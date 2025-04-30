@@ -187,17 +187,17 @@ class _BaseMesh:
 
   @functools.cached_property
   def auto_axes(self):
-    return tuple(n for n, t in safe_zip(self.axis_names, self._axis_types)
+    return tuple(n for n, t in unsafe_zip(self.axis_names, self._axis_types, strict=True)
                  if t == AxisType.Auto)
 
   @functools.cached_property
   def explicit_axes(self):
-    return tuple(n for n, t in safe_zip(self.axis_names, self._axis_types)
+    return tuple(n for n, t in unsafe_zip(self.axis_names, self._axis_types, strict=True)
                  if t == AxisType.Explicit)
 
   @functools.cached_property
   def manual_axes(self):
-    return tuple(n for n, t in safe_zip(self.axis_names, self._axis_types)
+    return tuple(n for n, t in unsafe_zip(self.axis_names, self._axis_types, strict=True)
                  if t == AxisType.Manual)
 
   @functools.cached_property
@@ -205,13 +205,13 @@ class _BaseMesh:
     if not self.axis_names:
       return {}
     d = collections.defaultdict(list)
-    for n, t in safe_zip(self.axis_names, self._axis_types):
+    for n, t in unsafe_zip(self.axis_names, self._axis_types, strict=True):
       d[t].append(n)
     return {t: tuple(n) for t, n in d.items()}
 
   @functools.cached_property
   def _name_to_type(self):
-    return dict(safe_zip(self.axis_names, self._axis_types))
+    return dict(unsafe_zip(self.axis_names, self._axis_types, strict=True))
 
 
 _mesh_object_dict = {}  # type: ignore
@@ -340,13 +340,13 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
   def shape(self):
     return collections.OrderedDict(
         (name, size)
-        for name, size in safe_zip(self.axis_names, self.devices.shape))
+        for name, size in unsafe_zip(self.axis_names, self.devices.shape, strict=True))
 
   @functools.cached_property
   def shape_tuple(self):
     return tuple(
         (name, size)
-        for name, size in safe_zip(self.axis_names, self.devices.shape))
+        for name, size in unsafe_zip(self.axis_names, self.devices.shape, strict=True))
 
   @property
   def axis_sizes(self) -> tuple[int, ...]:
@@ -485,7 +485,7 @@ class AbstractMesh(_BaseMesh):
   def shape_tuple(self):
     return tuple(
         (name, size)
-        for name, size in safe_zip(self.axis_names, self.axis_sizes))
+        for name, size in unsafe_zip(self.axis_names, self.axis_sizes, strict=True))
 
   @property
   def _internal_device_list(self):

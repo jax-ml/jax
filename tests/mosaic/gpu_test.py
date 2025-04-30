@@ -2539,7 +2539,7 @@ def set_in_transforms(
 
   in_transforms = []
   smem_refs = filter(inference_utils.is_transformable_smem_memref, op.operands)  # pylint: disable=undefined-variable
-  for _, result_transforms in jax._src.util.safe_zip(smem_refs, transforms):
+  for _, result_transforms in zip(smem_refs, transforms, strict=True):
     in_transforms.append(
         ir.ArrayAttr.get([t.attr() for t in result_transforms])
     )

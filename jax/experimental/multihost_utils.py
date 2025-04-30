@@ -33,7 +33,6 @@ from jax.interpreters import xla
 from jax._src import pjit as pjit_lib
 from jax.sharding import PartitionSpec as P
 from jax._src import distributed
-from jax._src.util import safe_zip
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 import numpy as np
@@ -349,7 +348,7 @@ def host_local_array_to_global_array(
   out_flat = [
       host_local_array_to_global_array_p.bind(inp, global_mesh=global_mesh,
                                               pspec=in_spec)
-      for inp, in_spec in safe_zip(flat_inps, in_pspecs)
+      for inp, in_spec in zip(flat_inps, in_pspecs, strict=True)
   ]
   return tree_unflatten(in_tree, out_flat)
 
@@ -455,7 +454,7 @@ def global_array_to_host_local_array(
   out_flat = [
       global_array_to_host_local_array_p.bind(inp, global_mesh=global_mesh,
                                               pspec=o)
-      for inp, o in safe_zip(flat_inps, out_pspecs)
+      for inp, o in zip(flat_inps, out_pspecs, strict=True)
   ]
   return tree_unflatten(out_tree, out_flat)
 

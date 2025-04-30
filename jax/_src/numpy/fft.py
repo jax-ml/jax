@@ -21,7 +21,6 @@ import numpy as np
 from jax import lax
 from jax._src import dtypes
 from jax._src.lib import xla_client
-from jax._src.util import safe_zip
 from jax._src.numpy.util import ensure_arraylike, promote_dtypes_inexact
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import ufuncs, reductions
@@ -78,7 +77,7 @@ def _fft_core(func_name: str, fft_type: lax.FftType, a: ArrayLike,
 
   if s is not None:
     in_s = list(arr.shape)
-    for axis, x in safe_zip(axes, s):
+    for axis, x in zip(axes, s, strict=True):
       in_s[axis] = x
     if fft_type == lax.FftType.IRFFT:
       in_s[-1] = (in_s[-1] // 2 + 1)

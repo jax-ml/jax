@@ -48,7 +48,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
-from jax._src.util import NumpyComplexWarning, safe_zip
+from jax._src.util import NumpyComplexWarning
 from jax._src.tree_util import tree_map
 
 config.parse_flags_with_absl()
@@ -3935,7 +3935,7 @@ class FooArray:
 
 def shard_foo_array_handler(xs, shardings, layouts, copy_semantics):
   results = []
-  for x, sharding in safe_zip(xs, shardings):
+  for x, sharding in zip(xs, shardings, strict=True):
     device, = sharding._addressable_device_assignment
     aval = core.get_aval(x.data)
     results.append(pxla.batched_device_put(

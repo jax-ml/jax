@@ -42,7 +42,7 @@ from jax._src.named_sharding import (  # noqa: F401
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
-from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
+from jax._src.util import safe_map, use_cpp_class, use_cpp_method
 import numpy as np
 
 config_ext = xc._xla.config
@@ -207,7 +207,7 @@ def pmap_sharding_devices_indices_map(
     self, global_shape: Shape) -> Mapping[Device, Index]:
   self.shard_shape(global_shape)  # raises a good error message
   indices = sharding_specs.spec_to_indices(global_shape, self.sharding_spec)
-  return dict(safe_zip(self.devices.flat, indices))  # type: ignore[arg-type]
+  return dict(zip(self.devices.flat, indices, strict=True))  # type: ignore[arg-type]
 
 
 @use_cpp_class(xc.PmapSharding)

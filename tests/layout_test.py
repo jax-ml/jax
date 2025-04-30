@@ -22,7 +22,6 @@ import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec as P, SingleDeviceSharding
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.util import safe_zip
 from jax.experimental.layout import (with_dll_constraint, Layout,
                                      DeviceLocalLayout as DLL)
 from jax.experimental.compute_on import compute_on
@@ -193,7 +192,7 @@ class LayoutTest(jtu.JaxTestCase):
     compiled2 = jax.jit(f, in_shardings=arg_layouts).lower(*inps).compile()
     out3, out4 = compiled2(*inps)
 
-    for l1, l2 in safe_zip(arg_layouts, compiled2.input_layouts[0]):
+    for l1, l2 in zip(arg_layouts, compiled2.input_layouts[0], strict=True):
       self.assertEqual(l1, l2)
 
     self.assertArraysEqual(out1, out3)

@@ -32,7 +32,6 @@ from jax._src import prng
 from jax._src import random
 from jax._src import source_info_util
 from jax._src import traceback_util
-from jax._src import util
 from jax._src.ad_checkpoint import remat_p
 from jax._src.debugging import debug_callback_p
 from jax._src.interpreters import partial_eval as pe
@@ -428,7 +427,7 @@ def _slice_signature(eqn):
   start_indices = eqn.params['start_indices']
   limit_indices = eqn.params['limit_indices']
   strides = eqn.params['strides'] or (1,) * len(start_indices)
-  idx = tuple(slice(*tup) for tup in util.safe_zip(start_indices, limit_indices, strides))
+  idx = tuple(slice(*tup) for tup in zip(start_indices, limit_indices, strides, strict=True))
   sink = np.zeros(in_aval.shape, dtype=bool)
   sink[idx] = True
   return KeyReuseSignature(Sink(0, sink), Source(0))

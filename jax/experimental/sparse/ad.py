@@ -22,7 +22,6 @@ import jax
 from jax._src import core
 from jax import tree_util
 from jax._src.api_util import _ensure_index, _ensure_index_tuple
-from jax._src.util import safe_zip
 from jax._src.util import split_list, wraps
 from jax._src.traceback_util import api_boundary
 from jax.experimental.sparse._base import JAXSparse
@@ -51,7 +50,7 @@ def flatten_fun_for_sparse_ad(fun, argnums: int | tuple[int, ...], args: tuple[A
   assert not end
   # For sparse args, we only mark the first buffer (the data) for differentiation.
   leaf_argnums2 = [nums[:1] if is_sparse(arg) else nums
-                   for arg, nums in safe_zip(args_flat1, leaf_argnums2)]
+                   for arg, nums in zip(args_flat1, leaf_argnums2, strict=True)]
   argnums_flat = tuple(itertools.chain.from_iterable(
       nums for i, nums in enumerate(leaf_argnums2) if i in argnums_flat1))
 
@@ -68,7 +67,7 @@ def flatten_fun_for_sparse_ad(fun, argnums: int | tuple[int, ...], args: tuple[A
 
   def postprocess_gradients(grads_out):
     leaf_grads = [None] * tree1.num_leaves
-    for i, grad in safe_zip(argnums_flat1, grads_out):
+    for i, grad in zip(argnums_flat1, grads_out, strict=True):
       leaf_grads[i] = reconstruct(i, grad)
     grad_tree = tree_util.tree_unflatten(tree1, leaf_grads)
     grad_tree = tuple(filter(lambda x: jax.tree.leaves(x), grad_tree))

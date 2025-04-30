@@ -68,7 +68,7 @@ from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.lib import pytree
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
-from jax._src.util import safe_map, safe_zip, split_list
+from jax._src.util import safe_map, split_list
 from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.numpy import indexing as jnp_indexing
 from jax.experimental import sparse
@@ -428,7 +428,7 @@ def eval_sparse(
       out_bufs = prim.bind(*(spenv.data(val) for val in invals), **eqn.params)
       out_bufs = out_bufs if prim.multiple_results else [out_bufs]
       out = []
-      for buf, outvar in safe_zip(out_bufs, eqn.outvars):
+      for buf, outvar in zip(out_bufs, eqn.outvars, strict=True):
         if isinstance(outvar, core.DropVar):
           out.append(None)
         else:
@@ -821,7 +821,7 @@ sparse_rules_bcoo[pjit.pjit_p] = _pjit_sparse
 
 
 def _duplicate_for_sparse_spvalues(spvalues, params):
-  for spvalue, param in safe_zip(spvalues, params):
+  for spvalue, param in zip(spvalues, params, strict=True):
     yield from [param, param] if spvalue.is_sparse() else [param]
 
 def _scan_sparse(spenv, *spvalues, jaxpr, num_consts, num_carry, **params):

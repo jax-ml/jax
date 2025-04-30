@@ -35,7 +35,6 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
-from jax._src.util import safe_zip
 from jax.experimental.mosaic.gpu import layouts as layouts_lib
 import numpy as np
 
@@ -227,7 +226,7 @@ def _optimization_barrier_op_lowering_rule(
     )
 
   fragmented_arrays = []
-  for operand, layout in safe_zip(op.operands, inference_utils.in_layouts(op)):
+  for operand, layout in zip(op.operands, inference_utils.in_layouts(op), strict=True):
     ty = ir.VectorType(operand.type)
     is_signed = False if ir.IntegerType.isinstance(ty.element_type) else None
     fragmented_arrays.append(
@@ -240,7 +239,7 @@ def _optimization_barrier_op_lowering_rule(
 
   return [
       _fragmented_array_to_ir(arr, result.type)
-      for arr, result in safe_zip(lowered_fragmented_arrays, op.results)
+      for arr, result in zip(lowered_fragmented_arrays, op.results, strict=True)
   ]
 
 

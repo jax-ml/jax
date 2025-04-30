@@ -7077,7 +7077,7 @@ def _get_spec_size(sp, mesh):
 def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
   new_spec = []
   mesh = operand.sharding.mesh
-  for out, sp in safe_zip(out_split, operand.sharding.spec):
+  for out, sp in unsafe_zip(out_split, operand.sharding.spec, strict=True):
     if isinstance(out, list):
       if sp is None:
         new_spec.extend([None] * len(out))
@@ -7492,7 +7492,7 @@ def _reduce_dtype_rule(*avals, computation, jaxpr, dimensions):
 def _reduce_weak_type_rule(*avals, computation, jaxpr, dimensions):
   operand_avals, init_val_avals = split_list(avals, [len(avals) // 2])
   return [op.weak_type and init_val.weak_type
-          for op, init_val in safe_zip(operand_avals, init_val_avals)]
+          for op, init_val in unsafe_zip(operand_avals, init_val_avals, strict=True)]
 
 def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
                        dimensions):
@@ -7589,7 +7589,7 @@ def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
                                       dim_var_values=ctx.dim_var_values)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
-          for r, aval in safe_zip(op.results, ctx.avals_out)]
+          for r, aval in unsafe_zip(op.results, ctx.avals_out, strict=True)]
 
 mlir.register_lowering(reduce_p, _reduce_lower)
 

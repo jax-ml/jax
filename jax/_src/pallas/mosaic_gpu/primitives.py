@@ -965,13 +965,13 @@ def _wgmma_lowering(
       if len(rhs_tiling) != 2 or len(new_shape) != 2:
         raise ValueError("WGMMA expects shapes 2D tiled into 2D tiles.")
 
-      if any(d % t != 0 for d, t in util.safe_zip(new_shape, rhs_tiling)):
+      if any(d % t != 0 for d, t in zip(new_shape, rhs_tiling, strict=True)):
         raise ValueError(
             f"The last reshape {new_shape} is not divisible by the tiling"
             f" {rhs_tiling}."
         )
 
-      high_dims = [d // t for d, t in util.safe_zip(new_shape, rhs_tiling)]
+      high_dims = [d // t for d, t in zip(new_shape, rhs_tiling, strict=True)]
       b = mgpu.memref_reshape(b, (*high_dims, *rhs_tiling))
       rhs_transpose = False
     case _:

@@ -50,7 +50,7 @@ from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import _jax
-from jax._src.util import safe_map, safe_zip
+from jax._src.util import safe_map
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -3040,7 +3040,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     self.assertIsInstance(out1, array.ArrayImpl)
     self.assertIsInstance(out2, array.ArrayImpl)
-    for s1, s2 in safe_zip(out1.addressable_shards, out2.addressable_shards):
+    for s1, s2 in zip(out1.addressable_shards, out2.addressable_shards, strict=True):
       self.assertArraysEqual(s1.data, input_data[s1.index])
       self.assertArraysEqual(s2.data, input_data[s2.index])
     self.assertArraysEqual(out1, input_data)
@@ -3065,7 +3065,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertIsInstance(out2, array.ArrayImpl)
     self.assertEqual(out1.shape, (2,))
     self.assertEqual(out2.shape, (dc, dc, 2))
-    for i, (s1, s2) in enumerate(safe_zip(out1.addressable_shards, out2.addressable_shards)):
+    for i, (s1, s2) in enumerate(zip(out1.addressable_shards, out2.addressable_shards, strict=True)):
       self.assertArraysEqual(s1.data, input_data[i])
       if config.pmap_no_rank_reduction.value:
         self.assertArraysEqual(s2.data, input_data[None])
@@ -3151,7 +3151,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
       self.assertArraysEqual(out, out_copy)
       self.assertIsInstance(out_copy.sharding, jax.sharding.PmapSharding)
       self.assertEqual(out.sharding, out_copy.sharding)
-      for o, o_copy in safe_zip(out.addressable_shards, out_copy.addressable_shards):
+      for o, o_copy in zip(out.addressable_shards, out_copy.addressable_shards, strict=True):
         self.assertArraysEqual(o.data, o_copy.data)
         self.assertEqual(o.device, o_copy.device)
         self.assertEqual(o.index, o_copy.index)

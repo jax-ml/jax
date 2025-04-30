@@ -63,7 +63,7 @@ from jax._src.typing import (
 )
 from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
-    ceil_of_ratio, safe_zip, set_module, unzip2)
+    ceil_of_ratio, set_module, unzip2)
 from jax.sharding import Sharding
 from jax.tree_util import tree_flatten, tree_map
 import numpy as np
@@ -2231,7 +2231,7 @@ def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
   oob_pos = indices_arr > 0
   oob_neg = indices_arr < -1
   return tuple(where(oob_pos, s - 1, where(oob_neg, 0, i))
-               for s, i in safe_zip(shape, out_indices))
+               for s, i in zip(shape, out_indices, strict=True))
 
 
 @export
@@ -3779,7 +3779,7 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
     if any(np.shape(val) != () for val in fill_value_tup):
       raise ValueError(f"fill_value must be a scalar or a tuple of length {arr.ndim}; got {fill_value}")
     fill_mask = arange(calculated_size) >= mask.sum()
-    out = tuple(where(fill_mask, fval, entry) for fval, entry in safe_zip(fill_value_tup, out))
+    out = tuple(where(fill_mask, fval, entry) for fval, entry in zip(fill_value_tup, out, strict=True))
   return out
 
 

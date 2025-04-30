@@ -70,7 +70,7 @@ from jax._src.sharding_impls import (
     get_array_mapping as _get_array_mapping, array_mapping_to_axis_resources,
     SingleDeviceSharding, GSPMDSharding, NamedSharding, PositionalSharding,
     PartitionSpec as P)
-from jax._src.util import (safe_map, safe_zip, partition_list, wrap_name,
+from jax._src.util import (safe_map, partition_list, wrap_name,
                            tuple_update, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache)
 from jax._src.state.types import AbstractRef, RefEffect
@@ -139,7 +139,7 @@ def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
   #               list[copy_semantics])
   batches = collections.defaultdict(lambda: ([], [], [], [], []))  # type: ignore
   for i, (arg, sharding, layout, cs) in enumerate(
-      safe_zip(args, shardings, layouts, xc_copy_semantics)):
+      zip(args, shardings, layouts, xc_copy_semantics, strict=True)):
     if canonicalize:
       arg = xla.canonicalize_dtype(arg)
     batch = batches[type(arg)]
@@ -156,7 +156,7 @@ def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
   results: list[jax.Array | None] = [None] * len(args)
   for t, (indices, a, s, l, cs) in batches.items():
     outs = shard_arg_handlers[t](a, s, l, cs)
-    for i, out in safe_zip(indices, outs):
+    for i, out in zip(indices, outs, strict=True):
       results[i] = out
   assert all(result is not None for result in results)
   return results
@@ -201,7 +201,7 @@ shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 
 def _shard_np_array(xs, shardings, layouts, copy_semantics):
   results = []
-  for x, sharding, layout in safe_zip(xs, shardings, layouts):
+  for x, sharding, layout in zip(xs, shardings, layouts, strict=True):
     devices = sharding._addressable_device_assignment
     if x.dtype == dtypes.float0:
       x = np.zeros(x.shape, dtype=np.dtype(bool))
@@ -234,7 +234,7 @@ def batched_device_put(aval: core.ShapedArray,
   try:
     from jax._src import array
 
-    bufs = [x for x, d in safe_zip(xs, devices)
+    bufs = [x for x, d in zip(xs, devices, strict=True)
             if (isinstance(x, array.ArrayImpl) and
                 dispatch.is_single_device_sharding(x.sharding) and
                 x.devices() == {d})]
@@ -711,7 +711,7 @@ def stage_parallel_callable(
 ) -> tuple[core.Jaxpr, list[Any], ReplicaInfo, ShardInfo]:
   sharded_avals = tuple(
       _shard_aval(pci.axis_size, axis, aval) if axis is not None else aval
-      for axis, aval in safe_zip(pci.in_axes, pci.avals))
+      for axis, aval in zip(pci.in_axes, pci.avals, strict=True))
 
   orig_fun = fun
   if config.pmap_no_rank_reduction.value:
@@ -967,7 +967,7 @@ class UnloadedPmapExecutable:
 
   def build_execute_fun(self):
     input_indices = []
-    for aval, spec in safe_zip(self.local_input_avals, self.input_shardings):
+    for aval, spec in zip(self.local_input_avals, self.input_shardings, strict=True):
       assert isinstance(spec, sharding_impls.PmapSharding), spec
       assert isinstance(aval, core.ShapedArray), aval
       input_indices.append(
@@ -1080,7 +1080,7 @@ class UnloadedPmapExecutable:
         sharding_specs.pmap_sharding_spec(
             replicas.num_local_replicas, pci.axis_size,
             cast(ShapedArray, aval).shape, in_axis)
-        for aval, in_axis in safe_zip(shards.sharded_avals, pci.in_axes)]
+        for aval, in_axis in zip(shards.sharded_avals, pci.in_axes, strict=True)]
     in_shardings = _get_pmap_sharding(local_device_assignment,
                                       input_sharding_specs)
 
@@ -1088,12 +1088,12 @@ class UnloadedPmapExecutable:
         _cast_to_shaped_array(
             _pmap_unmapped_aval(pci.axis_size, out_axis, aval))
         if out_axis is not None else aval
-        for aval, out_axis in safe_zip(shards.out_sharded_avals, pci.out_axes)]
+        for aval, out_axis in zip(shards.out_sharded_avals, pci.out_axes, strict=True)]
     out_specs = [
         sharding_specs.pmap_sharding_spec(
             replicas.num_local_replicas, pci.axis_size, aval.shape, out_axis)
-        for aval, out_axis in safe_zip(
-            shards.out_sharded_avals, pci.out_axes)]
+        for aval, out_axis in zip(
+            shards.out_sharded_avals, pci.out_axes, strict=True)]
     out_shardings = _get_pmap_sharding(local_device_assignment, out_specs)
 
     with dispatch.log_elapsed_time(
@@ -1195,17 +1195,17 @@ class ResultsHandler:
     self.out_avals = out_avals
 
   def __call__(self, out_bufs):
-    return [h(bufs) for h, bufs in safe_zip(self.handlers, out_bufs)]
+    return [h(bufs) for h, bufs in zip(self.handlers, out_bufs, strict=True)]
 
 
 def local_avals_to_results_handler(
     unmapped_local_out_avals: Sequence[ShapedArray],
     local_shardings: Sequence[JSharding]) -> ResultsHandler:
   out_indices = [tuple(s.devices_indices_map(aval.shape).values())
-                 for s, aval in safe_zip(local_shardings, unmapped_local_out_avals)]
+                 for s, aval in zip(local_shardings, unmapped_local_out_avals, strict=True)]
   handlers = [
       local_aval_to_result_handler(aval, s, idcs)
-      for aval, s, idcs in safe_zip(unmapped_local_out_avals, local_shardings, out_indices)
+      for aval, s, idcs in zip(unmapped_local_out_avals, local_shardings, out_indices, strict=True)
   ]
   return ResultsHandler(handlers, local_shardings, unmapped_local_out_avals)
 
@@ -1216,7 +1216,7 @@ def global_avals_to_results_handler(
     committed: bool) -> ResultsHandler:
   handlers = [
       global_aval_to_result_handler(global_aval, s, committed)
-      for global_aval, s in safe_zip(global_out_avals, shardings)
+      for global_aval, s in zip(global_out_avals, shardings, strict=True)
   ]
   return ResultsHandler(handlers, shardings, global_out_avals)
 
@@ -2264,7 +2264,7 @@ def lower_sharding_computation(
   # layout will be set via a custom call.
   out_layouts_via_prop = get_out_layouts_via_propagation(closed_jaxpr)
   out_layouts = tuple(DeviceLocalLayout.AUTO if p is not None else o
-                      for o, p in safe_zip(out_layouts, out_layouts_via_prop))
+                      for o, p in zip(out_layouts, out_layouts_via_prop, strict=True))
 
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
       len(out_shardings), len(out_layouts), len(global_out_avals))
@@ -2553,7 +2553,7 @@ def get_out_shardings_from_executable(
       len(out_op_shardings), num_out_avals, len(omk))
 
   return [sharding_impls.GSPMDSharding(device_assignment, os, memory_kind=mk)
-          for os, mk in safe_zip(out_op_shardings, omk)]
+          for os, mk in zip(out_op_shardings, omk, strict=True)]
 
 
 def _get_in_shardings_from_xla(
@@ -2628,7 +2628,7 @@ def _get_out_sharding_from_orig_sharding(
     out_shardings, out_avals, orig_in_s, orig_aval):
   out = []
   orig_handler = _orig_out_sharding_handlers[type(orig_in_s)]
-  for o, out_aval in safe_zip(out_shardings, out_avals):
+  for o, out_aval in zip(out_shardings, out_avals, strict=True):
     if (isinstance(o, sharding_impls.GSPMDSharding) and
         out_aval is not core.abstract_token):
       # TODO(yashkatariya): Remove this condition and ask users to drop into
@@ -2655,7 +2655,7 @@ def maybe_recover_user_shardings(
   if all(not isinstance(o, sharding_impls.GSPMDSharding) for o in new_shardings):
     return new_shardings
 
-  for oi, o_aval in safe_zip(old_shardings, old_avals):
+  for oi, o_aval in zip(old_shardings, old_avals, strict=True):
     if oi is not None and type(oi) in _orig_out_sharding_handlers:
       return _get_out_sharding_from_orig_sharding(
           new_shardings, new_avals, oi, o_aval)
@@ -2701,7 +2701,7 @@ def _get_layouts_from_executable(
     out_layouts_xla = out_layouts_xla[num_ordered_effects:]
 
   new_in_layouts = []
-  for x, l in safe_zip(in_layouts_xla, in_layouts):
+  for x, l in zip(in_layouts_xla, in_layouts, strict=True):
     x = DeviceLocalLayout.from_pjrt_layout(x)
     if isinstance(l, DeviceLocalLayout) and not is_user_xla_layout_equal(l, x):
       raise AssertionError(
@@ -2712,7 +2712,7 @@ def _get_layouts_from_executable(
     new_in_layouts.append(x)
 
   new_out_layouts = []
-  for x, l in safe_zip(out_layouts_xla, out_layouts):
+  for x, l in zip(out_layouts_xla, out_layouts, strict=True):
     x = DeviceLocalLayout.from_pjrt_layout(x)
     if isinstance(l, DeviceLocalLayout) and not is_user_xla_layout_equal(l, x):
       raise AssertionError(
@@ -2820,8 +2820,8 @@ def _maybe_get_and_check_in_shardings(
     return in_shardings
 
   new_in_shardings = []
-  for xla_s, orig, aval in safe_zip(in_shardings_xla, in_shardings,
-                                    global_in_avals):
+  for xla_s, orig, aval in zip(in_shardings_xla, in_shardings,
+                               global_in_avals, strict=True):
     if isinstance(orig, UnspecifiedValue):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
@@ -2856,8 +2856,8 @@ def _maybe_get_and_check_out_shardings(
     return out_shardings
 
   new_out_shardings = []
-  for xla_s, orig, aval in safe_zip(out_shardings_xla, out_shardings,
-                                    global_out_avals):
+  for xla_s, orig, aval in zip(out_shardings_xla, out_shardings,
+                               global_out_avals, strict=True):
     if isinstance(orig, UnspecifiedValue):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
@@ -3015,9 +3015,9 @@ class UnloadedMeshExecutable:
       in_shardings_xla, out_shardings_xla = _get_mesh_pspec_shardings_from_executable(
           xla_executable, mesh)
       in_shardings = [x if isinstance(i, AUTO) else i
-                      for x, i in safe_zip(in_shardings_xla, in_shardings)]
+                      for x, i in zip(in_shardings_xla, in_shardings, strict=True)]
       out_shardings = [x if isinstance(o, AUTO) else o
-                       for x, o in safe_zip(out_shardings_xla, out_shardings)]
+                       for x, o in zip(out_shardings_xla, out_shardings, strict=True)]
     else:
       if pmap_nreps == 1:
         assert mesh is None
@@ -3041,7 +3041,7 @@ class UnloadedMeshExecutable:
     del in_layouts, out_layouts
     dispatch_in_layouts = [
         None if is_default_layout(l, s, a) else l
-        for l, s, a, in safe_zip(xla_in_layouts, in_shardings, global_in_avals)
+        for l, s, a, in zip(xla_in_layouts, in_shardings, global_in_avals, strict=True)
     ]
 
     out_shardings = maybe_recover_user_shardings(
@@ -3237,7 +3237,7 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
   arg_names = [f"'{name}'" for name in jaxpr_debug_info.safe_arg_names(len(ref_avals))]
 
   errors = []
-  for ref_aval, arg_aval, name in safe_zip(ref_avals, arg_avals, arg_names):
+  for ref_aval, arg_aval, name in zip(ref_avals, arg_avals, arg_names, strict=True):
     # Don't compare shardings of avals because you can lower with
     # numpy arrays + in_shardings and call compiled executable with
     # sharded arrays. We also have sharding checks downstream.
@@ -3293,8 +3293,8 @@ def check_array_xla_sharding_layout_match(
   )
   errors = []
   num_errors = 5
-  for arg, xs, xl, name in safe_zip(
-      args_after_dce, in_xla_shardings, in_xla_layouts, arg_names):
+  for arg, xs, xl, name in zip(
+      args_after_dce, in_xla_shardings, in_xla_layouts, arg_names, strict=True):
     if not isinstance(arg, ArrayImpl):
       continue
     if isinstance(xs, (UnspecifiedValue, AUTO)):

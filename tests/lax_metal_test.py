@@ -48,7 +48,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
 
-from jax._src.util import safe_zip, NumpyComplexWarning
+from jax._src.util import NumpyComplexWarning
 
 try:
   from jax_plugins import metal_plugin
@@ -326,7 +326,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       else:
         fillvals = fill_value if np.ndim(fill_value) else len(result) * [fill_value or 0]
         return tuple(np.concatenate([arg, np.full(size - len(arg), fval, arg.dtype)])
-                     for fval, arg in safe_zip(fillvals, result))
+                     for fval, arg in zip(fillvals, result, strict=True))
     jnp_fun = lambda x: jnp.nonzero(x, size=size, fill_value=fill_value)
     with jtu.ignore_warning(category=DeprecationWarning,
                             message="Calling nonzero on 0d arrays.*"):
@@ -397,7 +397,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       else:
         fillvals = fill_value if np.ndim(fill_value) else result.shape[-1] * [fill_value or 0]
         return np.empty((size, 0), dtype=int) if np.ndim(x) == 0 else np.stack([np.concatenate([arg, np.full(size - len(arg), fval, arg.dtype)])
-                        for fval, arg in safe_zip(fillvals, result.T)]).T
+                        for fval, arg in zip(fillvals, result.T, strict=True)]).T
     jnp_fun = lambda x: jnp.argwhere(x, size=size, fill_value=fill_value)
 
     with jtu.ignore_warning(category=DeprecationWarning,

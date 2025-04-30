@@ -38,7 +38,7 @@ from jax.experimental.sparse.util import (
 from jax.experimental.sparse._lowerings import coo_spmv_p, coo_spmm_p
 from jax._src.interpreters import mlir
 import jax.numpy as jnp
-from jax._src.util import safe_zip, unzip2, split_list
+from jax._src.util import unzip2, split_list
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
@@ -134,7 +134,7 @@ def _validate_bcoo(data: Buffer, indices: Buffer, shape: Sequence[int]) -> BCOOP
   props = _validate_bcoo_indices(indices, shape)
   n_batch, n_sparse, n_dense, nse = props
   shape = tuple(shape)
-  if any(s1 not in (1, s2) for s1, s2 in safe_zip(data.shape[:n_batch], shape[:n_batch])):
+  if any(s1 not in (1, s2) for s1, s2 in zip(data.shape[:n_batch], shape[:n_batch], strict=True)):
     raise ValueError(f"data batch dimensions not compatible for {data.shape=}, {shape=}")
   if data.shape[n_batch:] != (nse,) + shape[n_batch + n_sparse:]:
     raise ValueError(f"Invalid {data.shape=} for {nse=}, {n_batch=}, {n_dense=}")
@@ -148,7 +148,7 @@ def _validate_bcoo_indices(indices: Buffer, shape: Sequence[int]) -> BCOOPropert
   n_batch = len(indices.shape) - 2
   n_dense = len(shape) - n_batch - n_sparse
   assert n_dense >= 0
-  if any(s1 not in (1, s2) for s1, s2 in safe_zip(indices.shape[:n_batch], shape[:n_batch])):
+  if any(s1 not in (1, s2) for s1, s2 in zip(indices.shape[:n_batch], shape[:n_batch], strict=True)):
     raise ValueError(f"indices batch dimensions not compatible for {indices.shape=}, {shape=}")
   if indices.shape[n_batch:] != (nse, n_sparse):
     raise ValueError(f"Invalid ={indices.shape=} for {nse=}, {n_batch=}, {n_dense=}")
@@ -693,9 +693,9 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers,
 
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_contracting_b, rhs_contracting_b = unzip2([
-    (l, r) for l, r in safe_zip(lhs_contracting, rhs_contracting) if l < n_batch])
+    (l, r) for l, r in zip(lhs_contracting, rhs_contracting, strict=True) if l < n_batch])
   lhs_contracting_s, rhs_contracting_s = unzip2([
-    (l, r) for l, r in safe_zip(lhs_contracting, rhs_contracting) if l >= n_batch])
+    (l, r) for l, r in zip(lhs_contracting, rhs_contracting, strict=True) if l >= n_batch])
 
   # Reorder lhs batch dimensions
   if lhs_batch or lhs_contracting_b:
@@ -1822,7 +1822,7 @@ def bcoo_concatenate(operands: Sequence[BCOO], *, dimension: int) -> BCOO:
                         dtype=operands[0].indices.dtype)
     new_data = lax.concatenate([op.data for op in operands], dimension=n_batch)
     new_indices = lax.concatenate([op.indices.at[..., dimension - n_batch].add(offset)
-                                   for op, offset in safe_zip(operands, offsets)],
+                                   for op, offset in zip(operands, offsets, strict=True)],
                                   dimension=n_batch)
   else:  # Concatenation along dense axes
     # TODO(jakevdp) should we implement this? In general it results in a wasteful
@@ -1985,7 +1985,7 @@ def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequen
     raise ValueError(f"strides must be a sequence of positive integers; got {strides}")
 
   if not all(0 <= start <= end <= size
-             for start, end, size in safe_zip(start_indices, limit_indices, mat.shape)):
+             for start, end, size in zip(start_indices, limit_indices, mat.shape, strict=True)):
     raise ValueError(f"bcoo_slice: invalid indices. Got {start_indices=}, "
                      f"{limit_indices=} and shape={mat.shape}")
 
@@ -2006,7 +2006,7 @@ def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequen
   new_indices = mat.indices[tuple(index_slices)]
   new_shape = tuple(
     (end - start + stride - 1) // stride
-    for start, end, stride in safe_zip(start_indices, limit_indices, strides))
+    for start, end, stride in zip(start_indices, limit_indices, strides, strict=True))
   _, new_shape_sparse, _ = split_list(new_shape, [mat.n_batch, mat.n_sparse])
 
   if mat.n_sparse:
@@ -2235,7 +2235,7 @@ def _bcoo_multiply_sparse_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices
   elif rhs.n_batch:
     rhs_data, rhs_indices = bcoo_update_layout(BCOO((rhs_data, rhs_indices), shape=rhs_shape), n_batch=0)._bufs
     rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
-  dims = jnp.array([i for i, (s1, s2) in enumerate(safe_zip(lhs_shape[:lhs.n_sparse], rhs_shape[:rhs.n_sparse]))
+  dims = jnp.array([i for i, (s1, s2) in enumerate(zip(lhs_shape[:lhs.n_sparse], rhs_shape[:rhs.n_sparse], strict=True))
                     if s1 != 1 and s2 != 1], dtype=int)
 
   # TODO(jakevdp): this nse can be tightened to min(lhs.nse, rhs.nse) if there

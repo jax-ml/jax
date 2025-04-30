@@ -33,7 +33,7 @@ from jax.experimental.sparse import bcoo
 from jax.experimental.sparse.util import (
     nfold_vmap, _count_stored_elements,
     _csr_to_coo, CuSparseEfficiencyWarning, SparseInfo, Shape)
-from jax._src.util import split_list, safe_zip
+from jax._src.util import split_list
 
 from jax._src import api_util
 from jax._src import config
@@ -96,7 +96,7 @@ class BCSRProperties(NamedTuple):
 
 
 def _compatible(shape1: Sequence[int], shape2: Sequence[int]) -> bool:
-  return all(s1 in (1, s2) for s1, s2 in safe_zip(shape1, shape2))
+  return all(s1 in (1, s2) for s1, s2 in zip(shape1, shape2, strict=True))
 
 
 def _validate_bcsr_indices(indices: jax.Array, indptr: jax.Array,

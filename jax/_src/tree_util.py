@@ -25,7 +25,7 @@ from typing import Any, TypeVar, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
-from jax._src.util import safe_zip, set_module
+from jax._src.util import set_module
 from jax._src.util import unzip2
 
 
@@ -1044,7 +1044,7 @@ def register_dataclass(
 register_pytree_with_keys(
     collections.OrderedDict,
     lambda x: (tuple((DictKey(k), x[k]) for k in x.keys()), tuple(x.keys())),
-    lambda keys, values: collections.OrderedDict(safe_zip(keys, values)),
+    lambda keys, values: collections.OrderedDict(zip(keys, values, strict=True)),
 )
 
 def _flatten_defaultdict_with_keys(d):
@@ -1054,7 +1054,7 @@ def _flatten_defaultdict_with_keys(d):
 register_pytree_with_keys(
     collections.defaultdict,
     _flatten_defaultdict_with_keys,
-    lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)),
+    lambda s, values: collections.defaultdict(s[0], zip(s[1], values, strict=True)),
 )
 
 

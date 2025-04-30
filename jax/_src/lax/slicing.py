@@ -1338,7 +1338,7 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     msg = "slice strides must be positive, got {}"
     raise TypeError(msg.format(strides))
   return tuple(core.stride_dim(d, window_size=1, window_stride=s)
-               for d, s in zip(diff, strides))
+               for d, s in unsafe_zip(diff, strides, strict=True))
 
 def _get_sub_spec_size(mesh, sub_spec):
   if isinstance(sub_spec, tuple):
@@ -1348,8 +1348,8 @@ def _get_sub_spec_size(mesh, sub_spec):
 def _get_sharding_for_varying_out_shape(out_shape, operand, name):
   """Returns a sharding when out_shape may not be the same as operand shape"""
   mesh = operand.sharding.mesh
-  for op_sh, out_sh, op_spec in safe_zip(
-      operand.shape, out_shape, operand.sharding.spec):
+  for op_sh, out_sh, op_spec in unsafe_zip(
+      operand.shape, out_shape, operand.sharding.spec, strict=True):
     if (op_sh != out_sh and op_spec is not None and
         out_sh % _get_sub_spec_size(mesh, op_spec) != 0):
       raise core.ShardingTypeError(
@@ -1505,14 +1505,14 @@ def _batch_dynamic_slice_indices(indices, bdims):
   if len(indices) == 0:
     return np.array([], 'int32'), None
   empty_marker = object()
-  size = next((x.shape[i] for x, i in zip(indices, bdims) if i is not None),
+  size = next((x.shape[i] for x, i in unsafe_zip(indices, bdims, strict=True) if i is not None),
               empty_marker)
   if size is empty_marker:
     return lax.concatenate([lax.broadcast(i, (1,)) for i in indices], 0), None
   indices = lax.concatenate(
     [lax.broadcast_in_dim(x, (size, 1),
                           broadcast_dimensions=((0,) if i is not None else ()))
-     for x, i in zip(indices, bdims)],
+     for x, i in unsafe_zip(indices, bdims, strict=True)],
     dimension=1)
   return indices, 0
 
@@ -1571,7 +1571,7 @@ def _dynamic_slice_padding_rule(in_avals, out_avals, x, *starts_and_dyn,
   x_aval, start_indices_avals, dyn_avals = util.split_list(in_avals, [1, x.ndim])
   start_indices, dyn = util.split_list(starts_and_dyn, [x.ndim])
   dyn_ = [a.dtype.bound if type(a.dtype) is core.bint else d
-          for a, d in zip(dyn_avals, dyn)]
+          for a, d in unsafe_zip(dyn_avals, dyn, strict=True)]
   slice_sizes_ = lax._merge_dyn_shape(slice_sizes, dyn_)
   start_idx = [d.val if type(d) is core.DArray else d for d in start_indices]
   return [dynamic_slice(x, start_idx, slice_sizes_)]
@@ -2048,9 +2048,9 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
     )
     if isinstance(operand_bdim, batching.RaggedAxis):
       ragged_slice_sizes = batching.bdim_as_shape(operand_bdim, slice_sizes)
-      for orig, fabricated in zip(
+      for orig, fabricated in unsafe_zip(
           lax._merge_dyn_shape(slice_sizes, dyn_slice_sizes),
-          ragged_slice_sizes):
+          ragged_slice_sizes, strict=True):
         if isinstance(fabricated, batching.IndexedAxisSize):
           if not core.same_referent(orig, fabricated.lengths):
             # Don't know what to do when slicing a ragged dimension with a
@@ -2566,7 +2566,7 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
 
   # move the operand batch dim to the front if it is not None, otherwise create
   # it at the front (so that we can scatter into it)
-  size = next(x.shape[ax] for x, ax in zip(batched_args, batch_dims)
+  size = next(x.shape[ax] for x, ax in unsafe_zip(batched_args, batch_dims, strict=True)
               if ax is not None)
   operand = batching.bdim_at_front(operand, operand_bdim, size)
 

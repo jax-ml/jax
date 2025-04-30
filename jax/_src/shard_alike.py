@@ -22,7 +22,6 @@ from jax._src.interpreters import mlir
 from jax._src.dispatch import apply_primitive
 from jax._src.tree_util import tree_flatten, tree_unflatten
 from jax._src.interpreters import batching
-from jax._src.util import safe_zip
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir
 
@@ -37,7 +36,7 @@ def shard_alike(x, y):
     raise ValueError('Trees should be equal. '
                      f'Got x_tree: {x_tree}, y_tree: {y_tree}')
 
-  for x_, y_ in safe_zip(x_flat, y_flat):
+  for x_, y_ in zip(x_flat, y_flat, strict=True):
     x_aval = core.shaped_abstractify(x_)
     y_aval = core.shaped_abstractify(y_)
     if x_aval.shape != y_aval.shape:
@@ -46,7 +45,7 @@ def shard_alike(x, y):
           f' {x_aval.shape} and `y` leaf shape: {y_aval.shape}. File an issue at'
           ' https://github.com/jax-ml/jax/issues if you want this feature.')
 
-  outs = [shard_alike_p.bind(x_, y_) for x_, y_ in safe_zip(x_flat, y_flat)]
+  outs = [shard_alike_p.bind(x_, y_) for x_, y_ in zip(x_flat, y_flat, strict=True)]
   x_out_flat, y_out_flat = zip(*outs)
   return tree_unflatten(x_tree, x_out_flat), tree_unflatten(y_tree, y_out_flat)
 

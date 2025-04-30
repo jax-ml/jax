@@ -38,7 +38,7 @@ from jax._src.numpy import util
 from jax._src.pjit import auto_axes
 from jax._src.tree_util import tree_flatten
 from jax._src.typing import Array, ArrayLike, StaticScalar
-from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update
+from jax._src.util import canonicalize_axis, set_module, tuple_update
 import numpy as np
 
 export = set_module('jax.numpy')
@@ -576,7 +576,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
   slice_sizes: list[int] = []
   allow_negative_indices: list[bool] = []
 
-  for ind, size in safe_zip(idx, arr.shape):
+  for ind, size in zip(idx, arr.shape, strict=True):
     if isinstance(ind, slice):
       start, stop, step = ind.indices(size)
       assert step == 1  # checked above

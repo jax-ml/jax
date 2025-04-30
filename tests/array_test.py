@@ -30,7 +30,6 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir
-from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
@@ -133,7 +132,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertArraysEqual(s.data, global_input_data[s.index])
       self.assertArraysEqual(s.data, arr.addressable_data(i))
 
-    for g, l in safe_zip(arr.global_shards, arr.addressable_shards):
+    for g, l in zip(arr.global_shards, arr.addressable_shards, strict=True):
       self.assertEqual(g.device, l.device)
       self.assertEqual(g.index, l.index)
       self.assertEqual(g.replica_id, l.replica_id)
@@ -574,7 +573,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     c_arr = jnp.array(arr, copy=True)
     self.assertArraysEqual(arr, c_arr)
     self.assertEqual(arr._committed, c_arr._committed)
-    for a, c in safe_zip(arr.addressable_shards, c_arr.addressable_shards):
+    for a, c in zip(arr.addressable_shards, c_arr.addressable_shards, strict=True):
       self.assertArraysEqual(a.data, c.data)
       self.assertEqual(a.index, c.index)
       self.assertEqual(a.replica_id, c.replica_id)

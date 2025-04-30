@@ -29,7 +29,7 @@ from jax._src.lax.lax import DotDimensionNumbers
 from jax._src.typing import DTypeLike
 from jax.experimental import sparse
 import jax.numpy as jnp
-from jax._src.util import safe_zip, split_list
+from jax._src.util import split_list
 import numpy as np
 
 MATMUL_TOL = {
@@ -134,7 +134,7 @@ class SparseTestCase(jtu.JaxTestCase):
     def batched_args_maker():
       args = list(zip(*(args_maker() for _ in range(batch_size))))
       return [arg[0] if bdim is None else concat([expand(x, bdim) for x in arg], bdim)
-              for arg, bdim in safe_zip(args, bdims)]
+              for arg, bdim in zip(args, bdims, strict=True)]
     self._CheckAgainstDense(jax.vmap(dense_fun, bdims), jax.vmap(sparse_fun, bdims), batched_args_maker,
                             check_dtypes=check_dtypes, tol=tol, atol=atol, rtol=rtol, check_jit=check_jit,
                             canonicalize_dtypes=canonicalize_dtypes)

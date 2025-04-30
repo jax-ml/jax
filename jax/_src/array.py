@@ -45,7 +45,7 @@ from jax._src.sharding_impls import (
     device_replica_id_map, hashed_index, num_addressable_indices,
     local_to_global_shape, _internal_use_concrete_mesh)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike
-from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
+from jax._src.util import unzip3, use_cpp_class, use_cpp_method, cache
 import numpy as np
 
 
@@ -676,7 +676,7 @@ if not TYPE_CHECKING:
 def _get_shape_from_index(slc: Index, shape: Shape) -> Shape:
   return tuple(
       (s.stop or dim) - (s.start or 0)
-      for s, dim in safe_zip(slc, shape)
+      for s, dim in zip(slc, shape, strict=True)
       if isinstance(s, slice)  # If element is int, this dimension is reduced
   )
 
@@ -1157,11 +1157,11 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
   candidates = defaultdict(list)
   bufs = [buf.data for buf in x.addressable_shards]
   arr_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
-  for buf, idx in safe_zip(bufs, arr_indices):
+  for buf, idx in zip(bufs, arr_indices, strict=True):
     candidates[hashed_index(idx)].append(buf)
 
   bufs = []
-  for idx, device in safe_zip(indices, devices):
+  for idx, device in zip(indices, devices, strict=True):
     # Look up all buffers that contain the correct slice of the logical array.
     candidates_list = candidates[hashed_index(idx)]
     if not candidates_list:
@@ -1192,7 +1192,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
   batch_cs = []
 
   for i, (x, sharding, layout, cs) in enumerate(
-      safe_zip(xs, shardings, layouts, copy_semantics)):
+      zip(xs, shardings, layouts, copy_semantics, strict=True)):
     x._check_if_deleted()
     indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
     same_layout = (True if layout is None else
@@ -1227,7 +1227,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
   util.test_event("batched_copy_array")
   copy_outs = xc.batched_copy_array_to_devices_with_sharding(
       batch_xs, batch_devs, batch_shardings, batch_cs)
-  for i, copy_out in safe_zip(batch_indices, copy_outs):
+  for i, copy_out in zip(batch_indices, copy_outs, strict=True):
     assert results[i] is None
     results[i] = copy_out
   return results
@@ -1263,7 +1263,7 @@ pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
 
 def _token_shard_arg(xs, shardings, layouts, copy_semantics):
   results = []
-  for x, sharding, layout in safe_zip(xs, shardings, layouts):
+  for x, sharding, layout in zip(xs, shardings, layouts, strict=True):
     assert layout is None
     x.block_until_ready()
     x = np.array([], dtype=bool)

@@ -41,7 +41,6 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src import util
 from jax._src.export import shape_poly
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
@@ -188,8 +187,8 @@ class PolyHarness(Harness):
         assert not isinstance(self.expected_output_signature, (tuple, list))
         expected_output_signature = [self.expected_output_signature]
         concrete_output_tf_shape = [concrete_output_tf_shape]
-      for expected, found in util.safe_zip(expected_output_signature,
-                                           concrete_output_tf_shape):
+      for expected, found in zip(expected_output_signature,
+                                 concrete_output_tf_shape, strict=True):
         tst.assertEqual(tuple(expected.shape), tuple(found))
 
     # Run the JAX and the TF functions and compare the results

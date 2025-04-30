@@ -1601,8 +1601,8 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
     return (None,) * len(jit_in_layouts)
 
   resolved_in_layouts = []
-  for arg, jit_in_l, rs, aval in safe_zip(
-      args, jit_in_layouts, resolved_in_shardings, in_avals):
+  for arg, jit_in_l, rs, aval in unsafe_zip(
+      args, jit_in_layouts, resolved_in_shardings, in_avals, strict=True):
     committed = getattr(arg, '_committed', True)
     # `arg_layout` is only used for checking purposes in the `else` branch
     # below. We cannot replace default layout with None to raise nicer errors.
@@ -1655,7 +1655,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
 
 def _resolve_out_layouts(out_layouts, out_shardings, out_avals):
   new_out_layouts = []
-  for out_l, out_s, out_aval in safe_zip(out_layouts, out_shardings, out_avals):
+  for out_l, out_s, out_aval in unsafe_zip(out_layouts, out_shardings, out_avals, strict=True):
     if out_l is None:
       new_out_layouts.append(None)
     elif (isinstance(out_l, DeviceLocalLayout) and
@@ -2891,7 +2891,7 @@ def mesh_cast(xs, out_shardings):
       mesh_cast_p.bind(
           x, dst_sharding=canonicalize_sharding(
               s, 'mesh_cast', check_mesh_consistency=False))
-      for x, s in safe_zip(x_flat, shardings_flat)
+      for x, s in unsafe_zip(x_flat, shardings_flat, strict=True)
   ]
   return tree_unflatten(treedef, out_flat)
 
@@ -2917,8 +2917,8 @@ def _mesh_cast_abstract_eval(aval, dst_sharding):
         f' axis_types={dst_sharding.mesh._axis_types_dict}. To reshard between'
         ' the same mesh, use `jax.sharding.reshard` instead?')
   if src_sharding.mesh._any_axis_explicit and dst_sharding.mesh._any_axis_explicit:
-    for s, d in safe_zip(flatten_spec(src_sharding.spec),
-                         flatten_spec(dst_sharding.spec)):
+    for s, d in unsafe_zip(flatten_spec(src_sharding.spec),
+                           flatten_spec(dst_sharding.spec), strict=True):
       if s is None and d is None:
         continue
       if s is None and d is not None:
@@ -2970,7 +2970,7 @@ def reshard(xs, out_shardings):
   shardings_flat = flatten_axes("reshard shardings", treedef, out_shardings)
   x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
   out_flat = []
-  for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat):
+  for x, x_aval, s in unsafe_zip(x_flat, x_avals_flat, shardings_flat, strict=True):
     ds = canonicalize_sharding(s, 'reshard')
     ds = ds.with_spec(ds.spec._normalized_spec_for_aval(x_aval.ndim))  # pytype: disable=attribute-error
     out_flat.append(reshard_p.bind(x, dst_sharding=ds))

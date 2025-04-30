@@ -649,7 +649,7 @@ def vtile(f_flat: lu.WrappedFun,
 
   @lu.transformation2
   def _map_to_tile(f, *args_flat):
-    sizes = (x.shape[i] for x, i in safe_zip(args_flat, in_axes_flat) if i is not None)
+    sizes = (x.shape[i] for x, i in unsafe_zip(args_flat, in_axes_flat, strict=True) if i is not None)
     tile_size_ = tile_size or next(sizes, None)
     assert tile_size_ is not None, "No mapped arguments?"
     outputs_flat = f(*map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat))

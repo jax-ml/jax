@@ -30,7 +30,6 @@ from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
-from jax._src.util import safe_zip
 
 from . import fragmented_array as fa
 from . import inference_utils
@@ -321,7 +320,7 @@ def _infer_memref_subview_transforms(
   num_tiled_axes = len(mgpu.TileTransformAttr(tile_transform).tiling)
   last_n_dims = op.source.type.shape[-num_tiled_axes:]
   last_n_sizes = list(op.static_sizes)[-num_tiled_axes:]
-  for slice_size, dim_size in safe_zip(last_n_sizes, last_n_dims):
+  for slice_size, dim_size in zip(last_n_sizes, last_n_dims, strict=True):
     if slice_size != dim_size:
       raise NotImplementedError(
           "Tile transforms are only propagated if the tiled axes are not "
