@@ -1389,7 +1389,7 @@ class LowerableChecksTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(_jax.XlaRuntimeError,
                                 "x needs to be positive"):
-      f(-1.)
+      f(-1.).block_until_ready()
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
