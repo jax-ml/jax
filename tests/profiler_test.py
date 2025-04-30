@@ -163,13 +163,13 @@ class ProfilerTest(unittest.TestCase):
       proto_path = glob.glob(os.path.join(tmpdir, "**/*.xplane.pb"),
                              recursive=True)
       self.assertEqual(len(proto_path), 1)
-      with open(proto_path[0], "rb") as f:
-        proto = f.read()
+      data = jax.profiler.ProfileData.from_file(proto_path[0])
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      planes = [plane.name for plane in data.planes]
+      self.assertIn("/host:CPU", planes)
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
+        self.assertIn("/device:TPU", planes)
 
   @jtu.run_on_devices("gpu")
   @jtu.thread_unsafe_test()
@@ -189,9 +189,12 @@ class ProfilerTest(unittest.TestCase):
         print(xy_plus_z(x, y, z))
 
       proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
-      proto_bytes = proto_path[0].read_bytes()
       if jtu.test_device_matches(["gpu"]):
-        self.assertIn(b"/device:GPU", proto_bytes)
+        data = jax.profiler.ProfileData.from_file(proto_path[0])
+        # Sanity check that serialized proto contains host and device traces
+        # without deserializing.
+        planes = [plane.name for plane in data.planes]
+        self.assertIn("/host:GPU", planes)
 
   def testProgrammaticProfilingContextManagerPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:
@@ -202,12 +205,13 @@ class ProfilerTest(unittest.TestCase):
 
       proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
       self.assertEqual(len(proto_path), 1)
-      proto = proto_path[0].read_bytes()
+      data = jax.profiler.ProfileData.from_file(proto_path[0])
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      planes = [plane.name for plane in data.planes]
+      self.assertIn("/host:CPU", planes)
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
+        self.assertIn("/device:TPU", planes)
 
   def testTraceAnnotation(self):
     x = 3

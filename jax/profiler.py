@@ -26,4 +26,8 @@ from jax._src.profiler import (
   stop_trace as stop_trace,
   trace as trace,
   annotate_function as annotate_function,
+  ProfileData as ProfileData,
+  ProfilePlane as ProfilePlane,
+  ProfileLine as ProfileLine,
+  ProfileEvent as ProfileEvent,
 )
