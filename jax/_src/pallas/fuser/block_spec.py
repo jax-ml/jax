@@ -34,6 +34,7 @@ from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.fuser import fuser_utils
+from jax._src.state import indexing
 import jax.numpy as jnp
 import numpy as np
 
@@ -95,9 +96,17 @@ def _wrap_eval_fn(primitive, eval_fn):
 
 
 def _block_size(dim: pallas_core.Element | int | None) -> int | None:
-  if isinstance(dim, pallas_core.Element):
-    return dim.block_size
-  return dim
+  match dim:
+    case (
+        pallas_core.Element()
+        | pallas_core.BoundedSlice()
+        | pallas_core.Blocked()
+    ):
+      return dim.block_size
+    case pallas_core.Squeezed() | None:
+      return None
+    case _:
+      return dim  # pytype: disable=bad-return-type
 
 
 @dataclasses.dataclass
@@ -176,9 +185,12 @@ class KernelEvalContext:
 
 _illegal = object()
 
+
 class _SpEnv(threading.local):
+
   def __init__(self):
     self.scalar_prefetch = None
+
 
 _sp_env = _SpEnv()
 
@@ -427,7 +439,7 @@ def make_kernel_function(
   bs_env, scalar_prefetch_fn_env = block_spec_env
 
   def _remove_nones(
-      shape: tuple[pallas_core.Element | int | None, ...] | None
+      shape: tuple[pallas_core.BlockDim | int | None, ...] | None,
   ) -> tuple[int, ...]:
     assert shape is not None
     new_shape = tuple(_block_size(s) for s in shape)
@@ -860,8 +872,73 @@ def _squeeze_block_spec(
 def _slice_eval_rule(ctx, x, **params):
   del params
   out_block_shape = ctx.out_block_specs[0].block_shape
-  assert len(x.shape) == sum(1 for bs in out_block_shape if bs is not None)
+  assert len(x.shape) == sum(
+      1
+      for bs in out_block_shape
+      if not (bs is None or isinstance(bs, pallas_core.Squeezed))
+  )
   return x
+
+
+def _offset_indexer(
+    bs: pallas_core.BlockDim | int | None,
+    indexer,
+    slice_start,
+    slice_size,
+):
+  # Short-circuit if the slice start is just at zero.
+  print('BS', bs, indexer, slice_start, slice_size)
+  if isinstance(slice_start, int) and slice_start == 0:
+    return indexer
+  match bs:
+    case None | pallas_core.Squeezed():
+      return indexer + slice_start
+    case pallas_core.Element(block_size):
+      _maybe_static_check(
+          slice_start % block_size == 0,
+          f'slice_start is not a multiple of block_size {block_size}',
+      )
+      _maybe_static_check(
+          slice_size % block_size == 0,
+          f'slice_size is not a multiple of block_size {block_size}',
+      )
+      return indexer + slice_start
+    case int() | pallas_core.Blocked():
+      block_size = _block_size(bs)
+      _maybe_static_check(
+          slice_start % block_size == 0,
+          f'slice_start is not a multiple of block_size {block_size}',
+      )
+      _maybe_static_check(
+          slice_size % block_size == 0,
+          f'slice_size is not a multiple of block_size {block_size}',
+      )
+      # indexer is a block index so we need to offset it by the block offset.
+      return indexer + slice_start // block_size
+    case pallas_core.BoundedSlice(block_size):
+      assert isinstance(indexer, indexing.Slice)
+      _maybe_static_check(
+          indexer.start % block_size == 0,
+          f'slice_start is not a multiple of block_size {block_size}',
+      )
+      _maybe_static_check(
+          indexer.size % block_size == 0,
+          f'slice_size is not a multiple of block_size {block_size}',
+      )
+      return indexing.ds(indexer.start + slice_start, indexer.size)
+    case _:
+      raise ValueError(f'Unsupported block size {bs}')
+
+
+def _maybe_static_check(pred: bool, msg: str):
+  # Tries to emit a static error if possible, otherwise falls back to runtime.
+  from jax.experimental import checkify
+
+  if isinstance(pred, jax.Array):
+    checkify.check(pred, msg, debug=True)
+  else:
+    if not pred:
+      raise ValueError(msg)
 
 
 @register_pull_block_spec_rule(lax.slice_p)
@@ -879,28 +956,42 @@ def _slice_rule(
   slice_sizes = tuple(
       int(end - start) for start, end in zip(start_indices, limit_indices)
   )
+  # Do some basic checks
   for bs, slice_start, slice_size in zip(
       block_spec.block_shape, start_indices, slice_sizes
   ):
-    if bs is None:
-      continue
-    block_size = _block_size(bs)
-    assert (
-        slice_start % block_size == 0
-    ), (start_indices, block_spec.block_shape)
-    assert slice_size % block_size == 0, (slice_sizes, block_spec.block_shape)
-  offsets = tuple(
-      slice_start // _block_size(bs) if bs is not None else slice_start
-      for slice_start, bs in zip(start_indices, block_spec.block_shape)
-  )
-
-  def _offset(x, i):
-    return x + i if i != 0 else x
+    match bs:
+      case None | pallas_core.Squeezed():
+        continue
+      case pallas_core.BoundedSlice() | pallas_core.Element():
+        block_size = _block_size(bs)
+        # Require that block_size no bigger than the slice.
+        if block_size > slice_size:
+          raise ValueError(
+              f'Block size {block_size} is larger than the slice size'
+              f' {slice_size}'
+          )
+      case _:
+        block_size = _block_size(bs)
+        assert slice_start % block_size == 0, (
+            start_indices,
+            block_spec.block_shape,
+        )
+        assert slice_size % block_size == 0, (
+            slice_sizes,
+            block_spec.block_shape,
+        )
 
   def new_index_map(*args):
     idx = block_spec.index_map(*args)
     assert len(idx) == len(block_spec.block_shape)
-    return tuple(_offset(i, o) for i, o in zip(idx, offsets))
+    idx = tuple(
+        _offset_indexer(bs, i, start, size)
+        for bs, i, start, size in zip(
+            block_spec.block_shape, idx, start_indices, slice_sizes, strict=True
+        )
+    )
+    return idx
 
   return [pallas_core.BlockSpec(block_spec.block_shape, new_index_map)]
 
@@ -917,20 +1008,6 @@ def _dynamic_slice_usage_rule(ctx, used_out: set[Usage], **params):
     return [set()] * len(ctx.avals_in)
 
 
-def _offset(x, i, s):
-  from jax.experimental import checkify
-
-  if s is not None:
-    pred = i % s == 0
-    if isinstance(pred, jax.Array):
-      checkify.check(i % s == 0, 'Invalid index', debug=True)
-    else:
-      if not pred:
-        raise ValueError('Invalid index')
-  offset = jax.lax.div(i, s) if s is not None else i
-  return x + offset
-
-
 @register_eval_rule(lax.dynamic_slice_p)
 def _dynamic_slice_eval_rule(ctx, x, *args, **params):
   del ctx, params
@@ -944,7 +1021,6 @@ def _dynamic_slice_rule(
     *,
     slice_sizes: tuple[int, ...],
 ):
-  del slice_sizes
 
   def new_index_map(*args):
     slice_starts = ctx.scalar_prefetch_fn()
@@ -966,11 +1042,15 @@ def _dynamic_slice_rule(
     # multiples of the block sizes. The indices of the block that correspond to
     # the slice are then given by (i // b_l, j // b_m, k // b_n).
     # We then add these block indices to block indices produced by the index
-    # map.
+    # map
+    print('BLOCK SHAPE', block_spec.block_shape)
+    print('INDEXER', idx)
+    print('SLICE starts', slice_starts)
+    print('SLICE sizes', slice_sizes)
     block_indices = tuple(
-        _offset(i, o, _block_size(s))
-        for i, o, s in zip(
-            idx, slice_starts, block_spec.block_shape, strict=True
+        _offset_indexer(s, i, start, size)
+        for i, s, start, size in zip(
+            idx, block_spec.block_shape, slice_starts, slice_sizes, strict=True
         )
     )
     return block_indices
@@ -990,7 +1070,7 @@ def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
   is_element_block = [isinstance(bd, pallas_core.Element) for bd in block_shape]
   if any(is_element_block):
     raise NotImplementedError(
-        "Concatenation with Element indexing is not yet supported."
+        'Concatenation with Element indexing is not yet supported.'
     )
   block_dim = block_shape[dimension]
   if block_dim is None:
@@ -1038,11 +1118,11 @@ def _concatenate_rule(
   is_element_block = [isinstance(bd, pallas_core.Element) for bd in block_shape]
   if any(is_element_block):
     raise NotImplementedError(
-        "Concatenation with Element indexing is not yet supported."
+        'Concatenation with Element indexing is not yet supported.'
     )
   num_blocks = []
   block_dim = block_shape[dimension]
-  if block_dim is None:
+  if block_dim is None or isinstance(block_dim, pallas_core.Squeezed):
     block_dim = 1
   if block_dim == sum(aval.shape[dimension] for aval in ctx.avals_in):  # pytype: disable=attribute-error
     # Handle special case if the block contains all of the concatenated
@@ -1114,7 +1194,9 @@ def _broadcast_in_dim_eval_rule(
   if not eval_ctx.avals_in[0].shape:  # pytype: disable=attribute-error
     # Scalar -> Array broadcast
     block_spec = eval_ctx.out_block_specs[0]
-    shape = tuple(_block_size(s) for s in block_spec.block_shape if s is not None)
+    shape = tuple(
+        _block_size(s) for s in block_spec.block_shape if s is not None
+    )
     return jax.lax.broadcast_in_dim(x, broadcast_dimensions=(), shape=shape)
   return x
 
@@ -1149,10 +1231,17 @@ def _transpose_eval_rule(
 ):
   block_spec = eval_ctx.out_block_specs[0]
   block_shape = block_spec.block_shape
-  block_shape_no_nones = tuple(bs for bs in block_shape if bs is not None)
+  block_shape_no_nones = tuple(
+      bs
+      for bs in block_shape
+      if not (bs is None or isinstance(bs, pallas_core.Squeezed))
+  )
   block_dims_iter = iter(range(len(block_shape_no_nones)))
   expanded_block_dims = [
-      None if bs is None else next(block_dims_iter) for bs in block_shape
+      None
+      if (bs is None or isinstance(bs, pallas_core.Squeezed))
+      else next(block_dims_iter)
+      for bs in block_shape
   ]
   assert next(block_dims_iter, None) is None
   permuted_block_dims = [expanded_block_dims[p] for p in permutation]
