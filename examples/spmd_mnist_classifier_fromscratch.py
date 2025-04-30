@@ -12,16 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import time
 
+from jax import NamedSharding
 import numpy as np
 import numpy.random as npr
-
 import jax
 from jax import jit, grad
-from jax.sharding import PartitionSpec as P, NamedSharding
+from jax.experimental.shard import reshard
+from jax.sharding import (
+  PartitionSpec as P,
+  AxisType,
+)
 from jax.scipy.special import logsumexp
-from jax.tree_util import tree_map
 import jax.numpy as jnp
 import datasets
 
@@ -50,6 +54,7 @@ def loss(params, batch):
   return -jnp.mean(jnp.sum(preds * targets, axis=1))
 
 
+@partial(jax.jit, donate_argnums=0)
 def train_step(params, batch):
   grads = grad(loss)(params, batch)
   return [
@@ -86,7 +91,9 @@ if __name__ == "__main__":
   num_batches = num_complete_batches + bool(leftover)
 
   devices = np.array(jax.devices())
-  mesh = jax.make_mesh((jax.device_count(),), ("batch",))
+  mesh = jax.make_mesh(
+    (jax.device_count(),), ("batch",), axis_types=(AxisType.Explicit,)
+  )
 
   replicated_sharding = NamedSharding(mesh, P())
   data_sharding = NamedSharding(mesh, P("batch"))
@@ -112,16 +119,7 @@ if __name__ == "__main__":
   batches = data_stream()
 
   params = init_random_params(param_scale, layer_sizes)
-
-  param_shardings = tree_map(lambda x: replicated_sharding, params)
-  params = jax.device_put(params, param_shardings)
-  batch_shardings = (data_sharding, data_sharding)
-
-  jitted_train_step = jax.jit(
-    train_step,
-    out_shardings=param_shardings,
-    donate_argnums=(0,),
-  )
+  replicated_params = jax.device_put(params, replicated_sharding)
 
   for epoch in range(num_epochs):
     start_time = time.time()
@@ -129,11 +127,19 @@ if __name__ == "__main__":
       print(f"Batch no {i+1} of {num_batches}")
       batch = next(batches)
       with jax.sharding.use_mesh(mesh):
-        params = jitted_train_step(params, batch)
+        replicated_params = train_step(replicated_params, batch)
     epoch_time = time.time() - start_time
 
-    train_acc = accuracy(params, (train_images, train_labels))
-    test_acc = accuracy(params, (test_images, test_labels))
+    # Reshard train_images, train_labels, test_images, test_labels
+    sharded_train_images = reshard(train_images, data_sharding)
+    sharded_train_labels = reshard(train_labels, data_sharding)
+    sharded_test_images = reshard(test_images, data_sharding)
+    sharded_test_labels = reshard(test_labels, data_sharding)
+
+    train_acc = accuracy(
+      replicated_params, (sharded_train_images, sharded_train_labels)
+    )
+    test_acc = accuracy(replicated_params, (sharded_test_images, sharded_test_labels))
     print(f"Epoch {epoch} in {epoch_time:0.2f} sec")
     print(f"Training set accuracy {train_acc}")
     print(f"Test set accuracy {test_acc}")
@@ -141,4 +147,4 @@ if __name__ == "__main__":
     if epoch < num_epochs - 1:
       batches = data_stream()
       print(f"Batch no {0} of {num_batches}")
-      params = jitted_train_step(params, next(batches))
+      replicated_params = train_step(replicated_params, next(batches))
