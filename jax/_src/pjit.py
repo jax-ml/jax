@@ -750,16 +750,16 @@ def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
     for i, x in enumerate(explicit_args):
       avals.append(core.shaped_abstractify(x))
   except OverflowError:
-    arg_path = f"argument path is {dbg.arg_names[i]}"
+    arg_path = f"argument path is {dbg.arg_names[i]}"  # pytype: disable=name-error
     raise OverflowError(
       "An overflow was encountered while parsing an argument to a jitted "
       f"computation, whose {arg_path}."
     ) from None
   except TypeError:
-    arg_description = f"path {dbg.arg_names[i]}"
+    arg_description = f"path {dbg.arg_names[i]}"  # pytype: disable=name-error
     raise TypeError(
       f"Error interpreting argument to {fun} as an abstract array."
-      f" The problematic value is of type {type(x)} and was passed to"
+      f" The problematic value is of type {type(x)} and was passed to"  # pytype: disable=name-error
       f" the function at {arg_description}.\n"
       "This typically means that a jit-wrapped function was called with a non-array"
       " argument, and this argument was not marked as static using the"
@@ -2035,8 +2035,8 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
   elif isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     num_devices = axis_ctx.mesh.size
   key = (pjit_p, name, jaxpr, effects, num_devices,
-         pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),
-         pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),
+         pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),  # pytype: disable=wrong-arg-types
+         pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),  # pytype: disable=wrong-arg-types
          in_layouts, out_layouts, api_name)
 
   func = mod_ctx.cached_primitive_lowerings.get(key, None)
