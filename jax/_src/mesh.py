@@ -366,10 +366,6 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
   def is_multi_process(self):
     return self.devices.size != len(self.local_devices)
 
-  @functools.cached_property
-  def _process_indices(self):
-    return {d.process_index for d in self._flat_devices_tuple}
-
   @property
   def local_mesh(self):
     return self._local_mesh(xb.process_index())
