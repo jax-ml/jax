@@ -18,6 +18,9 @@
 name: CI - Wheel Tests (Continuous)
 
 on:
+  # DO NOT SUBMIT IT. REMOVE THIS TRIGGER AFTER TESTING.
+  pull_request:
+    types: ["opened", "reopened"]
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
   workflow_dispatch: # allows triggering the workflow run manually
@@ -46,7 +49,7 @@ jobs:
             # Runner OS and Python values need to match the matrix stategy in the CPU tests job
             runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
             artifact: ["jaxlib"]
-            python: ["3.10"]
+            python: ["3.10", "3.14"]
     # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
     # dashboard only if we use an expression in the "name" field. Otherwise, it appends the matrix
     # values to the name and creates a separate entry for each matrix combination.
@@ -67,7 +70,7 @@ jobs:
           # Python values need to match the matrix stategy in the CUDA tests job below
           runner: ["linux-x86-n2-16"]
           artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
-          python: ["3.10",]
+          python: ["3.10", "3.14"]
     name: "Build ${{ format('{0}', 'CUDA') }} artifacts"
     with:
       runner: ${{ matrix.runner }}
@@ -90,7 +93,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy in the
           # build_jaxlib_artifact job above
           runner: ["linux-x86-n2-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
-          python: ["3.10",]
+          python: ["3.10", "3.14"]
           enable-x64: [1, 0]
     name: "Pytest CPU (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
@@ -112,7 +115,7 @@ jobs:
           # Python values need to match the matrix stategy in the artifact build jobs above
           # See exlusions for what is fully tested
           runner: ["linux-x86-g2-48-l4-4gpu", "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
-          python: ["3.10",]
+          python: ["3.10", "3.14"]
           cuda: ["12.1", "12.8"]
           enable-x64: [1, 0]
           exclude:
@@ -148,7 +151,7 @@ jobs:
         matrix:
           # Python values need to match the matrix stategy in the build artifacts job above
           runner: ["linux-x86-g2-48-l4-4gpu",]
-          python: ["3.10",]
+          python: ["3.10", "3.14"]
           jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1, 0]
     name: "Bazel CUDA Non-RBE (jax version = ${{ format('{0}', 'head') }})"
@@ -170,7 +173,7 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.10",]
+          python: ["3.10", "3.14"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},

@@ -134,8 +134,21 @@ jobs:
           $JAXCI_PYTHON -m pip install uv~=0.5.30
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
 
+          # For py 3.14.0a7, some pre-built dependency wheels aren't available,
+          # so we need to download their deps or build them from source.
+          if [[ $JAXCI_PYTHON == "python3.14" ]]; then
+            echo "Building some dependencies from source for Python 3.14.0a7"
+            # Build numpy 2.3.0.dev0 from source at the current github repo head. This is
+            # needed to include fixes for https://github.com/numpy/numpy/issues/28681.
+            $JAXCI_PYTHON -m uv pip install "git+https://github.com/numpy/numpy@2ddc86163e6b194edb975629bdfc60bd5af40c0f"
+
+            # SciPy build requirements
+            # TODO: Move them to the docker images
+            apt update && apt upgrade -y && apt-get install -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
+          fi
+
           # CPU Pytests crash with NumPy 2.2+ on Linux Aarch64; b/399168632
-          if [[ $OS == "linux" && $ARCH == "aarch64" ]]; then
+          if [[ $OS == "linux" && $ARCH == "aarch64" && $JAXCI_PYTHON != "python3.14" ]]; then
             $JAXCI_PYTHON -m uv pip install numpy~=2.1.0
           fi
       # Halt for testing
