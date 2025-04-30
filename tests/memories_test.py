@@ -34,6 +34,7 @@ from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     NamedSharding, SingleDeviceSharding, GSPMDSharding,
     TransferToMemoryKind, PartitionSpec as P)
+from jax._src.xla_metadata import set_xla_metadata
 from jax.experimental.compute_on import compute_on
 from jax._src.shard_map import shard_map
 import numpy as np
@@ -1684,6 +1685,74 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
 class StreamAnnotationTest(jtu.JaxTestCase):
 
+  def test_stream_annotation_single_instruction(self):
+    # E2E test for fix https://github.com/openxla/xla/pull/24269
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Stream annotation is only supported on GPU.")
+
+    mesh = jtu.create_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P('x'))
+    np_inp = np.ones((8,))
+    arr1 = jax.device_put(np_inp, s)
+    arr2 = jax.device_put(np_inp, s)
+
+    @compute_on('gpu_stream:1')
+    @jax.jit
+    def g(x, y):
+      return x + y
+
+    @jax.jit
+    def f(x, y):
+        return g(x, y)
+
+    compiled_f = jax.jit(f).lower(arr1, arr2).compile()
+    compiled_text = compiled_f.as_text()
+    self.assertIn('call-start', compiled_text)
+    self.assertIn('_xla_stream_annotation="1"', compiled_text)
+    self.assertIn('wrapped_add', compiled_text)
+    self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 2)
+
+  def test_streamed_gemm_overlap(self):
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Stream annotation is only supported on GPU.")
+
+    mesh = jtu.create_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P('x'))
+
+    @compute_on('gpu_stream:1')
+    @jax.jit
+    def g(x, y):
+      return x @ y
+
+    @compute_on('gpu_stream:2')
+    @jax.jit
+    def h(x, y):
+      return x @ y
+
+    @jax.jit
+    @functools.partial(
+        jax.shard_map, mesh=mesh, in_specs=(P('x'), P('x')),
+        out_specs=P('x'))
+    def f(x, y):
+      with set_xla_metadata(_scheduling_group_id="1"):
+        a = g(x, y)
+        b = h(y, x)
+      return a + b
+
+    np_input = np.ones((1024, 512))
+
+    arr1 = jax.device_put(np_input, s)
+    arr2 = jax.device_put(np_input, s)
+
+    compiled_f = jax.jit(f).lower(arr1, arr2).compile()
+    compiled_text = compiled_f.as_text()
+    self.assertIn('call-start', compiled_text)
+    self.assertIn('_xla_stream_annotation="1"', compiled_text)
+    self.assertIn('call-start.1', compiled_text)
+    self.assertIn('_xla_stream_annotation="2"', compiled_text)
+    self.assertIn('_scheduling_group_id="1"', compiled_text)
+    self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 1024)
+
   def test_stream_annotation_inside_shmap(self):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Stream annotation is only supported on GPU.")
@@ -1694,10 +1763,6 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     arr1 = jax.device_put(np_inp, s)
     arr2 = jax.device_put(np_inp, s)
 
-    # Makes sure the compute wrapped here is fusible.
-    # This is a workaround for limitations in XLA.
-    #  1) Compute-on boxes contain a single instruction cannot work.
-    #  2) Compute-on boxes contain tiny matmul cannot work.
     @compute_on('gpu_stream:1')
     @jax.jit
     def g(x, y):
@@ -1715,16 +1780,13 @@ class StreamAnnotationTest(jtu.JaxTestCase):
 
     compiled_f = jax.jit(
         shard_map(f, mesh=mesh, in_specs=(P('x'), P('x')),
-                  out_specs=P('x'))).lower(arr1, arr2).compile(
-                    {"xla_gpu_experimental_stream_annotation": True}
-                  )
+                  out_specs=P('x'))).lower(arr1, arr2).compile()
     compiled_text = compiled_f.as_text()
     self.assertIn('call-start', compiled_text)
     self.assertIn('_xla_stream_annotation="1"', compiled_text)
     self.assertIn('call-start.1', compiled_f.as_text())
     self.assertIn('_xla_stream_annotation="2"', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 11)
-
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
