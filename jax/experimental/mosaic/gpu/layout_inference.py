@@ -712,7 +712,7 @@ def infer_layout(module: ir.Module):
     max_vec_size_for_v = (
           np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
       )
-    desired_vec_size = 8 // utils.bytewidth(v.type.element_type)
+    desired_vec_size = 64 // utils.bitwidth(v.type.element_type)
     default_vector_size = min(
         default_vector_size, max_vec_size_for_v, desired_vec_size
     )

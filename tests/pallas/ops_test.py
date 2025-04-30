@@ -1292,7 +1292,6 @@ class OpsTest(PallasBaseTest):
       )
   )
   def test_comparison(self, fn, dtype):
-    self.skip_if_mosaic_gpu()
 
     if jtu.test_device_matches(["gpu"]) and dtype == jnp.bool_:
       self.skipTest("Not implemented on GPU.")
@@ -1302,16 +1301,16 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
     )
     def kernel(x_ref, y_ref, o_ref):
-      o_ref[:] = fn(x_ref[...], y_ref[...])
+      o_ref[:] = fn(x_ref[...], y_ref[...]).astype(jnp.int32)
 
-    x = jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype)
-    y = jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype)
+    x = jnp.tile(jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype), 16)
+    y = jnp.tile(jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype), 16)
     out = kernel(x, y)
     expected = fn(x, y)
-    self.assertArraysEqual(out, expected)
+    self.assertArraysEqual(out != 0, expected)
 
   @parameterized.named_parameters(
       (f"{fn.__name__}_{dtype.__name__}", fn, dtype)
