@@ -22,7 +22,8 @@ on:
 
 jobs:
   upstream-dev:
-    runs-on: ubuntu-latest
+    runs-on: linux-x86-n2-64
+    container: index.docker.io/library/ubuntu@sha256:b359f1067efa76f37863778f7b6d0e8d911e3ee8efa807ad01fbf5dc1ef9006b # ratchet:ubuntu:24.04
     permissions:
       contents: read
       issues: write  # for failed-build-issue
@@ -66,7 +67,7 @@ jobs:
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-          pytest -n 2 --tb=short --maxfail=20 tests examples
+          pytest -n auto --tb=short --maxfail=20 tests examples
       - name: Notify failed build
         uses: jayqi/failed-build-issue-action@1a893bbf43ef1c2a8705e2b115cd4f0fe3c5649b  # v1.2.0
         if: failure() && github.event.pull_request == null
