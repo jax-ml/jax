@@ -76,6 +76,7 @@ bazel test --config=ci_linux_x86_64_cuda \
       --config=rbe_cache \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --//jax:build_jaxlib=false \
+      --//jax:build_jax=false \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
       --test_output=errors \
@@ -102,6 +103,7 @@ bazel test --config=ci_linux_x86_64_cuda \
       --config=rbe_cache \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --//jax:build_jaxlib=false \
+      --//jax:build_jax=false \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
       --jobs=8 \
