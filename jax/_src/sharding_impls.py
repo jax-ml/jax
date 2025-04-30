@@ -1252,7 +1252,8 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
 
 @util.cache()
 def create_mesh_pspec_sharding(
-    mesh: mesh_lib.Mesh, pspec: PartitionSpec | None,
+    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh,
+    pspec: PartitionSpec | None,
     memory_kind: str | None = None) -> NamedSharding:
   if pspec is None:
     pspec = PartitionSpec()

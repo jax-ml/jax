@@ -1171,7 +1171,7 @@ def _partition_grid(
     offsets = jax_util.tuple_update(
         (0,) * len(grid), partition_dimension, grid_offset
     )
-  return new_grid, offsets
+  return new_grid, offsets  # type: ignore[return-value]
 
 
 def emit_pipeline(
