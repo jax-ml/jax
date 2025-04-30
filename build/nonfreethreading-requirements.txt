@@ -1,6 +1,6 @@
 numpy~=2.0.0; python_version<="3.12"
 numpy~=2.1.0; python_version=="3.13"
-numpy~=2.2.5; python_version>="3.14"
+numpy>=2.2.5; python_version>="3.14"
 
 # These packages have not released free-threaded wheels.
 zstandard
