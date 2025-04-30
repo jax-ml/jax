@@ -38,7 +38,10 @@ jax_multiplatform_test(
     shard_count = 10,
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -52,12 +55,16 @@ jax_multiplatform_test(
         "//jax:pallas_gpu_ops",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
-    ] + py_deps("numpy"),
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "device_test",
     srcs = ["device_test.py"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -66,12 +73,16 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ] + py_deps("absl/testing"),
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "api_util_test",
     srcs = ["api_util_test.py"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -89,7 +100,10 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ] + py_deps("absl/testing"),
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -103,7 +117,11 @@ jax_multiplatform_test(
         "gpu_h100x2",
     ],
     tags = ["multiaccelerator"],
-    deps = py_deps("tensorflow_core"),
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "tensorflow_core",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -112,6 +130,10 @@ jax_multiplatform_test(
     shard_count = {
         "gpu": 5,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -123,7 +145,10 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:experimental_buffer_callback",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_py_test(
@@ -142,11 +167,19 @@ jax_multiplatform_test(
         "cpu": 5,
         "gpu": 10,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "debug_nans_test",
     srcs = ["debug_nans_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_py_test(
@@ -155,14 +188,20 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ] + py_deps("portpicker"),
+    ] + py_deps([
+        "portpicker",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "distributed_test",
     srcs = ["distributed_test.py"],
     enable_backends = ["gpu"],
-    deps = py_deps("portpicker"),
+    deps = py_deps([
+        "portpicker",
+        "absl/testing",
+    ]),
 )
 
 jax_py_test(
@@ -175,12 +214,19 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ] + py_deps("portpicker"),
+    ] + py_deps([
+        "portpicker",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "dtypes_test",
     srcs = ["dtypes_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -190,12 +236,13 @@ jax_multiplatform_test(
     enable_configs = [
         "cpu",
     ],
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
     name = "extend_test",
     srcs = ["extend_test.py"],
-    deps = ["//jax:extend"],
+    deps = ["//jax:extend"] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -205,7 +252,10 @@ jax_multiplatform_test(
         "gpu_h100x2",
     ],
     # TODO(dfm): Remove after removal of jex.ffi imports.
-    deps = ["//jax:extend"],
+    deps = ["//jax:extend"] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -222,11 +272,19 @@ jax_multiplatform_test(
         "cpu": 20,
         "gpu": 10,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "generated_fun_test",
     srcs = ["generated_fun_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -237,6 +295,7 @@ jax_multiplatform_test(
         "XLA_PYTHON_CLIENT_PREALLOCATE": "0",
     },
     main = "gpu_memory_flags_test.py",
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -246,6 +305,7 @@ jax_multiplatform_test(
     env = {
         "XLA_PYTHON_CLIENT_PREALLOCATE": "1",
     },
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -260,7 +320,12 @@ jax_multiplatform_test(
     },
     deps = [
         "//jax:experimental_sparse",
-    ] + py_deps("matplotlib"),
+    ] + py_deps([
+        "matplotlib",
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -271,6 +336,11 @@ jax_multiplatform_test(
         "gpu": 10,
         "tpu": 15,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_py_test(
@@ -279,7 +349,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -297,7 +367,10 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -320,7 +393,10 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -336,7 +412,10 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -350,7 +429,10 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -366,7 +448,10 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -381,7 +466,10 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -397,7 +485,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -413,7 +501,10 @@ jax_multiplatform_test(
     deps = [
         "//jax:experimental",
         "//jax:internal_test_util",
-    ],
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -422,7 +513,10 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
-    ] + py_deps("numpy"),
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -434,18 +528,31 @@ jax_multiplatform_test(
         "tpu": 8,
     },
     tags = ["noasan"],  # Linking TF causes a linker OOM.
-    deps = py_deps("pil") + py_deps("tensorflow_core"),
+    deps = py_deps([
+        "pil",
+        "tensorflow_core",
+        "numpy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "jax_jit_test",
     srcs = ["jax_jit_test.py"],
     main = "jax_jit_test.py",
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_py_test(
@@ -455,7 +562,10 @@ jax_py_test(
         "//jax:test_util",
         "//jax/experimental/jax2tf",
         "//jax/tools:jax_to_ir",
-    ] + py_deps("tensorflow_core"),
+    ] + py_deps([
+        "tensorflow_core",
+        "absl/testing",
+    ]),
 )
 
 jax_py_test(
@@ -465,7 +575,7 @@ jax_py_test(
         "//jax",
         "//jax:jaxpr_util",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -478,7 +588,10 @@ jax_multiplatform_test(
     deps = [
         "//jax:jet",
         "//jax:stax",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -489,16 +602,28 @@ jax_multiplatform_test(
         "gpu": 30,
         "tpu": 20,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "custom_root_test",
     srcs = ["custom_root_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "custom_linear_solve_test",
     srcs = ["custom_linear_solve_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -517,6 +642,10 @@ jax_multiplatform_test(
         "noasan",  # Test times out on all backends
         "test_cpu_thunks",
     ],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -527,6 +656,10 @@ jax_multiplatform_test(
         "gpu": 30,
         "tpu": 40,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -537,6 +670,10 @@ jax_multiplatform_test(
         "gpu": 20,
         "tpu": 20,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -547,11 +684,19 @@ jax_multiplatform_test(
         "gpu": 10,
         "tpu": 10,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "lax_numpy_einsum_test",
     srcs = ["lax_numpy_einsum_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -562,11 +707,19 @@ jax_multiplatform_test(
         "gpu": 5,
         "tpu": 5,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "lax_numpy_vectorize_test",
     srcs = ["lax_numpy_vectorize_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -577,7 +730,11 @@ jax_multiplatform_test(
         "gpu": 20,
         "tpu": 8,
     },
-    deps = py_deps("numpy") + py_deps("scipy") + py_deps("absl/testing"),
+    deps = py_deps([
+        "numpy",
+        "scipy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -591,6 +748,11 @@ jax_multiplatform_test(
         "gpu": 5,
         "tpu": 5,
     },
+    deps = py_deps([
+        "numpy",
+        "scipy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -608,7 +770,11 @@ jax_multiplatform_test(
         "tpu": 20,
     },
     tags = ["noasan"],  # Times out under asan.
-    deps = py_deps("numpy") + py_deps("scipy") + py_deps("absl/testing"),
+    deps = py_deps([
+        "numpy",
+        "scipy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -621,7 +787,10 @@ jax_multiplatform_test(
     },
     deps = [
         "//jax:internal_test_util",
-    ] + py_deps("numpy") + py_deps("scipy") + py_deps("absl/testing"),
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -639,7 +808,11 @@ jax_multiplatform_test(
     deps = [
         "//jax:internal_test_util",
         "//jax:lax_reference",
-    ] + py_deps("numpy") + py_deps("mpmath"),
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+        "mpmath",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -650,7 +823,10 @@ jax_multiplatform_test(
     deps = [
         "//jax:internal_test_util",
         "//jax:lax_reference",
-    ] + py_deps("numpy"),
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -661,6 +837,10 @@ jax_multiplatform_test(
         "gpu": 30,
         "tpu": 20,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -671,7 +851,10 @@ jax_multiplatform_test(
         "gpu": 40,
         "tpu": 40,
     },
-    deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
+    deps = ["//jax:internal_test_util"] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -682,7 +865,10 @@ jax_multiplatform_test(
         "gpu": 40,
         "tpu": 40,
     },
-    deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
+    deps = ["//jax:internal_test_util"] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
 )
 
 jax_py_test(
@@ -693,7 +879,7 @@ jax_py_test(
     deps = [
         "//jax:internal_test_util",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -704,7 +890,7 @@ jax_py_test(
     deps = [
         "//jax:internal_test_util",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -724,6 +910,11 @@ jax_multiplatform_test(
         "gpu": 40,
         "tpu": 40,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -740,24 +931,36 @@ jax_multiplatform_test(
     tags = [
         "multiaccelerator",
     ],
+    deps = py_deps([
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "magma_linalg_test",
     srcs = ["magma_linalg_test.py"],
     enable_backends = ["gpu"],
-    deps = py_deps("magma"),
+    deps = py_deps([
+        "magma",
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "cholesky_update_test",
     srcs = ["cholesky_update_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "metadata_test",
     srcs = ["metadata_test.py"],
     enable_backends = ["cpu"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -766,7 +969,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -776,12 +979,17 @@ jax_multiplatform_test(
         "tpu_v3_x4",
         "gpu_h100x2",
     ],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "multi_device_test",
     srcs = ["multi_device_test.py"],
     enable_backends = ["cpu"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -800,12 +1008,20 @@ jax_multiplatform_test(
         "tpu": 10,
         "gpu": 10,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "optimizers_test",
     srcs = ["optimizers_test.py"],
-    deps = ["//jax:optimizers"],
+    deps = ["//jax:optimizers"] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -813,7 +1029,11 @@ jax_multiplatform_test(
     srcs = ["pickle_test.py"],
     deps = [
         "//jax:experimental",
-    ] + py_deps("cloudpickle") + py_deps("numpy"),
+    ] + py_deps([
+        "cloudpickle",
+        "numpy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -837,7 +1057,10 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:internal_test_util",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -855,12 +1078,21 @@ jax_multiplatform_test(
     # in this case there's not a good place to do it, see b/197635968#comment19
     # for details.
     tags = ["nomsan"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "heap_profiler_test",
     srcs = ["heap_profiler_test.py"],
     enable_backends = ["cpu"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -879,7 +1111,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:profiler",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -894,7 +1126,10 @@ jax_multiplatform_test(
         "nomsan",  # TODO(b/355237462): msan false-positives in torch?
         "not_build:arm",
     ],
-    deps = py_deps("torch"),
+    deps = py_deps([
+        "torch",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -908,11 +1143,19 @@ jax_multiplatform_test(
         ],
     },
     shard_count = 8,
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "random_test",
     srcs = ["random_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -938,6 +1181,11 @@ jax_multiplatform_test(
         "tpu": 40,
     },
     tags = ["noasan"],  # Times out
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 # TODO(b/199564969): remove once we always enable_custom_prng
@@ -946,6 +1194,7 @@ jax_multiplatform_test(
     srcs = ["random_test.py"],
     args = ["--jax_enable_custom_prng=true"],
     main = "random_test.py",
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -959,21 +1208,41 @@ jax_multiplatform_test(
         ],  # Times out on TPU with asan/tsan/msan.
     },
     shard_count = 12,
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "scipy_interpolate_test",
     srcs = ["scipy_interpolate_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "scipy_ndimage_test",
     srcs = ["scipy_ndimage_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "scipy_optimize_test",
     srcs = ["scipy_optimize_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -999,6 +1268,11 @@ jax_multiplatform_test(
         "gpu": 40,
         "tpu": 50,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1008,7 +1282,11 @@ jax_multiplatform_test(
         "cpu": 4,
         "gpu": 4,
     },
-    deps = py_deps("scipy"),
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1026,6 +1304,11 @@ jax_multiplatform_test(
         "noasan",
         "notsan",
     ],  # Times out
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1058,7 +1341,11 @@ jax_multiplatform_test(
     deps = [
         "//jax:experimental_sparse",
         "//jax:sparse_test_util",
-    ] + py_deps("scipy"),
+    ] + py_deps([
+        "scipy",
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1095,7 +1382,10 @@ jax_multiplatform_test(
     deps = [
         "//jax:experimental_sparse",
         "//jax:sparse_test_util",
-    ] + py_deps("scipy"),
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1120,12 +1410,16 @@ jax_multiplatform_test(
     deps = [
         "//jax:experimental_sparse",
         "//jax:sparse_test_util",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "stack_test",
     srcs = ["stack_test.py"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -1136,33 +1430,50 @@ jax_multiplatform_test(
         "gpu": 2,
         "tpu": 4,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "error_check_test",
     srcs = ["error_check_test.py"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
     name = "jax_numpy_error_test",
     srcs = ["jax_numpy_error_test.py"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
     name = "stax_test",
     srcs = ["stax_test.py"],
-    deps = ["//jax:stax"],
+    deps = ["//jax:stax"] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "linear_search_test",
     srcs = ["third_party/scipy/line_search_test.py"],
     main = "third_party/scipy/line_search_test.py",
+    deps = py_deps([
+        "absl/testing",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "blocked_sampler_test",
     srcs = ["blocked_sampler_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_py_test(
@@ -1171,7 +1482,11 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+        "cloudpickle",
+    ]),
 )
 
 pytype_test(
@@ -1180,7 +1495,11 @@ pytype_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
+        "//jax:typing",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_py_test(
@@ -1189,7 +1508,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -1198,7 +1517,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -1217,7 +1536,9 @@ jax_py_test(
         "//jax",
         "//jax:compiler",
         "//jax:test_util",
-    ] + py_deps("absl/logging"),
+    ] + py_deps([
+        "absl/logging",
+    ]),
 )
 
 jax_py_test(
@@ -1227,7 +1548,10 @@ jax_py_test(
         "//jax",
         "//jax:lru_cache",
         "//jax:test_util",
-    ] + py_deps("filelock"),
+    ] + py_deps([
+        "filelock",
+        "absl/logging",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1236,7 +1560,10 @@ jax_multiplatform_test(
     deps = [
         "//jax:compilation_cache_internal",
         "//jax:compiler",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1245,7 +1572,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:cache_key",
         "//jax:compiler",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -1254,18 +1581,27 @@ jax_multiplatform_test(
     shard_count = {
         "cpu": 10,
     },
-    deps = ["//jax:ode"],
+    deps = ["//jax:ode"] + py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "key_reuse_test",
     srcs = ["key_reuse_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "roofline_test",
     srcs = ["roofline_test.py"],
     enable_backends = ["cpu"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -1273,7 +1609,10 @@ jax_multiplatform_test(
     srcs = ["x64_context_test.py"],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1284,6 +1623,10 @@ jax_multiplatform_test(
         "gpu": 5,
         "tpu": 10,
     },
+    deps = py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
 )
 
 jax_py_test(
@@ -1293,17 +1636,26 @@ jax_py_test(
         "//jax",
         "//jax:mesh_utils",
         "//jax:test_util",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "transfer_guard_test",
     srcs = ["transfer_guard_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "cloudpickle",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "garbage_collection_guard_test",
     srcs = ["garbage_collection_guard_test.py"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -1329,6 +1681,10 @@ jax_multiplatform_test(
         "tpu_v4_x4",
     ],
     tags = ["multiaccelerator"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1343,6 +1699,10 @@ jax_multiplatform_test(
         "gpu_h100_shardy",
         "tpu_v3_x4_shardy",
     ],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1361,7 +1721,10 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1377,6 +1740,10 @@ jax_multiplatform_test(
         "tpu_v3_x4",
         "tpu_v4_x4",
     ],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1398,12 +1765,20 @@ jax_multiplatform_test(
         "gpu": 2,
         "tpu": 2,
     },
-    deps = py_deps("hypothesis"),
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "hypothesis",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "mutable_array_test",
     srcs = ["mutable_array_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1412,6 +1787,10 @@ jax_multiplatform_test(
     shard_count = {
         "tpu": 20,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1432,7 +1811,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -1456,12 +1835,16 @@ jax_multiplatform_test(
     deps = [
         "//jax:experimental",
         "//jax:tree_util",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "clear_backends_test",
     srcs = ["clear_backends_test.py"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -1469,7 +1852,10 @@ jax_multiplatform_test(
     srcs = ["attrs_test.py"],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1478,7 +1864,10 @@ jax_multiplatform_test(
     deps = [
         "//jax:experimental_colocated_python",
         "//jax/extend:ifrt_programs",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1491,7 +1880,10 @@ jax_multiplatform_test(
     shard_count = 15,
     deps = [
         "//jax:rnn",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_py_test(
@@ -1501,7 +1893,7 @@ jax_py_test(
         "//jax",
         "//jax:mosaic",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -1510,7 +1902,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -1519,12 +1911,13 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
     name = "logging_test",
     srcs = ["logging_test.py"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -1537,6 +1930,10 @@ jax_multiplatform_test(
         "tpu_v3_x4",
     ],
     tags = [],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1561,7 +1958,10 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:internal_test_harnesses",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1583,7 +1983,10 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:internal_test_harnesses",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1597,7 +2000,10 @@ jax_multiplatform_test(
     deps = [
         "//jax:internal_export_back_compat_test_data",
         "//jax:internal_export_back_compat_test_util",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1605,12 +2011,16 @@ jax_multiplatform_test(
     srcs = ["fused_attention_stablehlo_test.py"],
     enable_backends = ["gpu"],
     tags = ["multiaccelerator"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "xla_metadata_test",
     srcs = ["xla_metadata_test.py"],
-    deps = ["//jax:experimental"],
+    deps = ["//jax:experimental"] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -1624,7 +2034,10 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_py_test(
@@ -1633,7 +2046,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -1643,7 +2056,7 @@ jax_py_test(
         "//jax",
         "//jax:source_mapper",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -1652,12 +2065,19 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "string_array_test",
     srcs = ["string_array_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1669,6 +2089,7 @@ jax_multiplatform_test(
         "gpu_h100",
     ],
     tags = ["multiaccelerator"],
+    deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -1678,6 +2099,10 @@ jax_multiplatform_test(
     shard_count = {
         "gpu": 4,
     },
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_py_test(
@@ -1687,7 +2112,7 @@ jax_py_test(
         "//jax",
         "//jax:experimental",
         "//jax:test_util",
-    ],
+    ] + py_deps("absl/testing"),
 )
 
 exports_files(
