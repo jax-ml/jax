@@ -208,14 +208,13 @@ def _eval_jaxpr_discharge_state(
   return out_vals + ref_vals
 
 def _is_trivial_indexer(indexer: indexing.NDIndexer):
+  """Returns whether the indexer selects the entire shape."""
   for s, idx in zip(indexer.shape, indexer.indices):
     if not isinstance(idx, indexing.Slice):
       return False
-    if not isinstance(idx.start, int):
+    if idx.is_dynamic_start or idx.is_dynamic_size:
       return False
-    if idx.start:
-      return False
-    if idx.size != s:
+    if idx.start != 0 or idx.size != s:
       return False
   return True
 
