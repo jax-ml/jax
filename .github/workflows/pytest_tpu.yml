@@ -76,7 +76,7 @@ jobs:
       run:
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-rbe:753621568"
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "Pytest TPU (${{ inputs.tpu-type }}, Python ${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }})"
     # End Presubmit Naming Check github-tpu-presubmits
@@ -138,10 +138,6 @@ jobs:
             # Build numpy 2.3.0.dev0 from source at the current github repo head. This is
             # needed to include fixes for https://github.com/numpy/numpy/issues/28681.
             $JAXCI_PYTHON -m uv pip install "git+https://github.com/numpy/numpy@2ddc86163e6b194edb975629bdfc60bd5af40c0f"
-
-            # SciPy build requirements
-            # TODO: Move them to the docker images
-            apt update && apt upgrade -y && apt-get install -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
           fi
       - name: Set up libtpu wheels
         run: |

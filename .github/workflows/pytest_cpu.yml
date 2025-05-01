@@ -52,7 +52,7 @@ jobs:
         # Explicitly set the shell to bash to override Windows's default (cmd)
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-rbe:753621568') ||
                    (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
                    (contains(inputs.runner, 'windows-x86') && null) }}
 
@@ -141,10 +141,6 @@ jobs:
             # Build numpy 2.3.0.dev0 from source at the current github repo head. This is
             # needed to include fixes for https://github.com/numpy/numpy/issues/28681.
             $JAXCI_PYTHON -m uv pip install "git+https://github.com/numpy/numpy@2ddc86163e6b194edb975629bdfc60bd5af40c0f"
-
-            # SciPy build requirements
-            # TODO: Move them to the docker images
-            apt update && apt upgrade -y && apt-get install -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
           fi
 
           # CPU Pytests crash with NumPy 2.2+ on Linux Aarch64; b/399168632
