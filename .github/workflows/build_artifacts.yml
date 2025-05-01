@@ -133,8 +133,8 @@ jobs:
       - name: Build ${{ inputs.artifact }}
         timeout-minutes: 60
         run: |
-          $JAXCI_PYTHON -m pip list
-          $JAXCI_PYTHON -m pip cache list
+          python3.14 -m pip list
+          python3.14 -m pip cache list
           ./ci/build_artifacts.sh "${{ inputs.artifact }}"
       - name: Upload artifacts to a GCS bucket (non-Windows runs)
         if: >-
