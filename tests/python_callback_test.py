@@ -606,7 +606,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(
           Exception, "Unsupported primitive type"
       ):
-        _ = jax.jit(f)(x)
+        _ = jax.jit(f)(x).block_until_ready()
 
   @parameterized.parameters("int2", "int4", "uint2", "uint4")
   def test_subbyte_results(self, dtype: str):
@@ -629,7 +629,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(
           Exception, "Unsupported primitive type"
       ):
-        _ = jax.jit(f)()
+        _ = jax.jit(f)().block_until_ready()
 
 
 class PureCallbackTest(jtu.JaxTestCase):
