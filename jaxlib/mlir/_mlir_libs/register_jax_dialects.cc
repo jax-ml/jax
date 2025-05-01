@@ -18,6 +18,7 @@ limitations under the License.
 #include <nanobind/nanobind.h>
 
 #include "mlir-c/Dialect/Arith.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/ControlFlow.h"
 #include "mlir-c/Dialect/Func.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/GPU.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/LLVM.h"  // IWYU pragma: keep
@@ -50,6 +51,7 @@ NB_MODULE(register_jax_dialects, m) {
     REGISTER_DIALECT(scf);
     REGISTER_DIALECT(vector);
     // For Mosaic GPU
+    REGISTER_DIALECT(cf);
     REGISTER_DIALECT(gpu);
     REGISTER_DIALECT(nvgpu);
     REGISTER_DIALECT(nvvm);

@@ -208,6 +208,7 @@ nanobind_pywrap_extension(
     deps = [
         "//jaxlib/mosaic/gpu:mlir_capi",
         "@llvm-project//mlir:CAPIArith",
+        "@llvm-project//mlir:CAPICF",
         "@llvm-project//mlir:CAPIGPU",
         "@llvm-project//mlir:CAPIIR",
         "@llvm-project//mlir:CAPILLVM",

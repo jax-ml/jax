@@ -55,3 +55,9 @@ from jaxlib.mlir.dialects import sdy
 
 # Alias that is set up to abstract away the transition from MHLO to StableHLO.
 from jaxlib.mlir.dialects import stablehlo as hlo
+
+from jax._src import lib
+if lib.version >= (0, 6, 1):
+  from jaxlib.mlir.dialects import cf
+else:
+  cf = None  # type: ignore[no-redef]
