@@ -17,6 +17,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from functools import cache
 from itertools import chain
+import logging
 import numpy as np
 import os
 import socket
@@ -25,7 +26,6 @@ import textwrap
 import warnings
 from jax._src import clusters
 
-import logging
 
 logger = logging.getLogger(__name__)
 
