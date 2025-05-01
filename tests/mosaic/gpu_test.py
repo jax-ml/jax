@@ -41,9 +41,10 @@ from jax.experimental.mosaic.gpu import tcgen05
 import jax.numpy as jnp
 import numpy as np
 try:
-  import jax._src.lib.mosaic_gpu  # noqa: F401
+  import jax._src.lib.mosaic_gpu  as mosaic_gpu_lib # noqa: F401
   HAS_MOSAIC_GPU = True
 except ImportError:
+  mosaic_gpu_lib = None
   HAS_MOSAIC_GPU = False
 
   class Dimension(enum.IntEnum):  # Just to make parameterized tests expand ok
@@ -240,6 +241,16 @@ class TestCase(parameterized.TestCase):
     self.enter_context(config.traceback_filtering("off"))
     self.enter_context(self.context)
     self.enter_context(ir.Location.unknown())
+
+  @contextlib.contextmanager
+  def capture_stdout(self):
+    if mosaic_gpu_lib is None:
+      raise ValueError("Running tests but missing Mosaic GPU extension")
+    with jtu.capture_stdout() as stdout:
+      yield stdout
+      # We need to cudaDeviceSynchronize to make sure printfs are flushed.
+      mosaic_gpu_lib._mosaic_gpu_ext._sync_all_devices()
+
 
 
 class Sm90ATestCase(TestCase, jtu.CudaArchSpecificTest):
@@ -939,6 +950,44 @@ class TCGen05Test(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
     )(x)
     np.testing.assert_array_equal(x, y)
+
+  @parameterized.parameters([
+      (jnp.float32, 1, "130.0000"),
+      (jnp.float16, 1, "130.0000"),
+      (jnp.float16, 2, "[132.000000,133.000000]"),
+  ])
+  @jtu.thread_unsafe_test()
+  def test_tmem_debug_print(self, jax_dtype, packing, expected):
+    swizzle = 128
+    in_mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
+    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
+    tiling = (8, swizzle_elems)
+
+    def kernel(ctx, input, output, scratch):
+      smem, barrier, tmem = scratch
+      ctx.async_copy(
+          src_ref=input,
+          dst_ref=smem,
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(tiling),
+          barrier=barrier,
+      )
+      barrier.wait()
+      tmem[:] = fa.FragmentedArray.load_tiled(smem, swizzle, layout=tcgen05.LAYOUT)
+      tcgen05.commit_tmem()
+      tmem.slice(slice(None), slice(0, 8))._debug_print()
+
+    x = jnp.arange(128 * 128, dtype=jax_dtype).reshape(128, 128)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(tile_shape(x.shape, tiling), jax_dtype),
+        mgpu.TMABarrier(),
+        mgpu.TMEM(x.shape, jax_dtype, packing=packing),
+    ]
+    with self.capture_stdout() as stdout:
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+      )(x).block_until_ready()
+    self.assertIn("[1, 2]: " + expected, stdout())
 
   @parameterized.product(
       lhs_transpose=(False, True),

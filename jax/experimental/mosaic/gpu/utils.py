@@ -1280,6 +1280,11 @@ def prmt(high: ir.Value, low: ir.Value, permutation: ir.Value):
 def bitcast(x: ir.Value, new_type: ir.Type):
   if x.type == new_type:
     return x
+  if (x_bw := bitwidth(x.type)) != (new_bw := bitwidth(new_type)):
+    raise ValueError(
+        f"Can't bitcast {x.type} (of bitwidth {x_bw}) to {new_type} (of"
+        f" bitwidth {new_bw})"
+    )
   if ir.VectorType.isinstance(x.type) and ir.IntegerType.isinstance(new_type):
     new_type = ir.IntegerType(new_type)
     x_ty = ir.VectorType(x.type)
@@ -1299,6 +1304,12 @@ def bitcast(x: ir.Value, new_type: ir.Type):
     if bitwidth(x_ty) != bitwidth(new_ty):
       raise ValueError(f"Can't bitcast {x.type} to {new_type}")
     return vector.bitcast(new_type, x)
+  if ir.IntegerType.isinstance(x.type) and ir.FloatType.isinstance(new_type):
+    return arith.bitcast(new_type, x)
+  if ir.FloatType.isinstance(x.type) and ir.IntegerType.isinstance(new_type):
+    return arith.bitcast(new_type, x)
+  if ir.FloatType.isinstance(x.type) and ir.FloatType.isinstance(new_type):
+    return arith.bitcast(new_type, x)
   raise ValueError(f"Can't bitcast {x.type} to {new_type}")
 
 
