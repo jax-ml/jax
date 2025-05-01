@@ -3270,6 +3270,7 @@ def _handle_boxes(f, dbg, *args, **kwargs):
       return box
     elif type(x) is ListTree:
       lst = List()
+      lst._is_arg = True
       arg_mutables.append(lst)
       return lst
     else:
