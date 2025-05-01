@@ -36,7 +36,7 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import core
 from jax._src import prng
-from jax._src.shard_map import shard_map
+from jax._src.shard_map import shard_map, smap, Infer
 from jax._src import test_util as jtu
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
@@ -3129,6 +3129,91 @@ class ShardMapTest(jtu.JaxTestCase):
       return y
 
     argmax_impl(jax.random.normal(jax.random.key(0), (1024, 1024)))  # doesn't crash
+
+  def test_smap(self):
+    mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
+    np_inp = np.arange(32.).reshape(4, 8)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+
+    def g(x):
+      self.assertEqual(get_abstract_mesh().manual_axes, ('x', 'y'))
+      self.assertEqual(get_abstract_mesh().auto_axes, ('z',))
+      self.assertEqual(x.aval.vma, {'x', 'y'})
+      out = x * x
+      self.assertEqual(out.aval.vma, {'x', 'y'})
+      return out
+
+    def h(x):
+      self.assertEqual(get_abstract_mesh().manual_axes, ('x',))
+      self.assertEqual(get_abstract_mesh().auto_axes, ('y', 'z'))
+      self.assertEqual(x.aval.vma, {'x'})
+      out = smap(g, in_axes=0, out_axes=0, axis_name='y')(x)
+      self.assertEqual(out.aval.vma, {'x'})
+      return out
+
+    @jax.jit
+    def f(x):
+      return smap(h, in_axes=0, out_axes=0, axis_name='x')(x)
+
+    with jax.sharding.use_mesh(mesh):
+      out = f(arr)
+      self.assertArraysEqual(out, np_inp * np_inp)
+
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_smap_explicit(self, mesh):
+    np_inp = np.arange(32.).reshape(4, 8)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    def g(x):
+      self.assertEqual(get_abstract_mesh().manual_axes, ('x', 'y'))
+      self.assertEqual(get_abstract_mesh().explicit_axes, ('z',))
+      self.assertEqual(x.aval.vma, {'x', 'y'})
+      out = x * x
+      self.assertEqual(out.aval.vma, {'x', 'y'})
+      return out
+
+    def h(x):
+      self.assertEqual(get_abstract_mesh().manual_axes, ('x',))
+      self.assertEqual(get_abstract_mesh().explicit_axes, ('y', 'z'))
+      self.assertEqual(x.aval.vma, {'x'})
+      out = smap(g, in_axes=0, out_axes=0, axis_name='y')(x)
+      self.assertEqual(out.aval.vma, {'x'})
+      return out
+
+    @jax.jit
+    def f(x):
+      return smap(h, in_axes=Infer, out_axes=0, axis_name='x')(x)
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp * np_inp)
+
+  @jtu.with_explicit_mesh((2,), ('x',), axis_types=(AxisType.Auto,))
+  def test_smap_replicated(self, mesh):
+    @partial(smap, in_axes=None, out_axes=None, axis_name='x')
+    def f(x):
+      return x * 2
+    out = f(np.arange(8))
+    self.assertArraysEqual(out, np.arange(8) * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
+  @jtu.with_explicit_mesh((2,), ('data',), axis_types=(AxisType.Auto,))
+  def test_smap_replicated_sharded(self, mesh):
+    @partial(smap, in_axes=(None, 0), out_axes=(None, 0), axis_name='data')
+    def f(x, y):
+      return x * 2, y * 2
+
+    out1, out2 = f(np.arange(8), np.arange(8))
+    self.assertArraysEqual(out1, np.arange(8) * 2)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P()))
+    self.assertArraysEqual(out2, np.arange(8) * 2)
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P('data')))
+
+    @partial(smap, in_axes=(None, 0), out_axes=0, axis_name='data')
+    def g(x, y):
+      return x + y
+
+    out = g(np.arange(4), np.arange(8))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('data')))
 
 
 class FunSpec(NamedTuple):

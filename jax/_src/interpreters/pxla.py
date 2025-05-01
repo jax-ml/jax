@@ -84,6 +84,7 @@ class WeakRefList(list):
 xe = xc._xla
 
 unsafe_map, map = map, safe_map  # type: ignore
+zip, unsafe_zip = safe_zip, zip  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -1321,7 +1322,7 @@ class ExecuteReplicated:
       out_ = []
       for i, o in zip(self.mut.out_mut, out):
         if i is not None:
-          args[i]._buf._replace_with(o)
+          args[i]._buf._replace_with(o)  # type: ignore
         else:
           out_.append(o)
       return out_

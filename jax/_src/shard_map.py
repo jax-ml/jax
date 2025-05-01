@@ -41,7 +41,7 @@ from jax._src import util
 from jax._src.core import pvary
 from jax._src.core import Tracer, typeof
 from jax._src.mesh import (AbstractMesh, Mesh, AxisType, use_abstract_mesh,
-                           get_abstract_mesh)
+                           get_abstract_mesh, get_concrete_mesh)
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import sdy
@@ -126,6 +126,54 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
     return lambda g: _shard_map(g, **kwargs)
   return _shard_map(f, **kwargs)
 
+def _axes_to_pspec(axis_name, axis):
+  if axis is None:
+    return P()
+  return P(*[None] * axis + [axis_name])
+
+class InferFromArgs:
+
+  def __repr__(self):
+    return "jax.sharding.Infer"
+
+  def __reduce__(self):
+    return (_get_default_infer, ())
+
+Infer = InferFromArgs()
+
+def _get_default_infer():
+  return Infer
+
+# TODO(yashkatariya): We need a singleton which users can provide to `in_axes`
+# to tell smap to infer in_specs from args when mesh is fully explicit.
+def smap(f, in_axes, out_axes, axis_name: AxisName):
+  if isinstance(axis_name, (list, tuple)):
+    raise TypeError(
+        f"smap axis_name should be a `str` or a `Hashable`, but got {axis_name}")
+  if (in_axes is not None and in_axes is not Infer and
+      not isinstance(in_axes, (int, tuple))):
+    raise TypeError(
+        "smap in_axes must be an int, None, jax.sharding.Infer, or a tuple of"
+        " entries corresponding to the positional arguments passed to the"
+        f" function, but got {in_axes}.")
+  if (in_axes is not Infer and
+      not all(isinstance(l, int) for l in tree_leaves(in_axes))):
+    raise TypeError(
+        "smap in_axes must be an int, None, jax.sharding.Infer, or (nested)"
+        f" container with those types as leaves, but got {in_axes}.")
+  if not all(isinstance(l, int) for l in tree_leaves(out_axes)):
+    raise TypeError("smap out_axes must be an int, None, or (nested) container "
+                    f"with those types as leaves, but got {out_axes}.")
+
+  in_specs = (None if in_axes is Infer else
+              tree_map(partial(_axes_to_pspec, axis_name), in_axes,
+                       is_leaf=lambda x: x is None))
+  out_specs = tree_map(partial(_axes_to_pspec, axis_name), out_axes,
+                       is_leaf=lambda x: x is None)
+  return shard_map(f, axis_names={axis_name}, in_specs=in_specs,
+                   out_specs=out_specs)
+
+
 def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
                in_specs: Specs, out_specs: Specs | Callable[[], Specs],
                axis_names: Set[AxisName], check_vma: bool,
@@ -172,7 +220,7 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
     raise TypeError(
         "shard_map in_specs argument must be a pytree of"
         " `jax.sharding.PartitionSpec` instances, but it was None when mesh"
-        f" {mesh} has `Auto` axes.\n")
+        f" has `Auto` axes {mesh}")
 
   if in_specs is not None:
     _check_specs(SpecErrorType.input, in_specs, axis_names)
@@ -886,6 +934,8 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
     raise NotImplementedError
   del prim
   if isinstance(mesh, AbstractMesh):
+    concrete_mesh = get_concrete_mesh()
+    mesh = concrete_mesh if concrete_mesh is not None else mesh
     mesh = get_mesh_from_args(args, mesh)
   cur_mesh = get_abstract_mesh()
   args = map(partial(_unmatch_spec, mesh, check_vma, context_mesh=cur_mesh),
