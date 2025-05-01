@@ -94,6 +94,7 @@ if version >= (0, 6, 1):
   from jaxlib._jax import pytree as pytree  # noqa: F401
   from jaxlib._jax import Device as Device  # noqa: F401
   from jaxlib import _profiler as _profiler  # noqa: F401
+  from jaxlib.profiler import profile_data as _profile_data  # noqa: F401
 else:
   import jaxlib.xla_extension as _jax  # type: ignore  # pytype: disable=import-error  # noqa: F401
   from jaxlib.xla_extension import guard_lib as guard_lib  # type: ignore  # pytype: disable=import-error  # noqa: F401

@@ -33,6 +33,7 @@ traceback_util.register_exclusion(__file__)
 
 from jax._src import xla_bridge
 from jax._src.lib import _profiler
+from jax._src.lib import _profile_data
 
 _profiler_server: _profiler.ProfilerServer | None = None
 
@@ -298,6 +299,17 @@ class StepTraceAnnotation(TraceAnnotation):
   def __init__(self, name: str, **kwargs):
     super().__init__(name, _r=1, **kwargs)
 
+class ProfileData(_profile_data.ProfileData):
+  """Profile Data class for accessing the profile information."""
+
+class ProfilePlane(_profile_data.ProfilePlane):
+  """Profile Plane class for accessing the profile plane information."""
+
+class ProfileLine(_profile_data.ProfileLine):
+  """Profile Line class for accessing the profile line information."""
+
+class ProfileEvent(_profile_data.ProfileEvent):
+  """Profile Event class for accessing the profile event information."""
 
 def annotate_function(func: Callable, name: str | None = None,
                       **decorator_kwargs):
