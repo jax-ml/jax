@@ -180,6 +180,12 @@ def _cpu_test_deps():
         "//jax:config_build_jaxlib_wheel": ["//jaxlib/tools:jaxlib_py_import"],
     })
 
+def cuda_major_version():
+    return select({
+        "//jax:config_cuda_major_version_12": "12",
+        "//jax:config_cuda_major_version_13": "13",
+    })
+
 def _gpu_test_deps():
     """Returns the additional dependencies needed for a GPU test."""
     return select({
@@ -187,17 +193,17 @@ def _gpu_test_deps():
             "//jaxlib/cuda:gpu_only_test_deps",
             "//jaxlib/rocm:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
-            "@pypi//nvidia_nvshmem_cu12",
+            "//jaxlib/cuda:nvidia_nvshmem",
         ],
         "//jax:config_build_jaxlib_false": [
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
-            "@pypi//nvidia_nvshmem_cu12",
+            "//jaxlib/cuda:nvidia_nvshmem",
         ],
         "//jax:config_build_jaxlib_wheel": [
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
-            "@pypi//nvidia_nvshmem_cu12",
+            "//jaxlib/cuda:nvidia_nvshmem",
         ],
     })
 
