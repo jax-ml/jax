@@ -57,6 +57,9 @@ from . import utils
 # TODO(apaszke): Unify with jax._src.lib.cuda_path
 CUDA_ROOT = "/usr/local/cuda"
 if os.environ.get("CUDA_ROOT") is None:
+  cuda_nvcc_root = os.path.join(os.getcwd(), "..", "cuda_nvcc")
+  if os.path.exists(cuda_nvcc_root):
+    CUDA_ROOT = cuda_nvcc_root
   os.environ["CUDA_ROOT"] = CUDA_ROOT
 else:
   CUDA_ROOT = os.environ["CUDA_ROOT"]
@@ -89,7 +92,20 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
 try:
   from nvidia import nvshmem
 except ImportError:
-  pass
+  nvshmem_path = os.path.join(
+      os.getcwd(), "..", "nvidia_nvshmem"
+  )
+  if os.path.exists(nvshmem_path):
+    nvshmem_bc_path = os.path.join(
+        nvshmem_path, "lib", "libnvshmem_device.bc"
+    )
+    os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = nvshmem_bc_path
+    for root, _, files in os.walk(os.getcwd()):
+      if "libnvshmem_host.so.3" in files:
+        os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(root, "libnvshmem_host.so.3")
+        break
+  else:
+    pass
 else:
   if os.environ.get("MOSAIC_GPU_NVSHMEM_BC_PATH") is None:
     os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = os.path.join(
