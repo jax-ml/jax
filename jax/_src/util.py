@@ -150,7 +150,6 @@ def subvals(lst: Sequence[T], replace: Iterable[tuple[int, T]]) -> tuple[T, ...]
 def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   """Split list into sublists of the specified sizes."""
   args = list(args)
-  assert all(n >= 0 for n in ns)
   lists = []
   for n in ns:
     lists.append(args[:n])
