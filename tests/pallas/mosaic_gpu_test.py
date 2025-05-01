@@ -374,14 +374,32 @@ class PallasCallTest(PallasTest):
     )
 
   def test_inline_mgpu(self):
-    dtype = jnp.bfloat16
+    dtype = jnp.dtype(jnp.bfloat16)
     self.skip_if_wg_semantics()
+    shape = (128, 128)
+    tile = (64, 128 // dtype.itemsize)
+    tiled_shape = mgpu.tile_shape(shape, tile)
+    tiled_shape_t = list(tiled_shape)
+    tiled_shape_t[0], tiled_shape_t[1] = tiled_shape_t[1], tiled_shape_t[0]
+
+    key = jax.random.key(0)
+    x = (jax.random.uniform(key, (2, *shape)) * 42).astype(dtype)
+
+    transforms = (
+        plgpu.TilingTransform(tile),
+        plgpu.TransposeTransform((0, 2, 1, 3, 4)),
+        plgpu.SwizzleTransform(128),
+    )
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((128, 128), dtype),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
         in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
         scratch_shapes=[
-            plgpu.SMEM((128, 128), dtype),
+            plgpu.SMEM(
+                x.shape,
+                dtype,
+                transforms=transforms,
+            ),
             plgpu.Barrier(num_arrivals=1),
         ],
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -389,31 +407,48 @@ class PallasCallTest(PallasTest):
     def kernel(x_ref, o_ref, smem_ref, barrier):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier)
       plgpu.barrier_wait(barrier)
-      layout = plgpu.Layout.WG_STRIDED(x_ref.shape, vec_size=4)
+      # Add an indexer at the end.
+      sliced_smem_ref = smem_ref.at[0]
       @plgpu.inline_mgpu(
-          arg_types=(plgpu.RefType(),),
+          arg_types=(plgpu.RefType((
+              plgpu.TilingTransform(tile),
+              plgpu.TransposeTransform((1, 0, 2, 3)),
+              plgpu.SwizzleTransform(128),
+          )),),
           return_type=plgpu.GPUShapeDtypeStruct(
-              (128, 128), dtype, layout=layout
+              shape, dtype, layout=plgpu.Layout.WGMMA
           ),
       )
       def foo(ctx, smem_ref):
         del ctx
-        x = mgpu.FragmentedArray.load_strided(smem_ref)
+        assert smem_ref.type.shape == tiled_shape_t, (smem_ref.type, tiled_shape_t)
+        x = mgpu.FragmentedArray.load_tiled(smem_ref, swizzle=128)
         y = mgpu.FragmentedArray.splat(
             mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
         )
         return (x + y)
 
-      arr = foo(smem_ref)
-      @plgpu.inline_mgpu(arg_types=(layout, plgpu.RefType()))
-      def store(ctx, arr, o_ref):
-        del ctx
-        arr.store_untiled(o_ref)
-      store(arr, o_ref)
+      arr = foo(sliced_smem_ref)
+      @plgpu.inline_mgpu(arg_types=(plgpu.Layout.WGMMA, plgpu.RefType(transforms), plgpu.RefType()))
+      def store(ctx, arr, smem_ref, o_ref):
+        sliced_smem_ref = mgpu.memref_slice(smem_ref, (0,))
+        arr.store_tiled(sliced_smem_ref, swizzle=128)
+        mgpu.commit_shared()
+        ctx.async_copy(
+            src_ref=sliced_smem_ref,
+            dst_ref=o_ref,
+            swizzle=128,
+            gmem_transform=(
+                mgpu.TileTransform(tile),
+                mgpu.TransposeTransform((1, 0, 2, 3)),
+            ),
+        )
+        ctx.await_async_copy(0)
 
-    key = jax.random.key(0)
-    x = (jax.random.uniform(key, (128, 128)) * 42).astype(dtype)
-    np.testing.assert_array_equal(kernel(x), x + 1)
+      # This time we slice inside the inline_mgpu body.
+      store(arr, smem_ref, o_ref)
+
+    np.testing.assert_array_equal(kernel(x), x[0] + 1)
 
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_copy_smem_to_gmem(self, indexer):

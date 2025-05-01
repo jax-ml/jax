@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence, Callable
 import dataclasses
 import enum
+import functools
 import itertools
 import math
 from typing import Any, Literal
@@ -1476,7 +1477,17 @@ inline_mgpu_p.multiple_results = True
 
 @dataclasses.dataclass(frozen=True)
 class RefType:
-  ...
+  transforms: tuple[gpu_core.MemoryRefTransform, ...] = ()
+
+
+def _undo_transforms(
+    raw_ref: pallas_core.AbstractMemoryRef,
+    memory_transforms: Sequence[gpu_core.MemoryRefTransform],
+):
+  """Extract the `Transform`s that reverse the `MemoryRefTransform`s"""
+  tmp_ref = state_types.TransformedRef(raw_ref, transforms=())
+  tmp_ref = functools.reduce(lambda r, t: t.undo(r), reversed(memory_transforms), tmp_ref)
+  return tmp_ref.transforms
 
 
 def inline_mgpu(arg_types=(), return_type=None):
@@ -1540,30 +1551,30 @@ def inline_mgpu(arg_types=(), return_type=None):
 
       # Strip the transforms from the refs since they will be recorded in
       # the types.
-      raw_refs_flat_args = []
+      ref_transforms = []
+      raw_flat_args = []
       for a, t in zip(flat_args, flat_arg_types):
-        def traced_ty(ty):
-          return isinstance(a, jax_core.Tracer) and isinstance(a.aval, ty)
-
-        if isinstance(t, ParameterizedLayout) and traced_ty(jax_core.ShapedArray):
-          raw_refs_flat_args.append(a)
-        elif isinstance(t, RefType) and traced_ty(_Ref):
-          ref, transforms = a, ()
-          if isinstance(a, state_types.TransformedRef):
-            ref, transforms = ref.ref, ref.transforms
-
-          raw_refs_flat_args.append(ref)
-          if transforms:
-            raise NotImplementedError("Transformed refs (or types) are not supported.")
+        if isinstance(a, state_types.TransformedRef) and isinstance(t, RefType):
+          raw_flat_args.append(a.ref)
+          ref_transforms.append(a.transforms)
+        elif isinstance(aval := jax_core.get_aval(a), jax_core.ShapedArray) and isinstance(t, (ParameterizedLayout, Layout)):
+          raw_flat_args.append(a)
+          ref_transforms.append(None)
+        elif isinstance(aval, state.AbstractRef) and isinstance(t, RefType):
+          raw_flat_args.append(a)
+          ref_transforms.append(())
         else:
           raise ValueError(f"Mismatched type: {a, t}")
 
+      flat_ref_transforms, pytree_ref_transforms = jax.tree.flatten(ref_transforms)
       flat_ret = inline_mgpu_p.bind(
-          *flat_args,
-          args_treedef=treedef,
+          *raw_flat_args,
+          *flat_ref_transforms,
+          flat_arg_types=flat_arg_types,
           flat_ret_ty=flat_ret_ty,
           pytree_ret_ty=pytree_ret_ty,
-          flat_arg_types=flat_arg_types,
+          pytree_args=treedef,
+          pytree_ref_transforms=pytree_ref_transforms,
           mgpu_fn=f,
       )
       return jax.tree.unflatten(pytree_ret_ty, flat_ret)
@@ -1574,18 +1585,20 @@ def inline_mgpu(arg_types=(), return_type=None):
 
 @inline_mgpu_p.def_effectful_abstract_eval
 def _inline_mgpu_abstract_eval(
-    *flat_args,
-    args_treedef,
+    *flat_args_and_transforms,
     flat_arg_types,
     flat_ret_ty,
+    pytree_args,
+    pytree_ref_transforms,
     pytree_ret_ty,
     mgpu_fn,
 ):
-  del args_treedef, flat_arg_types, pytree_ret_ty, mgpu_fn  # Unused.
+  del flat_arg_types, pytree_ret_ty, pytree_ref_transforms, mgpu_fn  # Unused.
   aval_return = tuple(
       jax_core.ShapedArray(x.shape, x.dtype) for x in flat_ret_ty
   )
   # TODO(cperivol): Let the user set the effects.
+  flat_args = flat_args_and_transforms[:pytree_args.num_leaves]
   return aval_return, {
       gpu_core._wgmma_pipeline_effect,
       gpu_core._memory_effect,
@@ -1609,8 +1622,18 @@ def _type_check_mgpu(v, ty):
       pass
     case (GPUShapeDtypeStruct(), mgpu.FragmentedArray()):
       mlir_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
-      if v.mlir_dtype != mlir_dtype or ty.shape != v.shape or v.layout != ty.layout.to_mgpu():
-        raise ValueError(f"Array type mismatch at {v} != {ty}.")
+      if v.mlir_dtype != mlir_dtype:
+        raise ValueError(
+            f"Array dtype mismatch: expected {v.mlir_dtype} got {mlir_dtype}."
+        )
+      if ty.shape != v.shape:
+        raise ValueError(
+            f"Array shape mismatch: expected {ty.shape} got {v.shape}."
+        )
+      if v.layout != ty.layout.to_mgpu():
+        raise ValueError(
+            f"Array layout mismatch: expected {v.layout} got {ty.layout.to_mgpu()}."
+        )
     case (Layout() , mgpu.FragmentedArray()) | (ParameterizedLayout(), mgpu.FragmentedArray()):
       if ty.to_mgpu() != v.layout:
         raise ValueError(f"Unexpected layout for {v} (expected: {ty})")
@@ -1621,17 +1644,40 @@ def _type_check_mgpu(v, ty):
 @lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Lane)
 def _inline_mgpu_lowering_rule(
     ctx: lowering.LoweringRuleContext,
-    *flat_args,
+    *flat_args_and_transforms,
     mgpu_fn: Callable[..., Any],
     flat_arg_types,
     flat_ret_ty,
+    pytree_args,
+    pytree_ref_transforms,
     pytree_ret_ty,
-    args_treedef,
 ):
+  flat_args = flat_args_and_transforms[:pytree_args.num_leaves]
+  flat_arg_avals = ctx.avals_in[:pytree_args.num_leaves]
+  ref_transforms = pytree_ref_transforms.unflatten(flat_args_and_transforms[pytree_args.num_leaves:])
   for a, t in zip(flat_args, flat_arg_types):
     _type_check_mgpu(a, t)
 
-  args = jax.tree.unflatten(args_treedef, flat_args)
+  flat_transformed = []
+  for a, aval, t, transforms in zip(
+      flat_args, flat_arg_avals, flat_arg_types, ref_transforms, strict=True
+  ):
+    if not isinstance(t, RefType):
+      flat_transformed.append(a)
+      assert transforms is None
+      continue
+    assert isinstance(aval, pallas_core.AbstractMemoryRef)
+    a, user_transforms = lowering._handle_transforms(a, transforms, handle_transposes=False)
+    # Transforms that do not originate from a MemoryRefTransform are
+    # applied implicitly (eg by emit-pipeline) and therefore we do not
+    # expect the user to pass them to the type. The transforms not
+    # passed by the user here will be discharged.
+    ty_transforms = _undo_transforms(aval, t.transforms)
+    if ty_transforms != tuple(user_transforms):
+      raise ValueError(f"Transform mismatch: got {user_transforms}, expected {ty_transforms}")
+    flat_transformed.append(a)
+
+  args = jax.tree.unflatten(pytree_args, flat_transformed)
   ret = mgpu_fn(ctx.launch_ctx, *args)
   ret_leaves, ret_tree = jax.tree.flatten(
       ret, is_leaf=lambda x: isinstance(x, mgpu.FragmentedArray)
