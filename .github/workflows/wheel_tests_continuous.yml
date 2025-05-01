@@ -20,7 +20,7 @@ name: CI - Wheel Tests (Continuous)
 on:
   # DO NOT SUBMIT IT. REMOVE THIS TRIGGER AFTER TESTING.
   pull_request:
-    types: ["opened", "reopened"]
+    types: ["opened", "edited", "reopened"]
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
   workflow_dispatch: # allows triggering the workflow run manually
