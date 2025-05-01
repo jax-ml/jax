@@ -65,7 +65,7 @@ symlink_inputs(
     name = "func_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@llvm-project//mlir/python:FuncPyFiles"],
+        "dialects": ["@llvm-project//mlir/python:FuncPyFiles"],
     }},
     deps = [
         ":core",
@@ -78,7 +78,7 @@ symlink_inputs(
     name = "vector_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@llvm-project//mlir/python:VectorOpsPyFiles"],
+        "dialects": ["@llvm-project//mlir/python:VectorOpsPyFiles"],
     }},
     deps = [
         ":core",
@@ -91,7 +91,7 @@ symlink_inputs(
     name = "math_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@llvm-project//mlir/python:MathOpsPyFiles"],
+        "dialects": ["@llvm-project//mlir/python:MathOpsPyFiles"],
     }},
     deps = [
         ":core",
@@ -104,7 +104,7 @@ symlink_inputs(
     name = "arithmetic_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@llvm-project//mlir/python:ArithOpsPyFiles"],
+        "dialects": ["@llvm-project//mlir/python:ArithOpsPyFiles"],
     }},
     deps = [
         ":core",
@@ -117,7 +117,20 @@ symlink_inputs(
     name = "memref_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@llvm-project//mlir/python:MemRefOpsPyFiles"],
+        "dialects": ["@llvm-project//mlir/python:MemRefOpsPyFiles"],
+    }},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+    ],
+)
+
+symlink_inputs(
+    name = "control_flow_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:ControlFlowOpsPyFiles"],
     }},
     deps = [
         ":core",
@@ -130,7 +143,7 @@ symlink_inputs(
     name = "scf_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@llvm-project//mlir/python:SCFPyFiles"],
+        "dialects": ["@llvm-project//mlir/python:SCFPyFiles"],
     }},
     deps = [
         ":core",
@@ -143,7 +156,7 @@ symlink_inputs(
     name = "builtin_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@llvm-project//mlir/python:BuiltinOpsPyFiles"],
+        "dialects": ["@llvm-project//mlir/python:BuiltinOpsPyFiles"],
     }},
     deps = [
         ":core",
@@ -157,7 +170,7 @@ symlink_inputs(
     name = "chlo_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@stablehlo//:chlo_ops_py_files"],
+        "dialects": ["@stablehlo//:chlo_ops_py_files"],
     }},
     deps = [
         ":core",
@@ -171,7 +184,7 @@ symlink_inputs(
     name = "sparse_tensor_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@llvm-project//mlir/python:SparseTensorOpsPyFiles"],
+        "dialects": ["@llvm-project//mlir/python:SparseTensorOpsPyFiles"],
     }},
     deps = [
         ":core",
@@ -186,7 +199,7 @@ symlink_inputs(
     name = "mhlo_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@xla//xla/mlir_hlo:MhloOpsPyFiles"],
+        "dialects": ["@xla//xla/mlir_hlo:MhloOpsPyFiles"],
     }},
     deps = [
         ":core",
@@ -228,7 +241,7 @@ symlink_inputs(
     name = "stablehlo_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-      "dialects": ["@stablehlo//:stablehlo_ops_py_files"],
+        "dialects": ["@stablehlo//:stablehlo_ops_py_files"],
     }},
     deps = [
         ":core",

@@ -60,6 +60,7 @@ limitations under the License.
 #include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Transforms/Passes.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
@@ -228,12 +229,12 @@ mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
 
 void InitContext(mlir::MLIRContext* context) {
   mlir::DialectRegistry registry;
-  registry.insert<mlir::arith::ArithDialect, mlir::func::FuncDialect,
-                  mlir::math::MathDialect, mlir::memref::MemRefDialect,
-                  mlir::scf::SCFDialect, mlir::vector::VectorDialect,
-                  mlir::gpu::GPUDialect, mlir::nvgpu::NVGPUDialect,
-                  mlir::NVVM::NVVMDialect, mlir::LLVM::LLVMDialect,
-                  mosaic_gpu::MosaicGPUDialect>();
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  mlir::func::FuncDialect, mlir::math::MathDialect,
+                  mlir::memref::MemRefDialect, mlir::scf::SCFDialect,
+                  mlir::vector::VectorDialect, mlir::gpu::GPUDialect,
+                  mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
+                  mlir::LLVM::LLVMDialect, mosaic_gpu::MosaicGPUDialect>();
   mlir::registerConvertNVVMToLLVMInterface(registry);
   mlir::registerConvertComplexToLLVMInterface(registry);
   mlir::registerConvertMemRefToLLVMInterface(registry);

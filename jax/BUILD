@@ -866,6 +866,7 @@ py_library_providing_imports_info(
         "//jax/_src/lib",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
+        "//jaxlib/mlir:control_flow_dialect",
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:gpu_dialect",
         "//jaxlib/mlir:ir",

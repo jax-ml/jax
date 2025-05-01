@@ -32,6 +32,7 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import cf
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
@@ -235,7 +236,6 @@ class TestCase(parameterized.TestCase):
       yield stdout
       # We need to cudaDeviceSynchronize to make sure printfs are flushed.
       mosaic_gpu_lib._mosaic_gpu_ext._sync_all_devices()
-
 
 
 class Sm90ATestCase(TestCase, jtu.CudaArchSpecificTest):
@@ -3319,6 +3319,34 @@ class UtilsTest(TestCase):
   def test_parse_indices_oob(self, indices):
     with self.assertRaisesRegex(IndexError, "out of bounds"):
       utils.parse_indices(indices, (2, 3, 4))
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_assert(self):
+    if cf is None:
+      self.skipTest("``cf`` is not available")
+
+    def kernel(ctx: mgpu.LaunchContext, x_ref, out, scratch) -> None:
+      del ctx, out  # Unused.
+      # TODO(b/408271232): Use a False condition once the bug is fixed.
+      x = mgpu.FragmentedArray.load_strided(x_ref)
+      cond = x.reduce_sum(*scratch) != 42.0
+      cf.assert_(cond.registers.item(), "OOOPS")
+
+    f = mgpu.as_gpu_kernel(
+        kernel,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(jax.ShapeDtypeStruct((128,), jnp.float32),),
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        smem_scratch_shape=(jax.ShapeDtypeStruct((4,), jnp.float32),),
+    )
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass:
+      f(jnp.ones((128,), jnp.float32))
+
+    # SASS doesn't seem to include the assertion message, so we are just
+    # checking that __assertfail appears in the symbol table for the kernel.
+    self.assertIn("__assertfail", sass())
 
 
 class SerializationTest(absltest.TestCase):
