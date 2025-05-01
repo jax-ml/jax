@@ -204,7 +204,7 @@ def numpy_collate(batch):
 
 def flatten_and_cast(pic):
   """Convert PIL image to flat (1-dimensional) numpy array."""
-  return np.ravel(np.array(pic, dtype=jnp.float32))
+  return np.ravel(np.array(pic, dtype=np.float32))
 ```
 
 ```{code-cell} ipython3
