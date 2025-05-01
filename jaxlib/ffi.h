@@ -54,7 +54,6 @@ class PyFfiContext {
                XLA_FFI_ExecutionStage stage);
   Stage stage() const;
   absl::StatusOr<uintptr_t> stream() const;
-  absl::StatusOr<int32_t> device_ordinal() const;
 
  private:
   const XLA_FFI_Api* api_;

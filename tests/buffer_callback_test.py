@@ -46,7 +46,6 @@ class BufferCallbackTest(jtu.JaxTestCase):
         ctx.stream
 
       self.assertEqual(ctx.stage, buffer_callback.ExecutionStage.EXECUTE)
-      self.assertEqual(ctx.device_ordinal, 0)
       self.assertEqual(arg.shape, shape)
       self.assertEqual(arg.dtype, dtype)
       self.assertEqual(out.shape, shape)
