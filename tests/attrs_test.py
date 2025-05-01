@@ -1113,7 +1113,7 @@ class ListTest(jtu.JaxTestCase):
     lst.append(1.0)
     lst.append(2.0)
     lst.append(3.0)
-    self.assertAllClose(lst.freeze(), [1., 2., 3.])
+    self.assertAllClose(lst.get(), [1., 2., 3.])
 
   def test_jit_arg(self):
     @jax.jit
@@ -1127,13 +1127,13 @@ class ListTest(jtu.JaxTestCase):
     tracing_ok = True
     lst1 = List()
     f(lst1, 0)
-    self.assertAllClose(lst1.freeze(), [1., 2., {'c': 3.}])
+    self.assertAllClose(lst1.get(), [1., 2., {'c': 3.}])
 
     tracing_ok = False
     lst2 = List()
     lst2.append(0.)
     f(lst2, 1)
-    self.assertAllClose(lst2.freeze(), [0., 1., 2., {'c': 4.}])
+    self.assertAllClose(lst2.get(), [0., 1., 2., {'c': 4.}])
 
   def test_jit_closure(self):
     lst = List()
@@ -1151,7 +1151,7 @@ class ListTest(jtu.JaxTestCase):
 
     tracing_ok = False
     f(2)
-    self.assertAllClose(lst.freeze(), [1., {'a': 2.}, 4., 1., {'a': 2.0}, 5.0])
+    self.assertAllClose(lst.get(), [1., {'a': 2.}, 4., 1., {'a': 2.0}, 5.0])
 
   def test_jit_closure_nested(self):
     lst = List()
@@ -1168,7 +1168,7 @@ class ListTest(jtu.JaxTestCase):
       k(2.0)
 
     h(0.0)
-    self.assertAllClose(lst.freeze(), [0., 1., 2.])
+    self.assertAllClose(lst.get(), [0., 1., 2.])
 
   @parameterized.parameters([False, True])
   def test_scan_basic(self, jit):
@@ -1186,7 +1186,7 @@ class ListTest(jtu.JaxTestCase):
 
     f()
 
-    self.assertAllClose(lst.freeze(), [0., 1., 2., 3., 4., 5.])
+    self.assertAllClose(lst.get(), [0., 1., 2., 3., 4., 5.])
 
   @parameterized.parameters([False, True])
   def test_scan_basic_hetero(self, jit):
@@ -1212,16 +1212,16 @@ class ListTest(jtu.JaxTestCase):
         4.,
         {'a': (5., 6.)},
     ]
-    self.assertAllClose(lst.freeze(), expected)
+    self.assertAllClose(lst.get(), expected)
 
   @parameterized.parameters([False, True])
-  def test_freeze_basic(self, jit):
+  def test_get_basic(self, jit):
 
     def f():
       lst = List()
       lst.append(1.)
       lst.append(2.)
-      return lst.freeze()
+      return lst.get()
 
     if jit:
       f = jax.jit(f)
@@ -1234,9 +1234,9 @@ class ListTest(jtu.JaxTestCase):
 
     @jax.jit
     def f():
-      lst.freeze()
+      lst.get()
 
-    with self.assertRaisesRegex(Exception, "can only freeze a local List"):
+    with self.assertRaisesRegex(Exception, "can't read the value"):
       f()
 
   def test_freeze_nonlocal_list_nested(self):
@@ -1246,27 +1246,48 @@ class ListTest(jtu.JaxTestCase):
 
       @jax.jit
       def g():
-        lst.freeze()
+        lst.get()
 
       g()
 
-    with self.assertRaisesRegex(Exception, "can only freeze a local List"):
+    with self.assertRaisesRegex(Exception, "can't read the value"):
       f()
 
   @parameterized.parameters([False, True])
-  def test_append_after_freeze(self, jit):
+  def test_append_after_get(self, jit):
     def f():
       lst = List()
       lst.append(1.)
       lst.append(2.)
-      val = lst.freeze()
-      with self.assertRaisesRegex(Exception, "can't append"):
-        lst.append(3.)
+      val = lst.get()
+      lst.append(3.)
+      return lst.get()
 
     if jit:
       f = jax.jit(f)
 
-    f()
+    lst = f()
+    self.assertAllClose(lst, [1., 2., 3.])
+
+  def test_get_on_nonlocal_list_closure(self):
+    lst = List()
+
+    @jax.jit
+    def f():
+      lst.append(1.)
+      lst.append(2.)
+      with self.assertRaisesRegex(Exception, "can't read"):
+        val = lst.get()
+
+  def test_get_on_nonlocal_list_arg(self):
+    lst = List()
+
+    @jax.jit
+    def f(lst):
+      lst.append(1.)
+      lst.append(2.)
+      with self.assertRaisesRegex(Exception, "can't read"):
+        val = lst.get()
 
   @parameterized.parameters([False, True])
   def test_custom_vjp_plumbing(self, jit):
@@ -1292,7 +1313,7 @@ class ListTest(jtu.JaxTestCase):
       f = jax.jit(f)
 
     jax.grad(f)(1.0)
-    self.assertAllClose(lst.freeze(), [2.0])
+    self.assertAllClose(lst.get(), [2.0])
 
   def test_error_passing_multiple_times_to_jit(self):
     @jax.jit
