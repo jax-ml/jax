@@ -39,6 +39,7 @@ from jax._src import prng
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
+from jax._src import xla_bridge
 from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.export._export import export
 from jax._src.interpreters import mlir
@@ -664,8 +665,10 @@ def lower_jaxpr_to_module(
 ) -> tuple[Module, tuple[Any, ...]]:
   # NOTE: We should bump this periodically
   if is_cloud_tpu_older_than(2025, 1, 10):
+    platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a libTPU version that's at most a month old"
+        "Pallas TPU requires a libtpu version that's at most a month old. Found"
+        f" version string:\n{platform_version}"
     )
   debug_info = jaxpr.debug_info
   _mosaic_lowering_dynamic_shape_env = None
