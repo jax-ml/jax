@@ -115,6 +115,13 @@ ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
 if jaxlib_extension_version >= 334:
   from jaxlib._jax import ffi as ffi  # noqa: F401
 
+if jaxlib_extension_version >= 335:
+  import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
+
+  has_cpu_sparse = True
+else:
+  has_cpu_sparse = False
+
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
