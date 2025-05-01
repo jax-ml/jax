@@ -475,7 +475,7 @@ class Literal:
     del context  # unused
     dtype = getattr(self.aval, 'dtype', None)
     if print_dtype and dtype:
-      return f'{self.val}:{dtypes.short_dtype_name(dtype)}'
+      return f'{self.val}:{self.aval.str_short(short_dtypes=True)}'
     else:
       return f'{self.val}'
 
