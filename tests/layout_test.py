@@ -23,7 +23,7 @@ from jax.sharding import NamedSharding, PartitionSpec as P, SingleDeviceSharding
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
-from jax.experimental.layout import (with_dll_constraint, Layout,
+from jax.experimental.layout import (with_layout_constraint, Layout,
                                      DeviceLocalLayout as DLL)
 from jax.experimental.compute_on import compute_on
 
@@ -745,7 +745,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp * 2)
     self.assertEqual(out.layout, out_layout)
 
-  def test_with_dll_constraint(self):
+  def test_with_layout_constraint(self):
     if not jtu.test_device_matches(['tpu']):
       self.skipTest('Only works for TPU')
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -761,7 +761,7 @@ class LayoutTest(jtu.JaxTestCase):
       y = x.T
       # Constrain `y` to the original layout of `arr` because without it,
       # the layout of `y` would be the transpose of `arr`.
-      y = with_dll_constraint(y, custom_dll)
+      y = with_layout_constraint(y, custom_dll)
       return y * 2
 
     f(arr)  # doesn't crash

@@ -178,7 +178,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         continue
       if p.name == "sharding_constraint":
         continue
-      if p.name == "dll_constraint":
+      if p.name == "layout_constraint":
         continue
       if p.name == "mesh_cast":
         continue
