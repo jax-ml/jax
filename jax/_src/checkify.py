@@ -976,7 +976,7 @@ def shard_map_error_check(
     in_avals[i] = sharder(mesh, manual_axes, check_vma, new_in_names[i], v)
 
   with (jshmap._extend_axis_env(mesh, manual_axes),
-        mesh_lib.use_abstract_mesh(jshmap._as_manual_mesh(mesh, manual_axes)),
+        mesh_lib.use_abstract_mesh(jshmap._as_manual_mesh(mesh, manual_axes)),  # type: ignore[arg-type]
         config._check_vma(check_vma)):
     # jaxpr to checked_jaxpr
     checked_jaxpr, out_tree, _ = jaxpr_to_checkify_jaxpr(
