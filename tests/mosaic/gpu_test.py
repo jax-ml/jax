@@ -1070,6 +1070,74 @@ class TCGen05Test(TestCase):
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
 
   @parameterized.product(
+      in_jax_dtype=(jnp.float16, jnp.bfloat16),  # TODO(apaszke): f32
+      out_jax_dtype=(jnp.float16, jnp.float32,),
+      m=(128,),  # TODO(apaszke): 64, 192, 256
+      n=(64, 128, 256),  # TODO(apaszke): 192, other non-power-of-2
+  )
+  def test_mma_lhs_tmem(self, m, n, in_jax_dtype, out_jax_dtype):
+    swizzle = 128
+    k_steps = 2  # Reducing to 1 can be helpful while debugging.
+    if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
+      self.skipTest("Only f16 input is supported for f16 output.")
+
+    in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
+    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
+    k = swizzle_elems * k_steps
+    lhs_tiling = rhs_tiling = (8, swizzle_elems)
+
+    def kernel(ctx, lhs, rhs, out, scratch):
+      lhs_smem, rhs_smem, barriers, acc, lhs_tmem = scratch
+      ctx.async_copy(
+          src_ref=lhs,
+          dst_ref=lhs_smem,
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(lhs_tiling),
+          barrier=barriers[0],
+      )
+      ctx.async_copy(
+          src_ref=rhs,
+          dst_ref=rhs_smem,
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(rhs_tiling),
+          barrier=barriers[1],
+      )
+      barriers[0].wait()
+      barriers[1].wait()
+      lhs_tmem[:] = fa.FragmentedArray.load_tiled(
+          lhs_smem, swizzle, layout=tcgen05.LAYOUT
+      )
+      tcgen05.commit_tmem()
+      with mgpu.single_thread():
+        tcgen05.mma(
+            acc, lhs_tmem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
+        )
+        tcgen05.commit_arrive(barriers[2])
+      barriers[2].wait(for_tensor_core=True)
+      acc[:].store_untiled(out, optimized=False)
+
+    x_shape = (m, k)
+    x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
+    y_shape = (k, n)
+    y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
+        jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
+        mgpu.TMABarrier(3),
+        mgpu.TMEM((128, n), out_jax_dtype),
+        mgpu.TMEM((128, k), in_jax_dtype, packing=2),
+    ]
+    z = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
+    )(x, y)
+    x32, y32 = x.astype(np.float32), y.astype(np.float32)
+    ref = x32 @ y32
+    atol = 2e-2 if out_jax_dtype == jnp.float16 else 2e-5
+    rtol = 8e-4 if out_jax_dtype == jnp.float16 else 1e-7
+    np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
+
+  @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16,),
