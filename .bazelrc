@@ -329,6 +329,8 @@ build:rbe_linux_x86_64 --config=ci_linux_x86_64
 build:rbe_linux_x86_64_cuda --config=rbe_linux_x86_64_base
 build:rbe_linux_x86_64_cuda --config=ci_linux_x86_64_cuda
 build:rbe_linux_x86_64_cuda --repo_env=REMOTE_GPU_TESTING=1
+# Speed up CUDA repos creation by downloading ".tar" dists from the mirror.
+build:rbe_linux_x86_64_cuda --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
 
 # RBE configs for Windows
 # Set the remote worker pool
