@@ -96,11 +96,21 @@ setup(
           f"jax-cuda12-plugin[with-cuda]>={_current_jaxlib_version},<={_jax_version}",
         ],
 
+        'cuda13': [
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-cuda13-plugin[with-cuda]>={_current_jaxlib_version},<={_jax_version}",
+        ],
+
         # Target that does not depend on the CUDA pip wheels, for those who want
         # to use a preinstalled CUDA.
         'cuda12-local': [
           f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
           f"jax-cuda12-plugin>={_current_jaxlib_version},<={_jax_version}",
+        ],
+
+        'cuda13-local': [
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-cuda13-plugin>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         # ROCm support for ROCm 6.0 and above.
