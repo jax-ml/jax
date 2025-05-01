@@ -831,6 +831,11 @@ def _batched_reduction_collective(
 def _replica_groups(axis_env, axis_name, axis_index_groups):
   replica_groups = pxla.axis_groups(axis_env, axis_name)
   if axis_index_groups is not None:
+    raise ValueError(
+        "axis_index_groups not supported in pmap collectives. "
+        "Please open a feature request!"
+    )
+  if axis_index_groups is not None:
     replica_groups = [[axis_group[i] for i in axis_index_group]
                       for axis_group in replica_groups
                       for axis_index_group in axis_index_groups]
@@ -1549,6 +1554,7 @@ def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, a
 def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
                          axis_index_groups, axis_size, tiled,
                          platform=None):
+  print("axis_index_groups: ", axis_index_groups)
   x_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   axis_context = ctx.module_context.axis_context
