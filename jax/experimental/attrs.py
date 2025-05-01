@@ -366,28 +366,25 @@ ad.LinearizeTrace.process_box_set = _box_set_linearize
 class List:
   _val: PyTree
   _tag: core.OpaqueTraceState
-  frozen: bool
+  _is_arg: bool
   def __init__(self, val=None):
-    self._val = [] if val is None else val
+    self._val = [] if val is None else val[:]
     self._tag = core.get_opaque_trace_state()
-    self.frozen = False
+    self._is_arg = False
   def append(self, val):
     with core.take_current_trace() as t:
       return t.process_list_append(self, val)
-  def freeze(self):
+  def get(self):
     with core.take_current_trace() as t:
-      return t.process_list_freeze(self)
+      if _is_local(t, self) and not self._is_arg:
+        return self._val[:]  # defensive copy in case caller erroneously mutates
+    raise Exception("can't read the value of a List that was not created in "
+                    "this scope")
+AppendList = List
 
 def _list_append_impl(trace, lst, val):
-  if lst.frozen:
-    raise Exception("can't append to an already-frozen List")
   lst._val.append(val)
 core.EvalTrace.process_list_append = _list_append_impl
-
-def _list_freeze_impl(trace, lst):
-  lst.frozen = True
-  return lst._val
-core.EvalTrace.process_list_freeze = _list_freeze_impl
 
 def _list_append_staging(trace, lst, val):
   if not _is_local(trace, lst):
@@ -401,9 +398,3 @@ def _ensure_list_tracked(trace, lst):
     frame.attrs_inits.append(lst._val)
     frame.attrs_tracked.append((lst, '_val', pe.ListAttr))
     lst._val = []
-
-def _list_freeze_staging(trace, lst):
-  if not _is_local(trace, lst):
-    raise Exception("can only freeze a local List")
-  return _list_freeze_impl(trace, lst)
-pe.DynamicJaxprTrace.process_list_freeze = _list_freeze_staging
