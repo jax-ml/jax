@@ -33,6 +33,8 @@ class BufferCallbackTest(jtu.JaxTestCase):
       self.skipTest(
           "Requires a version of jaxlib with buffer callback support."
       )
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not supported on TPU.")
 
   @parameterized.parameters(jtu.dtypes.all)
   @jtu.run_on_devices("cpu")
