@@ -6679,7 +6679,7 @@ class JaxprTest(jtu.JaxTestCase):
       return (x, 1., np.zeros(1, dtype=jnp.float32))
 
     dtype = "f64" if config.enable_x64.value else "f32"
-    expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}, a) }}"
+    expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
@@ -6691,9 +6691,9 @@ class JaxprTest(jtu.JaxTestCase):
                       x + 2.,
                       lambda xf: xf - x)
     expected = """{ lambda ; a:f32[]. let
-    b:bool[] = ge a 0.0:f32
-    c:f32[] = add a 1.0:f32
-    d:f32[] = add a 2.0:f32
+    b:bool[] = ge a 0.0:f32[]
+    c:f32[] = add a 1.0:f32[]
+    d:f32[] = add a 2.0:f32[]
     e:i32[] = convert_element_type[new_dtype=int32 weak_type=False] b
     f:f32[] = cond[
       branches=(
