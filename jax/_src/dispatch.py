@@ -191,8 +191,12 @@ class LogElapsedTimeContextManager:
       logger.log(log_priority, self.fmt.format(
           fun_name=self.fun_name, elapsed_time=elapsed_time))
     if self.event is not None:
-      record_event_duration_secs(self.event, elapsed_time)
-      record_event_time_span(self.event, self.start_time, end_time)
+      record_event_duration_secs(
+          self.event, elapsed_time, fun_name=self.fun_name
+      )
+      record_event_time_span(
+          self.event, self.start_time, end_time, fun_name=self.fun_name
+      )
 
 log_elapsed_time = LogElapsedTimeContextManager
 

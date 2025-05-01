@@ -358,7 +358,8 @@ class CompilationCacheTest(CompilationCacheTestCase):
       config.persistent_cache_min_entry_size_bytes(0),
     ):
       durations = Counter()  # Map metric name to time duration.
-      def append_metric_duration(metric, duration):
+      def append_metric_duration(metric, duration, **kwargs):
+        del kwargs
         durations[metric] += duration
 
       with jtu.register_event_duration_listener(append_metric_duration):
