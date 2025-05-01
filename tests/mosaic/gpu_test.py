@@ -20,7 +20,6 @@ import enum
 import itertools
 import math
 import operator
-import os
 import re
 import unittest
 
@@ -86,20 +85,6 @@ def mlir_sum(elems):
   for elem in elems[1:]:
     total = arith.addi(total, elem)
   return total
-
-
-@contextlib.contextmanager
-def get_sass():
-  prev_dump = os.environ.get("MOSAIC_GPU_DUMP_SASS", None)
-  os.environ["MOSAIC_GPU_DUMP_SASS"] = "1"
-  try:
-    with jtu.capture_stdout() as output:
-      yield output
-  finally:
-    if prev_dump is not None:
-      os.environ["MOSAIC_GPU_DUMP_SASS"] = prev_dump
-    else:
-      del os.environ["MOSAIC_GPU_DUMP_SASS"]
 
 
 def copy(src: ir.Value, dst: ir.Value, swizzle: int | None = None):
@@ -2430,6 +2415,7 @@ class LayoutTest(TestCase):
       num_col_tiles=[1, 2, 3],
       row_tiling=[8, 64],
   )
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_copy_tiled(self, dtype, swizzle, num_col_tiles, row_tiling):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
@@ -2455,7 +2441,7 @@ class LayoutTest(TestCase):
         .transpose(0, 2, 1, 3)
     )
 
-    with get_sass() as sass:
+    with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass:
       iota = mgpu.as_gpu_kernel(
           kernel, (1, 1, 1), (128, 1, 1), expected, expected,
           [expected, expected, mgpu.TMABarrier()],
@@ -2554,6 +2540,7 @@ class LayoutTest(TestCase):
       (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 0.5),
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 2),
   )
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_upcast_to_wgmma(
       self, start_layout, end_layout, in_dtype, cast_dtype, shfl_per_reg
   ):
@@ -2597,7 +2584,7 @@ class LayoutTest(TestCase):
     f = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), xt, yt, [xt, yt, mgpu.TMABarrier()],
     )
-    with get_sass() as sass:
+    with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass:
       yt_kernel = f(xt)
     np.testing.assert_array_equal(yt_kernel, yt)
     self.assertEqual(sass().count("SHFL.BFLY"), regs_per_thread * shfl_per_reg)
