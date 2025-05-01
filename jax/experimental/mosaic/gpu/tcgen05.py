@@ -697,6 +697,30 @@ class TMEMRef:
             f"Stores only implemented for refs with standard layout, got: {self.layout}"
         )
 
+  def _debug_print(self):
+    i32 = ir.IntegerType.get_signless(32)
+    num_cols = self.layout.cols_in_shape(self.shape)
+    lane = arith.remui(utils.thread_idx(), arith.constant(i32, utils.WARPGROUP_SIZE))
+    for c in range(num_cols):
+      val = llvm.inline_asm(
+          i32,
+          [arith.addi(self.address, arith.constant(i32, c))],
+          "tcgen05.ld.sync.aligned.32x32b.x1.b32 {$0}, [$1];",
+          "=r,r",
+      )
+      dtype_bitwidth = utils.bitwidth(self.dtype)
+      full_packing = 32 // dtype_bitwidth
+      if self.layout.packing == 1:
+        if dtype_bitwidth < 32:
+          val = arith.trunci(ir.IntegerType.get_signless(dtype_bitwidth), val)
+        val = utils.bitcast(val, self.dtype)
+      elif self.layout.packing == full_packing:
+        val = utils.bitcast(val, ir.VectorType.get((full_packing,), self.dtype))
+      else:
+        raise NotImplementedError(f"Unsupported packing: {self.layout.packing}")
+      # TODO(apaszke): Make this print logical, not physical location.
+      utils.debug_print(f"[{{}}, {c}]: {{}}", lane, val, uniform=False)
+
 
 def _transfer_32xcols(base_addr: ir.Value, cols: int, packing: int):
   i32 = ir.IntegerType.get_signless(32)
