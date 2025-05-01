@@ -67,7 +67,7 @@ class NvshmemApi {
 
  private:
   NvshmemApi() {
-    const char* env_value = getenv("MOSAIC_GPU_NVSHMEM_SO_PATH");
+    const char* env_value = "libnvshmem_host.so.3";//getenv("MOSAIC_GPU_NVSHMEM_SO_PATH");
     const char* libnvshmem_path =
         env_value && *env_value != 0 ? env_value : nullptr;
     void* library = dlopen(libnvshmem_path, RTLD_LAZY);

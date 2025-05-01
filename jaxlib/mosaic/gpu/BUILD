@@ -141,6 +141,7 @@ cc_library(
     deps = [
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
+        "@xla//xla/tsl/cuda:nvshmem",
     ],
 )
 

@@ -103,7 +103,13 @@ def supports_cross_device_collectives():
   try:
     nvshmem_bc_path = os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"]
   except KeyError:
-    return False
+    nvshmem_bc_path = os.path.join(
+        os.getcwd(), "..", "nvidia_nvshmem", "lib", "libnvshmem_device.bc"
+    )
+    if os.path.exists(nvshmem_bc_path):
+      os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = nvshmem_bc_path
+    else:
+      return False
   if nvshmem_so_path := os.environ.get("MOSAIC_GPU_NVSHMEM_SO_PATH", ""):
     try:
       # This both ensures that the file exists, and it populates the dlopen
