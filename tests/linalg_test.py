@@ -1809,7 +1809,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       dtype=float_types + complex_types,
       lower=[False, True],
   )
-  @jtu.skip_on_devices("tpu","rocm")
+  @jtu.skip_on_devices("tpu")
   def testTridiagonal(self, shape, dtype, lower):
     rng = jtu.rand_default(self.rng())
     def jax_func(a):
