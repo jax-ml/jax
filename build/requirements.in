@@ -20,10 +20,13 @@ jaxlib
 
 # The with-cuda extra also includes NVIDIA's pip packages.
 jax-cuda12-plugin[with-cuda] ; sys_platform == "linux"
+jax-cuda13-plugin[with-cuda] ; sys_platform == "linux"
 jax-cuda12-pjrt ; sys_platform == "linux"
+jax-cuda13-pjrt ; sys_platform == "linux"
 
 # TPU dependencies
 libtpu ; sys_platform == "linux" and platform_machine == "x86_64"
 
 # For Mosaic GPU collectives
 nvidia-nvshmem-cu12>=3.2.5 ; sys_platform == "linux"
+nvidia-nvshmem-cu13
