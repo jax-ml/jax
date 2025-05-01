@@ -99,7 +99,7 @@ def pack_array(values):
   ptr_ty = ir.Type.parse("!llvm.ptr")
   arr_ptr = llvm.alloca(ptr_ty, c(len(values), i64), elem_ty)
   for i, v in enumerate(values):
-    elem_ptr = llvm.getelementptr(ptr_ty, arr_ptr, [], [i], elem_ty)
+    elem_ptr = llvm.getelementptr(ptr_ty, arr_ptr, [], [i], elem_ty, llvm.GEPNoWrapFlags.none)
     llvm.store(v, elem_ptr)
   return arr_ptr
 
@@ -721,7 +721,7 @@ class BarrierRef:
     with single_thread(scope=ThreadSubset.BLOCK):
       for i in range(num_barriers):
         nvvm.mbarrier_init_shared(
-            llvm.getelementptr(ptr, address, [], [i], i64),
+            llvm.getelementptr(ptr, address, [], [i], i64, llvm.GEPNoWrapFlags.none),
             c(arrival_count, i32),
         )
     return BarrierRef(address, c(0, i32), phases, num_barriers)
@@ -793,7 +793,7 @@ class BarrierRef:
     i64 = ir.IntegerType.get_signless(64)
     DYNAMIC32 = -2147483648
     return llvm.getelementptr(
-        ptr, self.base_address, [self.offset], [DYNAMIC32], i64
+        ptr, self.base_address, [self.offset], [DYNAMIC32], i64, llvm.GEPNoWrapFlags.none
     )
 
 
@@ -1241,7 +1241,7 @@ def getelementptr(
 ) -> ir.Value:
   static_indices = [i if isinstance(i, int) else DYNAMIC32 for i in indices]
   dyn_indices = [i for i in indices if not isinstance(i, int)]
-  return llvm.getelementptr(ptr.type, ptr, dyn_indices, static_indices, dtype)
+  return llvm.getelementptr(ptr.type, ptr, dyn_indices, static_indices, dtype, llvm.GEPNoWrapFlags.none)
 
 
 def dyn_dot(x, y):

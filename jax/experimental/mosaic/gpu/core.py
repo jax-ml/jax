@@ -271,7 +271,8 @@ def _construct_smem_reftree(
       )
       smem_ptr_ty = ir.Type.parse(f"!llvm.ptr<{workgroup_nvptx_address_space}>")
       barrier_base_ptr = llvm.getelementptr(
-          smem_ptr_ty, smem_base_ptr, [], [dynamic_smem_offset], i8
+          smem_ptr_ty, smem_base_ptr, [], [dynamic_smem_offset], i8,
+          llvm.GEPNoWrapFlags.none
       )
       dynamic_smem_offset += num_barriers * utils.MBARRIER_BYTES
       return barrier_base_ptr
@@ -550,7 +551,7 @@ def _lower_as_gpu_kernel(
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
       arg_refs = []
       for i, ref_ty in enumerate([*in_ref_tys, *out_ref_tys]):
-        ptr = llvm.LoadOp(ptr_ty, llvm.GEPOp(ptr_ty, buffers, [], [i], ptr_ty))
+        ptr = llvm.LoadOp(ptr_ty, llvm.GEPOp(ptr_ty, buffers, [], [i], ptr_ty, llvm.GEPNoWrapFlags.none))
         arg_refs.append(utils.ptr_as_memref(ptr, ir.MemRefType(ref_ty)))
       in_refs = arg_refs[:len(in_ref_tys)]
       out_refs = arg_refs[len(in_ref_tys):]

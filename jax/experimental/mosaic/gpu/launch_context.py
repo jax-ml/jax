@@ -294,13 +294,13 @@ class LaunchContext:
     self.next_scratch_offset += size
     def host_init_wrapped(host_ptr):
       host_init(
-          llvm.getelementptr(ptr_ty, host_ptr, [], [alloc_base], i8)
+          llvm.getelementptr(ptr_ty, host_ptr, [], [alloc_base], i8, llvm.GEPNoWrapFlags.none)
       )
     self.host_scratch_init.append(host_init_wrapped)
     # with ir.InsertionPoint(self.gmem_scratch_ptr.owner):
     # There is no way to create an insertion point after an operation...
     gep = llvm.GEPOp(
-        ptr_ty, self.gmem_scratch_ptr, [], [alloc_base], i8
+        ptr_ty, self.gmem_scratch_ptr, [], [alloc_base], i8, llvm.GEPNoWrapFlags.none
     )
     gep.move_after(self.gmem_scratch_ptr.owner)
     return device_init(gep.result)
@@ -339,7 +339,7 @@ class LaunchContext:
         alloc_ptr = llvm.inttoptr(ptr_ty, as_i64(aligned_ptr_idx))
         llvm_dyn = -2147483648  # TODO(apaszke): Improve the MLIR bindings...
         base_ptr = llvm.getelementptr(
-            ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type,
+            ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type, llvm.GEPNoWrapFlags.none,
         )
         rank = ref_ty.rank
         assert rank * 2 == len(sizes_and_strides)
