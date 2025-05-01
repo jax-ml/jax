@@ -97,8 +97,8 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
       the named axes of ``mesh``. In each ``PartitionSpec``, mentioning a
       ``mesh`` axis name at a position expresses sharding the corresponding
       argument array axis along that positional axis; not mentioning an axis
-      name expresses replication. If ``None``, all mesh axes must be in explicit
-      mode, in which case the in_specs are inferred from the argument types.
+      name expresses replication. If ``None``, all mesh axes must be of type
+      `Explicit`, in which case the in_specs are inferred from the argument types.
     out_specs: a pytree with ``PartitionSpec`` instances as leaves, with a tree
       structure that is a tree prefix of the output of ``f``. Each
       ``PartitionSpec`` represents how the corresponding output shards should be
@@ -107,8 +107,8 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
       corresponding positional axis; not mentioning a ``mesh`` axis name
       expresses a promise that the output values are equal along that mesh axis,
       and that rather than concatenating only a single value should be produced.
-    axis_names: (optional, default None) set of axis names from ``mesh`` over
-      which the function ``f`` is manual. If ``None``, ``f``, is manual
+    axis_names: (optional, default set()) set of axis names from ``mesh`` over
+      which the function ``f`` is manual. If empty, ``f``, is manual
       over all mesh axes.
     check_vma: (optional) boolean (default True) representing whether to enable
       additional validity checks and automatic differentiation optimizations.
