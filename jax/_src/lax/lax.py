@@ -2709,11 +2709,16 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
-  # TODO(dfm): Re-write this as a "reshard" when only the sharding changes.
   out_sharding = canonicalize_sharding(out_sharding, 'broadcast_in_dim')
-  if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and
-      isinstance(operand, Array) and out_sharding is None):
-    return operand
+  ndim = np.ndim(operand)
+  if (ndim == len(shape) and not len(broadcast_dimensions) and
+      isinstance(operand, Array)):
+    if out_sharding is None:
+      return operand
+    else:
+      out_sharding = out_sharding.with_spec(
+          out_sharding.spec._normalized_spec_for_aval(ndim))  # pytype: disable=attribute-error
+      return pjit.reshard_p.bind(operand, dst_sharding=out_sharding)
   if config.dynamic_shapes.value:
     # We must gate this behavior under a flag because otherwise the errors
     # raised are different (and have worse source provenance information).
