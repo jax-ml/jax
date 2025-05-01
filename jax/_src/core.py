@@ -3403,7 +3403,7 @@ class OpaqueTraceState:
     else:
       return False
 
-def get_opaque_trace_state(convention):
+def get_opaque_trace_state(convention=None):
   del convention
   return OpaqueTraceState(trace_ctx.trace._weakref)
 
