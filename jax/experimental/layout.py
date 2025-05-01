@@ -17,5 +17,5 @@ from jax._src.layout import (
     Layout as Layout,
 )
 from jax._src.pjit import (
-    with_dll_constraint as with_dll_constraint,
+    with_layout_constraint as with_layout_constraint,
 )

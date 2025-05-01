@@ -3120,49 +3120,49 @@ def use_explicit_axes(*axes):
   with mesh_lib.use_abstract_mesh(new_mesh):
     yield
 
-# -------------------- with_dll_constraint --------------------
+# -------------------- with_layout_constraint --------------------
 
-def with_dll_constraint(x, layouts):
+def with_layout_constraint(x, layouts):
   x_flat, tree = tree_flatten(x)
-  layouts_flat = tuple(flatten_axes("with_dll_constraint layouts", tree,
+  layouts_flat = tuple(flatten_axes("with_layout_constraint layouts", tree,
                                     layouts))
   if any(not isinstance(l, DeviceLocalLayout) for l in layouts_flat):
     raise ValueError(
-        'layouts passed to `with_dll_constraint` must be of type'
+        'layouts passed to `with_layout_constraint` must be of type'
         f' `DeviceLocalLayout`. Got {[type(l) for l in layouts_flat]}')
   check_aval_layout_compatibility(
       layouts_flat, x_flat, ("",) * len(layouts_flat),
-      "with_dll_constraint arguments")
-  outs = [dll_constraint_p.bind(xf, layout=l)
+      "with_layout_constraint arguments")
+  outs = [layout_constraint_p.bind(xf, layout=l)
           for xf, l in zip(x_flat, layouts_flat)]
   return tree_unflatten(tree, outs)
 
-dll_constraint_p = core.Primitive('dll_constraint')
-dll_constraint_p.def_abstract_eval(lambda x, **_: x)
-ad.deflinear2(dll_constraint_p,
-              lambda ct, _, **params: (dll_constraint_p.bind(ct, **params),))
+layout_constraint_p = core.Primitive('layout_constraint')
+layout_constraint_p.def_abstract_eval(lambda x, **_: x)
+ad.deflinear2(layout_constraint_p,
+              lambda ct, _, **params: (layout_constraint_p.bind(ct, **params),))
 
-def _dll_constraint_impl(x, *, layout):
+def _layout_constraint_impl(x, *, layout):
   if not isinstance(x, xc.ArrayImpl):
     raise ValueError(
-        'with_dll_constraint in eager mode can only be applied to'
+        'with_layout_constraint in eager mode can only be applied to'
         f' jax.Arrays. Got {type(x)}')
   if x.layout.device_local_layout == layout:  # type: ignore
     return x
   return api.jit(_identity_fn, out_shardings=Layout(layout, x.sharding))(x)
-dll_constraint_p.def_impl(_dll_constraint_impl)
+layout_constraint_p.def_impl(_layout_constraint_impl)
 
-def _dll_constraint_hlo_lowering(ctx, x_node, *, layout):
+def _layout_constraint_hlo_lowering(ctx, x_node, *, layout):
   aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   return [mlir.wrap_with_layout_op(ctx, x_node, out_aval, layout, aval)]
-mlir.register_lowering(dll_constraint_p,
-                       _dll_constraint_hlo_lowering)
+mlir.register_lowering(layout_constraint_p,
+                       _layout_constraint_hlo_lowering)
 
-def _dll_constraint_batcher(axis_data, vals_in, dims_in, layout):
+def _layout_constraint_batcher(axis_data, vals_in, dims_in, layout):
   raise NotImplementedError
-batching.fancy_primitive_batchers[dll_constraint_p] = _dll_constraint_batcher
-batching.skippable_batchers[dll_constraint_p] = lambda _: ()
+batching.fancy_primitive_batchers[layout_constraint_p] = _layout_constraint_batcher
+batching.skippable_batchers[layout_constraint_p] = lambda _: ()
 
 # -------------------- helpers --------------------
 
