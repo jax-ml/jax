@@ -1902,6 +1902,8 @@ def _broadcast_in_dim_lowering_rule(
   del sharding
   (aval_in,) = ctx.avals_in
   (aval_out,) = ctx.avals_out
+  if aval_in.shape == shape:
+    return val
 
   if jnp.issubdtype(aval_in.dtype, jnp.bool_):
     # Direct broadcasts for bools are not supported in Mosaic due to booleans
