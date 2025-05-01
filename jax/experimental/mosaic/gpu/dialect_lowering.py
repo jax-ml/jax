@@ -194,6 +194,7 @@ def _initialize_barrier_op_lowering_rule(
             [],
             [i],
             lowered_barrier_type,
+            llvm.GEPNoWrapFlags.none,
         ),
         utils.c(
             initialize_barrier_op.arrival_count.value * utils.WARPGROUP_SIZE,
@@ -206,7 +207,7 @@ def _initialize_barrier_op_lowering_rule(
 
   barrier_base_ptr = llvm.getelementptr(
       ir.Type.parse("!llvm.ptr"),
-      initialize_barrier_op.base_pointer, [], [0], lowered_barrier_type)
+      initialize_barrier_op.base_pointer, [], [0], lowered_barrier_type, llvm.GEPNoWrapFlags.none)
 
   return utils.ptr_as_memref(
       barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
