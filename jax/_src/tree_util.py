@@ -202,8 +202,11 @@ def all_leaves(iterable: Iterable[Any],
   if is_leaf is None:
     return pytree.all_leaves(default_registry, iterable)
   else:
-    lst = list(iterable)
-    return lst == tree_leaves(lst, is_leaf)
+    items = list(iterable)
+    leaves = tree_leaves(items, is_leaf)
+    return len(leaves) == len(items) and all(
+        item is leaf for item, leaf in zip(items, leaves, strict=True)
+    )
 
 
 _Children = TypeVar("_Children", bound=Iterable[Any])
