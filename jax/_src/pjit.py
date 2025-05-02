@@ -579,14 +579,9 @@ def _infer_params_impl(
   f, dyn_kwargs = argnames_partial_except(f, ji.static_argnames, kwargs)
   del kwargs
 
-
-  # TODO(mattjj,dougalm): refine this implementation of box-handling...
-  from jax.experimental.attrs import Box, List
-  if any(isinstance(x, (Box, List)) for x in tree_leaves((dyn_args, dyn_kwargs))):
-    dyn_args, dyn_kwargs, box_data = _flatten_boxes(dbg, dyn_args, dyn_kwargs)
+  dyn_args, dyn_kwargs, box_data = _flatten_boxes(dbg, dyn_args, dyn_kwargs)
+  if box_data:
     f = _handle_boxes(f, dbg)
-  else:
-    box_data = []
 
   explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
   flat_fun, out_tree = flatten_fun(f, in_tree)
@@ -3238,6 +3233,9 @@ class ListTree:
 
 def _flatten_boxes(dbg, args, kwargs):
   from jax.experimental.attrs import Box, List
+  # TODO(mattjj,dougalm): refine this implementation of box-handling...
+  if all(not isinstance(x, (Box, List)) for x in tree_leaves((args, kwargs))):
+    return args, kwargs, []
   box_data = []
   id_first_occurrences = {}
   idxs = itertools.count()
