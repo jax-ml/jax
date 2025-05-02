@@ -125,9 +125,6 @@ jobs:
       - name: Enable Bazel remote cache (with writes enabled) if building on Linux Aarch64
         if: contains(inputs.runner, 'linux-arm64')
         run: echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> $GITHUB_ENV
-      - name: Build ml_dtypes for pre-released Python 3.14
-        if: contains(inputs.python, '3.14') && contains(inputs.runner, 'linux-x86')
-        run: python3.14 -m pip install ml-dtypes
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
