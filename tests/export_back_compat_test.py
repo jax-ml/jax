@@ -976,9 +976,14 @@ class ShardyCompatTest(bctu.CompatTestBase):
       x = jax.lax.with_sharding_constraint(x, NS(old_mesh, P('a', None)))
       return shard_map_func(x)
 
-    data = self.load_testdata(shardy_sharding_ops_with_different_meshes.data_2025_02_12)
-    with Mesh(devices, axis_names=('x')):
-      self.run_one_test(func, data)
+    data = [
+        shardy_sharding_ops_with_different_meshes.data_2025_02_12,
+        shardy_sharding_ops_with_different_meshes.data_2025_04_14,
+    ]
+
+    for d in data:
+      with Mesh(devices, axis_names=('x')):
+        self.run_one_test(func, self.load_testdata(d))
 
 
 if __name__ == "__main__":
