@@ -41,7 +41,7 @@ from jax._src import util
 from jax._src.core import pvary
 from jax._src.core import Tracer, typeof
 from jax._src.mesh import (AbstractMesh, Mesh, AxisType, use_abstract_mesh,
-                           get_abstract_mesh)
+                           get_abstract_mesh, get_concrete_mesh)
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import sdy
@@ -97,8 +97,8 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
       the named axes of ``mesh``. In each ``PartitionSpec``, mentioning a
       ``mesh`` axis name at a position expresses sharding the corresponding
       argument array axis along that positional axis; not mentioning an axis
-      name expresses replication. If ``None``, all mesh axes must be in explicit
-      mode, in which case the in_specs are inferred from the argument types.
+      name expresses replication. If ``None``, all mesh axes must be of type
+      `Explicit`, in which case the in_specs are inferred from the argument types.
     out_specs: a pytree with ``PartitionSpec`` instances as leaves, with a tree
       structure that is a tree prefix of the output of ``f``. Each
       ``PartitionSpec`` represents how the corresponding output shards should be
@@ -107,8 +107,8 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
       corresponding positional axis; not mentioning a ``mesh`` axis name
       expresses a promise that the output values are equal along that mesh axis,
       and that rather than concatenating only a single value should be produced.
-    axis_names: (optional, default None) set of axis names from ``mesh`` over
-      which the function ``f`` is manual. If ``None``, ``f``, is manual
+    axis_names: (optional, default set()) set of axis names from ``mesh`` over
+      which the function ``f`` is manual. If empty, ``f``, is manual
       over all mesh axes.
     check_vma: (optional) boolean (default True) representing whether to enable
       additional validity checks and automatic differentiation optimizations.
@@ -126,9 +126,58 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
     return lambda g: _shard_map(g, **kwargs)
   return _shard_map(f, **kwargs)
 
+def _axes_to_pspec(axis_name, axis):
+  if axis is None:
+    return P()
+  return P(*[None] * axis + [axis_name])
+
+class InferFromArgs:
+
+  def __repr__(self):
+    return "jax.sharding.Infer"
+
+  def __reduce__(self):
+    return (_get_default_infer, ())
+
+Infer = InferFromArgs()
+
+def _get_default_infer():
+  return Infer
+
+# TODO(yashkatariya): We need a singleton which users can provide to `in_axes`
+# to tell smap to infer in_specs from args when mesh is fully explicit.
+def smap(f, in_axes, out_axes, axis_name: AxisName):
+  if isinstance(axis_name, (list, tuple)):
+    raise TypeError(
+        f"smap axis_name should be a `str` or a `Hashable`, but got {axis_name}")
+  if (in_axes is not None and in_axes is not Infer and
+      not isinstance(in_axes, (int, tuple))):
+    raise TypeError(
+        "smap in_axes must be an int, None, jax.sharding.Infer, or a tuple of"
+        " entries corresponding to the positional arguments passed to the"
+        f" function, but got {in_axes}.")
+  if (in_axes is not Infer and
+      not all(isinstance(l, int) for l in tree_leaves(in_axes))):
+    raise TypeError(
+        "smap in_axes must be an int, None, jax.sharding.Infer, or (nested)"
+        f" container with those types as leaves, but got {in_axes}.")
+  if not all(isinstance(l, int) for l in tree_leaves(out_axes)):
+    raise TypeError("smap out_axes must be an int, None, or (nested) container "
+                    f"with those types as leaves, but got {out_axes}.")
+
+  in_specs = (None if in_axes is Infer else
+              tree_map(partial(_axes_to_pspec, axis_name), in_axes,
+                       is_leaf=lambda x: x is None))
+  out_specs = tree_map(partial(_axes_to_pspec, axis_name), out_axes,
+                       is_leaf=lambda x: x is None)
+  return shard_map(f, axis_names={axis_name}, in_specs=in_specs,
+                   out_specs=out_specs)
+
+
 def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
                in_specs: Specs, out_specs: Specs | Callable[[], Specs],
-               axis_names: Set[AxisName], check_vma: bool):
+               axis_names: Set[AxisName], check_vma: bool,
+               _skip_mesh_check: bool = False) -> Callable:
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
                     f"but got {f} of type {type(f)}.")
@@ -140,6 +189,14 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
           "The context mesh cannot be empty. Either use"
           " `jax.sharding.use_mesh(mesh)` to enter into a mesh context or pass"
           " a mesh to `shard_map` via the `mesh` keyword argument.")
+  else:
+    ctx_mesh = get_abstract_mesh()
+    if (not _skip_mesh_check and not ctx_mesh.empty and
+        mesh.abstract_mesh != ctx_mesh):
+      raise ValueError(
+          f"The context mesh {ctx_mesh} should match the mesh passed to"
+          f" shard_map {mesh}")
+
   if not isinstance(mesh, (Mesh, AbstractMesh)):
     raise TypeError("shard_map requires a `jax.sharding.Mesh` or a "
                     "`jax.sharding.AbstractMesh` instance for its "
@@ -163,7 +220,7 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
     raise TypeError(
         "shard_map in_specs argument must be a pytree of"
         " `jax.sharding.PartitionSpec` instances, but it was None when mesh"
-        f" {mesh} has `Auto` axes.\n")
+        f" has `Auto` axes {mesh}")
 
   if in_specs is not None:
     _check_specs(SpecErrorType.input, in_specs, axis_names)
@@ -540,7 +597,7 @@ def _as_manual_mesh(mesh, manual_axes: frozenset):
     if cur_mesh._name_to_type[a] == AxisType.Auto:
       auto_axes.add(a)
     else:
-      assert cur_mesh._name_to_type[a] == AxisType.Explicit
+      assert cur_mesh._name_to_type[a] == AxisType.Explicit, cur_mesh._name_to_type[a]
       explicit_axes.add(a)
 
   new_axis_types = []
@@ -558,7 +615,7 @@ def _as_manual_mesh(mesh, manual_axes: frozenset):
 
 def _extend_axis_env(mesh, manual_axes):
   return core.extend_axis_env_nd([(k, v) for k, v in mesh.shape.items()
-                                 if k in manual_axes])
+                                  if k in manual_axes])
 
 def _shard_map_staging(
     trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: lu.WrappedFun,
@@ -571,11 +628,11 @@ def _shard_map_staging(
   source_info = source_info_util.current()
   to_jaxpr_tracer = partial(trace.to_jaxpr_tracer, source_info=source_info)
   in_tracers = map(to_jaxpr_tracer, in_tracers)
+  inner_mesh = _as_manual_mesh(mesh, manual_axes | set(mesh.manual_axes))
   in_avals = [t.aval for t in in_tracers]
   in_avals_ = map(partial(_shard_aval, mesh, manual_axes, check_vma), in_names,
                   in_avals)
-  manual_mesh = _as_manual_mesh(mesh, manual_axes)
-  with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(manual_mesh),
+  with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
   _check_names(out_names_thunk(), out_avals_)
@@ -590,7 +647,7 @@ def _shard_map_staging(
   constvars = map(trace.getvar, map(to_jaxpr_tracer, consts))
   outvars = map(trace.makevar, out_tracers)
   in_names_staged = ({},) * len(consts) + tuple(in_names)  # type: ignore
-  with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(manual_mesh),
+  with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   params = dict(mesh=mesh, in_names=in_names_staged,
@@ -629,10 +686,11 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
   assert isinstance(aval, core.ShapedArray)
   new_shape = tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
-  manual_mesh = _as_manual_mesh(mesh, manual_axes)
+  manual_mesh = _as_manual_mesh(mesh, manual_axes | set(mesh.manual_axes))
   new_sharding = NamedSharding(manual_mesh, aval.sharding.spec)
   vma = (frozenset({n for ns in names.values() for n in ns})
          if check_vma else frozenset())
+  vma = vma | aval.vma
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
@@ -695,7 +753,7 @@ core.custom_typechecks[shard_map_p] = _shard_map_typecheck
 
 
 def _valid_repeats(mesh: Mesh, vma: Set[AxisName], names: AxisNames) -> bool:
-  um = set(_unmentioned(mesh, names))
+  um = set(_unmentioned(mesh, names)) - set(mesh.manual_axes)
   if any(u in vma for u in um):
     return False
   return True
@@ -808,8 +866,10 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, manual_axes, names,
                  if len(manual_axes) < len(mesh.axis_names) else set())
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,
                                   unspecified_dims=unspecified)
-  manual_proto = pxla.manual_proto(aval_in, manual_axes, mesh)
-  return mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, unspecified)
+  manual_proto = pxla.manual_proto(
+      aval_in, manual_axes | set(mesh.manual_axes), mesh)
+  return mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto,
+                                         unspecified)
 
 def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, manual_axes, names,
                  aval_in, aval_out, x):
@@ -824,8 +884,10 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, manual_axes, names,
                  if len(manual_axes) < len(mesh.axis_names) else set())
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
     aval_in = core.physical_aval(aval_in)
-  manual_proto = pxla.manual_proto(aval_in, manual_axes, mesh)
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto, unspecified_dims=unspecified)
+  manual_proto = pxla.manual_proto(
+      aval_in, manual_axes | set(mesh.manual_axes), mesh)
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto,
+                                  unspecified_dims=unspecified)
   shard_proto = ns._to_xla_hlo_sharding(aval_out.ndim).to_proto()
   return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto,
                                          unspecified)
@@ -872,6 +934,8 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
     raise NotImplementedError
   del prim
   if isinstance(mesh, AbstractMesh):
+    concrete_mesh = get_concrete_mesh()
+    mesh = concrete_mesh if concrete_mesh is not None else mesh
     mesh = get_mesh_from_args(args, mesh)
   cur_mesh = get_abstract_mesh()
   args = map(partial(_unmatch_spec, mesh, check_vma, context_mesh=cur_mesh),
@@ -894,9 +958,9 @@ core.EvalTrace.process_shard_map = _shard_map_impl
 def _run_shmap(f, mesh, manual_axes, args, vmas, check_vma, context_mesh):
   trace = ShardMapTrace(mesh, manual_axes, check_vma, context_mesh)
   in_tracers = map(partial(ShardMapTracer, trace), vmas, args)
-  manual_mesh = _as_manual_mesh(mesh, manual_axes)
+  inner_mesh = _as_manual_mesh(mesh, manual_axes | set(mesh.manual_axes))
   with (core.set_current_trace(trace), _extend_axis_env(mesh, manual_axes),
-        use_abstract_mesh(manual_mesh), config._check_vma(check_vma)):
+        use_abstract_mesh(inner_mesh), config._check_vma(check_vma)):
     ans = f.call_wrapped(*in_tracers)
     outs, out_vma = unzip2(map(trace.to_val_vma_pair, ans))
   return outs, out_vma
@@ -1318,7 +1382,7 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
   args_to_promote = [getattr(aval, 'shape', ()) == () and f1 is None and f2 is None
                      for aval, f1, f2 in zip(res_avals, in_fwd, out_fwd)]
   with (_extend_axis_env(mesh, manual_axes),
-        use_abstract_mesh(_as_manual_mesh(mesh, manual_axes)),
+        use_abstract_mesh(_as_manual_mesh(mesh, manual_axes | set(mesh.manual_axes))),
         config._check_vma(check_vma)):
     lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
   out_names = out_names_thunk()
@@ -1483,7 +1547,7 @@ def _partial_eval_jaxpr_custom_rule(
   jaxpr, mesh = eqn.params['jaxpr'], eqn.params['mesh']
   check_vma, manual_axes = eqn.params['check_vma'], eqn.params['manual_axes']
   with (_extend_axis_env(mesh, manual_axes), config._check_vma(check_vma),
-        use_abstract_mesh(_as_manual_mesh(mesh, manual_axes))):
+        use_abstract_mesh(_as_manual_mesh(mesh, manual_axes | set(mesh.manual_axes)))):
     jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(jaxpr, unks_in, inst_in, False, False, saveable)
   num_out_primals = len(jaxpr_known.outvars) - num_res
@@ -1494,7 +1558,7 @@ def _partial_eval_jaxpr_custom_rule(
   which = [f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
   mesh = eqn.params['mesh']
   with (_extend_axis_env(mesh, manual_axes),
-        use_abstract_mesh(_as_manual_mesh(mesh, manual_axes)),
+        use_abstract_mesh(_as_manual_mesh(mesh, manual_axes | set(mesh.manual_axes))),
         config._check_vma(check_vma)):
     jaxpr_known = pe.prune_jaxpr_outputs(jaxpr_known, [True] * num_out_primals + which)
     jaxpr_known, jaxpr_staged = _add_reshapes(which, jaxpr_known, jaxpr_staged)

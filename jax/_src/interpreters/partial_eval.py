@@ -65,6 +65,8 @@ PyTree = Any
 # Attrs flavors, see jax/experimental/attrs.py
 ReadWrite = type('ReadWrite', (), {})()
 Append = type('Append', (), {})()
+BoxAttr = type('BoxAttr', (), {})()
+ListAttr = type('ListAttr', (), {})()
 
 def _update_annotation_known(
     f: lu.WrappedFun,
@@ -1724,8 +1726,8 @@ class JaxprStackFrame:
   def add_eqn(self, eqn: core.JaxprEqn):
     self.eqns.append(eqn)
 
-  def reset_states(self):
-    reset_states(self.attrs_tracked, self.attrs_inits)
+  def reset_states(self, trace):
+    reset_states(trace, self.attrs_tracked, self.attrs_inits)
 
   def to_jaxpr(
       self, trace: DynamicJaxprTrace,
@@ -1889,6 +1891,8 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.tracers = []
     self.frame.constid_to_tracer = {}
     self.frame.constvar_to_val = {}
+    self.frame.attrs_tracked = []
+    self.frame.attrs_inits = []
 
   def to_jaxpr_tracer(self, x, source_info: SourceInfo):
     as_local_var = self.frame.tracer_to_var.get(id(x))
@@ -2234,7 +2238,7 @@ def trace_to_jaxpr_dynamic(
       jaxpr, consts, attrs_tracked = trace.to_jaxpr(out_tracers, fun.debug_info)
       del fun, in_tracers, out_tracers, ans
     finally:
-      trace.frame.reset_states()
+      trace.frame.reset_states(trace)
       del trace
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
@@ -2297,8 +2301,8 @@ AbstractedAxesSpec = Union[
 
 AttrsTracked = list[tuple[Any, str, AttrKind]]
 AttrStates = list
-def reset_states(attrs_tracked: AttrsTracked, init_vals: AttrStates) -> None:
-  for ((obj, attr, _), val) in zip(attrs_tracked, init_vals):
+def reset_states(trace, attrs_tracked: AttrsTracked, init_vals: AttrStates) -> None:
+  for ((obj, attr, kind), val) in zip(attrs_tracked, init_vals):
     setattr(obj, attr, val) if val is not dne_sentinel else delattr(obj, attr)
 
 def get_states(attrs_tracked: AttrsTracked) -> list[PyTree]:

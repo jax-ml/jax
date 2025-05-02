@@ -475,7 +475,7 @@ class Literal:
     del context  # unused
     dtype = getattr(self.aval, 'dtype', None)
     if print_dtype and dtype:
-      return f'{self.val}:{dtypes.short_dtype_name(dtype)}'
+      return f'{self.val}:{self.aval.str_short(short_dtypes=True)}'
     else:
       return f'{self.val}'
 
@@ -3403,7 +3403,7 @@ class OpaqueTraceState:
     else:
       return False
 
-def get_opaque_trace_state(convention):
+def get_opaque_trace_state(convention=None):
   del convention
   return OpaqueTraceState(trace_ctx.trace._weakref)
 

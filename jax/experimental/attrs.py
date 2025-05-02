@@ -35,7 +35,8 @@ zip, unsafe_zip = safe_zip, zip
 
 Array = Any
 JaxVal = Any
-Pytree = Any
+PyTree = Any
+PyTreeDef = Any
 
 ReadWrite = pe.ReadWrite
 Append = pe.Append
@@ -43,11 +44,11 @@ Append = pe.Append
 register = api_util.register_class_with_attrs
 dne_sentinel = pe.dne_sentinel
 
-def jax_getattr(obj: Any, attr: str) -> Pytree:
+def jax_getattr(obj: Any, attr: str) -> PyTree:
   with core.take_current_trace() as t:
     return t.process_getattr(obj, attr)
 
-def jax_setattr(obj: Any, attr: str, val: Pytree) -> None:
+def jax_setattr(obj: Any, attr: str, val: PyTree) -> None:
   with core.take_current_trace() as t:
     return t.process_setattr(obj, attr, val)
 
@@ -85,7 +86,8 @@ def _check_append_type_agreement(_, attr, curtype, valtype):
         f"{expected.str_short()}, but appendattr got value of type "
         f"{valtype.str_short()} which has trailing shape {got.str_short()}.")
 
-def _ensure_tracked(trace: pe.DynamicJaxprTrace, obj: Any, attr: str):
+def _ensure_tracked(trace: pe.DynamicJaxprTrace, obj: Any, attr: str,
+                    kind: pe.AttrKind):
   frame = trace.frame
   source_info = source_info_util.current()
 
@@ -100,22 +102,22 @@ def _ensure_tracked(trace: pe.DynamicJaxprTrace, obj: Any, attr: str):
   if (obj, attr, Append) in frame.attrs_tracked:
     raise TypeError(f"can't read/write to append-only attr {attr}")
 
-  if (obj, attr, ReadWrite) not in frame.attrs_tracked:
+  if (obj, attr, kind) not in frame.attrs_tracked:
     init_val = getattr(obj, attr, dne_sentinel)
     frame.attrs_inits.append(init_val)
     init_vals, init_tree = tree_flatten(init_val)
     tracers = map(new_tracer, init_vals)
     setattr(obj, attr, tree_unflatten(init_tree, tracers))
-    frame.attrs_tracked.append((obj, attr, ReadWrite))
+    frame.attrs_tracked.append((obj, attr, kind))
 pe.DynamicJaxprTrace._ensure_tracked = _ensure_tracked
 
 def _getattr_staging(trace, obj, attr):
-  trace._ensure_tracked(obj, attr)
+  trace._ensure_tracked(obj, attr, ReadWrite)
   return getattr(obj, attr)
 pe.DynamicJaxprTrace.process_getattr = _getattr_staging
 
 def _setattr_staging(trace, obj, attr, val):
-  trace._ensure_tracked(obj, attr)
+  trace._ensure_tracked(obj, attr, ReadWrite)
   setattr(obj, attr, val)
 pe.DynamicJaxprTrace.process_setattr = _setattr_staging
 
@@ -291,3 +293,108 @@ def _vjp_wrap(jaxpr, consts, out_pvals, attr_avals, io_tree, in_attrs, out_attrs
     args_ct = tree_unflatten(in_tree, map(ad.instantiate_zeros, arg_cts))
     return args_ct, dict(zip(in_attrs, in_attr_bars))
   return f_vjp
+
+
+class Box:
+  _val: PyTree
+  _tag: core.OpaqueTraceState
+  def __init__(self, val):
+    self._val = val
+    self._tag = core.get_opaque_trace_state()
+  def get(self):
+    with core.take_current_trace() as t:
+      return t.process_box_get(self)
+  def set(self, val):
+    with core.take_current_trace() as t:
+      return t.process_box_set(self, val)
+
+def _box_get_impl(trace, box):
+  return box._val
+core.EvalTrace.process_box_get = _box_get_impl
+
+def _box_set_impl(trace, box, val):
+  box._val = val
+core.EvalTrace.process_box_set = _box_set_impl
+
+def _is_local(trace, box):
+  is_arg = box._tag._trace_ref() is trace
+  if is_arg: assert box._tag._trace_ref() is trace
+  return is_arg
+
+def _box_get_staging(trace, box):
+  if not _is_local(trace, box):
+    trace._ensure_tracked(box, '_val', pe.BoxAttr)
+  return box._val
+pe.DynamicJaxprTrace.process_box_get = _box_get_staging
+
+def _box_set_staging(trace, box, val):
+  if not _is_local(trace, box):
+    trace._ensure_tracked(box, '_val', pe.BoxAttr)
+  box._val = val
+pe.DynamicJaxprTrace.process_box_set = _box_set_staging
+
+def _box_get_jvp(trace, box):
+  return box._val
+ad.JVPTrace.process_box_get = _box_get_jvp
+
+def _box_set_jvp(trace, box, val):
+  primal, tangent = trace.to_primal_tangent_pair(val)
+  if not (isinstance(tangent, ad.Zero) or _is_local(trace, box)):
+    raise Exception
+  if isinstance(tangent, ad.Zero):
+    box._val = primal
+  else:
+    box._val = ad.JVPTracer(trace, primal, tangent)
+ad.JVPTrace.process_box_set = _box_set_jvp
+
+def _box_get_linearize(trace, box):
+  return box._val
+ad.LinearizeTrace.process_box_get = _box_get_linearize
+
+def _box_set_linearize(trace, box, val):
+  primal, tangent = trace.to_primal_tangent_pair(val)
+  if not (isinstance(tangent, ad.Zero) or _is_local(trace, box)):
+    raise Exception
+  if isinstance(tangent, ad.Zero):
+    box._val = primal
+  else:
+    raise NotImplementedError  # TODO
+    box._val = ad.LinearizeTracer(trace, primal, tangent)
+ad.LinearizeTrace.process_box_set = _box_set_linearize
+
+
+class List:
+  _val: PyTree
+  _tag: core.OpaqueTraceState
+  _is_arg: bool
+  def __init__(self, val=None):
+    self._val = [] if val is None else val[:]
+    self._tag = core.get_opaque_trace_state()
+    self._is_arg = False
+  def append(self, val):
+    with core.take_current_trace() as t:
+      return t.process_list_append(self, val)
+  def get(self):
+    with core.take_current_trace() as t:
+      if _is_local(t, self) and not self._is_arg:
+        return self._val[:]  # defensive copy in case caller erroneously mutates
+    raise Exception("can't read the value of a List that was not created in "
+                    "this scope")
+AppendList = List
+
+def _list_append_impl(trace, lst, val):
+  lst._val.append(val)
+core.EvalTrace.process_list_append = _list_append_impl
+
+def _list_append_staging(trace, lst, val):
+  if not _is_local(trace, lst):
+    _ensure_list_tracked(trace, lst)
+  return _list_append_impl(trace, lst, val)
+pe.DynamicJaxprTrace.process_list_append = _list_append_staging
+
+def _ensure_list_tracked(trace, lst):
+  frame = trace.frame
+  if (lst, '_val', pe.ListAttr) not in frame.attrs_tracked:
+    frame.attrs_inits.append(lst._val)
+    frame.attrs_tracked.append((lst, '_val', pe.ListAttr))
+    lst._val = []

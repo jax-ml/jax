@@ -36,11 +36,8 @@ def _addressable_devices_indices_map(
   global_map = sharding.devices_indices_map(global_shape)
   if sharding.is_fully_addressable:
     return global_map
-  if hasattr(sharding, '_internal_device_list'):
-    return {d: global_map[d]
-            for d in sharding._internal_device_list.addressable_device_list}
-  return {d: ind for d, ind in global_map.items()
-          if d.process_index == d.client.process_index()}
+  return {d: global_map[d]
+          for d in sharding._internal_device_list.addressable_device_list}  # type: ignore
 
 @cache(max_size=4096, trace_context_in_key=False)
 def common_devices_indices_map(
@@ -174,10 +171,7 @@ class Sharding:
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
     if self.is_fully_addressable:
       return self._device_assignment
-    if hasattr(self, '_internal_device_list'):
-      return tuple(self._internal_device_list.addressable_device_list)
-    return tuple(d for d in self._device_assignment
-                 if d.process_index == d.client.process_index())
+    return tuple(self._internal_device_list.addressable_device_list)  # type: ignore
 
   def shard_shape(self, global_shape: Shape) -> Shape:
     """Returns the shape of the data on each device.

@@ -190,6 +190,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       dst_dir=jaxlib_dir,
       src_files=[
           f"{source_file_prefix}jaxlib/cpu_feature_guard.{pyext}",
+          f"{source_file_prefix}jaxlib/cpu_sparse.py",
           f"{source_file_prefix}jaxlib/utils.{pyext}",
           f"{source_file_prefix}jaxlib/jax_common.dll"
           if build_utils.is_windows()
@@ -221,6 +222,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       dst_dir=jaxlib_dir / "cpu",
       src_files=[
           f"{source_file_prefix}jaxlib/cpu/_lapack.{pyext}",
+          f"{source_file_prefix}jaxlib/cpu/_sparse.{pyext}",
       ],
   )
 
@@ -270,6 +272,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/mlir/dialects/_arith_enum_gen.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/_arith_ops_gen.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/_builtin_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_cf_ops_gen.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/_chlo_ops_gen.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/_func_ops_gen.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/_math_ops_gen.py",
@@ -294,6 +297,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/mlir/dialects/_llvm_ops_gen.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/arith.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/builtin.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/cf.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/chlo.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/func.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/math.py",
@@ -327,7 +331,6 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/mlir/dialects/gpu/passes/__init__.py",
       ],
   )
-
 
   mlir_libs_dir = jaxlib_dir / "mlir" / "_mlir_libs"
   copy_files(

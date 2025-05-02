@@ -20,16 +20,19 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "nanobind/make_iterator.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/set.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/nb_class_ptr.h"
@@ -256,31 +259,28 @@ nb::tuple PyDeviceList::Dump() const { return AsTuple(); }
 
 bool PyDeviceList::IsFullyAddressable() {
   if (!is_fully_addressable_.has_value()) {
-    is_fully_addressable_ = true;
-    switch (device_list_.index()) {
-      case 0: {
-        const int process_index = py_client_ ? py_client_->process_index() : 0;
-        for (const xla::ifrt::Device* device :
-             std::get<0>(device_list_)->devices()) {
-          if (device->ProcessIndex() != process_index) {
-            is_fully_addressable_ = false;
-            break;
-          }
+    ProcessIndices();
+    CHECK(process_indices_.has_value());
+    if (process_indices_->size() > 1) {
+      is_fully_addressable_ = false;
+    } else {
+      CHECK_EQ(process_indices_->size(), 1);
+      int process_index;
+      switch (device_list_.index()) {
+        case 0: {
+          process_index = py_client_ ? py_client_->process_index() : 0;
+          break;
         }
-        break;
-      }
-      case 1: {
-        for (nb::handle device : std::get<1>(device_list_)) {
-          if (nb::cast<int>(device.attr("process_index")) !=
-              nb::cast<int>(device.attr("client").attr("process_index")())) {
-            is_fully_addressable_ = false;
-            break;
-          }
+        case 1: {
+          process_index =
+              nb::cast<int>(std::get<1>(device_list_)[0].attr("client").attr(
+                  "process_index")());
+          break;
         }
-        break;
+        default:
+          throw nb::value_error("Unrecognized DeviceList type");
       }
-      default:
-        throw nb::value_error("Unrecognized DeviceList type");
+      is_fully_addressable_ = *process_indices_->begin() == process_index;
     }
   }
   return *is_fully_addressable_;
@@ -330,6 +330,30 @@ bool PyDeviceList::IsFullyAddressable() {
     }
   }
   return *self->addressable_device_list_;
+}
+
+const std::set<int>& PyDeviceList::ProcessIndices() {
+  if (!process_indices_.has_value()) {
+    process_indices_ = std::set<int>{};
+    switch (device_list_.index()) {
+      case 0: {
+        for (const xla::ifrt::Device* device :
+             std::get<0>(device_list_)->devices()) {
+          process_indices_->insert(device->ProcessIndex());
+        }
+        break;
+      }
+      case 1: {
+        for (nb::handle device : std::get<1>(device_list_)) {
+          process_indices_->insert(nb::cast<int>(device.attr("process_index")));
+        }
+        break;
+      }
+      default:
+        throw nb::value_error("Unrecognized DeviceList type");
+    }
+  }
+  return *process_indices_;
 }
 
 void PyDeviceList::PopulateMemoryKindInfo() {
@@ -448,6 +472,8 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
                    nb::lock_self())
       .def_prop_ro("addressable_device_list",
                    &PyDeviceList::AddressableDeviceList)
+      .def_prop_ro("process_indices", &PyDeviceList::ProcessIndices,
+                   nb::lock_self())
       // `xla::ValueOrThrowWrapper` does not work with
       // `def_prop_ro()`. Manually convert an error into an exception.
       .def_prop_ro("default_memory_kind",

@@ -1408,7 +1408,7 @@ def _call_exported_abstract_eval(
   # it would be ambiguous whether we should continue tracing with a result
   # of type `f32[c]` or `f32[d]`.
   shape_constraints.check_statically(synthetic_eval)
-  exported_dim_values = [synthetic_eval.evaluate(solution[var])
+  exported_dim_values = [synthetic_eval.evaluate(solution[var])  # type: ignore[arg-type]
                          for var in exported_dim_vars]
   out_avals = tuple(
       core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,

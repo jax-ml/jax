@@ -20,7 +20,6 @@ load(
     "//jaxlib:jax.bzl",
     "jax_source_package",
     "jax_wheel",
-    "py_deps",
     "pytype_test",
     "wheel_sources",
 )
@@ -34,6 +33,7 @@ wheel_sources(
         "//jax:experimental",
         "//jax:experimental_colocated_python",
         "//jax:experimental_sparse",
+        "//jax:experimental_buffer_callback",
         "//jax:lax_reference",
         "//jax:pallas_experimental_gpu_ops",
         "//jax:pallas_gpu_ops",
@@ -119,22 +119,10 @@ genrule(
     tools = ["@bazel_tools//tools/zip:zipper"],
 )
 
-COMMON_DEPS = py_deps([
-    "absl/testing",
-    "numpy",
-    "ml_dtypes",
-    "scipy",
-    "opt_einsum",
-    "hypothesis",
-    "cloudpickle",
-    "flatbuffers",
-])
-
 py_import(
     name = "jax_py_import",
     wheel = ":jax_wheel",
     wheel_deps = [":wheel_additives"],
-    deps = COMMON_DEPS,
 )
 
 # This target is used to add more sources to the jax wheel.
@@ -144,7 +132,6 @@ py_import(
     name = "jax_wheel_with_internal_test_util",
     wheel = "@pypi_jax//:whl",
     wheel_deps = [":wheel_additives"],
-    deps = COMMON_DEPS,
 )
 
 pytype_test(

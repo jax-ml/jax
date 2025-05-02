@@ -288,11 +288,12 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
 
     if attrs_tracked:
-      appends_out = [kind is pe.Append for *_, (_, _, kind) in attrs_tracked]
+      appends_out = [k for _, t, (_, _, k) in attrs_tracked
+                     for k in [k in (pe.Append, pe.ListAttr)] * t.num_leaves]
       jaxpr = pe.move_outvars_to_back(
           jaxpr, appends_out + [False] * (len(jaxpr.out_avals) - len(appends_out)))
       num_attr_carry = sum(init_tree.num_leaves for init_tree, _, (_, _, kind)
-                           in attrs_tracked if kind is pe.ReadWrite)
+                           in attrs_tracked if kind in (pe.ReadWrite, pe.BoxAttr))
       _, carry_avals_out, _ = split_list(
           jaxpr.out_avals, [num_attr_carry, out_tree_children[0].num_leaves])
     else:
@@ -361,7 +362,9 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   if attrs_tracked:
     num_ext = (len(out) - len(in_state)
-               - sum(k is pe.Append for *_, (_, _, k) in attrs_tracked))
+               - sum(k is pe.Append for *_, (_, _, k) in attrs_tracked)
+               - sum(t.num_leaves for _, t, (_, _, k) in attrs_tracked
+                     if k is pe.ListAttr))
     out_state, out, out_append = split_list(out, [len(in_state), num_ext])
     out_attrs = _merge_attrs_out(attrs_tracked, out_state, out_append)
     _set_states(attrs_tracked, out_attrs)
@@ -378,6 +381,13 @@ def _set_states(attrs_tracked, vals):
     elif kind is pe.Append:
       val, = leaves
       jax_extendattr(obj, attr, val.reshape(-1, *val.shape[2:]))
+    elif kind is pe.BoxAttr:
+      val = tree_unflatten(treedef, leaves)
+      obj.set(val)
+    elif kind is pe.ListAttr:
+      for leaves_ in zip(*leaves):
+        for item in tree_unflatten(treedef, leaves_):
+          obj.append(item)
     else:
       assert False
 
@@ -392,15 +402,30 @@ def _get_states(attrs_tracked):
       vals.extend(leaves)
     elif kind is pe.Append:
       pass
+    elif kind is pe.BoxAttr:
+      tree = obj.get()
+      leaves, treedef_ = tree_flatten(tree)
+      assert treedef == treedef_
+      vals.extend(leaves)
+    elif kind is pe.ListAttr:
+      pass
     else:
       assert False
   return vals
 
 def _merge_attrs_out(attrs_tracked, out_state, out_append):
+  # merge out_state & out_append back into attrs_tracked order
   out_state_, out_append_ = iter(out_state), iter(out_append)
-  out_attrs = [item for _, out_tree, (_, _, k) in attrs_tracked for item in
-               (itertools.islice(out_state_, out_tree.num_leaves)
-               if k is pe.ReadWrite else [next(out_append_)])]
+  out_attrs = []
+  for _, out_tree, (_, _, k) in attrs_tracked:
+    if k in (pe.ReadWrite, pe.BoxAttr):
+      out_attrs.extend(itertools.islice(out_state_, out_tree.num_leaves))
+    elif k is pe.Append:
+      out_attrs.append(next(out_append_))
+    elif k is pe.ListAttr:
+      out_attrs.extend(itertools.islice(out_append_, out_tree.num_leaves))
+    else:
+      assert False
   assert next(out_state_, None) is next(out_append_, None) is None
   return out_attrs
 
@@ -847,7 +872,8 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
   # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a, e])
   jaxpr_trans, attrs_tracked = _transpose_scan_jaxpr(
       jaxpr, num_ires, num_consts - num_ires, num_eres, ct_ys_is_zeros)
-  appends_out = [kind is pe.Append for *_, (_, _, kind) in attrs_tracked]
+  appends_out = [k for _, t, (_, _, k) in attrs_tracked
+                 for k in [k in (pe.Append, pe.ListAttr)] * t.num_leaves]
   jaxpr_trans = pe.move_outvars_to_back(
       jaxpr_trans, appends_out + [False] * (len(jaxpr_trans.out_avals) - len(appends_out)))
   num_attr_carry = sum(init_tree.num_leaves for init_tree, _, (_, _, kind)

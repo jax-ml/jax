@@ -75,7 +75,7 @@ def create_instr_descriptor(
 
 def mma(
     d: TMEMRef,
-    a: ir.Value,
+    a: ir.Value | TMEMRef,
     b: ir.Value,
     *,
     a_swizzle: int = 128,
@@ -95,12 +95,22 @@ def mma(
   num_cta = 2 if collective else 1
 
   # Step 1. Establish the shape and element type of the operation.
-  if not ir.MemRefType.isinstance(a.type):
-    raise ValueError(f"A must be a memref, got {a.type}")
   if not ir.MemRefType.isinstance(b.type):
     raise ValueError(f"B must be a memref, got: {b.type}")
   (k, n), element_type = mma_utils.tiled_memref_shape(b)
-  (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)
+  if isinstance(a, TMEMRef):
+    m, k2 = a.shape
+    element_type2 = a.dtype
+    if collective:
+      raise NotImplementedError("Collective not supported for TMEMRef")
+    if a.layout != (expected_layout := _infer_tmem_layout(a.shape, collective, packing=2)):
+      raise ValueError(
+          f"A layout mismatch: expected {expected_layout}, got {a.layout}"
+      )
+  else:
+    if not ir.MemRefType.isinstance(a.type):
+      raise ValueError(f"A must be a memref, got {a.type}")
+    (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)
   if k != k2:
     raise ValueError(
         "MMA requires A and B to have the same contraction dimension (K),"
@@ -132,6 +142,8 @@ def mma(
           "MMA with element type f16 only supports accumulators of type f32"
           f" or f16, but got: {d.dtype}"
       )
+  else:
+    raise NotImplementedError(f"Unsupported element type: {element_type}")
 
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.
@@ -153,22 +165,27 @@ def mma(
   m_groups = m // m_group_elems
   k_groups = k // k_group_elems
   n_groups = n // n_group_elems
-  # TODO(apaszke): Require users to bitcast input refs to tf32 before WGMMA.
-  wgmma_element_type = (
+  # TODO(apaszke): Require users to bitcast input refs to tf32 before MMA.
+  mma_element_type = (
       ir.FloatTF32Type.get() if element_type == ir.F32Type.get() else element_type
   )
 
   # Step 3. Compute the operand descriptors.
-  (
-      (a_desc_base, a_k_instr_stride),
-      (a_m_group_stride, a_k_group_stride),
-      a_fastest,
-  ) = mma_utils.create_descriptor(
-      a,
-      swizzle=swizzle,
-      group_size=(m_group_elems, k_group_elems),
-      logical_k_major=False,
-  )
+  if not isinstance(a, TMEMRef):
+    (
+        (a_desc_base, a_k_instr_stride),
+        (a_m_group_stride, a_k_group_stride),
+        a_fastest,
+    ) = mma_utils.create_descriptor(
+        a,
+        swizzle=swizzle,
+        group_size=(m_group_elems, k_group_elems),
+        logical_k_major=False,
+    )
+  else:
+    a_fastest = mma_utils.Dim.K
+    a_k_instr_stride = None
+    a_m_group_stride = a_k_group_stride = a_desc_base = None
   (
       (b_desc_base, b_k_instr_stride),
       (b_n_group_stride, b_k_group_stride),
@@ -184,8 +201,11 @@ def mma(
   true = arith.constant(ir.IntegerType.get_signless(1), 1)
   n_collective_group_elems = n_group_elems * num_cta
   for mi, ni, ki in np.ndindex(m_groups, n_groups, k_groups):
-    a_offset = mi * a_m_group_stride + ki * a_k_group_stride
-    a_mk = arith.addi(a_desc_base, utils.c(mma_utils.encode_addr(a_offset), i64))
+    if isinstance(a, TMEMRef):
+      a_mk = a.slice(slice(None), utils.ds(ki * k_group_elems, k_group_elems)).address
+    else:
+      a_offset = mi * a_m_group_stride + ki * a_k_group_stride
+      a_mk = arith.addi(a_desc_base, utils.c(mma_utils.encode_addr(a_offset), i64))
     b_offset = ni * b_n_group_stride + ki * b_k_group_stride
     b_nk = arith.addi(b_desc_base, utils.c(mma_utils.encode_addr(b_offset), i64))
     if m_groups != 1:
@@ -207,17 +227,17 @@ def mma(
         b_k_stride=b_k_instr_stride,
         accumulate=acc,
         swizzle=swizzle,
-        element_type=wgmma_element_type,
+        element_type=mma_element_type,
     )
 
 
 def _do_mma(
     d_addr: ir.Value,
-    a_desc: ir.Value,
+    a_desc_or_addr: ir.Value,  # TMEM address if a_k_stride is None
     b_desc: ir.Value,
     a_transpose: bool,
     b_transpose: bool,
-    a_k_stride: int,
+    a_k_stride: int | None,
     b_k_stride: int,
     m: int,
     n: int,
@@ -228,10 +248,13 @@ def _do_mma(
     collective: bool,
 ):
   i1 = ir.IntegerType.get_signless(1)
+  i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
-  kn_tiling = swizzle // utils.bytewidth(element_type)
-  instr_k = 32 // utils.bytewidth(element_type)
-  if a_k_stride % 16 or b_k_stride % 16:
+  elem_bytewidth = utils.bytewidth(element_type)
+  kn_tiling = swizzle // elem_bytewidth
+  instr_k = 32 // elem_bytewidth
+  packing = 4 // elem_bytewidth
+  if (a_k_stride is not None and a_k_stride % 16) or b_k_stride % 16:
     raise ValueError
 
   if ir.F16Type.isinstance(element_type) or ir.BF16Type.isinstance(element_type):
@@ -243,16 +266,27 @@ def _do_mma(
   i_desc = create_instr_descriptor(
       m * num_cta, n * num_cta, d_type, element_type, a_transpose, b_transpose
   )
+  a_in_tmem = a_k_stride is None
+  a_ptx = "[$1]" if a_in_tmem else "$1"
+  a_ptx_constraint = "r" if a_in_tmem else "l"
+  assert a_desc_or_addr.type == ir.IntegerType.get_signless(32 if a_in_tmem else 64)
   for _ in range(kn_tiling // instr_k):
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
-        [d_addr, a_desc, b_desc, i_desc, accumulate],
-        f"tcgen05.mma.cta_group::{num_cta}.kind::{kind} [$0], $1, $2, $3, $4;",
-        "r,l,l,r,b",
+        [d_addr, a_desc_or_addr, b_desc, i_desc, accumulate],
+        f"tcgen05.mma.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, $2, $3, $4;",
+        f"r,{a_ptx_constraint},l,r,b",
         has_side_effects=True,
     )
     accumulate = arith.constant(i1, 1)
-    a_desc = arith.addi(a_desc, arith.constant(i64, a_k_stride >> 4))
+    if not a_in_tmem:
+      a_desc_or_addr = arith.addi(
+          a_desc_or_addr, arith.constant(i64, a_k_stride >> 4)
+      )
+    else:
+      a_desc_or_addr = arith.addi(
+          a_desc_or_addr, arith.constant(i32, instr_k // packing)
+      )
     b_desc = arith.addi(b_desc, arith.constant(i64, b_k_stride >> 4))
 
 
@@ -543,14 +577,18 @@ class TMEMRef:
     return cls(tmem_addr, shape, dtype, layout)
 
   def slice(self, *idxs):
+    i32 = ir.IntegerType.get_signless(32)
     base_idx, slice_shape, is_squeezed = utils.parse_indices(idxs, self.shape)
     if any(is_squeezed):
       raise ValueError("TMEM can only be sliced, not indexed")
-    if self.layout != TMEMLayout(elements_in_tile=(TMEM_ROWS, 8)):
-      raise NotImplementedError(
-          "Slicing only implemented for refs with standard layout, got:"
-          f" {self.layout}"
-      )
+    match self.layout:
+      case TMEMLayout(elements_in_tile=(r, 8), packing=packing) if r == TMEM_ROWS:
+        pass
+      case _:
+        raise NotImplementedError(
+            "Slicing only implemented for refs with standard layout, got:"
+            f" {self.layout}"
+        )
     if base_idx[0] != 0 or slice_shape[0] != TMEM_ROWS:
       raise NotImplementedError("TMEM cannot be sliced along rows")
     if slice_shape[1] % 8:
@@ -559,7 +597,9 @@ class TMEMRef:
       )
     col_idx = base_idx[1]
     if not isinstance(col_idx, ir.Value):
-      col_idx = arith.constant(ir.IntegerType.get_signless(32), col_idx)
+      col_idx = arith.constant(i32, col_idx)
+    if packing != 1:
+      col_idx = arith.divui(col_idx, arith.constant(i32, packing))
     return TMEMRef(
         address=arith.addi(self.address, col_idx),
         shape=tuple(slice_shape),
@@ -656,6 +696,30 @@ class TMEMRef:
         raise NotImplementedError(
             f"Stores only implemented for refs with standard layout, got: {self.layout}"
         )
+
+  def _debug_print(self):
+    i32 = ir.IntegerType.get_signless(32)
+    num_cols = self.layout.cols_in_shape(self.shape)
+    lane = arith.remui(utils.thread_idx(), arith.constant(i32, utils.WARPGROUP_SIZE))
+    for c in range(num_cols):
+      val = llvm.inline_asm(
+          i32,
+          [arith.addi(self.address, arith.constant(i32, c))],
+          "tcgen05.ld.sync.aligned.32x32b.x1.b32 {$0}, [$1];",
+          "=r,r",
+      )
+      dtype_bitwidth = utils.bitwidth(self.dtype)
+      full_packing = 32 // dtype_bitwidth
+      if self.layout.packing == 1:
+        if dtype_bitwidth < 32:
+          val = arith.trunci(ir.IntegerType.get_signless(dtype_bitwidth), val)
+        val = utils.bitcast(val, self.dtype)
+      elif self.layout.packing == full_packing:
+        val = utils.bitcast(val, ir.VectorType.get((full_packing,), self.dtype))
+      else:
+        raise NotImplementedError(f"Unsupported packing: {self.layout.packing}")
+      # TODO(apaszke): Make this print logical, not physical location.
+      utils.debug_print(f"[{{}}, {c}]: {{}}", lane, val, uniform=False)
 
 
 def _transfer_32xcols(base_addr: ir.Value, cols: int, packing: int):

@@ -49,7 +49,8 @@ class MonitoringTest(absltest.TestCase):
 
   def test_record_event_durations(self):
     durations = {}  # Map event names to frequency.
-    def increment_event_duration(event, duration):
+    def increment_event_duration(event, duration, **kwargs):
+      del kwargs
       if event not in durations:
         durations[event] = 0.
       durations[event] += duration
@@ -88,7 +89,7 @@ class MonitoringTest(absltest.TestCase):
 
   def test_unregister_exist_callback_success(self):
     original_duration_listeners = jax_src_monitoring.get_event_duration_listeners()
-    callback = lambda event, durations: None
+    callback = lambda event, durations, **kwargs: None
     self.assertNotIn(callback, original_duration_listeners)
     monitoring.register_event_duration_secs_listener(callback)
     self.assertIn(callback, jax_src_monitoring.get_event_duration_listeners())
@@ -102,7 +103,7 @@ class MonitoringTest(absltest.TestCase):
                      jax_src_monitoring.get_event_duration_listeners())
 
   def test_unregister_not_exist_callback_fail(self):
-    callback = lambda event, durations: None
+    callback = lambda event, durations, **kwargs: None
     self.assertNotIn(callback,
                      jax_src_monitoring.get_event_duration_listeners())
 
@@ -112,7 +113,7 @@ class MonitoringTest(absltest.TestCase):
 
   def test_unregister_callback_index_in_range_success(self):
     original_duration_listeners = jax_src_monitoring.get_event_duration_listeners()
-    callback = lambda event, durations: None
+    callback = lambda event, durations, **kwargs: None
     self.assertNotIn(callback, original_duration_listeners)
     monitoring.register_event_duration_secs_listener(callback)
     self.assertIn(callback, jax_src_monitoring.get_event_duration_listeners())
@@ -138,7 +139,7 @@ class MonitoringTest(absltest.TestCase):
 
   def test_get_event_duration_listeners_returns_a_copy(self):
     original_duration_listeners = jax_src_monitoring.get_event_duration_listeners()
-    callback = lambda event, durations: None
+    callback = lambda event, durations, **kwargs: None
 
     original_duration_listeners.append(callback)
 

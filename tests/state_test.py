@@ -361,7 +361,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
       return []
     jaxpr, _ , _, () = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [shaped_array_ref((), jnp.int32)])
-    self.assertIn("a[] <- 2:i32", jaxpr.pretty_print(use_color=False))
+    self.assertIn("a[] <- 2:i32[]", jaxpr.pretty_print(use_color=False))
 
     def body(x_ref, val):
       x_ref[:, 0] = val
@@ -377,7 +377,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
       return [x]
     jaxpr, _ , _, () = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [shaped_array_ref((), jnp.int32)])
-    self.assertIn("b:i32[], a[] <- a[], 2:i32", jaxpr.pretty_print(use_color=False))
+    self.assertIn("b:i32[], a[] <- a[], 2:i32[]", jaxpr.pretty_print(use_color=False))
 
     def body(x_ref, val):
       x = ref_swap(x_ref, (slice(None), 0), val)

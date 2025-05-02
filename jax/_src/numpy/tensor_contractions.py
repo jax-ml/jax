@@ -36,10 +36,12 @@ from jax._src.util import canonicalize_axis, set_module
 export = set_module('jax.numpy')
 
 @export
-@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
+@partial(jit, static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
+         inline=True)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: PrecisionLike = None,
-        preferred_element_type: DTypeLike | None = None) -> Array:
+        preferred_element_type: DTypeLike | None = None,
+        out_sharding=None) -> Array:
   """Compute the dot product of two arrays.
 
   JAX implementation of :func:`numpy.dot`.
@@ -119,7 +121,8 @@ def dot(a: ArrayLike, b: ArrayLike, *,
       contract_dims = ((a_ndim - 1,), (b_ndim - 2,))
   result = lax.dot_general(a, b, dimension_numbers=(contract_dims, batch_dims),
                            precision=precision,
-                           preferred_element_type=preferred_element_type)
+                           preferred_element_type=preferred_element_type,
+                           out_sharding=out_sharding)
   return lax_internal._convert_element_type(result, preferred_element_type,
                                             output_weak_type)
 

@@ -82,6 +82,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
         "//jaxlib/mlir:chlo_dialect",
+        "//jaxlib/mlir:control_flow_dialect",
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:gpu_dialect",
         "//jaxlib/mlir:ir",
@@ -932,6 +933,7 @@ cc_library(
         "@nanobind",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla:shape_util",
+        "@xla//xla:util",
         "@xla//xla:xla_data_proto_cc",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/ffi/api:ffi",

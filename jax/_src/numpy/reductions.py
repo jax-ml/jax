@@ -988,7 +988,7 @@ def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
 
     if axis is None:
       pass
-    elif isinstance(axis, tuple):
+    elif isinstance(axis, Sequence):
       axis = tuple(_canonicalize_axis(d, a_ndim) for d in axis)
     else:
       axis = _canonicalize_axis(axis, a_ndim)

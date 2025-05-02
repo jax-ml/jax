@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -589,15 +590,6 @@ LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
         op.getType(), op.getIn(), tpu::RoundingMode::kTowardsZero);
     op.replaceAllUsesWith(new_op.getResult());
     op.erase();
-    // We briefly trigger canonicalization here to potentially fuse the rounding
-    // ops into the newly created tpu.fptosi.
-    {
-      PatternRewriter rewriter(new_op.getContext());
-      rewriter.setInsertionPoint(new_op);
-      // We don't care if the canonicalization pattern matched or not.
-      (void)tpu::FPToSIOp::canonicalize(new_op, rewriter);
-      new_op = nullptr;  // Canonicalization may have erased the op!
-    }
     return success();
   }
   Value x = op.getIn();

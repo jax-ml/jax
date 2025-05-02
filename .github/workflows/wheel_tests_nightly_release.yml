@@ -83,21 +83,20 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          # Skip Python 3.13 as it fails due to missing TensorFlow wheels (used for
-          # profiler_test.py, build/collect-profile-requirements.txt) for that version (b/402590302)
-          python: ["3.10", "3.11", "3.12"]
+          python: ["3.10", "3.11", "3.12", "3.13", "3.13-nogil"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
             {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"}
           ]
-          libtpu-version-type: ["pypi_latest", "nightly", "oldest_supported_libtpu"]
+          libtpu-version-type: ["pypi_latest", "nightly"]
           exclude:
+            # Exclude nightly for releases
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
-            - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'oldest_supported_libtpu' }}
+            # Exclude pypi_latest for nightly releases
             - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
-            # Run a single Python version for v4-8 and v6e-8
+            # Run a single Python version for v4-8
             - tpu-specs:
                 type: "v4-8"
               python: "3.10"
@@ -105,15 +104,29 @@ jobs:
                 type: "v4-8"
               python: "3.11"
             - tpu-specs:
+                type: "v4-8"
+              python: "3.12"
+            - tpu-specs:
+                type: "v4-8"
+              python: "3.13-nogil"
+            # Run Python versions in between min and max for v6e-8
+            - tpu-specs:
                 type: "v6e-8"
               python: "3.10"
             - tpu-specs:
                 type: "v6e-8"
-              python: "3.11"
+              python: "3.13"
+            - tpu-specs:
+                type: "v6e-8"
+              python: "3.13-nogil"
             # Run min and max Python versions for v5e-8
             - tpu-specs:
                 type: "v5e-8"
               python: "3.11"
+            - tpu-specs:
+                type: "v5e-8"
+              python: "3.12"
+
     name: "Pytest TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}

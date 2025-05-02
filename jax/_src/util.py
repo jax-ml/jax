@@ -21,7 +21,7 @@ from functools import partial
 import itertools as it
 import logging
 import operator
-from typing import (Any, Generic, TypeVar, overload, TYPE_CHECKING, cast)
+from typing import (Any, Generic, SupportsIndex, TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np
@@ -33,6 +33,9 @@ from jax._src.lib import utils as jaxlib_utils
 logger = logging.getLogger(__name__)
 
 Seq = Sequence
+
+# TODO(jakevdp): fix import cycles and import Array.
+Array = Any
 
 T = TypeVar("T")
 T1 = TypeVar("T1")
@@ -137,13 +140,15 @@ def unzip3(xyzs: Iterable[tuple[T1, T2, T3]]
     zs.append(z)
   return tuple(xs), tuple(ys), tuple(zs)
 
-def subvals(lst, replace):
+def subvals(lst: Sequence[T], replace: Iterable[tuple[int, T]]) -> tuple[T, ...]:
+  """Substitute values within a list."""
   lst = list(lst)
   for i, v in replace:
     lst[i] = v
   return tuple(lst)
 
 def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
+  """Split list into sublists of the specified sizes."""
   args = list(args)
   lists = []
   for n in ns:
@@ -153,8 +158,9 @@ def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   return lists
 
 def split_list_checked(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
+  """Split list into sublists of the specified sizes."""
   args = list(args)
-  assert sum(ns) == len(args)
+  assert sum(ns) == len(args) and all(n >= 0 for n in ns)
   lists = []
   for n in ns:
     lists.append(args[:n])
@@ -162,8 +168,9 @@ def split_list_checked(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   return lists
 
 def partition_list(bs: Sequence[bool], l: Sequence[T]) -> tuple[list[T], list[T]]:
+  """Partition a list into two based on a mask."""
   assert len(bs) == len(l)
-  lists = [], []  # type: ignore
+  lists: tuple[list[T], list[T]] = ([], [])
   for b, x in zip(bs, l):
     lists[b].append(x)
   return lists
@@ -172,6 +179,7 @@ def merge_lists(bs: Sequence[bool],
                 l0: Sequence[T1],
                 l1: Sequence[T2]
                 ) -> list[T1 | T2]:
+  """Merge the elements of two lists based on a mask."""
   assert sum(bs) == len(l1) and len(bs) - sum(bs) == len(l0)
   i0, i1 = iter(l0), iter(l1)
   out: list[T1 | T2] = [next(i1) if b else next(i0) for b in bs]
@@ -200,7 +208,7 @@ def subs_list2(
   assert next(base_, sentinel) is sentinel
   return out
 
-def split_dict(dct, names):
+def split_dict(dct: dict[T1, T2], names: Sequence[T1]) -> list[T2]:
   dct = dict(dct)
   lst = [dct.pop(name) for name in names]
   assert not dct
@@ -244,7 +252,10 @@ toposort: Callable[[Iterable[Any]], list[Any]]
 toposort = partial(jaxlib_utils.topological_sort, "parents")
 
 
-def split_merge(predicate, xs):
+def split_merge(
+    predicate: Callable[[T], bool],
+    xs: Sequence[T]
+) -> tuple[list[T], list[T], Callable[[Sequence[T], Sequence[T]], list[T]]]:
   sides = list(map(predicate, xs))
   lhs = [x for x, s in zip(xs, sides) if s]
   rhs = [x for x, s in zip(xs, sides) if not s]
@@ -349,10 +360,10 @@ class WrapKwArgs:
   def __eq__(self, other):
     return self.val == other.val
 
-def wrap_name(name, transform_name):
+def wrap_name(name: str, transform_name: str) -> str:
   return transform_name + '(' + name + ')'
 
-def fun_name(fun: Callable):
+def fun_name(fun: Callable) -> str:
   name = getattr(fun, "__name__", None)
   if name is not None:
     return name
@@ -361,7 +372,7 @@ def fun_name(fun: Callable):
   else:
     return "<unnamed function>"
 
-def fun_qual_name(fun: Callable):
+def fun_qual_name(fun: Callable) -> str:
   qual_name = getattr(fun, "__qualname__", None)
   if qual_name is not None:
     return qual_name
@@ -369,7 +380,7 @@ def fun_qual_name(fun: Callable):
     return fun_qual_name(fun.func)
   return fun_name(fun)
 
-def canonicalize_axis(axis, num_dims) -> int:
+def canonicalize_axis(axis: SupportsIndex, num_dims: int) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
   if not -num_dims <= axis < num_dims:
@@ -378,7 +389,7 @@ def canonicalize_axis(axis, num_dims) -> int:
     axis = axis + num_dims
   return axis
 
-def moveaxis(x, src, dst):
+def moveaxis(x: Array, src: int | Sequence[int], dst: int | Sequence[int]) -> Array:
   if src == dst:
     return x
   if isinstance(src, int):
@@ -392,7 +403,7 @@ def moveaxis(x, src, dst):
     perm.insert(d, s)
   return x.transpose(perm)
 
-def ceil_of_ratio(x, y):
+def ceil_of_ratio(x: int, y: int) -> int:
   return -(-x // y)
 
 
@@ -429,15 +440,15 @@ def wraps(
 def assert_unreachable(x):
   raise AssertionError(f"Unhandled case: {type(x).__name__}")
 
-def tuple_insert(t, idx, val):
+def tuple_insert(t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
   assert 0 <= idx <= len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx:]
 
-def tuple_delete(t, idx):
+def tuple_delete(t: tuple[T, ...], idx: int) -> tuple[T, ...]:
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
 
-def tuple_update(t, idx, val):
+def tuple_update(t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx+1:]
 
@@ -578,7 +589,7 @@ class HashableWrapper:
     return self.x == other.x if self.hash is not None else self.x is other.x
 
 
-def _original_func(f):
+def _original_func(f: Callable) -> Callable:
   if isinstance(f, property):
     return cast(property, f).fget
   elif isinstance(f, functools.cached_property):

@@ -152,17 +152,6 @@ absl::StatusOr<uintptr_t> PyFfiContext::stream() const {
   return absl::bit_cast<uintptr_t>(args.stream);
 }
 
-absl::StatusOr<int32_t> PyFfiContext::device_ordinal() const {
-  XLA_FFI_DeviceOrdinal_Get_Args args;
-  args.struct_size = XLA_FFI_DeviceOrdinal_Get_Args_STRUCT_SIZE;
-  args.extension_start = nullptr;
-  args.device_ordinal = 0;
-  if (XLA_FFI_Error* error = api_->XLA_FFI_DeviceOrdinal_Get(&args)) {
-    return ffi::TakeStatus(error);
-  }
-  return args.device_ordinal;
-}
-
 PyFfiAnyBuffer::PyFfiAnyBuffer(DLDeviceType device_type, int32_t device_ordinal,
                                void* data, ffi::Span<int64_t const> dimensions,
                                ffi::DataType element_type, bool writeable)
@@ -377,8 +366,6 @@ void BuildFfiSubmodule(nb::module_& m) {
 
   nb::class_<PyFfiContext> context(ffi_module, "ExecutionContext");
   context.def_prop_ro("stage", &PyFfiContext::stage);
-  context.def_prop_ro("device_ordinal",
-                      xla::ValueOrThrowWrapper(&PyFfiContext::device_ordinal));
   context.def_prop_ro("stream",
                       xla::ValueOrThrowWrapper(&PyFfiContext::stream));
 }

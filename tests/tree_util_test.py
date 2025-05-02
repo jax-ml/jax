@@ -553,6 +553,18 @@ class TreeTest(jtu.JaxTestCase):
     self.assertTrue(tree_util.all_leaves([leaf]))
 
   @parameterized.parameters(*TREES)
+  def testAllLeavesWithTreesAndCustomIsLeaf(self, tree):
+    def is_leaf(t):
+      return tree_util.all_leaves([t])
+    self.assertFalse(tree_util.all_leaves([tree], is_leaf=is_leaf))
+
+  @parameterized.parameters(*LEAVES)
+  def testAllLeavesWithLeavesAndCustomIsLeaf(self, leaf):
+    def is_leaf(t):
+      return tree_util.all_leaves([t])
+    self.assertTrue(tree_util.all_leaves([leaf], is_leaf=is_leaf))
+
+  @parameterized.parameters(*TREES)
   def testCompose(self, tree):
     treedef = tree_util.tree_structure(tree)
     inner_treedef = tree_util.tree_structure(["*", "*", "*"])

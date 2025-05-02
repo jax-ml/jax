@@ -741,7 +741,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_residual(self):
-    k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
+    k1, k2, k3, k4, k5 = jax.random.split(jax.random.key(0), 5)
     query = jax.random.normal(
         k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
     key = jax.random.normal(
@@ -750,14 +750,43 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         k3, (4, 1024, 4, 64), dtype=jnp.bfloat16)
     grad = jax.random.normal(
         k4, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    grad_stat = jax.random.normal(
+        k5, (4, 4, 1024), dtype=jnp.float32)
 
-    jitted_sdpa_inference = jax.jit(
-      partial(
-        dot_product_attention, scale=1.0, mask_type=MaskType.NO_MASK,
-        dropout_rate=0, return_residual=True),
-    )
-    outs = jitted_sdpa_inference(query, key, value)
-    assert len(outs) == 2
+    devices = np.array(jax.local_devices()[:2])
+    with Mesh(devices, ("dp")) as mesh:
+      qkv_spec = PartitionSpec("dp", None, None, None)
+      stat_spec = PartitionSpec("dp", None, None)
+      qkv_sharding = NamedSharding(mesh, qkv_spec)
+      stat_sharding = NamedSharding(mesh, stat_spec)
+
+      query = jax.device_put(query, qkv_sharding)
+      key = jax.device_put(key, qkv_sharding)
+      value = jax.device_put(value, qkv_sharding)
+      grad = jax.device_put(grad, qkv_sharding)
+      grad_stat = jax.device_put(grad_stat, stat_sharding)
+
+      jitted_sdpa_inference = jax.jit(
+        partial(
+          dot_product_attention, scale=1.0, mask_type=MaskType.NO_MASK,
+          dropout_rate=0, return_residual=True),
+        in_shardings=(qkv_sharding, qkv_sharding, qkv_sharding),
+        out_shardings=(qkv_sharding, stat_sharding)
+      )
+
+      outs = jitted_sdpa_inference(query, key, value)
+      assert len(outs) == 2
+
+      def train(query, key, value, grads):
+        outs, grad_fn = jax.vjp(partial(
+          dot_product_attention, scale=1.0, mask_type=MaskType.NO_MASK,
+          dropout_rate=0, return_residual=True), query, key, value)
+        return outs, grad_fn(grads)
+      jitted_sdpa_train = jax.jit(train,
+        in_shardings=(qkv_sharding, qkv_sharding, qkv_sharding, (qkv_sharding, stat_sharding)),
+        out_shardings=((qkv_sharding, stat_sharding), (qkv_sharding, qkv_sharding, qkv_sharding)))
+      outs = jitted_sdpa_train(query, key, value, (grad, grad_stat))
+      assert len(outs) == 2
 
   @jtu.run_on_devices("cuda")
   def test_layouts(self):

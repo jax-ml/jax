@@ -1,5 +1,4 @@
 absl-py
-build
 cloudpickle
 colorama>=0.4.4
 filelock
@@ -10,12 +9,8 @@ pillow>=10.4.0; python_version<="3.13"
 # TODO(kanglan): Remove once psutil from portpicker supports python 3.13t
 portpicker; python_version<"3.13"
 pytest-xdist
-wheel
 rich
-setuptools
 # matplotlib 3.9.0 pins NumPy 1.23, which is incompatible with the requirement
 # below.
-matplotlib~=3.8.4; python_version=="3.10"
-matplotlib; python_version>="3.11" and python_version<="3.13"
-opt-einsum
+matplotlib; python_version<="3.13"
 auditwheel
