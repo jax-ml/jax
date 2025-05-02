@@ -28,6 +28,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import xla_client
 
 export = util.set_module("jax.experimental.buffer_callback")
 
@@ -46,6 +47,9 @@ def buffer_callback(
     has_side_effect: bool = False,
     vmap_method: str | None = None,
     input_output_aliases: dict[int, int] | None = None,
+    traits: xla_client.CustomCallTargetTraits = (
+        xla_client.CustomCallTargetTraits.DEFAULT
+    ),
 ):
   """An experimental callback that operates in place on device buffers.
 
@@ -167,6 +171,7 @@ def buffer_callback(
         vmap_method=vmap_method,
         has_side_effect=has_side_effect,
         input_output_aliases=static_input_output_aliases,
+        traits=traits,
     )
     return tree_util.tree_unflatten(out_tree, out_flat)
 
@@ -219,6 +224,15 @@ batching.primitive_batchers[buffer_callback_p] = functools.partial(
     ffi.ffi_batching_rule, buffer_callback_p
 )
 
+_PLATFORM_TRAITS_TO_TARGET_NAME = {
+  "cpu": "xla_buffer_python_cpu_callback",
+  "cuda": {
+    xla_client.CustomCallTargetTraits.DEFAULT: "xla_buffer_python_gpu_callback",
+    xla_client.CustomCallTargetTraits.COMMAND_BUFFER_COMPATIBLE:
+        "xla_buffer_python_gpu_command_buffer_callback",
+  },
+  "rocm": "xla_buffer_python_gpu_callback",
+}
 
 def _buffer_callback_lowering(
     ctx: mlir.LoweringRuleContext,
@@ -228,19 +242,21 @@ def _buffer_callback_lowering(
     out_tree: Any,
     has_side_effect: bool,
     input_output_aliases: Sequence[tuple[int, int]],
+    traits: xla_client.CustomCallTargetTraits,
     **_,
 ):
-
   if len(ctx.module_context.platforms) > 1:
     raise NotImplementedError("multi-platform lowering for buffer_callback")
   platform = ctx.module_context.platforms[0]
-  target_name = {
-      "cpu": "xla_buffer_python_cpu_callback",
-      "cuda": "xla_buffer_python_gpu_callback",
-      "rocm": "xla_buffer_python_gpu_callback",
-  }.get(platform)
+  target_name = _PLATFORM_TRAITS_TO_TARGET_NAME.get(platform)
   if target_name is None:
     raise ValueError(f"`buffer_callback` not supported on {platform} backend.")
+  if isinstance(target_name, dict):
+    target_name = target_name.get(traits)
+    if target_name is None:
+      raise ValueError(
+          f"`buffer_callback` not supported on {platform} backend " +
+          f"with traits {traits}.")
 
   def wrapped_callback(exec_ctx, *args: Any):
     args_in, args_out = util.split_list(args, [in_tree.num_leaves])

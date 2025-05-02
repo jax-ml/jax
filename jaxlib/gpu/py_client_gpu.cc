@@ -279,10 +279,34 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .RemainingArgs()
         .RemainingRets());
 
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    kXlaBufferPythonGpuCommandBufferCallback,
+#ifdef JAX_GPU_CUDA
+    (jax::XlaBufferCallback<kDLCUDA>),
+#else
+    (jax::XlaBufferCallback<kDLROCM>),
+#endif
+    xla::ffi::Ffi::Bind()
+        .Ctx<xla::ffi::DeviceOrdinal>()
+        .Ctx<xla::ffi::FfiApi>()
+        .Ctx<xla::ffi::FfiExecutionContext>()
+        .Ctx<xla::ffi::UserData<xla::FfiLoadedHostCallbacks>>()
+        .Attr<uint64_t>("index")
+        .RemainingArgs()
+        .RemainingRets(),
+        {xla::ffi::Traits::kCmdBufferCompatible});
+
 XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
                          "xla_buffer_python_gpu_callback",
                          absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
                          kXlaBufferPythonGpuCallback);
+
+XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
+                         "xla_buffer_python_gpu_command_buffer_callback",
+                         absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
+                         kXlaBufferPythonGpuCommandBufferCallback,
+                         XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
+
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

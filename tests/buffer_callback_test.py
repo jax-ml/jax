@@ -18,6 +18,7 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
+import jaxlib
 from jax._src import test_util as jtu
 from jax._src.lib import jaxlib_extension_version
 from jax.experimental import buffer_callback
@@ -124,6 +125,45 @@ class BufferCallbackTest(jtu.JaxTestCase):
         callback, jax.ShapeDtypeStruct(data.shape, data.dtype)
     )
     jax.block_until_ready(fun(data))
+
+  @parameterized.parameters(jtu.dtypes.all)
+  @jtu.run_on_devices("cuda")
+  def test_cuda_command_buffer(self, dtype):
+    counter = 0
+    def callback(ctx, out, arg):
+      nonlocal counter
+      counter += 1
+
+      ctx.stream  # doesn't crash
+
+      self.assertEqual(ctx.stage, buffer_callback.ExecutionStage.EXECUTE)
+      self.assertEqual(arg.shape, shape)
+      self.assertEqual(arg.dtype, dtype)
+      self.assertEqual(out.shape, shape)
+      self.assertEqual(out.dtype, dtype)
+
+      obj = arg.__cuda_array_interface__
+      self.assertEqual(obj["shape"], data.shape)
+      self.assertEqual(obj["typestr"], data.dtype.str)
+
+      obj = out.__cuda_array_interface__
+      self.assertEqual(obj["shape"], data.shape)
+      self.assertEqual(obj["typestr"], data.dtype.str)
+
+    rng = jtu.rand_default(self.rng())
+    shape = (3, 4)
+    data = rng(shape, dtype)
+    fun = buffer_callback.buffer_callback(
+        callback, jax.ShapeDtypeStruct(data.shape, data.dtype), traits=jaxlib.xla_client.CustomCallTargetTraits.COMMAND_BUFFER_COMPATIBLE
+    )
+    compiler_options = {
+          'xla_gpu_graph_min_graph_size': '1',
+    }
+    jitted = jax.jit(fun, compiler_options=compiler_options)
+    for _ in range(10):
+      jitted(data)
+
+    self.assertEqual(counter, 1)
 
   @parameterized.parameters([
       "sequential", "sequential_unrolled", "expand_dims", "broadcast_all"
