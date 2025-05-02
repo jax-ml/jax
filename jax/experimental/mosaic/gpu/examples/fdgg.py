@@ -486,7 +486,7 @@ def main(unused_argv):
     d = f(activations, weights, group_sizes)
     exit()
 
-  d, runtime = profiler.measure(f, mode="events")(activations, weights, group_sizes)
+  d, runtime = profiler.measure(f, mode="cupti")(activations, weights, group_sizes)
   print(f"{runtime=}")
   tflops = (2 * m * expert_n * k / 1e12) / (runtime / 1e3)
   print(f"{tflops=}")
