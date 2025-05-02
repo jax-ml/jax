@@ -803,7 +803,7 @@ def lower_jaxpr_to_module(
     # Each range is 2 events, each event is 4 bytes.
     prof_spec = mgpu_profiler.ProfilerSpec(params.profile_space * 2 * 4)
     prof_ctx = ProfilerContext(params.profile_dir, prof_spec)
-  module, new_out_shapes, _, launch_ctx, scratch_arr = (
+  module, new_out_shapes, _, launch_ctx = (
       mgpu_core._lower_as_gpu_kernel(
           body,
           grid=tuple(map(operator.mul, parallel_grid, cluster)),
@@ -825,7 +825,7 @@ def lower_jaxpr_to_module(
     mgpu.infer_transforms(module)  # pytype: disable=attribute-error
     mgpu.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
 
-  mgpu_core._initialize_scratch(launch_ctx, scratch_arr)
+  launch_ctx.scratch.finalize_size()
 
   if gmem_scratch_shapes:
     new_out_shapes = new_out_shapes[:-len(gmem_scratch_shapes)]

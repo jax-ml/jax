@@ -387,7 +387,6 @@ def _launch(
     grid: tuple[int, int, int],
     cluster: tuple[int, int, int],
     block: tuple[int, int, int],
-    scratch_arr,
     smem_buffers: ShapeTree | Union[ShapeTree],
     lowering_semantics: LoweringSemantics,
     profiler_spec: profiler.ProfilerSpec | None = None,
@@ -456,9 +455,9 @@ def _launch(
     else:
       prof = None
 
-    ptr_ty = ir.Type.parse("!llvm.ptr")
-    scratch_ptr = builtin.unrealized_conversion_cast([ptr_ty], [scratch_arr])
-    ctx = launch_context.LaunchContext(launch_op, scratch_ptr, cluster, prof)
+    ctx = launch_context.LaunchContext(
+        launch_context.Scratch(launch_op), cluster, prof
+    )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc] = []
       smem_ref_tree_thunk = _construct_smem_reftree(
@@ -510,7 +509,6 @@ def _lower_as_gpu_kernel(
   ptr_ty = ir.Type.parse("!llvm.ptr")
   token_ty = ir.Type.parse("!gpu.async.token")
   i32 = ir.IntegerType.get_signless(32)
-  i64 = ir.IntegerType.get_signless(64)
 
   def _shape_to_ref_ty(shape: jax.ShapeDtypeStruct) -> ir.MemRefType:
     return ir.MemRefType.get(shape.shape, utils.dtype_to_ir_type(shape.dtype))
@@ -536,7 +534,7 @@ def _lower_as_gpu_kernel(
     kernel_name = getattr(body, "__name__", "anonymous")
 
   # These are needed as nonlocal below.
-  launch_ctx, scratch_arr = None, None
+  launch_ctx = None
   with ir.InsertionPoint(module.body):
     _declare_runtime_functions()
     global_scratch = llvm.GlobalOp(
@@ -547,7 +545,7 @@ def _lower_as_gpu_kernel(
     )
     @func.FuncOp.from_py_func(ptr_ty, ptr_ty, name=f"mosaic_gpu_{kernel_name}")
     def main(token_ptr, buffers):
-      nonlocal launch_ctx, scratch_arr
+      nonlocal launch_ctx
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
       arg_refs = []
       for i, ref_ty in enumerate([*in_ref_tys, *out_ref_tys]):
@@ -556,14 +554,8 @@ def _lower_as_gpu_kernel(
       in_refs = arg_refs[:len(in_ref_tys)]
       out_refs = arg_refs[len(in_ref_tys):]
       prof_buffer = out_refs.pop() if prof_spec is not None else None
-      empty_arr_ty = ir.Type.parse("!llvm.array<0 x i8>")
-      scratch_alloc = llvm.AllocaOp(
-          ptr_ty, c(1, i64), empty_arr_ty,
-          alignment=launch_context.TMA_DESCRIPTOR_ALIGNMENT
-      )
-      scratch_arr = llvm.load(empty_arr_ty, scratch_alloc.result)
       with _launch(
-          token, grid, cluster, block, scratch_arr, smem_scratch_shape,
+          token, grid, cluster, block, smem_scratch_shape,
           lowering_semantics, prof_spec, prof_buffer
       ) as (_launch_ctx, smem_refs):
         nonlocal launch_ctx
@@ -575,7 +567,7 @@ def _lower_as_gpu_kernel(
   sym_tab.insert(global_scratch)
   module.operation.verify()
 
-  return module, out_shape, unwrap_output_tuple, launch_ctx, scratch_arr
+  return module, out_shape, unwrap_output_tuple, launch_ctx
 
 
 def _run_serde_pass(
@@ -601,27 +593,6 @@ def _run_serde_pass(
     module.context.allow_unregistered_dialects = allow_unregistered_dialects
   return module
 
-
-def _initialize_scratch(
-    launch_ctx : launch_context.LaunchContext,
-    scratch_arr: ir.Value,
-    ):
-  """
-  Allocates and initializes the host buffer right before the launch. This needs
-  to be done after all TMA descriptors have been recorded by the launch context.
-  Only then we know what the scratch contains.
-
-  When using the Mosaic GPU dialect, the necessary information is known only
-  after the lowering passes have run.
-  """
-  with ir.InsertionPoint(scratch_arr.owner):
-    gmem_scratch_bytes = launch_ctx.next_scratch_offset
-    scratch_alloc_op = scratch_arr.owner.opview.addr.owner.opview
-    scratch_arr_ty = ir.Type.parse(f"!llvm.array<{gmem_scratch_bytes} x i8>")
-    scratch_alloc_op.elem_type = ir.TypeAttr.get(scratch_arr_ty)
-    scratch_arr.set_type(scratch_arr_ty)
-    for init_callback in launch_ctx.host_scratch_init:
-      init_callback(scratch_alloc_op.result)
 
 def _declare_runtime_functions():
   """Declares the runtime functions that can be used by the generated code."""
@@ -653,7 +624,7 @@ def as_gpu_kernel(
   elif not isinstance(in_shape, tuple):
     in_shape = (in_shape,)
 
-  module, out_shape, unwrap_output_tuple, launch_ctx, scratch_arr = (
+  module, out_shape, unwrap_output_tuple, launch_ctx = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
           thread_semantics, module_name, kernel_name, prof_spec
@@ -667,7 +638,7 @@ def as_gpu_kernel(
     transform_inference.infer_transforms(module)  # pytype: disable=attribute-error
     dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
 
-  _initialize_scratch(launch_ctx, scratch_arr)
+  launch_ctx.scratch.finalize_size()
   module.operation.verify()
 
   expected_arg_treedef = jax.tree.structure(in_shape)
@@ -736,7 +707,7 @@ def as_torch_gpu_kernel(
   flat_out_types, out_treedef = jax.tree.flatten(out_shape)
   expected_arg_treedef = jax.tree.structure(in_shape)
 
-  module, out_shape, unwrap_output_tuple, launch_ctx, scratch_arr = (
+  module, out_shape, unwrap_output_tuple, launch_ctx = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
           lowering_semantics, module_name, kernel_name, prof_spec
@@ -750,7 +721,7 @@ def as_torch_gpu_kernel(
     transform_inference.infer_transforms(module)  # pytype: disable=attribute-error
     dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
 
-  _initialize_scratch(launch_ctx, scratch_arr)
+  launch_ctx.scratch.finalize_size()
   module.operation.verify()
 
   # Get our hands on the compilation and unload functions
