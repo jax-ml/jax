@@ -65,6 +65,7 @@ from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
     ceil_of_ratio, safe_zip, set_module, unzip2)
 from jax.sharding import Sharding
+from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P)
 from jax.tree_util import tree_flatten, tree_map
 import numpy as np
 
@@ -3096,7 +3097,8 @@ def broadcast_arrays(*args: ArrayLike) -> list[Array]:
 
 
 @export
-def broadcast_to(array: ArrayLike, shape: DimSize | Shape) -> Array:
+def broadcast_to(array: ArrayLike, shape: DimSize | Shape,
+                 *, out_sharding: NamedSharding | P | None = None) -> Array:
   """Broadcast an array to a specified shape.
 
   JAX implementation of :func:`numpy.broadcast_to`. JAX uses NumPy-style
@@ -3130,7 +3132,7 @@ def broadcast_to(array: ArrayLike, shape: DimSize | Shape) -> Array:
 
   .. _NumPy broadcasting: https://numpy.org/doc/stable/user/basics.broadcasting.html
   """
-  return util._broadcast_to(array, shape)
+  return util._broadcast_to(array, shape, sharding=out_sharding)
 
 
 def _split(op: str, ary: ArrayLike,

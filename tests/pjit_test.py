@@ -7041,6 +7041,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = iota()
       self.assertEqual(out.sharding, yz_sharding)
 
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_broadcast_to(self, mesh):
+    x = np.arange(24).reshape((1, 24))
+    x = jax.device_put(x, P(None, ('y', 'z')))
+
+    @jax.jit
+    def f(x):
+      out = jnp.broadcast_to(x, (8, 24), out_sharding=P('x', ('y', 'z')))
+      self.assertEqual(out.aval.sharding.spec, P('x', ('y', 'z')))
+      return out
+
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', ('y', 'z'))))
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_cumsum(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
