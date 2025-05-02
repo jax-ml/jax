@@ -479,5 +479,18 @@ class FftTest(jtu.JaxTestCase):
     self.assertArraysAllClose(
         jnp.fft.ifft(a, n=n, axis=1), np.fft.ifft(a, n=n, axis=1), atol=1e-14)
 
+  def testBatchedNumerics(self):
+    def f1(x):
+      return jnp.fft.rfftn(x, out_shape, (1, 2))[-1]
+
+    def f2(x):
+      return jnp.fft.rfftn(x[-1], out_shape, (0, 1))
+
+    in_shape = (3, 256, 256)
+    out_shape = (383, 383)
+    arr = np.ones(in_shape, np.float32)
+    self.assertAllClose(f1(arr), f2(arr))
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

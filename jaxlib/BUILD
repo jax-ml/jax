@@ -1286,3 +1286,12 @@ py_strict_test(
         "numpy",
     ]),
 )
+
+cc_binary(
+    name = "ducc_fft_test",
+    srcs = ["ducc_fft_test.cc"],
+    deps = [
+        "@ducc//:fft_wrapper",
+        "@eigen_archive//:eigen3",
+    ]
+)
