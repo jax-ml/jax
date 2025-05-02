@@ -125,9 +125,9 @@ jobs:
       - name: Enable Bazel remote cache (with writes enabled) if building on Linux Aarch64
         if: contains(inputs.runner, 'linux-arm64')
         run: echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> $GITHUB_ENV
-      - name: Install NumPy>=2.2.5 for Linux x86 and Windows x86 Python 3.14
+      - name: Install NumPy==2.2.5 and ml-dtypes==0.5.1 for Linux x86 and Windows x86 Python 3.14
         if: contains(inputs.python, '3.14') && contains(inputs.runner, '-x86')
-        run: python3.12 -m pip install numpy~=2.2.5
+        run: pytohn3.12 -m pip install numpy==2.2.5 ml-dtypes==0.5.1 # python 3.12 is the python version to call bazel commands
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
