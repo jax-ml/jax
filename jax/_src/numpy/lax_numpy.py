@@ -1946,7 +1946,7 @@ def isrealobj(x: Any) -> bool:
 @export
 def reshape(
     a: ArrayLike, shape: DimSize | Shape, order: str = "C", *,
-    copy: bool | None = None) -> Array:
+    copy: bool | None = None, out_sharding=None) -> Array:
   """Return a reshaped copy of an array.
 
   JAX implementation of :func:`numpy.reshape`, implemented in terms of
@@ -2020,16 +2020,17 @@ def reshape(
   util.check_arraylike("reshape", a)
 
   try:
-    # forward to method for ndarrays
-    return a.reshape(shape, order=order)  # type: ignore[call-overload,union-attr]
+    if out_sharding is None:
+      # forward to method for ndarrays
+      return a.reshape(shape, order=order)  # type: ignore[call-overload,union-attr]
   except AttributeError:
     pass
-  return asarray(a).reshape(shape, order=order)
+  return asarray(a).reshape(shape, order=order, out_sharding=out_sharding)
 
 
 @export
-@partial(jit, static_argnames=('order',), inline=True)
-def ravel(a: ArrayLike, order: str = "C") -> Array:
+@partial(jit, static_argnames=('order', 'out_sharding'), inline=True)
+def ravel(a: ArrayLike, order: str = "C", *, out_sharding=None) -> Array:
   """Flatten array into a 1-dimensional shape.
 
   JAX implementation of :func:`numpy.ravel`, implemented in terms of
@@ -2078,7 +2079,7 @@ def ravel(a: ArrayLike, order: str = "C") -> Array:
   a = util.ensure_arraylike("ravel", a)
   if order == "K":
     raise NotImplementedError("Ravel not implemented for order='K'.")
-  return reshape(a, (np.size(a),), order)
+  return reshape(a, (np.size(a),), order, out_sharding=out_sharding)
 
 
 @export

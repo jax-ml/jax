@@ -5511,36 +5511,43 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None, None)))
     self.assertArraysEqual(out, np_inp.reshape(2, 32, 1))
 
-  @parameterized.named_parameters(
-      ('1', (16, 1), (1, 16, 1), P('x', None), P(None, 'x', None), False),
-      ('2', (8, 2, 1), (1, 16, 1), P('x', None, None), P(None, 'x', None), True),
-      ('3', (8, 1), (1, 4, 2), P('x', None), P(None, None, 'x'), True),
-      ('4', (1, 4, 1, 6, 1), (1, 4, 6),
-       P(None, 'x', None, None, None), P(None, 'x', None), False),
-      ('5', (4, 6), (4, 6), P(None, 'x'), P(None, 'x'), False),
-      ('6', (1024, 4096), (1024, 2048, 2, 1, 1, 1, 1),
-       P('x', None), P('x', None, None, None, None, None, None), False),
-      ('7', (1024, 4096, 32), (1024, 2048, 2, 1, 1, 32),
-       P('x', None, None), P('x', None, None, None, None, None), False),
-      ('8', (1024, 4096), (1024, 1, 1, 4096),
-       P('x', None), P('x', None, None, None), False),
-      ('9', (1024, 4096), (1024, 1, 1, 4096),
-       P(None, 'x'), P(None, None, None, 'x'), False),
-      ('10', (1024, 2048, 2, 1, 1, 1), (1024, 4096),
-       P('x', None, None, None, None, None), P('x', None), False),
-      ('11', (1024, 2048, 2, 1, 1, 1), (1024, 4096),
-       P(None, 'x', None, None, None, None), P(None, 'x'), False),
+  @parameterized.parameters(
+      (src_shape, dst_shape, src_spec, dst_spec, use_sharding_arg, fun)
+      for fun in [jnp.reshape, jax.lax.reshape]
+      for src_shape, dst_shape, src_spec, dst_spec, use_sharding_arg in [
+        ((16, 1), (1, 16, 1), P('x', None), P(None, 'x', None),
+         False),
+        ((8, 2, 1), (1, 16, 1), P('x', None, None),
+         P(None, 'x', None), True),
+        ((8, 1), (1, 4, 2), P('x', None), P(None, None, 'x'),
+         True),
+        ((1, 4, 1, 6, 1), (1, 4, 6),
+         P(None, 'x', None, None, None), P(None, 'x', None), False),
+        ((4, 6), (4, 6), P(None, 'x'), P(None, 'x'), False),
+        ((1024, 4096), (1024, 2048, 2, 1, 1, 1, 1),
+         P('x', None), P('x', None, None, None, None, None, None), False),
+        ((1024, 4096, 32), (1024, 2048, 2, 1, 1, 32),
+         P('x', None, None), P('x', None, None, None, None, None), False),
+        ((1024, 4096), (1024, 1, 1, 4096),
+         P('x', None), P('x', None, None, None), False),
+        ((1024, 4096), (1024, 1, 1, 4096),
+         P(None, 'x'), P(None, None, None, 'x'), False),
+        ((1024, 2048, 2, 1, 1, 1), (1024, 4096),
+         P('x', None, None, None, None, None), P('x', None), False),
+        ((1024, 2048, 2, 1, 1, 1), (1024, 4096),
+         P(None, 'x', None, None, None, None), P(None, 'x'), False),
+      ]
   )
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reshape(self, src_shape, dst_shape, src_spec, dst_spec,
-                   use_sharding_arg, mesh):
+                   use_sharding_arg, fun, mesh):
     np_inp = np.arange(math.prod(src_shape),
                        dtype=np.float32).reshape(src_shape)
     arr = jax.device_put(np_inp, NamedSharding(mesh, src_spec))
 
     @partial(jax.jit, static_argnums=1)
     def f(x, new_sharding):
-      y = lax.reshape(x, dst_shape, out_sharding=new_sharding)
+      y = fun(x, dst_shape, out_sharding=new_sharding)
       self.assertEqual(y.aval.sharding.spec, dst_spec)
       self.assertEqual(y.shape, dst_shape)
       y = y * 2
@@ -7596,6 +7603,38 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.check_wsc_in_lowered(f.lower(arr).as_text())
 
     jax.jit(jax.grad(lambda x: f(x).sum()))(arr)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jnp_dot(self, mesh):
+    np_inp1 = np.arange(16).reshape(8, 2)
+    np_inp2 = np.arange(16).reshape(2, 8)
+    arr1 = jax.device_put(np_inp1, P('x', 'y'))
+    arr2 = jax.device_put(np_inp2, P('x', 'y'))
+
+    @jax.jit
+    def f(x, y):
+      out = jnp.dot(x, y, out_sharding=P('x'))
+      self.assertEqual(out.aval.sharding.spec, P('x', None))
+      return out
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out, np.dot(np_inp1, np_inp2))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jnp_ravel(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @jax.jit
+    def f(x):
+      out = jnp.ravel(x, out_sharding=P('x'))
+      self.assertEqual(out.aval.sharding.spec, P('x'))
+      return out
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out, np.ravel(np_inp))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
