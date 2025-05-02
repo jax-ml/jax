@@ -1261,6 +1261,31 @@ class ApiErrorTest(PallasBaseTest):
     ):
       dot_general_kernel(x, y)
 
+  def test_jax_disable_jit(self):
+    def add_vectors_kernel(x_ref, y_ref, o_ref):
+      x, y = x_ref[...], y_ref[...]
+      o_ref[...] = x + y
+
+    @jax.jit
+    def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array:
+      return self.pallas_call(
+          add_vectors_kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype)
+      )(x, y)
+
+    # Prove kernel works fine without disable_jit.
+    add_vectors(jnp.arange(8), jnp.arange(8))
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "pallas_call not supported with disable_jit."
+    ):
+      with jax.disable_jit():
+        add_vectors(jnp.arange(8.0), jnp.arange(8.0))
+
+    with jax.disable_jit():
+      # We instructed the user to do this, so this should not raise an error.
+      with jax.disable_jit(False):
+        add_vectors(jnp.arange(8.0), jnp.arange(8.0))
+
 
 class ApiErrorInterpretTest(ApiErrorTest):
   INTERPRET = True
