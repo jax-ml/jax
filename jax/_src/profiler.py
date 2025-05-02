@@ -39,6 +39,10 @@ _profiler_server: _profiler.ProfilerServer | None = None
 logger = logging.getLogger(__name__)
 
 
+class ProfileOptions(_profiler.ProfileOptions):
+  """Profiler Options to configure the collectors for the profiler."""
+
+
 def start_server(port: int) -> _profiler.ProfilerServer:
   """Starts the profiler server on port `port`.
 
@@ -89,12 +93,17 @@ class _ProfileState:
 _profile_state = _ProfileState()
 
 
-def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
-                create_perfetto_trace: bool = False) -> None:
+def start_trace(
+    log_dir: os.PathLike | str,
+    create_perfetto_link: bool = False,
+    create_perfetto_trace: bool = False,
+    profiler_options: ProfileOptions | None = None,
+) -> None:
   """Starts a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
-  functions and JAX on-device operations. Use :func:`stop_trace` to end the trace
+  functions and JAX on-device operations. Use :func:`stop_trace` to end the
+  trace
   and save the results to ``log_dir``.
 
   The resulting trace can be viewed with TensorBoard. Note that TensorBoard
@@ -113,8 +122,8 @@ def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
       ``perfetto_trace.json.gz`` file that is compatible for upload with the
       Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
       generated if ``create_perfetto_link`` is true. This could be useful if you
-      want to generate a Perfetto-compatible trace without blocking the
-      process.
+      want to generate a Perfetto-compatible trace without blocking the process.
+    profiler_options: Profiler options to configure the profiler for collection.
   """
   with _profile_state.lock:
     if _profile_state.profile_session is not None:
@@ -126,7 +135,12 @@ def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
     # fail and no TPU operations will be included in the profile.
     xla_bridge.get_backend()
 
-    _profile_state.profile_session = _profiler.ProfilerSession()
+    if profiler_options is None:
+      _profile_state.profile_session = _profiler.ProfilerSession()
+    else:
+      _profile_state.profile_session = _profiler.ProfilerSession(
+          profiler_options
+      )
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.create_perfetto_trace = (
         create_perfetto_trace or create_perfetto_link)
@@ -225,7 +239,12 @@ def stop_and_get_fdo_profile() -> bytes | str:
 
 
 @contextmanager
-def trace(log_dir: os.PathLike | str, create_perfetto_link=False, create_perfetto_trace=False):
+def trace(
+    log_dir: os.PathLike | str,
+    create_perfetto_link=False,
+    create_perfetto_trace=False,
+    profiler_options: ProfileOptions | None = None,
+):
   """Context manager to take a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
@@ -247,10 +266,12 @@ def trace(log_dir: os.PathLike | str, create_perfetto_link=False, create_perfett
       ``perfetto_trace.json.gz`` file that is compatible for upload with the
       Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
       generated if ``create_perfetto_link`` is true. This could be useful if you
-      want to generate a Perfetto-compatible trace without blocking the
-      process.
+      want to generate a Perfetto-compatible trace without blocking the process.
+    profiler_options: Profiler options to configure the profiler for collection.
   """
-  start_trace(log_dir, create_perfetto_link, create_perfetto_trace)
+  start_trace(
+      log_dir, create_perfetto_link, create_perfetto_trace, profiler_options
+  )
   try:
     yield
   finally:
