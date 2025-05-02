@@ -1331,6 +1331,84 @@ def _iota_pull_rule(
   return []
 
 
+def _pattern_match_sublanes_to_lanes_reshape(
+    aval_in: core.ShapedArray,
+    aval_out: core.ShapedArray,
+) -> bool:
+  # Pattern matches a reshape of the form (..., n/l, l) -> (..., n * l)
+  # where l is a multiple of 128 n/l is a multiple of packing.
+
+  *leading_in, second_to_last_dim, last_dim = aval_in.shape
+  *leading_out, last_dim_out = aval_out.shape
+  if leading_in != leading_out:
+    return False
+  assert last_dim_out == second_to_last_dim * last_dim
+  if last_dim % 128 != 0:
+    return False
+  return True
+
+
+@register_pull_block_spec_rule(lax.reshape_p)
+def _reshape_pull_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    dimensions: tuple[int, ...] | None,
+    new_sizes: tuple[int, ...],
+    sharding: jax.sharding.Sharding,
+):
+  del sharding, new_sizes
+  if dimensions is not None:
+    raise NotImplementedError('reshape with None dimensions not supported yet')
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  aval_out = ctx.avals_out[0]
+  assert isinstance(aval_out, core.ShapedArray)
+  if _pattern_match_sublanes_to_lanes_reshape(aval_in, aval_out):
+    block_shape = tuple(block_spec.block_shape)
+    if not isinstance(block_shape[-1], (int, pallas_core.Blocked)):
+      raise NotImplementedError(
+          f'reshape must use Blocked block size on lanes: {block_shape}'
+      )
+    last_dim = _block_size(block_shape[-1])
+    if last_dim % 128 != 0:
+      raise NotImplementedError(
+          'reshape with non-128 aligned block size on lanes not supported yet'
+      )
+    # We can now reshape last dim from d -> (d/128, 128)
+    new_block_shape = block_shape[:1] + (last_dim // 128, 128)
+
+    def new_index_map(*args):
+      idx = block_spec.index_map(*args)
+      return *idx, 0
+
+    return [pallas_core.BlockSpec(new_block_shape, new_index_map)]
+  raise NotImplementedError(f'reshape not supported yet: {aval_in}, {aval_out}')
+
+
+@register_eval_rule(lax.reshape_p)
+def _reshape_eval_rule(
+    eval_ctx: KernelEvalContext, x, *, dimensions, new_sizes, sharding
+):
+  del sharding, dimensions, new_sizes
+  out_shape_nones = tuple(
+      _block_size(s) for s in eval_ctx.out_block_specs[0].block_shape
+  )
+  out_shape = tuple(s for s in out_shape_nones if s is not None)
+  # Because we have restricted the pull block spec rule, we can just apply a
+  # basic reshape here.
+  orig_dtype = x.dtype
+  if jnp.issubdtype(orig_dtype, jnp.integer):
+    x = x.astype(jnp.int32)
+  elif jnp.issubdtype(orig_dtype, jnp.floating):
+    x = x.astype(jnp.float32)
+  x = x.reshape(out_shape)
+  return x.astype(orig_dtype)
+
+
+# Higher order primitives
+
+
 @register_usage_rule(pjit.pjit_p)
 def _jit_usage_rule(
     ctx, used_out: list[set[Usage]], *, jaxpr: core.ClosedJaxpr, **_
