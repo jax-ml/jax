@@ -5809,8 +5809,6 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeOffsets(
     const VectorType vty, const VectorLayout src, xla::Array<Value> vregs,
     const LayoutOffsets dst_offsets) {
   const auto &target_shape = ctx.target_shape;
-  const VectorLayout dst(src.bitwidth(), dst_offsets, src.tiling(),
-                         src.implicit_dim());
 
   int row_diff;
   if (!src.offsets()[0].has_value()) {
@@ -5830,30 +5828,30 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeOffsets(
     col_diff = *dst_offsets[1] - *src.offsets()[1];
   }
 
+  VectorLayout src_after_row_shift(src.bitwidth(),
+                                   {dst_offsets[0], src.offsets()[1]},
+                                   src.tiling(), src.implicit_dim());
   if (row_diff != 0) {
-    if (col_diff != 0) {
-      return emitError(loc, "Not implemented: Row and column offset changes");
-    }
     const SmallVector<int64_t> implicit_shape =
         src.implicitShape(vty.getShape());
     FAILUREOR_ASSIGN_OR_RETURN(
         vregs, doRowShiftRelayout(builder, loc, vty.getShape(), vregs, src,
                                   *dst_offsets[0], ctx.target_shape));
+    // Make sure the shape is as expected.
+    SmallVector<int64_t> current_tiles_shape =
+        src_after_row_shift.tileArrayImplicitShape(vty.getShape(),
+                                                   target_shape);
+    CHECK_EQ(*(current_tiles_shape.end() - 2), *(vregs.dimensions().end() - 2));
   }
 
-  // Rows are now correctly aligned. Time to offset columns.
-  // TODO(apaszke, mvoz): Changing an offset might add or remove one vreg.
-  // Note - this is handled for row shifts via tpu_rotate_with_overflow
-  SmallVector<int64_t> dst_tiles_shape =
-      dst.tileArrayImplicitShape(vty.getShape(), target_shape);
-  CHECK_EQ(*(dst_tiles_shape.end() - 2), *(vregs.dimensions().end() - 2));
-
-  // TODO(tlongeri): Clean up col_diff and pass the dst offset directly.
   if (col_diff != 0) {
     FAILUREOR_ASSIGN_OR_RETURN(
         vregs, doColumnShiftRelayout(builder, vty.getShape(), std::move(vregs),
-                                     src, *dst.offsets()[1], target_shape));
+                                     src_after_row_shift, *dst_offsets[1],
+                                     target_shape));
   }
+  VectorLayout dst(src.bitwidth(), dst_offsets, src.tiling(),
+                   src.implicit_dim());
   return std::make_pair(dst, std::move(vregs));
 }
 

@@ -1292,7 +1292,6 @@ class OpsTest(PallasBaseTest):
       )
   )
   def test_comparison(self, fn, dtype):
-    self.skip_if_mosaic_gpu()
 
     if jtu.test_device_matches(["gpu"]) and dtype == jnp.bool_:
       self.skipTest("Not implemented on GPU.")
@@ -1302,16 +1301,16 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
     )
     def kernel(x_ref, y_ref, o_ref):
-      o_ref[:] = fn(x_ref[...], y_ref[...])
+      o_ref[:] = fn(x_ref[...], y_ref[...]).astype(jnp.int32)
 
-    x = jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype)
-    y = jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype)
+    x = jnp.tile(jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype), 16)
+    y = jnp.tile(jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype), 16)
     out = kernel(x, y)
     expected = fn(x, y)
-    self.assertArraysEqual(out, expected)
+    self.assertArraysEqual(out != 0, expected)
 
   @parameterized.named_parameters(
       (f"{fn.__name__}_{dtype.__name__}", fn, dtype)
@@ -1517,10 +1516,10 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
-                  pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM),
+                  pl.BlockSpec(memory_space=pltpu.SMEM),
                   ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
         out_shape=jax.ShapeDtypeStruct((1,), dtype),
     )
     def kernel(x_ref, y_ref, o_ref):
@@ -1893,6 +1892,15 @@ class OpsTest(PallasBaseTest):
           math.prod(lhs_shape) + math.prod(rhs_shape) + math.prod(out_shape)
           > (256 * 256) * 2
       ):
+        self.skipTest("Shared memory size limit exceeded")
+      if (jax.local_devices()[0].device_kind == "NVIDIA L4" and
+          dtype == jnp.float32 and
+          lhs_and_rhs_shape in [
+            ((128, 16), (128, 256)),
+            ((16, 128), (128, 256)),
+            ((16, 256), (256, 128)),
+            ((256, 16), (256, 128)),
+          ]):
         self.skipTest("Shared memory size limit exceeded")
       if min(*lhs_shape, *rhs_shape) < 16:
         self.skipTest("All dimensions of lhs and rhs must be >= 16")

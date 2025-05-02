@@ -44,6 +44,7 @@ from jax._src.cloud_tpu_init import get_tpu_library_path
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
+from jax._src.lib import _profiler
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,24 @@ _at_fork_handler_installed = False
 
 # Backends
 
+_NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]
+
+def make_tpu_client(
+    library_path: str | None = None, options: _NameValueMapping | None = None
+):
+  """Returns a TPU client. Defaults to allowing 32 in-flight computations."""
+  if not _jax.pjrt_plugin_loaded('tpu'):
+    c_api = xla_client.load_pjrt_plugin_dynamically(
+        "tpu", library_path or "libtpu.so"
+    )
+    _profiler.register_plugin_profiler(c_api)
+    assert _jax.pjrt_plugin_loaded('tpu')
+  if not _jax.pjrt_plugin_initialized('tpu'):
+    _jax.initialize_pjrt_plugin('tpu')
+  if options is None:
+    options = {}
+  return _jax.get_c_api_client('tpu', options)
+
 
 def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   def _log_warning():
@@ -140,7 +159,7 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   t.start()
 
   try:
-    client = xla_client.make_tpu_client(
+    client = make_tpu_client(
         get_tpu_library_path(),
         _options_from_jax_configs("tpu"))
   finally:
@@ -437,12 +456,11 @@ def get_num_nodes_from_gpu_topology(topology: str) -> int:
                        '"<number-of-slices> x <number-of-hosts-per-slice> x '
                        '<number-of-devices-per-host>".')
 
-if hasattr(xla_client, "make_tpu_client"):
-  # TODO(phawkins,skyewm): switch TPU plugin to use the PJRT plugin mechanism,
-  # and then fail loudly on initialization failure.
-  register_backend_factory(
-    'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300,
-    fail_quietly=True)
+# TODO(phawkins,skyewm): switch TPU plugin to use the PJRT plugin mechanism,
+# and then fail loudly on initialization failure.
+register_backend_factory(
+  'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300,
+  fail_quietly=True)
 
 
 def _get_pjrt_plugin_names_and_library_paths(
@@ -660,7 +678,7 @@ def register_plugin(
   )
   if library_path is not None:
     c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
-    xla_client.profiler.register_plugin_profiler(c_api)
+    _profiler.register_plugin_profiler(c_api)
   else:
     assert c_api is not None
     xla_client.load_pjrt_plugin_with_c_api(plugin_name, c_api)
@@ -1214,7 +1232,7 @@ def make_pjrt_tpu_topology(topology_name='', **kwargs):
           "JAX TPU support not installed; cannot generate TPU topology. See"
           " https://github.com/jax-ml/jax#installation")
     c_api = xla_client.load_pjrt_plugin_dynamically("tpu", library_path)
-    xla_client.profiler.register_plugin_profiler(c_api)
+    _profiler.register_plugin_profiler(c_api)
   assert xla_client.pjrt_plugin_loaded("tpu")
   if not xla_client.pjrt_plugin_initialized("tpu"):
     xla_client.initialize_pjrt_plugin("tpu")

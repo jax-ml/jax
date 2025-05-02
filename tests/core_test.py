@@ -203,6 +203,13 @@ class CoreTest(jtu.JaxTestCase):
     else:
       self.assertFalse(core.valid_jaxtype(arr))
 
+  def test_str_aval(self):
+    aval = ShapedArray((8, 2), np.int32)
+    self.assertEqual(str(aval), "int32[8,2]")
+
+    aval = ShapedArray((8, 2), np.int32, weak_type=True)
+    self.assertEqual(str(aval), "~int32[8,2]")
+
   @parameterized.named_parameters(
       (str(i), *spec) for i, spec in enumerate(test_specs))
   def test_jit(self, f, args):
@@ -357,15 +364,15 @@ class CoreTest(jtu.JaxTestCase):
   def test_dropvar_avals(self):
     def f(x):
       def body(c, _):
-        return c, None
+        x1, x2 = c
+        return (2 * x1, 2 * x2), None
       (x1, x2), _ = jax.lax.scan(body, (x, x), None, length=1)
       return [x2]
 
     aval = core.ShapedArray((), jnp.dtype('int32'))
     pval = pe.PartialVal.unknown(aval)
     jaxpr, _, _ = pe.trace_to_jaxpr_nounits(
-        lu.wrap_init(f,
-                     debug_info=debug_info("test", f, (0,), {})),
+        lu.wrap_init(f, debug_info=debug_info("test", f, (0,), {})),
         [pval], False)
     dropvar, b = jaxpr.eqns[0].outvars
     self.assertEqual(dropvar.aval, aval)

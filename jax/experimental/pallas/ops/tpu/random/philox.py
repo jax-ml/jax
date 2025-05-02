@@ -140,8 +140,8 @@ def philox_4x32_kernel(key,
   return pl.pallas_call(
       kernel,
       in_specs=[
-          pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
-          pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+          pl.BlockSpec(memory_space=pltpu.SMEM),
+          pl.BlockSpec(memory_space=pltpu.SMEM),
       ],
       out_specs=out_spec,
       grid=grid_dims,

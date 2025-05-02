@@ -728,21 +728,6 @@ def _emit_tpu_python_callback(
   return outputs, token
 
 
-def _layout_to_mlir_layout(minor_to_major: Sequence[int] | None):
-  if minor_to_major is None:
-    # Needed for token layouts
-    layout: np.ndarray = np.zeros((0,), dtype="int64")
-  else:
-    layout = np.array(minor_to_major, dtype="int64")
-  return ir.DenseIntElementsAttr.get(layout, type=ir.IndexType.get())
-
-
-def _aval_to_default_layouts(aval):
-  avals = [core.physical_aval(aval)]
-  # Row major order is default for `NumPy`.
-  return [list(range(aval.ndim - 1, -1, -1)) for aval in avals]
-
-
 def emit_python_callback(
     ctx: mlir.LoweringRuleContext,
     callback,
@@ -754,8 +739,6 @@ def emit_python_callback(
     has_side_effect: bool,
     partitioned: bool = False,
     sharding: SdyArrayShardingList | xc.OpSharding | None = None,
-    operand_layouts: Sequence[Sequence[int] | None] | None = None,
-    result_layouts: Sequence[Sequence[int] | None] | None = None,
 ) -> tuple[Sequence[mlir.IrValues], Any, Any]:
   """Emits MLIR that calls back to a provided Python function.
 
@@ -770,8 +753,6 @@ def emit_python_callback(
     partitioned: If True, then `callback` is called on local shards only. If
       False, then `callback` is called on all shards.
     sharding: The sharding of the callback.
-    operand_layouts: The layouts of the operands.
-    result_layouts: The layouts of the results.
 
   Returns:
     A tuple of MLIR result values, a new token (if any), and the host callback
@@ -792,14 +773,6 @@ def emit_python_callback(
   backend = ctx.module_context.get_backend()
   result_shapes = [_aval_to_xla_shape(aval) for aval in result_avals]
   operand_shapes = [_aval_to_xla_shape(aval) for aval in operand_avals]
-  # Handling layouts
-  if operand_layouts is None:
-    operand_layouts = util.concatenate(
-        map(_aval_to_default_layouts, operand_avals))
-  operand_mlir_layouts = map(_layout_to_mlir_layout, operand_layouts)
-  if result_layouts is None:
-    result_layouts = util.concatenate(map(_aval_to_default_layouts, result_avals))
-  result_mlir_layouts = map(_layout_to_mlir_layout, result_layouts)
 
   # First we apply checks to ensure output shapes and dtypes match the expected
   # ones.

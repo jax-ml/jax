@@ -23,6 +23,7 @@ from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import _profiler
 from jax._src.lib import xla_client as xc
 
 config.parse_flags_with_absl()
@@ -136,7 +137,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
               "name1:path1,name2:path2,name3"
           )
         with mock.patch.object(
-            xc.profiler, "register_plugin_profiler", autospec=True
+            _profiler, "register_plugin_profiler", autospec=True
         ):
           xb.register_pjrt_plugin_factories_from_env()
     registration = xb._backend_factories["name1"]
@@ -174,7 +175,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     )
     with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
       with mock.patch.object(
-          xc.profiler, "register_plugin_profiler", autospec=True
+          _profiler, "register_plugin_profiler", autospec=True
       ):
         xb.register_pjrt_plugin_factories_from_env()
     registration = xb._backend_factories["name1"]

@@ -200,6 +200,7 @@ class SingleDeviceSharding(jsharding.Sharding):
       return xb.process_index(self._device.client) == self._device.process_index
     return True
 
+SingleDeviceSharding.__module__ = 'jax.sharding'
 
 @util.cache(max_size=4096, trace_context_in_key=False)
 def pmap_sharding_devices_indices_map(
@@ -368,6 +369,7 @@ class PmapSharding(jsharding.Sharding):
           f'the number of devices={len(self._device_assignment)}')
     return sharded_shape
 
+PmapSharding.__module__ = 'jax.sharding'
 
 def _op_sharding_to_pos_sharding(
     op_sharding: xc.OpSharding | xc.HloSharding,
@@ -691,14 +693,20 @@ def prepare_axis_resources(axis_resources, arg_name,
       if isinstance(entry, PmapSharding):
         raise ValueError(f'One of {what} got sharding {entry} which is not '
                          'allowed.')
+      if (not allow_unconstrained_dims and isinstance(entry, NamedSharding) and
+          PartitionSpec.UNCONSTRAINED in entry.spec):
+        raise ValueError(
+            f'Unconstrained dims are not allowed when passed to {arg_name}:'
+            f' {entry}')
       new_entries.append(entry)
     else:
       if not isinstance(entry, PartitionSpec):
         raise TypeError(f"{what} are expected to be "
                         f"PartitionSpec instances or None, but got {entry}")
-      for e in entry:
-        if e is PartitionSpec.UNCONSTRAINED and not allow_unconstrained_dims:
-          raise ValueError(f"Unconstrained dims are not allowed: {entry}")
+      if not allow_unconstrained_dims and PartitionSpec.UNCONSTRAINED in entry:
+        raise ValueError(
+            f'Unconstrained dims are not allowed when passed to {arg_name}:'
+            f' {entry}')
       _check_unique_resources(entry, arg_name)
       new_entries.append(entry)
 
@@ -1244,7 +1252,8 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
 
 @util.cache()
 def create_mesh_pspec_sharding(
-    mesh: mesh_lib.Mesh, pspec: PartitionSpec | None,
+    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh,
+    pspec: PartitionSpec | None,
     memory_kind: str | None = None) -> NamedSharding:
   if pspec is None:
     pspec = PartitionSpec()

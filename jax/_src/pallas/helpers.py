@@ -23,7 +23,11 @@ from jax._src.pallas import core as pl_core
 
 @jax.named_call
 def empty(
-    shape: tuple[int, ...], dtype: jnp.dtype, *, memory_space: Any = None
+    shape: tuple[int, ...],
+    dtype: jnp.dtype,
+    *,
+    memory_space: Any = None,
+    interpret: Any = False,
 ):
   def _empty_kernel(_):
     # No-op to leave the out_ref uninitialized
@@ -39,6 +43,7 @@ def empty(
       in_specs=[],
       out_specs=pl_core.BlockSpec(memory_space=kernel_memory_space),
       out_shape=memory_space(shape, dtype),
+      interpret=interpret,
   )()
 
 
@@ -47,8 +52,9 @@ class ArrayLike(Protocol):
   dtype: jnp.dtype
 
 
-def empty_like(x: ArrayLike, *, memory_space: Any = None):
-  return empty(x.shape, x.dtype, memory_space=memory_space)
+def empty_like(
+    x: ArrayLike, *, memory_space: Any = None, interpret: Any = False):
+  return empty(x.shape, x.dtype, memory_space=memory_space, interpret=interpret)
 
 
 def when(condition):

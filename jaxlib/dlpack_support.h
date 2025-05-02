@@ -13,9 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_XLA_NB_CLASS_PTR_H_
-#define JAXLIB_XLA_NB_CLASS_PTR_H_
+#ifndef JAXLIB_XLA_DLPACK_SUPPORT_H_
+#define JAXLIB_XLA_DLPACK_SUPPORT_H_
 
-#include "jaxlib/nb_class_ptr.h"  // IWYU pragma: keep
+#include "absl/status/statusor.h"
+#include "include/dlpack/dlpack.h"
+#include "xla/xla_data.pb.h"
 
-#endif  // JAXLIB_XLA_NB_CLASS_PTR_H_
+namespace xla {
+
+absl::StatusOr<DLDataType> PrimitiveTypeToDLDataType(PrimitiveType type);
+absl::StatusOr<PrimitiveType> DLDataTypeToPrimitiveType(DLDataType type);
+
+}  // namespace xla
+
+#endif  // JAXLIB_XLA_DLPACK_SUPPORT_H_

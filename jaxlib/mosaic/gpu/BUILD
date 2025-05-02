@@ -155,6 +155,7 @@ cc_library(
         "@llvm-project//mlir:ArithTransforms",
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
         "@llvm-project//mlir:ComplexToLLVM",
+        "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:ControlFlowToLLVM",
         "@llvm-project//mlir:ConversionPasses",
         "@llvm-project//mlir:ExecutionEngine",

@@ -13,7 +13,8 @@
 # limitations under the License.
 # ==============================================================================
 
-from typing import Any, Optional, Callable
+from typing import Any
+from collections.abc import Callable
 
 from jaxlib import _jax
 
@@ -22,9 +23,9 @@ Client = _jax.Client
 
 
 class ClientConnectionOptions:
-  on_disconnect: Optional[Callable[[_Status], None]] = None
-  on_connection_update: Optional[Callable[[str], None]] = None
-  connection_timeout_in_seconds: Optional[int] = None
+  on_disconnect: Callable[[_Status], None] | None = None
+  on_connection_update: Callable[[str], None] | None = None
+  connection_timeout_in_seconds: int | None = None
 
 
 def get_client(

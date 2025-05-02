@@ -54,14 +54,14 @@ struct ConvertExtractStridedSlicePattern final
       return rewriter.notifyMatchFailure(op, "only 1-D vectors are supported");
     }
     int64_t size =
-        (*op.getSizes().getAsRange<mlir::IntegerAttr>().begin()).getSInt();
+        (*op.getSizes().getAsRange<mlir::IntegerAttr>().begin()).getInt();
     if (size < 0) {
       return rewriter.notifyMatchFailure(op, "size is negative");
     }
     int64_t start =
-        (*op.getOffsets().getAsRange<mlir::IntegerAttr>().begin()).getSInt();
+        (*op.getOffsets().getAsRange<mlir::IntegerAttr>().begin()).getInt();
     int64_t stride =
-        (*op.getStrides().getAsRange<mlir::IntegerAttr>().begin()).getSInt();
+        (*op.getStrides().getAsRange<mlir::IntegerAttr>().begin()).getInt();
     if (stride != 1) {
       return rewriter.notifyMatchFailure(op, "only stride 1 is supported");
     }

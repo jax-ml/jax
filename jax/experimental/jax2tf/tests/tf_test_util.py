@@ -34,6 +34,7 @@ from jax.experimental import jax2tf
 from jax import export
 from jax._src import config
 from jax._src import xla_bridge
+from jax._src.lib import xla_client as xc
 import numpy as np
 import tensorflow as tf
 from tensorflow.compiler.xla import xla_data_pb2
@@ -344,7 +345,9 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                      tf_hlo)
 
         backend = xla_bridge.get_backend()
-        modules = backend.compile(str(jax_lowered.compiler_ir())).hlo_modules()
+        device_list = xc.DeviceList(tuple(backend.local_devices()))
+        modules = backend.compile(
+            str(jax_lowered.compiler_ir()), device_list).hlo_modules()
         jax_opt_hlo = modules[0].to_string()
         logging.info("[%s] JAX OPT HLO\n%s", self._testMethodName,
                      jax_opt_hlo)

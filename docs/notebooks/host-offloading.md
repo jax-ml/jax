@@ -120,6 +120,28 @@ out_dev = f(arr_host)
 print("Result value of H2D: \n", out_dev)
 ```
 
++++ {"id": "iYXC5ix384XP"}
+
+Moving data from host to device memory when needed for computation is the essence of host offloading. Use {func}`jax.device_put` to perform this transfer in this example to optimize performance.
+
+```{code-cell} ipython3
+---
+colab:
+  base_uri: https://localhost:8080/
+id: cmM6tJTS84XQ
+outputId: 40c353a1-fb55-44bc-bac9-dffc09852f49
+---
+# Instead of the lambda function, you can define add_func to explicitly
+# move data to device before computation
+def add_func(x):  # Move data to device and add one
+    x = jax.device_put(x, s_dev)
+    return x + 1
+
+f = jax.jit(add_func, out_shardings=s_dev)
+out_dev = f(arr_host)
+print("Result value of H2D and add 1 in device memory: \n", out_dev)
+```
+
 +++ {"id": "EbE-eBrJTBuS"}
 
 #### Host Output Sharding

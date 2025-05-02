@@ -99,7 +99,7 @@ def pack_array(values):
   ptr_ty = ir.Type.parse("!llvm.ptr")
   arr_ptr = llvm.alloca(ptr_ty, c(len(values), i64), elem_ty)
   for i, v in enumerate(values):
-    elem_ptr = llvm.getelementptr(ptr_ty, arr_ptr, [], [i], elem_ty)
+    elem_ptr = llvm.getelementptr(ptr_ty, arr_ptr, [], [i], elem_ty, llvm.GEPNoWrapFlags.none)
     llvm.store(v, elem_ptr)
   return arr_ptr
 
@@ -721,7 +721,7 @@ class BarrierRef:
     with single_thread(scope=ThreadSubset.BLOCK):
       for i in range(num_barriers):
         nvvm.mbarrier_init_shared(
-            llvm.getelementptr(ptr, address, [], [i], i64),
+            llvm.getelementptr(ptr, address, [], [i], i64, llvm.GEPNoWrapFlags.none),
             c(arrival_count, i32),
         )
     return BarrierRef(address, c(0, i32), phases, num_barriers)
@@ -793,7 +793,7 @@ class BarrierRef:
     i64 = ir.IntegerType.get_signless(64)
     DYNAMIC32 = -2147483648
     return llvm.getelementptr(
-        ptr, self.base_address, [self.offset], [DYNAMIC32], i64
+        ptr, self.base_address, [self.offset], [DYNAMIC32], i64, llvm.GEPNoWrapFlags.none
     )
 
 
@@ -1241,7 +1241,7 @@ def getelementptr(
 ) -> ir.Value:
   static_indices = [i if isinstance(i, int) else DYNAMIC32 for i in indices]
   dyn_indices = [i for i in indices if not isinstance(i, int)]
-  return llvm.getelementptr(ptr.type, ptr, dyn_indices, static_indices, dtype)
+  return llvm.getelementptr(ptr.type, ptr, dyn_indices, static_indices, dtype, llvm.GEPNoWrapFlags.none)
 
 
 def dyn_dot(x, y):
@@ -1280,6 +1280,11 @@ def prmt(high: ir.Value, low: ir.Value, permutation: ir.Value):
 def bitcast(x: ir.Value, new_type: ir.Type):
   if x.type == new_type:
     return x
+  if (x_bw := bitwidth(x.type)) != (new_bw := bitwidth(new_type)):
+    raise ValueError(
+        f"Can't bitcast {x.type} (of bitwidth {x_bw}) to {new_type} (of"
+        f" bitwidth {new_bw})"
+    )
   if ir.VectorType.isinstance(x.type) and ir.IntegerType.isinstance(new_type):
     new_type = ir.IntegerType(new_type)
     x_ty = ir.VectorType(x.type)
@@ -1299,6 +1304,12 @@ def bitcast(x: ir.Value, new_type: ir.Type):
     if bitwidth(x_ty) != bitwidth(new_ty):
       raise ValueError(f"Can't bitcast {x.type} to {new_type}")
     return vector.bitcast(new_type, x)
+  if ir.IntegerType.isinstance(x.type) and ir.FloatType.isinstance(new_type):
+    return arith.bitcast(new_type, x)
+  if ir.FloatType.isinstance(x.type) and ir.IntegerType.isinstance(new_type):
+    return arith.bitcast(new_type, x)
+  if ir.FloatType.isinstance(x.type) and ir.FloatType.isinstance(new_type):
+    return arith.bitcast(new_type, x)
   raise ValueError(f"Can't bitcast {x.type} to {new_type}")
 
 

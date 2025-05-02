@@ -13,7 +13,8 @@
 # limitations under the License.
 # ==============================================================================
 
-from typing import Any, Sequence, Union
+from typing import Any
+from collections.abc import Sequence
 
 from jaxlib import _jax
 
@@ -21,7 +22,7 @@ class Program:  ...
 
 class CompileOptions:  ...
 
-def make_hlo_program(mlir_module: Union[str, bytes]) -> Program: ...
+def make_hlo_program(mlir_module: str | bytes) -> Program: ...
 
 def make_colocated_python_program(
     name : str,
@@ -31,12 +32,13 @@ def make_colocated_python_program(
     output_avals: Sequence[Any],
 ) -> Program: ...
 
-def make_plugin_program(data: Union[str, bytes]) -> Program: ...
+def make_plugin_program(data: str | bytes) -> Program: ...
 
 def make_colocated_python_compile_options() -> CompileOptions: ...
 
 def make_xla_compile_options(
     compile_options: _jax.CompileOptions,
+    executable_devices: _jax.DeviceList,
     host_callbacks: Sequence[Any]
 ) -> CompileOptions: ...
 

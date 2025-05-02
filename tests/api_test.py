@@ -511,6 +511,27 @@ class JitTest(jtu.BufferDonationTestCase):
                          may_alias=False, donate=False)
     self.assertNotEqual(id(arr), id(out))
 
+  def test_device_put_aliasing_with_diff_compatible_sharding(self):
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices")
+
+    mesh = jax.sharding.Mesh(
+        np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y")
+    )
+    x = jax.device_put(
+        np.arange(16).reshape((4, 4)),
+        jax.NamedSharding(mesh, P("x", None)),
+    )
+    expanded_mesh = jax.sharding.Mesh(
+        np.array(jax.devices()[:2]).reshape((1, 2, 1)), ("replicas", "x", "y")
+    )
+    dst_sharding = jax.NamedSharding(expanded_mesh, P("x", None))
+    # No transfer should happen because the array is aliased to compatible
+    # sharding that only has a mesh with an additional dimension of size 1.
+    with jax.transfer_guard_device_to_device("disallow_explicit"):
+      res = jax.device_put(x, dst_sharding, may_alias=True)
+    self.assertEqual(dst_sharding, res.sharding)
+
   @parameterized.named_parameters(
       ("argnums", "donate_argnums", 0),
       ("argnames", "donate_argnames", 'x'),
@@ -6657,7 +6678,8 @@ class JaxprTest(jtu.JaxTestCase):
     def fun(x):
       return (x, 1., np.zeros(1, dtype=jnp.float32))
 
-    expected = "{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0, a) }"
+    dtype = "f64" if config.enable_x64.value else "f32"
+    expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
@@ -6669,9 +6691,9 @@ class JaxprTest(jtu.JaxTestCase):
                       x + 2.,
                       lambda xf: xf - x)
     expected = """{ lambda ; a:f32[]. let
-    b:bool[] = ge a 0.0
-    c:f32[] = add a 1.0
-    d:f32[] = add a 2.0
+    b:bool[] = ge a 0.0:f32[]
+    c:f32[] = add a 1.0:f32[]
+    d:f32[] = add a 2.0:f32[]
     e:i32[] = convert_element_type[new_dtype=int32 weak_type=False] b
     f:f32[] = cond[
       branches=(
@@ -6853,13 +6875,13 @@ class DCETest(jtu.JaxTestCase):
     self.assert_dce_result(
         jaxpr,   used_outputs=used_outputs,
         expected_used_inputs=expected_used_inputs,
-        expected_num_eqns=1)  # 1 b/c scan doesn't have fwding rule
+        expected_num_eqns=0)
     used_outputs[7] = expected_used_inputs[7] = True
     used_outputs[6] = expected_used_inputs[6] = True
     self.assert_dce_result(
         jaxpr,   used_outputs=used_outputs,
         expected_used_inputs=expected_used_inputs,
-        expected_num_eqns=1)
+        expected_num_eqns=0)
 
     # If we use the value at index 3 only, some of the hidden sequence must be
     # kept but the rest pruned.

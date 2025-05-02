@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-from typing import Any, List, Optional
+from typing import Any
 
 class TransferGuardLevel:
   ALLOW: Any
@@ -28,14 +28,14 @@ class GarbageCollectionGuardLevel:
   FATAL: Any
 
 class GuardState:
-  host_to_device: Optional[TransferGuardLevel]
-  device_to_device: Optional[TransferGuardLevel]
-  device_to_host: Optional[TransferGuardLevel]
+  host_to_device: TransferGuardLevel | None
+  device_to_device: TransferGuardLevel | None
+  device_to_host: TransferGuardLevel | None
 
   explicit_device_put: bool
   explicit_device_get: bool
 
-  garbage_collect_array: Optional[GarbageCollectionGuardLevel]
+  garbage_collect_array: GarbageCollectionGuardLevel | None
 
 def global_state() -> GuardState: ...
 def thread_local_state() -> GuardState: ...
@@ -43,4 +43,4 @@ def thread_local_state() -> GuardState: ...
 class _TestingScopedLogSink:
   def __enter__(self) -> _TestingScopedLogSink: ...
   def __exit__(self, *args, **kwargs) -> None: ...
-  def logs(self) -> List[str]: ...
+  def logs(self) -> list[str]: ...

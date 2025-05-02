@@ -962,7 +962,6 @@ class PallasCallElementIndexingTest(PallasBaseTest):
         ),
         out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
         out_shape=result_ty,
-        debug=True,
     )(x)
     ref = []
     for i in range(15):
@@ -1000,6 +999,35 @@ class PallasCallElementIndexingTest(PallasBaseTest):
 class PallasCallElementIndexingInterpretTest(PallasCallElementIndexingTest):
   INTERPRET = True
 
+
+class PallasCallBoundedSliceIndexingTest(PallasBaseTest):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu():
+      self.skipTest("Only applicable for TPU")
+
+  def test_block_spec_bounded_slice_static(self):
+    shape = (16, 8, 128)
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Unsupported block dimension type:"):
+      _ = self.pallas_call(
+          kernel,
+          jax.ShapeDtypeStruct((8, 8, 128), dtype=np.int32),
+          grid=(1,),
+          in_specs=(
+              pl.BlockSpec(
+                  (pl.BoundedSlice(8), 8, 128), lambda i: (pl.ds(4, 8), 0, 0),
+              ),
+          ),
+          out_specs=pl.BlockSpec(
+              (8, 8, 128), lambda i: (0, 0, 0),
+          ),
+      )(x)
 
 class ApiErrorTest(PallasBaseTest):
   def test_pallas_call_kernel_args_mismatch(self):
@@ -1232,6 +1260,31 @@ class ApiErrorTest(PallasBaseTest):
         r" the ref?",
     ):
       dot_general_kernel(x, y)
+
+  def test_jax_disable_jit(self):
+    def add_vectors_kernel(x_ref, y_ref, o_ref):
+      x, y = x_ref[...], y_ref[...]
+      o_ref[...] = x + y
+
+    @jax.jit
+    def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array:
+      return self.pallas_call(
+          add_vectors_kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype)
+      )(x, y)
+
+    # Prove kernel works fine without disable_jit.
+    add_vectors(jnp.arange(8), jnp.arange(8))
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "pallas_call not supported with disable_jit."
+    ):
+      with jax.disable_jit():
+        add_vectors(jnp.arange(8.0), jnp.arange(8.0))
+
+    with jax.disable_jit():
+      # We instructed the user to do this, so this should not raise an error.
+      with jax.disable_jit(False):
+        add_vectors(jnp.arange(8.0), jnp.arange(8.0))
 
 
 class ApiErrorInterpretTest(ApiErrorTest):

@@ -427,6 +427,10 @@ class Var:
   def __repr__(self):
     return f'Var(id={id(self)}){self.suffix}:{self.aval.str_short()}'
 
+  def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
+    del print_dtype  # unused
+    return f"{context.var_names[self]}{self.suffix}"
+
 
 def gensym(suffix: str = '') -> Callable[[AbstractValue], Var]:
   """Produce distinct variables, printed with the optional suffix."""
@@ -440,35 +444,48 @@ class DropVar(Var):
   def __init__(self, aval: AbstractValue):
     super().__init__('', aval)
   def __repr__(self): return '_'
+  def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
+    del context, print_dtype  # unused
+    return '_'
 
 class Literal:
-  __slots__ = ["val", "aval", "hash"]
+  __slots__ = ["val", "aval"]
 
   val: Any
   aval: AbstractValue
-  hash: int | None
 
   def __init__(self, val, aval):
     self.val = val
     self.aval = aval
+
+  @property
+  def hash(self):
     try:
-      self.hash = hash(val)
+      return hash(self.val)
     except TypeError:
-      if type(val) in literalable_types:
+      if type(self.val) in literalable_types:
         try:
-          self.hash = hash((val.item(), val.dtype))
+          return hash((self.val.item(), self.val.dtype))
         except (TypeError, AttributeError, ValueError):
-          self.hash = None
+          return None
 
   __hash__ = None  # type: ignore
 
-  def __repr__(self):
-    if hasattr(self, 'hash'):
-      return f'{self.val}'
+  def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
+    del context  # unused
+    dtype = getattr(self.aval, 'dtype', None)
+    if print_dtype and dtype:
+      return f'{self.val}:{self.aval.str_short(short_dtypes=True)}'
     else:
-      return f'Literal(val={self.val})'
+      return f'{self.val}'
+
+  def __repr__(self):
+    return f'{self.val}'
 
 literalable_types: set[type] = set()
+
+def is_literalable(x: Any) -> bool:
+  return type(x) in dtypes.python_scalar_dtypes or (type(x) in literalable_types and not np.shape(x))
 
 Atom = Union[Var, Literal]
 
@@ -1688,6 +1705,9 @@ class UnshapedArray(AbstractValue):
     return '{}({}{})'.format(self.__class__.__name__, self.str_short(),
                              ", weak_type=True" if self.weak_type else "")
 
+  def __str__(self):
+    return '{}{}'.format("~" if self.weak_type else "", self.str_short())
+
   _bool    = concretization_function_error(bool)
   _int     = concretization_function_error(int, True)
   _float   = concretization_function_error(float, True)
@@ -1891,7 +1911,10 @@ def str_short_aval(shape, dtype, mesh, spec, vma,
 def get_vma(vma, mesh):
   if mesh.empty:
     return vma
+  axis_env_names = get_axis_env().axis_names()
   for i in vma:
+    if i in axis_env_names and i not in mesh._name_to_type:
+      continue
     if mesh._name_to_type[i] != AxisType.Manual:
       raise ValueError(
           "Axes mentioned in `vma` field of ShapedArray should"
@@ -2024,7 +2047,7 @@ def standard_insert_pvary(*args):
   if not args:
     return args
   in_vma = [frozenset() if (aval := get_aval(a)) is abstract_token
-            else aval.vma for a in args]
+            else aval.vma for a in args]  # pytype: disable=attribute-error
   out_vma = frozenset.union(*in_vma)
   return [pvary(arg, tuple(n for n in out_vma if n not in src))
           if out_vma - src else arg for arg, src in zip(args, in_vma)]
@@ -2061,6 +2084,7 @@ class DShapedArray(UnshapedArray):
   array_abstraction_level: int = 3
 
   def __init__(self, shape, dtype, weak_type=False):
+    assert not any(isinstance(d, Literal) for d in shape)
     self.shape = shape
     self.dtype = dtype
     self.weak_type = weak_type
@@ -3146,9 +3170,9 @@ class JaxprPpContext:
         self.var_names[for_v] = pp_var(like_v, self)
 
 
-def pp_var(v: Var | Literal, context: JaxprPpContext) -> str:
-  if isinstance(v, (Literal, DropVar)): return str(v)
-  return f"{context.var_names[v]}{v.suffix}"
+def pp_var(v: Var | Literal, context: JaxprPpContext, *,
+           print_literal_dtype: bool = True) -> str:
+  return v.pretty_print(context, print_dtype=print_literal_dtype)
 
 def pp_aval(a: AbstractValue, context: JaxprPpContext) -> str:
   if isinstance(a, DShapedArray):
@@ -3379,7 +3403,7 @@ class OpaqueTraceState:
     else:
       return False
 
-def get_opaque_trace_state(convention):
+def get_opaque_trace_state(convention=None):
   del convention
   return OpaqueTraceState(trace_ctx.trace._weakref)
 

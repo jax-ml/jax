@@ -27,8 +27,8 @@ from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.util import safe_zip, safe_map, set_module
-from jax._src.typing import (Array, ArrayLike, DimSize, DType, DTypeLike,
-                             Shape, SupportsNdim, SupportsShape, SupportsSize)
+from jax._src.typing import (
+    Array, ArrayLike, DimSize, Shape, SupportsNdim, SupportsShape, SupportsSize)
 from jax.sharding import Sharding
 
 import numpy as np
@@ -122,11 +122,6 @@ def promote_dtypes_complex(*args: ArrayLike) -> list[Array]:
   to_dtype_complex = dtypes.to_complex_dtype(to_dtype)
   return [lax._convert_element_type(x, to_dtype_complex, weak_type)
           for x in args]
-
-
-def _complex_elem_type(dtype: DTypeLike) -> DType:
-  """Returns the float type of the real/imaginary parts of a complex dtype."""
-  return np.abs(np.zeros((), dtype)).dtype
 
 
 def _arraylike(x: ArrayLike) -> bool:
@@ -252,6 +247,13 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
   return promote_shapes(fun_name, *promote_dtypes_inexact(*args))
 
 
+def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
+                                    ) -> Sharding | None:
+  if isinstance(device, xc.Device):
+    return SingleDeviceSharding(device)
+  return device
+
+
 @partial(api.jit, inline=True)
 def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
@@ -294,6 +296,7 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
 # materialize the broadcast forms of scalar arguments.
 @api.jit
 def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
+  condition, x, y = ensure_arraylike("where", condition, x, y)
   if x is None or y is None:
     raise ValueError("Either both or neither of the x and y arguments should "
                      "be provided to jax.numpy.where, got {} and {}."

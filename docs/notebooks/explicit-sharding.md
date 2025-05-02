@@ -337,11 +337,11 @@ JAX now has three styles of parallelism:
 
 A summary table:
 
-| Mode | Explicit sharding? | Explicit Collectives? |
-|---|---|---|
-| Auto | No | No |
-| Explicit (new) | Yes | No |
-| Manual | Yes | Yes |
+| Mode | View? | Explicit sharding? | Explicit Collectives? |
+|---|---|---|---|
+| Auto | Global | ❌ | ❌ |
+| Explicit | Global | ✅ | ❌ |
+| Manual | Per-device | ✅ | ✅ |
 
 The current mesh tells us which sharding mode we're in. We can query it with
 `get_abstract_mesh`:

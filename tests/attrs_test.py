@@ -29,7 +29,8 @@ from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 
 from jax.experimental import attrs
-from jax.experimental.attrs import jax_setattr, jax_getattr, jax_appendattr
+from jax.experimental.attrs import (
+    jax_setattr, jax_getattr, jax_appendattr, Box, List)
 
 config.parse_flags_with_absl()
 
@@ -920,6 +921,409 @@ class AttrsVJPTest(jtu.JaxTestCase):
                         check_dtypes=False)
     self.assertAllClose(attr_cotangents[(thing2, 'x')], attr_cotangents_ref[1],
                         check_dtypes=False)
+
+
+class BoxTest(jtu.JaxTestCase):
+
+  def test_jit_arg(self):
+    @jax.jit
+    def f(box, x):
+      assert tracing_ok
+      box.set(box.get() + x)
+
+    tracing_ok = True
+    box1 = Box(1.0)
+    f(box1, 1.)
+    self.assertAllClose(box1.get(), 2.0)
+
+    tracing_ok = False
+    box2 = Box(2.0)
+    f(box2, 2.)
+    self.assertAllClose(box2.get(), 4.0)
+
+  def test_jit_arg_in_pytree(self):
+    @jax.jit
+    def f(dct, x):
+      assert tracing_ok
+      box = dct['box']
+      box.set(box.get() + x)
+
+    tracing_ok = True
+    box1 = Box(1.0)
+    f({'box': box1, 'a': 1.0}, 1.)
+    self.assertAllClose(box1.get(), 2.0)
+
+    tracing_ok = False
+    box2 = Box(2.0)
+    f({'box': box2, 'a': 2.0}, 2.)
+    self.assertAllClose(box2.get(), 4.0)
+
+    tracing_ok = True
+    box3 = Box(3)  # int, dtype changed
+    f({'box': box3, 'a': 2.0}, 2.)
+    self.assertAllClose(box3.get(), 5.0)
+
+  def test_jit_closure(self):
+    @jax.jit
+    def f(x):
+      box.set(box.get() + x)
+
+    box = Box(1.0)
+    f(2.0)
+    self.assertAllClose(box.get(), 3.0)
+
+    @jax.jit
+    def g(x):
+      f(x)
+
+    g(3.0)
+    self.assertAllClose(box.get(), 6.0)
+
+  def test_jit_closure_nested(self):
+    @jax.jit
+    def h(x):
+      box = Box(x)
+
+      @jax.jit
+      def k(x):
+        box.set(box.get() + x)
+
+      k(1.0)
+      k(1.0)
+      return box.get()
+
+    ans = h(2.0)
+    self.assertAllClose(ans, 4.0)
+
+  @parameterized.parameters([False, True])
+  def test_jvp_closure_stop_gradient(self, jit):
+    box = Box(1.0)
+
+    def f(x):
+      y = 2 * x
+      box.set(box.get() + jax.lax.stop_gradient(y))
+      return y
+
+    if jit:
+      f = jax.jit(f)
+
+    y, y_dot = jax.jvp(f, (1.0,), (1.0,))
+    self.assertAllClose(y, 2.0)
+    self.assertAllClose(y_dot, 2.0)
+    self.assertAllClose(box.get(), 3.0)
+
+  @parameterized.parameters([False, True])
+  def test_jvp_arg(self, jit):
+    def f(box, x):
+      box.set(box.get() + x)
+      return x
+
+    if jit:
+      f = jax.jit(f)
+
+    box = Box(5.0)
+    box_dot = Box(1.0)
+    y, y_dot = jax.jvp(f, (box, 2.), (box_dot, 1.))
+    self.assertAllClose(y, 2.0)
+    self.assertAllClose(y_dot, 1.0)
+    self.assertAllClose(box.get(), 7.0)
+    self.assertAllClose(box_dot.get(), 2.0)
+
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_plumbing(self, jit):
+    box = Box(0.0)
+
+    @jax.custom_vjp
+    def foo(x):
+      return x
+    def foo_fwd(x):
+      return foo(x), None
+    def foo_bwd(_, g):
+      box.set(g)
+      return g,
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    def f(x):
+      x = 2 * x
+      x = foo(x)
+      x = 2 * x
+      return x
+
+    if jit:
+      f = jax.jit(f)
+
+    jax.grad(f)(1.0)
+    self.assertAllClose(box.get(), 2.0)
+
+  @parameterized.parameters([False, True])
+  def test_grad_closrue_stop_gradient(self, jit):
+    box = Box(0.0)
+
+    def f(x):
+      y = x * 2
+      box.set(box.get() + jax.lax.stop_gradient(y))
+      return y
+
+    if jit:
+      f = jax.jit(f)
+
+    g = jax.grad(f)(1.0)
+    self.assertAllClose(g, 2.0)
+    self.assertAllClose(box.get(), 2.0)
+
+  @parameterized.parameters([False, True])
+  def test_scan_basic(self, jit):
+    box = Box(1.0)
+
+    def double_it_10():
+      def body(_, __):
+        box.set(box.get() * 2)
+        return None, None
+      _, _ = jax.lax.scan(body, None, None, length=10)
+
+    if jit:
+      double_it_10 = jax.jit(double_it_10)
+
+    double_it_10()
+    self.assertAllClose(box.get(), 1024., check_dtypes=False)
+
+  def test_error_passing_multiple_times_to_jit(self):
+
+    @jax.jit
+    def f(box1, box2):
+      ...
+
+    b = Box(1.0)
+    with self.assertRaisesRegex(ValueError, "a Box instance can't be passed"):
+      f(b, b)
+
+  # TODO(mattjj): re-enable this test
+  # def test_error_returning_from_jit(self):
+  #   @jax.jit
+  #   def f():
+  #     return {'a': Box(1.0)}
+
+  #   with self.assertRaisesRegex(ValueError, "a Box instance can't be returned"):
+  #     f()
+
+
+class ListTest(jtu.JaxTestCase):
+
+  def test_eager(self):
+    lst = List()
+    lst.append(1.0)
+    lst.append(2.0)
+    lst.append(3.0)
+    self.assertAllClose(lst.get(), [1., 2., 3.])
+
+  def test_jit_arg(self):
+    @jax.jit
+    def f(lst, x):
+      assert tracing_ok
+      lst.append(1.0)
+      lst.append(2.0)
+      lst.append({'c': x + 3.0})
+
+
+    tracing_ok = True
+    lst1 = List()
+    f(lst1, 0)
+    self.assertAllClose(lst1.get(), [1., 2., {'c': 3.}])
+
+    tracing_ok = False
+    lst2 = List()
+    lst2.append(0.)
+    f(lst2, 1)
+    self.assertAllClose(lst2.get(), [0., 1., 2., {'c': 4.}])
+
+  def test_jit_closure(self):
+    lst = List()
+
+    @jax.jit
+    def f(x):
+      assert tracing_ok
+      lst.append(1.0)
+      lst.append({'a': 2.0})
+      lst.append(x + 3.0)
+
+    tracing_ok = True
+    f(1)
+    self.assertAllClose(lst._val, [1., {'a': 2.}, 4.])
+
+    tracing_ok = False
+    f(2)
+    self.assertAllClose(lst.get(), [1., {'a': 2.}, 4., 1., {'a': 2.0}, 5.0])
+
+  def test_jit_closure_nested(self):
+    lst = List()
+
+    @jax.jit
+    def h(x):
+      lst.append(x)
+
+      @jax.jit
+      def k(x):
+        lst.append(x)
+
+      k(1.0)
+      k(2.0)
+
+    h(0.0)
+    self.assertAllClose(lst.get(), [0., 1., 2.])
+
+  @parameterized.parameters([False, True])
+  def test_scan_basic(self, jit):
+    lst = List()
+
+    def f():
+      def body(_, x):
+        lst.append(2 * x)
+        lst.append(2 * x + 1)
+        return (), ()
+      (), () = jax.lax.scan(body, (), jnp.arange(3.))
+
+    if jit:
+      f = jax.jit(f)
+
+    f()
+
+    self.assertAllClose(lst.get(), [0., 1., 2., 3., 4., 5.])
+
+  @parameterized.parameters([False, True])
+  def test_scan_basic_hetero(self, jit):
+    lst = List()
+
+    def f():
+      def body(_, x):
+        lst.append(2 * x)
+        lst.append({'a': (2 * x + 1, 2 * x + 2)})
+        return (), ()
+      (), () = jax.lax.scan(body, (), jnp.arange(3.))
+
+    if jit:
+      f = jax.jit(f)
+
+    f()
+
+    expected = [
+        0.,
+        {'a': (1., 2.)},
+        2.,
+        {'a': (3., 4.)},
+        4.,
+        {'a': (5., 6.)},
+    ]
+    self.assertAllClose(lst.get(), expected)
+
+  @parameterized.parameters([False, True])
+  def test_get_basic(self, jit):
+
+    def f():
+      lst = List()
+      lst.append(1.)
+      lst.append(2.)
+      return lst.get()
+
+    if jit:
+      f = jax.jit(f)
+
+    lst = f()
+    self.assertAllClose(lst, [1., 2.])
+
+  def test_freeze_nonlocal_list(self):
+    lst = List()
+
+    @jax.jit
+    def f():
+      lst.get()
+
+    with self.assertRaisesRegex(Exception, "can't read the value"):
+      f()
+
+  def test_freeze_nonlocal_list_nested(self):
+    @jax.jit
+    def f():
+      lst = List()
+
+      @jax.jit
+      def g():
+        lst.get()
+
+      g()
+
+    with self.assertRaisesRegex(Exception, "can't read the value"):
+      f()
+
+  @parameterized.parameters([False, True])
+  def test_append_after_get(self, jit):
+    def f():
+      lst = List()
+      lst.append(1.)
+      lst.append(2.)
+      val = lst.get()
+      lst.append(3.)
+      return lst.get()
+
+    if jit:
+      f = jax.jit(f)
+
+    lst = f()
+    self.assertAllClose(lst, [1., 2., 3.])
+
+  def test_get_on_nonlocal_list_closure(self):
+    lst = List()
+
+    @jax.jit
+    def f():
+      lst.append(1.)
+      lst.append(2.)
+      with self.assertRaisesRegex(Exception, "can't read"):
+        val = lst.get()
+
+  def test_get_on_nonlocal_list_arg(self):
+    lst = List()
+
+    @jax.jit
+    def f(lst):
+      lst.append(1.)
+      lst.append(2.)
+      with self.assertRaisesRegex(Exception, "can't read"):
+        val = lst.get()
+
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_plumbing(self, jit):
+    lst = List()
+
+    @jax.custom_vjp
+    def foo(x):
+      return x
+    def foo_fwd(x):
+      return foo(x), None
+    def foo_bwd(_, g):
+      lst.append(g)
+      return g,
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    def f(x):
+      x = 2 * x
+      x = foo(x)
+      x = 2 * x
+      return x
+
+    if jit:
+      f = jax.jit(f)
+
+    jax.grad(f)(1.0)
+    self.assertAllClose(lst.get(), [2.0])
+
+  def test_error_passing_multiple_times_to_jit(self):
+    @jax.jit
+    def f(lst1, lst2):
+      ...
+
+    b = List([])
+    with self.assertRaisesRegex(ValueError, "a List instance can't be passed"):
+      f(b, b)
 
 
 if __name__ == '__main__':

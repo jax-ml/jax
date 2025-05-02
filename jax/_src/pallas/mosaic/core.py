@@ -224,7 +224,7 @@ def _tensorcore_mesh_discharge_rule(
     mesh,
     jaxpr,
     compiler_params: Any | None,
-    interpret: bool,
+    interpret: Any,
     debug: bool,
     cost_estimate: pallas_core.CostEstimate | None,
     name: str,

@@ -169,7 +169,7 @@ class InterpretTest(jtu.JaxTestCase):
           out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
           grid=(iters,),
           in_specs=[
-              pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+              pl.BlockSpec(memory_space=pltpu.SMEM),
               pl.BlockSpec(x.shape, lambda i: (0, 0)),
           ],
           out_specs=pl.BlockSpec(x.shape, lambda i: (0, 0)),
@@ -244,7 +244,7 @@ class InterpretTest(jtu.JaxTestCase):
     y = pl.pallas_call(
         kernel_without_race,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
+        in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
         scratch_shapes=[
             pltpu.VMEM(x.shape, x.dtype),
             pltpu.SemaphoreType.DMA,
@@ -259,7 +259,7 @@ class InterpretTest(jtu.JaxTestCase):
     pl.pallas_call(
         kernel_with_race,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
+        in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
         scratch_shapes=[
             pltpu.VMEM(x.shape, x.dtype),
             pltpu.SemaphoreType.DMA,

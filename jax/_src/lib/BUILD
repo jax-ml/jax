@@ -52,6 +52,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
         "//jaxlib/mlir:chlo_dialect",
+        "//jaxlib/mlir:control_flow_dialect",
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:math_dialect",
@@ -63,5 +64,6 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:sparse_tensor_dialect",
         "//jaxlib/mlir:stablehlo_dialect",
         "//jaxlib/mlir:vector_dialect",
+        "@xla//xla/python:_profiler",
     ]),
 )

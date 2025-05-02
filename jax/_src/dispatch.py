@@ -51,7 +51,7 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, SingleDeviceSharding, TransferToMemoryKind, GSPMDSharding,
-    PositionalSharding, is_single_device_sharding)
+    is_single_device_sharding)
 import numpy as np
 
 
@@ -132,7 +132,8 @@ class RuntimeTokenSet(threading.local):
       # TODO(yueshengys): This might still be buggy in a multi-process SPMD
       # scenario. Revise the logic later. A distributed shutdown barrier inside
       # the XLA program may be needed.
-      return jax.device_put(tok, PositionalSharding(devices))
+      return jax.device_put(
+          tok, NamedSharding(Mesh(devices, 'x'), PartitionSpec('x')))
 
     # We only use replicated sharding for the first time when the token for the
     # order effect hasn't been created.
@@ -190,8 +191,12 @@ class LogElapsedTimeContextManager:
       logger.log(log_priority, self.fmt.format(
           fun_name=self.fun_name, elapsed_time=elapsed_time))
     if self.event is not None:
-      record_event_duration_secs(self.event, elapsed_time)
-      record_event_time_span(self.event, self.start_time, end_time)
+      record_event_duration_secs(
+          self.event, elapsed_time, fun_name=self.fun_name
+      )
+      record_event_time_span(
+          self.event, self.start_time, end_time, fun_name=self.fun_name
+      )
 
 log_elapsed_time = LogElapsedTimeContextManager
 

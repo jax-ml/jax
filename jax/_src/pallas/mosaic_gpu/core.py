@@ -168,7 +168,7 @@ def kernel(
     body: Callable[..., None],
     out_shape: object,
     *,
-    scratch_shapes: Sequence[pallas_core.ScratchShape] = (),
+    scratch_shapes: pallas_core.ScratchShapeTree = (),
     compiler_params: object | None = None,
     **mesh_kwargs: object,
 ):
@@ -207,6 +207,10 @@ def _is_known_divisible(value, divisor, fuel=10) -> bool:
     case arith_dialect.MulIOp():
       return (_is_known_divisible(value.owner.operands[0], divisor, fuel // 2) or
               _is_known_divisible(value.owner.operands[1], divisor, (fuel + 1)// 2))
+    case arith_dialect.SelectOp():
+      return (_is_known_divisible(value.owner.operands[1], divisor, fuel // 2) and
+              _is_known_divisible(value.owner.operands[2], divisor, (fuel + 1)// 2))
+
   return False
 
 

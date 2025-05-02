@@ -18,8 +18,10 @@ See the Pallas documentation at
 https://docs.jax.dev/en/latest/pallas.html.
 """
 
+from jax._src.pallas.core import BlockDim as BlockDim
 from jax._src.pallas.core import Blocked as Blocked
 from jax._src.pallas.core import BlockSpec as BlockSpec
+from jax._src.pallas.core import BoundedSlice as BoundedSlice
 from jax._src.pallas.core import Buffered as Buffered
 from jax._src.pallas.core import CompilerParams as CompilerParams
 from jax._src.pallas.core import core_map as core_map

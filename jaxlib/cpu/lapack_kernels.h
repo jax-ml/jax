@@ -18,11 +18,9 @@ limitations under the License.
 
 #include <complex>
 #include <cstdint>
-#include <optional>
 #include <type_traits>
 
 #include "absl/status/statusor.h"
-#include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_status.h"
 
@@ -92,26 +90,6 @@ void AssignKernelFn(typename KernelType::FnType* func) {
 }
 
 }  // namespace jax
-
-#define DEFINE_CHAR_ENUM_ATTR_DECODING(ATTR)                             \
-  template <>                                                            \
-  struct xla::ffi::AttrDecoding<ATTR> {                                  \
-    using Type = ATTR;                                                   \
-    static std::optional<Type> Decode(XLA_FFI_AttrType type, void* attr, \
-                                      DiagnosticEngine& diagnostic);     \
-  }
-
-// XLA needs attributes to have deserialization method specified
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::Side);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::UpLo);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::Transpose);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::Diag);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::svd::ComputationMode);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::eig::ComputationMode);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::schur::ComputationMode);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::schur::Sort);
-
-#undef DEFINE_CHAR_ENUM_ATTR_DECODING
 
 namespace jax {
 

@@ -126,6 +126,20 @@ class JaxAotTest(jtu.JaxTestCase):
     hlo = lowered.as_text("hlo")
     self.assertNotRegex(hlo, r"sine.*metadata=.*source_file=.*")
 
+  @jtu.run_on_devices('gpu', 'tpu')
+  def test_mismatched_backends_raises(self):
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    x = jnp.arange(1)
+    f_lowered = f.lower(x)
+    serialized, in_tree, out_tree = serialize(f_lowered.compile())
+    with self.assertRaisesRegex(
+        ValueError,
+        'Execution devices belong to a client other than `backend`'):
+      deserialize_and_load(serialized, in_tree, out_tree, backend='cpu',
+                           execution_devices=jax.devices()[:1])
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

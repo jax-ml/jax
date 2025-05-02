@@ -1102,7 +1102,9 @@ class SparseObjectTest(sptu.SparseTestCase):
     _, bcoo_indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch,
                                                   n_dense=n_dense)
 
-    bcoo_to_bcsr = partial(sparse_bcsr._bcoo_to_bcsr, shape=shape)
+    bcoo_to_bcsr = partial(
+        sparse_bcsr._bcoo_to_bcsr, shape=shape, index_dtype=bcoo_indices.dtype
+    )
 
     args_maker_bcoo_to_bcsr = lambda: [bcoo_indices]
     self._CompileAndCheck(bcoo_to_bcsr, args_maker_bcoo_to_bcsr)

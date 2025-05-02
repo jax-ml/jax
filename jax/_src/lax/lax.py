@@ -2507,10 +2507,6 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
     by the ``lhs`` non-contracting/non-batch dimensions, and finally the ``rhs``
     non-contracting/non-batch dimensions.
   """
-  if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
-    raise NotImplementedError(
-        '`out_sharding` argument of `dot_general` only supports NamedSharding '
-        'instances. Please file a bug if this is not enough for your use case.')
   out_sharding = canonicalize_sharding(out_sharding, 'dot_general')
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
@@ -2964,6 +2960,8 @@ def reduce(operands: Any,
     flat_init_avals = safe_map(core.get_aval, flat_init_values)
     closed_jaxpr, out_tree = _variadic_reduction_jaxpr(
         computation, comp_debug, tuple(flat_init_avals), init_value_tree)
+    flat_operands = core.standard_insert_pvary(*flat_operands)
+    flat_init_avals = core.standard_insert_pvary(*flat_init_values)
     out = reduce_p.bind(*flat_operands, *flat_init_values, computation=computation,
                         jaxpr=closed_jaxpr, dimensions=tuple(dimensions))
     return tree_util.tree_unflatten(out_tree, out)
@@ -5170,7 +5168,7 @@ def _dot_general_shape_computation(lhs_shape, rhs_shape, dimension_numbers):
   lhs_tensored_shape = tuple_delete(lhs_shape, lhs_contract_or_batch)
   rhs_group = ()
   if isinstance(dimension_numbers, RaggedDotDimensionNumbers):
-    rhs_group = tuple(dimension_numbers.rhs_group_dimensions)
+    rhs_group = tuple(dimension_numbers.rhs_group_dimensions)  # pytype: disable=attribute-error
   rhs_contract_or_batch_or_group = tuple(
       sorted(tuple(rhs_contracting) + tuple(rhs_batch) + rhs_group)
   )
@@ -6015,7 +6013,7 @@ def _ragged_dot_general_transpose_rule(
         unsorted_axes = list(x_batch) + x_kept + x_contract_sorted_by_y
       case RaggedDotMode.RAGGED_CONTRACTING | RaggedDotMode.RAGGED_BATCH:
         raise unimplemented('grad_x_dims', mode)
-    return dims, unsorted_axes
+    return dims, unsorted_axes  # pytype: disable=name-error
 
   def grad_y_dims():
     match mode:
@@ -6034,7 +6032,7 @@ def _ragged_dot_general_transpose_rule(
         )
       case RaggedDotMode.RAGGED_CONTRACTING | RaggedDotMode.RAGGED_BATCH:
         raise unimplemented('grad_y_dims', mode)
-    return dims, unsorted_axes
+    return dims, unsorted_axes  # pytype: disable=name-error
 
   def _ragged_dot_grad(lhs, rhs, dims_fn, aval):
     dims, unsorted_axes = dims_fn()
@@ -6236,7 +6234,7 @@ def _ragged_dot_general_impl(
           lhs,
           rhs,
           dimension_numbers=ragged_dot_dimension_numbers.dot_dimension_numbers,
-      )
+      )  # pytype: disable=bad-return-type
 
 
 def _ragged_dot_general_lower(

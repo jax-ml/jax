@@ -149,12 +149,14 @@ jobs:
           # Python values need to match the matrix stategy in the build artifacts job above
           runner: ["linux-x86-g2-48-l4-4gpu",]
           python: ["3.10",]
+          jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1, 0]
-    name: "Bazel CUDA Non-RBE (JAX artifacts version =  ${{ format('{0}', 'head') }})"
+    name: "Bazel CUDA Non-RBE (jax version = ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      jaxlib-version: ${{ matrix.jaxlib-version }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
@@ -172,8 +174,18 @@ jobs:
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
-            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"}
+            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
+            {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"}
           ]
+          libtpu-version-type: ["nightly", "oldest_supported_libtpu"]
+          exclude:
+            # Run a single config for oldest_supported_libtpu
+            - libtpu-version-type: "oldest_supported_libtpu"
+              tpu-specs:
+                type: "v4-8"
+            - libtpu-version-type: "oldest_supported_libtpu"
+              tpu-specs:
+                type: "v6e-8"
     name: "Pytest TPU (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
@@ -181,5 +193,5 @@ jobs:
       tpu-type: ${{ matrix.tpu-specs.type }}
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
-      libtpu-version-type: "nightly"
+      libtpu-version-type: ${{ matrix.libtpu-version-type }}
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}

@@ -11,10 +11,13 @@
 # Github Actions environment).
 
 name: CI - Cloud TPU (nightly)
+# Disable the schedule; Slated for removal, the new test workflow is in
+# "wheel_tests_nightly_release.yml"
 on:
-  schedule:
-    - cron: "0 2,14 * * *" # Run at 7am and 7pm PST
+#   schedule:
+#     - cron: "0 2,14 * * *" # Run at 7am and 7pm PST
   workflow_dispatch: # allows triggering the workflow run manually
+
 # This should also be set to read-only in the project settings, but it's nice to
 # document and enforce the permissions here.
 permissions:
@@ -88,14 +91,14 @@ jobs:
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly" ]; then
             $PYTHON -m uv pip install \
-              --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html \
+              --pre . -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/ \
               libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
               requests
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
             # TODO(phawkins): switch to libtpu, when the oldest release we support is a libtpu release.
             $PYTHON -m uv pip install \
-              --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html \
+              --pre . -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/ \
               libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
               requests

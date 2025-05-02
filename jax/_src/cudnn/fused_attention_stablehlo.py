@@ -407,7 +407,7 @@ def _dot_product_attention_fwd(
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length, is_training=False or return_residual)
   if return_residual:
-    return outputs
+    return tuple(outputs)
   else:
     return outputs[0]
 
@@ -427,7 +427,7 @@ def _dot_product_attention_fwd_rule(
   res = (query, key, value, bias, q_seqlen, kv_seqlen, q_offsets,
          kv_offsets, outputs[1], outputs[0])
   if return_residual:
-    return outputs, res
+    return tuple(outputs), res
   else:
     return outputs[0], res
 
@@ -436,6 +436,8 @@ def _dot_product_attention_bwd_rule(
     sliding_window_length, is_training, return_residual, res, grad_output):
   (query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
    activation, fwd_output) = res
+  if return_residual:
+    grad_output = grad_output[0]
   grads = _dot_product_attention_bwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
       activation, fwd_output, grad_output, scale=scale, seed=seed,

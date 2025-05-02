@@ -167,6 +167,7 @@ maintains an up-to-date list.
    glossary
 
 .. toctree::
+   :hidden:
    :maxdepth: 2
 
    config_options

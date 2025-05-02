@@ -77,6 +77,12 @@ pallas_call_p.multiple_results = True
 
 def _pallas_call_impl(*args, **params):
   # Call the lowering path
+  if config.disable_jit.value:
+    raise NotImplementedError(
+        "pallas_call not supported with disable_jit. Consider invoking under a"
+        " local context of `jax.disable_jit(False)`."
+    )
+
   @partial(jax.jit, inline=True)
   def _jit_run(*args):
     return pallas_call_p.bind(*args, **params)
@@ -122,7 +128,7 @@ def _pallas_call_jvp_rule(
     grid_mapping: GridMapping,
     mesh: pallas_core.Mesh | None,
     debug: bool,
-    interpret: bool,
+    interpret: Any,
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
@@ -221,14 +227,19 @@ def _batch_block_mapping(
         block_mapping.index_map_jaxpr.consts,
         *drop_last_args,
     )
+    unflat_indices = tree_util.tree_unflatten(
+        block_mapping.index_map_out_tree, indices)
+    if not isinstance(unflat_indices, tuple):
+      unflat_indices = (unflat_indices,)
+    unflat_indices = list(unflat_indices)
     if dim is not batching.not_mapped:
       if isinstance(dim, batching.RaggedAxis):
         assert for_ragged, "Ragged axis not supported for non-ragged batching."
         stacked_axis = dim.stacked_axis
-        indices.insert(stacked_axis, new_idx)
+        unflat_indices.insert(stacked_axis, new_idx)
       else:
-        indices.insert(dim, new_idx)
-    return tuple(indices)
+        unflat_indices.insert(dim, new_idx)
+    return tuple(unflat_indices)
   idx_avals = [pallas_core.index_map_grid_aval, *block_mapping.index_map_jaxpr.in_avals]
 
   if for_ragged:
@@ -243,11 +254,15 @@ def _batch_block_mapping(
       )
       idx_avals = [*idx_avals, i32_aval_memref]
 
+  block_mapping_flat_fn, out_tree_thunk = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(_block_map_function,
+                   debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info),
+      tree_util.tree_structure(idx_avals))
   with grid_mapping.trace_env():
     block_mapping_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(_block_map_function,
-                     debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info),
+        block_mapping_flat_fn,
         idx_avals)
+  new_index_map_out_tree = out_tree_thunk()
   shape = block_mapping.block_shape
   if dim is batching.not_mapped:
     new_block_shape = shape
@@ -278,7 +293,8 @@ def _batch_block_mapping(
   jaxpr = jax_core.ClosedJaxpr(block_mapping_jaxpr, consts)
   return block_mapping.replace(block_shape=new_block_shape,
                                array_shape_dtype=new_array_shape_dtype,
-                               index_map_jaxpr=jaxpr)
+                               index_map_jaxpr=jaxpr,
+                               index_map_out_tree=new_index_map_out_tree)
 
 
 def _broadcast_input_output_aliases(
@@ -325,7 +341,7 @@ def _batch_with_explicit_loop(
     mesh: pallas_core.Mesh | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
-    interpret: bool,
+    interpret: Any,
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
@@ -423,7 +439,7 @@ def _pallas_call_batching_rule(
     mesh: pallas_core.Mesh | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
-    interpret: bool,
+    interpret: Any,
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
@@ -1022,7 +1038,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
                               enabled_errors,
                               *args: jax_core.Value,
                               jaxpr: jax_core.Jaxpr,
-                              interpret: bool,
+                              interpret: Any,
                               input_output_aliases: tuple[tuple[int, int], ...],
                               grid_mapping: GridMapping,
                               out_avals: tuple[jax_core.AbstractValue, ...],
@@ -1242,7 +1258,7 @@ def _unsupported_lowering_error(platform: str) -> Exception:
 def _pallas_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
-    interpret: bool,
+    interpret: Any,
     backend: Backend | None,
     **params,
 ):
@@ -1356,7 +1372,7 @@ def _pallas_call_state_discharge_rule(
     grid_mapping: GridMapping,
     mesh: pallas_core.Mesh | None,
     debug: bool,
-    interpret: bool,
+    interpret: Any,
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
@@ -1480,7 +1496,7 @@ def pallas_call(
     scratch_shapes: ScratchShapeTree = (),
     input_output_aliases: Mapping[int, int] = {},
     debug: bool = False,
-    interpret: bool = False,
+    interpret: Any = False,
     name: str | None = None,
     compiler_params: (
         Mapping[Backend, CompilerParams] | CompilerParams | None
@@ -1610,7 +1626,7 @@ def _pallas_call(
     mesh: pallas_core.Mesh | None = None,
     input_output_aliases: Mapping[int, int] = {},
     debug: bool = False,
-    interpret: bool = False,
+    interpret: Any = False,
     name: str | None = None,
     compiler_params: (
         Mapping[Backend, CompilerParams] | CompilerParams | None

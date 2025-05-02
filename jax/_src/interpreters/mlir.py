@@ -1097,7 +1097,7 @@ class UnconstrainedVariants(NamedTuple):
 
 def _get_unconstrained_variants(s, aval) -> UnconstrainedVariants:
   us = contains_unconstrained(s)
-  unconstrained_dims = ({i for i, p in enumerate(s.spec)
+  unconstrained_dims = ({i for i, p in enumerate(s.spec)  # pytype: disable=attribute-error
                          if p is PartitionSpec.UNCONSTRAINED} if us else None)
   return UnconstrainedVariants(
       contains_unconstrained=us, all_unconstrained=all_unconstrained(s, aval),
@@ -2241,10 +2241,17 @@ def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects, name_stack,
     try:
       func_op = ctx.cached_primitive_lowerings[key]
     except KeyError:
+      num_callbacks = len(ctx.host_callbacks)
       func_op = lower_jaxpr_to_fun(
           ctx, fn_name, call_jaxpr, effects, name_stack, arg_names=arg_names,
           result_names=result_names)
-      ctx.cached_primitive_lowerings[key] = func_op
+
+      # If this Jaxpr includes callbacks, we can't cache the lowering because
+      # on TPU every callback must have a globally unique channel, but the
+      # channel gets assigned during lowering.
+      has_callbacks = len(ctx.host_callbacks) > num_callbacks
+      if not has_callbacks or "tpu" not in ctx.platforms:
+        ctx.cached_primitive_lowerings[key] = func_op
   else:
     func_op = lower_jaxpr_to_fun(
         ctx, fn_name, call_jaxpr, effects, name_stack, arg_names=arg_names,

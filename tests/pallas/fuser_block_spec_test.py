@@ -732,6 +732,35 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         x_block,
     )
 
+  def test_basic_reshape(self):
+
+    def f(x):
+      return x.reshape((512, 2048))
+
+    in_type = jax.ShapeDtypeStruct((512, 16, 128), jnp.float32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, in_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((256, 1024), lambda i, j, k: (i, k))
+    kernel_fn, (value_block_specs, x_block_spec), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(2, 3, 4),
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, in_type)
+    )
+    self.assertEmpty(value_block_specs)
+    self.assertEqual(x_block_spec.index_map(0, 1, 2), (0, 2, 0))
+    self.assertEqual(x_block_spec.index_map(3, 2, 1), (3, 1, 0))
+
+    x = jnp.arange((256 * 1024), dtype=jnp.float32).reshape((256, 8, 128))
+    y = kernel_fn((0, 1, 2), scalar_prefetch_values, (), x)
+    np.testing.assert_array_equal(y, x.reshape((256, 1024)))
+
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):
 

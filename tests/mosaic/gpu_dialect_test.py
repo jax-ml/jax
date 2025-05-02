@@ -605,6 +605,116 @@ class DialectTest(MosaicGpuTest):
         parsed_layout = layouts.from_tiled_layout_attr(attr)
         self.assertEqual(layout, parsed_layout)
 
+  def test_broadcast_in_dim_ok(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.VectorType.get([64], ir.F32Type.get()),
+          name="broadcast_in_dim",
+      )(
+          lambda operand: mgpu.dialect.broadcast_in_dim(
+              ir.VectorType.get([64, 64], ir.F32Type.get()),
+              operand,
+              broadcast_dimensions=[0],
+          )
+      )
+
+    self.assertTrue(self.module.operation.verify())
+
+  def test_broadcast_in_dim_no_0d(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.VectorType.get([], ir.F32Type.get()),
+          name="broadcast_in_dim",
+      )(
+          lambda operand: mgpu.dialect.broadcast_in_dim(
+              ir.VectorType.get([64], ir.F32Type.get()),
+              operand,
+              broadcast_dimensions=[],
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The input vector must have rank > 0",
+    ):
+      self.module.operation.verify()
+
+  def test_broadcast_in_dim_no_input_larger_than_output(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.VectorType.get([64, 64], ir.F32Type.get()),
+          name="broadcast_in_dim",
+      )(
+          lambda operand: mgpu.dialect.broadcast_in_dim(
+              ir.VectorType.get([64], ir.F32Type.get()),
+              operand,
+              broadcast_dimensions=[],
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"rank of the input vector must be smaller",
+    ):
+      self.module.operation.verify()
+
+  def test_broadcast_in_dim_too_many_dims(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.VectorType.get([64], ir.F32Type.get()),
+          name="broadcast_in_dim",
+      )(
+          lambda operand: mgpu.dialect.broadcast_in_dim(
+              ir.VectorType.get([64, 64], ir.F32Type.get()),
+              operand,
+              broadcast_dimensions=[0, 1],
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"size of the `broadcast_dimensions` attribute must be",
+    ):
+      self.module.operation.verify()
+
+  def test_broadcast_in_dim_dim_oob(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.VectorType.get([64], ir.F32Type.get()),
+          name="broadcast_in_dim",
+      )(
+          lambda operand: mgpu.dialect.broadcast_in_dim(
+              ir.VectorType.get([64, 64], ir.F32Type.get()),
+              operand,
+              broadcast_dimensions=[2],
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"must be in the range \[0, result.shape.rank",
+    ):
+      self.module.operation.verify()
+
+  def test_broadcast_in_dim_dim_transpose(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.VectorType.get([64, 64, 64, 64], ir.F32Type.get()),
+          name="broadcast_in_dim",
+      )(
+          lambda operand: mgpu.dialect.broadcast_in_dim(
+              ir.VectorType.get([64, 64, 64, 64], ir.F32Type.get()),
+              operand,
+              broadcast_dimensions=[0, 1, 3, 2],
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"`broadcast_dimensions` attribute must be stricly increasing",
+    ):
+      self.module.operation.verify()
+
 
 class DialectLoweringTest(MosaicGpuTest):
 

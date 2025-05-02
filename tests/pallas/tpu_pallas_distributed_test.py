@@ -44,8 +44,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
       self.skipTest('Only works with TPU v5e.')
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM),
-      ('hbm', pltpu.TPUMemorySpace.ANY),
+      ('vmem', pltpu.VMEM),
+      ('hbm', pltpu.ANY),
   )
   def test_basic_remote_vmem_dma(self, mem):
     # Implements very simple collective permute
@@ -126,8 +126,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     def body(x):
       return pl.pallas_call(
           kernel,
-          in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM)],
-          out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
           out_shape=x,
       )(x)
 
@@ -180,8 +180,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     def body(x):
       return pl.pallas_call(
           kernel,
-          in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM)],
-          out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
           out_shape=x,
       )(x)
 
@@ -232,8 +232,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     def body(x):
       return pl.pallas_call(
           kernel,
-          in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM)],
-          out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
           out_shape=x,
           compiler_params=pltpu.TPUCompilerParams(collective_id=0),
       )(x)
@@ -291,7 +291,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+                pl.BlockSpec(memory_space=pltpu.ANY),
             ],
             scratch_shapes=(
                 [pltpu.SemaphoreType.DMA] * 2
@@ -375,9 +375,9 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+                pl.BlockSpec(memory_space=pltpu.VMEM),
             ],
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
             scratch_shapes=(
                 [pltpu.SemaphoreType.DMA] * 2
             )
@@ -467,11 +467,11 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+                pl.BlockSpec(memory_space=pltpu.VMEM),
             ],
             out_specs=[
-                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
-                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+                pl.BlockSpec(memory_space=pltpu.VMEM),
+                pl.BlockSpec(memory_space=pltpu.VMEM),
             ],
             scratch_shapes=(
                 [pltpu.SemaphoreType.DMA] * 2

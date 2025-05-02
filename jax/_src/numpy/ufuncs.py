@@ -119,7 +119,7 @@ def fabs(x: ArrayLike, /) -> Array:
     >>> jnp.fabs(x2)
     Array([1., 0.], dtype=float32)
   """
-  check_arraylike('fabs', x)
+  x = ensure_arraylike('fabs', x)
   if dtypes.issubdtype(dtypes.dtype(x), np.complexfloating):
     raise TypeError("ufunc 'fabs' does not support complex dtypes")
   return lax.abs(*promote_args_inexact('fabs', x))
@@ -365,9 +365,9 @@ def floor(x: ArrayLike, /) -> Array:
            [ 0., -1.,  0.],
            [-5.,  2.,  1.]], dtype=float32)
   """
-  check_arraylike('floor', x)
+  x = ensure_arraylike('floor', x)
   if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
-    return lax.asarray(x)
+    return x
   return lax.floor(*promote_args_inexact('floor', x))
 
 
@@ -404,7 +404,7 @@ def ceil(x: ArrayLike, /) -> Array:
            [-0.,  4.,  1.],
            [ 5.,  4., -1.]], dtype=float32)
   """
-  check_arraylike('ceil', x)
+  x = ensure_arraylike('ceil', x)
   if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
     return lax.asarray(x)
   return lax.ceil(*promote_args_inexact('ceil', x))
@@ -2343,7 +2343,7 @@ def absolute(x: ArrayLike, /) -> Array:
     >>> jnp.absolute(x3)
     Array([17.,  5.,  5.], dtype=float32)
   """
-  check_arraylike('absolute', x)
+  x = ensure_arraylike('absolute', x)
   dt = dtypes.dtype(x)
   return lax.asarray(x) if dt == np.bool_ or dtypes.issubdtype(dt, np.unsignedinteger) else lax.abs(x)
 
@@ -2386,7 +2386,7 @@ def rint(x: ArrayLike, /) -> Array:
     >>> jnp.rint(x3)
     Array([-2.+4.j,  4.-0.j], dtype=complex64)
   """
-  check_arraylike('rint', x)
+  x = ensure_arraylike('rint', x)
   dtype = dtypes.dtype(x)
   if dtype == bool or dtypes.issubdtype(dtype, np.integer):
     return lax.convert_element_type(x, dtypes.float_)
@@ -2995,7 +2995,7 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     >>> jnp.ldexp(m, e)
     Array([ 2.,  3.,  5., 11.], dtype=float32)
   """
-  check_arraylike("ldexp", x1, x2)
+  x1, x2 = ensure_arraylike("ldexp", x1, x2)
   x1_dtype = dtypes.dtype(x1)
   x2_dtype = dtypes.dtype(x2)
   if (dtypes.issubdtype(x1_dtype, np.complexfloating)
@@ -3049,7 +3049,7 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
     >>> m * 2 ** e
     Array([1., 2., 3., 4., 5.], dtype=float32)
   """
-  check_arraylike("frexp", x)
+  x = ensure_arraylike("frexp", x)
   x, = promote_dtypes_inexact(x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise TypeError("frexp does not support complex-valued inputs")
@@ -3176,7 +3176,7 @@ def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     Array([[ 1., -1.,  4.],
            [ 0.,  2., -2.]], dtype=float32)
   """
-  check_arraylike("fmod", x1, x2)
+  x1, x2 = ensure_arraylike("fmod", x1, x2)
   if dtypes.issubdtype(dtypes.result_type(x1, x2), np.integer):
     x2 = _where(x2 == 0, lax._ones(x2), x2)
   out = lax.rem(*promote_args_numeric("fmod", x1, x2))
@@ -3229,7 +3229,7 @@ def square(x: ArrayLike, /) -> Array:
     >>> jnp.square(x2)
     Array([-8.-6.j, -1.+0.j,  4.+0.j], dtype=complex64)
   """
-  check_arraylike("square", x)
+  x = ensure_arraylike("square", x)
   x, = promote_dtypes_numeric(x)
   return lax.square(x)
 
@@ -3343,7 +3343,7 @@ def conjugate(x: ArrayLike, /) -> Array:
     >>> jnp.conjugate(x)
     Array([2.+1.j, 3.-5.j, 7.-0.j], dtype=complex64)
   """
-  check_arraylike("conjugate", x)
+  x = ensure_arraylike("conjugate", x)
   return lax.conj(x) if np.iscomplexobj(x) else lax.asarray(x)
 
 
@@ -3381,7 +3381,7 @@ def imag(val: ArrayLike, /) -> Array:
     >>> jnp.imag(x)
     Array([ 3., -1.,  0.], dtype=float32)
   """
-  check_arraylike("imag", val)
+  val = ensure_arraylike("imag", val)
   return lax.imag(val) if np.iscomplexobj(val) else lax.full_like(val, 0)
 
 
@@ -3413,7 +3413,7 @@ def real(val: ArrayLike, /) -> Array:
     >>> jnp.real(x)
     Array([ 3.,  4., -0.], dtype=float32)
   """
-  check_arraylike("real", val)
+  val = ensure_arraylike("real", val)
   return lax.real(val) if np.iscomplexobj(val) else lax.asarray(val)
 
 
@@ -3443,7 +3443,7 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
     >>> jnp.modf(x)
     (Array([-0.4000001 , -0.6999998 ,  0.6       ,  0.5       ,  0.29999995],      dtype=float32), Array([-3., -5.,  0.,  1.,  2.], dtype=float32))
   """
-  check_arraylike("modf", x)
+  x = ensure_arraylike("modf", x)
   x, = promote_dtypes_inexact(x)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.modf is not supported.")
@@ -3482,7 +3482,7 @@ def isfinite(x: ArrayLike, /) -> Array:
     >>> jnp.isfinite(3-4j)
     Array(True, dtype=bool, weak_type=True)
   """
-  check_arraylike("isfinite", x)
+  x = ensure_arraylike("isfinite", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.floating):
     return lax.is_finite(x)
@@ -3696,7 +3696,7 @@ def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     >>> jnp.heaviside(-3, x2)
     Array([0., 0., 0.], dtype=float32)
   """
-  check_arraylike("heaviside", x1, x2)
+  x1, x2 = ensure_arraylike("heaviside", x1, x2)
   x1, x2 = promote_dtypes_inexact(x1, x2)
   zero = _lax_const(x1, 0)
   return _where(lax.lt(x1, zero), zero,
@@ -3781,7 +3781,7 @@ def reciprocal(x: ArrayLike, /) -> Array:
     >>> jnp.reciprocal(x)
     Array([1.  , 0.2 , 0.25], dtype=float32)
   """
-  check_arraylike("reciprocal", x)
+  x = ensure_arraylike("reciprocal", x)
   x, = promote_dtypes_inexact(x)
   return lax.integer_pow(x, -1)
 
@@ -3834,7 +3834,7 @@ def sinc(x: ArrayLike, /) -> Array:
     (d/dx)^4 f(0.0) = 19.48
     (d/dx)^5 f(0.0) = 0.00
   """
-  check_arraylike("sinc", x)
+  x = ensure_arraylike("sinc", x)
   x, = promote_dtypes_inexact(x)
   eq_zero = lax.eq(x, _lax_const(x, 0))
   pi_x = lax.mul(_lax_const(x, np.pi), x)

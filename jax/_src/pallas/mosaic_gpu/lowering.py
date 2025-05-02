@@ -30,6 +30,7 @@ import jax
 from jax import api_util
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import lib as jaxlib
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import source_info_util
@@ -802,7 +803,7 @@ def lower_jaxpr_to_module(
     # Each range is 2 events, each event is 4 bytes.
     prof_spec = mgpu_profiler.ProfilerSpec(params.profile_space * 2 * 4)
     prof_ctx = ProfilerContext(params.profile_dir, prof_spec)
-  module, new_out_shapes, _, launch_ctx, scratch_arr = (
+  module, new_out_shapes, _, launch_ctx = (
       mgpu_core._lower_as_gpu_kernel(
           body,
           grid=tuple(map(operator.mul, parallel_grid, cluster)),
@@ -824,7 +825,7 @@ def lower_jaxpr_to_module(
     mgpu.infer_transforms(module)  # pytype: disable=attribute-error
     mgpu.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
 
-  mgpu_core._initialize_scratch(launch_ctx, scratch_arr)
+  launch_ctx.scratch.finalize_size()
 
   if gmem_scratch_shapes:
     new_out_shapes = new_out_shapes[:-len(gmem_scratch_shapes)]
@@ -1456,21 +1457,34 @@ def _broadcast_in_dim_lowering_rule(
     lax.broadcast_in_dim_p, mgpu.LoweringSemantics.Warpgroup)
 def _broadcast_in_dim_lowering_rule_wg(
     ctx: LoweringRuleContext,
-    x: ir.Value,
+    x,
     *,
     broadcast_dimensions,
     shape,
     sharding,
 ):
   del sharding
-  if broadcast_dimensions:
-    raise NotImplementedError
+
   [x_aval] = ctx.avals_in
-  x = _ensure_ir_value(x, x_aval.dtype)
-  return vector_dialect.splat(
-      ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype)),
-      x,
-  )
+
+  if not broadcast_dimensions:
+    # Even though we could implement this case by passing a 0D vector as input
+    # to mgpu.dialect.BroadcastInDimOp we don't want that. 0D vectors are
+    # generally problematic and so we avoid them by specializing that case
+    # directly here.
+    x = _ensure_ir_value(x, x_aval.dtype)
+    return vector_dialect.splat(
+        ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype)),
+        x,
+    )
+
+  # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
+  if jaxlib.version < (0, 6, 1):
+    raise NotImplementedError()
+
+  mlir_type = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
+  result_ty = ir.VectorType.get(shape, mlir_type)
+  return mgpu.dialect.broadcast_in_dim(result_ty, x, broadcast_dimensions)
 
 
 @register_lowering_rule(lax.convert_element_type_p, mgpu.LoweringSemantics.Lane)
@@ -1699,7 +1713,7 @@ def _comparison_lowering_rule_wg(
   x, y = _bcast_wg(x, y, *ctx.avals_in, *ctx.avals_out)
   if jnp.issubdtype(x_aval, jnp.signedinteger):
     return arith_dialect.cmpi(si_pred, x, y)
-  elif jnp.issubdtype(x_aval, jnp.integer) or jnp.issubdtype(x_aval, jnp.bool):
+  elif jnp.issubdtype(x_aval, jnp.unsignedinteger) or jnp.issubdtype(x_aval, jnp.bool):
     return arith_dialect.cmpi(ui_pred, x, y)
   elif jnp.issubdtype(x_aval, jnp.floating):
     return arith_dialect.cmpf(f_pred, x, y)

@@ -1415,12 +1415,12 @@ def with_and_without_mesh(f):
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))(with_mesh_from_kwargs(f))
 
-def with_explicit_mesh(sizes, names, axis_types=None):
+def with_explicit_mesh(sizes, names, axis_types=None, iota_order=False):
   axis_types = ((mesh_lib.AxisType.Explicit,) * len(names)
                 if axis_types is None else axis_types)
   def decorator(fn):
     def mesh_fn(*args, **kwargs):
-      mesh = create_mesh(sizes, names, axis_types=axis_types)
+      mesh = create_mesh(sizes, names, iota_order, axis_types=axis_types)
       with jax.sharding.use_mesh(mesh):
         return fn(*args, **kwargs, mesh=mesh)
     return mesh_fn

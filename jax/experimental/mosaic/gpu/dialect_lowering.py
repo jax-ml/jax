@@ -194,6 +194,7 @@ def _initialize_barrier_op_lowering_rule(
             [],
             [i],
             lowered_barrier_type,
+            llvm.GEPNoWrapFlags.none,
         ),
         utils.c(
             initialize_barrier_op.arrival_count.value * utils.WARPGROUP_SIZE,
@@ -206,7 +207,7 @@ def _initialize_barrier_op_lowering_rule(
 
   barrier_base_ptr = llvm.getelementptr(
       ir.Type.parse("!llvm.ptr"),
-      initialize_barrier_op.base_pointer, [], [0], lowered_barrier_type)
+      initialize_barrier_op.base_pointer, [], [0], lowered_barrier_type, llvm.GEPNoWrapFlags.none)
 
   return utils.ptr_as_memref(
       barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
@@ -407,7 +408,9 @@ def _vector_store_op_lowering_rule(
     fragmented_array.store_tiled(
         reinterpret_smem_ref(vector_store_op.base, transforms), swizzle
     )
-  elif (isinstance(fragmented_array.layout, fa.WGStridedFragLayout) or
+  elif (fragmented_array.layout == fa.WGMMA_ROW_LAYOUT or
+        fragmented_array.layout == fa.WGMMA_COL_LAYOUT or
+        isinstance(fragmented_array.layout, fa.WGStridedFragLayout) or
         isinstance(fragmented_array.layout, fa.WGSplatFragLayout)):
     fragmented_array.store_untiled(vector_store_op.base)
   else:
@@ -476,12 +479,85 @@ def _vector_reduction_op_lowering_rule(
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
   return [_fragmented_array_to_ir(result, op.result.type)]
 
+@_register_lowering(vector.MultiDimReductionOp)
+def _vector_multi_dim_reduction_op_lowering_rule(
+    ctx: LoweringContext, op: vector.MultiDimReductionOp
+) -> Sequence[ir.Value]:
+  del ctx
+
+  [in_layout, acc_layout] = inference_utils.in_layouts(op)
+  [out_layout] = inference_utils.out_layouts(op)
+  if layouts.from_layout_attr(in_layout) != fa.WGMMA_LAYOUT:
+    raise NotImplementedError(f"Unsupported input layout: {in_layout}")
+  if layouts.from_layout_attr(out_layout) not in {
+      fa.WGMMA_ROW_LAYOUT,
+      fa.WGMMA_COL_LAYOUT,
+  }:
+    raise NotImplementedError(f"Unsupported output layout: {out_layout}")
+  if out_layout != acc_layout:
+    raise ValueError(
+        f"Output layout {out_layout} must match the accumulator layout"
+        f" {acc_layout}"
+    )
+
+  element_type = ir.VectorType(op.source.type).element_type
+
+  is_signed = False if ir.IntegerType.isinstance(element_type) else None
+  source_fa = _fragmented_array_from_ir(op.source, in_layout, is_signed)
+  acc_fa = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
+  match vector.CombiningKind[
+      str(op.kind).removeprefix("#vector.kind<").removesuffix(">").upper()
+  ]:
+    case vector.CombiningKind.ADD:
+      result = source_fa.reduce("add", op.reduction_dims[0])
+      result += acc_fa
+    case (
+        vector.CombiningKind.MAXIMUMF
+        | vector.CombiningKind.MAXSI
+        | vector.CombiningKind.MAXUI
+    ):
+      result = source_fa.reduce("max", op.reduction_dims[0])
+      result = result.max(acc_fa)
+    case _:
+      raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
+  return [_fragmented_array_to_ir(result, op.result.type)]
+
 
 @_register_lowering(mgpu.LayoutCastOp)
 def _mgpu_layout_cast_op_lowering_rule(
     _: LoweringContext, layout_cast_op: mgpu.LayoutCastOp
 ) -> Sequence[ir.Value]:
   return [layout_cast_op.x]
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
+if hasattr(mgpu, "BroadcastInDimOp"):
+  @_register_lowering(mgpu.BroadcastInDimOp)
+  def _mgpu_broadcast_in_dim_op_lowering_rule(
+      _: LoweringContext, op: mgpu.BroadcastInDimOp
+  ) -> Sequence[ir.Value]:
+    in_ty = ir.VectorType(op.operand.type)
+    out_ty = ir.VectorType(op.result.type)
+    if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
+      raise NotImplementedError(
+          "Broadcast in dim with non-trivial broadcast dimensions is not"
+          f" supported: {op}"
+      )
+
+    broadcast_dims = list(op.broadcast_dimensions)
+    in_layout = inference_utils.in_layouts(op)[0]
+    operand_fa = _fragmented_array_from_ir(op.operand, in_layout)
+
+    if (operand_fa.layout == fa.WGMMA_ROW_LAYOUT and broadcast_dims == [0]):
+      out = operand_fa.broadcast_minor(out_ty.shape[1])
+    elif (operand_fa.layout == fa.WGMMA_COL_LAYOUT and broadcast_dims == [1]):
+      out = operand_fa.broadcast_major(out_ty.shape[0])
+    else:
+      raise NotImplementedError(
+          "Broadcast in dim with non-trivial broadcast dimensions is not"
+          f" supported: {op}"
+      )
+    return [_fragmented_array_to_ir(out, out_ty)]
 
 
 def swizzle_and_transforms_from_transforms_attr(

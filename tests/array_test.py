@@ -986,10 +986,6 @@ class ShardingTest(jtu.JaxTestCase):
     # memory kind also appears in the repr but only for TPU.
     self.assertIn('GSPMDSharding({replicated}', repr(s2))
 
-  def test_positional_sharding_fully_replicated(self):
-    sharding = PositionalSharding(jax.devices())
-    jax.device_put(jnp.array(1), sharding.replicate())  # doesn't crash
-
   @parameterized.named_parameters(
       ("mesh_x_y",              P("x", "y"),   (4, 2), (),   False),
       ("mesh_x",                P("x"),        (4, 2), (1,), False),
@@ -1018,17 +1014,6 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(mps.shard_shape(value_shape),
                      devices_sharding.shard_shape(value_shape))
     self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
-
-  def test_positional_sharding_aval_compatible(self):
-    if jax.device_count() < 2:
-      self.skipTest('Requires >=2 devices')
-    sharding = PositionalSharding(jax.devices()).reshape(1, jax.device_count())
-    x = jax.random.uniform(jax.random.key(42), (256, 20, 1000))
-    with self.assertRaisesRegex(
-        ValueError,
-        'Sharding PositionalSharding.*is only valid for values of rank 2, but'
-        ' was applied to a value of rank 3'):
-      jax.lax.with_sharding_constraint(x, sharding)
 
   @parameterized.named_parameters(
       ("2d_mesh_x_y",              (4, 2), P("x", "y")),
@@ -1103,34 +1088,12 @@ class ShardingTest(jtu.JaxTestCase):
                      op_shardings.is_op_sharding_replicated(
                          ps._to_xla_hlo_sharding(len(shape))))
 
-  def test_devices_sharding_respects_init_mesh_shape(self):
-    value_shape = (8, 4)
-
-    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
-    mps = jax.sharding.NamedSharding(mesh, P('x', 'y'))
-
-    devices_sharding = PositionalSharding(mesh.devices)
-
-    op1 = mps._to_xla_hlo_sharding(len(value_shape))
-    op2 = devices_sharding._to_xla_hlo_sharding(len(value_shape))
-
-    self.assertEqual(mps.shard_shape(value_shape),
-                     devices_sharding.shard_shape(value_shape))
-    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
-
   def test_pmap_sharding_repr(self):
     if jax.device_count() < 2:
       self.skipTest('Test needs >= 2 devices.')
     out = jax.pmap(lambda x: x)(jnp.arange(2.))
     str(out.sharding)  # doesn't crash
     repr(out.sharding)  # doesn't crash
-
-  def test_positional_sharding_repr(self):
-    if jax.device_count() < 2:
-      self.skipTest('Test needs >= 2 devices.')
-    s = PositionalSharding(jax.devices()).reshape(jax.device_count(), 1)
-    repr(s)  # doesn't crash
-    str(s)  # doesn't crash
 
   def test_pspec_tuple(self):
     pspec = P('x', 'y', 'z')

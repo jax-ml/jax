@@ -41,7 +41,10 @@ class DistributedTest(jtu.JaxTestCase):
     # concurrency to simulate multiple tasks.
     port = portpicker.pick_unused_port()
     jax.distributed.initialize(
-      coordinator_address=f"localhost:{port}", num_processes=1, process_id=0
+        coordinator_address=f"localhost:{port}",
+        num_processes=1,
+        process_id=0,
+        cluster_detection_method="deactivate",
     )
     jax.distributed.shutdown()
 
@@ -55,7 +58,10 @@ class DistributedTest(jtu.JaxTestCase):
       # We can't call the public APIs directly because they use global state.
       state = distributed.State()
       state.initialize(
-        coordinator_address=f"localhost:{port}", num_processes=n, process_id=i
+          coordinator_address=f"localhost:{port}",
+          num_processes=n,
+          process_id=i,
+          cluster_detection_method="deactivate",
       )
       state.shutdown()
 

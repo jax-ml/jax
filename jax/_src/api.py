@@ -358,7 +358,7 @@ def disable_jit(disable: bool = True):
   ...   return y + 3
   ...
   >>> print(f(jax.numpy.array([1, 2, 3])))  # doctest:+ELLIPSIS
-  Value of y is Traced<ShapedArray(int32[3])>with<DynamicJaxprTrace...>
+  Value of y is Traced<int32[3]>with<DynamicJaxprTrace...>
   [5 7 9]
 
   Here ``y`` has been abstracted by :py:func:`jit` to a :py:class:`ShapedArray`,
@@ -1851,8 +1851,11 @@ def jvp(
 
 def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
   """Variant of jvp() that takes an lu.WrappedFun."""
-  ps_flat, tree_def = tree_flatten(primals)
-  ts_flat, tree_def_2 = tree_flatten(tangents)
+  primals_, (), primal_box_data = pjit._flatten_boxes(fun.debug_info, primals, {})
+  tangents_, (), tangent_box_data = pjit._flatten_boxes(fun.debug_info, tangents, {})
+  fun = pjit._handle_boxes(fun, fun.debug_info)
+  ps_flat, tree_def = tree_flatten(primals_)
+  ts_flat, tree_def_2 = tree_flatten(tangents_)
   if tree_def != tree_def_2:
     raise TypeError("primal and tangent arguments to jax.jvp must have the same tree "
                     f"structure; primals have tree structure {tree_def} whereas tangents have "
@@ -1873,9 +1876,27 @@ def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
     flat_fun, out_tree = flatten_fun_nokwargs(fun, tree_def)
     out_primals, out_tangents = ad.jvp(flat_fun).call_wrapped(ps_flat, ts_flat)
     out_tree = out_tree()
+    if primal_box_data or tangent_box_data:
+      assert primal_box_data and tangent_box_data
+      box_treedef, out_tree = out_tree.children()
+      box_out_flat, out_primals = split_list(out_primals, [box_treedef.num_leaves])
+      box_dot_out_flat, out_tangents = split_list(out_tangents, [box_treedef.num_leaves])
+      box_out = tree_unflatten(box_treedef, box_out_flat)
+      box_dot_out = tree_unflatten(box_treedef, box_dot_out_flat)
+      for (i, kind), b in zip(primal_box_data, box_out):
+        if kind is pe.BoxAttr:
+          primals[i].set(tree_unflatten(b.treedef, b.leaves))
+        else:
+          assert False
+      for (i, kind), b in zip(tangent_box_data, box_dot_out):
+        if kind is pe.BoxAttr:
+          tangents[i].set(tree_unflatten(b.treedef, b.leaves))
+        else:
+          assert False
     return (tree_unflatten(out_tree, out_primals),
             tree_unflatten(out_tree, out_tangents))
   else:
+    if primal_box_data or tangent_box_data: raise NotImplementedError
     flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, tree_def)
     jvp_fun, aux = ad.jvp(flat_fun, has_aux=True)
     out_primals, out_tangents = jvp_fun.call_wrapped(ps_flat, ts_flat)
@@ -1992,10 +2013,27 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
     for primal_aval, tangent_aval in zip(primal_avals, tangent_avals):
       expected_tangent_aval  = primal_aval.to_tangent_aval()
       if not core.typecompat(expected_tangent_aval, tangent_aval):
-        raise ValueError("linearized function called on tangent values inconsistent with "
-                         "the original primal values: "
-                         f"got tangent aval {tangent_aval} for primal aval {primal_aval} "
-                         f"but expected {expected_tangent_aval}")
+        extra_msg = ''
+        if (isinstance(primal_aval, core.ShapedArray) and
+            isinstance(tangent_aval, core.ShapedArray) and
+            primal_aval.vma != tangent_aval.vma):
+          pvary_applications = []
+          if left := tangent_aval.vma - primal_aval.vma:
+            pvary_applications.append(
+                f"applying `jax.lax.pvary(..., {tuple(left)})` to the primal"
+                " value passed to `jax.linearize`")
+          if left := primal_aval.vma - tangent_aval.vma:
+            pvary_applications.append(
+                f"applying `jax.lax.pvary(..., {tuple(left)})` to the tangent"
+                " value passed to the callable `f_jvp` returned by"
+                " `jax.linearize`")
+          extra_msg = " \nThis might be fixed by:\n" + "\n".join(
+              f"  * {d};" for d in pvary_applications)
+        raise ValueError(
+            "linearized function called on tangent values inconsistent with "
+            "the original primal values:\n"
+            f"Got tangent aval {tangent_aval} for primal aval {primal_aval} "
+            f"but expected {expected_tangent_aval}.{extra_msg}")
     tangents_out = eval_jaxpr(jaxpr, consts, *tangents)
     tangents_out_ = iter(tangents_out)
     full_out = [pval.get_known() if pval.is_known() else next(tangents_out_)
@@ -2379,7 +2417,7 @@ def make_jaxpr(
       c:f32[] = sin a
       _:f32[] = sin b
       d:f32[] = cos b
-      e:f32[] = mul 1.0 d
+      e:f32[] = mul 1.0:f32[] d
       f:f32[] = neg e
       g:f32[] = mul f c
     in (g,) }

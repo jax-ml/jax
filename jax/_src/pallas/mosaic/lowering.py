@@ -39,6 +39,7 @@ from jax._src import prng
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
+from jax._src import xla_bridge
 from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.export._export import export
 from jax._src.interpreters import mlir
@@ -664,8 +665,10 @@ def lower_jaxpr_to_module(
 ) -> tuple[Module, tuple[Any, ...]]:
   # NOTE: We should bump this periodically
   if is_cloud_tpu_older_than(2025, 1, 10):
+    platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a libTPU version that's at most a month old"
+        "Pallas TPU requires a libtpu version that's at most a month old. Found"
+        f" version string:\n{platform_version}"
     )
   debug_info = jaxpr.debug_info
   _mosaic_lowering_dynamic_shape_env = None
@@ -717,6 +720,12 @@ def lower_jaxpr_to_module(
   window_params = []
   static_grid = None
   grid = mosaic_grid_mapping.grid
+  if not grid and any(
+      not bm.has_trivial_window() for bm in grid_mapping.block_mappings
+  ):
+    raise NotImplementedError(
+        "Non-trivial windowing is not supported for grid-free pallas_call."
+    )
   if grid:
     for i, bm in enumerate(grid_mapping.block_mappings):
       func_name = f"transform_{i}"
@@ -761,15 +770,30 @@ def lower_jaxpr_to_module(
           window_bounds=window_shape,
           transform_indices=ir.FlatSymbolRefAttr.get(func_name),
       )
+      for bd in bm.block_shape:
+        if not isinstance(
+            bd, (pallas_core.Element, pallas_core.Squeezed, pallas_core.Blocked)
+        ):
+          raise NotImplementedError(
+              "Unsupported block dimension type: "
+              f"{type(bd)} for block shape: {bm.block_shape}"
+          )
       is_element_block = [isinstance(bd, pallas_core.Element)
                           for bd in bm.block_shape]
       if any(is_element_block):
-        if not all(is_element_block):
+        is_element_or_squeezed_block = [
+            isinstance(bd, (pallas_core.Element, pallas_core.Squeezed))
+            for bd in bm.block_shape
+        ]
+        if not all(is_element_or_squeezed_block):
           raise NotImplementedError(
               "All block dimensions must be Elements or none of them can be"
               " Elements."
           )
-        padding = [bd.padding for bd in bm.block_shape]  # pytype: disable=attribute-error
+        padding = [
+            bd.padding if isinstance(bd, pallas_core.Element) else (0, 0)
+            for bd in bm.block_shape
+        ]
         pad_low, pad_high = map(list, zip(*padding))
         block_params["window_kind"] = ir.Attribute.parse(
             f"#tpu.element_window<{pad_low},{pad_high}>"
@@ -1878,6 +1902,8 @@ def _broadcast_in_dim_lowering_rule(
   del sharding
   (aval_in,) = ctx.avals_in
   (aval_out,) = ctx.avals_out
+  if aval_in.shape == shape:
+    return val
 
   if jnp.issubdtype(aval_in.dtype, jnp.bool_):
     # Direct broadcasts for bools are not supported in Mosaic due to booleans
@@ -3696,8 +3722,8 @@ def _debug_print_rule(
 
   # Scalar case.
   if is_all_scalars:
-    primitives.check_debug_print_format(fmt, *args)
     if has_placeholders:
+      primitives.check_debug_print_format(fmt, *args)
       if not all(
           isinstance(arg.type, ir.IntegerType) and arg.type.width == 32
           for arg in args

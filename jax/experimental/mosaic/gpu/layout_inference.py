@@ -21,6 +21,7 @@ from functools import partial
 import math
 from typing import cast
 
+from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -443,11 +444,162 @@ def _infer_reduction_op_layout(op: vector.ReductionOp) -> OptionalLayouts:
   return None
 
 
+@partial(_add_layout_inference_rule, vector.MultiDimReductionOp)
+def _infer_multi_dim_reduction_op_layout(
+    op: vector.MultiDimReductionOp,
+) -> OptionalLayouts:
+  if inference_utils.has_any_layout_set(op):
+    # At the moment we either have all layouts or none. So if we found some
+    # layouts, set just return the same ones.
+    op_in_layouts = list(inference_utils.in_layouts(op))
+    op_out_layouts = list(inference_utils.out_layouts(op))
+    return op_in_layouts, op_out_layouts
+
+  in_ty = ir.VectorType(op.source.type)
+  out_ty = ir.VectorType(op.result.type)
+  if len(in_ty.shape) != 2 or len(out_ty.shape) != 1:
+    raise NotImplementedError(
+        f"Only 2D -> 1D reductions are supported: {op}"
+    )
+
+  wgmma_layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
+  wgmma_row_layout = layouts_lib.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
+  wgmma_col_layout = layouts_lib.to_layout_attr(fa.WGMMA_COL_LAYOUT)
+  reduction_dims = list(op.reduction_dims)
+
+  # Find out the layout of the source.
+  in_layout = inference_utils.value_layout(op.source)
+  if in_layout is not None and in_layout == wgmma_layout:
+    if reduction_dims == [0]:
+      out_layout = wgmma_col_layout
+    elif reduction_dims == [1]:
+      out_layout = wgmma_row_layout
+    else:
+      raise NotImplementedError(
+          f"Invalid reduction dimensions: {reduction_dims}"
+      )
+    return [in_layout, out_layout], [out_layout]
+
+  # The source either has no layout or its layout is not WGMMA so we don't know
+  # yet how to handle it. Find out the layout of the result and see if that is
+  # WGMMA_ROW or WGMMA_COL which would imply the input is WGMMA. We can look at
+  # either the consumers or the acc input (they should have the same layout).
+  out_layouts = set()
+
+  # Get acc layout.
+  acc_layout = inference_utils.value_layout(op.acc)
+  if acc_layout is not None:
+    out_layouts.add(acc_layout)
+
+  # Get user layouts.
+  for use in cast(ir.OpResult, op.result).uses:
+    consumer = use.owner
+    operand = consumer.operands[use.operand_number]
+    layout = inference_utils.in_layout_for_operand(consumer, operand)
+    if layout:
+      out_layouts.add(layout)
+
+  if not out_layouts:
+    # We couldn't find any definitive layouts, so we can't infer anything.
+    return None
+
+  out_layout = _choose_representative_layout(out_layouts)
+  if out_layout is None:
+    raise NotImplementedError(
+        f"Could not choose a best layout from {out_layouts}"
+    )
+  if out_layout != wgmma_row_layout and out_layout != wgmma_col_layout:
+    # We don't have a layout we can handle in the output, so we can't infer
+    # anything.
+    return None
+
+  if (out_layout == wgmma_row_layout and reduction_dims == [1]) or (
+      out_layout == wgmma_col_layout and reduction_dims == [0]
+  ):
+    in_layout = wgmma_layout
+  else:
+    raise NotImplementedError(
+        f"Unsupported output layout: {out_layout} for reduction dimensions"
+        f" {reduction_dims}"
+    )
+
+  return [in_layout, out_layout], [out_layout]
+
+
 @partial(_add_layout_inference_rule, mgpu.LayoutCastOp)
 def _infer_layout_cast_op_layout(
     layout_cast_op: mgpu.LayoutCastOp,
 ) -> OptionalLayouts:
   return [layout_cast_op.new_layout], [layout_cast_op.new_layout]
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
+if jaxlib.version >= (0, 6, 1):
+  @partial(_add_layout_inference_rule, mgpu.BroadcastInDimOp)
+  def _infer_broadcast_in_dim_op_layout(
+      op: mgpu.BroadcastInDimOp,
+  ) -> OptionalLayouts:
+    if inference_utils.has_any_layout_set(op):
+      op_in_layouts = list(inference_utils.in_layouts(op))
+      op_out_layouts = list(inference_utils.out_layouts(op))
+      return op_in_layouts, op_out_layouts
+
+    in_ty = ir.VectorType(op.operand.type)
+    out_ty = ir.VectorType(op.result.type)
+    if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
+      raise NotImplementedError(
+          "Broadcast in dim with non-trivial broadcast dimensions is not"
+          f" supported: {op}"
+      )
+
+    # Find out the layout of the output from the consumers.
+    user_layouts = set()
+    for use in cast(ir.OpResult, op.result).uses:
+      consumer = use.owner
+      operand = consumer.operands[use.operand_number]
+      layout = inference_utils.in_layout_for_operand(consumer, operand)
+      if layout is not None:
+        user_layouts.add(layout)
+    if user_layouts:
+      out_layout = _choose_representative_layout(user_layouts)
+
+      if out_layout is None:
+        raise ValueError(f"Could not choose a best layout from {user_layouts}")
+
+      if out_layout != layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT):
+        raise NotImplementedError(f"Unsupported layout: {out_layout}")
+
+      broadcast_dims = list(op.broadcast_dimensions)
+      if broadcast_dims == [0]:
+        in_layout = layouts_lib.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
+      elif broadcast_dims == [1]:
+        in_layout = layouts_lib.to_layout_attr(fa.WGMMA_COL_LAYOUT)
+      else:
+        raise ValueError(f"Invalid broadcast dimensions: {broadcast_dims}")
+
+      return [in_layout], [out_layout]
+
+    # The consumers did not have any layouts set. Find out the layout of the
+    # input and infer the output layout from it.
+    in_layout = inference_utils.value_layout(op.operand)
+    if in_layout is None:
+      return None
+
+    broadcast_dims = list(op.broadcast_dimensions)
+    if (
+        broadcast_dims == [0]
+        and in_layout == layouts_lib.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
+    ) or (
+        broadcast_dims == [1]
+        and in_layout == layouts_lib.to_layout_attr(fa.WGMMA_COL_LAYOUT)
+    ):
+      out_layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
+      return [in_layout], [out_layout]
+    else:
+      raise NotImplementedError(
+          f"Unsupported layout: {in_layout} for broadcast dimensions"
+          f" {broadcast_dims}"
+      )
 
 
 @partial(_add_layout_inference_rule, mgpu.WGMMAOp)
@@ -560,7 +712,7 @@ def infer_layout(module: ir.Module):
     max_vec_size_for_v = (
           np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
       )
-    desired_vec_size = 8 // utils.bytewidth(v.type.element_type)
+    desired_vec_size = 64 // utils.bitwidth(v.type.element_type)
     default_vector_size = min(
         default_vector_size, max_vec_size_for_v, desired_vec_size
     )

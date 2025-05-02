@@ -18,6 +18,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
+    "buffer_callback_internal_users",
     "if_building_jaxlib",
     "jax_export_file_visibility",
     "jax_extend_internal_users",
@@ -66,6 +67,38 @@ config_setting(
     name = "enable_jaxlib_build",
     flag_values = {
         ":build_jaxlib": "true",
+    },
+)
+
+# The flag controls whether jax should be built by Bazel.
+# If ":build_jax=true", then jax will be built.
+# If ":build_jax=false", then jax is not built. It is assumed that the pre-built jax wheel
+# is available in the "dist" folder.
+# If ":build_jax=wheel", then jax wheel will be built as a py_import rule attribute.
+# The py_import rule unpacks the wheel and provides its content as a py_library.
+string_flag(
+    name = "build_jax",
+    build_setting_default = "true",
+    values = [
+        "true",
+        "false",
+        "wheel",
+    ],
+)
+
+config_setting(
+    name = "disable_jaxlib_and_jax_build",
+    flag_values = {
+        ":build_jaxlib": "false",
+        ":build_jax": "false",
+    },
+)
+
+config_setting(
+    name = "enable_jaxlib_and_jax_py_import",
+    flag_values = {
+        ":build_jaxlib": "wheel",
+        ":build_jax": "wheel",
     },
 )
 
@@ -132,6 +165,12 @@ package_group(
     name = "serialize_executable_users",
     includes = [":internal"],
     packages = serialize_executable_internal_users,
+)
+
+package_group(
+    name = "buffer_callback_users",
+    includes = [":internal"],
+    packages = buffer_callback_internal_users,
 )
 
 # JAX-private test utilities.
@@ -230,6 +269,7 @@ py_library_providing_imports_info(
         "_src/api.py",
         "_src/array.py",
         "_src/blocked_sampler.py",
+        "_src/buffer_callback.py",
         "_src/callback.py",
         "_src/checkify.py",
         "_src/custom_batching.py",
@@ -400,6 +440,7 @@ pytype_strict_library(
     srcs = ["_src/basearray.py"],
     pytype_srcs = ["_src/basearray.pyi"],
     deps = [
+        ":named_sharding",
         ":partition_spec",
         ":sharding",
         ":util",
@@ -671,7 +712,6 @@ pytype_strict_library(
             "experimental/pallas/**/*.py",
         ],
         exclude = [
-            "experimental/pallas/gpu.py",
             "experimental/pallas/mosaic_gpu.py",
             "experimental/pallas/ops/gpu/**/*.py",
             "experimental/pallas/ops/tpu/**/*.py",
@@ -784,7 +824,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_triton",
     srcs = [
-        "experimental/pallas/gpu.py",
         "experimental/pallas/triton.py",
     ],
     visibility = [
@@ -828,6 +867,7 @@ py_library_providing_imports_info(
         "//jax/_src/lib",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
+        "//jaxlib/mlir:control_flow_dialect",
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:gpu_dialect",
         "//jaxlib/mlir:ir",
@@ -1145,7 +1185,7 @@ pytype_strict_library(
         ":traceback_util",
         ":util",
         "//jax/_src/lib",
-    ],
+    ] + py_deps("numpy"),
 )
 
 # Public JAX libraries below this point.
@@ -1156,6 +1196,9 @@ py_library_providing_imports_info(
         [
             "experimental/*.py",
             "example_libraries/*.py",
+        ],
+        [
+            "experimental/buffer_callback.py",
         ],
     ),
     visibility = ["//visibility:public"],
@@ -1170,6 +1213,12 @@ pytype_library(
         "example_libraries/stax.py",
     ],
     visibility = ["//visibility:public"],
+    deps = [":jax"],
+)
+
+pytype_library(
+    name = "experimental_shard",
+    srcs = ["experimental/shard.py"],
     deps = [":jax"],
 )
 
@@ -1320,4 +1369,15 @@ pytype_library(
         "//jax/_src/lib",
         "//jax/extend:ifrt_programs",
     ] + py_deps("numpy") + py_deps("cloudpickle"),
+)
+
+pytype_library(
+    name = "experimental_buffer_callback",
+    srcs = [
+        "experimental/buffer_callback.py",
+    ],
+    visibility = [":buffer_callback_users"],
+    deps = [
+        ":jax",
+    ],
 )

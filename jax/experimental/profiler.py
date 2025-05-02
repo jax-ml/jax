@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.lib import xla_client
+from jax._src.lib import _profiler
 
 
 def get_profiled_instructions_proto(tensorboard_dir: str) -> bytes:
@@ -30,4 +30,4 @@ def get_profiled_instructions_proto(tensorboard_dir: str) -> bytes:
     Serialized
     [ProfiledInstructionsProto](https://github.com/openxla/xla/blob/main/third_party/tsl/tsl/profiler/protobuf/profiled_instructions.proto).
   """
-  return xla_client.profiler.get_profiled_instructions_proto(tensorboard_dir)
+  return _profiler.get_profiled_instructions_proto(tensorboard_dir)

@@ -324,5 +324,5 @@ class NDIndexer:
       if isinstance(idx, Slice):
         indices.append(_pp_slice(context, dim, idx))
       else:
-        indices.append(core.pp_var(idx, context))  # type: ignore
+        indices.append(core.pp_var(idx, context, print_literal_dtype=False))  # type: ignore
     return pp.concat([pp.text("["), pp.text(",".join(indices)), pp.text("]")])

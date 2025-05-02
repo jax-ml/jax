@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 import sys
@@ -48,8 +49,10 @@ def print_environment_info(return_string: bool = False) -> str | None:
   python: {python_version}
   device info: {xb.devices()[0].device_kind}-{xb.device_count()}, {xb.local_device_count()} local devices"
   process_count: {xb.process_count()}
-  platform: {platform.uname()}
-""")
+  platform: {platform.uname()}""")
+  for key, value in os.environ.items():
+    if key.startswith("JAX_"):
+      info += f"\n{key}={value}"
   nvidia_smi = try_nvidia_smi()
   if nvidia_smi:
     info += '\n\n$ nvidia-smi\n' + nvidia_smi

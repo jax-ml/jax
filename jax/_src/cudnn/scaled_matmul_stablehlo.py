@@ -28,7 +28,7 @@ from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
 from jax._src.lax.lax import ranges_like, remaining
 from jax._src.typing import DTypeLike
-from jax.interpreters import mlir, xla
+from jax._src.interpreters import mlir
 from jax.interpreters.mlir import ir
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
@@ -112,7 +112,7 @@ def _scaled_matmul_abstract(a, b, a_scale, b_scale, *, preferred_element_type):
 
 _scaled_matmul_p = core.Primitive("scaled_matmul")
 _scaled_matmul_p.multiple_results = True
-_scaled_matmul_p.def_impl(partial(xla.apply_primitive, _scaled_matmul_p))
+dispatch.simple_impl(_scaled_matmul_p)
 _scaled_matmul_p.def_abstract_eval(_scaled_matmul_abstract)
 
 

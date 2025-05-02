@@ -954,20 +954,28 @@ class DebugInfoTest(jtu.JaxTestCase):
         return dict(c=u * v, d=v)
 
       return jax.jit(my_g)(y, x)["c"]
+    if config.use_direct_linearize.value:
+      expected_jaxpr_debug_infos = [
+          "traced_for=jit, fun=<lambda>, arg_names=x,y,res_ct, result_paths=result[0],result[1]",
+          # TODO(necula): result_paths
+          "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=",
+          # TODO(necula): arg_names
+          "traced_for=jit, fun=my_g, arg_names=u,v,,, result_paths=result['c']",
+      ]
+    else:
+      expected_jaxpr_debug_infos = [
+          "traced_for=jit, fun=<lambda>, arg_names=x,y,res_ct, result_paths=result[0],result[1]",
+          # TODO(necula): result_paths
+          "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=",
+            # TODO(necula): arg_names
+          "traced_for=jit, fun=my_g, arg_names=,,u,v, result_paths=result['c'],result['d']",
+      ]
 
     self._check_tracers_and_jaxprs(
         jax.jit(lambda x, y, res_ct: jax.vjp(my_f, x, y)[1](res_ct)),
         2., 3., 0.3,
         tracer_spy=tracer_spy,
-        expected_jaxpr_debug_infos=[
-            "traced_for=jit, fun=<lambda>, arg_names=x,y,res_ct, result_paths=result[0],result[1]",
-            # TODO(necula): result_paths
-            "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=",
-            # TODO(necula): arg_names
-            "traced_for=jit, fun=my_g, arg_names=u,v,,, result_paths=,"
-            if config.use_direct_linearize.value else
-            "traced_for=jit, fun=my_g, arg_names=,,u,v, result_paths=result['c'],result['d']",
-        ],
+        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
         expected_tracer_debug_infos=[
             # TODO(necula): missing debug info
             "None",
@@ -1379,22 +1387,37 @@ class DebugInfoTest(jtu.JaxTestCase):
       _, pullback = jax.vjp(my_f, c, as_)
       return pullback((c, np.arange(3, dtype=c.dtype)))
 
+    if config.use_direct_linearize.value:
+      expected_jaxpr_debug_infos = [
+          "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
+          "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
+          "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
+          "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
+          "traced_for=jit, fun=my_f, arg_names=as_,,, result_paths=result[0],result[1]",
+          "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
+          "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
+          "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
+          "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
+          "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,, result_paths=",
+      ]
+    else:
+      expected_jaxpr_debug_infos = [
+          "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
+          "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
+          "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
+          "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
+          "traced_for=jit, fun=my_f, arg_names=,,x,as_, result_paths=result[0],result[1]",
+          "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
+          "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
+          "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
+          "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
+          "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,, result_paths=",
+      ]
     self._check_tracers_and_jaxprs(
         jax.jit(the_grad),
         c, as_,
         tracer_spy=tracer_spy,
-        expected_jaxpr_debug_infos=[
-            "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
-            "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
-            "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
-            "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
-            "traced_for=jit, fun=my_f, arg_names=,,x,as_, result_paths=result[0],result[1]",
-            "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
-            "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
-            "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
-            "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
-            "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,, result_paths=",
-        ],
+        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
         expected_tracer_debug_infos=[
             "traced_for=jit, fun=the_grad, arg_names=c,as_, from c",
             "traced_for=scan, fun=f, arg_names=c,a, from c",
@@ -1687,14 +1710,23 @@ class DebugInfoTest(jtu.JaxTestCase):
 
     x = jax.random.uniform(jax.random.key(0), shape=(8, 4))
 
+    if config.use_direct_linearize.value:
+      expected_jaxpr_debug_infos = [
+          "traced_for=jit, fun=my_f, arg_names=x, result_paths=result",
+          "traced_for=jit, fun=my_f, arg_names=x, result_paths=,",
+          "traced_for=jit, fun=my_f, arg_names=x,, result_paths=result"
+      ]
+    else:
+      expected_jaxpr_debug_infos = [
+          "traced_for=jit, fun=my_f, arg_names=x, result_paths=result",
+          "traced_for=jit, fun=my_f, arg_names=x, result_paths=,",
+          "traced_for=jit, fun=my_f, arg_names=,x, result_paths=result"
+      ]
+
     self._check_tracers_and_jaxprs(
         jax.jit(jax.hessian(jax.jit(my_f))),
         x,
-        expected_jaxpr_debug_infos=[
-            "traced_for=jit, fun=my_f, arg_names=x, result_paths=result",
-            "traced_for=jit, fun=my_f, arg_names=x, result_paths=,",
-            "traced_for=jit, fun=my_f, arg_names=,x, result_paths=result",
-        ],
+        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
         tracer_spy=tracer_spy,
         expected_tracer_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=x, from x",

@@ -1,4 +1,4 @@
-/* Copyright 2025 The JAX Authors
+/* Copyright 2025 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,9 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_XLA_PY_DEVICE_LIST_H_
-#define JAXLIB_XLA_PY_DEVICE_LIST_H_
+#ifndef THIRD_PARTY_PY_JAX_JAXLIB_CPU_SPARSE_KERNELS_H_
+#define THIRD_PARTY_PY_JAX_JAXLIB_CPU_SPARSE_KERNELS_H_
 
-#include "jaxlib/py_device_list.h"  // IWYU pragma: keep
+#include "xla/ffi/api/ffi.h"
 
-#endif  // JAXLIB_XLA_PY_DEVICE_LIST_H_
+namespace jax {
+
+XLA_FFI_DECLARE_HANDLER_SYMBOL(cpu_csr_sparse_dense_ffi);
+
+}  // namespace jax
+
+#endif  // THIRD_PARTY_PY_JAX_JAXLIB_CPU_SPARSE_KERNELS_H_

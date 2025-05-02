@@ -2021,7 +2021,7 @@ def compute_dim_vars_from_arg_shapes(
   }
   synthetic_eval = ShapeEvaluator(synthetic_env)
   shape_constraints.shape_assertions(synthetic_eval)
-  return tuple(synthetic_eval.evaluate(solution[var]) for var in dim_vars)
+  return tuple(synthetic_eval.evaluate(solution[var]) for var in dim_vars)  # type: ignore[arg-type]
 
 def _solve_dim_equations(
     eqns: list[_DimEquation],

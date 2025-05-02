@@ -25,6 +25,7 @@ from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jax._src import lib as jaxlib
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
+from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import func
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
@@ -231,16 +232,100 @@ OnDeviceProfiler = profiler.OnDeviceProfiler
 
 ReductionOp = Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"]
 
+class Scratch:
+  """Manages ops handling the GMEM scratch that contains the TMA descriptors.
+
+  TMA descriptors are created on the host and then copied to GMEM. So there
+  needs to be some code on the host to allocate and initialize the TMA
+  descriptors. However, we only know what descriptors we need after we have
+  lowered the entire kernel. This class helps manage everything needed to
+  correctly allocate and initialize the scratch.
+
+  To help reconcile the needs of kernels that use the dialect lowering with
+  those that use MGPU APIs directly, this class only creates the relevant ops
+  lazily. Eager creation would make them appear dead before dialect lowering
+  and MLIR's DCE would remove them.
+
+  During the lowering, we collect information about how many bytes are needed
+  and also how each descriptor should be initialized on the host. At the end
+  of the lowering, the finalize_size() method should be called to add the
+  necessary code on the host to allocate and initialize all descriptors.
+  """
+  def __init__(self, gpu_launch_op: gpu.LaunchOp):
+    self.next_offset: int = 0
+    self.host_init: list[Callable[[ir.Value], None]] = []
+    self._alloc_op = None
+    self._load_op = None
+    self._scratch_ptr = None
+
+    # Ideally, we would store the gpu.launch op directly. However, it gets
+    # invalidated by passes like "canonicalize". Thus we store the module and
+    # find the gpu.launch op from there when needed.
+    op = gpu_launch_op
+    while op.name != "builtin.module":
+      op = op.parent.opview
+    assert op is not None
+    self._module_op = op
+
+  def _find_gpu_launch_op(self, block: ir.Block) -> ir.OpView | None:
+    for op in block:
+      if op.name == "gpu.launch":
+        return op
+      for region in op.regions:
+        for block in region:
+          child_op = self._find_gpu_launch_op(block)
+          if child_op is not None:
+            return child_op
+    return None
+
+  def _create_ops_if_none(self):
+    if self._alloc_op is not None:
+      return
+
+    gpu_launch_op = self._find_gpu_launch_op(self._module_op.body)
+    assert gpu_launch_op is not None
+    ptr_ty = ir.Type.parse("!llvm.ptr")
+    with ir.InsertionPoint(gpu_launch_op):
+      empty_arr_ty = ir.Type.parse("!llvm.array<0 x i8>")
+      i64 = ir.IntegerType.get_signless(64)
+      self._alloc_op = llvm.AllocaOp(
+          ptr_ty, c(1, i64), empty_arr_ty,
+          alignment=TMA_DESCRIPTOR_ALIGNMENT
+      )
+      self._load_op = llvm.LoadOp(empty_arr_ty, self._alloc_op)
+
+    with ir.InsertionPoint.at_block_begin(gpu_launch_op.body.blocks[0]):
+      self._scratch_ptr = builtin.unrealized_conversion_cast(
+          [ptr_ty], [self._load_op]
+      )
+
+  def device_ptr(self) -> ir.Value:
+    self._create_ops_if_none()
+    return self._scratch_ptr
+
+  def finalize_size(self):
+    """
+    Allocates and initializes the host buffer. This needs to be done after
+    lowering, i.e. after all TMA descriptors have been recorded. Only then we
+    know what the scratch contains.
+    """
+    if self.next_offset == 0:
+      return
+    assert self._alloc_op is not None
+    with ir.InsertionPoint(self._load_op):
+      gmem_scratch_bytes = self.next_offset
+      scratch_arr_ty = ir.Type.parse(f"!llvm.array<{gmem_scratch_bytes} x i8>")
+      self._alloc_op.elem_type = ir.TypeAttr.get(scratch_arr_ty)
+      self._load_op.result.set_type(scratch_arr_ty)
+      for init_callback in self.host_init:
+        init_callback(self._alloc_op.result)
+
+
 @dataclasses.dataclass()
 class LaunchContext:
-  launch_op: gpu.LaunchOp
-  gmem_scratch_ptr: ir.Value
+  scratch: Scratch
   cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
-  next_scratch_offset: int = 0
-  host_scratch_init: list[Callable[[ir.Value], None]] = dataclasses.field(
-      default_factory=list, init=False
-  )
   tma_descriptors: dict[
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...]],
       ir.Value,
@@ -288,21 +373,21 @@ class LaunchContext:
     ptr_ty = ir.Type.parse("!llvm.ptr")
     if alignment is None:
       alignment = size
-    if self.next_scratch_offset % alignment:
+    if self.scratch.next_offset % alignment:
       raise NotImplementedError  # TODO(apaszke): Pad to match alignment
-    alloc_base = self.next_scratch_offset
-    self.next_scratch_offset += size
+    alloc_base = self.scratch.next_offset
+    self.scratch.next_offset += size
     def host_init_wrapped(host_ptr):
       host_init(
-          llvm.getelementptr(ptr_ty, host_ptr, [], [alloc_base], i8)
+          llvm.getelementptr(ptr_ty, host_ptr, [], [alloc_base], i8, llvm.GEPNoWrapFlags.none)
       )
-    self.host_scratch_init.append(host_init_wrapped)
+    self.scratch.host_init.append(host_init_wrapped)
     # with ir.InsertionPoint(self.gmem_scratch_ptr.owner):
     # There is no way to create an insertion point after an operation...
     gep = llvm.GEPOp(
-        ptr_ty, self.gmem_scratch_ptr, [], [alloc_base], i8
+        ptr_ty, self.scratch.device_ptr(), [], [alloc_base], i8, llvm.GEPNoWrapFlags.none
     )
-    gep.move_after(self.gmem_scratch_ptr.owner)
+    gep.move_after(self.scratch.device_ptr().owner)
     return device_init(gep.result)
 
   def _get_tma_desc(
@@ -339,7 +424,7 @@ class LaunchContext:
         alloc_ptr = llvm.inttoptr(ptr_ty, as_i64(aligned_ptr_idx))
         llvm_dyn = -2147483648  # TODO(apaszke): Improve the MLIR bindings...
         base_ptr = llvm.getelementptr(
-            ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type,
+            ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type, llvm.GEPNoWrapFlags.none,
         )
         rank = ref_ty.rank
         assert rank * 2 == len(sizes_and_strides)

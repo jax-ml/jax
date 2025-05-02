@@ -23,7 +23,6 @@ load(
     "proto_library",
     "py_deps",
     "py_library_providing_imports_info",
-    "py_strict_library",
     "py_strict_test",
     "pytype_library",
     "pytype_strict_library",
@@ -53,6 +52,7 @@ package_group(
 py_library_providing_imports_info(
     name = "jaxlib",
     srcs = [
+        "cpu_sparse.py",
         "gpu_common_utils.py",
         "gpu_linalg.py",
         "gpu_prng.py",
@@ -77,10 +77,12 @@ py_library_providing_imports_info(
         "//jaxlib:_jax",
         "//jaxlib:xla_client",
         "//jaxlib/cpu:_lapack",
+        "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
         "//jaxlib/mlir:chlo_dialect",
+        "//jaxlib/mlir:control_flow_dialect",
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:gpu_dialect",
         "//jaxlib/mlir:ir",
@@ -151,6 +153,7 @@ pywrap_library(
         "//jaxlib/mlir/_mlir_libs:_tpu_ext",
         "//jaxlib/mlir/_mlir_libs:_triton_ext",
         "//jaxlib/mlir/_mlir_libs:register_jax_dialects",
+        "@xla//xla/python:_profiler",
     ],
 )
 
@@ -284,6 +287,7 @@ nanobind_pywrap_extension(
         ":config",
         ":custom_call_sharding",
         ":dlpack",
+        ":ffi",
         ":guard_lib",
         ":ifrt_proxy",
         ":jax_jit",
@@ -321,6 +325,7 @@ nanobind_pywrap_extension(
         "@xla//xla:util",
         "@xla//xla/backends/cpu/collectives:cpu_collectives",
         "@xla//xla/ffi:ffi_api",
+        "@xla//xla/hlo/builder/lib:approx_topk_shape",
         "@xla//xla/pjrt:exceptions",
         "@xla//xla/pjrt:mlir_to_hlo",
         "@xla//xla/pjrt:pjrt_api",
@@ -342,9 +347,7 @@ nanobind_pywrap_extension(
         "@xla//xla/python:logging",
         "@xla//xla/python:nb_absl_flat_hash_map",
         "@xla//xla/python:nb_absl_span",
-        "@xla//xla/python:ops",
         "@xla//xla/python:pprof_profile_builder",
-        "@xla//xla/python:profiler",
         "@xla//xla/python:refine_polymorphic_shapes",
         "@xla//xla/python:types",
         "@xla//xla/python:version",
@@ -473,6 +476,24 @@ cc_library(
 )
 
 cc_library(
+    name = "dlpack_support",
+    srcs = ["dlpack_support.cc"],
+    hdrs = ["dlpack_support.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/status:statusor",
+        "@dlpack",
+        "@xla//xla:util",
+        "@xla//xla:xla_data_proto_cc",
+    ],
+)
+
+cc_library(
     name = "dlpack",
     srcs = ["dlpack.cc"],
     hdrs = ["dlpack.h"],
@@ -483,6 +504,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":dlpack_support",
         ":nb_class_ptr",
         ":py_client",
         ":python_ref_manager",
@@ -510,6 +532,38 @@ cc_library(
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:logging",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "ffi",
+    srcs = ["ffi.cc"],
+    hdrs = ["ffi.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        ":dlpack_support",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@dlpack",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/ffi:ffi_api",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+        "@xla//xla/pjrt:host_callback",
+        "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:types",
         "@xla//xla/tsl/platform:statusor",
     ],
 )
@@ -832,6 +886,7 @@ cc_library(
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:pprof_profile_builder",
         "@xla//xla/python:types",
+        "@xla//xla/python:version",
         "@xla//xla/python/compile_only_ifrt:client",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:attribute_map",
@@ -866,6 +921,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":ffi",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
@@ -873,9 +929,11 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@dlpack",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla:shape_util",
+        "@xla//xla:util",
         "@xla//xla:xla_data_proto_cc",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/ffi/api:ffi",
@@ -1150,7 +1208,6 @@ cc_library(
         "@xla//xla/ffi",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/ffi/api:c_api",
-        "@xla//xla/hlo/builder:xla_builder",
         "@xla//xla/hlo/builder:xla_computation",
         "@xla//xla/hlo/ir:hlo",
         "@xla//xla/hlo/ir:hlo_module_group",
@@ -1191,72 +1248,6 @@ pytype_strict_library(
         "numpy",
         "ml_dtypes",
     ]) + [":_jax"],
-)
-
-py_strict_test(
-    name = "xla_client_backend_independent_test",
-    srcs = ["xla_client_backend_independent_test.py"],
-    deps = [
-        ":xla_client",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-        "portpicker",
-    ]),
-)
-
-py_strict_library(
-    name = "xla_client_test",
-    testonly = 1,
-    srcs = ["xla_client_test.py"],
-    visibility = [":xla_python"],
-    deps = [
-        ":xla_client",
-        "//jax",
-        "//jax:test_util",
-        "//jaxlib",
-    ] + py_deps([
-        "absl/flags",
-        "absl/logging",
-        "absl/testing",
-        "ml_dtypes",
-        "numpy",
-    ]),
-)
-
-nanobind_extension(
-    name = "custom_calls_testlib",
-    testonly = 1,
-    srcs = ["custom_calls_testlib.cc"],
-    deps = [
-        "@com_google_absl//absl/status",
-        "@nanobind",
-        "@xla//xla/ffi/api:c_api",
-        "@xla//xla/ffi/api:ffi",
-    ],
-)
-
-py_strict_test(
-    name = "xla_client_test_cpu",
-    srcs = ["xla_client_test.py"],
-    args = ["--backend=cpu"],
-    env = {
-        "XLA_FLAGS": "--xla_force_host_platform_device_count=4",
-    },
-    main = "xla_client_test.py",
-    deps = [
-        ":custom_calls_testlib",
-        ":xla_client",
-        "//jax",
-        "//jax:test_util",
-        "//jaxlib",
-    ] + py_deps([
-        "absl/flags",
-        "absl/logging",
-        "absl/testing",
-        "ml_dtypes",
-        "numpy",
-    ]),
 )
 
 py_strict_test(

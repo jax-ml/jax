@@ -1925,8 +1925,8 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
     def f():
       return axis_index_p.bind(axis_name=axis_name)
     return mlir.lower_fun(
-        lambda: [jax.shard_map(f, mesh=axis_context.mesh, check_vma=False,
-                               in_specs=(), out_specs=P())()])(ctx)[0]
+        lambda: [jax.shard_map(f, check_vma=False, in_specs=(),
+                               out_specs=P())()])(ctx)[0]
 
   nreplicas = axis_env.nreps // math.prod(axis_env.sizes)
   div = mlir.ir_constant(

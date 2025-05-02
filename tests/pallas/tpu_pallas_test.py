@@ -841,7 +841,7 @@ class PallasCallDMATest(PallasBaseTest):
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
         ),
         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
     )()
@@ -861,7 +861,7 @@ class PallasCallDMATest(PallasBaseTest):
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
         ),
         out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
     )()
@@ -880,7 +880,7 @@ class PallasCallDMATest(PallasBaseTest):
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         ),
         out_shape=jax.ShapeDtypeStruct((16, 128), jnp.int32),
     )()
@@ -899,7 +899,7 @@ class PallasCallDMATest(PallasBaseTest):
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         ),
         out_shape=jax.ShapeDtypeStruct((17, 128), jnp.int32),
     )()
@@ -1099,7 +1099,7 @@ class PallasCallDMATest(PallasBaseTest):
     y = jax.block_until_ready(
         self.pallas_call(
             kernel,
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
             out_shape=jax.ShapeDtypeStruct((m, n), jnp.int32),
         )()
     )
@@ -1122,7 +1122,7 @@ class PallasCallDMATest(PallasBaseTest):
                 in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
                 out_specs=[
                     pl.BlockSpec(memory_space=pl.ANY),
-                    pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+                    pl.BlockSpec(memory_space=pltpu.SMEM),
                 ],
                 scratch_shapes=[pltpu.SemaphoreType.DMA],
             ),
@@ -1378,7 +1378,7 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
         out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((1, 2), jnp.float32),
@@ -1395,9 +1395,9 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x)
@@ -1420,7 +1420,7 @@ class PallasCallDMATest(PallasBaseTest):
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x)
@@ -1443,7 +1443,7 @@ class PallasCallDMATest(PallasBaseTest):
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x.reshape((16, 128)))
@@ -1472,7 +1472,7 @@ class PallasCallDMATest(PallasBaseTest):
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         out_shape=jax.ShapeDtypeStruct((3, 16, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x.reshape((3, 16, 128)))
@@ -1499,7 +1499,7 @@ class PallasCallDMATest(PallasBaseTest):
           in_specs=[
               pl.BlockSpec(memory_space=pl.ANY),
           ],
-          out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
           out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
       )(x)
 
@@ -1548,7 +1548,6 @@ class PallasCallDMATest(PallasBaseTest):
             out_specs=pl.BlockSpec((None, 8, 128), lambda i: (i, 0, 0)),
             grid=(2,),
         ),
-        debug=True,
         out_shape=jax.ShapeDtypeStruct((2, 8, 128), jnp.int32),
     )()
     expected = jnp.broadcast_to(jnp.arange(2, dtype=jnp.int32)[..., None, None],
@@ -1571,7 +1570,7 @@ class PallasCallDMATest(PallasBaseTest):
             ],
             scratch_shapes=[pltpu.SemaphoreType.REGULAR,
                             pltpu.SemaphoreType.DMA],
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         ),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
@@ -1776,6 +1775,42 @@ class PallasCallTest(PallasBaseTest):
     z = jax.block_until_ready(reduce())
     reduce_value = jnp.sum(jnp.full(shape, x), dtype=dty)
     np.testing.assert_allclose(z, reduce_value)
+
+  def test_scalar_any_input(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Needs a newer TPU")
+    if not jtu.if_cloud_tpu_at_least(2025, 5, 1):
+      self.skipTest("Needs a newer libTPU")
+    def kernel(src, dst, sem):
+      pltpu.async_copy(src, dst, sem).wait()
+
+    def run(src):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(src.shape, jnp.float32),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          scratch_shapes=[pltpu.SemaphoreType.DMA],
+          out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+      )(src)
+    x = jnp.full((1,), 3.1415, dtype=jnp.float32)
+    np.testing.assert_array_equal(run(x), x)
+
+  def test_sum_in_smem(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 4, 30):
+      self.skipTest("Needs a newer libTPU")
+    def kernel(x, out):
+      a = jnp.array(0, dtype=jnp.int32)
+      for i in range(4):
+        for j in range(4):
+          out[i, j] = a.astype(out.dtype)
+          a += x[i, j].astype(jnp.int32)
+
+    x = jnp.ones((4, 4), jnp.int16)
+    spec = pl.BlockSpec(memory_space=pltpu.SMEM)
+    y = pl.pallas_call(kernel, in_specs=[spec], out_specs=spec, out_shape=x)(x)
+    np.testing.assert_array_equal(
+        y, jnp.arange(16, dtype=jnp.int32).reshape(4, 4)
+    )
 
   @parameterized.parameters([
       dict(
@@ -1987,7 +2022,7 @@ class PallasCallTest(PallasBaseTest):
     if not jtu.if_cloud_tpu_at_least(2025, 4, 25):
       self.skipTest("Needs a newer libTPU")
     if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
-      self.skipTest("Triggers an XLA bug")
+      self.skipTest("Triggers an XLA bug")  # TODO(b/413602952)
     def kernel(x_ref, o_ref):
       o_ref[0, 0] = x_ref[0, 0].astype(o_ref.dtype)
     x = jnp.asarray([[-1]], dtype=in_dtype)
@@ -1998,6 +2033,23 @@ class PallasCallTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
     )(x)
     self.assertEqual(y, x.astype(jnp.int32))
+
+  @parameterized.product(in_dtype=[jnp.int4, jnp.int8, jnp.int16, jnp.int32])
+  def test_scalar_indirect_load(self, in_dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 4, 27):
+      self.skipTest("Needs a newer libTPU")
+    def kernel(x_ref, o_ref):
+      o_ref[0, 0] = x_ref[0, x_ref[0, 0].astype(jnp.int32)].astype(o_ref.dtype)
+    if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Triggers an XLA bug")  # TODO(b/413602952)
+    x = jnp.asarray([[3, 0, 0, 1]], dtype=in_dtype)
+    y = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
+    )(x)
+    self.assertEqual(y, x[0, x[0, 0]].astype(jnp.int32)[None, None])
 
   def test_masked_store(self):
     shape = (16, 256)
@@ -2080,7 +2132,6 @@ class PallasMegacoreTest(PallasBaseTest):
                     pl.BlockSpec((128, 128), lambda i, j, k: (k, j)),
                 ],
                 out_specs=pl.BlockSpec((128, 128), lambda i, j, k: (i, j)),
-                debug=True,
             )
         )
     )(x, y)
@@ -2579,8 +2630,8 @@ class PallasCallTPUBooleanTest(PallasBaseTest):
     output_shape = jax.ShapeDtypeStruct((8, 128), jnp.bool_)
     grid_spec = pltpu.PrefetchScalarGridSpec(
       num_scalar_prefetch=0,
-      in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM)],
-      out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+      in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+      out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
       grid=(1,),
       scratch_shapes=[pltpu.SemaphoreType.DMA] * 2,
     )

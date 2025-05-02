@@ -41,6 +41,7 @@ from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            JaxprEqn, Primitive, ShapedArray, DShapedArray,
                            mapped_aval, unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
                            InputType, OutputType, get_referent, JaxprEqnContext)
+from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_flatten,
                                 tree_structure, register_static)
@@ -64,6 +65,8 @@ PyTree = Any
 # Attrs flavors, see jax/experimental/attrs.py
 ReadWrite = type('ReadWrite', (), {})()
 Append = type('Append', (), {})()
+BoxAttr = type('BoxAttr', (), {})()
+ListAttr = type('ListAttr', (), {})()
 
 def _update_annotation_known(
     f: lu.WrappedFun,
@@ -198,7 +201,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     if const is None:
       return tracer
     else:
-      if type(const) in core.literalable_types and np.shape(const) == ():
+      if core.is_literalable(const):
         return self.new_instantiated_literal(const)
       else:
         return self.new_instantiated_const(const)
@@ -1558,17 +1561,21 @@ def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
 def _move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]
                            ) -> ClosedJaxpr:
   assert len(closed_jaxpr.in_avals) == len(to_move)
-  new_invars = _move_to_front(closed_jaxpr.jaxpr.invars, to_move)
-  id_map = {id(v): i for i, v in enumerate(new_invars)}
-  idx_map = {i: id_map[id(v)] for i, v in enumerate(closed_jaxpr.jaxpr.invars)}
-  new_effs = {e.replace(input_index=idx_map[e.input_index])
-              if isinstance(e, effects.JaxprInputEffect) else e
-              for e in closed_jaxpr.jaxpr.effects}
-  new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_invars,
-                    closed_jaxpr.jaxpr.outvars, closed_jaxpr.jaxpr.eqns,
-                    new_effs, closed_jaxpr.jaxpr.debug_info)
+  constvars, invars = closed_jaxpr.jaxpr.constvars, closed_jaxpr.jaxpr.invars
+  new_invars = _move_to_front(invars, to_move)
+  new_effs = _renumber_effects(
+      (*constvars, *new_invars), (*constvars, *invars), closed_jaxpr.jaxpr.effects)
+  new_jaxpr = Jaxpr(constvars, new_invars, closed_jaxpr.jaxpr.outvars,
+                    closed_jaxpr.jaxpr.eqns, new_effs,
+                    closed_jaxpr.jaxpr.debug_info)
   new_closed_jaxpr = core.ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
   return new_closed_jaxpr
+
+def _renumber_effects(new_vars, old_vars, effs):
+  newvar_idxs = {id(v): i for i, v in enumerate(new_vars)}
+  old_to_new = {i: newvar_idxs[id(v)] for i, v in enumerate(old_vars)}
+  return {e.replace(input_index=old_to_new[e.input_index])
+          if isinstance(e, effects.JaxprInputEffect) else e for e in effs}
 
 def _move_to_front(lst: Sequence, to_move: Sequence[bool]) -> Sequence:
   return ([elt for elt, move in zip(lst, to_move) if move] +
@@ -1587,7 +1594,6 @@ def _move_outvars_to_back(jaxpr, to_move):
   new_outvars = ([e for e, m in zip(jaxpr.jaxpr.outvars, to_move) if not m] +
                  [e for e, m in zip(jaxpr.jaxpr.outvars, to_move) if     m])
   return jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(outvars=new_outvars))
-
 
 
 class DynamicJaxprTracer(core.Tracer):
@@ -1647,7 +1653,8 @@ class DynamicJaxprTracer(core.Tracer):
 
   def get_referent(self):
     frame = self._trace.frame
-    val = frame.constvar_to_val.get(frame.tracer_to_var.get(id(self)))
+    var = frame.tracer_to_var.get(id(self))
+    val = frame.constvar_to_val.get(var) if isinstance(var, Var) else None
     return self if val is None else get_referent(val)
 
 core.pytype_aval_mappings[DynamicJaxprTracer] = lambda x: x.aval
@@ -1670,16 +1677,19 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
               f"\n Equation: {eqn}\n"
               "\n Jaxpr: "
               f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
-        invar = eqn.invars[eff.input_index]
-        if invar in mut_arrays:
+        eqn_invar = eqn.invars[eff.input_index]
+        if eqn_invar in mut_arrays:
           continue
-        if (input_index := all_vars.get(invar, sentinel)) is sentinel:
+        if (input_index := all_vars.get(eqn_invar, sentinel)) is sentinel:
+          # TODO(mattjj): ask for forgiveness
+          dbg = type('Fake', (), {'resolve_result_paths': lambda _: None})()
           raise ValueError(
                 f"`JaxprInputEffect` {eff} does not have "
-                f"corresponding input: {invar}."
+                f"corresponding jaxpr input: {eqn_invar=}."
                 f"\n Equation: {eqn}\n"
+                f"\n Effects: {eqn.effects}\n"
                 "\n Jaxpr: "
-                f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
+                f"{core.Jaxpr(constvars, invars, outvars, eqns, set(), dbg)}")  # type: ignore
         eff = eff.replace(input_index=input_index)
       jaxpr_effects.add(eff)
   return jaxpr_effects
@@ -1687,7 +1697,7 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
 
 class JaxprStackFrame:
   gensym: Callable[[AbstractValue], Var]
-  tracer_to_var: dict[TracerId, Var]
+  tracer_to_var: dict[TracerId, Atom]
   constid_to_tracer: dict[ConstId, Tracer]
   constvar_to_val: dict[Var, Any]
   tracers: list[DynamicJaxprTracer]  # hold onto strong refs for all tracers
@@ -1716,8 +1726,8 @@ class JaxprStackFrame:
   def add_eqn(self, eqn: core.JaxprEqn):
     self.eqns.append(eqn)
 
-  def reset_states(self):
-    reset_states(self.attrs_tracked, self.attrs_inits)
+  def reset_states(self, trace):
+    reset_states(trace, self.attrs_tracked, self.attrs_inits)
 
   def to_jaxpr(
       self, trace: DynamicJaxprTrace,
@@ -1725,11 +1735,13 @@ class JaxprStackFrame:
       debug_info: core.DebugInfo,
     ) -> tuple[Jaxpr, list[Any], list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str, AttrKind]]]]:
     # It's not necessary, but we keep the tracer-to-var mapping injective:
-    assert len(self.tracer_to_var) == len(set(self.tracer_to_var.values()))
+    vars = [v for v in self.tracer_to_var.values() if not isinstance(v, Literal)]
+    assert len(vars) == len(set(vars))
     invars = self.attrs_vars + self.invars
     state_ans, end_trees = unzip2(
         tree_flatten(t) for t in get_states(self.attrs_tracked))
-    state_outvars = [self.tracer_to_var[id(trace.to_jaxpr_tracer(x))]
+    source_info = source_info_util.current()
+    state_outvars = [self.tracer_to_var[id(trace.to_jaxpr_tracer(x, source_info))]
                      for xs in state_ans for x in xs]
     explicit_outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
     outvars = state_outvars + explicit_outvars
@@ -1738,14 +1750,15 @@ class JaxprStackFrame:
     jaxpr = Jaxpr(constvars, invars, outvars, self.eqns, jaxpr_effects,
                   debug_info)
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
-    jaxpr, constvals = _inline_literals(jaxpr, constvals)
+    jaxpr, constvals = _drop_unused_vars(jaxpr, constvals)
     init_trees = [tree_structure(init_val) for init_val in self.attrs_inits]
     return jaxpr, list(constvals), zip(init_trees, end_trees, self.attrs_tracked)
 
   def to_jaxpr2(self, out_tracers: Sequence[core.Tracer],
                 debug_info: core.DebugInfo):
     # It's not necessary, but we keep the tracer-to-var mapping injective:
-    assert len(self.tracer_to_var) == len(set(self.tracer_to_var.values()))
+    vars = [v for v in self.tracer_to_var.values() if not isinstance(v, Literal)]
+    assert len(vars) == len(set(vars))
     constvars, constvals = unzip2(self.constvar_to_val.items())
     expl_outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
     jaxpr_effects = make_jaxpr_effects(constvars, self.invars, expl_outvars,
@@ -1754,7 +1767,7 @@ class JaxprStackFrame:
                   jaxpr_effects, debug_info)
     # We can't run check_jaxpr until after we normalize.
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
-    jaxpr, constvals = _inline_literals(jaxpr, constvals)
+    jaxpr, constvals = _drop_unused_vars(jaxpr, constvals)
     jaxpr, out_type = _add_implicit_outputs(jaxpr)
     config.enable_checks.value and core.check_jaxpr(jaxpr)
     return jaxpr, out_type, constvals
@@ -1764,6 +1777,7 @@ class JaxprStackFrame:
       # this aval may have tracers in it, so we replace those with variables
       new_shape = [self.tracer_to_var[id(d)] if isinstance(d, Tracer) else d
                    for d in aval.shape]
+      new_shape = [d.val if isinstance(d, Literal) else d for d in new_shape]
       aval = aval.update(shape=tuple(new_shape))
     return self.gensym(aval)
 
@@ -1779,14 +1793,15 @@ class JaxprStackFrame:
         active_vars.update({v for v in eqn.invars if type(v) is Var})
     invar_positions = [i for i, v in enumerate(self.invars) if v in active_vars]
     constvars = active_vars & set(self.constvar_to_val)
-    const_eqns = [eqn for eqn in self.eqns
-                  if {v for v in eqn.invars if type(v) is Var} & constvars]
+    const_eqns = [eqn for eqn in self.eqns if any(
+        v in constvars if type(v) is Var else type(v) is Literal
+        for v in eqn.invars)]
     return invar_positions, const_eqns
 
 def _const_folding_and_forwarding(
     jaxpr: Jaxpr, constvals: Sequence[Any]) -> tuple[Jaxpr, tuple[Any, ...]]:
   consts: dict[Var, Any] = dict(zip(jaxpr.constvars, constvals))
-  var_subs: dict[Var, Var] = {}  # not Dict[Var, Atom] b/c literals not inlined
+  var_subs: dict[Var, Atom] = {}
   new_eqns = []
   def apply_var_sub(a: Atom) -> Atom:
     return var_subs.get(a, a) if isinstance(a, Var) else a
@@ -1797,14 +1812,20 @@ def _const_folding_and_forwarding(
     has_input_effect = any(isinstance(eff, effects.JaxprInputEffect)
                            for eff in eqn.effects)
     if (eqn.primitive in const_fold_rules and
-        any(v in consts for v in eqn.invars if isinstance(v, Var)) and
+        any(v in consts if isinstance(v, Var)
+            else isinstance(v, Literal) for v in eqn.invars) and
         not has_input_effect):
-      consts_in = [consts.get(v) if isinstance(v, Var) else None
+      consts_in = [consts.get(v) if isinstance(v, Var) else
+                   v.val if isinstance(v, Literal) else None
                    for v in eqn.invars]
       consts_out, new_eqn = const_fold_rules[eqn.primitive](consts_in, eqn)
       assert (new_eqn is None) == all(c is not None for c in consts_out)
       for v, c in zip(eqn.outvars, consts_out):
-        if c is not None: consts[v] = c
+        if c is not None:
+          if core.is_literalable(c):
+            var_subs[v] = Literal(c, v.aval)
+          else:
+            consts[v] = c
       if new_eqn is None: continue
       else: eqn = new_eqn
     # if the application trivially maps some inputs to outputs, simplify
@@ -1836,54 +1857,26 @@ ForwardingRule = Callable[
 forwarding_rules: dict[Primitive, ForwardingRule] = {}
 
 
-def _inline_literals(
+def _drop_unused_vars(
     jaxpr: Jaxpr, constvals: Sequence[Any]
 ) -> tuple[Jaxpr, list[Any]]:
-  # This function also prunes unused constants and inserts `dropvar` symbols.
-  input_effects = {eff for eff in jaxpr.effects
-                   if isinstance(eff, effects.JaxprInputEffect)}
-  # Don't inline any literal with an input effect
-  has_input_effect = [any(eff.input_index == i for eff in input_effects)
-                      for i in range(len(constvals))]
-  lits = {v: Literal(c, v.aval) for v, c, e in zip(jaxpr.constvars, constvals,
-                                                   has_input_effect)
-          if type(c) in core.literalable_types and not np.shape(c) and not e}
-  def lit(a: Atom) -> Literal | None:
-      return (a if isinstance(a, Literal) else lits.get(a) if isinstance(a, Var)
-              else None)
-  newname: Callable[[AbstractValue], Var] = core.gensym()
-  newvars: dict[Var, Var] = {}
-  newvar = lambda aval: newname(_substitute_vars_in_type(lits, newvars, aval))
-  var = lambda v: newvars.get(v) or newvars.setdefault(v, newvar(v.aval))
-  lit_or_var = (
-      lambda a: a if isinstance(a, Literal) else (lit(a) or var(a))
-  )
-  dropvar = lambda aval: DropVar(_substitute_vars_in_type(lits, newvars, aval))
-
-  def vars_in_shape(aval: AbstractValue) -> Sequence[Var]:
+  def vars(atom: Atom) -> list[Var]:
+    if isinstance(atom, Literal):
+      return []
+    aval = atom.aval
     if isinstance(aval, DShapedArray):
-      return [d for d in aval.shape if isinstance(d, Var)]
-    return []
-
-  used = {v for eqn in jaxpr.eqns for atom in eqn.invars
-          for v in it.chain([atom], vars_in_shape(atom.aval))
-          if isinstance(atom, Var)}
-  used |= {v for outvar in jaxpr.outvars
-           for v in it.chain([outvar], vars_in_shape(outvar.aval))}
-  new_constvars = [var(v) for v in jaxpr.constvars if v in used and not lit(v)]
-  new_constvals = [c for v, c in zip(jaxpr.constvars, constvals)
-                   if v in used and not lit(v)]
-  new_invars = [var(v) for v in jaxpr.invars]
-  new_eqns = []
-  for eqn in jaxpr.eqns:
-    invars = [lit_or_var(x) for x in eqn.invars]
-    outvars = [var(v) if v in used else dropvar(v.aval) for v in eqn.outvars]
-    new_eqns.append(eqn.replace(invars=invars, outvars=outvars))
-  new_outvars = [lit_or_var(v) for v in jaxpr.outvars]
-  effs = make_jaxpr_effects(new_constvars, new_invars, new_outvars, new_eqns)
-  new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns, effs,
-                    jaxpr.debug_info)
-  return new_jaxpr, new_constvals
+      return [atom] + [d for d in aval.shape if isinstance(d, Var)]
+    return [atom]
+  used: set[Var] = {v for atom in jaxpr.outvars for v in vars(atom)}
+  for eqn in jaxpr.eqns[::-1]:
+    eqn.outvars = [v if v in used else DropVar(v.aval) for v in eqn.outvars]
+    used.update(v for atom in eqn.invars for v in vars(atom))
+  cvars, constvals = unzip2(
+      (v, val) for v, val in zip(jaxpr.constvars, constvals) if v in used)
+  jaxpr._constvars = list(cvars)
+  jaxpr._effects = make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
+                                      jaxpr.outvars, jaxpr.eqns)
+  return jaxpr, list(constvals)
 
 
 class DynamicJaxprTrace(core.Trace):
@@ -1898,52 +1891,57 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.tracers = []
     self.frame.constid_to_tracer = {}
     self.frame.constvar_to_val = {}
+    self.frame.attrs_tracked = []
+    self.frame.attrs_inits = []
 
-  def to_jaxpr_tracer(self, x):
+  def to_jaxpr_tracer(self, x, source_info: SourceInfo):
     as_local_var = self.frame.tracer_to_var.get(id(x))
     if as_local_var is None:
       if hasattr(x, "dimension_as_value"):  # Used for shape_poly._DimExpr
         with core.set_current_trace(self):
           x = x.dimension_as_value()
-        return self.to_jaxpr_tracer(x)
+        return self.to_jaxpr_tracer(x, source_info)
       else:
-        return self.new_const(x)
+        return self.new_const(x, source_info)
     else:
       return x
 
-  def new_arg(self, aval):
-    tracer = DynamicJaxprTracer(self, aval, source_info_util.current())
+  def new_arg(self, aval, source_info: SourceInfo):
+    tracer = DynamicJaxprTracer(self, aval, source_info)
     self.frame.tracers.append(tracer)
     self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
     self.frame.invars.append(var)
     return tracer
 
-  def new_const(self, c):
+  def new_const(self, c, source_info: SourceInfo):
     # TODO(mattjj): for ints, or hashable consts, don't rely on id
     tracer = self.frame.constid_to_tracer.get(id(c))
     if tracer is None:
       aval = get_aval(c)
       if hasattr(aval, "weak_type"):
         aval = aval.update_weak_type(dtypes.is_weakly_typed(c))
-      aval = self._lift_tracers_in_aval(aval)
-      tracer = self._new_const(aval, c)
+      aval = self._lift_tracers_in_aval(aval, source_info)
+      tracer = self._new_const(aval, c, source_info)
     return tracer
 
   pure = lift = new_const
 
-  def _new_const(self, aval, c) -> DynamicJaxprTracer:
-    tracer = DynamicJaxprTracer(self, aval, source_info_util.current())
+  def _new_const(self, aval, c, source_info: SourceInfo) -> DynamicJaxprTracer:
+    tracer = DynamicJaxprTracer(self, aval, source_info)
     self.frame.tracers.append(tracer)
-    self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
-    self.frame.constid_to_tracer[id(c)] = tracer
-    self.frame.constvar_to_val[var] = c
+    if core.is_literalable(c):
+      self.frame.tracer_to_var[id(tracer)] = Literal(c, aval)
+    else:
+      self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
+      self.frame.constid_to_tracer[id(c)] = tracer
+      self.frame.constvar_to_val[var] = c
     return tracer
 
-  def _lift_tracers_in_aval(self, aval):
+  def _lift_tracers_in_aval(self, aval, source_info: SourceInfo):
     if (not isinstance(aval, DShapedArray) or
         not any(isinstance(d, Tracer) for d in aval.shape)):
       return aval
-    shape = [self.to_jaxpr_tracer(d) if isinstance(d, Tracer) else d
+    shape = [self.to_jaxpr_tracer(d, source_info) if isinstance(d, Tracer) else d
              for d in aval.shape]
     return aval.update(shape=tuple(shape))
 
@@ -1966,7 +1964,9 @@ class DynamicJaxprTrace(core.Trace):
   def process_primitive(self, primitive, tracers, params):
     if config.eager_constant_folding.value and not any(isinstance(x, Tracer) for x in tracers):
       return primitive.bind_with_trace(core.eval_trace, tracers, params)
-    jaxpr_tracers = map(self.to_jaxpr_tracer, tracers)
+    source_info = source_info_util.current()
+    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
+    jaxpr_tracers = map(to_jaxpr_tracer, tracers)
     if primitive in custom_staging_rules:
       return custom_staging_rules[primitive](self, *jaxpr_tracers, **params)
     return self.default_process_primitive(primitive, jaxpr_tracers, params)
@@ -1989,17 +1989,19 @@ class DynamicJaxprTrace(core.Trace):
 
   def process_call(self, call_primitive, f: lu.WrappedFun,
                    explicit_tracers, params):
+    source_info = source_info_util.current()
+    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
     if f.in_type is None:
       f = lu.annotate(f, tuple((get_aval(t), True) for t in explicit_tracers))
     assert f.in_type is not None
-    implicit_tracers = _extract_implicit_args(self, f.in_type, explicit_tracers)
-    in_tracers = map(self.to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
+    implicit_tracers = _extract_implicit_args(self, f.in_type, explicit_tracers,
+                                              source_info)
+    in_tracers = map(to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
     jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(f)
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers,
                              propagate_source_info=False)
-    source_info = source_info_util.current()
     out_tracers: list[Tracer] = []
     for aval, _ in out_type:
       if type(aval) is DShapedArray:
@@ -2009,7 +2011,7 @@ class DynamicJaxprTrace(core.Trace):
         aval = aval.update(shape=tuple(get_referent(d) for d in shape))
       out_tracers.append(DynamicJaxprTracer(self, aval, source_info))
     invars = map(self.getvar, in_tracers)
-    constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
+    constvars = map(self.getvar, map(to_jaxpr_tracer, consts))
     outvars = map(self.makevar, out_tracers)
     new_params = dict(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
     update_params = call_param_updaters.get(call_primitive)
@@ -2022,7 +2024,9 @@ class DynamicJaxprTrace(core.Trace):
     return [t for t, (_, keep) in zip(out_tracers, out_type) if keep]
 
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
-    tracers = map(self.to_jaxpr_tracer, tracers)
+    source_info = source_info_util.current()
+    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
+    tracers = map(to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     axis_name, axis_size = params['axis_name'], params['axis_size']
     reduced_in_avals = [core.mapped_aval(axis_size, in_axis, a)
@@ -2041,10 +2045,9 @@ class DynamicJaxprTrace(core.Trace):
       out_avals = [core.unmapped_aval(axis_size, out_axis, a)
                   if out_axis is not None else a
                   for a, out_axis in zip(reduced_out_avals, out_axes)]
-      source_info = source_info_util.current()
       out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
       invars = map(self.getvar, tracers)
-      constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
+      constvars = map(self.getvar, map(to_jaxpr_tracer, consts))
       outvars = map(self.makevar, out_tracers)
       new_in_axes = (None,) * len(consts) + params['in_axes']
       new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
@@ -2062,7 +2065,9 @@ class DynamicJaxprTrace(core.Trace):
   def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,
                               jvp: lu.WrappedFun, tracers,
                               symbolic_zeros: bool):
-    tracers = map(self.to_jaxpr_tracer, tracers)
+    source_info = source_info_util.current()
+    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
+    tracers = map(to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
     fun_jaxpr, out_avals, consts, () = trace_to_jaxpr_dynamic(fun, in_avals)
@@ -2079,7 +2084,7 @@ class DynamicJaxprTrace(core.Trace):
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
-    constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
+    constvars = map(self.getvar, map(to_jaxpr_tracer, consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_fun_jaxpr,
@@ -2088,7 +2093,7 @@ class DynamicJaxprTrace(core.Trace):
                              num_consts=len(consts),
                              symbolic_zeros=symbolic_zeros),
                         fun_jaxpr.effects,
-                        source_info_util.current())
+                        source_info)
     self.frame.add_eqn(eqn)
     return out_tracers
 
@@ -2097,7 +2102,9 @@ class DynamicJaxprTrace(core.Trace):
                               fwd: lu.WrappedFun, bwd: lu.WrappedFun, tracers,
                               out_trees: Callable[[], Sequence[PyTreeDef]],
                               symbolic_zeros: bool):
-    tracers = map(self.to_jaxpr_tracer, tracers)
+    source_info = source_info_util.current()
+    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
+    tracers = map(to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     fun_jaxpr, out_avals, consts, _ = trace_to_jaxpr_dynamic(fun, in_avals)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
@@ -2110,9 +2117,9 @@ class DynamicJaxprTrace(core.Trace):
       if attrs: raise NotImplementedError
       return jaxpr, consts
 
-    out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
+    out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
-    constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
+    constvars = map(self.getvar, map(to_jaxpr_tracer, consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars,
                         prim.initial_style,  # pytype: disable=attribute-error
@@ -2122,7 +2129,7 @@ class DynamicJaxprTrace(core.Trace):
                              bwd=bwd, out_trees=out_trees,
                              symbolic_zeros=symbolic_zeros),
                         fun_jaxpr.effects,
-                        source_info_util.current())
+                        source_info)
     self.frame.add_eqn(eqn)
     return out_tracers
 
@@ -2132,7 +2139,9 @@ class DynamicJaxprTrace(core.Trace):
                                out_types,
                                lin_tree: PyTreeDef,
                                res_tree: PyTreeDef, out_tree: PyTreeDef):
-    tracers = map(self.to_jaxpr_tracer, tracers)
+    source_info = source_info_util.current()
+    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
+    tracers = map(to_jaxpr_tracer, tracers)
     tracers_res, tracers_lin = split_list(tracers, [res_tree.num_leaves])
 
     in_avals_p = [t.aval for t in tracers]
@@ -2152,9 +2161,9 @@ class DynamicJaxprTrace(core.Trace):
       jaxpr, _, consts, () = trace_to_jaxpr_dynamic(transpose_flat, in_avals_t)
       return jaxpr, consts
 
-    out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
+    out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
-    constvars = map(self.getvar, map(self.to_jaxpr_tracer, call_consts))
+    constvars = map(self.getvar, map(to_jaxpr_tracer, call_consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_call_jaxpr,
@@ -2162,7 +2171,7 @@ class DynamicJaxprTrace(core.Trace):
                              out_types=out_types, res_tree=res_tree,
                              lin_tree=lin_tree, out_tree=out_tree),
                         closed_call_jaxpr.effects,
-                        source_info_util.current())
+                        source_info)
     self.frame.add_eqn(eqn)
     return out_tracers
 
@@ -2216,18 +2225,20 @@ def trace_to_jaxpr_dynamic(
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
   trace = DynamicJaxprTrace(fun.debug_info)
   with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
-    in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
+    source_info = source_info_util.current()
+    in_tracers = _input_type_to_tracers(
+        partial(trace.new_arg, source_info=source_info), in_avals)
     in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
     try:
       with core.set_current_trace(trace):
         ans = fun.call_wrapped(*in_tracers)
 
-      out_tracers = map(trace.to_jaxpr_tracer, ans)
+      out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans)
       _check_no_returned_refs(fun.debug_info, out_tracers)
       jaxpr, consts, attrs_tracked = trace.to_jaxpr(out_tracers, fun.debug_info)
       del fun, in_tracers, out_tracers, ans
     finally:
-      trace.frame.reset_states()
+      trace.frame.reset_states(trace)
       del trace
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
@@ -2269,12 +2280,14 @@ def trace_to_jaxpr_dynamic2(
 
   trace = DynamicJaxprTrace(fun.debug_info)
   with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
+    source_info = source_info_util.current()
     in_avals, keep_inputs = unzip2(fun.in_type)
-    in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
+    in_tracers = _input_type_to_tracers(
+        partial(trace.new_arg, source_info=source_info), in_avals)
     in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
     with core.set_current_trace(trace):
       ans = fun.call_wrapped(*in_tracers)
-    out_tracers = map(trace.to_jaxpr_tracer, ans)
+    out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans)
     jaxpr = trace.frame.to_jaxpr2(out_tracers, fun.debug_info)
     del trace, in_tracers, out_tracers, ans
 
@@ -2288,8 +2301,8 @@ AbstractedAxesSpec = Union[
 
 AttrsTracked = list[tuple[Any, str, AttrKind]]
 AttrStates = list
-def reset_states(attrs_tracked: AttrsTracked, init_vals: AttrStates) -> None:
-  for ((obj, attr, _), val) in zip(attrs_tracked, init_vals):
+def reset_states(trace, attrs_tracked: AttrsTracked, init_vals: AttrStates) -> None:
+  for ((obj, attr, kind), val) in zip(attrs_tracked, init_vals):
     setattr(obj, attr, val) if val is not dne_sentinel else delattr(obj, attr)
 
 def get_states(attrs_tracked: AttrsTracked) -> list[PyTree]:
@@ -2449,7 +2462,7 @@ class TracerAsName:
 
 def _extract_implicit_args(
     trace: DynamicJaxprTrace, in_type: Sequence[tuple[AbstractValue, bool]],
-    explicit_tracers: Sequence[DynamicJaxprTracer]
+    explicit_tracers: Sequence[DynamicJaxprTracer], source_info: SourceInfo,
   ) -> Sequence[DynamicJaxprTracer]:
   # First, construct a list to represent the full argument list, leaving the
   # implicit arguments as Nones for now.
@@ -2467,8 +2480,8 @@ def _extract_implicit_args(
     for d1, d2 in zip(aval.shape, tracer.aval.shape):
       if isinstance(d1, DBIdx):
         if tracers[d1.val] is None:
-          tracers[d1.val] = trace.to_jaxpr_tracer(d2)
-        assert tracers[d1.val] is trace.to_jaxpr_tracer(d2)
+          tracers[d1.val] = trace.to_jaxpr_tracer(d2, source_info)
+        assert tracers[d1.val] is trace.to_jaxpr_tracer(d2, source_info)
   assert all(t is not None for t in tracers)
   return [t for t, (_, e) in zip(tracers, in_type) if not e]  # type: ignore
 
@@ -2616,13 +2629,13 @@ def inline_jaxpr_into_trace(
     trace: DynamicJaxprTrace, jaxpr: Jaxpr, consts: Sequence[Any],
     *arg_tracers: DynamicJaxprTracer) -> list[Any]:
   # This function is conceptually the same thing as just calling eval_jaxpr,
-  const_tracers = map(trace.new_const, consts)
+  src = source_info_util.current()
+  const_tracers = map(partial(trace.new_const, source_info=src), consts)
   constvars = map(trace.getvar, const_tracers)
   argvars = map(trace.getvar, arg_tracers)
   env: dict[Var, Var] = dict(zip([*jaxpr.constvars, *jaxpr.invars],
                                  [*constvars, *argvars]))
 
-  src = source_info_util.current()
   for eqn in jaxpr.eqns:
     invars = [x if isinstance(x, Literal) else env[x] for x in eqn.invars]
     outvars = [Var('', v.aval) for v in eqn.outvars]

@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2025 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src import deprecations
+from jax._src.lib import jaxlib_extension_version as _jaxlib_extension_version
 
-deprecations.warn(
-    "pallas-gpu-triton",
-    "The ``jax.experimental.pallas.gpu`` submodule is deprecated. "
-    " Use ``jax.experimental.pallas.triton`` instead.",
-    stacklevel=1,
-)
+if _jaxlib_extension_version >= 334:
+  from jax._src.buffer_callback import (
+      Buffer as Buffer,
+      ExecutionContext as ExecutionContext,
+      ExecutionStage as ExecutionStage,
+      buffer_callback as buffer_callback,
+  )
 
-from jax.experimental.pallas.triton import *  # noqa: F403
+from jax._src.buffer_callback import buffer_callback as buffer_callback
+
+del _jaxlib_extension_version

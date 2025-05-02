@@ -41,7 +41,9 @@ echo "Installed packages:"
 "$JAXCI_PYTHON" -c 'import sys; print("python version:", sys.version)'
 "$JAXCI_PYTHON" -c 'import jax; print("jax version:", jax.__version__)'
 "$JAXCI_PYTHON" -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
-strings /usr/local/lib/"$JAXCI_PYTHON"/dist-packages/libtpu/libtpu.so | grep 'Built on'
+# Free-threaded builds use "-nogil" as the suffix for the binary and "t" for its
+# dist-packages path
+strings /usr/local/lib/"${JAXCI_PYTHON//-nogil/t}"/dist-packages/libtpu/libtpu.so | grep 'Built on'
 "$JAXCI_PYTHON" -c 'import jax; print("libtpu version:",jax.lib.xla_bridge.get_backend().platform_version)'
 
 # Set up all common test environment variables

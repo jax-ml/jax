@@ -47,6 +47,7 @@ limitations under the License.
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/ffi.h"
 #include "jaxlib/ifrt_proxy.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
@@ -106,6 +107,7 @@ limitations under the License.
 #include "jaxlib/sharding.h"
 #include "jaxlib/traceback.h"
 #include "jaxlib/xla_compiler.h"
+#include "xla/hlo/builder/lib/approx_topk_shape.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_api.h"
@@ -117,11 +119,9 @@ limitations under the License.
 #include "xla/python/logging.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
-#include "xla/python/ops.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pprof_profile_builder.h"
-#include "xla/python/profiler.h"
 #include "xla/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
 #include "xla/tsl/platform/status.h"
 #include "tsl/platform/platform.h"
@@ -579,8 +579,6 @@ NB_MODULE(_jax, m) {
 
   jax::BuildConfigSubmodule(m);
   BuildIfrtProgramsSubmodule(m);
-  BuildProfilerSubmodule(m);
-  BuildOpsSubmodule(m);
   BuildPytreeSubmodule(m);
   jax::BuildGuardSubmodule(m);
   jax::BuildJaxjitSubmodule(m);
@@ -590,6 +588,7 @@ NB_MODULE(_jax, m) {
   BuildMlirSubmodule(m);
   BuildSdySubmodule(m);
   BuildCustomCallShardingPybindAPI(m);
+  jax::BuildFfiSubmodule(m);
 #if defined(__linux__)
   aux::RegisterTransferServerTypes(m);
 #endif  // defined(__linux__)
@@ -950,6 +949,13 @@ NB_MODULE(_jax, m) {
         nb::arg("device_list"));
 
   m.attr("ifrt_version_number") = JAX_IFRT_VERSION_NUMBER;
+
+  m.def("approx_top_k_reduction_output_size",
+        xla::ValueOrThrowWrapper(ApproxTopKReductionOutputSize),
+        nb::arg("input_size"), nb::arg("rank"), nb::arg("top_k"),
+        nb::arg("recall_target"), nb::arg("aggregate_to_topk") = true,
+        nb::arg("input_size_override") = -1);
+
 }  // NOLINT(readability/fn_size)
 
 }  // namespace xla

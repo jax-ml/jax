@@ -525,6 +525,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":hip_vendor",
+        "//jaxlib:ffi",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:inlined_vector",
@@ -535,10 +536,12 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@dlpack",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla:comparison_util",
         "@xla//xla:shape_util",
+        "@xla//xla:util",
         "@xla//xla:xla_data_proto_cc",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/ffi/api:ffi",

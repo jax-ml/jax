@@ -520,21 +520,11 @@ def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
 
 def reduce_window_sharding_rule(operand, window_dimensions, window_strides,
                                 padding, base_dilation, window_dilation):
-  if base_dilation is None:
-    base_dilation = [1] * operand.ndim
-  if window_dilation is None:
-    window_dilation = [1] * operand.ndim
-
-  for spec, wdim, ws, pd, bd, wdil in zip(
-      operand.sharding.spec, window_dimensions, window_strides, padding,
-      base_dilation, window_dilation):
-    if spec is None:
-      continue
-    if not (wdim == 1 and ws == 1 and pd == (0, 0) and bd == 1 and wdil == 1):
-      raise core.ShardingTypeError(
-          "Only trivial windowing is supported along non-replicated"
-          f" dimensions. Got {operand.sharding.spec=}")
-  return operand.sharding
+  out_shape = reduce_window_shape_tuple(
+      operand.shape, window_dimensions, window_strides, padding, base_dilation,
+      window_dilation)
+  return lax.slicing._get_sharding_for_varying_out_shape(
+      out_shape, operand, 'reduce_window')
 
 reduce_window_sum_p = lax.standard_primitive(
     _reduce_window_sum_shape_rule, lax._input_dtype, 'reduce_window_sum',
@@ -680,8 +670,14 @@ def _select_and_scatter_shape_rule(
     raise TypeError(msg.format(window_strides, window_dimensions))
   return operand.shape
 
+def _select_and_scatter_sharding_rule(
+    operand, source, init_value, *, select_jaxpr, select_consts, scatter_jaxpr,
+    scatter_consts, window_dimensions, window_strides, padding):
+  return operand.sharding
+
 select_and_scatter_p = lax.standard_primitive(
     _select_and_scatter_shape_rule, lax._input_dtype, 'select_and_scatter',
+    sharding_rule=_select_and_scatter_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'select_and_scatter'))
 
 def _select_and_scatter_lower(
@@ -722,7 +718,8 @@ def _select_and_scatter_lower(
                                       *scatter.arguments,
                                       dim_var_values=ctx.dim_var_values)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
-  return op.results
+  return [mlir.lower_with_sharding_in_types(ctx, r, aval)
+          for r, aval in zip(op.results, ctx.avals_out)]
 
 mlir.register_lowering(select_and_scatter_p, _select_and_scatter_lower)
 
@@ -730,6 +727,11 @@ def _select_and_scatter_add_shape_rule(
     source, operand, *, select_prim, window_dimensions, window_strides,
     padding):
   return operand.shape
+
+def _select_and_scatter_add_sharding_rule(
+    source, operand, *, select_prim, window_dimensions, window_strides,
+    padding):
+  return operand.sharding
 
 def _select_and_scatter_add_jvp(
     primals, tangents, *, select_prim, window_dimensions, window_strides,
@@ -779,6 +781,7 @@ def _select_and_scatter_add_batch_rule(
 select_and_scatter_add_p = lax.standard_primitive(
     _select_and_scatter_add_shape_rule, lax._input_dtype,
     'select_and_scatter_add',
+    sharding_rule=_select_and_scatter_add_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'select_and_scatter_add'))
 
 ad.primitive_transposes[select_and_scatter_add_p] = \

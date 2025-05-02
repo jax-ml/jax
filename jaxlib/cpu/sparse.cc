@@ -1,4 +1,4 @@
-/* Copyright 2025 The JAX Authors
+/* Copyright 2025 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,9 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_XLA_PYTHON_REF_MANAGER_H_
-#define JAXLIB_XLA_PYTHON_REF_MANAGER_H_
+#include "nanobind/nanobind.h"
+#include "jaxlib/cpu/sparse_kernels.h"
+#include "jaxlib/kernel_nanobind_helpers.h"
 
-#include "jaxlib/python_ref_manager.h"  // IWYU pragma: keep
+namespace jax {
+namespace {
 
-#endif  // JAXLIB_XLA_PYTHON_REF_MANAGER_H_
+namespace nb = nanobind;
+
+nb::dict Registrations() {
+  nb::dict dict;
+
+  dict["cpu_csr_sparse_dense_ffi"] =
+      EncapsulateFunction(cpu_csr_sparse_dense_ffi);
+
+  return dict;
+}
+
+NB_MODULE(_sparse, m) { m.def("registrations", &Registrations); }
+
+}  // namespace
+}  // namespace jax
