@@ -165,7 +165,7 @@ MakeSingleDeviceIfrtArrayFromShard(
   } else {
     auto host_buffer_shard = std::get<ifrt::Client::HostBuffer>(
         std::move(shard.ifrt_array_or_host_buffer));
-    std::shared_ptr<const ifrt::Sharding> ifrt_sharding =
+    ifrt::ShardingRef ifrt_sharding =
         ifrt::SingleDeviceSharding::Create(ifrt_device, ifrt_memory_kind);
     return ifrt_client->MakeArrayFromHostBuffer(
         host_buffer_shard.data, host_buffer_shard.dtype,
@@ -182,8 +182,7 @@ MakeSingleDeviceIfrtArrayFromShard(
 // Expected to be called without holding GIL.
 absl::StatusOr<tsl::RCReference<ifrt::Array>> MakeIfrtArrayFromShardsInBatch(
     ifrt::Client* ifrt_client, ifrt::DType ifrt_dtype, ifrt::Shape ifrt_shape,
-    std::shared_ptr<const ifrt::Sharding> ifrt_sharding,
-    absl::Span<Shard> shards,
+    ifrt::ShardingRef ifrt_sharding, absl::Span<Shard> shards,
     tsl::RCReference<ifrt::UserContext> user_context) {
   absl::InlinedVector<
       std::pair<absl::InlinedVector<int64_t, 1>, ifrt::Client::HostBuffer>, 1>
@@ -224,7 +223,7 @@ absl::StatusOr<tsl::RCReference<ifrt::Array>> MakeIfrtArrayFromShardsInBatch(
 absl::StatusOr<tsl::RCReference<ifrt::Array>>
 MakeIfrtArrayFromShardsWithAssembly(
     ifrt::Client* ifrt_client, ifrt::DType ifrt_dtype, ifrt::Shape ifrt_shape,
-    std::shared_ptr<const ifrt::Sharding> ifrt_sharding,
+    ifrt::ShardingRef ifrt_sharding,
     ifrt::DeviceList* ifrt_addressable_device_list,
     ifrt::MemoryKind ifrt_memory_kind, absl::Span<Shard> shards,
     tsl::RCReference<ifrt::UserContext> user_context) {
@@ -975,7 +974,7 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
     shard_fns.push_back(std::move(shard));
   }
 
-  std::shared_ptr<const ifrt::Sharding> ifrt_sharding;
+  ifrt::ShardingRef ifrt_sharding;
   if (is_pmap_sharding) {
     CHECK(!shard_fns.empty());
     // IFRT Sharding will be determined once we discover the shard shape.

@@ -213,7 +213,7 @@ tsl::RCReference<ifrt::Array> CreateIfRtArrayFromSingleDeviceShardedPyArrays(
     throw nb::value_error(ifrt_dtype.status().ToString().c_str());
   }
 
-  absl::StatusOr<std::shared_ptr<const ifrt::Sharding>> ifrt_sharding =
+  absl::StatusOr<ifrt::ShardingRef> ifrt_sharding =
       sharding.type().is(jax::PmapSharding::type())
           ? xla::GetIfrtConcreteSharding(sharding, ifrt::Shape(shape),
                                          std::move(shapes))
@@ -1330,7 +1330,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
   }
 
   TF_ASSIGN_OR_RETURN(
-      std::shared_ptr<const xla::ifrt::Sharding> dst_ifrt_sharding,
+      xla::ifrt::ShardingRef dst_ifrt_sharding,
       GetIfrtConcreteEvenSharding(dst_sharding, ifrt_array_ptr->dtype(),
                                   ifrt_array_ptr->shape()));
 
