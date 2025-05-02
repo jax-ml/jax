@@ -9,13 +9,17 @@
 #                           that was built in the previous step and runs CPU tests.
 # 3. build-cuda-artifacts:  Calls the `build_artifacts.yml` workflow to build CUDA artifacts and
 #                           uploads them to a GCS bucket.
-# 4. run-pytest-cuda:       Calls the `pytest_cuda.yml` workflow which downloads the jaxlib and CUDA
+# 4. run-bazel-test-cpu-py-import: Calls the `bazel_cpu_py_import_rbe.yml` workflow which
+#                           runs Bazel CPU tests with py_import on RBE.
+# 5. run-pytest-cuda:       Calls the `pytest_cuda.yml` workflow which downloads the jaxlib and CUDA
 #                           artifacts that were built in the previous steps and runs the CUDA tests.
-# 5. run-bazel-test-cuda:   Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the jaxlib
+# 6. run-bazel-test-cuda:   Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the jaxlib
 #                           and CUDA artifacts that were built in the previous steps and runs the
 #                           CUDA tests using Bazel.
 
 name: CI - Wheel Tests (Continuous)
+permissions:
+      contents: read
 
 on:
   schedule:
@@ -135,6 +139,20 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+
+  run-bazel-test-cpu-py-import:
+    uses: ./.github/workflows/bazel_cpu_py_import_rbe.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          runner: ["linux-x86-n2-16", "linux-arm64-t2a-48"]
+          python: ["3.10",]
+          enable-x64: [1, 0]
+    name: "Bazel CPU tests with ${{ format('{0}', 'py_import') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
 
   run-bazel-test-cuda:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
