@@ -639,6 +639,7 @@ cc_library(
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla:comparison_util",
         "@xla//xla:shape_util",
+        "@xla//xla:util",
         "@xla//xla:xla_data_proto_cc",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/ffi/api:ffi",

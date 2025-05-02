@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/python/nb_numpy.h"
 #include "xla/python/types.h"
 #include "xla/shape_util.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace nb = nanobind;
@@ -81,8 +82,7 @@ ffi::Error XlaFfiPythonCpuCallback(FfiLoadedHostCallbacks* callbacks,
     auto arg = args.get<ffi::AnyBuffer>(i);
     auto ptype = static_cast<PrimitiveType>(arg->element_type());
     // TODO(b/395428868): Remove this check once we support subbyte types.
-    if (ptype == S1 || ptype == S2 || ptype == S4 || ptype == U1 ||
-        ptype == U2 || ptype == U4) {
+    if (ptype == S1 || ptype == U1) {
       return ffi::Error(ffi::ErrorCode::kUnimplemented,
                         absl::StrFormat("Unsupported primitive type: %s",
                                         PrimitiveType_Name(ptype)));
@@ -98,9 +98,21 @@ ffi::Error XlaFfiPythonCpuCallback(FfiLoadedHostCallbacks* callbacks,
     auto dtype = maybe_dtype.value();
     auto dims = absl::Span<const int64_t>(arg->dimensions().begin(),
                                           arg->dimensions().size());
+    // TODO(b/402422886): Remove this once we form Jax arrays directly instead
+    std::unique_ptr<char[]> buffer;
+    const void* data = arg->untyped_data();
+    size_t bits_per_element = xla::primitive_util::BitWidth(ptype);
+    if (bits_per_element == 2 || bits_per_element == 4) {
+      // NOTE(dsuo): FFI arguments and return buffers are sized assuming
+      // minimum 1-byte element sizes, even if the data itself is packed. We
+      // assume that 2-bit and 4-bit types are packed.
+      size_t size_bytes = arg->element_count() * bits_per_element / 8;
+      buffer = xla::UnpackIntN(bits_per_element, static_cast<const char*>(data),
+                               size_bytes);
+      data = buffer.get();
+    }
     // We pass in data using default numpy layout i.e., std::nullopt.
-    auto array =
-        nb_numpy_ndarray(dtype, dims, std::nullopt, arg.value().untyped_data());
+    auto array = nb_numpy_ndarray(dtype, dims, std::nullopt, data);
     array.attr("flags").attr("writeable") = nb::bool_(false);
     PyTuple_SET_ITEM(nb_args.ptr(), i, array.release().ptr());
   }
@@ -121,9 +133,8 @@ ffi::Error XlaFfiPythonCpuCallback(FfiLoadedHostCallbacks* callbacks,
   for (size_t i = 0; i < rets.size(); ++i) {
     auto ret = rets.get<ffi::AnyBuffer>(i).value();
     auto ptype = static_cast<PrimitiveType>(ret->element_type());
-    // TODO(b/395428868): Remove this check once we support subbyte types.
-    if (ptype == S1 || ptype == S2 || ptype == S4 || ptype == U1 ||
-        ptype == U2 || ptype == U4) {
+    // TODO(b/402422886): Remove this once we form Jax arrays directly instead
+    if (ptype == S1 || ptype == U1) {
       return ffi::Error(ffi::ErrorCode::kUnimplemented,
                         absl::StrFormat("Unsupported primitive type: %s",
                                         PrimitiveType_Name(ptype)));
@@ -143,26 +154,56 @@ ffi::Error XlaFfiPythonCpuCallback(FfiLoadedHostCallbacks* callbacks,
     }
     auto expected_shape = maybe_expected_shape.value();
     auto expected_strides = ByteStridesForShape(expected_shape);
-    if (strides == expected_strides) {
-      std::memcpy(ret->untyped_data(), array.data(), ret->size_bytes());
-      continue;
+
+    const void* data = array.data();
+    std::unique_ptr<char[]> buffer;
+    size_t bits_per_element = xla::primitive_util::BitWidth(ptype);
+    size_t size_bytes = array.size() * array.itemsize();
+    if (strides != expected_strides) {
+      xla::TransposePlan::Options options;
+      options.elem_size_in_bytes = xla::primitive_util::ByteWidth(ptype);
+      options.dims = absl::Span<const int64_t>(
+          reinterpret_cast<const int64_t*>(array.shape()), array.ndim());
+      absl::InlinedVector<int64_t, 4> reversed_layout;
+      reversed_layout.resize(expected_shape.dimensions().size());
+      absl::c_reverse_copy(expected_shape.layout().minor_to_major(),
+                           reversed_layout.begin());
+      options.permutation = reversed_layout;
+      options.input_layout = xla::TransposePlan::Striding{strides};
+      auto maybe_plan = transpose_cache->cache.GetOrCreate(options);
+      if (!maybe_plan.ok()) {
+        return ffi::Error::Internal(maybe_plan.status().ToString());
+      }
+      auto plan = maybe_plan.value();
+      if (bits_per_element == 2 || bits_per_element == 4) {
+        // NOTE(dsuo): If the data needs to be unpacked, don't use return buffer
+        // supplied by FFI directly.
+        buffer = std::make_unique<char[]>(size_bytes);
+        plan->Execute(data, buffer.get());
+        data = buffer.get();
+      } else {
+        plan->Execute(data, ret->untyped_data());
+        data = ret->untyped_data();
+      }
     }
-    xla::TransposePlan::Options options;
-    options.elem_size_in_bytes = xla::primitive_util::ByteWidth(ptype);
-    options.dims = absl::Span<const int64_t>(
-        reinterpret_cast<const int64_t*>(array.shape()), array.ndim());
-    absl::InlinedVector<int64_t, 4> reversed_layout;
-    reversed_layout.resize(expected_shape.dimensions_size());
-    absl::c_reverse_copy(expected_shape.layout().minor_to_major(),
-                         reversed_layout.begin());
-    options.permutation = reversed_layout;
-    options.input_layout = xla::TransposePlan::Striding{strides};
-    auto maybe_plan = transpose_cache->cache.GetOrCreate(options);
-    if (!maybe_plan.ok()) {
-      return ffi::Error::Internal(maybe_plan.status().ToString());
+
+    // TODO(b/402422886): Remove this once we form Jax arrays directly instead
+    // of packing/unpacking to/from numpy arrays.
+    if (bits_per_element == 2 || bits_per_element == 4) {
+      // NOTE(dsuo): FFI arguments and return buffers are sized assuming
+      // minimum 1-byte element sizes, even if the data itself is packed. We
+      // assume that 2-bit and 4-bit types are packed.
+      buffer = xla::PackIntN(bits_per_element, static_cast<const char*>(data),
+                             size_bytes);
+      data = buffer.get();
+      size_bytes = (size_bytes * bits_per_element) / 8;
     }
-    auto plan = maybe_plan.value();
-    plan->Execute(array.data(), ret->untyped_data());
+
+    // Copy data to output buffer if haven't already or modified the data to
+    // write back.
+    if (data != ret->untyped_data()) {
+      std::memcpy(ret->untyped_data(), data, size_bytes);
+    }
   }
 
   return ffi::Error::Success();
