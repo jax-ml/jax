@@ -347,12 +347,11 @@ def build_kernel(
           gpu.barrier()
           mma_done_barrier.wait(for_tensor_core=True)
 
-          acc_slot[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
+          # TODO make optimized an autotuned variable
+          acc_slot[:].astype(ir.F16Type.get()).store_untiled(d_smem, swizzle=128, optimized=False)
           mgpu.commit_shared()
 
           store_row = cx(0)
-          d_smem_2d_shape, _ = mma_utils.tiled_memref_shape(d_smem)
-          store_smem = mgpu.memref_reshape(d_smem, d_smem_2d_shape)
           for i in range(math.ceil(math.log2(tile_m)) + 1):
             num_rows = 1 << i
             do_store = arith.cmpi(
@@ -360,7 +359,7 @@ def build_kernel(
             )
             with mgpu.when(do_store):
               gmem_off = arith.addi(tile_m_start, store_row)
-              out_smem_slice = mgpu.memref_slice(store_smem, ds(store_row, num_rows))
+              out_smem_slice = mgpu.memref_slice(d_smem, ds(store_row, num_rows))
               out_smem_slice = mgpu.memref_reshape(
                   out_smem_slice,
                   (num_rows, tile_n // swizzle_elems, swizzle_elems)
@@ -393,7 +392,7 @@ def build_kernel(
         jnp.float16),
   )
   epilogue_buffer = jax.ShapeDtypeStruct(
-      mgpu.tile_shape((tile_m, tile_n), (128, swizzle_elems)),
+      (tile_m, tile_n),
       jnp.float16)
   smem_buffers = mgpu.Union([compute_buffers, epilogue_buffer])
   tmem_cols = tmem_slot_count * tile_n
@@ -465,10 +464,10 @@ def main(unused_argv):
   assert sum(group_sizes) == m
   # TODO(andportnoy) test different tile sizes
   tile_m = 128
-  tile_n = 64  # 256, 512
+  tile_n = 256  # 256, 512
 
   # TODO(andportnoy) test different stage counts
-  max_concurrent_steps = 6  # 4, 5, 6
+  max_concurrent_steps = 4  # 4, 5, 6
   profiler_spec = profiler.ProfilerSpec(4096) if profile else None
   with mlir.make_ir_context(), ir.Location.unknown():
     f = build_kernel(
