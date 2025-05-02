@@ -207,6 +207,10 @@ def _is_known_divisible(value, divisor, fuel=10) -> bool:
     case arith_dialect.MulIOp():
       return (_is_known_divisible(value.owner.operands[0], divisor, fuel // 2) or
               _is_known_divisible(value.owner.operands[1], divisor, (fuel + 1)// 2))
+    case arith_dialect.SelectOp():
+      return (_is_known_divisible(value.owner.operands[1], divisor, fuel // 2) and
+              _is_known_divisible(value.owner.operands[2], divisor, (fuel + 1)// 2))
+
   return False
 
 
