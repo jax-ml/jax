@@ -1,0 +1,63 @@
+# CI - Bazel CPU tests with py_import (RBE)
+#
+# This workflow runs the Bazel CPU tests with py_import dependency. It can only be triggered by
+# other workflows via `workflow_call`. It is used by the `CI - Wheel Tests (Continuous)` workflows
+# to run the Bazel CPU tests.
+#
+# It consists of the following job:
+# run-tests:
+#    - Executes the `run_bazel_test_cpu_py_import_rbe.sh` script, which performs the following actions:
+#      - Runs the Bazel CPU tests with py_import dependency.
+name: CI - Bazel CPU tests with py_import (RBE)
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: string
+        required: true
+        default: "linux-x86-n2-16"
+      python:
+        description: "Which python version to test?"
+        type: string
+        required: true
+        default: "3.12"
+      enable-x64:
+        description: "Should x64 mode be enabled?"
+        type: string
+        required: true
+        default: "0"
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: string
+        required: false
+        default: 'no'
+
+jobs:
+  run-tests:
+    defaults:
+      run:
+        # Explicitly set the shell to bash
+        shell: bash
+    runs-on: ${{ inputs.runner }}
+    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+                   (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') }}
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
+      JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
+
+    name: "Bazel CPU tests with py_import (${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Run Bazel CPU tests with py_import (RBE)
+        timeout-minutes: 60
+        run: ./ci/run_bazel_test_cpu_py_import_rbe.sh
