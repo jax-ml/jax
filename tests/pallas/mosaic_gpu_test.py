@@ -1705,6 +1705,7 @@ class PallasCallWGTest(
         mgpu_primitives.inline_mgpu_p,
         mgpu_primitives.broadcasted_iota_p,
         mgpu_primitives.load_p,
+        mgpu_primitives.tcgen05_mma_p,
         lax.slice_p,
         pallas_core.core_map_p,
     }
@@ -2109,6 +2110,57 @@ class PallasCallSm100ATest(PallasSm100ATest):
 
     # Test that this runs without errors.
     jax.block_until_ready(kernel())
+
+  @parameterized.parameters(
+      ((128, 128), 128, jnp.float16),
+      # Test bfloat16
+      ((128, 128), 128, jnp.bfloat16),
+      # Test additional swizzles.
+      ((128, 128), 64, jnp.float16),
+      ((128, 128), 32, jnp.float16),
+  )
+  def test_simple_matmul(self, shape, swizzle, dtype):
+    # Test a matmul with a single block.
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+
+    def kernel(a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref):
+      plgpu.tcgen05_mma(acc_tmem,
+                        a_smem,
+                        b_smem,
+                        barrier_ref,
+                        accumulate=False)
+      plgpu.barrier_wait(barrier_ref)
+      scratch_smem[...] = acc_tmem[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(scratch_smem, out_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    scratch_shapes = [
+        plgpu.TMEM(shape, jnp.float32),
+        plgpu.SMEM(shape, dtype, transforms=transforms),
+        plgpu.Barrier(num_arrivals=1, for_tensor_core=True),
+    ]
+    f = self.pallas_call(
+        kernel,
+        in_specs=(
+            plgpu.GPUBlockSpec(transforms=transforms,
+                               memory_space=plgpu.SMEM),
+            plgpu.GPUBlockSpec(transforms=transforms,
+                               memory_space=plgpu.SMEM),
+        ),
+        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        scratch_shapes=scratch_shapes,
+    )
+    x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
+    y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
+    result = f(x, y)
+    expected = x @ y
+    np.testing.assert_allclose(result, expected, rtol=1e-3)
 
 
 class PallasCallSm100AWGTest(

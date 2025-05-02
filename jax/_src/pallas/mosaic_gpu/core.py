@@ -765,6 +765,7 @@ class BarrierType(dtypes.ExtendedDType):
   name: ClassVar[str] = "barrier"
 
   num_arrivals: int
+  for_tensor_core: bool
 
   def __str__(self):
     return self.name
@@ -783,12 +784,24 @@ class ClusterBarrierType(dtypes.ExtendedDType):
 
 @dataclasses.dataclass(frozen=True)
 class Barrier:
+  """Describes a barrier Ref.
+
+  Attributes:
+    num_arrivals: The number of arrivals that will be recorded by this barrier.
+    num_barriers: The number of barriers that will be created. Individual
+      barriers can be accessed by indexing into the barrier Ref.
+    for_tensor_core: Whether this barrier is used for synchronizing with
+      the tensor core. This should be set to True when waiting on Blackwell
+      (TC Gen 5) asynchoronous matmul instructions.
+  """
   num_arrivals: int
   num_barriers: int = 1
+  for_tensor_core: bool = dataclasses.field(default=False, kw_only=True)
 
   def get_ref_aval(self) -> AbstractMemoryRef:
     aval = jax_core.ShapedArray(
-        [self.num_barriers], BarrierType(self.num_arrivals)
+        [self.num_barriers], BarrierType(self.num_arrivals,
+                                         for_tensor_core=self.for_tensor_core)
     )
     return AbstractMemoryRef(aval, SMEM)
 
