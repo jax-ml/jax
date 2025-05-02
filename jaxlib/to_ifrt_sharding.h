@@ -43,19 +43,18 @@ absl::StatusOr<xla::ifrt::DeviceListRef> GetIfrtDeviceList(
 xla::ifrt::MemoryKind GetMemoryKind(nanobind::handle sharding);
 
 // Converts a JAX Sharding into `xla::ifrt::HloSharding`.
-absl::StatusOr<std::shared_ptr<const xla::ifrt::Sharding>> GetIfrtHloSharding(
+absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtHloSharding(
     nanobind::handle sharding, const xla::ifrt::Shape& shape);
 
 // Converts a JAX Sharding into `xla::ifrt::ConcreteEvenSharding`.
-absl::StatusOr<std::shared_ptr<const xla::ifrt::Sharding>>
-GetIfrtConcreteEvenSharding(nanobind::handle sharding, xla::ifrt::DType dtype,
-                            const xla::ifrt::Shape& shape);
+absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtConcreteEvenSharding(
+    nanobind::handle sharding, xla::ifrt::DType dtype,
+    const xla::ifrt::Shape& shape);
 
 // Converts a JAX Sharding into `xla::ifrt::ConcreteSharding`.
-absl::StatusOr<std::shared_ptr<const xla::ifrt::Sharding>>
-GetIfrtConcreteSharding(nanobind::handle sharding,
-                        const xla::ifrt::Shape& shape,
-                        std::vector<xla::ifrt::Shape> shard_shapes);
+absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtConcreteSharding(
+    nanobind::handle sharding, const xla::ifrt::Shape& shape,
+    std::vector<xla::ifrt::Shape> shard_shapes);
 
 }  // namespace xla
 
