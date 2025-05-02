@@ -300,7 +300,8 @@ def _repeat(self: Array, repeats: ArrayLike, axis: int | None = None, *,
   """
   return lax_numpy.repeat(self, repeats=repeats, axis=axis, total_repeat_length=total_repeat_length)
 
-def _reshape(self: Array, *args: Any, order: str = "C") -> Array:
+def _reshape(self: Array, *args: Any, order: str = "C", out_sharding=None
+             ) -> Array:
   """Returns an array containing the same data with a new shape.
 
   Refer to :func:`jax.numpy.reshape` for full documentation.
@@ -308,10 +309,10 @@ def _reshape(self: Array, *args: Any, order: str = "C") -> Array:
   __tracebackhide__ = True
   newshape = _compute_newshape(self, args[0] if len(args) == 1 else args)
   if order == "C":
-    return lax.reshape(self, newshape, None)
+    return lax.reshape(self, newshape, None, out_sharding=out_sharding)
   elif order == "F":
     dims = list(range(self.ndim)[::-1])
-    return lax.reshape(self, newshape[::-1], dims).T
+    return lax.reshape(self, newshape[::-1], dims, out_sharding=out_sharding).T
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
