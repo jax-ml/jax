@@ -197,12 +197,12 @@ def _dot(self: Array, b: ArrayLike, *, precision: lax_internal.PrecisionLike = N
   """
   return tensor_contractions.dot(self, b, precision=precision, preferred_element_type=preferred_element_type)
 
-def _flatten(self: Array, order: str = "C") -> Array:
+def _flatten(self: Array, order: str = "C", *, out_sharding=None) -> Array:
   """Flatten array into a 1-dimensional shape.
 
   Refer to :func:`jax.numpy.ravel` for the full documentation.
   """
-  return lax_numpy.ravel(self, order=order)
+  return lax_numpy.ravel(self, order=order, out_sharding=out_sharding)
 
 def _imag_property(self: Array) -> Array:
   """Return the imaginary part of the array."""
