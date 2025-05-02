@@ -2465,7 +2465,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   def _yielded_values(outs, avals):
     ret = []
     for out, aval in zip(outs, avals):
-      if isinstance(out, mgpu.FragmentedArray):
+      if isinstance(out, (mgpu.WGMMAAccumulator, mgpu.FragmentedArray)):
         ret.append(out)
       else:
         ret.append(_ensure_ir_value(out, aval.dtype))
