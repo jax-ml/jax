@@ -1893,6 +1893,15 @@ class OpsTest(PallasBaseTest):
           > (256 * 256) * 2
       ):
         self.skipTest("Shared memory size limit exceeded")
+      if (jax.local_devices()[0].device_kind == "NVIDIA L4" and
+          dtype == jnp.float32 and
+          lhs_and_rhs_shape in [
+            ((128, 16), (128, 256)),
+            ((16, 128), (128, 256)),
+            ((16, 256), (256, 128)),
+            ((256, 16), (256, 128)),
+          ]):
+        self.skipTest("Shared memory size limit exceeded")
       if min(*lhs_shape, *rhs_shape) < 16:
         self.skipTest("All dimensions of lhs and rhs must be >= 16")
       if any(not is_power_of_two(x) for x in lhs_shape + rhs_shape):
