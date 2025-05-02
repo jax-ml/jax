@@ -486,8 +486,9 @@ def _launch(
 
     if tmem_allocs:
       gpu.barrier()  # Make sure everyone is done before we release TMEM.
-      for alloc in tmem_allocs:
-        alloc.dealloc()
+      with utils.when(is_init_warp):
+        for alloc in tmem_allocs:
+          alloc.dealloc()
     if prof is not None:
       prof.finalize(grid=grid, block=block)
     gpu.terminator()
