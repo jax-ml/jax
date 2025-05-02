@@ -887,7 +887,6 @@ def _offset_indexer(
     slice_size,
 ):
   # Short-circuit if the slice start is just at zero.
-  print('BS', bs, indexer, slice_start, slice_size)
   if isinstance(slice_start, int) and slice_start == 0:
     return indexer
   match bs:
@@ -1043,10 +1042,6 @@ def _dynamic_slice_rule(
     # the slice are then given by (i // b_l, j // b_m, k // b_n).
     # We then add these block indices to block indices produced by the index
     # map
-    print('BLOCK SHAPE', block_spec.block_shape)
-    print('INDEXER', idx)
-    print('SLICE starts', slice_starts)
-    print('SLICE sizes', slice_sizes)
     block_indices = tuple(
         _offset_indexer(s, i, start, size)
         for i, s, start, size in zip(
