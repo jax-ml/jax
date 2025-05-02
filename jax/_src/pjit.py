@@ -3258,9 +3258,13 @@ def _flatten_boxes(dbg, args, kwargs):
   args, kwargs = tree_map(visit, (args, kwargs))
   return args, kwargs, box_data
 
+# TODO(mattjj): because _handle_boxes's caller passes arguments splatted, the
+# names of its first two parameters must not collide with user-suppliedkwargs.
+# Using obscure names is a temporary workaround; revise!
 @lu.transformation2
-def _handle_boxes(f, dbg, *args, **kwargs):
+def _handle_boxes(__f, __dbg, *args, **kwargs):
   from jax.experimental.attrs import Box, List
+  f, dbg = __f, __dbg
   new_args = []
   arg_mutables = []
   def visit(x):
