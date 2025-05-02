@@ -383,8 +383,6 @@ def build_kernel(
       carrys = [work_id, work_id_group_start, group_offset]
       return carrys
       # group_for
-    with only(mma_warp):
-      tmem_dealloc(acc.address, acc.shape[1], collective=False)
 
   compute_buffers = (
     jax.ShapeDtypeStruct(
