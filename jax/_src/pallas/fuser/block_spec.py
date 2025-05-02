@@ -35,6 +35,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.fuser import fuser_utils
 from jax._src.state import indexing
+from jax._src.state import primitives as state_primitives
 import jax.numpy as jnp
 import numpy as np
 
@@ -326,7 +327,7 @@ def _pull_block_spec(
   def _read_block_spec(atom: core.Atom) -> pallas_core.BlockSpec | Any:
     if isinstance(atom, core.Literal):
       return pallas_core.no_block_spec
-    return env[atom]
+    return env.get(atom, pallas_core.no_block_spec)
 
   def _write_block_spec(atom: core.Atom, block_spec: pallas_core.BlockSpec):
     if isinstance(atom, core.Literal):
@@ -335,9 +336,11 @@ def _pull_block_spec(
 
   for i, eqn in reversed(list(enumerate(jaxpr.eqns))):
     eqn_out_block_specs = tuple(util.safe_map(_read_block_spec, eqn.outvars))
+    if all(bs is pallas_core.no_block_spec for bs in eqn_out_block_specs):
+      continue
     rule = pull_block_spec_rules.get(eqn.primitive, None)
     if not rule:
-      raise NotImplementedError(eqn.primitive)
+      raise NotImplementedError(eqn.primitive, eqn_out_block_specs)
     ctx = PullRuleContext(
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
@@ -475,7 +478,7 @@ def make_kernel_function(
   def _read_block_spec(atom: core.Atom) -> pallas_core.BlockSpec | Any:
     if isinstance(atom, core.Literal):
       return pallas_core.no_block_spec
-    return bs_env[atom]
+    return bs_env.get(atom, pallas_core.no_block_spec)
 
   def kernel_fn(program_ids, scalar_prefetch, *args, **kwargs):
     def _check_args(prefix, path, x, y, usage):
@@ -801,11 +804,18 @@ def _binop_pull_rule(prim, ctx: PullRuleContext, block_spec):
   return [l_block_spec, r_block_spec]
 
 
+def register_default_eval_rule(prim: core.Primitive):
+  def default_rule(ctx, *args, **params):
+    assert all(bs is pallas_core.no_block_spec for bs in ctx.out_block_specs)
+    return prim.bind(*args, **params)
+  register_eval_rule(prim)(default_rule)
+
 def register_binop_rule(prim: core.Primitive):
   register_pull_block_spec_rule(prim)(functools.partial(_binop_pull_rule, prim))
   register_usage_rule(prim)(functools.partial(_binop_usage_rule, prim))
   register_eval_rule(prim)(functools.partial(_binop_eval_rule, prim))
 
+register_default_eval_rule(state_primitives.get_p)
 
 register_binop_rule(lax.mul_p)
 register_binop_rule(lax.add_p)
