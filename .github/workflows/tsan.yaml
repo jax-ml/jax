@@ -272,26 +272,10 @@ jobs:
             --bazel_options=--copt=-g \
             --clang_path=/usr/bin/clang-18
 
+
+          mkdir -p dist
+          cp wheelhouse/*.whl dist/
           if [ "${{ matrix.python-version }}" == "3.13" ]; then
-            # Patch build/requirements_lock_3_13_ft.txt to use TSAN instrumented NumPy
-
-            sed -i "s|+--extra-index-url.*|+--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" .github/workflows/${{ matrix.requirements_lock_name }}.patch
-            cat .github/workflows/${{ matrix.requirements_lock_name }}.patch
-            git apply .github/workflows/${{ matrix.requirements_lock_name }}.patch || exit 1
-
-            # Display the content for debugging in logs
-            cat build/${{ matrix.requirements_lock_name }}.txt | head -15
-            # Check the patch
-            cat build/${{ matrix.requirements_lock_name }}.txt | head -15 | grep -E "(--pre|.*${GITHUB_WORKSPACE}/wheelhouse/|numpy)"
-            if [ "$?" == "1" ]; then echo "Could not find the patch in the ${{ matrix.requirements_lock_name }}.txt"; exit 1; fi
-            cat build/${{ matrix.requirements_lock_name }}.txt | grep -E "(numpy==)"
-            if [ "$?" == "0" ]; then "Found original numpy dependency in the ${{ matrix.requirements_lock_name }}.txt"; exit 1; fi
-
-          else
-            # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy and Scipy
-
-            sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
-
             # We should install jpeg dev package to be able to build Pillow from source:
             apt-get install -y libjpeg-dev --no-install-recommends
 
