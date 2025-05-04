@@ -44,18 +44,13 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt update
-          apt install -y clang-18 libstdc++-14-dev build-essential libssl-dev \
+          apt install -q -y clang-18 libstdc++-14-dev build-essential libssl-dev \
             zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
             libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
             libffi-dev liblzma-dev file zip
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: jax
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: python/cpython
-          path: cpython
-          ref: ${{ matrix.github_branch }}
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: numpy/numpy
@@ -80,6 +75,13 @@ jobs:
           path: |
             ./python-tsan.tgz
           key: ${{ runner.os }}-cpython-tsan-${{ matrix.python-version }}-${{ steps.get-date.outputs.date }}
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
+        with:
+          repository: python/cpython
+          path: cpython
+          ref: ${{ matrix.github_branch }}
 
       - name: Build TSAN CPython ${{ matrix.python-version }}
         if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
@@ -180,9 +182,11 @@ jobs:
 
       - name: Build Scipy wheel
         if: ${{ steps.cache-scipy-restore.outputs.cache-hit != 'true' && matrix.python-version == '3.14' }}
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           # Install scipy dependencies:
-          apt-get install -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
+          apt install -q -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
 
           cd scipy
 
@@ -254,7 +258,9 @@ jobs:
           JAX_ENABLE_X64: true
           JAX_SKIP_SLOW_TESTS: true
           PY_COLORS: 1
+          DEBIAN_FRONTEND: noninteractive
         run: |
+          set -x
           cd jax
 
           export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
@@ -272,31 +278,19 @@ jobs:
             --bazel_options=--copt=-g \
             --clang_path=/usr/bin/clang-18
 
-          if [ "${{ matrix.python-version }}" == "3.13" ]; then
-            # Patch build/requirements_lock_3_13_ft.txt to use TSAN instrumented NumPy
 
-            sed -i "s|+--extra-index-url.*|+--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" .github/workflows/${{ matrix.requirements_lock_name }}.patch
-            cat .github/workflows/${{ matrix.requirements_lock_name }}.patch
-            git apply .github/workflows/${{ matrix.requirements_lock_name }}.patch || exit 1
-
-            # Display the content for debugging in logs
-            cat build/${{ matrix.requirements_lock_name }}.txt | head -15
-            # Check the patch
-            cat build/${{ matrix.requirements_lock_name }}.txt | head -15 | grep -E "(--pre|.*${GITHUB_WORKSPACE}/wheelhouse/|numpy)"
-            if [ "$?" == "1" ]; then echo "Could not find the patch in the ${{ matrix.requirements_lock_name }}.txt"; exit 1; fi
-            cat build/${{ matrix.requirements_lock_name }}.txt | grep -E "(numpy==)"
-            if [ "$?" == "0" ]; then "Found original numpy dependency in the ${{ matrix.requirements_lock_name }}.txt"; exit 1; fi
-
-          else
+          mkdir -p dist
+          cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
+          cp -v ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl dist/
+          if [ "${{ matrix.python-version }}" == "3.14" ]; then
             # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy and Scipy
-
             sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
 
             # We should install jpeg dev package to be able to build Pillow from source:
-            apt-get install -y libjpeg-dev --no-install-recommends
+            apt install -q -y libjpeg-dev --no-install-recommends
 
             # Install scipy runtime dependencies (in case we restore scipy wheel from cache):
-            apt-get install -y libopenblas-dev liblapack-dev --no-install-recommends
+            apt install -q -y libopenblas-dev liblapack-dev --no-install-recommends
           fi
 
           echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
