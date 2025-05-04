@@ -2586,6 +2586,7 @@ class LayoutTest(TestCase):
     )
     with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass:
       yt_kernel = f(xt)
+      jax.block_until_ready(yt_kernel)
     np.testing.assert_array_equal(yt_kernel, yt)
     self.assertEqual(sass().count("SHFL.BFLY"), regs_per_thread * shfl_per_reg)
 
