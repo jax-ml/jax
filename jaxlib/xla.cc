@@ -487,10 +487,15 @@ NB_MODULE(_jax, m) {
               &CompiledMemoryStats::host_alias_size_in_bytes)
       .def_rw("host_temp_size_in_bytes",
               &CompiledMemoryStats::host_temp_size_in_bytes)
-      .def_prop_ro("serialized_hlo_proto",
+      .def_prop_ro("serialized_buffer_assignment_proto",
                    [](const CompiledMemoryStats& cms) -> nb::bytes {
-                     return nb::bytes(cms.serialized_hlo_proto.data(),
-                                      cms.serialized_hlo_proto.size());
+                     if (cms.buffer_assignment.has_value()) {
+                       std::string s =
+                           cms.buffer_assignment->SerializeAsString();
+                       return nb::bytes(s.data(), s.size());
+                     } else {
+                       return nb::bytes();
+                     }
                    })
       .def("__str__", &CompiledMemoryStats::DebugString);
 
