@@ -11,12 +11,6 @@ race:partial_vectorcall_fallback
 # https://github.com/python/cpython/issues/129748
 race:mi_block_set_nextx
 
-# https://github.com/python/cpython/issues/128130
-race_top:run_eval_code_obj
-
-# https://github.com/python/cpython/issues/132214
-race_top:update_one_slot
-
 # Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
 race:heevd_ffi
 race:gesdd_ffi
@@ -24,3 +18,7 @@ race:dscal_k_
 race:scal_k_
 race:gemm_beta
 race:gemm_oncopy
+
+# https://github.com/python/cpython/issues/132214
+# Should be fixed
+# race_top:update_one_slot
