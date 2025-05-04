@@ -240,7 +240,7 @@ def from_dlpack(external_array,
   device transfer or copy was requested.
 
   Args:
-    external_array: An array object that has ``__dlpack__` and
+    external_array: An array object that has ``__dlpack__`` and
       ``__dlpack_device__`` methods.
     device: The (optional) :py:class:`Device`, representing the device on which
       the returned array should be placed. If given, then the result is
