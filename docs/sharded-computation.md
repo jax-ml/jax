@@ -147,7 +147,7 @@ print(result)
 
 +++ {"id": "Q4N5mrr9i_ki"}
 
-The result is partially replicated: that is, the first two elements of the array are replicated on devices `0` and `6`, the second on `1` and `7`, and so on.
+The result is partially replicated: that is, the first two elements of the array are replicated on devices `0` and `4`, the second on `1` and `5`, and so on.
 
 ## 2. Explicit sharding
 
