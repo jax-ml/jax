@@ -79,24 +79,22 @@ GPU and TPU. The end result looks something like this:
 
 ### Installation
 
-The TensorBoard profiler is only available with the version of TensorBoard
-bundled with TensorFlow.
-
+The TensorBoard profiler is available as a plugin to TensorBoard
 ```shell
-pip install tensorflow tensorboard-plugin-profile
+pip install tensorboard tensorboard-plugin-profile
 ```
 
-If you already have TensorFlow installed, you only need to install the
+If you already have TensorBoard installed, you only need to install the
 `tensorboard-plugin-profile` pip package. Be careful to only install one version
 of TensorFlow or TensorBoard, otherwise you may encounter the "duplicate
 plugins" error described {ref}`below <multiple_installs>`. See
 <https://www.tensorflow.org/guide/profiler> for more information on installing
 TensorBoard.
 
-Nightly version of TensorBoard profiler requires nightly tensorflow and
-tensorboard
+Profiling with the nightly version of TensorBoard requires the nightly
+tensorboard profiler plugin
 ```shell
-pip install tf-nightly tb-nightly tbp-nightly
+pip install tb-nightly tbp-nightly
 ```
 
 ### Programmatic capture
@@ -156,7 +154,7 @@ example. You can specify a different port with the `--port` flag. See
 Then, either select "Profile" in the upper-right dropdown menu, or go directly
 to <http://localhost:6006/#profile>. Available traces appear in the "Runs"
 dropdown menu on the left. Select the run you're interested in, and then under
-"Tools", select `trace_viewer`.  You should now see a timeline of the
+"Tools", select `trace_viewer`. You should now see a timeline of the
 execution. You can use the WASD keys to navigate the trace, and click or drag to
 select events to see more details at the bottom. See [these TensorFlow
 docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)
@@ -308,8 +306,8 @@ replace, so it may be necessary to uninstall everything and reinstall a single
 version:
 
 ```shell
-pip uninstall tensorflow tf-nightly tensorboard tb-nightly
-pip install tensorflow
+pip uninstall tensorflow tf-nightly tensorboard tb-nightly tensorboard-plugin-profile tbp-nightly
+pip install tensorboard tensorboard-plugin-profile
 ```
 
 ## Nsight
