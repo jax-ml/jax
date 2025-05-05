@@ -3343,7 +3343,7 @@ class UtilsTest(TestCase):
     )
 
     with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass:
-      f(jnp.ones((128,), jnp.float32))
+      jax.block_until_ready(f(jnp.ones((128,), jnp.float32)))
 
     # SASS doesn't seem to include the assertion message, so we are just
     # checking that __assertfail appears in the symbol table for the kernel.
