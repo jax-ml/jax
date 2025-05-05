@@ -1320,8 +1320,6 @@ class OpsTest(PallasBaseTest):
       )
   )
   def test_comparison_scalar(self, fn, dtype):
-    self.skip_if_mosaic_gpu()
-
     if jtu.test_device_matches(["tpu"]) and dtype == jnp.float16:
       self.skipTest("float16 is not supported on TPU")
 
@@ -1331,6 +1329,9 @@ class OpsTest(PallasBaseTest):
     ):
       self.skipTest("Only works on GPUs with capability >= sm80")
 
+    if jtu.test_device_matches(["gpu"]) and dtype == jnp.bool_:
+      self.skip_if_mosaic_gpu()
+
     @functools.partial(
         self.pallas_call,
         in_specs=(
@@ -1338,17 +1339,17 @@ class OpsTest(PallasBaseTest):
             pl.BlockSpec(memory_space=smem_on_tpu()),
         ),
         out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
-        out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
     )
     def kernel(x_ref, y_ref, o_ref):
-      for i in range(8):
-        o_ref[i] = fn(x_ref[i], y_ref[i])
+      for i in range(128):
+        o_ref[i] = fn(x_ref[i], y_ref[i]).astype(jnp.int32)
 
-    x = jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype)
-    y = jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype)
+    x = jnp.tile(jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype), 16)
+    y = jnp.tile(jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype), 16)
     out = kernel(x, y)
     expected = fn(x, y)
-    self.assertArraysEqual(out, expected)
+    self.assertArraysEqual(out != 0, expected)
 
   def test_isnan(self):
     self.skip_if_mosaic_gpu()
