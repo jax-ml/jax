@@ -1354,8 +1354,9 @@ def _swap_lowering_rule(
 def _swap_lowering_rule_wg(
     ctx: LoweringRuleContext, x_smem, value, *leaves, tree
 ):
-  if not ir.VectorType.isinstance(value.type):
-    raise TypeError(f"Can only store vectors (got {value}).")
+  shape = ctx.avals_out[0].shape
+  if shape and not ir.VectorType.isinstance(value.type):
+    raise TypeError(f"Can only store scalars or vectors (got {value}).")
   if not ir.MemRefType.isinstance(x_smem.type):
     raise TypeError(f"Can only store to references (got {x_smem}).")
 
@@ -1368,7 +1369,6 @@ def _swap_lowering_rule_wg(
         "Transforms are not yet implemented for warpgroup semantics"
     )
 
-  shape = ctx.avals_out[0].shape
   ty = ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype))
   if shape:
     zero_index = arith_dialect.constant(ir.IndexType.get(), 0)

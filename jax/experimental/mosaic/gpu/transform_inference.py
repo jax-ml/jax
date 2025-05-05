@@ -195,6 +195,17 @@ def _infer_vector_load_store_transforms(
   return None if transforms is None else ([transforms], [])
 
 
+@partial(_add_transform_inference_rule, memref.StoreOp)
+def _infer_memref_store_transforms(op: memref.StoreOp) -> OptionalTransforms:
+  # memref.store is only used for scalar operations, so there are no transforms.
+  ref_shape = ir.MemRefType(op.memref.type).shape
+  if ref_shape != [] and ref_shape != [1]:
+    raise NotImplementedError(
+        f"Only scalar memrefs are supported, got {ref_shape}"
+    )
+
+  return None
+
 @partial(_add_transform_inference_rule, mgpu.SliceSMEMOp)
 def _infer_slice_smem_transforms(op: mgpu.SliceSMEMOp) -> OptionalTransforms:
   transforms = None
