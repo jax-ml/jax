@@ -474,6 +474,7 @@ cc_library(
         ":cusolver_kernels_ffi",
         ":cusparse_kernels",
         ":triton_kernels",
+        "//jaxlib/mosaic/gpu:mosaic_gpu_support",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_target_registry",
