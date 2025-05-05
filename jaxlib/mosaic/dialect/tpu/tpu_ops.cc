@@ -1223,10 +1223,18 @@ LogicalResult PackSubelementsOp::verify() {
   const int packing_factor = cast<VectorType>(getSources().front().getType())
                                  .getElementTypeBitWidth() /
                              getType().getElementTypeBitWidth();
+  if (packing_factor == 0) {
+    return emitOpError("Input bitwidth must be greater than output bitwidth: ")
+           << "Operand bitwidth: "
+           << cast<VectorType>(getSources().front().getType())
+                  .getElementTypeBitWidth()
+           << " vs Op type bitwidth: " << getType().getElementTypeBitWidth();
+  }
   SmallVector<bool> seen_positions(packing_factor, false);
   for (const int32_t position : getPositions()) {
     if (position < 0 || packing_factor <= position) {
-      return emitOpError("Positions must be between 0 and the packing factor");
+      return emitOpError("Positions must be between 0 and the packing factor")
+             << position << " vs " << packing_factor;
     }
     if (seen_positions[position]) {
       return emitOpError("Positions must be unique");
@@ -1265,6 +1273,50 @@ LogicalResult AssumeMultipleOp::verify() {
                  "Illegal user annotation, expected an integer that is "
                  "divisible by the multiple, but got ")
              << int_attr.getInt() << " % " << divisor;
+    }
+  }
+  return success();
+}
+
+LogicalResult SublaneShuffleOp::verify() {
+  auto lhs = getLhs();
+  auto rhs = getRhs();
+  auto result = getResult();
+  auto lhs_ty = dyn_cast<VectorType>(lhs.getType());
+  auto rhs_ty = dyn_cast<VectorType>(rhs.getType());
+  auto result_ty = dyn_cast<VectorType>(result.getType());
+
+  if (!lhs_ty || !rhs_ty || !result_ty) {
+    return emitOpError("Expected operands and result to be vector types");
+  }
+
+  if (lhs_ty.getShape() != rhs_ty.getShape() ||
+      lhs_ty.getShape() != result_ty.getShape()) {
+    return emitOpError("Expected lhs, rhs, and result shapes to match");
+  }
+  if (lhs_ty.getElementType() != rhs_ty.getElementType() ||
+      lhs_ty.getElementType() != result_ty.getElementType()) {
+    return emitOpError("Expected lhs, rhs, and result element types to match");
+  }
+
+  auto pattern = getPattern();
+  auto shape = result_ty.getShape();
+  if (shape.size() < 2 || shape.size() > 3) {
+    return emitOpError("Vreg rank should be 2 or 3");
+  }
+  auto sublane_count = shape[0];
+
+  if (pattern.size() != sublane_count) {
+    return emitOpError("Expected pattern size (")
+           << pattern.size() << ") to match result/operand sublanes ("
+           << sublane_count << ")";
+  }
+
+  int64_t total_input_sublanes = sublane_count * 2;
+  for (int32_t idx : pattern) {
+    if (idx < 0 || idx >= total_input_sublanes) {
+      return emitOpError("Pattern index ") << idx << " out of bounds [0, "
+                                           << (total_input_sublanes - 1) << "]";
     }
   }
   return success();
