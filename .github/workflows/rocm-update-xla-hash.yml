@@ -1,0 +1,50 @@
+name: ROCm Update XLA Hash
+
+on:
+  workflow_dispatch:
+    inputs:
+      xla_hash:
+        description: Full commit hash or branch name of the XLA commit
+        type: string
+        required: true
+      xla_repo:
+        description: XLA repo that the commit is from. Should be of the form <owner>/<repo>.
+        type: string
+        requird: false
+        default: openxla/xla
+
+jobs:
+  update-xla-hash:
+    env:
+      NEW_BRANCH_NAME: ci-xlahash-${{ github.ref_name }}_${{ github.run_id }}}_${{ github.run_number }}_${{ github.run_attempt }}
+      WORKSPACE_DIR: workdir_xlahash_${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          path: ${{ env.WORKSPACE_DIR }}
+      - name: Generate an app token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ROCM_REPO_MANAGEMENT_API_2_ID }}
+          private-key: ${{ secrets.ROCM_REPO_MANAGEMENT_API_2_PRIV_KEY }}
+      - name: Run update script
+        run: |
+          pushd ${{ env.WORKSPACE_DIR }}
+          build/rocm/tools/update_xla_hash.py -v --xla-repo ${{ inputs.xla_repo }} --gh-token $GH_TOKEN ${{ inputs.xla_hash }}
+        env:
+           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+      - name: Create branch for PR
+        run: |
+          git checkout -b $NEW_BRANCH_NAME
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git push origin HEAD
+      - name: Open PR
+        run: |
+          gh pr create --repo ${{ github.repository }} --head $NEW_BRANCH_NAME --base ${{ github.ref_name }} --title "CI: $(date +%x) XLA hash update" --body "Update the XLA commit hash"
+          gh pr merge --repo ${{ github.repository }} --rebase --auto $NEW_BRANCH_NAME
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+
+
