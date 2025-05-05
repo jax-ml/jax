@@ -613,9 +613,6 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
   if rem:
     raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
 
-  tiling = plgpu.TilingTransform((8, 64))
-  swizzle = plgpu.SwizzleTransform(128)
-
   def fa3_kernel(q_ref, k_ref, v_ref, out_ref, lse_ref, scoped):
     batch = lax.axis_index("batch")
     wg_idx = lax.axis_index("wg")
@@ -633,15 +630,9 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
     def _compute_thread():
       qo_smem = qo_smem2.at[wg_idx]
       lse_smem = lse_smem2.at[wg_idx] if lse_smem2 is not None else None
-      m_i = plgpu.layout_cast(
-          jnp.full((block_q,), -jnp.inf, dtype=jnp.float32), plgpu.Layout.WGMMA_ROW,
-      )
-      l_i = plgpu.layout_cast(
-          jnp.full((block_q,), 0, dtype=jnp.float32), plgpu.Layout.WGMMA_ROW,
-      )
-      acc = plgpu.layout_cast(
-          jnp.full((block_q, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
-      )
+      m_i = jnp.full((block_q,), -jnp.inf, dtype=jnp.float32)
+      l_i = jnp.full((block_q,), 0, dtype=jnp.float32)
+      acc = jnp.full((block_q, head_dim), 0, dtype=jnp.float32)
       # Q is not pipelined, so we load in with a manual DMA.
       plgpu.copy_gmem_to_smem(
           q_ref.at[batch, pl.ds(q_seq_base, block_q), q_head],
@@ -712,12 +703,10 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
         in_specs=[
             plgpu.GPUBlockSpec(  # k
                 block_shape=(block_kv, head_dim),
-                index_map=lambda i: (i, 0),
-                transforms=[tiling, swizzle]),
+                index_map=lambda i: (i, 0)),
             plgpu.GPUBlockSpec(  # v
                 block_shape=(block_kv, head_dim),
-                index_map=lambda i: (i, 0),
-                transforms=[tiling, swizzle]),
+                index_map=lambda i: (i, 0)),
         ],
         out_specs=[],
     )
@@ -732,13 +721,16 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
   )
   def run(refs):
     q_ref, k_ref, v_ref, out_ref, lse_ref = refs
-    @pl.core_map(mesh,
-                 compiler_params=plgpu.GPUCompilerParams(approx_math=True),
-                 )
+
+    @pl.core_map(
+        mesh,
+        compiler_params=plgpu.GPUCompilerParams(
+            approx_math=True, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+        ),
+    )
     def _kernel_entry():
       qo_scratch = plgpu.SMEM(
           (compute_wgs, block_q, head_dim), jnp.float16,
-          transforms=(tiling, swizzle),
       )
       scratch = [qo_scratch, None]
       if save_residuals:
