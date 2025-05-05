@@ -1061,7 +1061,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     else:
       err, msg = Exception, "Unsupported dtype"
     with self.assertRaisesRegex(err, msg):
-      jnp.linalg.qr(arr)
+      jax.block_until_ready(jnp.linalg.qr(arr))
 
   @jtu.sample_product(
     shape=[(10, 4, 5), (5, 3, 3), (7, 6, 4)],
