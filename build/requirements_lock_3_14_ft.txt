@@ -1,9 +1,5 @@
---pre
---extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
 numpy
 
---pre
---extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
 scipy
 
 absl-py==2.1.0
