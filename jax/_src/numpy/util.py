@@ -258,7 +258,7 @@ def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
 def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
   avals = [core.shaped_abstractify(arg) for arg in args]
-  shapes = [a.shape for a in avals]
+  shapes = [a.shape for a in avals]  # pytype: disable=attribute-error  # jax-aval-types
   if not shapes or all(core.definitely_equal_shape(shapes[0], s) for s in shapes):
     return [lax.asarray(arg) for arg in args]
   result_shape = lax.broadcast_shapes(*shapes)

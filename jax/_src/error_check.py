@@ -160,8 +160,8 @@ def set_error_if(pred: jax.Array, /, msg: str) -> None:
     new_error_code = jnp.uint32(len(_error_list))
     _error_list.append((msg, traceback))
 
-  out_sharding = core.typeof(_error_storage.ref).sharding
-  in_sharding: NamedSharding = core.typeof(pred).sharding
+  out_sharding = core.typeof(_error_storage.ref).sharding  # pytype: disable=attribute-error  # jax-aval-types
+  in_sharding: NamedSharding = core.typeof(pred).sharding  # pytype: disable=attribute-error  # jax-aval-types
 
   # Reduce `pred`.
   if all(dim is None for dim in out_sharding.spec):  # single-device case.

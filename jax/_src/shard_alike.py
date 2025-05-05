@@ -40,10 +40,10 @@ def shard_alike(x, y):
   for x_, y_ in safe_zip(x_flat, y_flat):
     x_aval = core.shaped_abstractify(x_)
     y_aval = core.shaped_abstractify(y_)
-    if x_aval.shape != y_aval.shape:
+    if x_aval.shape != y_aval.shape:  # pytype: disable=attribute-error  # jax-aval-types
       raise ValueError(
           'The leaves shapes of `x` and `y` should match. Got `x` leaf shape:'
-          f' {x_aval.shape} and `y` leaf shape: {y_aval.shape}. File an issue at'
+          f' {x_aval.shape} and `y` leaf shape: {y_aval.shape}. File an issue at'  # pytype: disable=attribute-error  # jax-aval-types
           ' https://github.com/jax-ml/jax/issues if you want this feature.')
 
   outs = [shard_alike_p.bind(x_, y_) for x_, y_ in safe_zip(x_flat, y_flat)]

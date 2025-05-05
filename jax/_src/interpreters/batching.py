@@ -397,7 +397,7 @@ class BatchTracer(Tracer):
       assert type(batch_dim) in (NotMapped, int, RaggedAxis)
       if type(batch_dim) is int:
         aval = core.get_aval(val)
-        assert 0 <= batch_dim < len(aval.shape)
+        assert 0 <= batch_dim < len(aval.shape)  # pytype: disable=attribute-error  # jax-aval-types
     self._trace = trace
     self.val = val
     self.batch_dim = batch_dim
@@ -409,22 +409,22 @@ class BatchTracer(Tracer):
     if self._trace.axis_data.spmd_name is not None:
       if config._check_vma.value:
         aval = aval.update(
-            vma=aval.vma - frozenset(self._trace.axis_data.spmd_name))
+            vma=aval.vma - frozenset(self._trace.axis_data.spmd_name))  # pytype: disable=attribute-error  # jax-aval-types
     if self.batch_dim is not_mapped:
       return aval
     elif type(self.batch_dim) is int:
-      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
+      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)  # pytype: disable=attribute-error  # jax-aval-types
     elif type(self.batch_dim) is RaggedAxis:
       new_aval = core.mapped_aval(
-        aval.shape[self.batch_dim.stacked_axis], self.batch_dim.stacked_axis, aval)
+        aval.shape[self.batch_dim.stacked_axis], self.batch_dim.stacked_axis, aval)  # pytype: disable=attribute-error  # jax-aval-types
       shape = list(new_aval.shape)  # pytype: disable=attribute-error
       for ragged_axis, segment_lengths in self.batch_dim.ragged_axes:
         size_tracer = BatchTracer(self._trace, segment_lengths, 0)
         if self.batch_dim.stacked_axis < ragged_axis:
           ragged_axis -= 1
         shape[ragged_axis] = size_tracer
-      return core.DShapedArray(shape=tuple(shape), dtype=aval.dtype,
-                               weak_type=aval.weak_type)
+      return core.DShapedArray(shape=tuple(shape), dtype=aval.dtype,  # pytype: disable=attribute-error  # jax-aval-types
+                               weak_type=aval.weak_type)  # pytype: disable=attribute-error  # jax-aval-types
 
   def full_lower(self):
     if self.batch_dim is not_mapped:
@@ -1105,10 +1105,10 @@ def broadcast(x, sz, axis, mesh_axis=None):
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
   x_aval = core.get_aval(x)
-  if x_aval.sharding.mesh.empty:
+  if x_aval.sharding.mesh.empty:  # pytype: disable=attribute-error  # jax-aval-types
     mesh_axis = None
-  new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
-  sharding = x_aval.sharding.with_spec(new_spec)
+  new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))  # pytype: disable=attribute-error  # jax-aval-types
+  sharding = x_aval.sharding.with_spec(new_spec)  # pytype: disable=attribute-error  # jax-aval-types
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure
   # out how to ensure jaxpr arguments always have the context mesh.
   with mesh_lib.use_abstract_mesh(sharding.mesh):
