@@ -850,6 +850,38 @@ def TPU_PRNGRandomBitsOp : TPU_Op<"prng_random_bits"> {
   let results = (outs AnyVectorOfNonZeroRank:$output);
 }
 
+def TPU_SublaneShuffleOp : TPU_Op<"sublane_shuffle", [SameOperandsAndResultType]> {
+  // This op takes 2 physical vregs and a pattern, applies the pattern,
+  // and returns the result as 1 vreg.
+  //
+  // The pattern is a list of integers, where the integer value is the
+  // index of the sublane in the *combined input* [lhs, rhs], and the
+  // position of the integer in the list is the index of the sublane
+  // in the *output* vreg.
+  //
+  // The pattern size must match the operand/result sublane count.
+  //
+  // Example:
+  //   %0 = tpu.single_output_sublane_shuffle %a, %b,
+  //        [0, 1, 2, 3, 4, 5, 6, 7] // Result is %a
+  //   %1 = tpu.single_output_sublane_shuffle %a, %b,
+  //        [8, 9, 10, 11, 12, 13, 14, 15] // Result is %b
+  //   %2 = tpu.single_output_sublane_shuffle %a, %b,
+  //        [7, 6, 5, 4, 11, 10, 9, 8] // Result uses high half of a
+  //                                  // and low half of b, reversed.
+  let arguments = (ins
+    TPU_Vreg:$lhs,
+    TPU_Vreg:$rhs,
+    DenseI32ArrayAttr:$pattern
+  );
+  let results = (outs TPU_Vreg:$result);
+  let assemblyFormat = [{
+    $lhs `,` $rhs `,` $pattern attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)
+  }];
+
+  let hasVerifier = 1;
+}
+
 def TPU_LogOp : TPU_Op<"log"> {
   let arguments = (ins
     Variadic<AnyType>:$inputs,
