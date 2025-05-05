@@ -633,6 +633,11 @@ def as_gpu_kernel(
   )
 
   if thread_semantics == LoweringSemantics.Warpgroup and dialect is not None:
+    # We need to run CSE first in orderto remove dead-code for which layout
+    # inference does not work.
+    pm = mlir.passmanager.PassManager.parse("builtin.module(cse)", module.context)
+    pm.run(module.operation)
+
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     layout_inference.infer_layout(module)  # pytype: disable=attribute-error
@@ -716,6 +721,11 @@ def as_torch_gpu_kernel(
   )
 
   if lowering_semantics == LoweringSemantics.Warpgroup and dialect is not None:
+    # We need to run CSE first in orderto remove dead-code for which layout
+    # inference does not work.
+    pm = mlir.passmanager.PassManager.parse("builtin.module(cse)", module.context)
+    pm.run(module.operation)
+
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     layout_inference.infer_layout(module)  # pytype: disable=attribute-error
