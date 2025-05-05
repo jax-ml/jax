@@ -210,7 +210,10 @@ FailureOr<SmallVector<Layout>> getOutLayouts(
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> out_layouts,
                              getLayoutArrayFromAttr(op.getAttr("out_layout")));
   if (out_layouts.size() != op.getNumResults()) {
-    return op.emitOpError("out_layout size does not match number of results");
+    return op.emitOpError("out_layout size does not match number of results")
+           << " results: " << op.getNumResults()
+           << " vs layout size: " << out_layouts.size() << " for "
+           << op.getName();
   }
   for (const auto [l, res] : llvm::zip_equal(out_layouts, op.getResults())) {
     if (!layoutIsValidForValue(l, res, target_shape)) {
