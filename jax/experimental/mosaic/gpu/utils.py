@@ -64,6 +64,9 @@ WORKGROUP_NVPTX_ADDRESS_SPACE = gpu_address_space_to_nvptx(
 
 
 def ptr_as_memref(ptr, memref_ty: ir.MemRefType, ptr_memory_space: int | None = None):
+  strides, offset = memref_ty.get_strides_and_offset()
+  if offset != 0:
+    raise ValueError("Non-zero offset is not supported for ptr_as_memref")
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
   ptr_ty = "ptr" if ptr_memory_space is None else f"ptr<{ptr_memory_space}>"
@@ -84,7 +87,7 @@ def ptr_as_memref(ptr, memref_ty: ir.MemRefType, ptr_memory_space: int | None = 
       desc = llvm.InsertValueOp(
           desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [3, i]
       )
-    for i, s in enumerate(get_contiguous_strides(memref_ty.shape)):
+    for i, s in enumerate(strides):
       desc = llvm.InsertValueOp(
           desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [4, i]
       )
