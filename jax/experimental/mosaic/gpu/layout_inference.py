@@ -21,7 +21,6 @@ from functools import partial
 import math
 from typing import cast
 
-from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -534,7 +533,7 @@ def _infer_layout_cast_op_layout(
 
 
 # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
-if jaxlib.version >= (0, 6, 1):
+if hasattr(mgpu, "BroadcastInDimOp"):
   @partial(_add_layout_inference_rule, mgpu.BroadcastInDimOp)
   def _infer_broadcast_in_dim_op_layout(
       op: mgpu.BroadcastInDimOp,

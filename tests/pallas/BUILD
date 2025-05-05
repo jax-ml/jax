@@ -151,6 +151,7 @@ jax_multiplatform_test(
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
         "JAX_PALLAS_VERBOSE_ERRORS": "0",
     },
+    shard_count = 16,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
