@@ -52,14 +52,9 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/parser/hlo_parser.h"
-#include "xla/hlo/pass/hlo_pass_interface.h"
-#include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
-#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
-#include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -70,7 +65,6 @@ limitations under the License.
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_numpy.h"
 #include "xla/python/types.h"
-#include "xla/service/call_inliner.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/hlo.pb.h"
@@ -820,32 +814,6 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                      return param_shardings;
                    });
 
-  nb::class_<HloModuleGroup> hlo_module_group_class(m, "HloModuleGroup");
-  hlo_module_group_class
-      .def("__init__",
-           [](HloModuleGroup* self, const std::string& name,
-              const std::vector<std::shared_ptr<HloModule>>& hlo_modules) {
-             std::vector<std::unique_ptr<HloModule>> modules;
-             modules.reserve(hlo_modules.size());
-             for (const auto& m : hlo_modules) {
-               modules.push_back(m->Clone(/*suffix=*/""));
-             }
-             new (self) HloModuleGroup(name, std::move(modules));
-           })
-      .def_prop_ro("name", &HloModuleGroup::name)
-      .def("to_string", &HloModuleGroup::ToString)
-      .def("to_modules",
-           [](HloModuleGroup& m) -> std::vector<std::shared_ptr<HloModule>> {
-             std::vector<std::unique_ptr<HloModule>> modules =
-                 m.ConsumeModules();
-             std::vector<std::shared_ptr<HloModule>> shared_modules;
-             shared_modules.reserve(modules.size());
-             for (auto& module : modules) {
-               shared_modules.push_back(std::move(module));
-             }
-             return shared_modules;
-           });
-
   m.def("hlo_module_to_dot_graph",
         [](const HloModule& hlo_module) -> std::string {
           return xla::ValueOrThrow(RenderGraph(
@@ -1479,26 +1447,5 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("__repr__",
            [](const xla::HloSharding& self) { return self.ToString(); })
       .def("to_proto", &xla::HloSharding::ToProto);
-
-
-  // Hlo Module Passes
-  nb::class_<HloPassInterface> hlo_pass_interface(m, "HloPassInterface");
-  hlo_pass_interface.def_prop_ro("name", &HloPassInterface::name)
-      .def("is_pass_pipeline", &HloPassInterface::IsPassPipeline)
-      .def("run",
-           [](HloPassInterface& pass, HloModule* module) -> bool {
-             return xla::ValueOrThrow(pass.Run(module));
-           })
-      .def("run_on_module_group",
-           [](HloPassInterface& pass, HloModuleGroup* module_group) -> bool {
-             return xla::ValueOrThrow(pass.RunOnModuleGroup(module_group));
-           });
-
-  nb::class_<HloDCE, HloPassInterface>(m, "HloDCE").def(nb::init<>());
-  nb::class_<CallInliner, HloPassInterface>(m, "CallInliner").def(nb::init<>());
-  nb::class_<FlattenCallGraph, HloPassInterface>(m, "FlattenCallGraph")
-      .def(nb::init<>());
-  nb::class_<TupleSimplifier, HloPassInterface>(m, "TupleSimplifier")
-      .def(nb::init<>());
 }  // NOLINT(readability/fn_size)
 }  // namespace xla
