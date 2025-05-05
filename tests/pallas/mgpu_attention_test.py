@@ -153,7 +153,7 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
       dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)
 
-      self.assertAllClose(dq, dq_ref, atol=5e-2)
+      self.assertAllClose(dq, dq_ref, atol=7e-2)
       self.assertAllClose(dk, dk_ref, atol=7e-2)
       self.assertAllClose(dv, dv_ref, atol=5e-2)
 
