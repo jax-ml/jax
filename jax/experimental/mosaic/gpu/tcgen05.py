@@ -643,7 +643,7 @@ class TMEMRef:
                     arith.addi(self.address, arith.constant(i32, col_tile * 128)),
                     cols=128,
                     dtype=self.dtype,
-                    tmem_packing=False,
+                    tmem_packing=1,
                 )
             )
         registers = np.concatenate(tiles, axis=1).T.reshape(regs_shape)

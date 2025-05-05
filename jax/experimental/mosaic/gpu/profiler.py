@@ -263,10 +263,20 @@ class ProfilerSpec:
     if np.any(entries_used > self.entries_per_warpgroup - 2):
       raise RuntimeError("Insufficient space to capture a full trace")
     traces = entries[..., 3:]
+
+    # Estimate the overhead of profiling.
+    time_events = traces[:, :, 1::2]
+    valid_times_mask = np.arange(traces.shape[-1])[1::2] < (entries_used[..., None] - 3)
+    # 12 cycles is a ballpark estimate for H100
+    profiling_overhead = (time_events[:, :, 1:] - time_events[:, :, :-1]).min(
+        where=valid_times_mask[:, :, 1:], initial=12
+    )
+    profiling_overhead = max(0, profiling_overhead - 1)
+
     unintern = {v: k for k, v in self.interned_names.items()}
     events = []
     for block_idx, wg_idx in np.ndindex(num_blocks, warpgroups_per_block):
-      valid_entries = entries_used[block_idx, wg_idx] - 3
+      valid_entries = (entries_used[block_idx, wg_idx] - 3)
       local_clock_offset = None
       assert valid_entries % 2 == 0, valid_entries
       start_time = start_times[block_idx, wg_idx]
@@ -278,7 +288,7 @@ class ProfilerSpec:
         if local_clock_offset is None:
           local_clock_offset = time
         time -= local_clock_offset
-        time -= i * 6  # Account for the overhead of profiling.
+        time -= (i // 2) * profiling_overhead  # Account for the overhead of profiling.
         if time < 0:
           break  # Detect a timer wraparound
         name_id = tag
