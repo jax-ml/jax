@@ -17,7 +17,6 @@
 # pylint: disable=g-complex-comprehension
 
 from absl.testing import parameterized
-import jax
 from jax._src import config
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
@@ -44,8 +43,6 @@ def _make_ir_context():
 class LayoutInferenceTest(parameterized.TestCase):
 
   def setUp(self):
-    if jax.version._version != jax.lib.__version__:
-      raise self.skipTest("Test requires matching jax and jaxlib versions")
     super().setUp()
     self.enter_context(_make_ir_context())
     self.enter_context(ir.Location.unknown())

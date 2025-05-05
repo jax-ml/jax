@@ -86,8 +86,8 @@ def workgroup_ptr_ty() -> ir.Type:
 class MosaicGpuTest(parameterized.TestCase):
 
   def setUp(self):
-    if jax.version._version != jax.lib.__version__:
-      raise self.skipTest("Test requires matching jax and jaxlib versions")
+    if jax._src.lib.jaxlib_extension_version < 337:
+      raise self.skipTest("Test requires jaxlib 0.6.1")
     super().setUp()
     self.enter_context(_make_ir_context())
     self.enter_context(ir.Location.unknown())
