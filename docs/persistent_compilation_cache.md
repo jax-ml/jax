@@ -234,7 +234,7 @@ jax.config.update("jax_explain_cache_misses", True)
 
 There are a couple of pitfalls that have currently been discovered:
 
-* Currently the persistent cache doesn't work with function that have host callbacks. In this situation, caching in completely avoided.
+* Currently the persistent cache doesn't work with function that have host callbacks. In this situation, caching is completely avoided.
   - This is because the HLO contains a pointer to the callback and changes from run to run even if the computation and compute infrastructure is exactly the same.
 
 * Currently the persistent cache doesn't work with a function that uses primitives that implement their own custom_partitioning.
