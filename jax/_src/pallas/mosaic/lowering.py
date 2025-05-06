@@ -311,11 +311,9 @@ def ir_constant(x, mlir_type=None):
       x = np.array(x, np.float32)
   if not mlir_type:
     mlir_type = _dtype_to_ir_type(x.dtype)
-  if isinstance(x, int) or np.issubdtype(x.dtype, np.integer):
+  if isinstance(x, int) or jnp.issubdtype(x.dtype, np.integer):
     return arith.constant(mlir_type, ir.IntegerAttr.get(mlir_type, int(x)))
-  elif isinstance(x, float) or x.dtype == np.float32:
-    return arith.constant(mlir_type, ir.FloatAttr.get(mlir_type, float(x)))
-  elif x.dtype == jnp.bfloat16:
+  elif isinstance(x, float) or jnp.issubdtype(x.dtype, jnp.floating):
     return arith.constant(mlir_type, ir.FloatAttr.get(mlir_type, float(x)))
   elif x.dtype == jnp.bool_:
     return arith.constant(mlir_type, ir.BoolAttr.get(bool(x)))
