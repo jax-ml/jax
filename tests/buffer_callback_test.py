@@ -97,9 +97,14 @@ class BufferCallbackTest(jtu.JaxTestCase):
     # DLPack tensors.
     jax.block_until_ready(fun(data))
 
-  @parameterized.parameters(jtu.dtypes.all)
+  @parameterized.product(
+      dtype=jtu.dtypes.all, command_buffer_compatible=[True, False]
+  )
   @jtu.run_on_devices("cuda")
-  def test_cuda_array_interface(self, dtype):
+  def test_cuda_array_interface(self, dtype, command_buffer_compatible):
+    if command_buffer_compatible and jaxlib_extension_version < 337:
+      self.skipTest("Requires jaxlib extension version of at least 337.")
+
     def callback(ctx, out, arg):
       ctx.stream  # doesn't crash
 
@@ -121,8 +126,14 @@ class BufferCallbackTest(jtu.JaxTestCase):
     shape = (3, 4)
     data = rng(shape, dtype)
     fun = buffer_callback.buffer_callback(
-        callback, jax.ShapeDtypeStruct(data.shape, data.dtype)
+        callback, jax.ShapeDtypeStruct(data.shape, data.dtype),
+        command_buffer_compatible=command_buffer_compatible,
     )
+
+    # TODO: There's an XLA:GPU/CUDA bug that causes a segfault when
+    # instantiating an empty CUDA graph. Once that bug is fixed or worked
+    # around, add a test that checks that the Python callback is only executed
+    # once.
     jax.block_until_ready(fun(data))
 
   @parameterized.parameters([
