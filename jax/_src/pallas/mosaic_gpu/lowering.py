@@ -1870,7 +1870,7 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
         raise NotImplementedError("No support for axes yet")
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
       with ctx.module_ctx.scratch_view([scratch_ty]) as [scratch]:
-        return x.reduce_sum(scratch)
+        return x.reduce("add", axes, scratch)
     case mgpu.WGMMA_LAYOUT:
       if axes != (x_aval.ndim - 1,):
         raise NotImplementedError

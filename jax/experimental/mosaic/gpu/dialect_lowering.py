@@ -472,7 +472,7 @@ def _vector_reduction_op_lowering_rule(
           ir.MemRefType.get([4], element_type, memory_space=smem),
           arith.constant(None, op.attributes["offset"]),
       )
-      result = a.reduce_sum(scratch)
+      result = a.reduce("add", range(len(a.shape)), scratch)
     case (
         "#vector.kind<maxsi>" | "#vector.kind<maxui>" | "#vector.kind<maximumf>"
     ):

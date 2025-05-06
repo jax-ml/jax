@@ -30,7 +30,6 @@ from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import math as mlir_math
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import vector
 import numpy as np
 
@@ -68,15 +67,15 @@ class Tiling:
   def __post_init__(self):
     if not self.tiles:
       return
-    tiled_rank = len(self.tiles[0])
+    last_tile_rank = len(self.tiles[0])
     for tile in self.tiles:
-      if len(tile) > tiled_rank:
-        raise ValueError("Only the first tile can refer to value dimensions")
+      if len(tile) > last_tile_rank:
+        raise ValueError("Tiles must have a decreasing rank")
       if not tile:
         raise ValueError("Tiles must not be empty")
       if any(d <= 0 for d in tile):
         raise ValueError(f"Tile shape must only have positive sizes, got: {self.tiles}")
-      tiled_rank += len(tile)
+      last_tile_rank = len(tile)
 
   def __str__(self):
     return f"Tiling({''.join(map(str, self.tiles))})"
@@ -117,6 +116,33 @@ class Tiling:
       untiled, tiled = strides[:-len(tile)], strides[-len(tile):]
       strides = (*untiled, *(s * t for s, t in zip(tiled, tile)), *tiled)
     return strides
+
+  def tile_dimension(self, dim: int) -> tuple[bool, ...]:
+    """Result is True whenever the tiled dim originated from the given input dim."""
+    tiling_rank = len(self.tiles[0])
+    if dim < 0 or dim >= tiling_rank:
+      raise ValueError(f"Invalid dimension {dim} for tiling {self}")
+    strides = [1] * tiling_rank
+    strides[dim] = 0
+    return tuple(s == 0 for s in self.tile_strides(tuple(strides)))
+
+  def remove_dimension(self, dim: int) -> "Tiling":
+    """Returns a tiling with the given dimension removed."""
+    tiling_rank = len(self.tiles[0])
+    if dim < 0 or dim >= tiling_rank:
+      raise ValueError(f"Invalid dimension {dim} for tiling {self}")
+    dim_in_tile = dim
+    tiles = []
+    last_tile_rank = len(self.tiles[0])
+    for t in self.tiles:
+      assert last_tile_rank >= len(t)
+      dim_in_tile -= last_tile_rank - len(t)
+      if dim_in_tile >= 0:
+        t = t[:dim_in_tile] + t[dim_in_tile + 1:]
+      if not t:  # If this tile is empty, all other tiles will be empty too.
+        break
+      tiles.append(t)
+    return Tiling(tuple(tiles))
 
   def tile_nested_shape_strides(
       self,
@@ -281,7 +307,7 @@ class TiledLayout:
         for d in self.lane_dims
     )
     if lane_dims_prod != WARP_SIZE:
-      raise ValueError
+      raise ValueError("The product of lane dims does not equal the warp size")
 
   @functools.cached_property
   def partitioned_lane_dims(self) -> tuple[int, ...]:
@@ -404,6 +430,36 @@ class TiledLayout:
       )
       indices[self.warp_dim] = warp_idx
     return tuple(indices)
+
+  def remove_dimension(self, dim: int) -> TiledLayout:
+    if dim < 0 or dim >= len(self.tiling.tiles[0]):
+      raise ValueError(f"Dimension {dim} is out of range for {self.tiling}")
+    new_tiling = self.tiling.remove_dimension(dim)
+    tiled_shape = self.tiled_tiling_shape
+    removed_dim = self.tiling.tile_dimension(dim)
+    dim_offsets = np.cumsum(removed_dim[::-1])[::-1].tolist()
+    if removed_dim[self.vector_dim]:
+      new_tiling = Tiling((*new_tiling.tiles, (1,)))
+      new_vector_dim = -1
+      dim_offsets = [o - 1 for o in dim_offsets]  # We inserted an extra dim.
+    else:
+      new_vector_dim = self.vector_dim + dim_offsets[self.vector_dim]
+    def replace_tiled_dim(d: int | Replicated, size: int):
+      if isinstance(d, Replicated):
+        return d
+      elif removed_dim[d]:
+        return Replicated(size)
+      else:
+        return d + dim_offsets[d]
+    return TiledLayout(
+        new_tiling,
+        replace_tiled_dim(self.warp_dim, WARPS_IN_WARPGROUP),
+        tuple(
+            d if isinstance(d, Replicated) else replace_tiled_dim(d, tiled_shape[d])
+            for d in self.lane_dims
+        ),
+        new_vector_dim,
+    )
 
 
 def _tiled_wgmma_layout(shape: tuple[int, ...]):
@@ -539,9 +595,9 @@ WGMMA_COL_LAYOUT = TiledLayout(
     vector_dim=-1,
 )
 WGMMA_ROW_LAYOUT = TiledLayout(
-    Tiling(((64,), (16,), (8,), (1,))),
-    warp_dim=-4,
-    lane_dims=(-2, Replicated(4)),
+    Tiling(((64,), (16,), (8,), (1,), (1,))),
+    warp_dim=-5,
+    lane_dims=(-3, Replicated(4)),
     vector_dim=-1,
 )
 
@@ -1543,74 +1599,26 @@ class FragmentedArray:
         _registers=new_registers, _layout=self.layout, _is_signed=is_signed
     )
 
-  # NOTE: scratch can be reused immediately once this function returns.
-  def reduce_sum(self, scratch: ir.Value | None = None):
-    if isinstance(self.layout, WGSplatFragLayout):
-      [reg] = self.registers.flat
-      if ir.FloatType.isinstance(self.mlir_dtype):
-        op = mulf
-      elif ir.IntegerType.isinstance(self.mlir_dtype):
-        op = arith.muli
-      else:
-        raise NotImplementedError(self.mlir_dtype)
-      return FragmentedArray.splat(
-          op(reg, utils.c(math.prod(self.shape), self.mlir_dtype)),
-          (),
-          is_signed=self.is_signed,
-      )
-
-    if not isinstance(self.layout, WGStridedFragLayout):
-      raise NotImplementedError(f"Unsupported layout {self.layout}")
-
-    if scratch is None:
-      raise ValueError("scratch must be provided")
-
-    if ir.FloatType.isinstance(self.mlir_dtype):
-      op = addf
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
-      op = arith.addi
-    else:
-      raise NotImplementedError(self.mlir_dtype)
-
-    result = c(0, self.mlir_dtype)
-    for reg in self.registers:
-      result = op(
-          result,
-          vector.reduction(self.mlir_dtype, vector.CombiningKind.ADD, reg),
-      )
-    scratch_ty = ir.MemRefType(scratch.type)
-    if scratch_ty.element_type != self.mlir_dtype or scratch_ty.shape != [4]:
-      raise ValueError(f"Expected shape={(4,)}, {self.mlir_dtype} (got {scratch_ty})")
-
-    index = ir.IndexType.get()
-    warp_result = utils.warp_tree_reduce(result, op, 32)
-    warp_id = arith.divui(gpu.thread_id(gpu.Dimension.x), c(32, index))
-    memref.store(warp_result, scratch, [warp_id])
-    utils.warpgroup_barrier()
-    zero_index = c(0, index)
-    with mgpu.single_thread(scope=mgpu.ThreadSubset.WARPGROUP):
-      scratch_vec = vector.load(
-          ir.VectorType.get((4,), self.mlir_dtype),
-          scratch,
-          [zero_index],
-      )
-      scratch_sum = vector.reduction(
-          self.mlir_dtype, vector.CombiningKind.ADD, scratch_vec
-      )
-      memref.store(scratch_sum, scratch, [zero_index])
-    utils.warpgroup_barrier()
-    result = memref.load(scratch, [zero_index])
-    utils.warpgroup_barrier()  # Make sure everyone is done using scratch.
-    return FragmentedArray.splat(result, (), is_signed=self.is_signed)
-
-  def reduce(self, op: str | Callable[[ir.Value, ir.Value], ir.Value], axis):
+  def reduce(
+      self,
+      op: str | Callable[[ir.Value, ir.Value], ir.Value],
+      axis: int | Sequence[int, ...],
+      scratch: ir.Value | None = None,
+  ):
+    i32 = ir.IntegerType.get_signless(32)
+    if isinstance(axis, int):
+      axis = (axis,)
+    splat_op = None
     if isinstance(op, str):
       match op:
         case "add":
+          reduced_elems = math.prod(self.shape[a] for a in axis)
           if ir.FloatType.isinstance(self.mlir_dtype):
             op = addf
+            splat_op = lambda x: arith.mulf(x, c(reduced_elems, x.type))
           elif ir.IntegerType.isinstance(self.mlir_dtype):
             op = arith.addi
+            splat_op = lambda x: arith.muli(x, c(reduced_elems, x.type))
           else:
             raise NotImplementedError(self.mlir_dtype)
         case "max":
@@ -1622,54 +1630,176 @@ class FragmentedArray:
             op = arith.maxsi if self.is_signed else arith.maxui
           else:
             raise NotImplementedError(self.mlir_dtype)
+          splat_op = lambda x: x
         case _:
           raise ValueError(f"Unrecognized reduction operator: {op}")
-    if self.layout != WGMMA_LAYOUT:
-      raise NotImplementedError(self.layout)
-    if axis != 1:
+    match self.layout:
+      case WGStridedFragLayout(shape=_, vec_size=vec_size):
+        if set(axis) != set(range(len(self.shape))):
+          raise NotImplementedError(
+              "Warpgroup strided layout only support reductions along all axes"
+          )
+        # We reinterpret the data as a tiled layout. We're reducing it all anyway.
+        layout = TiledLayout(
+            tiling=Tiling(((128 * vec_size,), (32 * vec_size,), (vec_size,))),
+            warp_dim=-3,
+            lane_dims=(-2,),
+            vector_dim=-1,
+        )
+        return FragmentedArray(
+            _registers=self.registers.reshape(
+                layout.registers_shape((math.prod(self.shape),))
+            ),
+            _layout=layout,
+            _is_signed=self.is_signed,
+        ).reduce(op, 0, scratch)
+      case WGSplatFragLayout():
+        if splat_op is None:
+          raise NotImplementedError(
+              "Splat reductions only supported when the operator is a string"
+          )
+        assert not self.registers.shape
+        return FragmentedArray(
+            _registers=np.asarray(
+                splat_op(self.registers.item()), dtype=object
+            ),
+            _layout=WGSplatFragLayout(
+                tuple(d for a, d in enumerate(self.shape) if a not in axis)
+            ),
+            _is_signed=self.is_signed,
+        )
+      case TiledLayout():
+        pass
+      case _:
+        raise NotImplementedError(self.layout)
+    if len(self.layout.base_tile_shape) != len(self.shape):
       raise NotImplementedError
+    if isinstance(axis, int):
+      axis = (axis,)
+    layout = self.layout
+    tiled_tiling_shape = layout.tiled_tiling_shape
+    reduced_dims = layout.tiling.tile_dimension(axis[0])
+    for a in axis[1:]:
+      reduced_dims = [
+          r or d for r, d in zip(reduced_dims, layout.tiling.tile_dimension(a), strict=True)
+      ]
+    regs_shape = self.registers.shape
+    reduced_shape = tuple(
+        d if r else 1 for r, d in zip(reduced_dims, regs_shape, strict=True)
+    )
+    remaining_shape = tuple(
+        1 if r else d for r, d in zip(reduced_dims, regs_shape)
+    )
+    out_regs = np.empty(remaining_shape, dtype=object)
     index = ir.IndexType.get()
-    i32 = ir.IntegerType.get_signless(32)
-    row_tile_dim = self.registers.shape[0]
-    row_subtile_dim = self.registers.shape[4]
-    new_regs = np.empty((row_tile_dim, 1, row_subtile_dim, 1, 1), dtype=object)
-    assert self.registers.shape[-1] == 1
-    for row_tile, row_subtile in np.ndindex(row_tile_dim, row_subtile_dim):
-      # Reduce the registers owned by the current thread over n tiles
-      reg_index = [0] * self.registers.ndim
-      reg_index[0] = row_tile
-      reg_index[4] = row_subtile
-      thread_result_vec = self.registers[tuple(reg_index)]
-      for n_tile in range(1, self.registers.shape[1]):
-        reg_index[1] = n_tile
-        thread_result_vec = op(
-            thread_result_vec, self.registers[tuple(reg_index)]
+    for out_idx in np.ndindex(remaining_shape):
+      out_reg = None
+      for red_idx in np.ndindex(reduced_shape):
+        src_idx = tuple(o + r for o, r in zip(out_idx, red_idx))
+        if out_reg is None:
+          out_reg = self.registers[src_idx]
+        else:
+          out_reg = op(out_reg, self.registers[src_idx])
+      # Reduce within the vector dimension, if necessary.
+      if reduced_dims[layout.vector_dim]:
+        [vec_len] = ir.VectorType(out_reg.type).shape
+        scalar_out_reg = None
+        for i in range(vec_len):
+          scalar = vector.extractelement(out_reg, position=c(i, index))
+          scalar_out_reg = (
+              scalar if scalar_out_reg is None else op(scalar_out_reg, scalar)
+          )
+        out_reg = vector.splat(
+            ir.VectorType.get((1,), out_reg.type.element_type), scalar_out_reg
         )
-
-      thread_result = vector.extractelement(thread_result_vec, position=c(0, index))
-      for i in range(1, self.layout.vector_length):
-        thread_result = op(
-            thread_result,
-            vector.extractelement(thread_result_vec, position=c(i, index)),
+      # Reduce accross warp lanes, if necessary (using warp shuffles).
+      if any(reduced_dims[d] for d in layout.partitioned_lane_dims):
+        if utils.bitwidth(out_reg.type) > 32:
+          raise NotImplementedError  # Need to implement wide shfl_bfly.
+        lane_stride = 1
+        for d in layout.lane_dims[::-1]:  # Iterate minor-to-major
+          if isinstance(d, Replicated):
+            lane_stride *= d.times
+          elif not reduced_dims[d]:
+            lane_stride *= tiled_tiling_shape[d]
+          else:
+            assert lane_stride.bit_count() == 1
+            reduction_size = tiled_tiling_shape[d]
+            while reduction_size > 1:
+              other_out_reg = utils.shfl_bfly(out_reg, lane_stride)
+              out_reg = op(out_reg, other_out_reg)
+              lane_stride *= 2
+              reduction_size //= 2
+        assert lane_stride == WARP_SIZE, lane_stride
+      # Reduce accross warps in the warpgroup, if necessary.
+      if (
+          not isinstance(layout.warp_dim, Replicated)
+          and reduced_dims[layout.warp_dim]
+      ):
+        if scratch is None:
+          raise ValueError(
+              "scratch must be provided when cross-warp reduction is required"
+          )
+        [vec_len] = ir.VectorType(out_reg.type).shape
+        scratch_ty = ir.MemRefType(scratch.type)
+        if scratch_ty.rank != 1:
+          raise ValueError(f"Expected rank 1 for scratch, got {scratch_ty.rank}")
+        if scratch_ty.element_type != self.mlir_dtype:
+          raise ValueError(
+              f"Expected element type {self.mlir_dtype} for scratch, got"
+              f" {scratch_ty.element_type}"
+          )
+        # TODO(apaszke): All lanes that replicate data can share the same scratch.
+        # For now we treat the complete reduction as a special case.
+        reduces_all_dims = set(axis) == set(range(len(self.shape)))
+        unique_lanes = 1 if reduces_all_dims else 32
+        if scratch_ty.shape[0] < WARPS_IN_WARPGROUP * unique_lanes * vec_len:
+          raise ValueError("Insufficient scratch space for cross-warp reduction")
+        if scratch_ty.get_strides_and_offset()[0] != [1]:
+          raise ValueError("Expected scratch to be contiguous")
+        thread_idx = utils.thread_idx()
+        if reduces_all_dims:
+          lane_idx = c(0, i32)
+        else:
+          lane_idx = arith.remui(thread_idx, c(WARP_SIZE, i32))
+        warp_idx = arith.divui(
+            arith.remui(thread_idx, c(WARPGROUP_SIZE, i32)), c(WARP_SIZE, i32)
         )
-
-      # Do a shuffle to reduce in groups of 4 consecutive threads.
-      result = thread_result
-      for i in (1, 2):
-        other_result = nvvm.shfl_sync(
-            result.type,
-            c(0xFFFFFFFF, i32),
-            result,
-            c(i, i32),
-            c(0x1F, i32),
-            nvvm.ShflKind.bfly,
+        spill_base = arith.muli(lane_idx, c(WARPS_IN_WARPGROUP, i32))
+        store_idx = arith.index_cast(index, arith.addi(spill_base, warp_idx))
+        vector.store(
+            out_reg, scratch, [arith.muli(store_idx, c(vec_len, index))]
         )
-        result = op(result, other_result)
-      new_regs[row_tile, :, row_subtile] = vector.splat(
-          ir.VectorType.get((1,), self.mlir_dtype), result
-      )
+        utils.warpgroup_barrier()
+        scratch_vec = vector.load(
+            ir.VectorType.get((WARPS_IN_WARPGROUP * vec_len,), self.mlir_dtype),
+            scratch,
+            [arith.muli(arith.index_cast(index, spill_base), c(vec_len, index))],
+        )
+        out_reg = None
+        for w in range(WARPS_IN_WARPGROUP):
+          part = utils.vector_slice(scratch_vec, slice(w * vec_len, (w + 1) * vec_len))
+          out_reg = part if out_reg is None else op(out_reg, part)
+        utils.warpgroup_barrier()  # Make sure everyone is done using scratch.
+      out_regs[out_idx] = out_reg
+    # Infer the output layout and reshape the registers accordingly.
+    reduced_logical_shape = list(self.shape)
+    for a in sorted(axis, reverse=True):
+      del reduced_logical_shape[a]
+    if not reduced_logical_shape:  # Complete reduction results in a splat.
+      reduced_layout = WGSplatFragLayout(())
+      assert out_regs.size == 1
+      out_reg = out_regs.flat[0]
+      assert ir.VectorType(out_reg.type).shape == [1]
+      out_reg = vector.extractelement(out_reg, position=c(0, index))
+      out_regs = np.asarray(out_reg, dtype=object)
+    else:
+      reduced_layout = layout
+      for a in sorted(axis, reverse=True):
+        reduced_layout = reduced_layout.remove_dimension(a)
+      out_regs = out_regs.reshape(reduced_layout.registers_shape(reduced_logical_shape))
     return FragmentedArray(
-        _registers=new_regs, _layout=WGMMA_ROW_LAYOUT, _is_signed=self.is_signed
+        _registers=out_regs, _layout=reduced_layout, _is_signed=self.is_signed
     )
 
   def broadcast(self, shape):
@@ -1726,6 +1856,8 @@ class FragmentedArray:
     )
 
   def broadcast_major(self, m):
+    if self.layout != WGMMA_COL_LAYOUT:
+      raise NotImplementedError
     if m % 64:
       raise ValueError("Number of rows must be divisible by 64")
     reg_shape = WGMMA_LAYOUT.registers_shape((m, self.shape[0]))
@@ -1777,7 +1909,6 @@ class FragmentedArray:
         if create_array:
           new_regs[reg_idx] = val
 
-
     if create_array:
       return FragmentedArray(_registers=new_regs, _layout=self.layout, _is_signed=is_signed)
 
@@ -1825,12 +1956,22 @@ class FragmentedArray:
     )
 
   def _store_untiled_splat(self, ref: ir.Value):
+    if math.prod(self.shape) == 1:
+      c0 = c(0, ir.IndexType.get())
+      memref.store(
+          self.registers.flat[0], ref, [c0] * len(ir.MemRefType(ref.type).shape)
+      )
+      return
+
     vec_size = 64 // mgpu.bitwidth(self.mlir_dtype)
     if np.prod(self.shape) < vec_size * WARPGROUP_SIZE:
       vec_size = 1
 
     if np.prod(self.shape) % WARPGROUP_SIZE * vec_size:
-      raise ValueError(self.shape, WARPGROUP_SIZE, vec_size)
+      raise NotImplementedError(
+          "Arrays with the splat layout can only be stored when they have a"
+          f" single element or a multiple of {WARPGROUP_SIZE} elements"
+      )
 
     fa = FragmentedArray.splat(
         self.registers.flat[0],

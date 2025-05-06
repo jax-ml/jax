@@ -63,6 +63,12 @@ else:
   from jax._src.lib.mlir.dialects import gpu
   from jax._src.lib.mlir.dialects import llvm
   Dimension = gpu.Dimension
+try:
+  import hypothesis as hp
+  import hypothesis.strategies as hps
+  jtu.setup_hypothesis()
+except ImportError:
+  hp = hps = None
 
 
 # ruff: noqa: F405
@@ -1999,7 +2005,7 @@ class FragmentedArrayTest(TestCase):
       src = mgpu.FragmentedArray.load_strided(
           src, is_signed=utils.is_signed(dtype)
       )
-      acc = src.reduce_sum(scratch).broadcast((m,))
+      acc = src.reduce("add", (0, 1), scratch).broadcast((m,))
       acc.store_untiled(dst, optimized=False)
 
     in_shape = jax.ShapeDtypeStruct((m, n), dtype)
@@ -2019,15 +2025,19 @@ class FragmentedArrayTest(TestCase):
       dtype=[jnp.float32, jnp.int32],
       m=[128],
       n=[32, 64],
+      reduce_both=[False, True],
   )
-  def test_splat_reduce_sum(self, dtype, m, n):
+  def test_splat_reduce_sum(self, dtype, m, n, reduce_both):
     def kernel(ctx, dst, _):
       src = mgpu.FragmentedArray.splat(
           utils.c(1, utils.dtype_to_ir_type(dtype)),
           (m, n),
           is_signed=utils.is_signed(dtype),
       )
-      acc = src.reduce_sum().broadcast((m,))
+      if reduce_both:
+        acc = src.reduce("add", (0, 1)).broadcast((m,))
+      else:
+        acc = src.reduce("add", 1)
       acc.store_untiled(dst, optimized=False)
 
     kernel_fn = mgpu.as_gpu_kernel(
@@ -2038,7 +2048,8 @@ class FragmentedArrayTest(TestCase):
         out_shape=jax.ShapeDtypeStruct((m,), dtype),
         smem_scratch_shape=(),
     )
-    np.testing.assert_array_equal(kernel_fn(), jnp.full((m,), m * n * 1.0))
+    result = m * n if reduce_both else n
+    np.testing.assert_array_equal(kernel_fn(), jnp.full((m,), result, dtype))
 
   @parameterized.product(
       op=(arith.addf, arith.maximumf),
@@ -3330,7 +3341,7 @@ class UtilsTest(TestCase):
       del ctx, out  # Unused.
       # TODO(b/408271232): Use a False condition once the bug is fixed.
       x = mgpu.FragmentedArray.load_strided(x_ref)
-      cond = x.reduce_sum(*scratch) != 42.0
+      cond = x.reduce("add", 0, *scratch) != 42.0
       cf.assert_(cond.registers.item(), "OOOPS")
 
     f = mgpu.as_gpu_kernel(
@@ -3362,6 +3373,110 @@ class SerializationTest(absltest.TestCase):
           ctx,
       )
       pipeline.run(module.operation)
+
+
+if hp is not None:
+  @hps.composite
+  def tiled_layouts(draw, initial_tile, vector_transfer: bool = False):
+    assert all(t.bit_count() == 1 for t in initial_tile)
+    assert math.prod(initial_tile) >= 128
+    tiles = [initial_tile]
+    dim_offset = len(initial_tile)
+    warp_dim = fa.Replicated(4)
+    if draw(hps.booleans()):
+      warp_dim = draw(
+          hps.sampled_from(
+              [i for i, t in enumerate(tiles[-1]) if t % 4 == 0]
+          )
+      )
+      warp_tile = list(tiles[-1])
+      warp_tile[warp_dim] //= 4
+      warp_dim += dim_offset
+      tiles.append(warp_tile)
+      dim_offset += len(tiles[-1])
+    lane_dims = [fa.Replicated(2) if draw(hps.booleans()) else None for _ in range(5)]
+    for i, dim in enumerate(lane_dims):
+      if isinstance(dim, fa.Replicated):
+        continue
+      lane_dim = draw(hps.sampled_from(
+          [i for i, t in enumerate(tiles[-1]) if t % 2 == 0]
+      ))
+      lane_tile = list(tiles[-1])
+      lane_tile[lane_dim] //= 2
+      lane_dims[i] = dim_offset + lane_dim
+      tiles.append(lane_tile)
+      dim_offset += len(lane_tile)
+    # Permute lane dims so that they don't always partition the data in order.
+    lane_dims = draw(hps.permutations(lane_dims))
+    if vector_transfer:
+      min_vector_dim = len(tiles[-1]) - 1
+    else:
+      min_vector_dim = 0
+    vector_dim = draw(hps.integers(min_vector_dim, len(tiles[-1]) - 1))
+    vector_size = 2 ** draw(
+        hps.integers(0, tiles[-1][vector_dim].bit_length() - 1)
+    )
+    vector_tile = list(tiles[-1])
+    assert vector_tile[vector_dim] % vector_size == 0
+    vector_tile[vector_dim] //= vector_size
+    tiles.append(vector_tile)
+    dim_offset += len(vector_tile)
+    vector_dim += dim_offset
+    dim_offset += len(vector_tile)  # This is the remainder after tiling!
+
+    if not isinstance(warp_dim, fa.Replicated):
+      warp_dim = warp_dim - dim_offset
+    lane_dims = tuple(
+        d if isinstance(d, fa.Replicated) else d - dim_offset
+        for d in lane_dims
+    )
+    vector_dim = vector_dim - dim_offset
+    return fa.TiledLayout(
+        tiling=fa.Tiling(tuple(map(tuple, tiles))),
+        warp_dim=warp_dim,
+        lane_dims=lane_dims,
+        vector_dim=vector_dim,
+    )
+
+  class HypothesisTest(TestCase):
+
+    def test_reduce(self):
+      @hps.composite
+      def strategy(draw):
+        rank = draw(hps.integers(2, 3))
+        initial_tile = tuple(
+            draw(hps.sampled_from([1, 2, 4, 8, 16, 32, 64, 128]))
+            for _ in range(rank)
+        )
+        hp.assume(128 <= math.prod(initial_tile) < 128 * 32)
+        shape = tuple(t * draw(hps.integers(1, 5)) for t in initial_tile)
+        hp.assume(math.prod(shape) <= 128 * 128)
+        layout = draw(tiled_layouts(initial_tile, vector_transfer=True))
+        reduced_dims = draw(hps.sets(hps.integers(0, rank - 1), min_size=1))
+        return shape, layout, tuple(reduced_dims)
+
+      @hp.given(strategy())
+      def run(args):
+        shape, layout, reduced_dims = args
+        out_shape = list(shape)
+        for d in sorted(reduced_dims, reverse=True):
+          del out_shape[d]
+        def kernel(ctx, src, dst, scratch):
+          arr = fa.FragmentedArray.load_untiled(src, layout=layout, optimized=False)
+          arr.reduce("max", reduced_dims, scratch).store_untiled(dst, optimized=False)
+        x = jax.random.normal(jax.random.key(1234), shape, jnp.float32)
+        out_type = jax.ShapeDtypeStruct(out_shape, jnp.float32)
+        scratch_type = jax.ShapeDtypeStruct((2048,), jnp.float32)
+        hp.assume(layout.vector_length <= 16)  # Otherwise we run out of scratch
+        try:
+          result = mgpu.as_gpu_kernel(
+              kernel, (1, 1, 1), (128, 1, 1), x, out_type, scratch_type
+          )(x)
+        except NotImplementedError:
+          hp.assume(False)
+          return
+        np.testing.assert_array_equal(result, x.max(reduced_dims))
+      run()
 
 
 if __name__ == "__main__":
