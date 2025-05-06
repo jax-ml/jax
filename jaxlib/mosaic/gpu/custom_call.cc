@@ -99,6 +99,7 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace {
 
@@ -406,6 +407,7 @@ absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
 
 absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     mlir::ModuleOp module) {
+  tsl::profiler::TraceMe trace("Compile");
   auto sm_and_ptx_isa = GetSmAndPtxIsaVersion();
   if (!sm_and_ptx_isa.ok()) {
     return sm_and_ptx_isa.status();
@@ -577,6 +579,7 @@ absl::StatusOr<CompiledKernel*> CachedCompileAndInit(
   absl::MutexLock lock(mutex);
   // We released the reader lock, another thread might have initialized it.
   if (cache->find(key) == cache->end()) {
+    tsl::profiler::TraceMe trace("Compilation cache miss");
     auto compiled = CompileAndInit(module);
     if (!compiled.ok()) {
       return compiled.status();
