@@ -737,6 +737,10 @@ jax_multiplatform_test(
         "gpu_p100x2_shardy",
         "gpu_p100x2_pjrt_c_api",
     ],
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+    },
     tags = [
         "multiaccelerator",
     ],
