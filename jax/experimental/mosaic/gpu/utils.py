@@ -1254,13 +1254,24 @@ def dyn_dot(x, y):
 
 def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   i32 = ir.IntegerType.get_signless(32)
+  index = ir.IndexType.get()
   if isinstance(distance, int):
     distance = c(distance, i32)
   if (result_type := x.type) != i32:
+    if (x_bitwidth := bitwidth(x.type)) < 32:  # Pad to 32-bits if necessary.
+      x = bitcast(x, ir.IntegerType.get_signless(x_bitwidth))
+      empty32 = llvm.mlir_undef(ir.VectorType.get((32 // x_bitwidth,), x.type))
+      x = vector.insertelement(x, empty32, position=c(0, index))
+    elif x_bitwidth != 32:
+      raise ValueError(f"Unsupported bitwidth {x_bitwidth}")
     x = bitcast(x, i32)
   y = nvvm.shfl_sync(
       i32, c(0xFFFFFFFF, i32), x, distance, c(0x1F, i32), nvvm.ShflKind.bfly,
   )
+  if (x_bitwidth := bitwidth(result_type)) < 32:
+    bits_ty = ir.IntegerType.get_signless(x_bitwidth)
+    y_vec = bitcast(y, ir.VectorType.get((32 // x_bitwidth,), x.type))
+    y = vector.extractelement(y_vec, position=c(0, index))
   return bitcast(y, result_type)
 
 
