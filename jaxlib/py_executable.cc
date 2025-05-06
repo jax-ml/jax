@@ -327,7 +327,6 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
   std::vector<nb::object> outputs;
   auto ifrt_arrays = Consume();
   auto traceback = Traceback::Get();
-  DCHECK_GT(num_computations_, 0);
   int num_output_buffers = ifrt_arrays.size();
   outputs.reserve(num_output_buffers);
   if (out_handlers.size() != num_output_buffers) {
