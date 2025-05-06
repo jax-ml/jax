@@ -28,7 +28,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 
-from jax.experimental import attrs
+from jax._src import attrs
 from jax.experimental.attrs import (
     jax_setattr, jax_getattr, jax_appendattr, Box, List)
 
