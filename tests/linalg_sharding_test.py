@@ -14,7 +14,7 @@
 
 import functools
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 import numpy as np
 
 import jax
@@ -32,12 +32,6 @@ complex_types = jtu.dtypes.complex
 
 
 CPU_ONLY_FUN_AND_SHAPES = [
-    # These functions are supported on GPU, but partitioning support will
-    # require updates to GSPMD, since they are lowered directly to HLO ops
-    # instead of custom calls on GPU.
-    (lax.linalg.cholesky, ((6, 6),)),
-    (lax.linalg.triangular_solve, ((6, 6), (4, 6))),
-
     # The GPU kernel for this function still uses an opaque descriptor to
     # encode the input shapes so it is not partitionable.
     # TODO(danfm): Update the kernel and enable this test on GPU.
@@ -49,11 +43,13 @@ CPU_ONLY_FUN_AND_SHAPES = [
 ]
 
 CPU_AND_GPU_FUN_AND_SHAPES = [
+    (lax.linalg.cholesky, ((6, 6),)),
     (lax.linalg.eig, ((6, 6),)),
     (lax.linalg.eigh, ((6, 6),)),
     (lax.linalg.lu, ((10, 6),)),
     (lax.linalg.qr, ((6, 6),)),
     (lax.linalg.svd, ((10, 6),)),
+    (lax.linalg.triangular_solve, ((6, 6), (4, 6))),
     (lax.linalg.tridiagonal, ((6, 6),)),
 ]
 
@@ -68,9 +64,15 @@ class LinalgShardingTest(jtu.JaxTestCase):
       self.skipTest("Requires multiple devices")
 
   def get_fun_and_shapes(self, fun_and_shapes, grad=False):
-    if (jtu.test_device_matches(["gpu"])
-        and fun_and_shapes not in CPU_AND_GPU_FUN_AND_SHAPES):
-      self.skipTest(f"{fun_and_shapes[0].__name__} not supported on GPU")
+    if jtu.test_device_matches(["gpu"]):
+      if fun_and_shapes not in CPU_AND_GPU_FUN_AND_SHAPES:
+        self.skipTest(
+            f"Partitioning {fun_and_shapes[0].__name__} not supported on GPU.")
+      if (fun_and_shapes[0] in (lax.linalg.cholesky, lax.linalg.triangular_solve)
+          and not config.use_shardy_partitioner.value):
+        self.skipTest(
+            f"Partitioning {fun_and_shapes[0].__name__} only supported on GPU "
+            "when shardy is enabled.")
     if not grad:
       return fun_and_shapes
 
@@ -79,10 +81,10 @@ class LinalgShardingTest(jtu.JaxTestCase):
       self.skipTest(f"{fun.__name__} does not support differentation")
     if jtu.test_device_matches(["gpu"]) and fun in (
         lax.linalg.eig, lax.linalg.lu, lax.linalg.qr
-    ):
+    ) and not config.use_shardy_partitioner.value:
       self.skipTest(
           f"JVP of {fun.__name__} uses triangular solve on GPU, which doesn't "
-          "support batch partitioning yet")
+          "support batch partitioning unless shardy is enabled.")
 
     if fun == lax.linalg.eig:
       fun = functools.partial(
@@ -107,9 +109,8 @@ class LinalgShardingTest(jtu.JaxTestCase):
       return x
     return tuple(arg_maker(shape) for shape in shapes)
 
-  @jtu.sample_product(
-      fun_and_shapes=ALL_FUN_AND_SHAPES,
-      dtype=float_types + complex_types,
+  @parameterized.product(
+      fun_and_shapes=ALL_FUN_AND_SHAPES, dtype=float_types + complex_types
   )
   @jtu.run_on_devices("gpu", "cpu")
   def test_batch_axis_sharding(self, fun_and_shapes, dtype):
@@ -124,20 +125,17 @@ class LinalgShardingTest(jtu.JaxTestCase):
     expected = fun(*args)
     actual = fun_jit(*args_sharded)
     self.assertAllClose(actual, expected)
-    # TODO(danfm): Re-enable this check after diganosing non-determinism.
-    # self.assertNotIn("all-", fun_jit.lower(*args_sharded).compile().as_text())
+    self.assertNotIn("all-", fun_jit.lower(*args_sharded).compile().as_text())
 
     vmap_fun = jax.vmap(fun)
     vmap_fun_jit = jax.jit(vmap_fun)
     actual = vmap_fun_jit(*args_sharded)
     self.assertAllClose(actual, expected)
-    # TODO(danfm): Re-enable this check after diganosing non-determinism.
-    # self.assertNotIn(
-    #     "all-", vmap_fun_jit.lower(*args_sharded).compile().as_text())
+    self.assertNotIn(
+        "all-", vmap_fun_jit.lower(*args_sharded).compile().as_text())
 
-  @jtu.sample_product(
-      fun_and_shapes=ALL_FUN_AND_SHAPES,
-      dtype=float_types + complex_types,
+  @parameterized.product(
+      fun_and_shapes=ALL_FUN_AND_SHAPES, dtype=float_types + complex_types
   )
   @jtu.run_on_devices("gpu", "cpu")
   def test_non_batch_axis_sharding(self, fun_and_shapes, dtype):
@@ -155,9 +153,8 @@ class LinalgShardingTest(jtu.JaxTestCase):
     self.assertIn(
         "all-gather", fun_jit.lower(*args_sharded).compile().as_text())
 
-  @jtu.sample_product(
-      fun_and_shapes=ALL_FUN_AND_SHAPES,
-      dtype=float_types + complex_types,
+  @parameterized.product(
+      fun_and_shapes=ALL_FUN_AND_SHAPES, dtype=float_types + complex_types
   )
   @jtu.run_on_devices("gpu", "cpu")
   def test_batch_axis_sharding_jvp(self, fun_and_shapes, dtype):
@@ -181,14 +178,12 @@ class LinalgShardingTest(jtu.JaxTestCase):
         (primals_sharded, tangents),
     ]:
       _, actual = jvp_fun_jit(*args)
-      self.assertAllClose(actual, expected)
-      # TODO(danfm): Re-enable this check after diganosing non-determinism.
-      # hlo = jvp_fun_jit.lower(primals_sharded, tangents_sharded).compile()
-      # self.assertNotIn("all-", hlo.as_text())
+      self.assertAllClose(actual, expected, atol={np.float64: 1e-12})
+      hlo = jvp_fun_jit.lower(primals_sharded, tangents_sharded).compile()
+      self.assertNotIn("all-", hlo.as_text())
 
-  @jtu.sample_product(
-      fun_and_shapes=ALL_FUN_AND_SHAPES,
-      dtype=float_types + complex_types,
+  @parameterized.product(
+      fun_and_shapes=ALL_FUN_AND_SHAPES, dtype=float_types + complex_types
   )
   @jtu.run_on_devices("gpu", "cpu")
   def test_batch_axis_sharding_vjp(self, fun_and_shapes, dtype):
@@ -205,9 +200,8 @@ class LinalgShardingTest(jtu.JaxTestCase):
     expected = vjp_fun(tangents)
     actual = vjp_fun_jit(tangents_sharded)
     self.assertAllClose(actual, expected)
-    # TODO(danfm): Re-enable this check after diganosing non-determinism.
-    # hlo = vjp_fun_jit.lower(tangents_sharded).compile()
-    # self.assertNotIn("all-", hlo.as_text())
+    hlo = vjp_fun_jit.lower(tangents_sharded).compile()
+    self.assertNotIn("all-", hlo.as_text())
 
 
 if __name__ == "__main__":
