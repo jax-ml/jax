@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import itertools as it
+from functools import partial
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -1324,6 +1325,50 @@ class ListTest(jtu.JaxTestCase):
     b = List([])
     with self.assertRaisesRegex(ValueError, "a List instance can't be passed"):
       f(b, b)
+
+  def test_scan_transpose_regression(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def g2(box, x, i):
+      return x
+
+    def g2_fwd(box, x, i):
+      return x, i
+
+    def g2_bwd(box, i, g):
+      boxg = g.reshape((1, *g.shape))
+      box.set(jax.lax.dynamic_update_slice(box.get(), boxg, (i, 0, 0)))
+      return g, None
+
+    g2.defvjp(g2_fwd, g2_bwd)
+
+    def block_box(x, w, box, index):
+      x = x @ w
+      x = g2(box, x, index)
+      return x
+
+    def fwd_box(ws, x, box, stack):
+      def internal_scan(carry, w):
+        x, index = carry
+        x = block_box(x, w, box, index)
+        return (x, index+1), None
+      
+      (x, _), _ = jax.lax.scan(internal_scan, (x, 0), ws)
+      return x
+
+    D = 16
+    L = 4
+    B = 2
+    x = jnp.ones((B, D))
+    y = jnp.ones((B, D))
+    ws = jnp.ones((L, D, D))
+    grad_box = Box(jnp.zeros((L, B, D)))
+    grad_list = {'block_out': List()}
+
+    def jax_loss(ws, inputs, targets, box_or_list):
+      preds = fwd_box(ws, inputs, box_or_list, stack=stack)
+      return jnp.square(preds - targets).mean()
+
+    attr_grads = jax.grad(jax_loss)(ws, x, y, grad_box)  # don't crash
 
 
 if __name__ == '__main__':
