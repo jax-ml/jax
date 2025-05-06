@@ -650,6 +650,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":jaxpr_util",
         ":layout",
         ":mesh",
         ":op_shardings",
