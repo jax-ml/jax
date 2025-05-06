@@ -970,6 +970,28 @@ check_tracer_leaks = bool_state(
           'to disable any debuggers while leak checking is enabled.'))
 checking_leaks = functools.partial(check_tracer_leaks, True)
 
+
+captured_constants_warn_bytes = int_state(
+    name='jax_captured_constants_warn_bytes',
+    default=2 * 10 ** 9,
+    help=('The number of bytes of parameters that may be captured as constants '
+          'before a warning is issued. Defaults to approximately 2GB. '
+          'Set to -1 to disable issuing a warning.'
+    )
+)
+
+captured_constants_report_frames = int_state(
+    name='jax_captured_constants_report_frames',
+    default=0,
+    help=('The number of stack frames reported for each captured constant '
+          'indicating the file and operation where the constant was captured. '
+          'Set to -1 to print the complete set of frames, or 0 to disable. '
+          'N.b. the report is only generated if the total amount of captured '
+          'constants exceeds `jax_captured_constants_warn_bytes`, as it is expensive'
+          'to generate the report.'
+    )
+)
+
 debug_nans = bool_state(
     name='jax_debug_nans',
     default=False,
