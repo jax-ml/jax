@@ -88,7 +88,7 @@ def _load_p_lowering_rule(
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(args_tree, leaves)
-  x_ref, transforms = lowering._handle_transforms(x_ref, transforms)
+  x_ref, transforms = lowering._handle_transforms(ctx, x_ref, transforms)
 
   if layout is not None:
     layout = layout.to_mgpu()
@@ -259,7 +259,7 @@ def _copy_smem_to_gmem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
-  src, src_transforms = lowering._handle_transforms(src, src_transforms, handle_transposes=False)
+  src, src_transforms = lowering._handle_transforms(ctx, src, src_transforms, handle_transposes=False)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     ctx.launch_ctx.async_copy(
@@ -477,7 +477,7 @@ def _copy_gmem_to_smem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
-  dst, dst_transforms = lowering._handle_transforms(dst, dst_transforms, handle_transposes=False)
+  dst, dst_transforms = lowering._handle_transforms(ctx, dst, dst_transforms, handle_transposes=False)
   copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(src_transforms)
   barrier_indexer = _extract_barrier_indexer(
       barrier_transforms_treedef.unflatten(flat_barrier_transforms)
@@ -923,7 +923,7 @@ def _wgmma_lowering(
     )
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
     a, a_transforms = lowering._handle_transforms(
-        a, a_transforms, handle_transposes=False, handle_reshapes=False
+        ctx, a, a_transforms, handle_transposes=False, handle_reshapes=False
     )
     match a_transforms:
       case (gpu_core.UnswizzleRef(lhs_swizzle), gpu_core.UntileRef(tiling)):
@@ -950,7 +950,7 @@ def _wgmma_lowering(
 
   b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
   b, b_transforms = lowering._handle_transforms(
-      b, b_transforms, handle_transposes=False, handle_reshapes=False
+      ctx, b, b_transforms, handle_transposes=False, handle_reshapes=False
   )
 
   match b_transforms:
@@ -1010,14 +1010,12 @@ def _wgmma_warpgroup_lowering(
     a_transforms_tree,
     b_transforms_tree,
 ):
-  del ctx  # Unused.
-
   if a_transforms_tree is not None:
     a_transforms_leaves, b_transforms_leaves = util.split_list(
         transforms_leaves, [a_transforms_tree.num_leaves]
     )
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
-    a, a_transforms = lowering._handle_transforms(a, a_transforms)
+    a, a_transforms = lowering._handle_transforms(ctx, a, a_transforms)
     match a_transforms:
       case (gpu_core.TransposeRef((1, 0)),):
         a = mgpu.memref_transpose(a, (1, 0))
@@ -1032,7 +1030,7 @@ def _wgmma_warpgroup_lowering(
 
   if b_transforms_tree is not None:
     b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
-    b, b_transforms = lowering._handle_transforms(b, b_transforms)
+    b, b_transforms = lowering._handle_transforms(ctx, b, b_transforms)
     match b_transforms:
       case (gpu_core.TransposeRef((1, 0)),):
         b = mgpu.memref_transpose(b, (1, 0))
@@ -1215,7 +1213,7 @@ def _tcgen05_mma_lowering(
 
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
     a_ref, a_transforms = lowering._handle_transforms(
-        a_ref, a_transforms, handle_transposes=False, handle_reshapes=True
+        ctx, a_ref, a_transforms, handle_transposes=False, handle_reshapes=True
     )
     match a_transforms:
       case (gpu_core.UnswizzleRef(lhs_swizzle), gpu_core.UntileRef(lhs_tiling)):
@@ -1239,7 +1237,7 @@ def _tcgen05_mma_lowering(
 
   b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
   b_ref, b_transforms = lowering._handle_transforms(
-      b_ref, b_transforms, handle_transposes=False, handle_reshapes=True
+      ctx, b_ref, b_transforms, handle_transposes=False, handle_reshapes=True
   )
   match b_transforms:
     case (gpu_core.UnswizzleRef(rhs_swizzle), gpu_core.UntileRef(rhs_tiling)):
@@ -1535,7 +1533,7 @@ def _jaxpr_call_lowering_rule(
       # We ignore other transforms here, because they are already embedded
       # in the jaxpr.
       ref, _ = lowering._handle_transforms(
-          ref, transforms, handle_reshapes=False, handle_transposes=False
+          ctx, ref, transforms, handle_reshapes=False, handle_transposes=False
       )
     args.append(ref)
   program_ids = program_ids_treedef.unflatten(flat_program_ids)
@@ -1844,7 +1842,7 @@ def _inline_mgpu_lowering_rule(
       assert transforms is None
       continue
     assert isinstance(aval, pallas_core.AbstractMemoryRef)
-    a, user_transforms = lowering._handle_transforms(a, transforms, handle_transposes=False)
+    a, user_transforms = lowering._handle_transforms(ctx, a, transforms, handle_transposes=False)
     # Transforms that do not originate from a MemoryRefTransform are
     # applied implicitly (eg by emit-pipeline) and therefore we do not
     # expect the user to pass them to the type. The transforms not

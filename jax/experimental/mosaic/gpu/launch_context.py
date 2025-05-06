@@ -323,6 +323,7 @@ class Scratch:
 
 @dataclasses.dataclass()
 class LaunchContext:
+  module: ir.Module
   scratch: Scratch
   cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
@@ -330,6 +331,7 @@ class LaunchContext:
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...]],
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
+  is_device_collective: bool = False
 
   @contextlib.contextmanager
   def named_region(self, *args, **kwargs):
@@ -845,3 +847,34 @@ class LaunchContext:
   ):
     nvvm.cp_async_bulk_wait_group(allow_groups, read=await_read_only)
     utils.warpgroup_barrier()
+
+  def _ensure_nvshmem_decls(self):
+    if self.is_device_collective:
+      return
+    self.is_device_collective = True
+    with ir.InsertionPoint(self.module.body):
+      nvshmem_my_pe_type = ir.TypeAttr.get(ir.Type.parse("!llvm.func<i32()>"))
+      llvm.LLVMFuncOp(
+          "nvshmem_my_pe", nvshmem_my_pe_type, sym_visibility="private"
+      )
+      nvshmem_ptr_type = ir.TypeAttr.get(
+          ir.Type.parse("!llvm.func<!llvm.ptr(!llvm.ptr,i32)>")
+      )
+      llvm.LLVMFuncOp("nvshmem_ptr", nvshmem_ptr_type, sym_visibility="private")
+
+  def to_remote(self, ref: ir.Value, peer: ir.Value):
+    self._ensure_nvshmem_decls()
+    if ir.MemRefType.isinstance(ref.type):
+      return utils.ptr_as_memref(
+          self.to_remote(utils.memref_ptr(ref), peer), ref.type
+      )
+    if ref.type != ir.Type.parse("!llvm.ptr"):
+      raise ValueError(f"Unsupported type for to_remote: {ref.type}")
+    if peer.type != ir.IntegerType.get_signless(32):
+      raise ValueError(f"peer index must be an i32, got {peer.type}")
+    return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
+
+  def device_id(self) -> ir.Value:
+    self._ensure_nvshmem_decls()
+    i32 = ir.IntegerType.get_signless(32)
+    return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
