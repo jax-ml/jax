@@ -59,6 +59,7 @@ from jax._src.state import discharge as state_discharge
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
 from jax._src.typing import Array
+from jax._src.attrs import jax_setattr, jax_getattr, jax_extendattr
 from jax._src.util import (
     merge_lists, partition_list, safe_map, safe_zip, split_list,
     split_list_checked, unzip2, weakref_lru_cache,)
@@ -372,7 +373,6 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   return tree_unflatten(out_tree, out)
 
 def _set_states(attrs_tracked, vals):
-  from jax.experimental.attrs import jax_setattr, jax_extendattr
   valss = split_list_checked(vals, [td.num_leaves for _, td, _ in attrs_tracked])
   for ((_, treedef, (obj, attr, kind)), leaves) in zip(attrs_tracked, valss):
     if kind is pe.ReadWrite:
@@ -392,7 +392,6 @@ def _set_states(attrs_tracked, vals):
       assert False
 
 def _get_states(attrs_tracked):
-  from jax.experimental.attrs import jax_getattr
   vals = []
   for treedef, _, (obj, attr, kind) in attrs_tracked:
     if kind is pe.ReadWrite:

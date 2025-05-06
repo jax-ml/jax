@@ -80,6 +80,8 @@ from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, tuple_insert,
     distributed_debug_log, split_list, split_list_checked, weakref_lru_cache,
     merge_lists, subs_list, fun_name, fun_qual_name)
+from jax._src.attrs import (Box, List, dne_sentinel, jax_setattr, jax_getattr,
+                            jax_extendattr)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -723,7 +725,6 @@ def _infer_params_internal(
       static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
       signature=ji.fun_signature)
 
-  from jax.experimental.attrs import Box, List
   any_boxes = any(isinstance(x, (Box, List)) for x in tree_leaves((args, kwargs)))
   if config.dynamic_shapes.value or any_boxes:  # don't use the cache
     p, args_flat = _infer_params_impl(fun, ji, ctx_mesh, dbg,
@@ -1507,7 +1508,6 @@ def _attr_cache_index(
     fun: lu.WrappedFun,
     in_type: core.InputType | tuple[core.AbstractValue, ...]
 ) -> int:
-  from jax.experimental.attrs import dne_sentinel
   cases = seen_attrs_get(fun, in_type)
   for i, records in enumerate(cases):
     for obj, attr, kind, treedef, avals in records:
@@ -1521,7 +1521,6 @@ def _attr_cache_index(
   return len(cases)
 
 def _attr_cachedata_update(fun, in_type, i, attrs_tracked):
-  from jax.experimental.attrs import dne_sentinel
   leaves = lambda obj, attr: tree_leaves(getattr(obj, attr, dne_sentinel))
   records = [(obj, attr, kind, init_tree, map(core.typeof, leaves(obj, attr)))
              for init_tree, _, (obj, attr, kind) in attrs_tracked]
@@ -3177,7 +3176,6 @@ def get_unconstrained_dims(sharding: NamedSharding):
 # -------------------- attrs etc --------------------
 
 def _set_states(attrs_tracked, vals):
-  from jax.experimental.attrs import jax_setattr, jax_extendattr
   valss = split_list(vals, [td.num_leaves for _, td, _ in attrs_tracked[:-1]])
   for ((_, treedef, (obj, attr, kind)), leaves) in zip(attrs_tracked, valss):
     if kind is pe.ReadWrite:
@@ -3197,7 +3195,6 @@ def _set_states(attrs_tracked, vals):
       assert False
 
 def _get_states(attrs_tracked):
-  from jax.experimental.attrs import jax_getattr, dne_sentinel
   vals = []
   for treedef, _, (obj, attr, kind) in attrs_tracked:
     if kind is pe.ReadWrite:
@@ -3234,7 +3231,6 @@ class ListTree:
   treedef: PyTreeDef | None = static()
 
 def _flatten_boxes(dbg, args, kwargs):
-  from jax.experimental.attrs import Box, List
   # TODO(mattjj,dougalm): refine this implementation of box-handling...
   if all(not isinstance(x, (Box, List)) for x in tree_leaves((args, kwargs))):
     return args, kwargs, []
@@ -3271,7 +3267,6 @@ def _flatten_boxes(dbg, args, kwargs):
 # Using obscure names is a temporary workaround; revise!
 @lu.transformation2
 def _handle_boxes(__f, __dbg, *args, **kwargs):
-  from jax.experimental.attrs import Box, List
   f, dbg = __f, __dbg
   new_args = []
   arg_mutables = []
