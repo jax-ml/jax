@@ -37,6 +37,7 @@ from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.util import safe_zip
 from jax.experimental.mosaic.gpu import layouts as layouts_lib
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import numpy as np
 
 from . import fragmented_array as fa
@@ -399,6 +400,7 @@ def _vector_store_op_lowering_rule(
       vector_store_op.valueToStore, to_store_layout
   )
 
+  mgpu_utils.warpgroup_barrier()  # Make sure the reads have completed.
   if fragmented_array.layout == fa.WGMMA_LAYOUT:
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
         inference_utils.in_transforms(vector_store_op)[0]
@@ -417,6 +419,7 @@ def _vector_store_op_lowering_rule(
     raise ValueError(
         f"{vector_store_op} has an unsupported layout: {to_store_layout}"
     )
+  mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
 
   return []
 

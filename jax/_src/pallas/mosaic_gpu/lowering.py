@@ -1299,6 +1299,7 @@ def _swap_lowering_rule(
   x_smem, transforms = _handle_transforms(
       x_smem, transforms, handle_transposes=not transposed_value
   )
+  mgpu.warpgroup_barrier()  # Make sure reads have completed before we write.
   match transforms:
     case (
         gpu_core.UnswizzleRef(swizzle),
@@ -1328,7 +1329,6 @@ def _swap_lowering_rule(
           layout=value.layout,
       )
       value.store_tiled(x_smem, swizzle=swizzle)
-      return old_value
     case ():
       match value.layout:
         case mgpu.TiledLayout():
@@ -1339,15 +1339,15 @@ def _swap_lowering_rule(
               optimized=False,
           )
           value.store_untiled(x_smem, optimized=False)
-          return old_value
         case _:
           old_value = mgpu.FragmentedArray.load_strided(
               x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
           )
           value.store_untiled(x_smem)
-          return old_value
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
+  mgpu.warpgroup_barrier()  # Make sure the writes have completed.
+  return old_value
 
 
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Warpgroup)
