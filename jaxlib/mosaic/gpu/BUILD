@@ -123,17 +123,22 @@ cc_library(
     name = "runtime",
     srcs = ["runtime.cc"],
     # Linker may prune these symbols if they are not explicitly exported.
-    linkopts = ["-Wl,--export-dynamic-symbol='mosaic_gpu_*'"],
+    linkopts = [
+        "-Wl,--export-dynamic-symbol='mosaic_gpu_*'",
+        "-Wl,--export-dynamic-symbol='nvshmemx_barrier_all_on_stream'",
+        "-Wl,--export-dynamic-symbol='nvshmemx_cumodule_init'",
+        "-Wl,--export-dynamic-symbol='nvshmemx_init_status'",
+    ],
     deps = [
-        ":mosaic_gpu_comm",
+        ":nvshmem",
         "@local_config_cuda//cuda:cuda_headers",
     ],
     alwayslink = True,
 )
 
 cc_library(
-    name = "mosaic_gpu_comm",
-    hdrs = ["mosaic_gpu_comm.h"],
+    name = "nvshmem",
+    hdrs = ["nvshmem.h"],
     deps = [
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
@@ -144,7 +149,7 @@ cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     deps = [
-        ":mosaic_gpu_comm",
+        ":nvshmem",
         ":passes",
         ":target",
         "//jaxlib/cuda:cuda_vendor",
@@ -236,7 +241,7 @@ cc_binary(
         "notap",
     ],
     deps = [
-        "//jaxlib/mosaic/gpu:mosaic_gpu_comm",
+        ":nvshmem",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
     ],

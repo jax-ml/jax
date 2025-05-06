@@ -41,6 +41,7 @@ module = [
     "numpy.*",
     "opt_einsum.*",
     "optax.*",
+    "portpicker.*",
     "pygments.*",
     "pytest.*",
     "rich.*",

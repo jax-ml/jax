@@ -234,6 +234,20 @@ py_library(
 )
 
 py_library(
+    name = "test_multiprocess",
+    srcs = ["_src/test_multiprocess.py"],
+    visibility = [":internal"],
+    deps = if_building_jaxlib(
+        if_building = [
+            ":jax",
+            ":test_util",
+        ],
+        if_not_building = [],
+        if_not_building_for_cpu = [],
+    ),
+)
+
+py_library(
     name = "internal_export_back_compat_test_util",
     srcs = ["_src/internal_test_util/export_back_compat_test_util.py"],
     visibility = [
@@ -858,6 +872,7 @@ pytype_strict_library(
 py_library_providing_imports_info(
     name = "mosaic_gpu",
     srcs = glob(["experimental/mosaic/gpu/*.py"]),
+    data = py_deps("libnvshmem_device"),
     visibility = [
         ":mosaic_gpu_users",
     ],

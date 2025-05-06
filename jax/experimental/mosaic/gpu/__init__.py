@@ -27,6 +27,7 @@ from .core import (
     TMEM as TMEM,
     Union as Union,
     as_gpu_kernel as as_gpu_kernel,
+    supports_cross_device_collectives as supports_cross_device_collectives,
 )
 
 from .launch_context import (

@@ -34,6 +34,7 @@ from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
+from jax._src.pallas import primitives as pallas_primitives
 from jax._src.state import types as state_types
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -1708,6 +1709,9 @@ class PallasCallWGTest(
         mgpu_primitives.tcgen05_mma_p,
         lax.slice_p,
         pallas_core.core_map_p,
+        pallas_primitives.semaphore_signal_p,
+        pallas_primitives.semaphore_wait_p,
+        pallas_primitives.semaphore_read_p,
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)

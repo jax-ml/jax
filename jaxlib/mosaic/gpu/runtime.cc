@@ -17,9 +17,8 @@ limitations under the License.
 #include <cstdint>
 #include <cstdio>
 
-#include "jaxlib/mosaic/gpu/mosaic_gpu_comm.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-
+#include "jaxlib/mosaic/gpu/nvshmem.h"
 
 extern "C" {
 
@@ -177,13 +176,16 @@ void* mosaic_gpu_module_load(void *data) {
     abort();
   }
 
-  CUdeviceptr ptr = 0;
-  size_t size = 0;
-  // Check if module contains NVSHMEM globals implying NVSHMEM state needs to set
-  if (cuModuleGetGlobal(&ptr, &size, module, "nvshmemi_device_lib_version_d") == CUDA_SUCCESS) {
-    if (mosaic::gpu::NvshmemApi::Default().cumodule_int(module) != NVSHMEM_SUCCESS) {
-      fprintf(stderr, "nvshmemx_cumodule_init failed.\n");
-      abort();
+  {  // Set the NVSHMEM state if it's used by the module.
+    CUdeviceptr ptr = 0;
+    size_t size = 0;
+    if (cuModuleGetGlobal(&ptr, &size, module,
+                          "nvshmemi_device_lib_version_d") == CUDA_SUCCESS) {
+      if (mosaic::gpu::NvshmemApi::Default().cumodule_init(module) !=
+          NVSHMEM_SUCCESS) {
+        fprintf(stderr, "nvshmemx_cumodule_init failed.\n");
+        abort();
+      }
     }
   }
 
