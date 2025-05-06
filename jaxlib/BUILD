@@ -885,6 +885,7 @@ cc_library(
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:pprof_profile_builder",
+        "@xla//xla/python:safe_static_init",
         "@xla//xla/python:types",
         "@xla//xla/python:version",
         "@xla//xla/python/compile_only_ifrt:client",
