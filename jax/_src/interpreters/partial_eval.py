@@ -434,49 +434,45 @@ class JaxprTrace(Trace['JaxprTracer']):
     if all(t.is_known() for t in tracers):
       vals = [t.pval[1] for t in tracers]
       with core.set_current_trace(self.parent_trace):
-        return prim.bind(f, fwd, bwd, *vals, out_trees=out_trees, symbolic_zeros=symbolic_zeros)
-    else:
-      # TODO(mattjj): remove non-ad users of partial eval, then drop this case.
-      # We stage out the whole thing, i.e. no nontrivial partial evaluation.
-      tracers = map(self.instantiate_const_abstracted, tracers)
-      # Because we instantiate all tracers, in_knowns is all False.
-      in_knowns, in_avals, () = partition_pvals([t.pval for t in tracers])
-      f = trace_to_subjaxpr_nounits(f, self, True, f.debug_info)
-      f, aux = partial_eval_wrapper_nounits(f, (*in_knowns,), (*in_avals,))
-      with core.set_current_trace(self.parent_trace):
-        out_flat = prim.bind(f, fwd, bwd, out_trees=out_trees,
-                             symbolic_zeros=symbolic_zeros)
-      out_knowns, out_avals, jaxpr, env = aux()
-      out_consts, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-      res_tracers = map(self.new_instantiated_const, res)
-      env_tracers = map(self.to_jaxpr_tracer, env)
-      out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
-                    for a in out_avals]
-      closed_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(jaxpr), ())
+        return prim.bind(f, fwd, bwd, *vals, out_trees=out_trees,
+                         symbolic_zeros=symbolic_zeros)
 
-      @_memoize
-      def fwd_jaxpr_thunk(*zeros):
-        fwd_ = _interleave_fun(fwd, zeros)
-        fwd_ = trace_to_subjaxpr_nounits(fwd_, self, True, fwd_.debug_info)
-        fwd_, aux = partial_eval_wrapper_nounits(fwd_, (*in_knowns,), (*in_avals,))
-        out_flat = fwd_.call_wrapped()
-        out_knowns, out_avals, jaxpr, env = aux()
-        _, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-        converted_jaxpr = convert_envvars_to_constvars(jaxpr, len(env))
-        return converted_jaxpr, (*res, *env)
+    tracers = map(self.instantiate_const, tracers)
+    in_knowns = (False,) * len(tracers)
+    in_avals = tuple(t.aval for t in tracers)
+    f_ = trace_to_subjaxpr_nounits2(f, self.tag, f.debug_info, True)
+    f_, aux = partial_eval_wrapper_nounits(f_, in_knowns, in_avals)
+    params = dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros)
+    res = prim.bind_with_trace(self.parent_trace, (f_, fwd, bwd), params)
+    out_knowns, out_avals, jaxpr, env = aux()
+    assert not any(out_knowns)
+    res_tracers = map(self.instantiate_const, map(self.new_const, res))
+    env_tracers = map(self.to_jaxpr_tracer, env)
+    out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
+                   for a in out_avals]
+    closed_jaxpr = close_jaxpr(convert_constvars_jaxpr(jaxpr))
+
+    @partial(lu.wrap_init, debug_info=fwd.debug_info)
+    @_memoize
+    def fwd_jaxpr_thunk(*zeros):
+      fwd_ = _interleave_fun(fwd, zeros)
+      fwd_jaxpr, _, consts, () = trace_to_jaxpr_dynamic(fwd_, in_avals)
+      return fwd_jaxpr, consts
 
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
+    params = dict(
+        call_jaxpr=closed_jaxpr,
+        fwd_jaxpr_thunk=fwd_jaxpr_thunk,
+        num_consts=len(res) + len(env),
+        bwd=bwd,
+        out_trees=out_trees,
+        symbolic_zeros=symbolic_zeros
+    )
     eqn = new_eqn_recipe((*res_tracers, *env_tracers, *tracers),
-                         out_tracers, prim.initial_style,
-                         dict(fun_jaxpr=closed_jaxpr,
-                              fwd_jaxpr_thunk=fwd_jaxpr_thunk,
-                              num_consts=len(res) + len(env),
-                              bwd=bwd, out_trees=out_trees,
-                              symbolic_zeros=symbolic_zeros),
-                         jaxpr.effects, source)
+                         out_tracers, prim, params, jaxpr.effects, source)
     for t in out_tracers: t.recipe = eqn
-    return merge_lists(out_knowns, out_tracers, out_consts)
+    return out_tracers
 
 def partition_pvals(
     pvals: list[PartialVal]
@@ -2050,6 +2046,7 @@ class DynamicJaxprTrace(core.Trace):
     fun_jaxpr, out_avals, consts, () = trace_to_jaxpr_dynamic(fun, in_avals)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
+    @partial(lu.wrap_init, debug_info=jvp.debug_info)
     @_memoize
     def jvp_jaxpr_thunk(*in_zeros):
       for store in jvp.stores: store and store.reset()
@@ -2065,8 +2062,7 @@ class DynamicJaxprTrace(core.Trace):
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_fun_jaxpr,
-                             jvp_jaxpr_fun=lu.wrap_init(jvp_jaxpr_thunk,
-                                                        debug_info=jvp.debug_info),
+                             jvp_jaxpr_fun=jvp_jaxpr_thunk,
                              num_consts=len(consts),
                              symbolic_zeros=symbolic_zeros),
                         fun_jaxpr.effects,
@@ -2086,6 +2082,7 @@ class DynamicJaxprTrace(core.Trace):
     fun_jaxpr, out_avals, consts, _ = trace_to_jaxpr_dynamic(fun, in_avals)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
+    @partial(lu.wrap_init, debug_info=fwd.debug_info)
     @_memoize
     def fwd_jaxpr_from_zeros(*zeros):
       for store in fwd.stores: store and store.reset()
@@ -2098,9 +2095,8 @@ class DynamicJaxprTrace(core.Trace):
     invars = map(self.getvar, tracers)
     constvars = map(self.getvar, map(to_jaxpr_tracer, consts))
     outvars = map(self.makevar, out_tracers)
-    eqn = new_jaxpr_eqn([*constvars, *invars], outvars,
-                        prim.initial_style,  # pytype: disable=attribute-error
-                        dict(fun_jaxpr=closed_fun_jaxpr,
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
+                        dict(call_jaxpr=closed_fun_jaxpr,
                              fwd_jaxpr_thunk=fwd_jaxpr_from_zeros,
                              num_consts=len(consts),
                              bwd=bwd, out_trees=out_trees,
