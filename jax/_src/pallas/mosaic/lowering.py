@@ -166,13 +166,14 @@ class LoweringContext:
   block_shapes: list[tuple[int | pallas_core.Squeezed, ...]]
   name_stack: source_info_util.NameStack
   mesh_context: MeshContext | None
-  replace = dataclasses.replace
   traceback_caches: mlir.TracebackCaches
   for_verification: bool
   forward_compatible: bool
   dynamic_shape_replacement_fn: Callable[
       [tuple[jax.DimSize, ...]], tuple[int, ...]
   ]
+
+  replace = dataclasses.replace
 
   @property
   def grid_rank(self):
@@ -199,6 +200,7 @@ class LoweringRuleContext:
   avals_in: Sequence[jax_core.AbstractValue]
   avals_out: Sequence[jax_core.AbstractValue]
   block_shapes: Sequence[tuple[int | pallas_core.Squeezed, ...] | None]
+
   replace = dataclasses.replace
 
   @property
@@ -1126,9 +1128,9 @@ def jaxpr_subcomp(
             current_name_stack, name_stack)
         current_name_stack = name_stack
         for _ in popped:
-          tpu.TraceStopOp()
+          tpu.trace_stop()
         for name in pushed:
-          tpu.TraceStartOp(message=name, level=10)
+          tpu.trace_start(message=name, level=10)
 
         try:
           ans = lowering_rules[eqn.primitive](
@@ -1163,7 +1165,7 @@ def jaxpr_subcomp(
   popped, pushed = _compute_name_stack_updates(
       current_name_stack, initial_name_stack)
   for _ in popped:
-    tpu.TraceStopOp()
+    tpu.trace_stop()
   assert len(pushed) == 0
 
   outvals = map(read_env, jaxpr.outvars)
@@ -1608,13 +1610,13 @@ def _maybe_cast_load_to_bool(
         out_aval,
         is_kernel_boundary=True,
     )
-    vector_zeros = arith.ConstantOp(
+    vector_zeros = arith.constant(
         load_vector_type,
         ir.DenseElementsAttr.get_splat(load_vector_type, const_zero)
     )
     return arith.cmpi(predicate, val, vector_zeros)
   else:  # Scalar case.
-    const_zero = arith.ConstantOp(load_scalar_type, const_zero)
+    const_zero = arith.constant(load_scalar_type, const_zero)
     return arith.cmpi(predicate, val, const_zero)
 
 
@@ -1687,7 +1689,7 @@ def _masked_swap_lowering_rule(
     result = memref.load(ref, starts)
     result = _maybe_cast_load_to_bool(ctx, val_aval, result)
     val = _maybe_cast_store_to_memref_type(ctx, val_aval, val)
-    memref.StoreOp(val, ref, starts)
+    memref.store(val, ref, starts)
     return result
 
   if not is_vmem_store:
@@ -1740,9 +1742,9 @@ def _masked_swap_lowering_rule(
   if need_stride:
     if mask is not None:
       raise NotImplementedError("masked swap with strided store")
-    tpu.StridedStoreOp(val, ref, starts, strides)
+    tpu.strided_store(val, ref, starts, strides)
   else:
-    tpu.VectorStoreOp(val, ref, starts, [], mask=mask)
+    tpu.vector_store(val, ref, starts, [], mask=mask)
   return result
 
 
@@ -1805,7 +1807,7 @@ def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
         ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
     )
     identity = ir.DenseElementsAttr.get_splat(out_type, val)
-    acc = arith.ConstantOp(out_type, identity)
+    acc = arith.constant(out_type, identity)
     return vector.multi_reduction(kind, x, acc, axes)
   return _lowering_rule
 
@@ -2074,12 +2076,12 @@ def _dot_general_lowering_rule(
       else:
         raise NotImplementedError(f"Unsupported {preferred_element_type=}")
 
-    acc = arith.ConstantOp(
+    acc = arith.constant(
         red_type, ir.DenseElementsAttr.get_splat(red_type, val)
     )
-    red = vector.MultiDimReductionOp(
+    red = vector.multi_reduction(
         ir.Attribute.parse("#vector.kind<add>"),
-        arith.MulFOp(x, y),
+        arith.mulf(x, y),
         acc,
         [1]
     )
@@ -2101,7 +2103,7 @@ def _dot_general_lowering_rule(
     )
   else:
     raise NotImplementedError(f"Unsupported dot precision: {precision}")
-  out_tile = arith.ConstantOp(
+  out_tile = arith.constant(
       out_type, ir.DenseElementsAttr.get_splat(out_type, val)
   )
   return tpu.matmul(
@@ -2945,7 +2947,7 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
         ctx.lowering_context.dynamic_shape_replacement_fn, out_aval
     )
     scalar_minus_one = ir.IntegerAttr.get(out_scalar_type, -1)
-    minus_one = arith.ConstantOp(
+    minus_one = arith.constant(
         out_type, ir.DenseElementsAttr.get_splat(out_type, scalar_minus_one)
     )
   return arith.xori(x, minus_one)
@@ -3064,7 +3066,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
     iv = for_op.induction_variable
     inner_args = for_op.inner_iter_args
     inner_out = _run_body(iv, inner_args)
-    scf.YieldOp(inner_out)
+    scf.yield_(inner_out)
   return for_op.results
 
 
@@ -3236,10 +3238,10 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches):
       )
     else:
       out = jaxpr_subcomp(lowering_context, branches[1].jaxpr, *args)
-    scf.YieldOp(out)
+    scf.yield_(out)
   with ir.InsertionPoint(if_op.else_block):
     out = jaxpr_subcomp(lowering_context, branches[0].jaxpr, *args)
-    scf.YieldOp(out)
+    scf.yield_(out)
   return if_op.results
 
 
@@ -3501,7 +3503,7 @@ def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr):
         block_shapes=(*ctx.block_shapes, *block_shapes)
     )
     out = jaxpr_subcomp(ctx, jaxpr, *consts, *args)
-    tpu.YieldOp(out)
+    tpu.yield_(out)
   return region.results
 
 
@@ -3981,7 +3983,7 @@ def _pad_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
         pad = vector.broadcast(pad_vec_type, padding_value)
       else:
         scalar_attr = ir.FloatAttr.get(operand.type.element_type, padding_value)
-        pad = arith.ConstantOp(
+        pad = arith.constant(
             pad_vec_type,
             ir.DenseElementsAttr.get_splat(
                 pad_vec_type,
