@@ -366,21 +366,14 @@ void PyDeviceList::PopulateMemoryKindInfo() {
     throw nb::value_error("Unrecognized DeviceList type");
   }
   MemoryKindInfo info;
-  xla::ifrt::Device* addressable_device = nullptr;
-  const int process_index = py_client_ ? py_client_->process_index() : 0;
-  for (xla::ifrt::Device* device : std::get<0>(device_list_)->devices()) {
-    if (device->ProcessIndex() == process_index) {
-      addressable_device = device;
-      break;
-    }
-  }
-  if (addressable_device == nullptr) {
+  if (std::get<0>(device_list_)->size() == 0) {
     info.default_memory_kind = nb::none();
     memory_kind_info_ = std::move(info);
     return;
   }
+  xla::ifrt::Device* device = std::get<0>(device_list_)->devices()[0];
 
-  auto default_memory = addressable_device->DefaultMemory();
+  auto default_memory = device->DefaultMemory();
   if (!default_memory.ok()) {
     // Cache the error.
     memory_kind_info_ = default_memory.status();
@@ -388,9 +381,9 @@ void PyDeviceList::PopulateMemoryKindInfo() {
   }
   info.default_memory_kind = nb::cast(*(*default_memory)->Kind().memory_kind());
   nb::tuple memory_kinds =
-      nb::steal<nb::tuple>(PyTuple_New(addressable_device->Memories().size()));
-  for (size_t i = 0; i < addressable_device->Memories().size(); ++i) {
-    auto* memory = addressable_device->Memories()[i];
+      nb::steal<nb::tuple>(PyTuple_New(device->Memories().size()));
+  for (size_t i = 0; i < device->Memories().size(); ++i) {
+    auto* memory = device->Memories()[i];
     nb::str s = nb::str(memory->Kind().memory_kind()->data(),
                         memory->Kind().memory_kind()->size());
     PyTuple_SET_ITEM(memory_kinds.ptr(), i, s.release().ptr());
@@ -402,24 +395,17 @@ void PyDeviceList::PopulateMemoryKindInfo() {
 void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
   MemoryKindInfo info;
   try {
-    nb::handle addressable_device;
-    for (nb::handle device : std::get<1>(device_list_)) {
-      if (nb::cast<int>(device.attr("process_index")) ==
-          nb::cast<int>(device.attr("client").attr("process_index")())) {
-        addressable_device = device;
-        break;
-      }
-    }
-    if (!addressable_device) {
+    if (std::get<1>(device_list_).size() == 0) {
       info.default_memory_kind = nb::none();
       // info.memory_kinds is default-initialized to an empty tuple.
       memory_kind_info_ = std::move(info);
       return;
     }
-    auto default_memory = addressable_device.attr("default_memory")();
+    nb::handle device = std::get<1>(device_list_)[0];
+    auto default_memory = device.attr("default_memory")();
     info.default_memory_kind = default_memory.attr("kind");
     info.memory_kinds = nb::tuple(
-        nb::object(addressable_device.attr("addressable_memories")()));
+        nb::object(device.attr("addressable_memories")()));
     memory_kind_info_ = std::move(info);
   } catch (nb::python_error& e) {
     // Cache the error.
