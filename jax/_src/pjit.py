@@ -1955,7 +1955,7 @@ def pjit_staging_rule(trace, *args, **params):
     assert next(out_tracers_, None) is None
   elif any(isinstance(c, core.MutableArray) for c in jaxpr.consts):
     jaxpr, consts = pxla._move_mutable_consts(jaxpr)
-    consts = map(partial(trace.new_const, source_info=source_info), consts)
+    consts = [trace.new_const(c, source_info) for c in consts]
     in_shardings = (*params['in_shardings'],) + (UNSPECIFIED,) * len(consts)
     in_layouts = (*params['in_layouts'],) + (None,) * len(consts)
     donated_invars = (*params['donated_invars'],) + (False,) * len(consts)
@@ -1975,8 +1975,8 @@ def _pjit_forwarding(jaxpr, out_shardings, out_layouts):
             for fwd, os, ol in zip(in_fwd, out_shardings, out_layouts)]
   keep = [f is None for f in in_fwd]
   jaxpr = pe.prune_closed_jaxpr_outputs(jaxpr, keep)
-  out_shardings = [o for o, k in zip(out_shardings, keep) if k]
-  out_layouts   = [o for o, k in zip(out_layouts  , keep) if k]
+  out_shardings = tuple(o for o, k in zip(out_shardings, keep) if k)
+  out_layouts   = tuple(o for o, k in zip(out_layouts  , keep) if k)
   return jaxpr, in_fwd, out_shardings, out_layouts
 
 def pjit_forwarding_rule(eqn):
@@ -1985,11 +1985,10 @@ def pjit_forwarding_rule(eqn):
   jaxpr, in_fwd, out_shardings, out_layouts = _pjit_forwarding(
       eqn.params['jaxpr'], eqn.params['out_shardings'], eqn.params['out_layouts'])
   new_outvars = [v for v, f in zip(eqn.outvars, in_fwd) if f is None]
-  new_params = dict(eqn.params, jaxpr=jaxpr, out_shardings=(*out_shardings,),
-                    out_layouts=(*out_layouts,))
+  new_params = dict(eqn.params, jaxpr=jaxpr, out_shardings=out_shardings,
+                    out_layouts=out_layouts)
   new_eqn = eqn.replace(params=new_params, outvars=new_outvars)
-  fwd_vars = [eqn.invars[f] if f is not None else None for f in in_fwd]
-  return fwd_vars, new_eqn
+  return in_fwd, new_eqn
 # TODO(mattjj): Remove pjit_forwarding_rule and also in staging rule.
 pe.forwarding_rules[pjit_p] = pjit_forwarding_rule
 
