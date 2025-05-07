@@ -23,6 +23,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Changes
   * JAX nightly packages are now published to artifact registry. To install
     these packages, see the [JAX installation guide](https://docs.jax.dev/en/latest/installation.html#jax-nightly-installation).
+  * `jax.sharding.PartitionSpec` no longer inherits from a tuple.
 
 ## JAX 0.6.0 (April 16, 2025)
 
