@@ -1364,8 +1364,6 @@ class IOCallbackTest(jtu.JaxTestCase):
     self.assertEqual(_collected, expected)
 
   def test_can_shard_io_callback_manually(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/384938613): Failing under shardy.")
 
     mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
 
