@@ -65,6 +65,17 @@ class KernelType(enum.Enum):
   SC_VECTOR_SUBCORE = 2
 
 
+class GridDimensionSemantics(enum.Enum):
+  PARALLEL = "parallel"
+  ARBITRARY = "arbitrary"
+
+PARALLEL = GridDimensionSemantics.PARALLEL
+ARBITRARY = GridDimensionSemantics.ARBITRARY
+
+
+DimensionSemantics = Literal["parallel", "arbitrary"] | GridDimensionSemantics
+
+
 @dataclasses.dataclass(frozen=True)
 class TPUCompilerParams(pallas_core.CompilerParams):
   """Mosaic TPU compiler parameters.
@@ -88,9 +99,7 @@ class TPUCompilerParams(pallas_core.CompilerParams):
     disable_bounds_checks: Disable bounds checks in the kernel.
   """
   BACKEND: ClassVar[pallas_core.Backend] = "mosaic_tpu"
-  dimension_semantics: (
-      Sequence[Literal["parallel", "arbitrary"] | GridDimensionSemantics] | None
-  ) = None
+  dimension_semantics: Sequence[DimensionSemantics] | None = None
   allow_input_fusion: Sequence[bool] | None = None
   vmem_limit_bytes: int | None = None
   collective_id: int | None = None
@@ -271,10 +280,3 @@ def _convert_semaphore_type_to_aval(
 pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
     _convert_semaphore_type_to_aval
 )
-
-
-class GridDimensionSemantics(enum.Enum):
-  PARALLEL = "parallel"
-  ARBITRARY = "arbitrary"
-PARALLEL = GridDimensionSemantics.PARALLEL
-ARBITRARY = GridDimensionSemantics.ARBITRARY
