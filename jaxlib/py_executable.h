@@ -162,12 +162,7 @@ class PyLoadedExecutable {
     return ifrt_loaded_executable_->GetCostAnalysis();
   }
 
-  void Delete() {
-    // TODO(hyeontaek): Return absl::Status.
-    TF_CHECK_OK(ifrt_loaded_executable_->Delete().Await());
-  }
-
-  bool is_deleted() { return ifrt_loaded_executable_->IsDeleted(); }
+  void Delete() {}  // Will be deleted.
 
   // Takes args indexed by argid then deviceid, transposes them, and passes to
   // PjRtExecutable::Execute. The result is similarly transposed back into the

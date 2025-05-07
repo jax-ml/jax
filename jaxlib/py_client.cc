@@ -191,9 +191,7 @@ nb::list PyClient::LiveExecutables() {
   nb::ft_lock_guard lock(executables_mutex_);
   nb::list executables;
   for (PyLoadedExecutable* exec = executables_; exec; exec = exec->next_) {
-    if (!exec->is_deleted()) {
-      executables.append(nb::find(exec));
-    }
+    executables.append(nb::find(exec));
   }
   return executables;
 }
@@ -621,12 +619,10 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
 
   for (PyLoadedExecutable* executable = executables_; executable;
        executable = executable->next_) {
-    if (!executable->is_deleted()) {
-      HeapProfileKey key{
-          executable->traceback() ? executable->traceback()->get() : nullptr,
-          executable->SizeOfGeneratedCodeInBytes(), nullptr};
-      ++entries[key];
-    }
+    HeapProfileKey key{
+        executable->traceback() ? executable->traceback()->get() : nullptr,
+        executable->SizeOfGeneratedCodeInBytes(), nullptr};
+    ++entries[key];
   }
 
   PprofProfileBuilder builder;
