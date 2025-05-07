@@ -109,6 +109,61 @@ namespace ffi = xla::ffi;
 using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
 
+class TemporaryDirectory {
+ private:
+  TemporaryDirectory(std::string path) : path(std::move(path)) {}
+  // TODO(apaszke): Unlink in destructor.
+
+ public:
+  static absl::StatusOr<TemporaryDirectory> Create() {
+    std::string pattern = "/tmp/mosaic-gpu-XXXXXX";
+    if (mkdtemp(pattern.data()) == NULL) {
+      return absl::InternalError("Failed to create temporary directory");
+    }
+    return TemporaryDirectory(std::move(pattern));
+  }
+
+  std::string_view GetPath() { return path; }
+
+ private:
+  std::string path;
+};
+
+absl::Status RunCUDATool(const char* tool,
+                         const std::vector<const char*>& args,
+                         bool stderr_to_stdout = false) {
+  CHECK(!args.empty() && args.back() == nullptr);
+  const char * cuda_path_ptr = getenv("CUDA_ROOT");
+  if (!cuda_path_ptr) return absl::InternalError("Failed to get CUDA_ROOT");
+  std::string tool_path(cuda_path_ptr);
+  tool_path += "/bin/";
+  tool_path += tool;
+  pid_t child_pid;
+  posix_spawn_file_actions_t file_actions;
+  if (posix_spawn_file_actions_init(&file_actions)) {
+    return absl::InternalError("Failed to initialize spawn file actions");
+  }
+  if (posix_spawn_file_actions_adddup2(&file_actions, STDOUT_FILENO,
+                                       STDERR_FILENO)) {
+    return absl::InternalError("Failed to set up spawn file actions");
+  }
+  // execv is guaranteed by POSIX to not modify the args (other than
+  // replacing the whole process image), so the const_cast is valid.
+  if (posix_spawn(&child_pid, tool_path.c_str(), &file_actions, nullptr,
+                  const_cast<char* const*>(args.data()), environ)) {
+    return absl::InternalError("Process spawn failed");
+  }
+  int status;
+  if (waitpid(child_pid, &status, 0) == -1) {
+    return absl::InternalError("Failed to wait for CUDA tool invocation");
+  }
+  if (status != 0) return absl::InternalError("CUDA tool failed");
+  if (posix_spawn_file_actions_destroy(&file_actions) != 0) {
+    return absl::InternalError("Failed to clean up after posix_spawn");
+  }
+  return absl::OkStatus();
+}
+
 void EnsureLLVMNVPTXTargetIsRegistered() {
   static absl::once_flag register_nvptx_target_flag;
   absl::call_once(register_nvptx_target_flag, []() {
@@ -271,61 +326,6 @@ void InitContext(mlir::MLIRContext* context) {
   context->appendDialectRegistry(registry);
   context->loadAllAvailableDialects();
 }
-
-absl::Status RunCUDATool(const char* tool,
-                         const std::vector<const char*>& args,
-                         bool stderr_to_stdout = false) {
-  CHECK(!args.empty() && args.back() == nullptr);
-  const char * cuda_path_ptr = getenv("CUDA_ROOT");
-  if (!cuda_path_ptr) return absl::InternalError("Failed to get CUDA_ROOT");
-  std::string tool_path(cuda_path_ptr);
-  tool_path += "/bin/";
-  tool_path += tool;
-  pid_t child_pid;
-  posix_spawn_file_actions_t file_actions;
-  if (posix_spawn_file_actions_init(&file_actions)) {
-    return absl::InternalError("Failed to initialize spawn file actions");
-  }
-  if (posix_spawn_file_actions_adddup2(&file_actions, STDOUT_FILENO,
-                                       STDERR_FILENO)) {
-    return absl::InternalError("Failed to set up spawn file actions");
-  }
-  // execv is guaranteed by POSIX to not modify the args (other than
-  // replacing the whole process image), so the const_cast is valid.
-  if (posix_spawn(&child_pid, tool_path.c_str(), &file_actions, nullptr,
-                  const_cast<char* const*>(args.data()), environ)) {
-    return absl::InternalError("Process spawn failed");
-  }
-  int status;
-  if (waitpid(child_pid, &status, 0) == -1) {
-    return absl::InternalError("Failed to wait for CUDA tool invocation");
-  }
-  if (status != 0) return absl::InternalError("CUDA tool failed");
-  if (posix_spawn_file_actions_destroy(&file_actions) != 0) {
-    return absl::InternalError("Failed to clean up after posix_spawn");
-  }
-  return absl::OkStatus();
-}
-
-class TemporaryDirectory {
- private:
-  TemporaryDirectory(std::string path) : path(std::move(path)) {}
-  // TODO(apaszke): Unlink in destructor.
-
- public:
-  static absl::StatusOr<TemporaryDirectory> Create() {
-    std::string pattern = "/tmp/mosaic-gpu-XXXXXX";
-    if (mkdtemp(pattern.data()) == NULL) {
-      return absl::InternalError("Failed to create temporary directory");
-    }
-    return TemporaryDirectory(std::move(pattern));
-  }
-
-  std::string_view GetPath() { return path; }
-
- private:
-  std::string path;
-};
 
 void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
                            const std::string& ptx_isa, const std::string& nvshmem_path) {
