@@ -3065,7 +3065,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       if not dce_jaxpr.eqns:
         assert not includes
         return
-      call_jaxpr = dce_jaxpr.eqns[0].params["fun_jaxpr"]
+      call_jaxpr = dce_jaxpr.eqns[0].params["call_jaxpr"]
       for prim in includes:
         assert any(eqn.primitive == prim for eqn in call_jaxpr.eqns)
       for prim in excludes:
