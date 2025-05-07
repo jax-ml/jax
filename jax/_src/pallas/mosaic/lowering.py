@@ -51,6 +51,7 @@ from jax._src.lax.control_flow import for_loop
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import cf
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import math
 from jax._src.lib.mlir.dialects import memref
@@ -160,7 +161,6 @@ class LoweringDynamicShapeEnv:
 
 @dataclasses.dataclass
 class LoweringContext:
-  ir_context: ir.Context
   grid_sizes: tuple[int, ...]  # Includes both user and vmap axes.
   grid_names: tuple[Hashable, ...] | None
   mapped_dims: tuple[int, ...]  # Indices of vmapped grid dimensions.
@@ -668,7 +668,6 @@ def _check_block_mappings(
 
 def lower_jaxpr_to_module(
     lowering_context: mlir.LoweringRuleContext,
-    ctx: ir.Context,
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
     *,
@@ -720,7 +719,6 @@ def lower_jaxpr_to_module(
   sym_tab = ir.SymbolTable(m.operation)
 
   func_op = lower_jaxpr_to_func(
-      ctx,
       jaxpr,
       mosaic_grid_mapping=mosaic_grid_mapping,
       name="main",
@@ -755,7 +753,6 @@ def lower_jaxpr_to_module(
         continue
 
       mlir_func = lower_jaxpr_to_transform_func(
-          ctx,
           bm.index_map_jaxpr.jaxpr,
           bm.block_aval,
           name=func_name,
@@ -902,7 +899,6 @@ def lower_jaxpr_to_module(
 
 
 def lower_jaxpr_to_transform_func(
-    ctx: ir.Context,
     jaxpr: jax_core.Jaxpr,
     aval: jax_core.AbstractValue,
     *,
@@ -937,7 +933,6 @@ def lower_jaxpr_to_transform_func(
     else:
       mesh_context = None
     lowering_context = LoweringContext(
-        ctx,
         mosaic_grid_mapping.grid,
         mosaic_grid_mapping.grid_names,
         mosaic_grid_mapping.mapped_dims,
@@ -970,7 +965,6 @@ def lower_jaxpr_to_transform_func(
 
 
 def lower_jaxpr_to_func(
-    ctx: ir.Context,
     jaxpr: jax_core.Jaxpr,
     *,
     mosaic_grid_mapping: MosaicGridMapping,
@@ -1009,7 +1003,6 @@ def lower_jaxpr_to_func(
     else:
       mesh_context = None
     lowering_context = LoweringContext(
-        ctx,
         mosaic_grid_mapping.grid,
         mosaic_grid_mapping.grid_names,
         mosaic_grid_mapping.mapped_dims,
@@ -3742,9 +3735,12 @@ def _checkify_lowering_rule(
                               "--jax_pallas_enable_runtime_assert "
                               "or functionalize with checkify.check.")
 
-  assert ctx.lowering_context.ir_context.allow_unregistered_dialects, (
-    "allow_unregistered_dialects must be set to True for "
-    "runtime assert check.")
+  if cf is None:
+    # TODO(slebedev): Remove once the minimal jaxlib version is 0.6.1.
+    raise ValueError(
+        "cf dialect is not available. Make sure you have jaxlib 0.6.1 or later."
+    )
+
   error = jax.tree.unflatten(err_tree, err_args)
   assert len(error._pred) == 1
   assert len(error._metadata) == 1
@@ -3761,10 +3757,7 @@ def _checkify_lowering_rule(
   out_scalar_type = _dtype_to_ir_type(jnp.dtype('bool'))
   minus_one = ir_constant(-1, out_scalar_type)
   not_pred = arith.xori(pred, minus_one)
-  attrs = {"msg": ir.StringAttr.get(exception.fmt_string)}
-  ir.Operation.create("cf.assert",
-                      operands=(not_pred,),
-                      attributes=attrs)
+  cf.assert_(not_pred, exception.fmt_string)
   return []
 
 
