@@ -56,6 +56,8 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
   # variables to the container.
   JAXCI_TEMP_ENVFILE_DIR=$(mktemp)
   env | grep -e "JAXCI_" -e "JAX_" -e "JAXLIB_" > "$JAXCI_TEMP_ENVFILE_DIR"
+  # TODO(kanglan): Remove this once the rules python debug is done.
+  echo "RULES_PYTHON_REPO_DEBUG=${RULES_PYTHON_REPO_DEBUG:-0}" >> "$JAXCI_TEMP_ENVFILE_DIR"
 
   # On Windows, convert MSYS Linux-like paths to Windows paths.
   if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
