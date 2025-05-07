@@ -367,11 +367,6 @@ def _infer_memref_load_transforms(op: memref.LoadOp) -> OptionalTransforms:
 def _infer_memref_cast_transforms(
     op: memref.CastOp,
 ) -> OptionalTransforms:
-  if inference_utils.has_in_transforms_set(
-      op
-  ) and inference_utils.has_out_transforms_set(op):
-    return inference_utils.in_transforms(op), inference_utils.out_transforms(op)
-
   transforms = _transforms_from_uses(op)
   in_transforms = inference_utils.value_transforms(op.source)
   transforms = _resolve_transforms(transforms, in_transforms)
