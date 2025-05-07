@@ -1299,7 +1299,7 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(
       n= [5, 13, 21, 53, 500],
       p= [0.1, 0.3, 0.5, 0.7, 0.9],
-      dtype= jtu.dtypes.floating)
+      dtype= jtu.dtypes.floating + jtu.dtypes.integer)
   def testBinomialSample(self, n, p, dtype):
     key = lambda: self.make_key(12)
     rand = lambda key: random.binomial(key, n, p, shape=(12000,), dtype=dtype)
@@ -1311,9 +1311,9 @@ class DistributionsTest(RandomTestBase):
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckChiSquared(samples.astype(int), pmf, pval=1e-3)
-      self.assertAllClose(samples.mean(), n * p, rtol=0.025, check_dtypes=False)
+      self.assertAllClose(samples.mean(), n * p, rtol=0.025, check_dtypes=True)
       self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.036,
-                          check_dtypes=False)
+                          check_dtypes=True)
 
   def testBinomialCornerCases(self):
     key = lambda: self.make_key(0)

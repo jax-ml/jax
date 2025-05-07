@@ -2688,7 +2688,7 @@ def binomial(
     n: RealArray,
     p: RealArray,
     shape: Shape | None = None,
-    dtype: DTypeLikeFloat = float,
+    dtype: DTypeLike = float,
 ) -> Array:
   r"""Sample Binomial random values with given shape and float dtype.
 
@@ -2710,7 +2710,7 @@ def binomial(
     shape: optional, a tuple of nonnegative integers specifying the result
       shape. Must be broadcast-compatible with ``n`` and ``p``.
       The default (None) produces a result shape equal to ``np.broadcast(n, p).shape``.
-    dtype: optional, a float dtype for the returned values (default float64 if
+    dtype: optional, a float or integer dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
 
   Returns:
@@ -2720,14 +2720,21 @@ def binomial(
   key, _ = _check_prng_key("binomial", key)
   check_arraylike("binomial", n, p)
   dtypes.check_user_dtype_supported(dtype)
-  if not dtypes.issubdtype(dtype, np.floating):
-    raise ValueError(
-        f"dtype argument to `binomial` must be a float dtype, got {dtype}"
-      )
+  if not (dtypes.issubdtype(dtype, np.floating) or dtypes.issubdtype(dtype, np.integer)):
+    raise ValueError(f"dtype argument to `binomial` must be a float or integer dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
+
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _binomial(key, n, p, shape, dtype)
+
+  float_type = dtypes.canonicalize_dtype(np.float32)
+
+  samples = _binomial(key, n, p, shape, float_type)
+
+  if dtypes.issubdtype(dtype, np.integer):
+    samples = jnp.round(samples)
+
+  return lax.convert_element_type(samples, dtype)
 
 
 # Functions related to key reuse checking
