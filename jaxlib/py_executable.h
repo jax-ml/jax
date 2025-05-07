@@ -131,11 +131,10 @@ using ExecuteShardedArg = std::variant<PyArray, std::vector<PyArray>>;
 // b) to add Python-specific functionality.
 class PyLoadedExecutable {
  public:
-  PyLoadedExecutable(
-      nb_class_ptr<PyClient> client,
-      std::shared_ptr<ifrt::LoadedExecutable> ifrt_loaded_executable,
-      std::optional<nb_traceback> traceback,
-      std::optional<std::string> fingerprint);
+  PyLoadedExecutable(nb_class_ptr<PyClient> client,
+                     ifrt::LoadedExecutableRef ifrt_loaded_executable,
+                     std::optional<nb_traceback> traceback,
+                     std::optional<std::string> fingerprint);
   ~PyLoadedExecutable();
 
   nb_class_ptr<PyClient> client() const { return client_; }
@@ -143,7 +142,7 @@ class PyLoadedExecutable {
     return ifrt_loaded_executable_.get();
   }
 
-  std::shared_ptr<ifrt::LoadedExecutable> shared_ifrt_loaded_executable() {
+  ifrt::LoadedExecutableRef shared_ifrt_loaded_executable() {
     return ifrt_loaded_executable_;
   }
 
@@ -226,7 +225,7 @@ class PyLoadedExecutable {
   friend class PyClient;
 
   nb_class_ptr<PyClient> client_;
-  std::shared_ptr<ifrt::LoadedExecutable> ifrt_loaded_executable_;
+  ifrt::LoadedExecutableRef ifrt_loaded_executable_;
   std::optional<nb_traceback> traceback_;
 
   // Identical executables (i.e. representing the same program) will have the
