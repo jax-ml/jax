@@ -112,7 +112,7 @@ absl::StatusOr<xla::PjRtMemorySpace*> MemorySpaceFromSharding(
 class IfrtArrayEntry : public PullTable::Entry {
  public:
   struct BufferRef {
-    tsl::RCReference<xla::ifrt::Array> arr;
+    xla::ifrt::ArrayRef arr;
     xla::PjRtBuffer* buffer;
     size_t buf_size;
   };
@@ -158,7 +158,7 @@ class IfrtArrayEntry : public PullTable::Entry {
 };
 
 absl::StatusOr<tsl::RCReference<IfrtArrayEntry>> CreatePullEntry(
-    const std::vector<tsl::RCReference<xla::ifrt::Array>>& arrs,
+    const std::vector<xla::ifrt::ArrayRef>& arrs,
     std::shared_ptr<PremappedCopierState> state, size_t xfer_size) {
   std::vector<IfrtArrayEntry::BufferRef> refs;
   for (auto& arr : arrs) {
@@ -228,8 +228,7 @@ class PyTransferServer {
         server_->Connect(xla::ValueOrThrow(SocketAddress::Parse(saddr))));
   }
 
-  void AwaitPull(uint64_t uuid,
-                 const std::vector<tsl::RCReference<xla::ifrt::Array>>& arrs) {
+  void AwaitPull(uint64_t uuid, const std::vector<xla::ifrt::ArrayRef>& arrs) {
     server_->AwaitPull(uuid, xla::ValueOrThrow(CreatePullEntry(
                                  arrs, premapped_copier_, xfer_size_)));
   }
@@ -260,7 +259,7 @@ absl::StatusOr<xla::ifrt::ArraySpec> ArraySpecFromShapeDtypeStruct(
 }
 
 struct BufferSource {
-  tsl::RCReference<xla::ifrt::Array> arr;
+  xla::ifrt::ArrayRef arr;
   xla::PjRtBuffer* buffer;
 };
 
@@ -373,7 +372,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       .def("_await_pull_flat",
            [](PyTransferServer& self, uint64_t uuid,
               std::vector<xla::PyArray> inputs) {
-             std::vector<tsl::RCReference<xla::ifrt::Array>> arrs;
+             std::vector<xla::ifrt::ArrayRef> arrs;
              arrs.reserve(inputs.size());
              for (const xla::PyArray& input : inputs) {
                arrs.push_back(tsl::FormRef(input.ifrt_array()));
