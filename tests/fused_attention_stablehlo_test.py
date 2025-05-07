@@ -505,6 +505,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   def test_sdpa_dbias(self, batch_size: int):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
+    if jax._src.lib.version < (0, 6, 1):
+      self.skipTest("Requires jaxlib >=0.6.1.")
     # cuDNN only supports dbias when batch size is 1. If the batch size is
     # greater, dbias is silently set to all zeros. This test verifies this
     # behavior for both vmap and regular use cases.
