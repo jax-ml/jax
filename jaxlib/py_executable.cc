@@ -140,8 +140,7 @@ static int GetNumDevices(const ExecuteShardedArg& arg) {
     return std::get<std::vector<PyArray>>(arg).size();
   }
 }
-static tsl::RCReference<ifrt::Array> GetIfRtArray(
-    const ExecuteShardedArg& arg) {
+static ifrt::ArrayRef GetIfRtArray(const ExecuteShardedArg& arg) {
   if (std::holds_alternative<PyArray>(arg)) {
     return tsl::FormRef(std::get<PyArray>(arg).ifrt_array());
   }
@@ -151,7 +150,7 @@ static tsl::RCReference<ifrt::Array> GetIfRtArray(
   // insufficient information about the shape (a dummy shape is used). This
   // should be removed if possible and only be used in the context where the
   // shape information is unused.
-  std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays;
+  std::vector<ifrt::ArrayRef> ifrt_arrays;
   ifrt_arrays.reserve(arg_vector.size());
   absl::InlinedVector<ifrt::Device*, 1> devices;
   devices.reserve(arg_vector.size());
@@ -177,11 +176,11 @@ static tsl::RCReference<ifrt::Array> GetIfRtArray(
   return *ifrt_array;
 }
 
-void PopulateExecuteShardedResults(
-    const nb_class_ptr<PyClient>& client,
-    std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays,
-    const PjRtFuture<>& result_status, int num_computations,
-    std::vector<std::vector<PyArray>>& outputs) {
+void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
+                                   std::vector<ifrt::ArrayRef> ifrt_arrays,
+                                   const PjRtFuture<>& result_status,
+                                   int num_computations,
+                                   std::vector<std::vector<PyArray>>& outputs) {
   auto traceback = Traceback::Get();
   DCHECK_GT(num_computations, 0);
   int num_output_buffers = ifrt_arrays.size();
@@ -206,7 +205,7 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     ifrt::LoadedExecutable* ifrt_loaded_executable,
     absl::Span<const ExecuteShardedArg> args,
     std::optional<std::vector<PjRtFuture<>>>& returned_futures) {
-  std::vector<tsl::RCReference<ifrt::Array>> output_arrays;
+  std::vector<ifrt::ArrayRef> output_arrays;
   std::unique_ptr<ifrt::Future<>> returned_future;
   int num_computations = ifrt_loaded_executable->addressable_devices().size();
   PjRtFuture<> result_status;
@@ -224,7 +223,7 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
                           }));
       }
     }
-    std::vector<tsl::RCReference<ifrt::Array>> arg_arrays(args.size());
+    std::vector<ifrt::ArrayRef> arg_arrays(args.size());
     absl::c_transform(args, arg_arrays.begin(),
                       [&](const ExecuteShardedArg& arg) mutable {
                         return GetIfRtArray(arg);
@@ -257,10 +256,10 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
 
 }  // namespace
 
-PyExecuteResults::PyExecuteResults(
-    const nb_class_ptr<PyClient>& client,
-    std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays,
-    int num_computations, PyShardedToken token, PjRtFuture<> result_status)
+PyExecuteResults::PyExecuteResults(const nb_class_ptr<PyClient>& client,
+                                   std::vector<ifrt::ArrayRef> ifrt_arrays,
+                                   int num_computations, PyShardedToken token,
+                                   PjRtFuture<> result_status)
     : client_(client),
       ifrt_arrays_(std::move(ifrt_arrays)),
       num_computations_(num_computations),
@@ -273,7 +272,7 @@ void PyExecuteResults::CheckNotDisassembled() const {
   }
 }
 
-std::vector<tsl::RCReference<ifrt::Array>> PyExecuteResults::Consume() {
+std::vector<ifrt::ArrayRef> PyExecuteResults::Consume() {
   CheckNotDisassembled();
   is_exploded_ = true;
   return std::move(ifrt_arrays_);
@@ -306,7 +305,7 @@ PyExecuteResults::DisassemblePrefixIntoSingleDeviceArrays(size_t n) {
                      ifrt_arrays_.size())
             .c_str());
   }
-  std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays;
+  std::vector<ifrt::ArrayRef> ifrt_arrays;
   ifrt_arrays.reserve(ifrt_arrays_.size() - n);
   for (size_t i = n; i < ifrt_arrays_.size(); ++i) {
     ifrt_arrays.push_back(std::move(ifrt_arrays_[i]));

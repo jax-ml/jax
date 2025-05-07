@@ -146,12 +146,12 @@ absl::StatusOr<const Shape*> XlaDynamicShape(ifrt::Array* ifrt_array,
   return &scratch.value();
 }
 
-tsl::RCReference<ifrt::Array> CreateIfRtArrayFromSingleDeviceShardedPyArrays(
+ifrt::ArrayRef CreateIfRtArrayFromSingleDeviceShardedPyArrays(
     nb_dtype dtype, absl::Span<const int64_t> shape,
     absl::Span<const PyArray> py_arrays, const nb::object& sharding) {
   const ifrt::MemoryKind dst_memory_kind = xla::GetMemoryKind(sharding);
 
-  std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays;
+  std::vector<ifrt::ArrayRef> ifrt_arrays;
   ifrt_arrays.reserve(py_arrays.size());
   absl::InlinedVector<ifrt::Device*, 1> devices;
   devices.reserve(py_arrays.size());
@@ -225,7 +225,7 @@ tsl::RCReference<ifrt::Array> CreateIfRtArrayFromSingleDeviceShardedPyArrays(
   // TODO(emilyaf): Always use `ifrt_dtype` once tokens are handled correctly.
   ifrt::DType array_dtype =
       ifrt_arrays.empty() ? ifrt_dtype.value() : ifrt_arrays[0]->dtype();
-  absl::StatusOr<tsl::RCReference<ifrt::Array>> ifrt_array =
+  absl::StatusOr<ifrt::ArrayRef> ifrt_array =
       device->client()->AssembleArrayFromSingleDeviceArrays(
           array_dtype, ifrt::Shape(shape), *std::move(ifrt_sharding),
           absl::MakeSpan(ifrt_arrays), ifrt::ArrayCopySemantics::kReuseInput,
@@ -458,7 +458,7 @@ PyArray_Storage::PyArray_Storage(
     nb::object aval, bool weak_type, xla::nb_dtype dtype,
     std::vector<int64_t> shape, nb::object sharding, bool committed,
     nb_class_ptr<PyClient> py_client, std::optional<nb_traceback> traceback,
-    tsl::RCReference<ifrt::Array> ifrt_array, xla::PjRtFuture<> result_status)
+    ifrt::ArrayRef ifrt_array, xla::PjRtFuture<> result_status)
     : aval(std::move(aval)),
       weak_type(weak_type),
       dtype(std::move(dtype)),
@@ -515,7 +515,7 @@ void PyArray::PyInit(PyArray self, nb::object aval, nb::object sharding,
 
 PyArray PyArray::MakeFromSingleDeviceArray(
     nb_class_ptr<PyClient> py_client, std::optional<nb_traceback> traceback,
-    tsl::RCReference<ifrt::Array> ifrt_array, bool weak_type, bool committed,
+    ifrt::ArrayRef ifrt_array, bool weak_type, bool committed,
     xla::PjRtFuture<> result_status) {
   if (!llvm::isa<ifrt::SingleDeviceSharding>(ifrt_array->sharding())) {
     throw XlaRuntimeError(
@@ -547,8 +547,8 @@ PyArray PyArray::MakeFromSingleDeviceArray(
 
 PyArray PyArray::MakeFromIfrtArrayAndSharding(
     nb_class_ptr<PyClient> py_client, std::optional<nb_traceback> traceback,
-    tsl::RCReference<ifrt::Array> ifrt_array, nb::object sharding,
-    bool weak_type, bool committed, bool skip_checks) {
+    ifrt::ArrayRef ifrt_array, nb::object sharding, bool weak_type,
+    bool committed, bool skip_checks) {
   auto shape_span = ifrt_array->shape().dims();
   ShapedArrayCacheKey key;
   key.dtype = ifrt_array->dtype();
@@ -590,7 +590,7 @@ PyArray PyArrayResultHandler::Call(absl::Span<const PyArray> py_arrays) const {
 }
 
 PyArray PyArrayResultHandler::Call(nb_class_ptr<PyClient> py_client,
-                                   tsl::RCReference<ifrt::Array> ifrt_array,
+                                   ifrt::ArrayRef ifrt_array,
                                    xla::PjRtFuture<> result_status) const {
   return PyArray(aval_, weak_type_, dtype_, shape_, sharding_,
                  std::move(py_client), Traceback::Get(), std::move(ifrt_array),
@@ -606,8 +606,8 @@ PyArray::PyArray(nb::object aval, bool weak_type, nb_dtype dtype,
                  std::vector<int64_t> shape, nb::object sharding,
                  nb_class_ptr<PyClient> py_client,
                  std::optional<nb_traceback> traceback,
-                 tsl::RCReference<ifrt::Array> ifrt_array, bool committed,
-                 bool skip_checks, xla::PjRtFuture<> result_status) {
+                 ifrt::ArrayRef ifrt_array, bool committed, bool skip_checks,
+                 xla::PjRtFuture<> result_status) {
   auto* self =
       PyArray_tp_new(reinterpret_cast<PyTypeObject*>(type_), nullptr, nullptr);
   m_ptr = self;
@@ -636,7 +636,7 @@ nb::object PyArray::CheckAndRearrange(const absl::Span<const PyArray> py_arrays,
   return this->attr("_check_and_rearrange")(py_arrays, sharding, aval);
 }
 
-void PyArray::SetIfrtArray(tsl::RCReference<ifrt::Array> ifrt_array) {
+void PyArray::SetIfrtArray(ifrt::ArrayRef ifrt_array) {
   GetStorage().ifrt_array = std::move(ifrt_array);
 }
 
@@ -683,7 +683,7 @@ nb::object PyArray::arrays() {
 
 absl::Status PyArray::set_arrays(nb::object obj) {
   if (obj.is_none()) {
-    SetIfrtArray(tsl::RCReference<ifrt::Array>());
+    SetIfrtArray(ifrt::ArrayRef());
     py_arrays().clear();
     return absl::OkStatus();
   }
@@ -697,9 +697,9 @@ absl::Status PyArray::set_arrays(nb::object obj) {
 
   if (list.size() == 0) return absl::OkStatus();
 
-  SetIfrtArray(tsl::RCReference<ifrt::Array>());
+  SetIfrtArray(ifrt::ArrayRef());
   py_arrays().clear();
-  std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays;
+  std::vector<ifrt::ArrayRef> ifrt_arrays;
   ifrt_arrays.reserve(list.size());
   absl::InlinedVector<ifrt::Device*, 1> devices;
   devices.reserve(list.size());
@@ -1074,7 +1074,7 @@ absl::Status PyArray::Delete() {
     // buffer has been deleted or a request must be processed via RPC,
     // especially as this deletion is done per array.
     ifrt_array()->Delete();
-    SetIfrtArray(tsl::RCReference<ifrt::Array>());
+    SetIfrtArray(ifrt::ArrayRef());
   }
   return absl::OkStatus();
 }
@@ -1090,7 +1090,7 @@ bool PyArray::IsDeleted() const {
 PyArray PyArray::Clone() const {
   auto array = tsl::FormRef(ifrt_array());
   auto* ifrt_client = py_client()->ifrt_client();
-  tsl::RCReference<ifrt::Array> out =
+  ifrt::ArrayRef out =
       ifrt_client
           ->CopyArrays(absl::MakeSpan(&array, 1), /*devices=*/std::nullopt,
                        /*memory_kind=*/std::nullopt,
@@ -1149,7 +1149,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
   // kinds. The grouping is enforced by `ifrt::Client::CopyArrays()`.
   struct Batch {
     std::vector<int> indexes;
-    std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays;
+    std::vector<ifrt::ArrayRef> ifrt_arrays;
   };
   absl::flat_hash_map<BatchedCopyToDeviceWithShardingKey, Batch> batches;
 
@@ -1206,7 +1206,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
     batch.ifrt_arrays.push_back(tsl::FormRef(ifrt_array_ptr));
   }
 
-  std::vector<std::pair<int, tsl::RCReference<ifrt::Array>>> ifrt_arrays;
+  std::vector<std::pair<int, ifrt::ArrayRef>> ifrt_arrays;
   {
     GlobalPyRefManager()->CollectGarbage();
     nb::gil_scoped_release gil_release;
@@ -1271,7 +1271,7 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
       (!force_copy && (host_buffer_semantics ==
                        ifrt::Client::HostBufferSemantics::kImmutableZeroCopy));
 
-  std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays;
+  std::vector<ifrt::ArrayRef> ifrt_arrays;
 
   absl::InlinedVector<ifrt::Device*, 1> devices;
   devices.reserve(n_devices);
@@ -1334,7 +1334,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
       GetIfrtConcreteEvenSharding(dst_sharding, ifrt_array_ptr->dtype(),
                                   ifrt_array_ptr->shape()));
 
-  tsl::RCReference<xla::ifrt::Array> new_ifrt_array;
+  xla::ifrt::ArrayRef new_ifrt_array;
   {
     nb::gil_scoped_release gil_release;
 
@@ -1399,7 +1399,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
         /*mappings=*/std::move(mappings),
     };
     DCHECK_OK(plan.Validate());
-    std::vector<tsl::RCReference<xla::ifrt::Array>> input;
+    std::vector<xla::ifrt::ArrayRef> input;
     input.push_back(tsl::FormRef(ifrt_array_ptr));
     TF_ASSIGN_OR_RETURN(
         auto remapped,
@@ -1717,7 +1717,7 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
                           PrimitiveTypeToNbDtype(shape->element_type()));
       // Objects that must be kept alive while the array is alive.
       struct Hold {
-        tsl::RCReference<ifrt::Array> buffer;
+        ifrt::ArrayRef buffer;
         std::unique_ptr<PjRtBuffer::ExternalReference> external_reference_hold;
       };
       auto hold = std::make_unique<Hold>();

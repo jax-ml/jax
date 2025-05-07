@@ -419,11 +419,10 @@ PjitFunction::~PjitFunction() {
   executables_ = nullptr;
 }
 
-void CallShardArgFallback(
-    nb::handle arg, nb::handle sharding, nb::handle layout,
-    const nb::callable& fallback,
-    std::vector<tsl::RCReference<xla::ifrt::Array>>& num_args_arrays,
-    std::vector<nb::object>& keep_alive_objects) {
+void CallShardArgFallback(nb::handle arg, nb::handle sharding,
+                          nb::handle layout, const nb::callable& fallback,
+                          std::vector<xla::ifrt::ArrayRef>& num_args_arrays,
+                          std::vector<nb::object>& keep_alive_objects) {
   tsl::profiler::TraceMe traceme("cpp_pjit_shard_arg_fallback");
   auto py_array_or_bufs = fallback(arg, sharding, layout);
   auto py_array = nb::cast<xla::PyArray>(py_array_or_bufs);
@@ -433,8 +432,7 @@ void CallShardArgFallback(
 
 // Prepares the input PjRtBuffers from the python arguments. This is equivalent
 // to shard_args() in pxla.py but for only a few supported cases.
-absl::StatusOr<std::vector<tsl::RCReference<xla::ifrt::Array>>>
-PrepareIfrtInputs(
+absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     const xla::PyLoadedExecutable& executable,
     absl::Span<nb::object const> flat_dynamic_args,
     absl::Span<xla::PyArgSignature const> flat_dynamic_arg_signatures,
@@ -449,12 +447,12 @@ PrepareIfrtInputs(
       executable.ifrt_loaded_executable()->num_devices();
   int num_args = flat_dynamic_args.size();
 
-  std::vector<tsl::RCReference<xla::ifrt::Array>> num_args_arrays;
+  std::vector<xla::ifrt::ArrayRef> num_args_arrays;
   num_args_arrays.reserve(num_args);
 
   struct CopyGroup {
     std::vector<int> indices;
-    std::vector<tsl::RCReference<xla::ifrt::Array>> arrays;
+    std::vector<xla::ifrt::ArrayRef> arrays;
   };
   absl::flat_hash_map<std::pair<xla::ifrt::Device*, xla::ifrt::MemoryKind>,
                       CopyGroup>
@@ -760,7 +758,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
       tsl::Env::Default()->GetCurrentThreadId();
 
   // A vector of [num_outputs].
-  std::vector<tsl::RCReference<xla::ifrt::Array>> output_arrays;
+  std::vector<xla::ifrt::ArrayRef> output_arrays;
   {
     nb::gil_scoped_release gil_release;
     TF_ASSIGN_OR_RETURN(auto result,

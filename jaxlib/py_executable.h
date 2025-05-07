@@ -89,7 +89,7 @@ class PyShardedToken {
 class PyExecuteResults {
  public:
   PyExecuteResults(const nb_class_ptr<PyClient>& client,
-                   std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays,
+                   std::vector<ifrt::ArrayRef> ifrt_arrays,
                    int num_computations, PyShardedToken token,
                    PjRtFuture<> result_status = PjRtFuture<>());
 
@@ -102,7 +102,7 @@ class PyExecuteResults {
       std::vector<std::variant<const PyArrayResultHandler*, nanobind::object>>
           out_handlers);
 
-  std::vector<tsl::RCReference<ifrt::Array>> Consume();
+  std::vector<ifrt::ArrayRef> Consume();
 
   PyShardedToken ConsumeToken();
 
@@ -117,7 +117,7 @@ class PyExecuteResults {
   bool is_exploded_ = false;
   bool token_consumed_ = false;
   nb_class_ptr<PyClient> client_;
-  std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays_;
+  std::vector<ifrt::ArrayRef> ifrt_arrays_;
   int num_computations_;
   PyShardedToken token_;
   // Only set if the computation has tokens.
