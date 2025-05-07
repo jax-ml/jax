@@ -363,6 +363,23 @@ def _infer_memref_load_transforms(op: memref.LoadOp) -> OptionalTransforms:
   raise NotImplementedError("Non-scalar memref.load transforms")
 
 
+@partial(_add_transform_inference_rule, memref.CastOp)
+def _infer_memref_cast_transforms(
+    op: memref.CastOp,
+) -> OptionalTransforms:
+  if inference_utils.has_in_transforms_set(
+      op
+  ) and inference_utils.has_out_transforms_set(op):
+    return inference_utils.in_transforms(op), inference_utils.out_transforms(op)
+
+  transforms = _transforms_from_uses(op)
+  in_transforms = inference_utils.value_transforms(op.source)
+  transforms = _resolve_transforms(transforms, in_transforms)
+  if transforms is None:
+    return None
+  return [transforms], [transforms]
+
+
 def _should_have_transforms(op: ir.OpView) -> bool:
   """Returns 'True' if the operation should be assigned in/out transforms."""
   return any(
