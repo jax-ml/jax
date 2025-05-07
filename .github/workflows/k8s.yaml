@@ -1,4 +1,4 @@
-name: Distributed run using K8s Jobset
+name: Multi-process run using K8s
 
 on:
   push:
