@@ -1216,6 +1216,7 @@ py_library_providing_imports_info(
         ],
         [
             "experimental/buffer_callback.py",
+            "experimental/mosaic/gpu/*.py",
         ],
     ),
     visibility = ["//visibility:public"],
