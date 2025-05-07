@@ -56,7 +56,7 @@ _Ref = pallas_core.AbstractMemoryRef | state_types.TransformedRef
 
 
 def _check_ref(
-    aval: object, name: str, memory_space: gpu_core.GPUMemorySpace
+    aval: object, name: str, memory_space: gpu_core.MemorySpace
 ) -> None:
   if not isinstance(aval, state_types.AbstractRef):
     raise TypeError(f"{name} must be a reference, got {aval}")
@@ -1175,11 +1175,11 @@ def _tcgen05_mma_abstract_eval(acc, a, b, barrier, accumulate,
   if collective:
     raise NotImplementedError("Collective MMA not yet implemented.")
 
-  if acc.memory_space != gpu_core.GPUMemorySpace.TMEM:
+  if acc.memory_space != gpu_core.MemorySpace.TMEM:
     raise ValueError("Accumulator must be a TMEM Ref.")
-  if a.memory_space != gpu_core.GPUMemorySpace.SMEM:
+  if a.memory_space != gpu_core.MemorySpace.SMEM:
     raise ValueError("LHS must be an SMEM Ref. TMEM not yet supported.")
-  if b.memory_space != gpu_core.GPUMemorySpace.SMEM:
+  if b.memory_space != gpu_core.MemorySpace.SMEM:
     raise ValueError("RHS must be an SMEM Ref.")
 
   for_tensor_core = getattr(

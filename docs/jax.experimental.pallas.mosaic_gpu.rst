@@ -10,9 +10,9 @@ Classes
    :toctree: _autosummary
 
    Barrier
-   GPUBlockSpec
-   GPUCompilerParams
-   GPUMemorySpace
+   BlockSpec
+   CompilerParams
+   MemorySpace
    Layout
    SwizzleTransform
    TilingTransform

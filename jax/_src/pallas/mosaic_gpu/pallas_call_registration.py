@@ -63,9 +63,9 @@ def pallas_call_lowering(
   mgpu.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
 
   if "mosaic_gpu" in compiler_params:
-    params = cast(gpu_core.GPUCompilerParams, compiler_params["mosaic_gpu"])
+    params = cast(gpu_core.CompilerParams, compiler_params["mosaic_gpu"])
   else:
-    params = gpu_core.GPUCompilerParams()
+    params = gpu_core.CompilerParams()
 
   jax_mesh = None
   axis_context = ctx.module_context.axis_context

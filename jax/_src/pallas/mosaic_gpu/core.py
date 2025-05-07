@@ -70,7 +70,7 @@ def is_trivial_index(idx, shape) -> bool:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class GPUCompilerParams(pallas_core.CompilerParams):
+class CompilerParams(pallas_core.CompilerParams):
   """Mosaic GPU compiler parameters.
 
   Attributes:
@@ -107,7 +107,7 @@ class GPUCompilerParams(pallas_core.CompilerParams):
       )
 
 
-class GPUMemorySpace(enum.Enum):
+class MemorySpace(enum.Enum):
   #: Global memory.
   GMEM = "gmem"
   #: Shared memory.
@@ -140,7 +140,7 @@ class SemaphoreType(enum.Enum):
       dtype = pallas_core.BarrierSemaphore()
     else:
       dtype = pallas_core.Semaphore()
-    return pallas_core.MemoryRef(shape, dtype, GPUMemorySpace.GMEM)
+    return pallas_core.MemoryRef(shape, dtype, MemorySpace.GMEM)
 
   def get_array_aval(self) -> jax_core.ShapedArray:
     return self(()).get_array_aval()
@@ -184,7 +184,7 @@ def kernel(
             *scratch_shapes,
         )
       pallas_core.core_map(
-          GPUMesh(**mesh_kwargs), compiler_params=compiler_params
+          Mesh(**mesh_kwargs), compiler_params=compiler_params
       )(cmap_body)
     _, outs = state_discharge.run_state(stateful)(
         (operands, jax.tree.map(jnp.zeros_like, out_shape))
@@ -756,7 +756,7 @@ class UnswizzleRef(state_types.Transform):
 
 
 @dataclasses.dataclass
-class GPUBlockSpec(pallas_core.BlockSpec):
+class BlockSpec(pallas_core.BlockSpec):
   transforms: Sequence[MemoryRefTransform] = ()
 
   def to_block_mapping(
@@ -788,10 +788,10 @@ class GPUBlockSpec(pallas_core.BlockSpec):
     )
 
 
-GMEM = GPUMemorySpace.GMEM
-SMEM = GPUMemorySpace.SMEM
-TMEM = GPUMemorySpace.TMEM
-REGS = GPUMemorySpace.REGS
+GMEM = MemorySpace.GMEM
+SMEM = MemorySpace.SMEM
+TMEM = MemorySpace.TMEM
+REGS = MemorySpace.REGS
 
 
 class barrier_dtype(dtypes.extended):
@@ -874,7 +874,7 @@ class WGMMAAccumulatorRef:
           "Preinitialized WGMMAAccumulatorRef only supported in pl.run_state."
       )
     return WGMMAAbstractAccumulatorRef(
-        jax_core.ShapedArray(shape=self.shape, dtype=self.dtype), GPUMemorySpace.REGS
+        jax_core.ShapedArray(shape=self.shape, dtype=self.dtype), MemorySpace.REGS
     )
 
   @staticmethod
@@ -884,7 +884,7 @@ class WGMMAAccumulatorRef:
 
 def _wgmma_ref_type_mapping(ref: WGMMAAccumulatorRef):
   aval = WGMMAAbstractAccumulatorRef(
-      jax_core.ShapedArray(shape=ref.shape, dtype=ref.dtype), GPUMemorySpace.REGS
+      jax_core.ShapedArray(shape=ref.shape, dtype=ref.dtype), MemorySpace.REGS
   )
   return aval, ref._init
 state_types._ref_type_aval_mappings[WGMMAAccumulatorRef] = _wgmma_ref_type_mapping
@@ -922,7 +922,7 @@ def _as_accum(ref) -> WGMMAAbstractAccumulatorRef:
 _WARPGROUP_AXIS_NAME = object()
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class GPUMesh:
+class Mesh:
   grid: Sequence[int] = ()
   grid_names: Sequence[str] = ()
   cluster: Sequence[int] = ()
@@ -1009,15 +1009,15 @@ def _gpu_mesh_discharge_rule(
     cost_estimate,
     name,
 ):
-  if not isinstance(mesh, GPUMesh):
-    raise TypeError(f"Mesh must be a GPUMesh, got {type(mesh)}")
-  if compiler_params and not isinstance(compiler_params, GPUCompilerParams):
+  if not isinstance(mesh, Mesh):
+    raise TypeError(f"Mesh must be a `plgpu.Mesh`, got {type(mesh)}")
+  if compiler_params and not isinstance(compiler_params, CompilerParams):
     raise TypeError(
-        "Compiler params must be a GPUCompilerParams, got"
+        "Compiler params must be a `plgpu.CompilerParams`, got"
         f" {type(compiler_params)}"
     )
   if not compiler_params:
-    compiler_params = GPUCompilerParams()
+    compiler_params = CompilerParams()
   return pallas_core.default_mesh_discharge_rule(
       in_avals,
       out_avals,
@@ -1033,7 +1033,7 @@ def _gpu_mesh_discharge_rule(
   )
 
 
-pallas_core._core_map_mesh_rules[GPUMesh] = _gpu_mesh_discharge_rule
+pallas_core._core_map_mesh_rules[Mesh] = _gpu_mesh_discharge_rule
 
 
 class MemoryEffect(jax_core.Effect):
