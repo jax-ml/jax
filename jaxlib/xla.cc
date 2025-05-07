@@ -511,7 +511,6 @@ NB_MODULE(_jax, m) {
       .def(
           "get_compiled_memory_stats",
           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetCompiledMemoryStats))
-      .def("delete", &PyLoadedExecutable::Delete)
       .def("execute_sharded",
            xla::ValueOrThrowWrapper(&PyLoadedExecutable::ExecuteSharded),
            nb::arg("arguments"), nb::arg("with_tokens") = false)

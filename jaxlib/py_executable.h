@@ -161,8 +161,6 @@ class PyLoadedExecutable {
     return ifrt_loaded_executable_->GetCostAnalysis();
   }
 
-  void Delete() {}  // Will be deleted.
-
   // Takes args indexed by argid then deviceid, transposes them, and passes to
   // PjRtExecutable::Execute. The result is similarly transposed back into the
   // argid,deviceid format.
