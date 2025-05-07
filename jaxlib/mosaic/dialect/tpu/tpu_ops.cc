@@ -26,6 +26,8 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Utils/IndexingUtils.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -258,6 +260,191 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
                                                   layout_ref);
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), squeeze);
   return success();
+}
+
+namespace {
+
+// Rewrites two back-to-back TransposeOp operations into a single TransposeOp.
+class TransposeFolder final : public OpRewritePattern<tpu::TransposeOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tpu::TransposeOp transposeOp,
+                                PatternRewriter &rewriter) const override {
+    // Composes two permutations: result[i] = permutation1[permutation2[i]].
+    auto composePermutations = [](ArrayRef<int64_t> permutation1,
+                                  ArrayRef<int64_t> permutation2) {
+      SmallVector<int64_t, 4> result;
+      for (auto index : permutation2) result.push_back(permutation1[index]);
+      return result;
+    };
+
+    // Return if the input of 'transposeOp' is not defined by another transpose.
+    tpu::TransposeOp parentTransposeOp =
+        transposeOp.getVector().getDefiningOp<tpu::TransposeOp>();
+    if (!parentTransposeOp) return failure();
+
+    SmallVector<int64_t, 4> permutation = composePermutations(
+        parentTransposeOp.getPermutation(), transposeOp.getPermutation());
+    // Replace 'transposeOp' with a new transpose operation.
+    rewriter.replaceOpWithNewOp<tpu::TransposeOp>(
+        transposeOp, transposeOp.getResult().getType(),
+        parentTransposeOp.getVector(), permutation);
+    return success();
+  }
+};
+
+// Folds transpose(splat x : src_type) : res_type into splat x : res_type.
+class FoldTransposeSplat final : public OpRewritePattern<TransposeOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(TransposeOp transposeOp,
+                                PatternRewriter &rewriter) const override {
+    auto splatOp = transposeOp.getVector().getDefiningOp<vector::SplatOp>();
+    if (!splatOp) return failure();
+
+    rewriter.replaceOpWithNewOp<vector::SplatOp>(
+        transposeOp, transposeOp.getResultVectorType(), splatOp.getInput());
+    return success();
+  }
+};
+
+/// Folds transpose(create_mask) into a new transposed create_mask.
+class FoldTransposeCreateMask final : public OpRewritePattern<TransposeOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(TransposeOp transpOp,
+                                PatternRewriter &rewriter) const override {
+    Value transposeSrc = transpOp.getVector();
+    auto createMaskOp = transposeSrc.getDefiningOp<vector::CreateMaskOp>();
+    auto constantMaskOp = transposeSrc.getDefiningOp<vector::ConstantMaskOp>();
+    if (!createMaskOp && !constantMaskOp) return failure();
+
+    // Get the transpose permutation and apply it to the vector.create_mask or
+    // vector.constant_mask operands.
+    ArrayRef<int64_t> permutation = transpOp.getPermutation();
+
+    if (createMaskOp) {
+      auto maskOperands = createMaskOp.getOperands();
+      SmallVector<Value> newOperands(maskOperands.begin(), maskOperands.end());
+      applyPermutationToVector(newOperands, permutation);
+
+      rewriter.replaceOpWithNewOp<vector::CreateMaskOp>(
+          transpOp, transpOp.getResultVectorType(), newOperands);
+      return success();
+    }
+
+    // ConstantMaskOp case.
+    auto maskDimSizes = constantMaskOp.getMaskDimSizes();
+    auto newMaskDimSizes = applyPermutation(maskDimSizes, permutation);
+
+    rewriter.replaceOpWithNewOp<vector::ConstantMaskOp>(
+        transpOp, transpOp.getResultVectorType(), newMaskDimSizes);
+    return success();
+  }
+};
+
+/// Folds transpose(broadcast(x)) to broadcast(x) if the transpose is
+/// 'order preserving', where 'order preserving' means the flattened
+/// inputs and outputs of the transpose have identical (numerical) values.
+///
+/// Example:
+/// ```
+///  %0 = vector.broadcast %input : vector<1x1xi32> to vector<1x8xi32>
+///  %1 = vector.transpose %0, [1, 0] : vector<1x8xi32>
+///                                                 to vector<8x1xi32>
+/// ```
+/// can be rewritten as the equivalent
+/// ```
+///  %0 = vector.broadcast %input : vector<1x1xi32> to vector<8x1xi32>.
+/// ```
+/// The algorithm works by partitioning dimensions into groups that can be
+/// locally permuted while preserving order, and checks that the transpose
+/// only permutes within these groups.
+///
+/// Groups are either contiguous sequences of 1s, or non-1s (1-element groups).
+/// Consider broadcasting 4x1x1x7 to 2x3x4x5x6x7. This is equivalent to
+/// broadcasting from 1x1x4x1x1x7.
+///                   ^^^ ^ ^^^ ^
+///          groups:   0  1  2  3
+/// Order preserving permutations for this example are ones that only permute
+/// within the groups [0,1] and [3,4], like (1 0 2 4 3 5 6).
+class FoldTransposeBroadcast : public OpRewritePattern<tpu::TransposeOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+  FoldTransposeBroadcast(MLIRContext *context, PatternBenefit benefit = 1)
+      : OpRewritePattern<tpu::TransposeOp>(context, benefit) {}
+
+  LogicalResult matchAndRewrite(tpu::TransposeOp transpose,
+                                PatternRewriter &rewriter) const override {
+    vector::BroadcastOp broadcast =
+        transpose.getVector().getDefiningOp<vector::BroadcastOp>();
+    if (!broadcast) {
+      return rewriter.notifyMatchFailure(transpose,
+                                         "not preceded by a broadcast");
+    }
+
+    auto inputType = dyn_cast<VectorType>(broadcast.getSourceType());
+    VectorType outputType = transpose.getResultVectorType();
+
+    // transpose(broadcast(scalar)) -> broadcast(scalar) is always valid
+    bool inputIsScalar = !inputType;
+    if (inputIsScalar) {
+      rewriter.replaceOpWithNewOp<vector::BroadcastOp>(transpose, outputType,
+                                                       transpose.getVector());
+      return success();
+    }
+
+    ArrayRef<int64_t> permutation = transpose.getPermutation();
+    ArrayRef<int64_t> inputShape = inputType.getShape();
+    int64_t inputRank = inputType.getRank();
+    int64_t outputRank = transpose.getType().getRank();
+    int64_t deltaRank = outputRank - inputRank;
+
+    int low = 0;
+    for (int inputIndex = 0; inputIndex < inputRank; ++inputIndex) {
+      bool notOne = inputShape[inputIndex] != 1;
+      bool prevNotOne = (inputIndex != 0 && inputShape[inputIndex - 1] != 1);
+      bool groupEndFound = notOne || prevNotOne;
+      if (groupEndFound) {
+        int high = inputIndex + deltaRank;
+        // Return failure if not all permutation destinations for indices in
+        // [low, high) are in [low, high), i.e. the permutation is not local to
+        // the group.
+        for (int i = low; i < high; ++i) {
+          if (permutation[i] < low || permutation[i] >= high) {
+            return rewriter.notifyMatchFailure(
+                transpose, "permutation not local to group");
+          }
+        }
+      }
+    }
+
+    // We don't need to check the final group [low, outputRank) because if it is
+    // not locally bound, there must be a preceding group that already failed
+    // the check (impossible to have just 1 non-locally bound group).
+
+    // The preceding logic also ensures that at this point, the output of the
+    // transpose is definitely broadcastable from the input shape, assert so:
+    assert(vector::isBroadcastableTo(inputType, outputType) ==
+               vector::BroadcastableToResult::Success &&
+           "not broadcastable directly to transpose output");
+
+    rewriter.replaceOpWithNewOp<vector::BroadcastOp>(transpose, outputType,
+                                                     transpose.getVector());
+
+    return success();
+  }
+};
+
+}  // namespace
+
+void tpu::TransposeOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                   MLIRContext *context) {
+  results.add<FoldTransposeCreateMask, TransposeFolder, FoldTransposeSplat,
+              FoldTransposeBroadcast>(context);
 }
 
 LogicalResult MemRefReshapeOp::verify() {
@@ -539,6 +726,75 @@ LogicalResult verifyRotateOp(Op op) {
         "Expected either none or both stride and stride dimension are "
         "present");
     return failure();
+  }
+  return success();
+}
+
+void tpu::TransposeOp::build(OpBuilder &builder, OperationState &result,
+                             Value vector, ArrayRef<int64_t> permutation) {
+  VectorType vt = llvm::cast<VectorType>(vector.getType());
+  SmallVector<int64_t, 4> transposedShape(vt.getRank());
+  SmallVector<bool, 4> transposedScalableDims(vt.getRank());
+  for (unsigned i = 0; i < permutation.size(); ++i) {
+    transposedShape[i] = vt.getShape()[permutation[i]];
+    transposedScalableDims[i] = vt.getScalableDims()[permutation[i]];
+  }
+
+  result.addOperands(vector);
+  result.addTypes(VectorType::get(transposedShape, vt.getElementType(),
+                                  transposedScalableDims));
+  result.addAttribute(TransposeOp::getPermutationAttrName(result.name),
+                      builder.getDenseI64ArrayAttr(permutation));
+}
+
+OpFoldResult tpu::TransposeOp::fold(FoldAdaptor adaptor) {
+  // Eliminate splat constant transpose ops.
+  if (auto splat =
+          llvm::dyn_cast_if_present<SplatElementsAttr>(adaptor.getVector())) {
+    return splat.reshape(getResultVectorType());
+  }
+
+  // Eliminate identity transpose ops. This happens when the dimensions of the
+  // input vector remain in their original order after the transpose operation.
+  ArrayRef<int64_t> perm = getPermutation();
+
+  // Check if the permutation of the dimensions contains sequential values:
+  // {0, 1, 2, ...}.
+  for (int64_t i = 0, e = perm.size(); i < e; i++) {
+    if (perm[i] != i) {
+      return {};
+    }
+  }
+
+  return getVector();
+}
+
+LogicalResult tpu::TransposeOp::verify() {
+  VectorType vectorType = getSourceVectorType();
+  VectorType resultType = getResultVectorType();
+  int64_t rank = resultType.getRank();
+  if (vectorType.getRank() != rank) {
+    return emitOpError("vector result rank mismatch: ") << rank;
+  }
+  // Verify transposition array.
+  ArrayRef<int64_t> perm = getPermutation();
+  int64_t size = perm.size();
+  if (rank != size) {
+    return emitOpError("transposition length mismatch: ") << size;
+  }
+  SmallVector<bool, 8> seen(rank, false);
+  for (const auto &ta : llvm::enumerate(perm)) {
+    if (ta.value() < 0 || ta.value() >= rank) {
+      return emitOpError("transposition index out of range: ") << ta.value();
+    }
+    if (seen[ta.value()]) {
+      return emitOpError("duplicate position index: ") << ta.value();
+    }
+    seen[ta.value()] = true;
+    if (resultType.getDimSize(ta.index()) !=
+        vectorType.getDimSize(ta.value())) {
+      return emitOpError("dimension size mismatch at: ") << ta.value();
+    }
   }
   return success();
 }
