@@ -750,8 +750,8 @@ class PallasCallTest(PallasBaseTest):
 
   @parameterized.parameters(jnp.int8, jnp.uint8)
   def test_integer_dot(self, dtype):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_device_tpu_at_least(5):
-      self.skipTest("`int8` dot is only supported on v5 TPUs and newer.")
+    if not jtu.is_device_tpu_between(5, 6):
+      self.skipTest("`int8` dot is only supported on v5 and v6.")
 
     @functools.partial(
         self.pallas_call,
@@ -818,8 +818,8 @@ class PallasCallTest(PallasBaseTest):
 
   @parameterized.parameters(True, False)
   def test_float8_e4m3b11fnuz_dot(self, transpose):
-    if not jtu.test_device_matches(["tpu"]) or not jtu.is_device_tpu_at_least(5):
-      self.skipTest("`float8_e4m3b11fnuz` dot only supported on TPU.")
+    if not jtu.is_device_tpu_between(5, 6):
+      self.skipTest("`float8_e4m3b11fnuz` dot only supported on TPU v5 and v6.")
 
     dtype = jnp.float8_e4m3b11fnuz
     x = jax.random.normal(jax.random.key(0), (2048, 1024), dtype=jnp.bfloat16)
