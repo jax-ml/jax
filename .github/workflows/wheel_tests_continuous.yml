@@ -22,6 +22,10 @@ permissions:
       contents: read
 
 on:
+  # Add a pull request for testing
+  pull_request:
+    branches:
+      - main
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
   workflow_dispatch: # allows triggering the workflow run manually
@@ -145,7 +149,7 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          runner: ["linux-x86-n2-16", "linux-arm64-t2a-48"]
+          runner: ["linux-x86-n2-16", "linux-arm64-c4a-64"]
           python: ["3.10",]
           enable-x64: [1, 0]
     name: "Bazel CPU tests with ${{ format('{0}', 'py_import') }}"
