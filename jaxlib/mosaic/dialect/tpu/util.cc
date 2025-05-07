@@ -27,7 +27,9 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
@@ -159,6 +161,17 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
          *(tiled_layout.getTileStrides().end() - 2) == 1;
 }
 
+bool isContiguousMemref(TypedValue<MemRefType> memref) {
+  auto memref_ty = getMemRefType(memref);
+  if (auto tiled_layout =
+          dyn_cast<tpu::TiledLayoutAttr>(memref_ty.getLayout())) {
+    auto contiguous_tile_strides = ComputeTileStrides(
+        memref_ty, tiled_layout.getTiles().front().dimensions());
+    return contiguous_tile_strides == tiled_layout.getTileStrides();
+  }
+  return true;
+}
+
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space) {
   auto memory_space =
       dyn_cast_or_null<tpu::MemorySpaceAttr>(ty.getMemorySpace());
@@ -277,5 +290,23 @@ void setLayout(Operation *op, Layout in, ArrayRef<Layout> out) {
 void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out) {
   setInLayout(op, in);
   setOutLayout(op, out);
+}
+
+Value createIdxScalarConstant(OpBuilder &builder, Location loc, int32_t value) {
+  return builder.create<arith::ConstantOp>(loc, builder.getIndexType(),
+                                           builder.getIndexAttr(value));
+}
+
+Value createI32ScalarConstant(OpBuilder &builder, Location loc, int32_t value) {
+  return builder.create<arith::ConstantOp>(loc, builder.getI32Type(),
+                                           builder.getI32IntegerAttr(value));
+}
+
+Value createI32VectorConstant(OpBuilder &builder, Location loc,
+                              ArrayRef<int64_t> shape, int32_t value) {
+  return builder.create<arith::ConstantOp>(
+      loc, DenseElementsAttr::get(
+               VectorType::get(shape, builder.getI32Type()),
+               builder.getIntegerAttr(builder.getI32Type(), value)));
 }
 }  // namespace mlir::tpu

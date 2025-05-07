@@ -232,6 +232,8 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
                                    const std::array<int64_t, 2> &target_shape,
                                    bool allow_minormost_padding = false);
 
+bool isContiguousMemref(TypedValue<MemRefType> memref);
+
 // Determines whether the given MemRefType has the given memory space.
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space);
 
@@ -254,6 +256,12 @@ void setLayout(Operation *op, Layout in, Layout out);
 void setLayout(Operation *op, ArrayRef<Layout> in, Layout out);
 void setLayout(Operation *op, Layout in, ArrayRef<Layout> out);
 void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out);
+
+// Helper functions to create constants.
+Value createIdxScalarConstant(OpBuilder &builder, Location loc, int32_t value);
+Value createI32ScalarConstant(OpBuilder &builder, Location loc, int32_t value);
+Value createI32VectorConstant(OpBuilder &builder, Location loc,
+                              ArrayRef<int64_t> shape, int32_t value);
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

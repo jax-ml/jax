@@ -38,12 +38,16 @@ import hypothesis.strategies as hps
 jax.config.parse_flags_with_absl()
 jtu.setup_hypothesis(max_examples=100)
 
-_JAX_DTYPES = (
+_JAX_DTYPES_NO_BOOL = (
     jnp.float32,
     jnp.bfloat16,
     jnp.int32,
     jnp.int16,
     jnp.int8,
+)
+
+_JAX_DTYPES = (
+    *_JAX_DTYPES_NO_BOOL,
     jnp.bool_,
 )
 
@@ -510,6 +514,35 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(
         output[tuple(slice(0, d) for d in src_shape)], x
     )
+
+  @parameterized.product(dtype=_JAX_DTYPES_NO_BOOL)
+  @hp.given(
+      m=hps.integers(1, 128),
+      # Need to make sure the 2nd minor can be fully tiled by XLA in memory.
+      n=hps.sampled_from([1, 2, 4, 8, 16, 24, 32]),
+  )
+  @hp.settings(max_examples=50)
+  def test_load_to_reshape(self, dtype, m, n):
+    if not jtu.if_cloud_tpu_at_least(2025, 4, 29):
+      self.skipTest("Requires libtpu built after 2025-04-29")
+    if jtu.get_tpu_version() < 4:
+      self.skipTest("Requires TPUv4+")
+    if jtu.get_tpu_version() == 4 and dtype == jnp.int8:
+      self.skipTest("Int8 is not supported on this target")
+    packing = 32 // pallas_utils.dtype_bitwidth(dtype)
+    n *= packing
+    inp_shape = (m, n, 128)
+    out_shape = (m, n * 128)
+
+    def kernel(inp_ref, out_ref):
+      inp = inp_ref[...]
+      out_ref[...] = inp.reshape(out_shape)
+
+    inp = jnp.arange(np.prod(inp_shape), dtype=dtype).reshape(inp_shape)
+    run = pl.pallas_call(kernel, jax.ShapeDtypeStruct(out_shape, dtype))
+    output = run(inp)
+    expected = inp.reshape(out_shape)
+    np.testing.assert_array_equal(output, expected)
 
 
 @jtu.thread_unsafe_test_class()  # hypothesis is not thread safe

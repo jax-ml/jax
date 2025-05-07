@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -51,6 +52,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "jaxlib/mosaic/dialect/tpu/vreg_util.h"
 
 namespace mlir::tpu {
@@ -66,6 +68,8 @@ struct CanonicalizeContext {
   bool compatibility_mode;
 
   int hardware_generation;
+
+  std::array<int64_t, 2> target_shape;
 };
 
 bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
@@ -672,6 +676,144 @@ LogicalResult canonicalize_repeat(const CanonicalizeContext &ctx,
   return success();
 }
 
+LogicalResult canonicalize_reshape(const CanonicalizeContext &ctx,
+                                   Operation &raw_op) {
+  auto op = dyn_cast<vector::ShapeCastOp>(raw_op);
+  // We can canonicalize some load(reshape(x)) -> strided load + ALU ops.
+  auto src = op.getSource();
+  auto src_ty = src.getType();
+  auto tgt_ty = op.getType();
+  if (auto load_op = src.getDefiningOp<vector::LoadOp>()) {
+    // Pattern match (..., M, N, 128) -> (..., M, N * 128).
+    // This reshape can be folded into the load for any dtype and tiling
+    // as long as the minormost dim is 128 and N is aligned to packing.
+    auto bitwidth = src_ty.getElementTypeBitWidth();
+    auto packing = 32 / bitwidth;
+    CHECK_GT(packing, 0);
+    // Memref bitcast is not supported if HW generation is below 4. We don't
+    // return failure because we will rely on vector reshape.
+    if (ctx.hardware_generation < 4 && packing > 1) {
+      return success();
+    }
+    auto ref = load_op.getBase();
+    // Currently we only consider loading full shape from contiguous memref,
+    // otherwise we can not fold the reshape into the load.
+    if (ref.getType().getShape() != src_ty.getShape() ||
+        !isContiguousMemref(ref)) {
+      return success();
+    }
+    auto src_shape = src_ty.getShape();
+    auto tgt_shape = tgt_ty.getShape();
+    int src_rank = src_shape.size();
+    int tgt_rank = tgt_shape.size();
+    if (src_rank != tgt_rank + 1 || src_rank <= 2 ||
+        src_shape[src_rank - 2] % packing != 0 ||
+        src_shape[src_rank - 1] != ctx.target_shape[1] ||
+        src_shape[src_rank - 2] * src_shape[src_rank - 1] !=
+            tgt_shape[tgt_rank - 1]) {
+      return success();
+    }
+    for (int i = 0; i < tgt_rank - 1; ++i) {
+      if (src_shape[i] != tgt_shape[i]) {
+        return success();
+      }
+    }
+    // At this point, the pattern is matched.
+    int n = src_shape[src_rank - 2];
+    int m = src_shape[src_rank - 3];
+    auto elem_ty = src_ty.getElementType();
+    bool is_int = elem_ty.isInteger();
+    if (!is_int && !elem_ty.isBF16() && !elem_ty.isF32()) {
+      // For float, we only support f32 and bf16 which have the same exponent
+      // bitwidth.
+      return success();
+    }
+
+    ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
+    auto loc = op.getLoc();
+    // First, we bitcast and reshape src ref from (..., M, N, 128) to
+    // i32(..., M * N / packing, 128).
+    SmallVector<int64_t> b_shape(src_shape);
+    CHECK_EQ(n % packing, 0);
+    b_shape[src_rank - 2] = n / packing;
+    auto b_ref = builder.create<tpu::MemRefBitcastOp>(
+        loc, MemRefType::get(b_shape, builder.getI32Type()), ref);
+
+    SmallVector<int64_t> r_shape(tgt_shape);
+    r_shape[tgt_rank - 1] = ctx.target_shape[1];
+    r_shape[tgt_rank - 2] = m * n / packing;
+    auto new_ref = builder.create<tpu::MemRefReshapeOp>(
+        loc, MemRefType::get(r_shape, builder.getI32Type()), b_ref);
+
+    // Then, we strided load the bitcasted ref by stride (N / packing).
+    int stride = n / packing;
+    // Expect to hold n x (m, 128) chunks and wait to be concatenated
+    // horizontally.
+    SmallVector<Value> chunks(n);
+    SmallVector<int64_t> chunk_shape{m, ctx.target_shape[1]};
+    auto const0 = createIdxScalarConstant(builder, loc, 0);
+    SmallVector<Value> indices(tgt_rank, const0);
+    SmallVector<int32_t> strides(tgt_rank, 1);
+    strides[tgt_rank - 2] = stride;
+    for (int i = 0; i < stride; ++i) {
+      indices[tgt_rank - 2] = createIdxScalarConstant(builder, loc, i);
+      auto chunk = builder.create<tpu::StridedLoadOp>(
+          loc, VectorType::get(chunk_shape, builder.getI32Type()), new_ref,
+          indices, strides);
+      for (int j = 0; j < packing; ++j) {
+        int idx = i * packing + j;
+        // TODO(jevinjiang): currently we just assume all signless integer are
+        // signed which needs sign extension. But unsigned type will not work
+        // because we can not tell if signless dtype is actually unsigned
+        // unless call site explicitly specify the dtype in memref.
+        if (is_int) {
+          // Logical shift-left to clear higher bits.
+          chunks[idx] = builder.create<arith::ShLIOp>(
+              loc, chunk.getType(), chunk,
+              createI32VectorConstant(builder, loc, chunk_shape,
+                                      32 - bitwidth - j * bitwidth));
+          // Arithmetic shift-right to trigger sign extension.
+          chunks[idx] = builder.create<arith::ShRSIOp>(
+              loc, chunk.getType(), chunks[idx],
+              createI32VectorConstant(builder, loc, chunk_shape,
+                                      32 - bitwidth));
+        } else {
+          // Logical shift-right to clear lower bits.
+          chunks[idx] = builder.create<arith::ShRUIOp>(
+              loc, chunk.getType(), chunk,
+              createI32VectorConstant(builder, loc, chunk_shape, j * bitwidth));
+          // Logical shift-left to put sign bit and exponent to the beginning.
+          chunks[idx] = builder.create<arith::ShLIOp>(
+              loc, chunk.getType(), chunks[idx],
+              createI32VectorConstant(builder, loc, chunk_shape,
+                                      32 - bitwidth));
+        }
+      }
+    }
+    // Concatenate the chunks horizontally to get x32(..., M, N * 128).
+    CHECK_GT(chunks.size(), 0);
+    Value x32_tgt = chunks[0];
+    if (chunks.size() > 1) {
+      x32_tgt = builder.create<tpu::ConcatenateOp>(
+          loc, VectorType::get(tgt_shape, builder.getI32Type()), chunks,
+          /*dimension=*/1);
+    }
+    if (!is_int) {
+      x32_tgt = builder.create<tpu::BitcastOp>(
+          loc, VectorType::get(tgt_shape, builder.getF32Type()), x32_tgt);
+    }
+    // Convert to target dtype.
+    Value tgt = x32_tgt;
+    if (tgt_ty != x32_tgt.getType()) {
+      tgt = is_int ? (Value)builder.create<arith::TruncIOp>(tgt_ty, tgt)
+                   : (Value)builder.create<arith::TruncFOp>(tgt_ty, tgt);
+    }
+    op.replaceAllUsesWith(tgt);
+    op.erase();
+  }
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(const CanonicalizeContext &ctx, Operation &op)>;
 
@@ -682,6 +824,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::ExtractOp::getOperationName(), canonicalize_extract},
       {vector::MultiDimReductionOp::getOperationName(),
        canonicalize_multi_dim_reduction},
+      {vector::ShapeCastOp::getOperationName(), canonicalize_reshape},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
@@ -725,12 +868,15 @@ bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
 
 class MosaicCanonicalizer {
  public:
-  MosaicCanonicalizer(int hardware_generation, bool compatibility_mode)
+  MosaicCanonicalizer(int hardware_generation, bool compatibility_mode,
+                      std::array<int64_t, 2> target_shape)
       : hardware_generation_(hardware_generation),
-        compatibility_mode_(compatibility_mode) {}
+        compatibility_mode_(compatibility_mode),
+        target_shape_(target_shape) {}
 
   int hardware_generation_;
   bool compatibility_mode_;
+  std::array<int64_t, 2> target_shape_;
 
   LogicalResult canonicalize(func::FuncOp op) {
     if (!op.getBody().hasOneBlock()) {
@@ -751,7 +897,8 @@ class MosaicCanonicalizer {
   }
 
   LogicalResult canonicalizeOp(Operation &any_op) {
-    CanonicalizeContext ctx({compatibility_mode_, hardware_generation_});
+    CanonicalizeContext ctx(
+        {compatibility_mode_, hardware_generation_, target_shape_});
     // We must iterate over the op first, because canonicalization can cause
     // us to .erase() an op, and accessing getRegions on it after is not sound.
     // Invariant - top level ops with regions may never be invalidated.
@@ -776,14 +923,18 @@ class MosaicCanonicalizer {
 
 struct CanonicalizeMosaicPass
     : public impl::CanonicalizeMosaicPassBase<CanonicalizeMosaicPass> {
-  CanonicalizeMosaicPass(int hardware_generation_p, bool compatibility_mode_p)
+  CanonicalizeMosaicPass(int hardware_generation_p, bool compatibility_mode_p,
+                         std::array<int64_t, 2> target_shape)
       : compatibility_mode_(compatibility_mode_p) {
     this->hardware_generation = hardware_generation_p;
+    this->sublane_count = target_shape[0];
+    this->lane_count = target_shape[1];
   }
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    MosaicCanonicalizer vlc(hardware_generation, compatibility_mode_);
+    MosaicCanonicalizer vlc(hardware_generation, compatibility_mode_,
+                            {sublane_count, lane_count});
     if (vlc.canonicalize(func).failed()) {
       signalPassFailure();
     }
@@ -795,9 +946,10 @@ struct CanonicalizeMosaicPass
 }  // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
-    int hardware_generation, bool compatibility_mode) {
-  return std::make_unique<CanonicalizeMosaicPass>(hardware_generation,
-                                                  compatibility_mode);
+    int hardware_generation, bool compatibility_mode,
+    std::array<int64_t, 2> target_shape) {
+  return std::make_unique<CanonicalizeMosaicPass>(
+      hardware_generation, compatibility_mode, target_shape);
 }
 
 }  // namespace mlir::tpu
