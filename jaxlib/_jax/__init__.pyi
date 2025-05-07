@@ -328,7 +328,7 @@ class CompiledMemoryStats:
   host_output_size_in_bytes: int
   host_alias_size_in_bytes: int
   host_temp_size_in_bytes: int
-  serialized_hlo_proto: bytes
+  serialized_buffer_assignment_proto: bytes
   def __str__(self) -> str: ...
 
 class ExecutableBuildOptions:
