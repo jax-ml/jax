@@ -279,6 +279,12 @@ def to_inexact_dtype(dtype: DTypeLike) -> DType:
   return _dtype_to_inexact.get(dtype_, dtype_)
 
 
+def to_floating_dtype(dtype: DTypeLike) -> DType:
+  """Promotes a dtype to a non-complex floating dtype."""
+  dtype_ = np.dtype(dtype)
+  return finfo(_dtype_to_inexact.get(dtype_, dtype_)).dtype
+
+
 def to_complex_dtype(dtype: DTypeLike) -> DType:
   ftype = to_inexact_dtype(dtype)
   if ftype in [np.dtype('float64'), np.dtype('complex128')]:

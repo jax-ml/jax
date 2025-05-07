@@ -1071,7 +1071,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
     noverlap: Number of points to overlap between segments (default: ``nperseg // 2``).
     nfft: Number of FFT points used in the STFT. If ``None`` (default), the
       value is determined from the size of ``Zxx``.
-    input_onesided: If Tru` (default), interpret the input as a one-sided STFT
+    input_onesided: If True (default), interpret the input as a one-sided STFT
       (positive frequencies only). If False, interpret the input as a two-sided STFT.
     boundary: If True (default), it is assumed that the input signal was extended at
       its boundaries by ``stft``. If `False`, the input signal is assumed to have been truncated at the boundaries by `stft`.
@@ -1108,7 +1108,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
     raise ValueError('Must specify differing time and frequency axes!')
 
   Zxx = jnp.asarray(Zxx, dtype=jax.dtypes.canonicalize_dtype(
-      np.result_type(Zxx, np.complex64)))
+    dtypes.to_complex_dtype(Zxx.dtype)))
 
   n_default = (2 * (Zxx.shape[freq_axis] - 1) if input_onesided
                else Zxx.shape[freq_axis])
@@ -1147,7 +1147,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   xsubs = ifunc(Zxx, axis=-2, n=nfft)[..., :nperseg_int, :]
 
   # Get window as array
-  if window == 'hann':
+  if isinstance(window, str) and window == 'hann':
     # Implement the default case without scipy
     win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, jnp.pi, nperseg_int, endpoint=False)) ** 2
     win = win.astype(xsubs.dtype)
