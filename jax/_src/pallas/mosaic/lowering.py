@@ -402,9 +402,7 @@ class MosaicGridMapping:
       self,
       jaxpr: jax_core.Jaxpr,
       grid_mapping: pallas_core.GridMapping,
-      dimension_semantics: (
-          Sequence[str | tpu_core.GridDimensionSemantics, ...] | None
-      ),
+      dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
       mesh: mesh_lib.Mesh | None,
       dynamic_shape_replacement_fn: Callable[
           [tuple[jax.DimSize, ...]], tuple[int, ...]
@@ -656,9 +654,7 @@ def lower_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
     *,
-    dimension_semantics: (
-        Sequence[str | tpu_core.GridDimensionSemantics, None, ...] | None
-    ),
+    dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
     mesh: mesh_lib.Mesh | None = None,
     for_verification: bool = False,
     dynamic_shape_replacement_enabled: bool = False,
