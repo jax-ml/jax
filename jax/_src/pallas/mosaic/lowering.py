@@ -2357,7 +2357,10 @@ def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
   )
-  return vector.transpose(out_type, x, permutation)
+  if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 5, 8):
+    return vector.transpose(out_type, x, permutation)
+  else:
+    return tpu.transpose(out_type, x, permutation)
 
 
 def _bcast(x, y, x_aval, y_aval, out_aval):

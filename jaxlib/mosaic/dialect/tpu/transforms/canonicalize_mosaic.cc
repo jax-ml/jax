@@ -209,7 +209,7 @@ LogicalResult tpu_matmul_rule(const CanonicalizeContext &ctx,
   // dimension numbers changed which will later be lowered into a more efficient
   // operation that fuses the transpose into the matmul.
   auto transpose_op =
-      dyn_cast_if_present<vector::TransposeOp>(rhs.getDefiningOp());
+      dyn_cast_if_present<tpu::TransposeOp>(rhs.getDefiningOp());
   auto dimension_numbers = op.getDimensionNumbers();
   if (transpose_op && transpose_op->hasOneUse() &&
       dimension_numbers->getRhsContractingDims().size() == 1 &&
@@ -259,7 +259,7 @@ LogicalResult tpu_matmul_rule(const CanonicalizeContext &ctx,
 
       const SmallVector<int64_t> perm_vec =
           SmallVector<int64_t>(perm.begin(), perm.end());
-      lhs = builder.create<vector::TransposeOp>(
+      lhs = builder.create<tpu::TransposeOp>(
           lhs_ty_transposed, lhs,
           DenseI64ArrayAttr::get(builder.getContext(), perm_vec));
     }
@@ -703,6 +703,17 @@ LogicalResult canonicalize_repeat(const CanonicalizeContext &ctx,
   return success();
 }
 
+LogicalResult canonicalize_vector_transpose(const CanonicalizeContext &ctx,
+                                            Operation &raw_op) {
+  auto op = cast<vector::TransposeOp>(raw_op);
+  ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
+  auto new_op = builder.create<tpu::TransposeOp>(op.getType(), op.getVector(),
+                                                 op.getPermutation());
+  op.replaceAllUsesWith(new_op.getResult());
+  op.erase();
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(const CanonicalizeContext &ctx, Operation &op)>;
 
@@ -713,6 +724,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::ExtractOp::getOperationName(), canonicalize_extract},
       {vector::MultiDimReductionOp::getOperationName(),
        canonicalize_multi_dim_reduction},
+      {vector::TransposeOp::getOperationName(), canonicalize_vector_transpose},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
