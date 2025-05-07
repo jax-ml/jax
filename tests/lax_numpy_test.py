@@ -4661,7 +4661,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @jtu.sample_product(
-    dtype=[np.uint8, np.bool_],
+    dtype=int_dtypes + unsigned_dtypes + bool_dtypes,
     bitorder=['big', 'little'],
     shape=[(1, 2, 3, 4)],
     axis=[None, 0, 1, -2, -1],
