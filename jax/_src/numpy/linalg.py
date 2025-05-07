@@ -1157,6 +1157,13 @@ def norm(x: ArrayLike, ord: int | str | None = None,
     >>> jnp.linalg.norm(x, axis=1)
     Array([3.7416575, 9.486833 ], dtype=float32)
   """
+  return _norm(x, ord=ord, axis=axis, keepdims=keepdims)
+
+@partial(jit, static_argnames=('ord', 'axis', 'keepdims'))
+def __norm(x: ArrayLike, ord: int | str | None = None,
+          axis: None | tuple[int, ...] | int = None,
+          keepdims: bool = False) -> Array:
+
   x = ensure_arraylike("jnp.linalg.norm", x)
   x, = promote_dtypes_inexact(x)
   x_shape = np.shape(x)
@@ -1219,6 +1226,27 @@ def norm(x: ArrayLike, ord: int | str | None = None,
   else:
     raise ValueError(f"Improper number of axes for norm: {axis=}. Pass one axis to"
                      " compute a vector-norm, or two axes to compute a matrix-norm.")
+
+_norm = custom_jvp(__norm, nondiff_argnums=(1, 2, 3))
+
+@_norm.defjvp
+def _norm_jvp(ord, axis, keepdims, primals, tangents):
+  (x,), (dx,) = primals, tangents
+  out = _norm(x, ord=ord, axis=axis, keepdims=keepdims)
+  if ord is None or ord in ("f", "fro", 2):
+    denom = out
+    if not keepdims and axis is not None:
+      denom = jnp.expand_dims(denom, axis)
+    safe_denom = ufuncs.maximum(denom, jnp.finfo(ufuncs.real(x)).eps)
+    grad_at_zero = ufuncs.real(dx) * ufuncs.sqrt(denom)
+    out_grad = reductions.sum(jnp.where(
+      denom != 0, ufuncs.real(dx * ufuncs.conj(x)) / safe_denom, grad_at_zero),
+        axis=axis, keepdims=keepdims)
+    return out, out_grad
+  else:
+    return jax.jvp(partial(__norm, ord=ord, axis=axis, keepdims=keepdims),
+                   primals, tangents)
+
 
 @overload
 def qr(a: ArrayLike, mode: Literal["r"]) -> Array: ...
@@ -1622,6 +1650,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
 
 
 @export
+@partial(jit, static_argnames=('axis', 'keepdims', 'ord'))
 def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, keepdims: bool = False,
                 ord: int | str = 2) -> Array:
   """Compute the vector norm of a vector or batch of vectors.
@@ -1657,6 +1686,12 @@ def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, k
     >>> jnp.linalg.vector_norm(x, axis=1)
     Array([3.7416575, 9.486833 ], dtype=float32)
   """
+  return _vector_norm(x, axis=axis, keepdims=keepdims, ord=ord)
+
+@partial(jit, static_argnames=('axis', 'keepdims', 'ord'))
+def __vector_norm(x: ArrayLike, axis: int | tuple[int, ...] | None = None,
+                 keepdims: bool = False, ord: int | str = 2) -> Array:
+
   x = ensure_arraylike('jnp.linalg.vector_norm', x)
   if ord is None or ord == 2:
     return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
@@ -1687,6 +1722,28 @@ def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, k
     ord_inv = lax_internal._const(abs_x, 1. / ord_arr)
     out = reductions.sum(abs_x ** ord_arr, axis=axis, keepdims=keepdims)
     return ufuncs.power(out, ord_inv)
+
+_vector_norm = custom_jvp(__vector_norm, nondiff_argnums=(1, 2, 3))
+
+@_vector_norm.defjvp
+def _vector_norm_jvp(axis, keepdims, ord, primals, tangents):
+  (x,), (dx,) = primals, tangents
+  out = vector_norm(x, axis=axis, keepdims=keepdims, ord=ord)
+  if ord is None or ord == 2:
+    denom = out
+    if not keepdims and axis is not None:
+      denom = jnp.expand_dims(denom, axis)
+    safe_denom = ufuncs.maximum(denom, jnp.finfo(ufuncs.real(x)).eps)
+    grad_at_zero = ufuncs.real(dx) * ufuncs.sqrt(denom)
+    out_grad = reductions.sum(jnp.where(
+      denom != 0, ufuncs.real(dx * ufuncs.conj(x)) / safe_denom, grad_at_zero),
+        axis=axis, keepdims=keepdims)
+    return out, out_grad
+  else:
+    return jax.jvp(
+      partial(__vector_norm, axis=axis, keepdims=keepdims, ord=ord),
+      primals, tangents)
+
 
 @export
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
