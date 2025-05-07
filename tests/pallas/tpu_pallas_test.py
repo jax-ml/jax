@@ -1290,6 +1290,16 @@ class PallasCallDMATest(PallasBaseTest):
         grid=(2,),
     )(x)
     np.testing.assert_allclose(y, x)
+    y = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((2, 8, 128), jnp.float32),
+        grid=(2,),
+    )(x)
+    np.testing.assert_allclose(y, x)
 
   def test_hbm_vmem_dma(self):
     def kernel(x_hbm_ref, y_ref):
@@ -1309,6 +1319,14 @@ class PallasCallDMATest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x)
+    y = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ],
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(y, x)
 
   def test_vmem_hbm_dma(self):
     def kernel(x_ref, y_hbm_ref):
@@ -1322,6 +1340,12 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(y, x)
+    y = self.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x)
@@ -1346,6 +1370,13 @@ class PallasCallDMATest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x)
+    y = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(y, x)
 
   def test_hbm_smem_dma(self):
     def kernel(x_hbm_ref, y_ref):
@@ -1360,6 +1391,14 @@ class PallasCallDMATest(PallasBaseTest):
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
+        ],
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(y, x)
+    y = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.HBM),
         ],
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
@@ -1381,6 +1420,16 @@ class PallasCallDMATest(PallasBaseTest):
             pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
         out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        out_shape=jax.ShapeDtypeStruct((1, 2), jnp.float32),
+    )(x)
+    expected = jnp.zeros_like(x[0:1, 0:2]).at[0, 1].set(x[4, 4])
+    np.testing.assert_allclose(y, expected)
+    y = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
         out_shape=jax.ShapeDtypeStruct((1, 2), jnp.float32),
     )(x)
     expected = jnp.zeros_like(x[0:1, 0:2]).at[0, 1].set(x[4, 4])
@@ -1447,6 +1496,15 @@ class PallasCallDMATest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x.reshape((16, 128)))
+    y = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(y, x.reshape((16, 128)))
 
   def test_hbm_vmem_dma_multiple_indexing(self):
     if self.INTERPRET:
@@ -1473,6 +1531,15 @@ class PallasCallDMATest(PallasBaseTest):
             pl.BlockSpec(memory_space=pl.ANY),
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        out_shape=jax.ShapeDtypeStruct((3, 16, 128), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(y, x.reshape((3, 16, 128)))
+    y = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
         out_shape=jax.ShapeDtypeStruct((3, 16, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x.reshape((3, 16, 128)))
