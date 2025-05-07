@@ -26,6 +26,7 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -504,6 +505,36 @@ LogicalResult VectorStoreOp::verify() {
     }
     if (value_ty.getShape() != getMask().getType().getShape())
       return emitOpError("Expected valueToStore shape to match mask shape");
+  }
+  return success();
+}
+
+LogicalResult VectorLoadOp::verify() {
+  const MemRefType ref_ty = getBase().getType();
+  if (!getStrides().empty()) {
+    if (llvm::size(getStrides()) != ref_ty.getRank()) {
+      return emitOpError("Expected ") << ref_ty.getRank() << " strides.";
+    }
+    return emitError("Not implemented: general vector load with strides.");
+  }
+  const VectorType value_ty = getResult().getType();
+
+  if (value_ty.getElementType() != ref_ty.getElementType()) {
+    return emitOpError("Expected base and result element type to match.");
+  }
+  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+    return emitOpError("Expected ") << ref_ty.getRank() << " indices.";
+  }
+  if (getMask()) {
+    if (value_ty.getElementTypeBitWidth() != 32) {
+      return emitError(
+          "Not implemented: masked load with non-32-bit element type");
+    }
+    if (vector::isBroadcastableTo(getMask().getType(), value_ty) !=
+        vector::BroadcastableToResult::Success) {
+      return emitOpError(
+          "Expected mask shape to be broadcastable to result shape.");
+    }
   }
   return success();
 }

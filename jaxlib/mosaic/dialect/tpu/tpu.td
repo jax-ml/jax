@@ -245,6 +245,33 @@ def TPU_VectorStoreOp :TPU_Op<"vector_store", [DefaultMemWrite, AttrSizedOperand
   let hasVerifier = 1;
 }
 
+// tpu.vector_load loads a vector from memory into a register.
+//
+//  base   : Memref to load from.
+//  indices: Scalar indices into base. indices must be of the same rank as the
+//           base memref shape.
+//  strides: The stride to use for calculating the address of subsequent
+//           elements. If left unspecified, the stride is implicitly 1 along
+//           each dimension. Otherwise the stride must match the rank of the
+//           memref shape.
+//  mask   : Elementwise vector mask. Must be broadcastable to the shape of the
+//           result vector. Depending on the core type, this may be a dynamic
+//           (lane) mask consumed from a register or a static (sublane) mask
+//           that must be the result of arith.constant.
+def TPU_VectorLoadOp :TPU_Op<"vector_load", [DefaultMemRead, AttrSizedOperandSegments]> {
+  let arguments = (ins
+    AnyMemRef:$base,
+    Variadic<Index>:$indices,
+    DenseI32ArrayAttr:$strides,
+    Optional<AnyVectorOfNonZeroRank>:$mask   // Elementwise mask.
+  );
+  let results = (outs AnyVectorOfNonZeroRank:$result);
+  let assemblyFormat = [{
+    $base `[` $indices `]` (`masked` $mask^)? attr-dict `:` type($base) `,` type($result) `,` type($mask)
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_StridedLoadOp : TPU_Op<"strided_load", [DefaultMemRead]> {
   let arguments = (ins
     AnyMemRef:$base,
