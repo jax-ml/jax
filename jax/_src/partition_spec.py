@@ -88,12 +88,12 @@ class PartitionSpecImpl:
 
   def __add__(self, other):
     if not isinstance(other, (tuple, PartitionSpec)):
-      return NotImplemented
+      return NotImplementedError
     return PartitionSpec(*self, *other)
 
   def __radd__(self, other):
     if not isinstance(other, (tuple, PartitionSpec)):
-      return NotImplemented
+      return NotImplementedError
     return PartitionSpec(*other, *self)
 
   def index(self, value):
