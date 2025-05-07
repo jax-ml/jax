@@ -653,9 +653,9 @@ def as_gpu_kernel(
   )
 
   if thread_semantics == LoweringSemantics.Warpgroup and dialect is not None:
-    # We need to run CSE first in orderto remove dead-code for which layout
-    # inference does not work.
-    pm = mlir.passmanager.PassManager.parse("builtin.module(cse)", module.context)
+    # We need to run a pass that removes dead-code for which layout inference
+    # does not work.
+    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize)", module.context)
     pm.run(module.operation)
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
@@ -744,9 +744,9 @@ def as_torch_gpu_kernel(
   )
 
   if lowering_semantics == LoweringSemantics.Warpgroup and dialect is not None:
-    # We need to run CSE first in orderto remove dead-code for which layout
-    # inference does not work.
-    pm = mlir.passmanager.PassManager.parse("builtin.module(cse)", module.context)
+    # We need to run a pass that removes dead-code for which layout inference
+    # does not work.
+    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize)", module.context)
     pm.run(module.operation)
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
