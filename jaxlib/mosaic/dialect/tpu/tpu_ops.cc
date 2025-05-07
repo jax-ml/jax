@@ -1220,13 +1220,22 @@ LogicalResult PackSubelementsOp::verify() {
   if (getPositions().size() != getSources().size()) {
     return emitOpError("Size of sources and positions must match");
   }
-  const int packing_factor = cast<VectorType>(getSources().front().getType())
-                                 .getElementTypeBitWidth() /
-                             getType().getElementTypeBitWidth();
+  auto src_type = cast<VectorType>(getSources().front().getType());
+  auto src_bitwidth = src_type.getElementTypeBitWidth();
+  auto dst_bitwidth = getType().getElementTypeBitWidth();
+  const int packing_factor = src_bitwidth / dst_bitwidth;
+  if (packing_factor == 0) {
+    return emitOpError("Input bitwidth ")
+           << src_bitwidth
+           << " must be greater than output bitwidth: " << dst_bitwidth;
+  }
   SmallVector<bool> seen_positions(packing_factor, false);
   for (const int32_t position : getPositions()) {
     if (position < 0 || packing_factor <= position) {
-      return emitOpError("Positions must be between 0 and the packing factor");
+      return emitOpError(
+                 "Positions must be between 0 and the packing factor - got "
+                 "position: ")
+             << position << " vs packing factor: " << packing_factor;
     }
     if (seen_positions[position]) {
       return emitOpError("Positions must be unique");
