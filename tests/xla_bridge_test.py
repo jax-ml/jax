@@ -143,7 +143,9 @@ class XlaBridgeTest(jtu.JaxTestCase):
     registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
       with mock.patch.object(
-          xc, "pjrt_plugin_initialized", autospec=True, return_vale=True
+          xc,
+          "pjrt_plugin_initialized",
+          autospec=True,
       ):
         with mock.patch.object(xc, "initialize_pjrt_plugin", autospec=True):
           registration.factory()
@@ -181,7 +183,9 @@ class XlaBridgeTest(jtu.JaxTestCase):
     registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
       with mock.patch.object(
-          xc, "pjrt_plugin_initialized", autospec=True, return_vale=True
+          xc,
+          "pjrt_plugin_initialized",
+          autospec=True,
       ):
         with mock.patch.object(xc, "initialize_pjrt_plugin", autospec=True):
           registration.factory()
@@ -202,6 +206,22 @@ class XlaBridgeTest(jtu.JaxTestCase):
       options["ml_framework_version"] = version.__version__
 
     mock_make.assert_called_once_with("name1", options, None)
+
+  def test_register_plugin_with_lazy_config(self):
+    options = {"bar": "baz"}
+
+    def f():
+      return options
+
+    with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
+      with mock.patch.object(
+          _profiler, "register_plugin_profiler", autospec=True
+      ):
+        xb.register_plugin("foo", options=f, library_path="/dev/null")
+    with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
+      with mock.patch.object(xc, "pjrt_plugin_initialized", autospec=True):
+        xb._backend_factories["foo"].factory()
+    mock_make.assert_called_once_with("foo", options, None)
 
 
 class GetBackendTest(jtu.JaxTestCase):

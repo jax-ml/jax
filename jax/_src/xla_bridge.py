@@ -614,6 +614,8 @@ def _options_from_jax_configs(plugin_name):
 
   return options
 
+OptionsDict = Mapping[str, str | int | list[int] | float | bool]
+
 
 # TODO(b/261345120): decide on a public name and expose a public method which is
 # an alias of this method.
@@ -622,7 +624,7 @@ def register_plugin(
     *,
     priority: int = 400,
     library_path: str | None = None,
-    options: Mapping[str, str | int | list[int] | float | bool] | None = None,
+    options: OptionsDict | Callable[[], OptionsDict] | None = None,
     c_api: Any | None = None,
 ) -> Any:
   """Registers a backend factory for the PJRT plugin.
@@ -633,7 +635,9 @@ def register_plugin(
       Default to be 400.
     library_path: Optional. The full path to the .so file of the plugin. The
       plugin needs to provide either the library_path or the c_api.
-    options: Optional. It is used when creating a PJRT plugin client.
+    options: Optional. It is used when creating a PJRT plugin client. Can be a
+      callable, in which case it will be invoked upon plugin initialization
+      time, and will be expected to return an option dictionary.
     c_api: Optional. The plugin can provide a PJRT C API to be registered.
   """
   def factory():
@@ -641,7 +645,7 @@ def register_plugin(
       xla_client.initialize_pjrt_plugin(plugin_name)
     updated_options = {}
     if options is not None:
-      updated_options.update(options)
+      updated_options.update(options() if callable(options) else options)
     updated_options.update(_options_from_jax_configs(plugin_name))
     if distributed.global_state.client is None:
       return xla_client.make_c_api_client(plugin_name, updated_options, None)
