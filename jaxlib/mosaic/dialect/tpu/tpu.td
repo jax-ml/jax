@@ -909,6 +909,29 @@ def TPU_SublaneShuffleOp : TPU_Op<"sublane_shuffle", [SameOperandsAndResultType]
   let hasVerifier = 1;
 }
 
+def TPU_TransposeOp : TPU_Op<"transpose", [Pure]> {
+  let summary = "tpu transpose operation";
+  let arguments = (ins AnyVectorOfAnyRank:$vector,
+                       DenseI64ArrayAttr:$permutation);
+  let results = (outs AnyVectorOfAnyRank:$result);
+
+  let builders = [
+    OpBuilder<(ins "Value":$vector, "ArrayRef<int64_t>":$permutation)>
+  ];
+  let assemblyFormat = [{
+    $vector `,` $permutation attr-dict `:` type($vector) `->` type($result)
+  }];
+  let extraClassDeclaration = [{
+    VectorType getSourceVectorType() {
+      return ::llvm::cast<VectorType>(getVector().getType());
+    }
+    VectorType getResultVectorType() {
+      return ::llvm::cast<VectorType>(getResult().getType());
+    }
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_LogOp : TPU_Op<"log"> {
   let arguments = (ins
     Variadic<AnyType>:$inputs,

@@ -324,6 +324,41 @@ LogicalResult MemRefReshapeOp::verify() {
   return success();
 }
 
+LogicalResult TransposeOp::verify() {
+  auto source_type = getSourceVectorType();
+  auto permutation = getPermutation();
+  auto output_type = getResultVectorType();
+  auto input_shape = source_type.getShape();
+  auto output_shape = output_type.getShape();
+  if (source_type.getElementType() != output_type.getElementType()) {
+    return emitOpError("Expected input and output element types to match");
+  }
+  if (permutation.size() != source_type.getRank()) {
+    return emitOpError("Expected permutation rank to match input rank");
+  }
+  if (permutation.size() != output_type.getRank()) {
+    return emitOpError("Expected permutation rank to match output rank");
+  }
+  std::vector<bool> seen_dims(source_type.getRank(), false);
+  for (int64_t dim : permutation) {
+    if (dim < 0 || dim >= source_type.getRank()) {
+      return emitOpError("Permutation element out of bounds: ") << dim;
+    }
+    if (seen_dims[dim]) {
+      return emitOpError("Permutation element repeated: ") << dim;
+    }
+    seen_dims[dim] = true;
+  }
+  for (int i = 0; i < source_type.getRank(); ++i) {
+    if (input_shape[permutation[i]] != output_shape[i]) {
+      return emitOpError(
+          "Expected input shape permuted by the given permutation to match the "
+          "output shape");
+    }
+  }
+  return success();
+}
+
 LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
                                             PatternRewriter &rewriter) {
   auto src_ty = op.getInput().getType();

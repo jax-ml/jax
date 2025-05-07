@@ -320,7 +320,7 @@ class VectorLayoutInferer {
         if (inferStore<vector::StoreOp>(op).failed()) {
           return failure();
         }
-      } else if (auto op = dyn_cast<vector::TransposeOp>(any_op)) {
+      } else if (auto op = dyn_cast<tpu::TransposeOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
         }
@@ -1622,7 +1622,7 @@ class VectorLayoutInferer {
     return success();
   }
 
-  LogicalResult infer(vector::TransposeOp op) {
+  LogicalResult infer(tpu::TransposeOp op) {
     auto permutation = op.getPermutation();
     TPU_CHECK_OP(permutation.size() > 1,
                  "Vector and scalar transpose should be a no-op and removed");
@@ -1910,7 +1910,7 @@ class VectorLayoutInferer {
           continue;
         }
       }
-      if (auto transpose = dyn_cast<vector::TransposeOp>(operand.getOwner())) {
+      if (auto transpose = dyn_cast<tpu::TransposeOp>(operand.getOwner())) {
         auto perm = transpose.getPermutation();
         auto rank = perm.size();
         // Only permutations that actually swap the last two dims need it.
