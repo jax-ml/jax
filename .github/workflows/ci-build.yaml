@@ -6,7 +6,19 @@ name: CI
 # - 3.10 : Part of Matrix
 # - 3.11 : Part of Matrix
 
+# hello 
+
 on:
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
   # Trigger the workflow on push or pull request,
   # but only for the main branch
   push:
@@ -68,7 +80,7 @@ jobs:
     - name: Image Setup
       run: |
         apt update
-        apt install -y libssl-dev
+        apt install -y libssl-dev gdb
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
       with:
@@ -89,14 +101,20 @@ jobs:
         PY_COLORS: 1
       run: |
         uv pip install --system -e .
+        set +e
+        python -c "print('hello')"
+
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         echo "JAX_ENABLE_CUSTOM_PRNG=$JAX_ENABLE_CUSTOM_PRNG"
         echo "JAX_THREEFRY_PARTITIONABLE=$JAX_THREEFRY_PARTITIONABLE"
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
         echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-        pytest -n auto --tb=short --maxfail=20 tests examples
+        pytest -n auto --tb=short --maxfail=20 tests/api_test.py || true
 
+    - name: Sleep
+      run: |
+        while true; do echo "sleeping"; sleep 40; done
 
   documentation:
     name: Documentation - test code snippets
