@@ -189,7 +189,9 @@ class SvdTest(jtu.JaxTestCase):
 
       osp_linalg_fn = functools.partial(
           osp_linalg.svd, full_matrices=full_matrices, compute_uv=compute_uv)
-      actual_s = svd.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
+      actual_s = svd.svd(
+          a, full_matrices=full_matrices, compute_uv=compute_uv
+      ).block_until_ready()
 
       expected_s = osp_linalg_fn(a)
 
