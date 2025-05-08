@@ -3007,7 +3007,11 @@ def _reshard_impl(x, dst_sharding):
 reshard_p.def_impl(_reshard_impl)
 
 def _reshard_transpose_rule(ct, x, dst_sharding):
-  return [reshard_p.bind(ct, dst_sharding=x.aval.sharding)]
+  x_sharding = x.aval.sharding
+  if x_sharding.spec.unreduced:
+    x_sharding = NamedSharding(
+        x_sharding.mesh, PartitionSpec(*x_sharding.spec._partitions))
+  return [reshard_p.bind(ct, dst_sharding=x_sharding)]
 ad.deflinear2(reshard_p, _reshard_transpose_rule)
 
 def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):

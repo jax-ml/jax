@@ -7764,7 +7764,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @config.use_shardy_partitioner(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_basic(self, mesh):
-    np_inp = np.arange(16).reshape(8, 2)
+    np_inp = np.arange(16.).reshape(8, 2)
     x = jax.device_put(np_inp, P('x', 'y'))
     y = jax.device_put(np_inp.T, P('y', None))
     a = jax.device_put(np_inp, P('x', 'y'))
@@ -7789,6 +7789,73 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     lowered_text = traced.lower().as_text()
     self.assertIn('unreduced={"y"}', lowered_text)
     self.assertTrue(lowered_text.count('unreduced={"y"}') == 3)
+
+    # { lambda ; a:f64[8@x,2@y] b:f64[2@y,8] c:f64[8@x,2@y] d:f64[2@y,8]. let
+    #   e:f64[8@x,8] = pjit[
+    #     name=f
+    #     ctx_mesh=Mesh('x': 2, 'y': 2, axis_types=(Explicit, Explicit))
+    #     jaxpr={ lambda ; a:f64[8@x,2@y] b:f64[2@y,8] c:f64[8@x,2@y] d:f64[2@y,8]. let
+    #         f:f64[8@x,8]{U:y} = dot_general[
+    #           dimension_numbers=(([1], [0]), ([], []))
+    #           out_sharding=P('x', unreduced=('y',)))
+    #           preferred_element_type=float64
+    #         ] a b
+    #         g:f64[8@x,8]{U:y} = dot_general[
+    #           dimension_numbers=(([1], [0]), ([], []))
+    #           out_sharding=P('x', unreduced=('y',)))
+    #           preferred_element_type=float64
+    #         ] c d
+    #         h:f64[8@x,8]{U:y} = add f g
+    #         e:f64[8@x,8] = reshard[
+    #           dst_sharding=P('x', None))
+    #         ] h
+    #       in (e,) }
+    #   ] a b c d
+    #   _:f64[] = reduce_sum[axes=(0, 1)] e
+    #   i:f64[] = broadcast_in_dim[
+    #     broadcast_dimensions=()
+    #     shape=()
+    #     sharding=P())
+    #   ] 1.0:f64[]
+    #   j:f64[8@x,8] = broadcast_in_dim[
+    #     broadcast_dimensions=()
+    #     shape=(8, 8)
+    #     sharding=P('x', None))
+    #   ] i
+    #   k:f64[8@x,2@y] l:f64[2@y,8] m:f64[8@x,2@y] n:f64[2@y,8] = pjit[
+    #     name=f
+    #     ctx_mesh=Mesh('x': 2, 'y': 2, axis_types=(Explicit, Explicit))
+    #     jaxpr={ lambda ; b:f64[2@y,8] a:f64[8@x,2@y] d:f64[2@y,8] c:f64[8@x,2@y] j:f64[8@x,8]. let
+    #         o:f64[8@x,8]{U:y} = reshard[
+    #           dst_sharding=P('x', None, unreduced=('y',)))
+    #         ] j
+    #         p:f64[8,2@y] = dot_general[
+    #           dimension_numbers=(([0], [0]), ([], []))
+    #           out_sharding=P(None, 'y'))
+    #           preferred_element_type=float64
+    #         ] o c
+    #         n:f64[2@y,8] = transpose[permutation=(1, 0)] p
+    #         m:f64[8@x,2@y] = dot_general[
+    #           dimension_numbers=(([1], [1]), ([], []))
+    #           out_sharding=P('x', 'y'))
+    #           preferred_element_type=float64
+    #         ] o d
+    #         q:f64[8,2@y] = dot_general[
+    #           dimension_numbers=(([0], [0]), ([], []))
+    #           out_sharding=P(None, 'y'))
+    #           preferred_element_type=float64
+    #         ] o a
+    #         l:f64[2@y,8] = transpose[permutation=(1, 0)] q
+    #         k:f64[8@x,2@y] = dot_general[
+    #           dimension_numbers=(([1], [1]), ([], []))
+    #           out_sharding=P('x', 'y'))
+    #           preferred_element_type=float64
+    #         ] o b
+    #       in (k, l, m, n) }
+    #   ] b a d c j
+    # in (k, l, m, n) }
+    print(jax.jit(jax.grad(lambda x, y, a, b: f(x, y, a, b).sum(),
+                           argnums=(0, 1, 2, 3))).trace(x, y, a, b).jaxpr)
 
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_dot_general_unreduced_error(self, mesh):
