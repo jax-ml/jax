@@ -450,7 +450,11 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
              std::vector<int64_t> xla_minor_to_major =
                  SequenceToVector<int64_t>(minor_to_major);
              new (self)
-                 Layout(xla_minor_to_major, xla_tiles, element_size_in_bits);
+                 Layout(xla_minor_to_major, xla_tiles,
+                        /*tail_padding_alignment_in_elements=*/1,
+                        /*index_primitive_type=*/PRIMITIVE_TYPE_INVALID,
+                        /*element_primitive_type=*/PRIMITIVE_TYPE_INVALID,
+                        /*element_size_in_bits=*/element_size_in_bits);
            })
       .def("minor_to_major",
            [](Layout layout) { return SpanToNbTuple(layout.minor_to_major()); })
