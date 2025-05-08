@@ -162,17 +162,17 @@ class PyClient {
       ifrt::Device* device, bool force_copy,
       ifrt::Client::HostBufferSemantics host_buffer_semantics);
 
-  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileIfrtProgram(
-      nb_class_ptr<PyClient> client,
-      std::unique_ptr<ifrt::Program> ifrt_program,
-      std::unique_ptr<ifrt::CompileOptions> ifrt_options);
+  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
+  CompileAndLoadIfrtProgram(nb_class_ptr<PyClient> client,
+                            std::unique_ptr<ifrt::Program> ifrt_program,
+                            std::unique_ptr<ifrt::CompileOptions> ifrt_options);
 
-  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> Compile(
+  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
       nb_class_ptr<PyClient> client, std::string mlir_module,
       ifrt::DeviceListRef executable_devices, CompileOptions options,
       std::vector<nanobind::capsule> host_callbacks);
 
-  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> Compile(
+  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
       nb_class_ptr<PyClient> client, std::string mlir_module,
       ifrt::DeviceListRef executable_devices, CompileOptions options,
       std::vector<nanobind::callable> host_callbacks);
@@ -193,7 +193,7 @@ class PyClient {
   // program through `send_channel_ids` and the results correspond to Recv ops
   // through `recv_channel_ids`. It returns the host callback as an opaque
   // object whose reference will keep the Python callback alive. The host
-  // callback can be passed to `PyClient::Compile` or
+  // callback can be passed to `PyClient::CompileAndLoad` or
   // `PyClient::DeserializeExecutable`. The corresponding Send/Recv ops in the
   // XLA computation can trigger the execution of this host callback.
   // `serializer` is a function that takes `callable` as an argument and returns

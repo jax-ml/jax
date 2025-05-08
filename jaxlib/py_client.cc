@@ -411,7 +411,7 @@ MakeIfrtDeserializeExecutableOptions(std::optional<CompileOptions> options,
 }  // namespace
 
 /* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
-PyClient::CompileIfrtProgram(
+PyClient::CompileAndLoadIfrtProgram(
     nb_class_ptr<PyClient> client, std::unique_ptr<ifrt::Program> ifrt_program,
     std::unique_ptr<ifrt::CompileOptions> ifrt_options) {
   auto* pjrt_compatible_client =
@@ -448,9 +448,10 @@ PyClient::CompileIfrtProgram(
   std::optional<std::string> fingerprint;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(ifrt_loaded_executable,
-                        client->ifrt_client_->GetDefaultCompiler()->Compile(
-                            std::move(ifrt_program), std::move(ifrt_options)));
+    TF_ASSIGN_OR_RETURN(
+        ifrt_loaded_executable,
+        client->ifrt_client_->GetDefaultCompiler()->CompileAndLoad(
+            std::move(ifrt_program), std::move(ifrt_options)));
     TF_RETURN_IF_ERROR(ifrt_loaded_executable->GetReadyFuture().Await());
     TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   }
@@ -460,10 +461,11 @@ PyClient::CompileIfrtProgram(
       std::move(traceback), std::move(fingerprint));
 }
 
-/* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> PyClient::Compile(
-    nb_class_ptr<PyClient> client, std::string mlir_module,
-    ifrt::DeviceListRef executable_devices, CompileOptions options,
-    std::vector<nb::capsule> host_callbacks) {
+/* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
+PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, std::string mlir_module,
+                         ifrt::DeviceListRef executable_devices,
+                         CompileOptions options,
+                         std::vector<nb::capsule> host_callbacks) {
   mlir::MLIRContext context;
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       ParseMlirModuleString(mlir_module, context));
@@ -472,16 +474,17 @@ PyClient::CompileIfrtProgram(
     // export it before going to HLO while preserving Shardy ops and attrs.
     TF_RETURN_IF_ERROR(ExportShardyForHloRoundTrip(*module));
   }
-  return CompileIfrtProgram(
+  return CompileAndLoadIfrtProgram(
       client, std::make_unique<xla::ifrt::HloProgram>(module.get()),
       MakeIfrtCompileOptions(std::move(options), std::move(executable_devices),
                              std::move(host_callbacks)));
 }
 
-/* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> PyClient::Compile(
-    nb_class_ptr<PyClient> client, std::string mlir_module,
-    ifrt::DeviceListRef executable_devices, CompileOptions options,
-    std::vector<nb::callable> host_callbacks) {
+/* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
+PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, std::string mlir_module,
+                         ifrt::DeviceListRef executable_devices,
+                         CompileOptions options,
+                         std::vector<nb::callable> host_callbacks) {
   mlir::MLIRContext context;
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       ParseMlirModuleString(mlir_module, context));
@@ -509,7 +512,7 @@ PyClient::CompileIfrtProgram(
   auto compile_options = std::make_unique<ifrt::XlaCompileOptions>(
       std::move(options), std::move(ifrt_loaded_host_callbacks));
 #endif
-  return CompileIfrtProgram(
+  return CompileAndLoadIfrtProgram(
       client, std::make_unique<xla::ifrt::HloProgram>(module.get()),
       std::move(compile_options));
 }
@@ -761,7 +764,7 @@ PyType_Slot PyClient::slots_[] = {
              std::vector<nb::capsule> host_callbacks) {
             ifrt::DeviceListRef executable_devices =
                 ValueOrThrow(py_executable_devices.ifrt_device_list());
-            return ValueOrThrow(PyClient::Compile(
+            return ValueOrThrow(PyClient::CompileAndLoad(
                 std::move(client),
                 std::string(mlir_module.c_str(), mlir_module.size()),
                 std::move(executable_devices), std::move(options),
@@ -777,7 +780,7 @@ PyType_Slot PyClient::slots_[] = {
              std::vector<nb::callable> host_callbacks) {
             ifrt::DeviceListRef executable_devices =
                 ValueOrThrow(py_executable_devices.ifrt_device_list());
-            return ValueOrThrow(PyClient::Compile(
+            return ValueOrThrow(PyClient::CompileAndLoad(
                 std::move(client),
                 std::string(mlir_module.c_str(), mlir_module.size()),
                 std::move(executable_devices), std::move(options),
@@ -793,7 +796,7 @@ PyType_Slot PyClient::slots_[] = {
              std::vector<nb::capsule> host_callbacks) {
             ifrt::DeviceListRef executable_devices =
                 ValueOrThrow(py_executable_devices.ifrt_device_list());
-            return ValueOrThrow(PyClient::Compile(
+            return ValueOrThrow(PyClient::CompileAndLoad(
                 std::move(client), std::move(mlir_module),
                 std::move(executable_devices), std::move(options),
                 std::move(host_callbacks)));
@@ -808,7 +811,7 @@ PyType_Slot PyClient::slots_[] = {
              std::vector<nb::callable> host_callbacks) {
             ifrt::DeviceListRef executable_devices =
                 ValueOrThrow(py_executable_devices.ifrt_device_list());
-            return ValueOrThrow(PyClient::Compile(
+            return ValueOrThrow(PyClient::CompileAndLoad(
                 std::move(client), std::move(mlir_module),
                 std::move(executable_devices), std::move(options),
                 std::move(host_callbacks)));
@@ -825,7 +828,7 @@ PyType_Slot PyClient::slots_[] = {
             ifrt::DeviceListRef executable_devices =
                 ValueOrThrow(jax::PyDeviceList(nb::tuple(py_executable_devices))
                                  .ifrt_device_list());
-            return ValueOrThrow(PyClient::Compile(
+            return ValueOrThrow(PyClient::CompileAndLoad(
                 std::move(client),
                 std::string(mlir_module.c_str(), mlir_module.size()),
                 std::move(executable_devices), std::move(options),
@@ -840,7 +843,100 @@ PyType_Slot PyClient::slots_[] = {
             ifrt::DeviceListRef executable_devices =
                 ValueOrThrow(jax::PyDeviceList(nb::tuple(py_executable_devices))
                                  .ifrt_device_list());
-            return ValueOrThrow(PyClient::Compile(
+            return ValueOrThrow(PyClient::CompileAndLoad(
+                std::move(client), std::move(mlir_module),
+                std::move(executable_devices), std::move(options),
+                std::vector<nb::capsule>()));
+          },
+          nb::arg("computation"), nb::arg("executable_devices"),
+          nb::arg("compile_options") = CompileOptions())
+      .def(
+          "compile_and_load",
+          [](nb_class_ptr<PyClient> client, nb::bytes mlir_module,
+             jax::PyDeviceList& py_executable_devices, CompileOptions options,
+             std::vector<nb::capsule> host_callbacks) {
+            ifrt::DeviceListRef executable_devices =
+                ValueOrThrow(py_executable_devices.ifrt_device_list());
+            return ValueOrThrow(PyClient::CompileAndLoad(
+                std::move(client),
+                std::string(mlir_module.c_str(), mlir_module.size()),
+                std::move(executable_devices), std::move(options),
+                std::move(host_callbacks)));
+          },
+          nb::arg("computation"), nb::arg("executable_devices"),
+          nb::arg("compile_options") = CompileOptions(),
+          nb::arg("host_callbacks") = std::vector<nb::capsule>())
+      .def(
+          "compile_and_load",
+          [](nb_class_ptr<PyClient> client, nb::bytes mlir_module,
+             jax::PyDeviceList& py_executable_devices, CompileOptions options,
+             std::vector<nb::callable> host_callbacks) {
+            ifrt::DeviceListRef executable_devices =
+                ValueOrThrow(py_executable_devices.ifrt_device_list());
+            return ValueOrThrow(PyClient::CompileAndLoad(
+                std::move(client),
+                std::string(mlir_module.c_str(), mlir_module.size()),
+                std::move(executable_devices), std::move(options),
+                std::move(host_callbacks)));
+          },
+          nb::arg("computation"), nb::arg("executable_devices"),
+          nb::arg("compile_options") = CompileOptions(),
+          nb::arg("host_callbacks") = std::vector<nb::callable>())
+      .def(
+          "compile_and_load",
+          [](nb_class_ptr<PyClient> client, std::string mlir_module,
+             jax::PyDeviceList& py_executable_devices, CompileOptions options,
+             std::vector<nb::capsule> host_callbacks) {
+            ifrt::DeviceListRef executable_devices =
+                ValueOrThrow(py_executable_devices.ifrt_device_list());
+            return ValueOrThrow(PyClient::CompileAndLoad(
+                std::move(client), std::move(mlir_module),
+                std::move(executable_devices), std::move(options),
+                std::move(host_callbacks)));
+          },
+          nb::arg("computation"), nb::arg("executable_devices"),
+          nb::arg("compile_options") = CompileOptions(),
+          nb::arg("host_callbacks") = std::vector<nb::capsule>())
+      .def(
+          "compile_and_load",
+          [](nb_class_ptr<PyClient> client, std::string mlir_module,
+             jax::PyDeviceList& py_executable_devices, CompileOptions options,
+             std::vector<nb::callable> host_callbacks) {
+            ifrt::DeviceListRef executable_devices =
+                ValueOrThrow(py_executable_devices.ifrt_device_list());
+            return ValueOrThrow(PyClient::CompileAndLoad(
+                std::move(client), std::move(mlir_module),
+                std::move(executable_devices), std::move(options),
+                std::move(host_callbacks)));
+          },
+          nb::arg("computation"), nb::arg("executable_devices"),
+          nb::arg("compile_options") = CompileOptions(),
+          nb::arg("host_callbacks") = std::vector<nb::callable>())
+      // The following two overloads are for users of deprecated APIs who call
+      // `backend.compile` but do not have visibility to `DeviceList`.
+      .def(
+          "compile_and_load",
+          [](nb_class_ptr<PyClient> client, nb::bytes mlir_module,
+             nb::sequence& py_executable_devices, CompileOptions options) {
+            ifrt::DeviceListRef executable_devices =
+                ValueOrThrow(jax::PyDeviceList(nb::tuple(py_executable_devices))
+                                 .ifrt_device_list());
+            return ValueOrThrow(PyClient::CompileAndLoad(
+                std::move(client),
+                std::string(mlir_module.c_str(), mlir_module.size()),
+                std::move(executable_devices), std::move(options),
+                std::vector<nb::capsule>()));
+          },
+          nb::arg("computation"), nb::arg("executable_devices"),
+          nb::arg("compile_options") = CompileOptions())
+      .def(
+          "compile_and_load",
+          [](nb_class_ptr<PyClient> client, std::string mlir_module,
+             nb::sequence& py_executable_devices, CompileOptions options) {
+            ifrt::DeviceListRef executable_devices =
+                ValueOrThrow(jax::PyDeviceList(nb::tuple(py_executable_devices))
+                                 .ifrt_device_list());
+            return ValueOrThrow(PyClient::CompileAndLoad(
                 std::move(client), std::move(mlir_module),
                 std::move(executable_devices), std::move(options),
                 std::vector<nb::capsule>()));
@@ -848,7 +944,9 @@ PyType_Slot PyClient::slots_[] = {
           nb::arg("computation"), nb::arg("executable_devices"),
           nb::arg("compile_options") = CompileOptions())
       .def("compile_ifrt_program",
-           xla::ValueOrThrowWrapper(PyClient::CompileIfrtProgram))
+           xla::ValueOrThrowWrapper(PyClient::CompileAndLoadIfrtProgram))
+      .def("compile_and_load_ifrt_program",
+           xla::ValueOrThrowWrapper(PyClient::CompileAndLoadIfrtProgram))
       .def("serialize_executable",
            xla::ValueOrThrowWrapper(&PyClient::SerializeExecutable))
       .def(
