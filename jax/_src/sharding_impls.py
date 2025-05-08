@@ -1244,7 +1244,7 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
       phys_spec = (*phys_sharding.spec,
                    *[None] * (len(phys_shape) - len(phys_sharding.spec)))
     else:
-      phys_spec = phys_sharding.spec
+      phys_spec = phys_sharding.spec  # type: ignore
     return phys_sharding.with_spec(phys_spec[:-elt_aval.ndim])
   else:
     return get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding)
