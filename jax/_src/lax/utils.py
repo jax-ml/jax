@@ -38,13 +38,14 @@ def _argnum_weak_type(*argnums):
   return lambda *args, **_: all(args[i].weak_type for i in argnums)
 
 def standard_primitive(shape_rule, dtype_rule, name,
-                       weak_type_rule=None, sharding_rule=None, vma_rule=None):
+                       weak_type_rule=None, sharding_rule=None, vma_rule=None,
+                       unreduced_rule=None):
   weak_type_rule = weak_type_rule or _standard_weak_type_rule
   prim = core.Primitive(name)
   prim.def_impl(partial(dispatch.apply_primitive, prim))
   prim.def_abstract_eval(
       partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
-              weak_type_rule, sharding_rule, vma_rule))
+              weak_type_rule, sharding_rule, vma_rule, unreduced_rule))
   return prim
 
 def _get_array_abstraction_level(a): return a.array_abstraction_level
@@ -103,7 +104,8 @@ def call_shape_dtype_sharding_rule(prim, shape_rule, dtype_rule, sharding_rule,
   return out_shapes, out_dtypes, out_shardings
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
-                           sharding_rule, vma_rule, *avals, **kwargs):
+                           sharding_rule, vma_rule, unreduced_rule,
+                           *avals, **kwargs):
   for a in avals:
     if isinstance(a, state.AbstractRef):
       raise ValueError(
@@ -125,6 +127,8 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
         prim, shape_rule, dtype_rule, sharding_rule, False,
         *avals, **kwargs)
     out_vma = vma_rule(*avals, **kwargs)
+    if unreduced_rule is not None:
+      out_sharding = unreduced_rule(out_sharding, *avals, **kwargs)
     out_aval = core.ShapedArray(
         out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
         vma=out_vma)

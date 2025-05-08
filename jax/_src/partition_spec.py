@@ -160,6 +160,9 @@ class PartitionSpec:
   def with_partitions(self, new_partitions):
     return PartitionSpec(*new_partitions, unreduced=self._unreduced)
 
+  def with_unreduced(self, new_unreduced):
+    return PartitionSpec(*self._partitions, unreduced=new_unreduced)
+
   def _normalized_spec_for_aval(self, ndim: int) -> PartitionSpec:
     out = [None if p is _UNCONSTRAINED_PARTITION else p
            for p in self._partitions]
