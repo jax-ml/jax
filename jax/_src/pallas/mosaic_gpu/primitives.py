@@ -1227,7 +1227,7 @@ def _tcgen05_mma_lowering(
     collective_axis,
 ):
   _, a_aval, b_aval, *_ = ctx.avals_in
-  lhs_swizzle: int = 128
+  lhs_swizzle: int | None = None
   lhs_transpose: bool = False
   if a_transforms_tree is not None:
     a_transforms_leaves, b_transforms_leaves = util.split_list(
@@ -1277,14 +1277,20 @@ def _tcgen05_mma_lowering(
       )
 
   swizzle_elems = rhs_swizzle // b_aval.dtype.itemsize
-  if rhs_swizzle != lhs_swizzle:
+  if lhs_swizzle is None:
+    lhs_swizzle = rhs_swizzle
+  elif rhs_swizzle != lhs_swizzle:
     raise ValueError("MMA rhs swizzle must match lhs swizzle."
                       f" {lhs_swizzle=} {rhs_swizzle=}")
   if rhs_tiling != (8, swizzle_elems):
     raise ValueError("MMA rhs tiling does not fit swizzle"
                       f" {rhs_tiling=} expected={(8, swizzle_elems)}")
-  if lhs_transpose or rhs_transpose:
-    raise NotImplementedError("Lowering does not yet support transpose")
+  if lhs_transpose:
+    if isinstance(a_ref, tcgen05.TMEMRef):
+      raise ValueError("TMEM transpose not allowed.")
+    a_ref = mgpu.memref_transpose(a_ref, (1, 0, 3, 2))
+  if rhs_transpose:
+    b_ref = mgpu.memref_transpose(b_ref, (1, 0, 3, 2))
   if isinstance(accumulate, bool):
     accumulate = mgpu.c(accumulate, ir.IntegerType.get_signless(1))
 
@@ -1314,8 +1320,8 @@ def _tcgen05_mma_lowering(
               acc,
               a_ref,
               b_ref,
-              a_swizzle=rhs_swizzle,
-              b_swizzle=lhs_swizzle,
+              a_swizzle=lhs_swizzle,
+              b_swizzle=rhs_swizzle,
               accumulate=accumulate,
               collective=collective,
           )
