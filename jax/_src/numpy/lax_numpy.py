@@ -65,7 +65,9 @@ from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
     ceil_of_ratio, safe_zip, set_module, unzip2)
 from jax.sharding import Sharding
-from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P)
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
+from jax._src.mesh import get_abstract_mesh
+from jax._src.pjit import auto_axes
 from jax.tree_util import tree_flatten, tree_map
 import numpy as np
 
@@ -6630,7 +6632,8 @@ def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
 
 @export
 def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
-           total_repeat_length: int | None = None) -> Array:
+           total_repeat_length: int | None = None,
+           out_sharding: NamedSharding | P | None = None) -> Array:
   """Construct an array from repeated elements.
 
   JAX implementation of :func:`numpy.repeat`.
@@ -6694,6 +6697,31 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
     Array([[1, 1, 2, 2, 2, 2, 2],
            [3, 3, 4, 4, 4, 4, 4]], dtype=int32)
   """
+  if out_sharding is not None:
+    return auto_axes(
+        partial(_repeat, axis=axis, total_repeat_length=total_repeat_length),
+        out_sharding=out_sharding)(a, repeats)
+  ctx_mesh = get_abstract_mesh()
+  if ctx_mesh._are_all_axes_explicit:
+    aval = core.typeof(a)
+    if axis is None or aval.sharding.spec[axis] is not None:
+      raise ValueError(
+          "Please pass sharding to `jnp.repeat` via `out_sharding` parameter.")
+    assert axis is not None and aval.sharding.spec[axis] is None
+    out_sharding = (NamedSharding(ctx_mesh, P())
+                    if aval.sharding.mesh.empty else aval.sharding)
+    return auto_axes(
+        partial(_repeat, axis=axis, total_repeat_length=total_repeat_length),
+        out_sharding=out_sharding)(a, repeats)
+  try:
+    return _repeat(a, repeats, axis=axis,
+                   total_repeat_length=total_repeat_length)
+  except core.ShardingTypeError as e:
+    raise ValueError(
+        "Please pass sharding to `jnp.repeat` via `out_sharding` parameter.")
+
+def _repeat(a: ArrayLike, repeats: ArrayLike, *, axis: int | None = None,
+            total_repeat_length: int | None = None) -> Array:
   if core.is_dim(repeats):
     util.check_arraylike("repeat", a)
   else:
