@@ -3062,8 +3062,11 @@ tf_impl_with_avals[lax.scatter_sub_p] = _scatter
 
 
 def _cond(
-    index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr]
+    index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
+    **params
 ) -> Sequence[TfVal]:
+  if params:
+    raise NotImplementedError("jax2tf conversion for platform_dependent")
   # tf.cond needs lambdas with no arguments.
   branches_tf = [
       partial(_interpret_jaxpr, jaxpr, *operands,
