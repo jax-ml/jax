@@ -2749,16 +2749,14 @@ class WarpSpecializedPipelineTest(PallasTest):
         thread_name="wg",
     )
     def kernel(x_gmem, acc_gmem, acc_smem):
-      def _compute_thread():
+      def _compute_thread(pipeline_fn):
         # Cast the init value to the same layout as x_smem, so the pipeline loop
         # carry has a constant signature.
         o_acc = plgpu.layout_cast(
           jnp.full((blk_m, blk_n,), 0, dtype=jnp.float32),
           plgpu.Layout.WG_STRIDED((blk_m, blk_n), vec_size=2))
-        carry_init = (o_acc,)
         # Pass control to the pipeline emitter and return the final carry.
-        final_carry = (yield carry_init)
-        o_final, = final_carry
+        o_final = pipeline_fn(o_acc)
         # Note that both compute WGs are doing identical work so the potential
         # race condition on the store here won't affect the result.
         acc_smem[...] = o_final
@@ -2767,9 +2765,8 @@ class WarpSpecializedPipelineTest(PallasTest):
         plgpu.wait_smem_to_gmem(0)
 
       def tiled_acc_kernel(_, x_smem, carry):
-        o_carry, = carry
-        new_carry = x_smem[...] + o_carry
-        return (new_carry,)
+        new_carry = x_smem[...] + carry
+        return new_carry
 
       pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
           tiled_acc_kernel,
@@ -2778,7 +2775,7 @@ class WarpSpecializedPipelineTest(PallasTest):
           num_compute_wgs=num_compute_wgs,
           memory_registers=40,
           wg_axis="wg",
-          carry_coroutine=_compute_thread,
+          compute_context=_compute_thread,
           in_specs=[
               pl.BlockSpec(
                   block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)

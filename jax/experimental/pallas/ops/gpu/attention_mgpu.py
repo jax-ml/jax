@@ -336,7 +336,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
     kv_head = lax.div(q_head, jnp.array(q_heads_per_kv_head, q_head.dtype))
     q_smem2, do_smem2, lse_smem2, delta_smem2 = smem_buffers
     q_barriers, do_barriers, lse_barriers, delta_barriers = buffer_barriers
-    def _compute_thread():
+    def _compute_thread(pipeline_callback):
       q_smem, do_smem, lse_smem, delta_smem = q_smem2.at[wg_idx], do_smem2.at[wg_idx], lse_smem2.at[wg_idx], delta_smem2.at[wg_idx]
       q_seq_base = lax.axis_index("q_seq") * (compute_wgs * block_q) + wg_idx * block_q
       q_slice = (batch, pl.ds(q_seq_base, block_q), q_head)
@@ -360,7 +360,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       dq_acc = plgpu.layout_cast(
           jnp.full((block_q, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
       )
-      dq, _, _ = (yield (dq_acc, lse, delta))
+      dq, _, _ = pipeline_callback((dq_acc, lse, delta))
       q_smem[...] = dq.astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(q_smem, dq_ref.at[q_slice])
@@ -406,7 +406,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
         memory_registers=40,
         wg_axis="wg",
         manual_consumed_barriers=True,
-        carry_coroutine=_compute_thread,
+        compute_context=_compute_thread,
         in_specs=[
             plgpu.GPUBlockSpec(  # k
                 block_shape=(block_kv, head_dim),
@@ -429,7 +429,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
     (k_smem2, v_smem2) = smem_buffers
     (k_barriers, v_barriers) = buffer_barriers
 
-    def _compute_thread():
+    def _compute_thread(pipeline_callback):
       k_smem, v_smem = k_smem2.at[wg_idx], v_smem2.at[wg_idx]
       kv_seq_base = lax.axis_index("kv_seq") * (compute_wgs * block_kv) + wg_idx * block_kv
       kv_head = lax.div(q_head, jnp.array(q_heads_per_kv_head, q_head.dtype))
@@ -449,7 +449,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       dv_acc = plgpu.layout_cast(
           jnp.full((block_kv, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
       )
-      (dk, dv) = (yield (dv_acc, dk_acc))
+      (dk, dv) = pipeline_callback((dv_acc, dk_acc))
       k_smem[...] = dk.astype(dtype)
       v_smem[...] = dv.astype(dtype)
 
@@ -513,7 +513,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       memory_registers=40,
       wg_axis="wg",
       manual_consumed_barriers=True,
-      carry_coroutine=_compute_thread,
+      compute_context=_compute_thread,
       in_specs=[
           plgpu.GPUBlockSpec(  # q
               block_shape=(block_q, head_dim),
@@ -627,7 +627,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
         plgpu.barrier_arrive(schedule_barrier)
         plgpu.barrier_wait(schedule_barrier)
 
-    def _compute_thread():
+    def _compute_thread(pipeline_callback):
       qo_smem = qo_smem2.at[wg_idx]
       lse_smem = lse_smem2.at[wg_idx] if lse_smem2 is not None else None
       m_i = jnp.full((block_q,), -jnp.inf, dtype=jnp.float32)
@@ -641,7 +641,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
       )
       plgpu.barrier_wait(q_barriers.at[wg_idx])
       pl.when(wg_idx == 1)(perform_schedule_barrier)
-      final_carry = (yield (acc, m_i, l_i))
+      final_carry = pipeline_callback((acc, m_i, l_i))
       pl.when(wg_idx == 0)(perform_schedule_barrier)
       acc, m_i, l_i = final_carry
       acc /= lax.broadcast_in_dim(l_i, (block_q, head_dim), [0])
@@ -699,7 +699,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
         memory_registers=40,
         wg_axis="wg",
         manual_consumed_barriers=True,
-        carry_coroutine=_compute_thread,
+        compute_context=_compute_thread,
         in_specs=[
             plgpu.GPUBlockSpec(  # k
                 block_shape=(block_kv, head_dim),
