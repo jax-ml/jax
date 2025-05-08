@@ -251,7 +251,7 @@ def _run_scoped_resource_estimator(
       else:
         packing = 1
       layout = tcgen05._infer_tmem_layout(
-          aval.shape, collective=False, packing=packing)
+          aval.shape, collective=aval.collective, packing=packing)
       cols_used = layout.cols_in_shape(aval.shape)
       cols_used = tcgen05._alloc_ncols(cols_used, exact=False)
       rs += Resources(tmem_scratch_cols=cols_used)
@@ -2235,6 +2235,7 @@ def _run_scoped_lowering_rule(
                 jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
                 packed=aval.packed,
                 exact_cols=False,
+                collective=aval.collective,
             )
         )
         input_refs.append(input_ref)
