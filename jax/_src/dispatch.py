@@ -46,7 +46,7 @@ from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, Layout
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
-from jax._src.monitoring import record_event_duration_secs, record_event_time_span
+from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
@@ -179,6 +179,10 @@ class LogElapsedTimeContextManager:
 
   def __enter__(self):
     self.start_time = time.time()
+    if self.event is not None:
+      record_scalar(
+          self.event, self.start_time, fun_name=self.fun_name
+      )
 
   def __exit__(self, exc_type, exc_value, traceback):
     if _on_exit:

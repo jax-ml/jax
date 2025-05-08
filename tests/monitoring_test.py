@@ -68,10 +68,10 @@ class MonitoringTest(absltest.TestCase):
     observed_values = []
 
     monitoring.register_scalar_listener(
-        lambda key, _: observed_keys.append(key),
+        lambda key, _, **kwargs: observed_keys.append(key),
     )
     monitoring.register_scalar_listener(
-        lambda _, value: observed_values.append(value),
+        lambda _, value, **kwargs: observed_values.append(value),
     )
 
     monitoring.record_scalar("test_unique_event", 1)
