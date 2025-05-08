@@ -31,6 +31,9 @@ T = TypeVar('T')
 map = safe_map
 
 def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
+  ty = core.typeof(x)
+  if hasattr(ty, 'vspace_add'):  # TODO(mattjj,dougalm): revise away hasattr
+    return ty.vspace_add(x, y)
   x, y = core.standard_insert_pvary(x, y)
   return add_jaxvals_p.bind(x, y)
 
@@ -48,6 +51,8 @@ def add_abstract(x, y):
   return x
 
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
+  if hasattr(aval, 'vspace_zero'):  # TODO(mattjj,dougalm): revise away hasattr
+    return aval.vspace_zero()
   return aval_zeros_likers[type(aval)](aval)
 aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 

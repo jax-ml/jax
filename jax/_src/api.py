@@ -540,17 +540,18 @@ def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError(f"{name} with holomorphic=True requires inputs with complex dtype, "
                       f"but got {aval.dtype.name}.")
-  if (dtypes.issubdtype(aval.dtype, dtypes.extended) or
-      dtypes.issubdtype(aval.dtype, np.integer) or
-      dtypes.issubdtype(aval.dtype, np.bool_)):
-    if not allow_int:
-      raise TypeError(f"{name} requires real- or complex-valued inputs (input dtype "
-                      f"that is a sub-dtype of np.inexact), but got {aval.dtype.name}. "
-                      "If you want to use Boolean- or integer-valued inputs, use vjp "
-                      "or set allow_int to True.")
-  elif not dtypes.issubdtype(aval.dtype, np.inexact):
-    raise TypeError(f"{name} requires numerical-valued inputs (input dtype that is a "
-                    f"sub-dtype of np.bool_ or np.number), but got {aval.dtype.name}.")
+  if isinstance(aval, ShapedArray):
+    if (dtypes.issubdtype(aval.dtype, dtypes.extended) or
+        dtypes.issubdtype(aval.dtype, np.integer) or
+        dtypes.issubdtype(aval.dtype, np.bool_)):
+      if not allow_int:
+        raise TypeError(f"{name} requires real- or complex-valued inputs (input dtype "
+                        f"that is a sub-dtype of np.inexact), but got {aval.dtype.name}. "
+                        "If you want to use Boolean- or integer-valued inputs, use vjp "
+                        "or set allow_int to True.")
+    elif not dtypes.issubdtype(aval.dtype, np.inexact):
+      raise TypeError(f"{name} requires numerical-valued inputs (input dtype that is a "
+                      f"sub-dtype of np.bool_ or np.number), but got {aval.dtype.name}.")
 _check_input_dtype_grad = partial(_check_input_dtype_revderiv, "grad")
 
 def _check_output_dtype_revderiv(name, holomorphic, x):
@@ -1873,6 +1874,7 @@ def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
                     f"structure; primals have tree structure {tree_def} whereas tangents have "
                     f"tree structure {tree_def_2}.")
   for p, t in zip(ps_flat, ts_flat):
+    if not isinstance(core.typeof(p), ShapedArray): continue
     if core.primal_dtype_to_tangent_dtype(_dtype(p)) != _dtype(t):
       raise TypeError("primal and tangent arguments to jax.jvp do not match; "
                       "dtypes must be equal, or in case of int/bool primal dtype "

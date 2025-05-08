@@ -73,6 +73,7 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
 def jvpfun(f: Callable, instantiate, transform_stack, primals, tangents):
   tag = core.TraceTag()
   tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
+              and isinstance(core.typeof(t), core.ShapedArray)
               and dtype(t) == float0 else t for t in tangents]
   ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
          else contextlib.nullcontext())
@@ -475,6 +476,7 @@ class JVPTrace(Trace):
     super().__init__()
     self.tag = tag
     self.parent_trace = parent_trace
+    self.requires_low = False
 
   def to_primal_tangent_pair(self, val):
     if isinstance(val, JVPTracer) and val._trace.tag is self.tag:
@@ -606,7 +608,8 @@ class JVPTrace(Trace):
     return map(partial(maybe_jvp_tracer, self), ps_out, ts_out)
 
 def maybe_jvp_tracer(trace, primal, tangent):
-  if type(tangent) is Zero or dtype(tangent) == float0:
+  if (type(tangent) is Zero or
+      core.typeof(tangent) is core.ShapedArray and dtype(tangent) == float0):
     return primal
   else:
     return JVPTracer(trace, primal, tangent)
@@ -641,6 +644,7 @@ def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
     primal_aval = get_aval(primal).strip_weak_type()
     tangent_aval = get_aval(tangent).strip_weak_type()
+    if not isinstance(primal_aval, core.ShapedArray): return  # TODO(mattjj,dougalm)
     assert core.definitely_equal_shape(primal_aval.shape, tangent_aval.shape), (primal_aval.shape, tangent_aval.shape)
     expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
     assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)

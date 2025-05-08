@@ -20,7 +20,7 @@ import contextlib
 import dataclasses
 from functools import partial
 import inspect
-import itertools
+import itertools as it
 import logging
 import weakref
 from typing import NamedTuple, Any, Union, cast
@@ -188,7 +188,8 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
     args_flat = [*init_states, *args_flat]
 
   try:
-    if core.trace_state_clean() and not config.debug_key_reuse.value:
+    if (core.trace_state_clean() and not config.debug_key_reuse.value
+        and not p.params['jaxpr'].jaxpr.is_high):
       args_flat = map(core.full_lower, args_flat)
       core.check_eval_args(args_flat)
       out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
@@ -1591,6 +1592,36 @@ def check_aval_layout_compatibility(
 pjit_p = core.Primitive("pjit")
 pjit_p.multiple_results = True
 pjit_p.skip_canonicalization = True
+
+def _is_high(jaxpr, **_) -> bool:
+  return jaxpr.jaxpr.is_high
+pjit_p.is_high = _is_high  # type: ignore
+
+def _to_lojax(*hi_args, jaxpr, out_shardings, out_layouts, **params):
+  num_mut = [len(ty.lo_ty()) for ty in jaxpr.jaxpr.mut_types.values()]
+  out_shardings = (UNSPECIFIED,) * sum(num_mut) + out_shardings
+  out_layouts = (None,) * sum(num_mut) + out_layouts
+
+  lo_args = [lo_val for t, hi_val in zip(jaxpr.in_avals, hi_args)
+             for lo_val in t.lower_val(hi_val)]
+  lo_jaxpr = pe.lower_jaxpr(jaxpr)
+  all_outs = pjit_p.bind(*lo_args, jaxpr=lo_jaxpr, out_shardings=out_shardings,
+                         out_layouts=out_layouts, **params)
+  out_mut, lo_outs = split_list(all_outs, [sum(num_mut)])
+
+  out_mut_ = iter(out_mut)
+  in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
+  for var, ty in jaxpr.jaxpr.mut_types.items():
+    ty.set(hi_args[in_idx[var]], *it.islice(out_mut_, len(ty.lo_ty())))
+  assert next(out_mut_, None) is None
+
+  lo_outs_ = iter(lo_outs)
+  hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty())))
+             for t in jaxpr.out_avals]
+  assert next(lo_outs_, None) is None
+
+  return hi_outs
+pjit_p.to_lojax = _to_lojax
 
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   # If device or backend is set, return the default layout. This is because you
@@ -3233,7 +3264,7 @@ def _flatten_boxes(dbg, args, kwargs):
     return args, kwargs, []
   box_data = []
   id_first_occurrences = {}
-  idxs = itertools.count()
+  idxs = it.count()
   def visit(x):
     i = next(idxs)
     if (isinstance(x, (Box, List)) and
