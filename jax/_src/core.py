@@ -1825,11 +1825,12 @@ def get_cur_mesh_sharding(spec=None):
   return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
 
 def _make_lengths_same(sharding, ndim):
-  if ndim > len(sharding.spec):
-    return sharding.with_spec(sharding.spec._normalized_spec_for_aval(ndim))
-  if ndim < len(sharding.spec):
-    assert all(s is None for s in sharding.spec[ndim:]), (ndim, sharding.spec)
-    return sharding.with_spec(sharding.spec[:ndim])
+  pspec = sharding.spec
+  if ndim > len(pspec):
+    return sharding.with_spec(pspec._normalized_spec_for_aval(ndim))
+  if ndim < len(pspec):
+    assert all(s is None for s in pspec[ndim:]), (ndim, pspec)
+    return sharding.with_spec(P(*pspec[:ndim], unreduced=pspec.unreduced))
   assert False, "unreachable"
 
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
@@ -1841,11 +1842,11 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
       new_spec.append(s)
     else:
       temp_s = s[0] if isinstance(s, tuple) else s
-      new_spec.append(
-          None
-          if mesh._name_to_type[temp_s] in (AxisType.Auto, AxisType.Manual)
-          else s)
-  return P(*new_spec)
+      new_spec.append(s if mesh._name_to_type[temp_s] == AxisType.Explicit
+                      else None)
+  new_unreduced = tuple(u for u in spec.unreduced
+                        if mesh._name_to_type[u] == AxisType.Explicit)
+  return P(*new_spec, unreduced=new_unreduced)
 
 def _maybe_modify_sharding(sharding, ndim):
   if len(sharding.spec) == 0 or all(s is None for s in sharding.spec):
@@ -1905,8 +1906,8 @@ def str_short_aval(shape, dtype, mesh, spec, vma,
   dt_str = dt_str.replace('void', 'float0')
   shapestr = _get_shape_sharding_str(shape, spec)
   mesh_axes = f'({mesh._axis_types_dict})' if mesh_axis_types else ''
-  vma = f"{{{','.join(i for i in vma)}}}" if vma else ''
-  return f'{dt_str}[{shapestr}]{vma}{mesh_axes}'
+  vma_ur = _vma_ur_str(vma, spec.unreduced)
+  return f'{dt_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
 def get_vma(vma, mesh):
   if mesh.empty:
@@ -2000,6 +2001,18 @@ def _get_shape_sharding_str(shape, spec):
       out.append(f"{s1}@{s2}")
   return ','.join(out)
 
+def _create_str(x, prefix):
+  x_str = f"{','.join(i for i in x)}"
+  x_str = x_str if len(x) == 1 else f"({x_str})"
+  return f"{prefix}:{x_str}"
+
+def _vma_ur_str(vma, unreduced):
+  if not vma and not unreduced:
+    return ''
+  vma_str = _create_str(vma, 'V') if vma else ''
+  ur_str = _create_str(unreduced, 'U') if unreduced else ''
+  sep = ', ' if vma and unreduced else ''
+  return f"{{{vma_str}{sep}{ur_str}}}"
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):

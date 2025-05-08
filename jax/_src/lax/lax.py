@@ -3954,7 +3954,7 @@ def broadcasting_sharding_rule(name, *avals):
 
   result_specs = [None] * len(shapes[0])
   for i, (ss, ds) in enumerate(zip(zip(*specs), zip(*shapes))):
-    if all(s == ss[0] for s in ss[1:]):
+    if all(ss[0] == s for s in ss[1:]):
       # if all dimension shardings are same, the resulting dimension sharding is
       # the same.
       result_specs[i] = ss[0]
@@ -3974,7 +3974,20 @@ def broadcasting_sharding_rule(name, *avals):
             raise core.ShardingTypeError(
                 f'{name} got incompatible shardings for broadcasting: '
                 f'{", ".join(map(str, map(tuple, specs)))}.')
-  return NamedSharding(mesh, P(*result_specs))
+
+  unreduced = [a.sharding.spec.unreduced for a in avals if a.shape]
+  # TODO(yashkatariya): Relax this restriction to allow
+  # `f32[8]{R:x} * f32[8]{U:x} -> f32[8]{U:x}` for example and maybe more cases.
+  if unreduced:
+    if not all(unreduced[0] == u for u in unreduced[1:]):
+      raise core.ShardingTypeError(
+          'All arrays must be unreduced along the same mesh axes. Got'
+          f' {", ".join(map(str, map(tuple, unreduced)))}')
+    result_unreduced = unreduced[0]
+  else:
+    result_unreduced = None
+
+  return NamedSharding(mesh, P(*result_specs, unreduced=result_unreduced))
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=True):
@@ -5190,11 +5203,26 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
 
+  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
+  rhs_contracting_spec = tuple(rhs.sharding.spec[i] for i in rhs_contracting)
+
   if out_sharding is not None:
     assert isinstance(out_sharding, NamedSharding)
+    if out_sharding.spec.unreduced:
+      if lhs_contracting_spec != rhs_contracting_spec:
+        raise core.ShardingTypeError(
+            'lhs and rhs contracting dims should be sharded identically when'
+            ' out_sharding provided to dot_general mentions unreduced_axes.'
+            f' Got {out_sharding=}, {lhs_contracting_spec=},'
+            f' {rhs_contracting_spec=}')
+      if out_sharding.spec.unreduced != lhs_contracting_spec:
+        raise core.ShardingTypeError(
+            "out_sharding's unreduced axes should be equal to the contracting"
+            f' specs. Got unreduced axes={out_sharding.spec.unreduced} and'
+            f' contracting spec={lhs_contracting_spec}')
     return out_sharding
 
-  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_batch_spec = tuple(lhs.sharding.spec[i] for i in lhs_batch)
   rhs_batch_spec = tuple(rhs.sharding.spec[i] for i in rhs_batch)
   msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
@@ -5202,8 +5230,6 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
         f"{rhs_batch_spec}.")
   _check_specs_match(lhs_batch_spec, rhs_batch_spec, msg)
 
-  lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
-  rhs_contracting_spec = tuple(rhs.sharding.spec[i] for i in rhs_contracting)
   msg = ("dot_general requires contracting dimensions to have consistent "
         f"sharding, got {lhs_contracting_spec} and {rhs_contracting_spec}.")
   _check_specs_match(lhs_contracting_spec, rhs_contracting_spec, msg)

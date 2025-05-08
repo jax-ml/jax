@@ -25,6 +25,7 @@ from jax._src.util import use_cpp_class, cache, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
+from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec
 from jax._src import sharding as JSharding
 import numpy as np
@@ -410,6 +411,7 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
 def check_pspec(mesh, spec, _manual_axes=frozenset()):
   _check_unique_resources(spec, "NamedSharding spec", mesh)
   _check_mesh_resource_axis(mesh, spec)
+  _check_mesh_unreduced(mesh, spec)
 
 class DuplicateSpecError(Exception):
   def __init__(self, message, mesh, pspec):
@@ -443,14 +445,13 @@ def _check_unique_resources(pspec: PartitionSpec, arg_name: str, mesh=None
             f' for {mesh_lib.show_axes(multiple_uses)}'),
         mesh=mesh, pspec=pspec)
 
-
 def _check_mesh_resource_axis(mesh, pspec):
   for p in pspec:
     if p is PartitionSpec.UNCONSTRAINED or p is None:
       continue
     p = p if isinstance(p, tuple) else (p,)
     for r in p:
-      if r not in mesh.shape:
+      if r not in mesh.axis_names:
         raise ValueError(
             f"Resource axis: {r} of {pspec} "
             f"is not found in mesh: {tuple(mesh.shape.keys())}.")
@@ -459,9 +460,34 @@ def _check_mesh_resource_axis(mesh, pspec):
           'AxisTypes should be the same in a tuple subset of PartitionSpec:'
           f' {pspec}. Got subset {p} with axis'
           f' types: ({", ".join(str(mesh._name_to_type[r]) for r in p)})')
-  if (mesh_lib.AxisType.Auto not in mesh._axis_types_dict and
+  if (AxisType.Auto not in mesh._axis_types_dict and
       PartitionSpec.UNCONSTRAINED in pspec):
     raise ValueError(
         f'{pspec} cannot contain'
         ' `P.UNCONSTRAINED` when no mesh axis_types are `Auto`. Got mesh'
         f' axis_types: {mesh._axis_types_dict}')
+
+def _check_mesh_unreduced(mesh, pspec):
+  counts = {}
+  duplicate = False
+  for u in pspec.unreduced:
+    if u not in mesh.axis_names:
+      raise ValueError(
+          f'Unreduced axes {u} is not found in {mesh.axis_names=}. '
+          f'Got {pspec=}')
+    count = counts.get(u, 0)
+    if count > 0:
+      duplicate = True
+    counts[u] = count + 1
+  if duplicate:
+    multiple_uses = [r for r, c in counts.items() if c > 1]
+    raise ValueError(
+        f'Unreduced axes in {pspec} has duplicate entries which is not allowed.'
+        f' Got {mesh_lib.show_axes(multiple_uses)}')
+
+  for u in pspec.unreduced:
+    if mesh._name_to_type[u] in (AxisType.Auto, AxisType.Manual):
+      raise ValueError(
+          'Unreduced axes can only refer to mesh axes that is of type'
+          f' `Explicit`. Got unreduced axes: {pspec.unreduced} and'
+          f' mesh: {mesh}')
