@@ -278,4 +278,17 @@ void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out) {
   setInLayout(op, in);
   setOutLayout(op, out);
 }
+
+bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size) {
+  CHECK_GE(shape.size(), 2);
+  int64_t product = shape.back();
+  for (int i = shape.size() - 2; i >= 1; --i) {
+    product *= shape[i];
+    if (product >= target_size) {
+      break;
+    }
+  }
+  return product == target_size;
+}
+
 }  // namespace mlir::tpu

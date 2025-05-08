@@ -254,6 +254,12 @@ void setLayout(Operation *op, Layout in, Layout out);
 void setLayout(Operation *op, ArrayRef<Layout> in, Layout out);
 void setLayout(Operation *op, Layout in, ArrayRef<Layout> out);
 void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out);
+
+// Returns true if the product of some number of minor dimensions in `shape`
+// equals `target_size`.
+// Precondition: `shape` has at least 2 dimensions.
+bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size);
+
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
