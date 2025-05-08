@@ -64,12 +64,11 @@ def cost_estimate_jaxpr(
   total_cost = CostEstimate(flops=0, transcendentals=0, bytes_accessed=0)
 
   for eqn in jaxpr.eqns:
-    _, bind_params = eqn.primitive.get_bind_params(eqn.params)
     rule = _cost_rules.get(eqn.primitive, None)
     if rule is not None:
       context = Context(avals_in=[v.aval for v in eqn.invars],
                         avals_out=[v.aval for v in eqn.outvars])
-      op_cost = rule(context, **bind_params)
+      op_cost = rule(context, **eqn.params)
       total_cost = total_cost + op_cost
   return pallas_core.CostEstimate(
       flops=total_cost.flops,
