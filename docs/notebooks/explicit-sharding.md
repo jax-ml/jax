@@ -239,7 +239,7 @@ Here are some example sharding rules:
      which the split/merged axes are sharded as None then we shard the
      resulting split/merged axes as None and the other axes according to their
      corresponding input axis shardings. In all other cases we throw an error
-     and require the user to provide an `out_shardings` argument.
+     and require the user to provide an `out_sharding` argument.
 
 +++ {"id": "jZMp6w48Xmd7"}
 
@@ -308,7 +308,7 @@ def add_with_out_sharding_kwarg(x, y):
   print(f"We're in auto-sharding mode here. This is the current mesh: {get_abstract_mesh()}")
   return x + y
 
-result = add_with_out_sharding_kwarg(some_x, some_y, out_shardings=P("X", None))
+result = add_with_out_sharding_kwarg(some_x, some_y, out_sharding=P("X", None))
 print(f"Result type: {jax.typeof(result)}")
 ```
 
@@ -390,7 +390,7 @@ def f(arr1):
   x = jnp.sin(arr1)
   print(f'x.sharding: {jax.typeof(x)}', end='\n\n')
 
-  z = g(x, out_shardings=P("X", "Y"))
+  z = g(x, out_sharding=P("X", "Y"))
 
   print(f'z.sharding: {jax.typeof(z)}', end="\n\n")
   return z + 1
@@ -423,7 +423,7 @@ def f(arr1):
   print(f'mesh inside f: {get_abstract_mesh()}', end='\n\n')
   x = jnp.sin(arr1)
 
-  z = explicit_g(x, in_shardings=P("X", "Y"))
+  z = explicit_g(x, in_sharding=P("X", "Y"))
 
   return z + 1
 
@@ -469,7 +469,7 @@ def check_in_auto_context(x):
   compare_shardings(x)
   return x
 
-check_in_auto_context(my_array, out_shardings=P("X"))
+check_in_auto_context(my_array, out_sharding=P("X"))
 ```
 
 +++ {"id": "MRFccsi5X8so"}

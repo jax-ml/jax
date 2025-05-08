@@ -3067,24 +3067,24 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
   return mesh_to_use.update_axis_types({a: axis_type for a in axes})
 
 def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
-              out_shardings=None):
+              out_sharding=None):
   def decorator(*args, **kwargs):
-    if out_shardings is None:
-      if "out_shardings" in kwargs:
-        _out_shardings = kwargs.pop("out_shardings")
+    if out_sharding is None:
+      if "out_sharding" in kwargs:
+        _out_sharding = kwargs.pop("out_sharding")
       else:
-        raise TypeError("Missing required keyword argument: 'out_shardings'")
+        raise TypeError("Missing required keyword argument: 'out_sharding'")
     else:
-      _out_shardings = out_shardings
+      _out_sharding = out_sharding
     new_mesh = _get_new_mesh(
-        axes, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_shardings,
+        axes, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding,
         error_on_manual_to_auto_explicit=True)
     with mesh_lib.use_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
           core.get_aval(a).sharding.spec, new_mesh), args)
       args = mesh_cast(args, in_specs)
       out = fun(*args, **kwargs)
-    return mesh_cast(out, _out_shardings)
+    return mesh_cast(out, _out_sharding)
   return decorator
 
 @contextlib.contextmanager
@@ -3095,19 +3095,19 @@ def use_auto_axes(*axes):
 
 
 def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
-                  in_shardings=None):
+                  in_sharding=None):
   def decorator(*args, **kwargs):
-    if in_shardings is None:
-      if "in_shardings" in kwargs:
-        _in_shardings = kwargs.pop("in_shardings")
+    if in_sharding is None:
+      if "in_sharding" in kwargs:
+        _in_sharding = kwargs.pop("in_sharding")
       else:
-        raise TypeError("Missing required keyword argument: 'in_shardings'")
+        raise TypeError("Missing required keyword argument: 'in_sharding'")
     else:
-      _in_shardings = in_shardings
+      _in_sharding = in_sharding
     new_mesh = _get_new_mesh(axes, mesh_lib.AxisType.Explicit, 'explicit_axes',
                              error_on_manual_to_auto_explicit=True)
     with mesh_lib.use_abstract_mesh(new_mesh):
-      args = mesh_cast(args, _in_shardings)
+      args = mesh_cast(args, _in_sharding)
       out = fun(*args, **kwargs)
     out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(
         core.get_aval(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)

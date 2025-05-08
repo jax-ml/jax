@@ -608,7 +608,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
     internal_ds = partial(lax.dynamic_slice, slice_sizes=slice_sizes,
                           allow_negative_indices=allow_negative_indices)
     if out_sharding is not None:
-      arr = auto_axes(internal_ds, out_shardings=out_sharding)(arr, start_indices)
+      arr = auto_axes(internal_ds, out_sharding=out_sharding)(arr, start_indices)
     else:
       arr = internal_ds(arr, start_indices)
   if int_indices:
@@ -646,7 +646,7 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=mode, fill_value=fill_value)
   if out_sharding is not None:
-    return auto_axes(internal_gather, out_shardings=out_sharding
+    return auto_axes(internal_gather, out_sharding=out_sharding
                      )(arr, dynamic_idx)
   return internal_gather(arr, dynamic_idx)
 
