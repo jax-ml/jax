@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 class UnconstrainedSingleton:
 
@@ -43,6 +43,25 @@ def _canonicalize_partition(partition):
     return tuple(partition)
   return partition
 
+def _check(partitions, unreduced):
+  us = set(unreduced)
+  for p in partitions:
+    p = p if isinstance(p, tuple) else (p,)
+    for r in p:
+      if r in us:
+        raise ValueError(
+            "partitions cannot overlap with unreduced axes passed to"
+            f" PartitionSpec. Got partitions: {partitions} and unreduced axes:"
+            f" {unreduced}")
+  if None in unreduced:
+    raise ValueError(
+        "unreduced cannot contain None. All elements in unreduced should refer"
+        " to the mesh axes.")
+
+def unpicke_pspec(partitions, unreduced):
+  return PartitionSpec(*partitions, unreduced=unreduced)
+
+AxisName = Any
 
 class PartitionSpecImpl:
   """Tuple describing how to partition an array across a mesh of devices.
@@ -53,20 +72,34 @@ class PartitionSpecImpl:
   This class exists so JAX's pytree utilities can distinguish a partition
   specifications from tuples that should be treated as pytrees.
   """
-  __slots__ = ("_partitions",)
+  __slots__ = ("_partitions", "_unreduced")
   __match_args__ = ("_partitions",)
 
   # A sentinel value representing a dim is unconstrained.
   UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
-  def __init__(self, *partitions):
+  def __init__(self, *partitions,
+               unreduced: tuple[AxisName, ...] | AxisName | None = None):
     self._partitions = tuple(_canonicalize_partition(p) for p in partitions)
+    self._unreduced = (
+        () if unreduced is None else tuple(unreduced)
+        if isinstance(unreduced, (list, tuple)) else (unreduced,))
+    _check(self._partitions, self._unreduced)
+
+  @property
+  def unreduced(self):
+    return self._unreduced
 
   def __repr__(self):
-    return f"PartitionSpec{self._partitions!r}"
+    pr = repr(self._partitions)[1:-1]
+    if not self._unreduced:
+      return f"PartitionSpec({pr})"
+    ur_str = f"unreduced={self._unreduced!r}"
+    pr = '' if not pr else f"{pr} " if pr.endswith(',') else f"{pr}, "
+    return (f"PartitionSpec({pr}{ur_str})")
 
   def __reduce__(self):
-    return (PartitionSpec, self._partitions)
+    return (unpicke_pspec, (self._partitions, self._unreduced))
 
   def __getitem__(self, i):
     return self._partitions[i]
@@ -80,20 +113,42 @@ class PartitionSpecImpl:
   def __eq__(self, other):
     if not isinstance(other, (PartitionSpec, tuple)):
       return False
-    other = tuple(_canonicalize_partition(o) for o in other)
-    return self._partitions == other
+    other_p = tuple(_canonicalize_partition(o) for o in other)
+    if isinstance(other, PartitionSpec):
+      return (self._partitions == other_p and
+              self._unreduced == other._unreduced)
+    else:
+      if self._unreduced:
+        raise TypeError(
+            f"other {other} cannot be of instance `tuple` when self {self} has"
+            " unreduced in `__eq__` of PartitionSpec.")
+      return self._partitions == other_p
 
   def __hash__(self):
-    return hash(self._partitions)
+    return hash((self._partitions, self._unreduced))
 
   def __add__(self, other):
     if not isinstance(other, (tuple, PartitionSpec)):
-      return NotImplemented
-    return PartitionSpec(*self, *other)
+      raise NotImplementedError
+    if isinstance(other, PartitionSpec):
+      return PartitionSpec(
+          *self, *other,
+          unreduced=(*self._unreduced, *other._unreduced))
+    else:
+      if self._unreduced:
+        raise TypeError(
+            f"other {other} cannot be of instance `tuple` when self {self} has"
+            " unreduced in `__add__` of PartitionSpec.")
+      return PartitionSpec(*self, *other)
 
   def __radd__(self, other):
-    if not isinstance(other, (tuple, PartitionSpec)):
-      return NotImplemented
+    if not isinstance(other, tuple):
+      raise NotImplementedError
+    # other will always be a tuple.
+    if self._unreduced:
+      raise TypeError(
+          f"other {other} cannot be of instance `tuple` when self {self} has"
+          " unreduced in `__radd__` of PartitionSpec.")
     return PartitionSpec(*other, *self)
 
   def index(self, value):
@@ -102,12 +157,16 @@ class PartitionSpecImpl:
   def count(self, value):
     return self._partitions.count(_canonicalize_partition(value))
 
+  def with_partitions(self, new_partitions):
+    return PartitionSpec(*new_partitions, unreduced=self._unreduced)
+
   def _normalized_spec_for_aval(self, ndim: int) -> PartitionSpec:
     out = [None if p is _UNCONSTRAINED_PARTITION else p
            for p in self._partitions]
     if len(out) < ndim:
       out.extend([None] * (ndim - len(out)))
-    return PartitionSpec(*out)
+    return self.with_partitions(out)
+
 
 if TYPE_CHECKING:
   class PartitionSpec(PartitionSpecImpl, tuple):  # type: ignore

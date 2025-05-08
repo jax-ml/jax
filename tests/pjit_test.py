@@ -7677,8 +7677,88 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(jax.typeof(out).sharding, jax.typeof(x).sharding)
       return out
 
-    f(arr)
-    jax.jit(f)(arr)
+    f(arr)  # doesn't crash
+    jax.jit(f)(arr)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_basic(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    x = jax.device_put(np_inp, P('x', 'y'))
+    y = jax.device_put(np_inp.T, P('y', None))
+    a = jax.device_put(np_inp, P('x', 'y'))
+    b = jax.device_put(np_inp.T, P('y', None))
+
+    @jax.jit
+    def f(x, y, a, b):
+      m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
+      self.assertEqual(m1.aval.sharding.spec, P('x', None, unreduced='y'))
+
+      m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x', unreduced='y'))
+      self.assertEqual(m2.aval.sharding.spec, P('x', None, unreduced='y'))
+
+      s = m1 + m2  # unreduced
+      self.assertEqual(s.aval.sharding.spec, P('x', None, unreduced='y'))
+
+      out = reshard(s, P('x'))  # reduce
+      self.assertEqual(out.aval.sharding.spec, P('x', None))
+      return out
+
+    f.trace(x, y, a, b)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
+  def test_dot_general_unreduced_error(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    # Case 1
+    x = jax.device_put(np_inp, P('x', 'y'))
+    y = jax.device_put(np_inp.T, P('y', None))
+
+    @jax.jit
+    def f(x, y):
+      return jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='z'))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "unreduced axes should be equal to the contracting specs"):
+      f.trace(x, y)
+
+    # Case 2
+    x = jax.device_put(np_inp, P('x', 'y'))
+    y = jax.device_put(np_inp.T, P(None, None))
+    @jax.jit
+    def g(x, y):
+      return jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "lhs and rhs contracting dims should be sharded identically"):
+      g.trace(x, y)
+
+    # Case 3
+    x = jax.device_put(np_inp, P('x', None))
+    y = jax.device_put(np_inp.T, P(None, None))
+
+    @jax.jit
+    def h(x, y):
+      return jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "unreduced axes should be equal to the contracting specs"):
+      h.trace(x, y)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_add_unreduced_error(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    x = jax.device_put(np_inp, P('x', 'y'))
+    y = jax.device_put(np_inp.T, P('y', None))
+
+    @jax.jit
+    def f(x, y):
+      m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
+      m2 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x'))
+      return m1 + m2
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "arrays must be unreduced along the same mesh axes"):
+      f.trace(x, y)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
