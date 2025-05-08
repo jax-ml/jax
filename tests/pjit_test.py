@@ -7763,22 +7763,34 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "unreduced axes should be equal to the contracting specs"):
       h.trace(x, y)
 
-  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_add_unreduced_error(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
     x = jax.device_put(np_inp, P('x', 'y'))
     y = jax.device_put(np_inp.T, P('y', None))
+    a = jax.device_put(np_inp, P('x', 'z'))
+    b = jax.device_put(np_inp.T, P('z', None))
 
     @jax.jit
-    def f(x, y):
+    def f(x, y, a, b):
       m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
-      m2 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x'))
+      m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x', unreduced='z'))
       return m1 + m2
 
     with self.assertRaisesRegex(
         core.ShardingTypeError,
-        "arrays must be unreduced along the same mesh axes"):
-      f.trace(x, y)
+        "lhs and rhs to `add` must be unreduced along the same mesh axes"):
+      f.trace(x, y, a, b)
+
+    @jax.jit
+    def g(x, y):
+      m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
+      m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x'))
+      return m1 + m2
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "lhs is unreduced while rhs is not"):
+      g.trace(x, y)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
