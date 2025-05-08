@@ -3974,23 +3974,10 @@ def broadcasting_sharding_rule(name, *avals):
             raise core.ShardingTypeError(
                 f'{name} got incompatible shardings for broadcasting: '
                 f'{", ".join(map(str, map(tuple, specs)))}.')
-
-  unreduced = [a.sharding.spec.unreduced for a in avals if a.shape]
-  # TODO(yashkatariya): Relax this restriction to allow
-  # `f32[8]{R:x} * f32[8]{U:x} -> f32[8]{U:x}` for example and maybe more cases.
-  if unreduced:
-    if not all(unreduced[0] == u for u in unreduced[1:]):
-      raise core.ShardingTypeError(
-          'All arrays must be unreduced along the same mesh axes. Got'
-          f' {", ".join(map(str, map(tuple, unreduced)))}')
-    result_unreduced = unreduced[0]
-  else:
-    result_unreduced = None
-
-  return NamedSharding(mesh, P(*result_specs, unreduced=result_unreduced))
+  return NamedSharding(mesh, P(*result_specs))
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
-           require_same_dtypes=True):
+           require_same_dtypes=True, unreduced_rule=None):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
                        allow_extended_dtype=allow_extended_dtype,
                        require_same=require_same_dtypes)
@@ -3998,7 +3985,8 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
   sharding_rule = partial(broadcasting_sharding_rule, name)
   prim = standard_primitive(
       shape_rule, dtype_rule, name, sharding_rule=sharding_rule,
-      vma_rule=partial(core.standard_vma_rule, name))
+      vma_rule=partial(core.standard_vma_rule, name),
+      unreduced_rule=unreduced_rule)
   batching.defbroadcasting(prim)
   pe.def_trivial_padding(prim)
   return prim
@@ -4586,8 +4574,22 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-# TODO(slebedev): Why does mypy fail to infer the type here?
-add_p: Primitive = standard_naryop([_num, _num], 'add')
+def _add_unreduced(out_sharding, *avals):
+  unreduced = [a.sharding.spec.unreduced for a in avals if a.shape]
+  # TODO(yashkatariya): Relax this restriction to allow
+  # `f32[8]{R:x} + f32[8]{U:x} -> f32[8]{U:x}` for example and maybe more cases.
+  if unreduced:
+    if not all(unreduced[0] == u for u in unreduced[1:]):
+      raise core.ShardingTypeError(
+          'All arrays must be unreduced along the same mesh axes. Got'
+          f' {", ".join(map(str, map(tuple, unreduced)))}')
+    res_unreduced = unreduced[0]
+  else:
+    res_unreduced = None
+  return out_sharding.with_spec(out_sharding.spec.with_unreduced(res_unreduced))
+
+add_p: Primitive = naryop(_input_dtype, [_num, _num], 'add',
+                          unreduced_rule=_add_unreduced)
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
@@ -4897,7 +4899,8 @@ convert_element_type_p.def_abstract_eval(
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
             _convert_element_type_weak_type_rule,
             _convert_element_type_sharding_rule,
-            partial(core.standard_vma_rule, convert_element_type_p.name)))
+            partial(core.standard_vma_rule, convert_element_type_p.name),
+            None))
 ad.defjvp2(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 
@@ -5202,6 +5205,9 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
     raise core.ShardingTypeError(
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
+  if lhs.sharding.spec.unreduced or rhs.sharding.spec.unreduced:
+    raise NotImplementedError(
+        'Please file an issue at https://github.com/jax-ml/jax/issues')
 
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
