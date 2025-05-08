@@ -3095,7 +3095,9 @@ def _while_lowering_rule(
 
 
 @register_lowering_rule(lax.cond_p)
-def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches):
+def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
+  if params:
+    raise NotImplementedError("platform_dependent cond")
   index, *args = args
   constant_index = _fold_and_get_constant_value(index)
 
