@@ -1707,6 +1707,7 @@ class PallasCallWGTest(
         mgpu_primitives.broadcasted_iota_p,
         mgpu_primitives.load_p,
         mgpu_primitives.tcgen05_mma_p,
+        mgpu_primitives.commit_tmem_p,
         lax.slice_p,
         pallas_core.core_map_p,
         pallas_primitives.semaphore_signal_p,
@@ -2092,38 +2093,56 @@ class PallasCallSm90AWGTest(
 
 class PallasCallSm100ATest(PallasSm100ATest):
 
-  def test_tmem_alloc(self):
+  def test_tmem(self):
     self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
-
+    swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(128),
+    )
     @functools.partial(
         self.kernel,
         out_shape=jnp.zeros((128, 128), jnp.float32),
         scratch_shapes=[
             plgpu.TMEM((128, 128), jnp.float32),
-            plgpu.SMEM((128, 128), jnp.float32),
+            plgpu.TMEM((128, 128), jnp.float32),
+            plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
+            plgpu.Barrier(num_arrivals=1),
         ],
         num_threads=1,
         thread_name="x",
     )
-    def kernel(y_ref, tmem_ref, smem_ref):
-      # Issue a write so the TMEM load is not DCE'd.
-      smem_ref[...] = tmem_ref[...]
+    def kernel(x_ref, y_ref, tmem_ref, tmem_ref2, smem_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      # Exercise TMEM by roundtripping SMEM -> TMEM -> TMEM -> SMEM.
+      x_val = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05)
+      tmem_ref[...] = x_val + 1
+      plgpu.commit_tmem()
+      tmem_ref2[...] = tmem_ref[...]
+      plgpu.commit_tmem()
+      smem_ref[...] = tmem_ref2[...]
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_ref, y_ref)
       plgpu.wait_smem_to_gmem(0)
 
-    # Test that this runs without errors.
-    jax.block_until_ready(kernel())
+    x = jax.random.uniform(
+        jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
+    x_result = jax.block_until_ready(kernel(x))
+    np.testing.assert_array_equal(x_result, x + 1)
 
   @parameterized.parameters(
-      ((128, 128), 128, jnp.float16),
+      ((128, 128), 128, jnp.float16, False),
+      # Test LHS in TMEM.
+      ((128, 128), 128, jnp.float16, True),
       # Test bfloat16
-      ((128, 128), 128, jnp.bfloat16),
+      ((128, 128), 128, jnp.bfloat16, False),
       # Test additional swizzles.
-      ((128, 128), 64, jnp.float16),
-      ((128, 128), 32, jnp.float16),
+      ((128, 128), 64, jnp.float16, False),
+      ((128, 128), 32, jnp.float16, False),
   )
-  def test_simple_matmul(self, shape, swizzle, dtype):
+  def test_simple_matmul(self, shape, swizzle, dtype, lhs_tmem=False):
+    self.skip_if_wg_semantics()
     # Test a matmul with a single block.
     swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
     transforms = (
@@ -2131,9 +2150,16 @@ class PallasCallSm100ATest(PallasSm100ATest):
         plgpu.SwizzleTransform(swizzle),
     )
 
-    def kernel(a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref):
+    def kernel(a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref,
+               a_tmem_ref):
+      if lhs_tmem:
+        lhs_ref = a_tmem_ref
+        lhs_ref[...] = plgpu.load(a_smem, (), layout=plgpu.Layout.TCGEN05)
+        plgpu.commit_tmem()
+      else:
+        lhs_ref = a_smem
       plgpu.tcgen05_mma(acc_tmem,
-                        a_smem,
+                        lhs_ref,
                         b_smem,
                         barrier_ref,
                         accumulate=False)
@@ -2144,10 +2170,15 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.wait_smem_to_gmem(0)
 
     scratch_shapes = [
-        plgpu.TMEM(shape, jnp.float32),
+        plgpu.TMEM(shape, jnp.float32, packed=False),
         plgpu.SMEM(shape, dtype, transforms=transforms),
         plgpu.Barrier(num_arrivals=1, for_tensor_core=True),
     ]
+    if lhs_tmem:
+      scratch_shapes.append(plgpu.TMEM(shape, dtype, packed=True))
+    else:
+      scratch_shapes.append(None)
+
     f = self.pallas_call(
         kernel,
         in_specs=(
