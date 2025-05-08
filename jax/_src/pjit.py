@@ -2141,7 +2141,7 @@ def _insert_axis_partitions(spec, dim, val):
   too_short = dim - len(spec)
   if too_short > 0:
     spec += (None,) * too_short
-  new_partitions = tuple_insert(spec, dim, val)
+  new_partitions = tuple_insert(spec, dim, val)  # type: ignore
   return PartitionSpec(*new_partitions)
 
 def _pjit_batcher_for_sharding(

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 class UnconstrainedSingleton:
 
@@ -63,7 +63,7 @@ def unpicke_pspec(partitions, unreduced):
 
 AxisName = Any
 
-class PartitionSpecImpl:
+class PartitionSpec:
   """Tuple describing how to partition an array across a mesh of devices.
 
   Each element is either ``None``, a string, or a tuple of strings.
@@ -166,10 +166,3 @@ class PartitionSpecImpl:
     if len(out) < ndim:
       out.extend([None] * (ndim - len(out)))
     return self.with_partitions(out)
-
-
-if TYPE_CHECKING:
-  class PartitionSpec(PartitionSpecImpl, tuple):  # type: ignore
-    ...
-else:
-  PartitionSpec = PartitionSpecImpl
