@@ -367,8 +367,7 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
     Array([[ 5.5 , -2.5 ],
            [-3.75,  1.75]], dtype=float32)
   """
-  a = ensure_arraylike("jnp.linalg.matrix_power", a)
-  arr, = promote_dtypes_inexact(a)
+  arr = ensure_arraylike("jnp.linalg.matrix_power", a)
 
   if arr.ndim < 2:
     raise TypeError("{}-dimensional array given. Array must be at least "

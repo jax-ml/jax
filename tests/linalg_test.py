@@ -1230,6 +1230,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(partial(jnp.linalg.matrix_power, n=n), args_maker,
                           rtol=1e-3)
 
+  def testMatrixPowerBool(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/28603
+    mat = np.array([[True,True], [False,True]])
+    np_result = np.linalg.matrix_power(mat, 2)
+    jnp_result = jnp.linalg.matrix_power(mat, 2)
+    self.assertArraysEqual(np_result, jnp_result)
+
   @jtu.sample_product(
     shape=[(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50), (3, 4, 5),
            (2, 3, 4, 5)],
