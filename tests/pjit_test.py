@@ -7570,6 +7570,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
   @jtu.with_explicit_mesh((2,), ('x',))
+  def test_jnp_repeat(self, mesh):
+    out = jnp.repeat(np.eye(3), np.array((2,2,2,)) - 1, axis=0)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None)))
+
+    a = jnp.eye(3)
+    out = jnp.repeat(a, np.array((2,2,2,)) - 1, axis=0)
+    self.assertEqual(out.sharding, a.sharding)
+
+    a = jax.device_put(jnp.eye(4), P('x'))
+    out = jnp.repeat(a, np.array((2,2,2,2)) - 1, axis=0, out_sharding=P('x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
   def test_scatter_gather(self, mesh):
     x = np.random.uniform(size=(mesh.size * 2, 3))
     i = np.random.randint(0, x.shape[1], len(x))
