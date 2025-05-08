@@ -349,12 +349,12 @@ def _check_shape(name: str, shape: Shape, *param_shapes) -> None:
       raise ValueError(msg.format(name, shape_, shape))
 
 
-def maybe_auto_axes(f, out_shardings, **hoist_kwargs):
+def maybe_auto_axes(f, out_sharding, **hoist_kwargs):
   f_ = partial(f, **hoist_kwargs)
-  if out_shardings is None:
+  if out_sharding is None:
     return f_
   else:
-    return auto_axes(f_, out_shardings=out_shardings)
+    return auto_axes(f_, out_sharding=out_sharding)
 
 
 def bits(key: ArrayLike,
