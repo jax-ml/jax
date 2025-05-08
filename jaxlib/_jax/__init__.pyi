@@ -511,7 +511,19 @@ class Client:
       compile_options: CompileOptions = ...,
       host_callbacks: Sequence[Any] = ...,
   ) -> LoadedExecutable: ...
+  def compile_and_load(
+      self,
+      computation: str | bytes,
+      executable_devices: DeviceList | Sequence[Device],
+      compile_options: CompileOptions = ...,
+      host_callbacks: Sequence[Any] = ...,
+  ) -> LoadedExecutable: ...
   def compile_ifrt_program(
+      self,
+      program: ifrt_programs.Program,
+      program_options: ifrt_programs.CompileOptions,
+  ) -> LoadedExecutable: ...
+  def compile_and_load_ifrt_program(
       self,
       program: ifrt_programs.Program,
       program_options: ifrt_programs.CompileOptions,
