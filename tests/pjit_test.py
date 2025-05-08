@@ -4272,6 +4272,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
     else:
       self.assertIn('unspecified_dims=[0,1,2]', lowered_text)
 
+  def test_wsc_with_scalar(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    s = NamedSharding(mesh, P())
+    out = jax.lax.with_sharding_constraint(1., s)
+    self.assertArraysEqual(out, 1.)
+    self.assertEqual(out.sharding, s)
+
   def test_jit_partially_specified_shardings(self):
 
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))

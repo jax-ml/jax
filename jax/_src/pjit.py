@@ -1578,9 +1578,8 @@ def check_aval_layout_compatibility(
     if l is None or isinstance(l, AutoLayout):
       continue
     name_str = f' with pytree key path {name}' if name else ''
-    shape = aval.shape
     try:
-      l.check_compatible_aval(shape)
+      l.check_compatible_aval(aval.shape)
     except ValueError as e:
       raise ValueError(
           f'One of {what_aval}{name_str} is incompatible with its layout '
@@ -2717,7 +2716,7 @@ def with_sharding_constraint(x, shardings):
   .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
   """
   x_flat, tree = tree_flatten(x)
-
+  x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
   layouts, shardings = _split_layout_and_sharding(shardings)
 
   user_shardings = prepare_axis_resources(
@@ -2753,13 +2752,11 @@ def with_sharding_constraint(x, shardings):
                         for s in shardings_flat]
 
   pjit_check_aval_sharding(
-      shardings_flat, x_flat, ("",) * len(shardings_flat),
+      shardings_flat, x_avals_flat, ("",) * len(shardings_flat),
       "with_sharding_constraint arguments",
       allow_uneven_sharding=True)
-
   check_shardings_are_auto(shardings_flat)
-
-  check_aval_layout_compatibility(user_layouts_flat, x_flat,
+  check_aval_layout_compatibility(user_layouts_flat, x_avals_flat,
                                   ("",) * len(user_layouts_flat),
                                   "with_sharding_constraint arguments")
 
@@ -3125,6 +3122,7 @@ def use_explicit_axes(*axes):
 
 def with_layout_constraint(x, layouts):
   x_flat, tree = tree_flatten(x)
+  x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
   layouts_flat = tuple(flatten_axes("with_layout_constraint layouts", tree,
                                     layouts))
   if any(not isinstance(l, DeviceLocalLayout) for l in layouts_flat):
@@ -3132,7 +3130,7 @@ def with_layout_constraint(x, layouts):
         'layouts passed to `with_layout_constraint` must be of type'
         f' `DeviceLocalLayout`. Got {[type(l) for l in layouts_flat]}')
   check_aval_layout_compatibility(
-      layouts_flat, x_flat, ("",) * len(layouts_flat),
+      layouts_flat, x_avals_flat, ("",) * len(layouts_flat),
       "with_layout_constraint arguments")
   outs = [layout_constraint_p.bind(xf, layout=l)
           for xf, l in zip(x_flat, layouts_flat)]
