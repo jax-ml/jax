@@ -1271,16 +1271,16 @@ def put(a: ArrayLike, ind: ArrayLike, v: ArrayLike,
            [ 0,  0, 20,  0,  0],
            [ 0,  0,  0,  0, 30]], dtype=int32)
   """
+  if inplace:
+    raise ValueError(
+      "jax.numpy.put cannot modify arrays in-place, because JAX arrays are immutable. "
+      "Pass inplace=False to instead return an updated array.")
   arr, ind_arr, _ = util.ensure_arraylike("put", a, ind, v)
   ind_arr = ind_arr.ravel()
   v_arr = lax_numpy.ravel(v)
   if not arr.size or not ind_arr.size or not v_arr.size:
     return arr
   v_arr = lax_numpy._tile_to_size(v_arr, len(ind_arr))
-  if inplace:
-    raise ValueError(
-      "jax.numpy.put cannot modify arrays in-place, because JAX arrays are immutable. "
-      "Pass inplace=False to instead return an updated array.")
   if mode is None:
     scatter_mode = "drop"
   elif mode == "clip":
