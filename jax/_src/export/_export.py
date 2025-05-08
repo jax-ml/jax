@@ -1433,6 +1433,12 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
   submodule_bc = mlir.module_to_bytecode(submodule)
   shardy_enabled = _jax.sdy.lowered_with_shardy(submodule_bc)
+
+  if not shardy_enabled and config.use_shardy_partitioner.value:
+    raise ValueError(
+        "The function was exported with GSPMD but you are using the shardy "
+        "partitioner. Please re-export the function with shardy enabled.")
+
   if shardy_enabled:
     submodule = ir.Module.parse(
         _jax.sdy.sdy_round_trip_import_shardings(submodule_bc)
