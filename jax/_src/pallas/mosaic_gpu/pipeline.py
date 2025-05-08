@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from typing import Protocol, TypeVar
 from collections.abc import Callable, Sequence
 import dataclasses
 import functools
@@ -39,6 +40,7 @@ import jax.numpy as jnp
 
 map = util.safe_map
 zip = util.safe_zip
+T = TypeVar('T')
 
 def _get_block_size(
     bd: pl.Blocked | pl.Element | pl.Squeezed | pl.BoundedSlice | int | None,
@@ -378,6 +380,34 @@ def emit_pipeline(
   return pipeline
 
 
+class ComputeContext(Protocol):
+  """Protocol for a compute context for the warp specialized pipeline.
+
+  The ComputeContext is run exclusively in the compute thread and allows
+  the user to set up a prologue to initialize a pipeline carry and an epilogue
+  to consume the final carry.
+
+  All values allocated in the ComputeContext will only be allocated in the
+  compute thread and not the memory thread. This can potentially reduce
+  register pressure if certain values are only consumed by the compute threads.
+
+  Usage will usually follow this structure:
+
+  ```
+  def compute_context(pipeline):
+    # Perform prologue work and compute the initial carry.
+    initial_carry = ...
+    # Run the pipeline.
+    final_carry = pipeline(*initial_carry)
+    # Perform epilogue work using the final carry.
+    do_work(final_carry)
+  ```
+
+  """
+  def __call__(self, pipeline: Callable[[T], T]) -> None:
+    ...
+
+
 def emit_pipeline_warp_specialized(
     body: Callable[..., None],
     *,
@@ -389,7 +419,7 @@ def emit_pipeline_warp_specialized(
     wg_axis: str,
     num_compute_wgs: int,
     manual_consumed_barriers: bool = False,
-    carry_coroutine: Any | None = None,
+    compute_context: ComputeContext | None = None,
     memory_thread_idx: int | None = None,
 ):
   """Creates a function to emit a warp-specialized pipeline.
@@ -402,7 +432,7 @@ def emit_pipeline_warp_specialized(
   def body(indices, *input_refs, *output_refs, [consumed_barriers]) -> None:
   ```
 
-  or with a carries enabled (enabled via the ``carry_coroutine`` argument),
+  or with a carries enabled (enabled via the ``compute_context`` argument),
   where the body returns the next carry:
 
   ```
@@ -425,11 +455,15 @@ def emit_pipeline_warp_specialized(
     manual_consumed_barriers: If True, consumed barriers will be
       passed into the body function after the output refs. There will be one
       barrier per input and will be passed in the same order.
-    carry_coroutine: If specified, enables carries in the pipeline.
-      The signature of the body function will be modified such that the last
-      argument will be the current carry and it must return the next carry.
-      The coroutine itself should yield the initial carry, and the
-      yield statement will return the final value of the carry.
+    compute_context: If specified, enables carries in the pipeline and allows
+      a user-specified prologue/epilogue that is only executed in the compute
+      thread. The signature of the pipeline body function will be modified
+      such that the last argument will be the current carry and it must
+      return the next carry.
+      The compute_context itself should follow the signature of `ComputeContext`
+      and take a pipeline function as its sole argument. Calling the
+      pipeline with the initial carry will run the pipeline and return the
+      final carry.
     memory_thread_idx: The index of the memory thread. If not specified,
       defaults to the last thread.
   """
@@ -443,7 +477,7 @@ def emit_pipeline_warp_specialized(
     # thread is the last thread.
     raise NotImplementedError("Memory thread must be the last thread.")
 
-  has_carry = carry_coroutine is not None
+  has_carry = compute_context is not None
 
   # Trace the index maps to determine if they depend on the grid.
   # Grid-independent values will not be multiple-buffered.
@@ -622,25 +656,29 @@ def emit_pipeline_warp_specialized(
       ]
 
       if has_carry:
-        _carry = carry_coroutine()
-        try:
-          carry_init = next(_carry)
-        except StopIteration:
-          raise ValueError("carry_coroutine must yield the initial carry.")  # pylint: disable=raise-missing-from
+        last_indices = None
+        def pipeline_callback(user_init_carry):
+          nonlocal last_indices
+          if last_indices is not None:
+            raise ValueError(
+              "Cannot call pipeline more than once in `compute_context`")
+          print("[DEBUG] user_init_carry: ", user_init_carry)
+          init_loop_carry = (init_indices, last_store_slices, user_init_carry)
+          last_indices, _, final_body_carry = lax.fori_loop(0,
+                        num_steps,
+                        compute_loop_body,
+                        init_loop_carry)
+          print("[DEBUG] final_body_carry: ", final_body_carry)
+          return final_body_carry
+        compute_context(pipeline_callback)
+        if last_indices is None:
+          raise ValueError("Pipeline was not called in `compute_context`")
       else:
-        _carry = None
-        carry_init = None
-      init_loop_carry = (init_indices, last_store_slices, carry_init)
-      last_indices, _, final_body_carry = lax.fori_loop(0,
-                    num_steps,
-                    compute_loop_body,
-                    init_loop_carry)
-      if has_carry:
-        try:
-          _carry.send(final_body_carry)  # pytype: disable=attribute-error
-          raise ValueError("carry_coroutine must only yield once.")
-        except StopIteration:
-          pass
+        assert compute_context is None
+        last_indices, _, _ = lax.fori_loop(
+            0, num_steps, compute_loop_body,
+            (init_indices, last_store_slices, None)
+        )
 
       # Handle index_invariant outputs after the loop. They are not
       # written in the main pipeline loop.
