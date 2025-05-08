@@ -82,7 +82,8 @@ def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>
 
 def TPU_DimensionSemantics : I32EnumAttr<"DimensionSemantics", "Dimension semantics", [
   I32EnumAttrCase<"parallel", 0>,
-  I32EnumAttrCase<"arbitrary", 1>
+  I32EnumAttrCase<"arbitrary", 1>,
+  I32EnumAttrCase<"core_parallel", 2>
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
