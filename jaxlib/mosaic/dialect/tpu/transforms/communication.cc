@@ -111,8 +111,12 @@ struct LogicalToPhysicalDeviceIdPass
           {total_devices}, IntegerType::get(func.getContext(), 32),
           TiledLayoutAttr::get(func.getContext(), {xla::Tile({128})}, {1}),
           MemorySpaceAttr::get(func.getContext(), MemorySpace::smem));
-      func.insertArgument(func.getNumArguments(), device_assignment_type,
-                          nullptr, UnknownLoc::get(func.getContext()));
+
+      if (failed(func.insertArgument(func.getNumArguments(),
+                                     device_assignment_type, nullptr,
+                                     UnknownLoc::get(func.getContext())))) {
+        return signalPassFailure();
+      }
       auto device_assignment_arg = func.getArgument(func.getNumArguments() - 1);
       func.walk([device_assignment_arg](Operation *some_op) {
         if (auto op = dyn_cast<tpu::EnqueueDMAOp>(some_op)) {
