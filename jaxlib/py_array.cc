@@ -1528,9 +1528,6 @@ int PyArray_bf_getbuffer(PyObject* exporter, Py_buffer* view, int flags) {
     absl::Span<const std::shared_ptr<PjRtBuffer>> buffers =
         array->pjrt_buffers();
 
-    if (buffers.empty()) {
-      return InvalidArgument("Array has no buffers.");
-    }
     PjRtBuffer& buffer = *buffers.front();
     if (!buffer.IsOnCpu()) {
       return InvalidArgument(
