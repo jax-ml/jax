@@ -931,7 +931,8 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       ] if _thread_local_state.call_tf_concrete_function_list is not None else [],
       # We always set has_token_input_output because it requires real tokens
       # for versions less than 9 and is not used starting with version 9.
-      has_token_input_output=False
+      has_token_input_output=False,
+      use_shardy_partitioner=config.use_shardy_partitioner.value
   )
 
   call_module_attrs["platforms"] = tuple(p.upper() for p in exported.platforms)
