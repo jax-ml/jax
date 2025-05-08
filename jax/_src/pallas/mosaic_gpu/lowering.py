@@ -241,15 +241,20 @@ def _run_scoped_resource_estimator(
           )
       )
     elif aval.memory_space == gpu_core.TMEM:
-      if aval.dtype.itemsize != 4:
-        raise ValueError("TMEM only supports 32-bit types.")
       if len(aval.shape) != 2:
-        raise ValueError("TMEM allocations must be 2D.")
+        raise ValueError(f"TMEM allocations must be 2D. Got {aval.shape}")
       if aval.shape[0] % tcgen05.TMEM_ROWS != 0:
-        raise ValueError("TMEM shape[0] must be a multiple of 128.")
-      if aval.shape[1] % 8 != 0:
-        raise ValueError("TMEM shape[1] must be a multiple of 8.")
-      rs += Resources(tmem_scratch_cols=aval.shape[1])
+        raise ValueError(
+            f"TMEM shape[0] must be a multiple of 128. Got {aval.shape[0]}.")
+      if aval.packed:
+        packing = 4 // aval.dtype.itemsize
+      else:
+        packing = 1
+      layout = tcgen05._infer_tmem_layout(
+          aval.shape, collective=False, packing=packing)
+      cols_used = layout.cols_in_shape(aval.shape)
+      cols_used = tcgen05._alloc_ncols(cols_used, exact=False)
+      rs += Resources(tmem_scratch_cols=cols_used)
     elif aval.memory_space == gpu_core.SMEM:
       rs += Resources(
           smem_scratch_bytes=math.prod(aval.shape) * aval.dtype.itemsize
@@ -346,20 +351,30 @@ class ModuleContext:
   def alloc_tmem(
       self,
       struct: jax.ShapeDtypeStruct,
-      layout: tcgen05.TMEMLayout | None = None
+      *,
+      layout: tcgen05.TMEMLayout | None = None,
+      collective: bool = False,
+      packed: bool = False,
+      exact_cols: bool = False
   ) -> ir.Value:
-    if self.tmem_used_cols > 0:
-      raise NotImplementedError(
-          "Multiple TMEM allocations are not implemented.")
+    if packed:
+      packing = 4 // struct.dtype.itemsize
+    else:
+      packing = 1
     if layout is None:
-      layout = tcgen05._infer_tmem_layout(struct.shape, collective=False)
-    cols_used = np.prod(struct.shape) // tcgen05.TMEM_ROWS
+      layout = tcgen05._infer_tmem_layout(
+          struct.shape, collective, packing=packing)
+    unpadded_cols_used = layout.cols_in_shape(struct.shape)
+    cols_used = tcgen05._alloc_ncols(unpadded_cols_used, exact_cols)
+
+    off = arith_dialect.addi(self.tmem_base_ptr,
+                             _i32_constant(self.tmem_used_cols))
+    tmem_ref = tcgen05.TMEMRef(
+        address=off,
+        shape=struct.shape,
+        dtype=mgpu_utils.dtype_to_ir_type(struct.dtype),
+        layout=layout)
     self.tmem_used_cols += cols_used
-    off = self.tmem_base_ptr
-    tmem_ref = tcgen05.TMEMRef(address=off,
-                               shape=struct.shape,
-                               dtype=mgpu_utils.dtype_to_ir_type(struct.dtype),
-                               layout=layout)
     yield tmem_ref
     self.tmem_used_cols -= cols_used
 
@@ -610,6 +625,8 @@ def lower_pipelined_jaxpr_to_module(
   def ref_for_aval(aval: jax_core.AbstractValue):
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
       return gpu_core.WGMMAAccumulatorRef(aval.shape, aval.dtype)
+    elif isinstance(aval, gpu_core.AbstractTMEMRef):
+      return gpu_core.TMEM(aval.shape, aval.dtype, packed=aval.packed)
     elif isinstance(aval, pallas_core.AbstractMemoryRef):
       return pallas_core.MemoryRef(aval.shape, aval.dtype, aval.memory_space)
     else:
@@ -1324,17 +1341,32 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
 
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Lane)
 def _swap_lowering_rule(
-    ctx: LoweringRuleContext, x_smem, value, *leaves, tree
+    ctx: LoweringRuleContext, x_ref, value, *leaves, tree
 ):
   if not isinstance(value, mgpu.FragmentedArray):
     raise TypeError(f"Can only store arrays (got {value}).")
-  if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
-    raise TypeError(f"Can only store to references (got {x_smem}).")
+
+  if isinstance(x_ref, tcgen05.TMEMRef):
+    transforms = jax.tree.unflatten(tree, leaves)
+    match transforms:
+      case (indexer,) if isinstance(indexer, indexing.NDIndexer):
+        if not gpu_core.is_trivial_index(indexer.indices, x_ref.shape):
+          raise NotImplementedError(
+              "Only trivial indexing is supported for TMEM refs.")
+      case _:
+        raise NotImplementedError(
+            "Only a single indexing transform is supported for TMEM refs.")
+    old_value = x_ref[:]
+    x_ref[:] = value
+    return old_value
+
+  if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
+    raise TypeError(f"Can only store to references (got {x_ref}).")
   v_aval = ctx.avals_in[1]
   transforms = jax.tree.unflatten(tree, leaves)
   transposed_value = value.layout == mgpu.WGMMA_TRANSPOSED_LAYOUT
   x_smem, transforms = _handle_transforms(
-      ctx, x_smem, transforms, handle_transposes=not transposed_value, allow_peer_refs=True
+      ctx, x_ref, transforms, handle_transposes=not transposed_value, allow_peer_refs=True
   )
   mgpu.warpgroup_barrier()  # Make sure reads have completed before we write.
   match transforms:
@@ -2201,6 +2233,8 @@ def _run_scoped_lowering_rule(
         input_ref = alloc_stack.enter_context(
             ctx.module_ctx.alloc_tmem(
                 jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
+                packed=aval.packed,
+                exact_cols=False,
             )
         )
         input_refs.append(input_ref)

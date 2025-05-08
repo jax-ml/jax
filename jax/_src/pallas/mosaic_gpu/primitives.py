@@ -1177,8 +1177,9 @@ def _tcgen05_mma_abstract_eval(acc, a, b, barrier, accumulate,
 
   if acc.memory_space != gpu_core.GPUMemorySpace.TMEM:
     raise ValueError("Accumulator must be a TMEM Ref.")
-  if a.memory_space != gpu_core.GPUMemorySpace.SMEM:
-    raise ValueError("LHS must be an SMEM Ref. TMEM not yet supported.")
+  if a.memory_space not in (gpu_core.GPUMemorySpace.SMEM,
+                            gpu_core.GPUMemorySpace.TMEM):
+    raise ValueError("LHS must be a TMEM/SMEM Ref.")
   if b.memory_space != gpu_core.GPUMemorySpace.SMEM:
     raise ValueError("RHS must be an SMEM Ref.")
 
@@ -1287,6 +1288,27 @@ def _tcgen05_mma_lowering(
                           ctx=ctx.launch_ctx)
   return []
 
+
+commit_tmem_p = jax_core.Primitive("commit_tmem")
+commit_tmem_p.multiple_results = True
+
+
+@commit_tmem_p.def_effectful_abstract_eval
+def _commit_tmem_abstract_eval():
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(commit_tmem_p, mgpu.LoweringSemantics.Lane)
+def _commit_tmem_lowering(_):
+  tcgen05.commit_tmem()
+  return ()
+
+
+def commit_tmem():
+  """Commits all writes to TMEM, making them visible to loads and MMA."""
+  commit_tmem_p.bind()
+
+
 class Layout(enum.Enum):
   #: [m, n] matrix, where m % 64 == 0 == n % 8.
   WGMMA = enum.auto()
@@ -1298,6 +1320,8 @@ class Layout(enum.Enum):
 
   WG_SPLAT = enum.auto()
   WG_STRIDED = enum.auto()
+
+  TCGEN05 = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
@@ -1324,6 +1348,9 @@ class Layout(enum.Enum):
         return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
       case Layout.WG_STRIDED:
         return mgpu.WGStridedFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
+      case Layout.TCGEN05:
+        check_no_args()
+        return mgpu.TCGEN05_LAYOUT
 
 @dataclasses.dataclass(frozen=True)
 class ParameterizedLayout:
