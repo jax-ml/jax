@@ -1124,8 +1124,19 @@ def tcgen05_mma(acc: _Ref,
                 a: _Ref,
                 b: _Ref,
                 barrier: _Ref,
-                accumulate: bool | jax.Array = True):
+                accumulate: bool | jax.Array = True,
+                collective_axis: str | None = None):
   """Asynchronous matrix-multiply accumulate for TensorCore gen 5 (Blackwell).
+
+  If run in collective mode, `acc`, `a` (LHS), and `b` (RHS) should correspond
+  to half of the total inputs to the MMA, where `acc` and `a` (LHS) are split
+  in half along the rows and `b` (RHS) is split along the columns like so:
+
+   -----------    -----------   -----------
+   |  ACC1   |    |  LHS1   |   |    |    |
+   ----------- += ----------- @ |RHS1|RHS2|
+   |  ACC2   |    |  LHS2   |   |    |    |
+   -----------    -----------   -----------
 
   Args:
     acc: The accumulator. Must be a TMEM Ref.
@@ -1134,10 +1145,15 @@ def tcgen05_mma(acc: _Ref,
     barrier: Barrier Ref for synchronizing with the tensor core. Should have
       for_tensor_core set to True.
     accumulate: Whether to accumulate into acc or overwrite it.
+    collective_axis: The name of the cluster axis along which to perform
+      a collective MMA. The cluster axis should have a size of exactly 2,
+      and must be on the minormost cluster axis.
   """
   acc_m, acc_n = acc.shape
   lhs_m, lhs_k = a.shape
   rhs_k, rhs_n = b.shape
+  if collective_axis is not None:
+    acc_n /= 2
   if acc_m != lhs_m:
     raise ValueError(
         f"Accumulator and LHS have incompatible shapes. Accumulator: {acc.shape}. LHS: {a.shape}.")
@@ -1164,16 +1180,14 @@ def tcgen05_mma(acc: _Ref,
                       *a_transforms_leaves, *b_transforms_leaves,
                       a_transforms_tree=a_transforms_tree,
                       b_transforms_tree=b_transforms_tree,
-                      collective=False)
+                      collective_axis=collective_axis)
 
 @tcgen05_mma_p.def_abstract_eval
 def _tcgen05_mma_abstract_eval(acc, a, b, barrier, accumulate,
                                *transforms_leaves,
                                a_transforms_tree, b_transforms_tree,
-                               collective):
+                               collective_axis):
   del (accumulate, transforms_leaves, a_transforms_tree, b_transforms_tree)
-  if collective:
-    raise NotImplementedError("Collective MMA not yet implemented.")
 
   if acc.memory_space != gpu_core.GPUMemorySpace.TMEM:
     raise ValueError("Accumulator must be a TMEM Ref.")
@@ -1182,6 +1196,14 @@ def _tcgen05_mma_abstract_eval(acc, a, b, barrier, accumulate,
     raise ValueError("LHS must be a TMEM/SMEM Ref.")
   if b.memory_space != gpu_core.GPUMemorySpace.SMEM:
     raise ValueError("RHS must be an SMEM Ref.")
+
+  if collective_axis is not None:
+    if not acc.collective:
+      raise ValueError(
+          "Accumulator Ref must be collective if collective_axis is set.")
+    if a.memory_space == gpu_core.GPUMemorySpace.TMEM and not a.collective:
+      raise ValueError(
+          "LHS TMEM Ref must be collective if collective_axis is set.")
 
   for_tensor_core = getattr(
       barrier.inner_aval.dtype, "for_tensor_core", False)
@@ -1202,7 +1224,7 @@ def _tcgen05_mma_lowering(
     *transforms_leaves,
     a_transforms_tree,
     b_transforms_tree,
-    collective: bool,
+    collective_axis,
 ):
   _, a_aval, b_aval, *_ = ctx.avals_in
   lhs_swizzle: int = 128
@@ -1267,12 +1289,26 @@ def _tcgen05_mma_lowering(
     accumulate = mgpu.c(accumulate, ir.IntegerType.get_signless(1))
 
   predicate = ctx.module_ctx.single_lane_predicate
-  if collective:
+  collective = False
+  if collective_axis is not None:
+    cluster_axis = lowering._resolve_cluster_axis(
+        ctx.module_ctx.axis_names, collective_axis)
+    if cluster_axis != gpu_dialect.Dimension(0):
+      # Note: resolve_cluster_axis checks if axis_names exists.
+      assert ctx.module_ctx.axis_names is not None
+      if len(ctx.module_ctx.axis_names.cluster) <= 1:
+        raise ValueError("No cluster axes found.")
+      minormost_cluster_axis = ctx.module_ctx.axis_names.cluster[0]
+      raise ValueError(
+          "Can only perform collective MMA along minormost cluster axis. "
+          f"Got {collective_axis}, expected {minormost_cluster_axis}.")
     index = ir.IndexType.get()
     is_leader_block = arith_dialect.cmpi(
         arith_dialect.CmpIPredicate.eq,
-        ctx.launch_ctx.cluster_idx(gpu_dialect.Dimension.x), mgpu.c(0, index))
+        ctx.launch_ctx.cluster_idx(cluster_axis), mgpu.c(0, index))
     predicate = arith_dialect.andi(predicate, is_leader_block)
+    collective = True
+
   with mgpu.when(predicate):
     tcgen05.mma(
               acc,

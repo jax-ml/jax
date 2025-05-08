@@ -126,11 +126,12 @@ class GPUMemorySpace(enum.Enum):
       dtype: jnp.dtype,
       *,
       transforms: Sequence[MemoryRefTransform] = (),
-      packed: bool | None = None
+      packed: bool | None = None,
+      collective: bool | None = None
   ) -> pallas_core.MemoryRef:
     # A convenience function for constructing MemoryRef types.
     return GPUMemoryRef(shape, dtype, memory_space=self, transforms=transforms,
-                        packed=packed)
+                        packed=packed, collective=collective)
 
 
 class SemaphoreType(enum.Enum):
@@ -224,10 +225,14 @@ class GPUMemoryRef(pallas_core.MemoryRef):
 
   # Whether to allow TMEM packing for sub 4-byte dtypes.
   packed: bool | None = dataclasses.field(default=None, kw_only=True)
+  collective: bool | None = dataclasses.field(default=None, kw_only=True)
 
   def __post_init__(self):
-    if self.packed is not None and self.memory_space != GPUMemorySpace.TMEM:
-      raise ValueError("Packed option is only supported for TMEM.")
+    if self.memory_space != GPUMemorySpace.TMEM:
+      if self.packed is not None:
+        raise ValueError("Packed option is only supported for TMEM.")
+      if self.collective is not None:
+        raise ValueError("Collective option is only supported for TMEM.")
 
   def get_ref_aval(self) -> _Ref:
     aval = jax_core.ShapedArray(self.shape, self.dtype)
@@ -237,7 +242,8 @@ class GPUMemoryRef(pallas_core.MemoryRef):
       ref = pallas_core.TransformedRef(
           AbstractTMEMRef(aval,
                           memory_space=self.memory_space,
-                          packed=self.packed), ()
+                          packed=self.packed,
+                          collective=self.collective), ()
       )
     else:
       ref = pallas_core.TransformedRef(
@@ -936,11 +942,12 @@ def _as_accum(ref) -> WGMMAAbstractAccumulatorRef:
   )
 
 class AbstractTMEMRef(AbstractMemoryRef):
-  __slots__ = ["inner_aval", "memory_space", "packed"]
+  __slots__ = ["inner_aval", "memory_space", "packed", "collective"]
 
-  def __init__(self, inner_aval, memory_space, packed):
+  def __init__(self, inner_aval, memory_space, packed, collective):
     super().__init__(inner_aval, memory_space)
     self.packed = packed
+    self.collective = collective
 
   def __repr__(self) -> str:
     return f'TMEM({self.inner_aval.str_short()},packed={self.packed})'
