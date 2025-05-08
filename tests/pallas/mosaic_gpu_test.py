@@ -2131,18 +2131,20 @@ class PallasCallSm100ATest(PallasSm100ATest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(x_result, x + 1)
 
-  @parameterized.parameters(
-      ((128, 128), 128, jnp.float16, False),
-      # Test LHS in TMEM.
-      ((128, 128), 128, jnp.float16, True),
-      # Test bfloat16
-      ((128, 128), 128, jnp.bfloat16, False),
-      # Test additional swizzles.
-      ((128, 128), 64, jnp.float16, False),
-      ((128, 128), 32, jnp.float16, False),
-  )
-  def test_simple_matmul(self, shape, swizzle, dtype, lhs_tmem=False):
+  @parameterized.product(shape=[(128, 128)],
+                         swizzle=[128, 64, 32],
+                         dtype=[jnp.float16, jnp.bfloat16],
+                         lhs_tmem=[False, True],
+                         transpose_rhs=[False, True],
+                         transpose_lhs=[False, True])
+  def test_simple_matmul(self, shape, swizzle,
+                         dtype=jnp.float16,
+                         lhs_tmem=False,
+                         transpose_lhs=False,
+                         transpose_rhs=False):
     self.skip_if_wg_semantics()
+    if transpose_lhs and lhs_tmem:
+      self.skipTest("TMEM transpose not supported.")
     # Test a matmul with a single block.
     swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
     transforms = (
@@ -2152,6 +2154,10 @@ class PallasCallSm100ATest(PallasSm100ATest):
 
     def kernel(a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref,
                a_tmem_ref):
+      if transpose_lhs:
+        a_smem = plgpu.transpose_ref(a_smem, (1, 0))
+      if transpose_rhs:
+        b_smem = plgpu.transpose_ref(b_smem, (1, 0))
       if lhs_tmem:
         lhs_ref = a_tmem_ref
         lhs_ref[...] = plgpu.load(a_smem, (), layout=plgpu.Layout.TCGEN05)
@@ -2194,6 +2200,10 @@ class PallasCallSm100ATest(PallasSm100ATest):
     x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
     y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
     result = f(x, y)
+    if transpose_lhs:
+      x = jnp.transpose(x, (1, 0))
+    if transpose_rhs:
+      y = jnp.transpose(y, (1, 0))
     expected = x @ y
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
