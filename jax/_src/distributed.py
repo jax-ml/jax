@@ -156,14 +156,17 @@ class State:
     self.slice_index = slice_index
 
   def shutdown(self):
+    if self.preemption_sync_manager:
+      # It's important to shut down the preemption sync manager before the
+      # client because the preemption sync manager depends on the client.
+      self.preemption_sync_manager.shutdown()
+      self.preemption_sync_manager = None
     if self.client:
       self.client.shutdown()
       self.client = None
     if self.service:
       self.service.shutdown()
       self.service = None
-    if self.preemption_sync_manager:
-      self.preemption_sync_manager = None
 
   def initialize_preemption_sync_manager(self):
     if self.preemption_sync_manager is not None:
