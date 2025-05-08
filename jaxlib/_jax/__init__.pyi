@@ -572,17 +572,6 @@ def get_tfrt_cpu_client(
     collectives: CpuCollectives | None = ...,
     num_devices: int | None = ...,
 ) -> Client: ...
-def get_gpu_client(
-    asynchronous: bool = ...,
-    allocator_config: GpuAllocatorConfig = ...,
-    distributed_client: DistributedRuntimeClient | None = ...,
-    node_id: int = ...,
-    num_nodes: int = ...,
-    allowed_devices: Any | None = ...,
-    platform_name: str | None = ...,
-    mock: bool | None = ...,
-    mock_gpu_topology: str | None = ...,
-) -> Client: ...
 def get_mock_gpu_client(
     asynchronous: bool = ...,
     allocator_config: GpuAllocatorConfig = ...,
