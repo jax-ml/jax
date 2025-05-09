@@ -38,6 +38,7 @@ import warnings
 import jax
 from jax import jit
 from jax import lax
+from jax.experimental import xla_metadata
 from jax._src import config
 from jax._src import core
 from jax._src import deprecations
@@ -6979,7 +6980,11 @@ def tril(m: ArrayLike, k: int = 0) -> Array:
     raise ValueError("Argument to jax.numpy.tril must be at least 2D")
   N, M = m_shape[-2:]
   mask = tri(N, M, k=k, dtype=bool)
-  return lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
+
+  with xla_metadata.set_xla_metadata(matrix_type="hlo.lower_triangular_matrix"):
+    tril_mat = lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
+
+  return tril_mat
 
 
 @export
