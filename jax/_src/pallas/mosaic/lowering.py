@@ -2177,11 +2177,14 @@ def _convert_element_type_lowering_rule(
     elif jnp.iinfo(old_dtype).bits == jnp.iinfo(new_dtype).bits:
       # This case triggers when casting signed to unsigned or vice versa.
       return x
-  # TODO(apaszke): Remove both_32bit constraints using the Mosaic canonicalizer.
   elif _from(floating) and _to(signed):
     return arith.fptosi(out_type, x)
-  elif _from(signed) and _to(floating) and both_32bit:
-    return arith.sitofp(out_type, x)
+  elif _from(signed) and _to(floating):
+    if (
+        not (ctx.forward_compatible or is_cloud_tpu_older_than(2025, 5, 12))
+        or both_32bit
+    ):
+      return arith.sitofp(out_type, x)
   elif old_dtype == jnp.bool_ and _to(integer) and new_dtype.itemsize == 4:
     return arith.extui(out_type, x)
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),

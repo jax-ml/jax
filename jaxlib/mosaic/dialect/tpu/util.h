@@ -180,6 +180,16 @@ FailureOr<int8_t> getTypeBitwidth(Type ty) {
          << ty;
 }
 
+// Returns the bitwidth of the element type. The function works for both
+// scalar and vector types.
+template <bool adjust_bool = false>
+inline FailureOr<int8_t> getElementTypeBitwidth(Type ty) {
+  if (auto vty = dyn_cast<VectorType>(ty)) {
+    return getTypeBitwidth<adjust_bool>(vty.getElementType());
+  }
+  return getTypeBitwidth<adjust_bool>(ty);
+}
+
 template <typename T>
 ArrayRef<std::remove_const_t<T>> toArrayRef(absl::Span<T> span) {
   return ArrayRef<std::remove_const_t<T>>(span.data(), span.size());
