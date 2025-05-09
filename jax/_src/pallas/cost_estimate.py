@@ -238,15 +238,15 @@ def _pjit_cost_rule(ctx, *, jaxpr: jax_core.ClosedJaxpr, **_):
   )
 register_cost_rule(pjit.pjit_p, _pjit_cost_rule)
 
-def _custom_vjp_rule(ctx, *, fun_jaxpr: jax_core.ClosedJaxpr, **_):
+def _custom_vjp_rule(ctx, *, call_jaxpr: jax_core.ClosedJaxpr, **_):
   del ctx
-  inner_cost = cost_estimate_jaxpr(fun_jaxpr)
+  inner_cost = cost_estimate_jaxpr(call_jaxpr)
   return CostEstimate(
       flops=inner_cost.flops,
       transcendentals=inner_cost.transcendentals,
       bytes_accessed=inner_cost.bytes_accessed,
   )
-register_cost_rule(custom_derivatives.custom_vjp_call_jaxpr_p, _custom_vjp_rule)
+register_cost_rule(custom_derivatives.custom_vjp_call_p, _custom_vjp_rule)
 
 def _run_state_rule(*_, jaxpr: jax_core.Jaxpr, **_2):
   inner_cost = cost_estimate_jaxpr(pe.close_jaxpr(jaxpr))
