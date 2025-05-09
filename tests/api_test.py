@@ -34,6 +34,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 import traceback
 import types
 from typing import NamedTuple
@@ -8417,6 +8418,32 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     x = jnp.arange(3.0)
     jax.jvp(jax.vmap(jax.jit(f)), (x,), (x,))  # doesn't crash
+
+  def test_pretty_print(self):
+    @jax.custom_jvp
+    def f(x):
+      return x + 1
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      return f(*primals), tangents[0]
+
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(f)(x)
+    actual = jaxpr.pretty_print(use_color=False)
+    expected = textwrap.dedent(
+        """
+        { lambda ; a:f32[1]. let
+            b:f32[1] = custom_jvp_call[
+              name=f
+              call_jaxpr={ lambda ; c:f32[1]. let d:f32[1] = add c 1.0:f32[] in (d,) }
+              jvp=f_jvp
+              symbolic_zeros=False
+            ] a
+          in (b,) }
+        """).strip()
+    self.assertEqual(actual, expected)
+
 
 
 class CustomVJPTest(jtu.JaxTestCase):
