@@ -636,7 +636,8 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
 
     if self._npy_value is None:
-      if self.is_fully_replicated:
+      if (self.is_fully_replicated and
+          self.sharding._internal_device_list.addressable_device_list):  # type: ignore
         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
         npy_value.flags.writeable = False
         if did_copy:
