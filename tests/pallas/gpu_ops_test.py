@@ -268,7 +268,7 @@ class FusedAttentionTest(PallasBaseTest):
       use_segment_ids,
   ):
     if jtu.is_cuda_compute_capability_equal("8.0") and all([
-        block_sizes["block_q"] == 128,
+        dict(block_sizes)["block_q"] == 128,
         batch_size == 2,
         num_heads == 2,
         head_dim == 128,
