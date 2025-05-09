@@ -566,13 +566,9 @@ def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
     result = x[..., np.newaxis]
   else:
     step = nperseg - noverlap
-    batch_shape = list(batch_shape)
-    x = x.reshape((math.prod(batch_shape), signal_length, 1))
-    result = jax.lax.conv_general_dilated_patches(
-        x, (nperseg,), (step,),
-        'VALID',
-        dimension_numbers=('NTC', 'OIT', 'NTC'))
-    result = result.reshape(*batch_shape, *result.shape[-2:])
+    starts = jnp.arange(signal_length - nperseg + 1, step=step)
+    slice_func = partial(jax.lax.dynamic_slice_in_dim, operand=x, slice_size=nperseg, axis=-1)
+    result = jax.vmap(slice_func, out_axes=-2)(start_index=starts)
 
   # Detrend each data segment individually
   result = detrend_func(result)
