@@ -50,6 +50,7 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
             --color=yes \
+            --test_timeout=500 \
             --strategy=TestRunner=local \
             --//jax:build_jaxlib=wheel \
             --//jax:build_jax=wheel \
