@@ -61,6 +61,12 @@ class ProfilerTest(unittest.TestCase):
   # check functional correctness.
 
   def setUp(self):
+    if sys.version_info >= (3, 14) and jtu.TEST_NUM_THREADS.value > 1:
+      # TODO(phawkins): try reenabling these after
+      # https://github.com/python/cpython/issues/132817 is fixed. Simply
+      # installing the profiler hook is unsafe if there are multiple threads.
+      self.skipTest("Profiler tests are not thread-safe under Python 3.14")
+
     super().setUp()
     self.worker_start = threading.Event()
     self.profile_done = False
