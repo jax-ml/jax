@@ -197,7 +197,8 @@ class PyTransferServer {
   PyTransferServer() = default;
   absl::Status Start(xla::ifrt::Client* client, size_t max_num_parallel_copies,
                      size_t xfer_size, const SocketAddress& addr,
-                     const std::vector<SocketAddress>& transport_addresses) {
+                     const std::vector<SocketAddress>& transport_addresses,
+                     bool supports_pinned_allocator) {
     std::shared_ptr<BulkTransportFactory> factory;
     if (transport_addresses.empty()) {
       factory = BulkTransportFactory::CreateLocal();
@@ -207,8 +208,16 @@ class PyTransferServer {
       SlabAllocator uallocator(xla::ValueOrThrow(MapPjrtMemory(
                                    client, tmp->data(), tmp->size(), tmp)),
                                xfer_size);
+      std::optional<SlabAllocator> pinned_allocator;
+      if (supports_pinned_allocator) {
+        auto tmp = xla::ValueOrThrow(
+            AllocateNetworkPinnedMemory(xfer_size * max_num_parallel_copies));
+        pinned_allocator.emplace(xla::ValueOrThrow(MapPjrtMemory(
+                                     client, tmp->data(), tmp->size(), tmp)),
+                                 xfer_size);
+      }
       factory = xla::ValueOrThrow(CreateSocketBulkTransportFactory(
-          transport_addresses, std::nullopt, uallocator));
+          transport_addresses, pinned_allocator, uallocator));
     }
 
     server_ = std::make_shared<SocketServer>();
@@ -387,8 +396,8 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       "start_transfer_server",
       [](xla::nb_class_ptr<xla::PyClient> py_client, std::string address,
          std::vector<std::string> transport_addresses_str,
-         size_t max_num_parallel_copies,
-         size_t transfer_size) -> PyTransferServer {
+         size_t max_num_parallel_copies, size_t transfer_size,
+         bool supports_pinned_allocator) -> PyTransferServer {
         PyTransferServer result;
         std::vector<SocketAddress> transport_addresses;
         transport_addresses.reserve(transport_addresses_str.size());
@@ -399,13 +408,15 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
         xla::ThrowIfError(result.Start(
             py_client->ifrt_client(), max_num_parallel_copies, transfer_size,
             xla::ValueOrThrow(SocketAddress::Parse(address)),
-            transport_addresses));
+            transport_addresses, supports_pinned_allocator));
         return result;
       },
       nb::arg("client"), nb::arg("address") = SocketAddress().ToString(),
       nb::arg("transport_addresses") = std::vector<std::string>(),
       nb::arg("max_num_parallel_copies") = 8,
-      nb::arg("transfer_size") = 256 * 1024 * 1024);
+      nb::arg("transfer_size") = 256 * 1024 * 1024,
+      // Dual pinning not confirmed to be supported.
+      nb::arg("supports_pinned_allocator") = false);
 }
 
 }  // namespace aux
