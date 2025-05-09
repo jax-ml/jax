@@ -971,8 +971,6 @@ _array_operators = {
   "rsub": _defer_to_unrecognized_arg("-", ufuncs.subtract, swap=True),
   "mul": _defer_to_unrecognized_arg("*", ufuncs.multiply),
   "rmul": _defer_to_unrecognized_arg("*", ufuncs.multiply, swap=True),
-  "div": _defer_to_unrecognized_arg("/", ufuncs.divide),
-  "rdiv": _defer_to_unrecognized_arg("/", ufuncs.divide, swap=True),
   "truediv": _defer_to_unrecognized_arg("/", ufuncs.true_divide),
   "rtruediv": _defer_to_unrecognized_arg("/", ufuncs.true_divide, swap=True),
   "floordiv": _defer_to_unrecognized_arg("//", ufuncs.floor_divide),
