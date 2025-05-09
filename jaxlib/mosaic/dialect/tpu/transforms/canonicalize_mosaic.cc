@@ -674,7 +674,7 @@ LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
 
 LogicalResult canonicalize_sitofp(const CanonicalizeContext &ctx,
                                   Operation &raw_op) {
-  auto op = cast<arith::FPToSIOp>(raw_op);
+  auto op = cast<arith::SIToFPOp>(raw_op);
   ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
   auto src_vty = dyn_cast<VectorType>(op.getIn().getType());
   auto dst_vty = dyn_cast<VectorType>(op.getType());
