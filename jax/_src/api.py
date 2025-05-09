@@ -2870,6 +2870,17 @@ class ShapeDtypeStruct:
     # https://github.com/jax-ml/jax/issues/8182
     return hash((self.shape, self.dtype, self.sharding, self.layout, self.weak_type))
 
+  def __setattr__(self, name, value):
+    if hasattr(self, name):
+      if getattr(self, name) == value:
+        # This can to happen if two threads race, for example if two threads
+        # are trying to hash the same SDS instance.
+        return
+      raise RuntimeError(
+          f"Cannot reassign attributes ({name}) of immutable ShapeDtypeStruct"
+          " objects")
+    super().__setattr__(name, value)
+
   def update(self, **kwargs):
     if 'sharding' in kwargs:
       s = kwargs['sharding']
@@ -2887,6 +2898,7 @@ class ShapeDtypeStruct:
         dtype=kwargs.pop('dtype', self.dtype),
         sharding=sharding,
         weak_type=kwargs.pop('weak_type', self.weak_type))
+
 
 def _sds_aval_mapping(x):
   aval = ShapedArray(
