@@ -820,6 +820,7 @@ pytype_strict_library(
         ":pallas_tpu_users",
     ],
     deps = [
+        ":dtypes",
         ":jax",
         ":pallas",
         ":pallas_tpu",
