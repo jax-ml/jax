@@ -922,9 +922,9 @@ class TCGen05Test(TestCase):
           barrier=barrier,
       )
       barrier.wait()
-      tmem[:] = fa.FragmentedArray.load_tiled(smem, swizzle, layout=tcgen05.LAYOUT)
+      tmem.store(fa.FragmentedArray.load_tiled(smem, swizzle, layout=tcgen05.LAYOUT))
       tcgen05.commit_tmem()
-      tmem[:].store_tiled(smem, swizzle)
+      tmem.load().store_tiled(smem, swizzle)
       mgpu.commit_shared()
       ctx.async_copy(
           src_ref=smem, dst_ref=output, swizzle=swizzle, gmem_transform=mgpu.TileTransform(tiling),
@@ -964,7 +964,7 @@ class TCGen05Test(TestCase):
           barrier=barrier,
       )
       barrier.wait()
-      tmem[:] = fa.FragmentedArray.load_tiled(smem, swizzle, layout=tcgen05.LAYOUT)
+      tmem.store(fa.FragmentedArray.load_tiled(smem, swizzle, layout=tcgen05.LAYOUT))
       tcgen05.commit_tmem()
       tmem.slice(slice(None), slice(0, 8))._debug_print()
 
@@ -1075,7 +1075,7 @@ class TCGen05Test(TestCase):
         )
         tcgen05.commit_arrive(barriers[2])
       barriers[2].wait(for_tensor_core=True)
-      acc[:].store_untiled(out, optimized=False)
+      acc.load().store_untiled(out, optimized=False)
 
     x_shape = (k, m) if lhs_transpose else (m, k)
     x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
@@ -1144,8 +1144,10 @@ class TCGen05Test(TestCase):
       )
       barriers[0].wait()
       barriers[1].wait()
-      lhs_tmem[:] = fa.FragmentedArray.load_tiled(
-          lhs_smem, swizzle, layout=tcgen05.LAYOUT
+      lhs_tmem.store(
+          fa.FragmentedArray.load_tiled(
+              lhs_smem, swizzle, layout=tcgen05.LAYOUT
+          )
       )
       tcgen05.commit_tmem()
       with mgpu.single_thread():
@@ -1154,7 +1156,7 @@ class TCGen05Test(TestCase):
         )
         tcgen05.commit_arrive(barriers[2])
       barriers[2].wait(for_tensor_core=True)
-      acc[:].store_untiled(out, optimized=False)
+      acc.load().store_untiled(out, optimized=False)
 
     x_shape = (m, k)
     x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
@@ -1246,7 +1248,7 @@ class TCGen05Test(TestCase):
         tcgen05.commit_arrive(barriers[2], collective=True, ctx=ctx)
       barriers[2].wait(for_tensor_core=True)
       m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
-      acc[:].store_untiled(memref_slice(out, m_slice), optimized=False)
+      acc.load().store_untiled(memref_slice(out, m_slice), optimized=False)
 
     in_finfo = jnp.finfo(in_jax_dtype)
     exponent_bits, mantissa_bits = in_finfo.nexp, in_finfo.nmant

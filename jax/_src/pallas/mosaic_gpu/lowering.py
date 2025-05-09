@@ -1276,7 +1276,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
     if not gpu_core.is_trivial_index(indexer.indices, x_ref.shape):
       raise NotImplementedError(
           "Only trivial indexing is supported for TMEM refs.")
-    return x_ref[:]
+    return x_ref.load()
 
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
     raise TypeError(f"Can only load from references (got {x_ref}).")

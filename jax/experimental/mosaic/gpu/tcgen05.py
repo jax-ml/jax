@@ -35,6 +35,15 @@ from .launch_context import LaunchContext
 
 TMEM_ROWS = 128
 TCGEN05_SMEM_DESCRIPTOR_BIT = 1 << 46
+# Like WGMMA_LAYOUT, only each warp holds a 32xN strip instead of 16xN.
+# The name is so short, because it's meant to be used qualified (tcgen05.LAYOUT)
+LAYOUT = fa.TiledLayout(
+    fa.Tiling(((128, 8), (32, 8), (8, 8), (1, 2))),
+    warp_dim=-8,
+    lane_dims=(-4, -3),
+    vector_dim=-1,
+)
+
 
 def create_instr_descriptor(
     m: int,
@@ -582,7 +591,9 @@ class TMEMRef:
     if any(is_squeezed):
       raise ValueError("TMEM can only be sliced, not indexed")
     match self.layout:
-      case TMEMLayout(elements_in_tile=(r, 8), packing=packing) if r == TMEM_ROWS:
+      case TMEMLayout(elements_in_tile=(r, 8), packing=packing) if (
+          r == TMEM_ROWS
+      ):
         pass
       case _:
         raise NotImplementedError(
@@ -607,18 +618,17 @@ class TMEMRef:
         dtype=self.dtype,
     )
 
-  def __getitem__(self, *idxs):
+  def load(self, layout: fa.TiledLayout = LAYOUT):
     i32 = ir.IntegerType.get_signless(32)
-    base_idxs, slice_shape, is_squeezed = utils.parse_indices(idxs, self.shape)
-    if any(is_squeezed):
-      raise ValueError("TMEM loads only support slicing")
-    if any(idx != 0 for idx in base_idxs) or tuple(slice_shape) != self.shape:
-      raise NotImplementedError("Slicing of TMEM not impelmented yet")
     if self.shape[1] % 8:
       raise NotImplementedError
     if utils.bitwidth(self.dtype) not in {16, 32}:
       raise NotImplementedError(f"Unsupported dtype: {self.dtype}")
-    layout = _m128_layout(self.shape)
+    if layout != LAYOUT:
+      raise ValueError(
+          "TMEM loads can only produce results in the tcgen05 layout"
+          f" ({LAYOUT}), but got: {layout}"
+      )
     regs_shape = layout.registers_shape(self.shape)
     match self.layout:
       case TMEMLayout(elements_in_tile=(r, 8), packing=packing) if r == TMEM_ROWS:
@@ -653,16 +663,7 @@ class TMEMRef:
         )
     return fa.FragmentedArray(_registers=registers, _layout=layout, _is_signed=None)
 
-  def __setitem__(self, idxs, value):
-    if not isinstance(idxs, tuple):
-      idxs = (idxs,)
-    base_idxs, slice_shape, is_squeezed = utils.parse_indices(idxs, self.shape)
-    if any(is_squeezed):
-      raise ValueError(
-          "TMEM stores don't support integer indexing (only slices allowed)"
-      )
-    if any(idx != 0 for idx in base_idxs) or tuple(slice_shape) != self.shape:
-      raise NotImplementedError("Slicing parts of TMEM not implemented yet")
+  def store(self, value):
     if self.shape[1] % 8:
       raise NotImplementedError
     if utils.bitwidth(self.dtype) not in {16, 32}:
@@ -840,16 +841,6 @@ def _m128_layout(shape: tuple[int, ...]):
   if shape[0] % 128 != 0 or shape[1] % 8 != 0:
     raise ValueError(f"Shape {shape} is not a multiple of 64x8")
   return LAYOUT
-
-
-# Like WGMMA_LAYOUT, only each warp holds a 32xN strip instead of 16xN.
-# The name is so short, because it's meant to be used qualified (tcgen05.LAYOUT)
-LAYOUT = fa.TiledLayout(
-    fa.Tiling(((128, 8), (32, 8), (8, 8), (1, 2))),
-    warp_dim=-8,
-    lane_dims=(-4, -3),
-    vector_dim=-1,
-)
 
 
 def commit_tmem():
