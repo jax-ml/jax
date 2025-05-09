@@ -2866,14 +2866,13 @@ class ShapeDtypeStruct:
               (other.shape, other.dtype, other.sharding, other.layout, other.weak_type))
 
   def __hash__(self):
-    # TODO(frostig): avoid the conversion from dict by addressing
-    # https://github.com/jax-ml/jax/issues/8182
-    return hash((self.shape, self.dtype, self.sharding, self.layout, self.weak_type))
+    return hash((self.shape, self.dtype, self.sharding, self.layout,
+                 self.weak_type))
 
   def __setattr__(self, name, value):
     if hasattr(self, name):
       if getattr(self, name) == value:
-        # This can to happen if two threads race, for example if two threads
+        # This can happen if two threads race, for example if two threads
         # are trying to hash the same SDS instance.
         return
       raise RuntimeError(

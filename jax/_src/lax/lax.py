@@ -5213,9 +5213,6 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
     raise core.ShardingTypeError(
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
-  if lhs.sharding.spec.unreduced or rhs.sharding.spec.unreduced:
-    raise NotImplementedError(
-        'Please file an issue at https://github.com/jax-ml/jax/issues')
 
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
