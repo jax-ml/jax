@@ -4574,16 +4574,24 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-def _add_unreduced(out_sharding, *avals):
-  unreduced = [a.sharding.spec.unreduced for a in avals if a.shape]
-  # TODO(yashkatariya): Relax this restriction to allow
-  # `f32[8]{R:x} + f32[8]{U:x} -> f32[8]{U:x}` for example and maybe more cases.
-  if unreduced:
-    if not all(unreduced[0] == u for u in unreduced[1:]):
+def _add_unreduced(out_sharding, x, y):
+  x_ur, y_ur = x.sharding.spec.unreduced, y.sharding.spec.unreduced
+  if x_ur and y_ur:
+    if x_ur != y_ur:
       raise core.ShardingTypeError(
-          'All arrays must be unreduced along the same mesh axes. Got'
-          f' {", ".join(map(str, map(tuple, unreduced)))}')
-    res_unreduced = unreduced[0]
+          'lhs and rhs to `add` must be unreduced along the same mesh axes. '
+          f'Got lhs={x_ur}, rhs={y_ur}')
+    res_unreduced = x_ur
+  elif x_ur or y_ur:
+    if x_ur and not y_ur:
+      lhs_str, rhs_str = 'lhs', 'rhs'
+    else:
+      assert not x_ur and y_ur
+      lhs_str, rhs_str = 'rhs', 'lhs'
+    raise core.ShardingTypeError(
+        f'{lhs_str} is unreduced while {rhs_str} is not. `add` operation does'
+        ' not allow this because there will be implicit communication. Please'
+        f' reduce {lhs_str} via `reshard` before calling `add`.')
   else:
     res_unreduced = None
   return out_sharding.with_spec(out_sharding.spec.with_unreduced(res_unreduced))
