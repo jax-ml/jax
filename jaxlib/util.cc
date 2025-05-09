@@ -62,7 +62,7 @@ absl::Status AwaitBuffersReady(absl::Span<ifrt::Array* const> ifrt_arrays) {
   if (ifrt_arrays.size() == 1) {
     future = ifrt_arrays[0]->GetReadyFuture();
   } else {
-    std::vector<tsl::RCReference<ifrt::Value>> values;
+    std::vector<ifrt::ValueRef> values;
     values.reserve(ifrt_arrays.size());
     for (ifrt::Array* const ifrt_array : ifrt_arrays) {
       values.push_back(tsl::FormRef(ifrt_array));
