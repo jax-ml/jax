@@ -2870,6 +2870,24 @@ class ShapeDtypeStruct:
     # https://github.com/jax-ml/jax/issues/8182
     return hash((self.shape, self.dtype, self.sharding, self.layout, self.weak_type))
 
+  def update(self, **kwargs):
+    if 'sharding' in kwargs:
+      s = kwargs['sharding']
+      if self._dll is not None and isinstance(s, Sharding):
+        raise ValueError(
+            f"You are updating ShapeDtypeStruct with a {type(s)} when the"
+            f" original ShapeDtypeStruct had a concrete layout {self.layout}."
+            " This might lead to bugs. If you want to do this, create a new"
+            " ShapeDtypeStruct via the constructor.")
+      sharding = s
+    else:
+      sharding = self.layout
+    return ShapeDtypeStruct(
+        shape=kwargs.pop('shape', self.shape),
+        dtype=kwargs.pop('dtype', self.dtype),
+        sharding=sharding,
+        weak_type=kwargs.pop('weak_type', self.weak_type))
+
 def _sds_aval_mapping(x):
   aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
