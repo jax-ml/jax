@@ -346,7 +346,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
         backend = xla_bridge.get_backend()
         device_list = xc.DeviceList(tuple(backend.local_devices()))
-        modules = backend.compile(
+        modules = backend.compile_and_load(
             str(jax_lowered.compiler_ir()), device_list).hlo_modules()
         jax_opt_hlo = modules[0].to_string()
         logging.info("[%s] JAX OPT HLO\n%s", self._testMethodName,
