@@ -143,7 +143,6 @@ exclude_patterns = [
     'autodidax2_part1.md',
     'sharded-computation.md',
     'ffi.ipynb',
-    'notebooks/host-offloading.ipynb',
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.

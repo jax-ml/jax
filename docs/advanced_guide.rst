@@ -14,6 +14,7 @@ operations.
    notebooks/Distributed_arrays_and_automatic_parallelization
    notebooks/explicit-sharding
    notebooks/shard_map
+   notebooks/host-offloading
    multi_process
    distributed_data_loading
 
