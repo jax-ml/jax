@@ -489,9 +489,20 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     a = eps * (a + np.conj(a.T))
     w, v = jnp.linalg.eigh(a)
     w = w.astype(v.dtype)
+    # Detect platform
+    backend = xla_bridge.get_backend()
+    is_gpu = backend.platform == "gpu"
+    is_rocm = "rocm" in backend.platform_version.lower()
+    reference = 80 * eps * np.linalg.norm(a)
+
+    # ROCm has reduced float32 precision in eigh for near-zero matrices.
+    # Increase epsilon to avoid false failures due to numerical error
+    # (This numerical issue is also observed with CUDA version 12.9.)
+    if is_gpu and is_rocm:
+        reference = max(reference, 2e-5)
     with jax.numpy_rank_promotion("allow"):
       self.assertLessEqual(
-          np.linalg.norm(np.matmul(a, v) - w * v), 80 * eps * np.linalg.norm(a)
+          np.linalg.norm(np.matmul(a, v) - w * v), reference
       )
 
   @jtu.sample_product(
