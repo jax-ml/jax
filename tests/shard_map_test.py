@@ -3649,6 +3649,94 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     self.assertAllClose(f(jnp.arange(8.)), jnp.array([1.,  5.,  9., 13.]))
 
 
+def smap_ref(f, in_axes, out_axes, axis_name, axis_size):
+  del axis_name  # no collectives
+  def smapped(*args):
+    split_args = zip(*[split_arg(x, d, axis_size) for x, d in zip(args, in_axes)])
+    split_result = [f(*xs) for xs in split_args]
+    return concat_result(split_result, out_axes)
+  return smapped
+
+def split_arg(x, d, axis_size):
+  if d is None:
+    x = np.tile(x, [axis_size] + [1] * (x.ndim - 1))
+  return np.split(x, axis_size, d or 0)
+
+def concat_result(results, out_axes):
+  if not isinstance(results[0], (list, tuple)):
+    return results[0] if out_axes is None else np.concatenate(results, out_axes)
+  return [res[0] if d is None else np.concatenate(res, d)
+          for res, d in zip(zip(*results), out_axes)]
+
+def sample_smap() -> Chooser:
+  spec = yield fun_specs
+  mesh_shape = yield mesh_shapes
+  axis_names = ('i', 'j', 'k', 'l')[:len(mesh_shape)]
+  mesh = SimpleNamespace(shape=dict(zip(axis_names, mesh_shape)),
+                         axis_names=axis_names)
+  axis_name = yield axis_names
+  body_in_types = yield (tys for tys in it.product(input_shapes, repeat=spec.num_inputs)
+                         if not spec.valid_types or spec.valid_types(*tys))
+  in_axes = yield from sample_in_axes(body_in_types)
+  out_rep = spec.out_rep(*[ax is None for ax in in_axes])
+  body_out_type = jax.eval_shape(spec.fun, *body_in_types)
+  out_axes = yield from sample_out_axes(out_rep, body_out_type)
+  in_str = '(' + ','.join(jax.core.ShapedArray(t.shape, t.dtype).str_short()
+                          for t in body_in_types) + ')'
+  name = f'{spec.name}_{mesh.shape}_{in_axes}_{out_axes}_{axis_name}_{in_str}'
+  in_types = [ty.update(shape=dilate_axis(ty.shape, d, mesh.shape[axis_name]))
+              for ty, d in zip(body_in_types, in_axes)]
+  args = [np.arange(ty.size, dtype=ty.dtype).reshape(ty.shape) / ty.size
+          for ty in in_types]
+  return name, spec, mesh.shape, in_axes, out_axes, axis_name, args
+
+def sample_in_axes(body_in_types) -> Chooser:
+  in_axes = []
+  for ty in body_in_types:
+    in_axes.append((yield [None, *range(ty.ndim)]))
+  return tuple(in_axes)
+
+def sample_out_axes(out_rep, body_out_type) -> Chooser:
+  if not isinstance(body_out_type, (list, tuple)):
+    out_axes = yield [None] * out_rep + list(range(body_out_type.ndim))
+  else:
+    out_axes_ = []
+    for ty, r in zip(body_out_type, out_rep):
+      out_axes_.append((yield [None] * r + list(range(ty.ndim))))
+    out_axes = tuple(out_axes_)
+  return out_axes
+
+def dilate_axis(shape: tuple[int, ...], i: int | None, size: int) -> tuple[int, ...]:
+  if i is None:
+    return shape
+  shp = list(shape)
+  shp[i] *= size
+  return tuple(shp)
+
+class SmapSystematicTest(jtu.JaxTestCase):
+
+  @staticmethod
+  def make_mesh(mesh_shape):
+    return jtu.create_mesh(tuple(mesh_shape.values()), tuple(mesh_shape))
+
+  @parameterized.parameters(
+      sample(jtu.NUM_GENERATED_CASES.value, sample_smap))
+  def test_against_ref(self, fun_spec, mesh_shape, in_axes, out_axes, axis_name, args):
+    fun = fun_spec.fun
+    mesh = self.make_mesh(mesh_shape)
+    args = map(jnp.array, args)
+
+    with jax.sharding.use_mesh(mesh):
+      fun_ = smap(fun, in_axes=in_axes, out_axes=out_axes, axis_name=axis_name)
+      out = jax.jit(fun_)(*args)
+
+    fun_ref = smap_ref(fun, in_axes=in_axes, out_axes=out_axes, axis_name=axis_name,
+                       axis_size=mesh_shape[axis_name])
+    expected = fun_ref(*args)
+
+    self.assertAllClose(out, expected, check_dtypes=False)
+
+
 @jtu.with_config(jax_use_shardy_partitioner=True)
 # TODO(phawkins): enable this test unconditionally once shardy is the default.
 @unittest.skipIf(sdy is None, "shardy is not enabled")
