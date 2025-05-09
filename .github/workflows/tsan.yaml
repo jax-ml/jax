@@ -31,7 +31,7 @@ jobs:
             requirements_lock_name: "requirements_lock_3_13_ft"
           - name-prefix: "with 3.14"
             python-version: "3.14"
-            github_branch: "main"
+            github_branch: "3.14"
             requirements_lock_name: "requirements_lock_3_14_ft"
     defaults:
       run:
@@ -133,9 +133,6 @@ jobs:
 
           python3 -m pip install uv~=0.5.30
 
-          # Install Cython same as in numpy CI: https://github.com/numpy/numpy/blob/9ead596ce4f8df0189f9ba3d54937e22e2785a5e/.github/workflows/linux.yml#L75C21-L75C96
-          python3 -m uv pip install -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple cython
-
           python3 -m uv pip install -r requirements/build_requirements.txt
 
           CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized
@@ -204,19 +201,14 @@ jobs:
 
           python3 -m pip install uv~=0.5.30
 
-          # Install Cython same as in numpy CI: https://github.com/numpy/numpy/blob/9ead596ce4f8df0189f9ba3d54937e22e2785a5e/.github/workflows/linux.yml#L75C21-L75C96
-          python3 -m uv pip install -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple cython
-
           python3 -m uv pip install -U --pre numpy --extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/
-          python3 -m uv pip install pythran pybind11 meson-python ninja
+          python3 -m uv pip install cython pythran pybind11 meson-python ninja
 
           python3 -m uv pip list | grep -E "(numpy|pythran|cython|pybind11)"
 
           export CC=clang-18
           export CXX=clang++-18
           python3 -m pip wheel --wheel-dir dist -vvv . --no-build-isolation --no-deps -Csetup-args=-Dbuildtype=debugoptimized
-
-          python3 -m uv pip list | grep -E "(numpy|pythran|cython|pybind11)"
 
           # Create simple index and copy the wheel
           mkdir -p ${GITHUB_WORKSPACE}/wheelhouse/scipy
@@ -266,7 +258,6 @@ jobs:
           export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
           echo "Python sha256: ${PYTHON_SHA256}"
 
-          python3 -VV
           python3 build/build.py build --configure_only \
             --python_version=${{ matrix.python-version }}-ft \
             --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
