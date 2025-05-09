@@ -55,6 +55,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding, parse_flatten_op_sharding)
 from jax._src.pjit import (pjit, mesh_cast, auto_axes, explicit_axes,
                            use_auto_axes, use_explicit_axes, reshard)
+from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
@@ -4972,6 +4973,40 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertTrue(jax.dtypes.issubdtype(out.dtype, jax.dtypes.prng_key))
     self.assertEqual(out.shape, input_shape)
     jax.random.key_data(out)  # doesn't crash
+
+  def test_sds_update(self):
+    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
+    s1 = jax.ShapeDtypeStruct((2, 2), jnp.int32)
+    s1_u = s1.update(shape=(4, 2), dtype=np.float32)
+    self.assertEqual(s1_u.shape, (4, 2))
+    self.assertEqual(s1_u.dtype, np.float32)
+    self.assertFalse(s1_u.weak_type)
+
+    s2 = jax.ShapeDtypeStruct((2, 2), jnp.int32)
+    s2_u = s2.update(shape=(4, 2), weak_type=True)
+    self.assertEqual(s2_u.shape, (4, 2))
+    self.assertEqual(s2_u.dtype, np.int32)
+    self.assertTrue(s2_u.weak_type)
+
+    s3 = jax.ShapeDtypeStruct((2, 2), jnp.int32,
+                              sharding=NamedSharding(mesh, P()))
+    s3_u = s3.update(sharding=NamedSharding(mesh, P('x')))
+    self.assertEqual(s3_u.sharding, NamedSharding(mesh, P('x')))
+
+    s32_u = s3.update(shape=(4, 2))
+    self.assertEqual(s32_u.shape, (4, 2))
+    self.assertEqual(s32_u.sharding, NamedSharding(mesh, P()))
+
+    sh = NamedSharding(mesh, P())
+    s4 = jax.ShapeDtypeStruct((2, 2), jnp.int32,
+                              sharding=Layout(DLL((0, 1)), sh))
+    new_layout = Layout(DLL((1, 0)), NamedSharding(mesh, P('x')))
+    s4_u = s4.update(sharding=new_layout)
+    self.assertEqual(s4_u.sharding, new_layout.sharding)
+    self.assertEqual(s4_u.layout, new_layout)
+
+    with self.assertRaisesRegex(ValueError, "updating ShapeDtypeStruct"):
+      s4.update(sharding=NamedSharding(mesh, P('x')))
 
 
 def spec_regex(s):
