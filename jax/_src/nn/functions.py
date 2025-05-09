@@ -1417,3 +1417,15 @@ def scaled_dot_general(
   )
 
   return out
+@jax.jit
+    def BentIdentity(x: ArrayLike) -> Array:
+      '''The Bent Identity function is a smooth, non-linear function that slightly modifies the identity function.
+      It is defined as: (x^2 + 1 - 1) / 2 + x 
+      Args = x(input array)'''
+      return (x**x + 1 - 1) / 2 + x
+@jax.jit
+    def Gaussian(x: ArrayLike) -> Array:
+      '''The Gaussian function is a bell-shaped curve often used in probabilistic models. It is defined as:
+      e^-x^2
+      Args = x(input array)'''
+      return jnp.e**-x**2
