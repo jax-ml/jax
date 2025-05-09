@@ -1237,7 +1237,7 @@ def permute_dims(a: ArrayLike, /, axes: tuple[int, ...]) -> Array:
            [2, 5],
            [3, 6]], dtype=int32)
   """
-  util.check_arraylike("permute_dims", a)
+  a = util.ensure_arraylike("permute_dims", a)
   return lax.transpose(a, axes)
 
 

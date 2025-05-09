@@ -29,6 +29,9 @@ from jax._src import test_util as jtu
 config.parse_flags_with_absl()
 
 
+@functools.partial(jax.tree_util.register_dataclass,
+                   data_fields=['x'],
+                   meta_fields=[])
 class JaxArrayWrapper:
   """Class that provides a __jax_array__ method."""
   x: ArrayLike
