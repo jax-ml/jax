@@ -1369,7 +1369,8 @@ def emit_pipeline(
       initial_indices = (0,) * len(grid)
       scheduler = make_scheduler(0, initial_indices)
       brefs = map_brefs(scheduler.alias_local_refs, allocations, refs)
-      map_brefs(scheduler.initialize, brefs, refs, schedule)
+      with scheduler.grid_env():
+        map_brefs(scheduler.initialize, brefs, refs, schedule)
 
       # pipeline loop
       next_indices = lax.fori_loop(0, num_steps, loop_body, initial_indices)
@@ -1378,7 +1379,8 @@ def emit_pipeline(
       final_indices = _prev_index(next_indices, grid)
       scheduler = make_scheduler(num_steps - 1, final_indices)
       brefs = map_brefs(scheduler.alias_local_refs, allocations, refs)
-      map_brefs(scheduler.finalize, brefs, refs, schedule)
+      with scheduler.grid_env():
+        map_brefs(scheduler.finalize, brefs, refs, schedule)
 
   return pipeline
 
