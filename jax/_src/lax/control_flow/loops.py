@@ -876,7 +876,7 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
   jaxpr_trans = pe.move_outvars_to_back(
       jaxpr_trans, appends_out + [False] * (len(jaxpr_trans.out_avals) - len(appends_out)))
   num_attr_carry = sum(init_tree.num_leaves for init_tree, _, (_, _, kind)
-                       in attrs_tracked if kind is pe.ReadWrite)
+                       in attrs_tracked if kind in (pe.ReadWrite, pe.BoxAttr))
   linear_trans = ([False] * num_ires + [False] * num_attr_carry +
                   [True] * (len(ct_consts) + len(ct_carry) + len(ct_ys)) +
                   [False] * num_eres)
@@ -884,6 +884,7 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
 
   transpose_inputs = *ires, *in_state, *ct_consts, *ct_carry, *ct_ys, *eres
   transpose_num_out_carry = num_consts-num_ires+num_carry+num_attr_carry
+  assert len(transpose_inputs) == len(linear_trans), breakpoint()
 
   if not _split_transpose:
     outs = scan_p.bind(
