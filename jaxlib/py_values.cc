@@ -147,6 +147,27 @@ using DevicePutHandler = std::function<absl::StatusOr<ShardFn>(
     nb::handle obj, ifrt::Client* client, ifrt::Device* to_device,
     ifrt::MemoryKind to_memory_kind, const DevicePutOptions& options)>;
 
+// Shared logic that makes an IFRT array (either single-device or multi-device)
+// from a fully-replicated `shard` that is created from a host buffer (not from
+// an existing IFRT array). `shard` will be consumed.
+//
+// `user_context` will be used for a new IFRT array created.
+//
+// Expected to be called without holding GIL.
+absl::StatusOr<tsl::RCReference<ifrt::Array>>
+MakeIfrtArrayFromFullyReplicatedShard(
+    ifrt::Client* ifrt_client, ifrt::ShardingRef ifrt_sharding, Shard& shard,
+    tsl::RCReference<ifrt::UserContext> user_context) {
+  auto host_buffer_shard = std::get<ifrt::Client::HostBuffer>(
+      std::move(shard.ifrt_array_or_host_buffer));
+  return ifrt_client->MakeArrayFromHostBuffer(
+      host_buffer_shard.data, host_buffer_shard.dtype,
+      std::move(host_buffer_shard.shape),
+      std::move(host_buffer_shard.byte_strides), std::move(ifrt_sharding),
+      shard.host_buffer_semantics, std::move(host_buffer_shard.on_done),
+      std::move(user_context));
+}
+
 // Shared logic that makes a single-device IFRT array from a `shard`. `shard`
 // will be consumed.
 //
@@ -161,18 +182,11 @@ absl::StatusOr<ifrt::ArrayRef> MakeSingleDeviceIfrtArrayFromShard(
   if (auto* ifrt_array =
           std::get_if<ifrt::ArrayRef>(&shard.ifrt_array_or_host_buffer)) {
     return std::move(*ifrt_array);
-  } else {
-    auto host_buffer_shard = std::get<ifrt::Client::HostBuffer>(
-        std::move(shard.ifrt_array_or_host_buffer));
-    ifrt::ShardingRef ifrt_sharding =
-        ifrt::SingleDeviceSharding::Create(ifrt_device, ifrt_memory_kind);
-    return ifrt_client->MakeArrayFromHostBuffer(
-        host_buffer_shard.data, host_buffer_shard.dtype,
-        std::move(host_buffer_shard.shape),
-        std::move(host_buffer_shard.byte_strides), std::move(ifrt_sharding),
-        shard.host_buffer_semantics, std::move(host_buffer_shard.on_done),
-        std::move(user_context));
   }
+  ifrt::ShardingRef ifrt_sharding =
+      ifrt::SingleDeviceSharding::Create(ifrt_device, ifrt_memory_kind);
+  return MakeIfrtArrayFromFullyReplicatedShard(
+      ifrt_client, std::move(ifrt_sharding), shard, std::move(user_context));
 }
 
 // Makes an IFRT Array from `shards` using a batched array creation API (fast
@@ -973,12 +987,19 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   }
 
   ifrt::ShardingRef ifrt_sharding;
+  bool is_fully_replicated;
   if (is_pmap_sharding) {
     CHECK(!shard_fns.empty());
     // IFRT Sharding will be determined once we discover the shard shape.
+    is_fully_replicated = false;
   } else {
     TF_ASSIGN_OR_RETURN(ifrt_sharding,
                         GetIfrtHloSharding(sharding, ifrt_shape));
+    // Fully-replicated shardings enable additional optimizations of using a
+    // single host buffer.
+    // TODO(hyeontaek): Enable a similar optimization for partially replicated
+    // cases to reduce the number of host buffers to obtain.
+    is_fully_replicated = ifrt_sharding->IsFullyReplicated();
   }
   tsl::RCReference<ifrt::UserContext> ifrt_user_context =
       ifrt_client->CreateUserContext();
@@ -988,12 +1009,6 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   // Whether to build an IFRT array from host buffers as a single batch. We do
   // not batch any shard is already an IFRT array.
   bool should_batch = true;
-#if JAX_IFRT_VERSION_NUMBER < 2
-  // PjRt-IFRT would fail `xla::ifrt::Client::MakeArrayFromHostBuffer()` invoked
-  // by `xla::ifrt::ClientMakeArraysFromHostBufferShards()` for a fully
-  // replicated sharding if the sharding has any non-addressable device.
-  should_batch = false;
-#endif
 
   std::vector<Shard> shards;
   shards.reserve(shard_fns.size());
@@ -1004,7 +1019,15 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
       should_batch = false;
     }
     shards.push_back(std::move(shard));
+    if (should_batch && is_fully_replicated) {
+      // We need only one host buffer for a fully-replicated array.
+      break;
+    }
   }
+  // While we have finished calling `shard_fns`, we cannot destroy them until we
+  // make a call to IFRT array creation. Destroying `shard_fns` would release
+  // host buffers prematurely and can cause the array creation API to see
+  // garbage data.
 
   // TODO(emilyaf): Remove the following and just use ifrt_dtype when tokens are
   // supported.
@@ -1021,11 +1044,18 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
 
   ifrt::ArrayRef ifrt_array;
   if (should_batch) {
-    TF_ASSIGN_OR_RETURN(ifrt_array,
-                        MakeIfrtArrayFromShardsInBatch(
-                            ifrt_client, ifrt_dtype, std::move(ifrt_shape),
-                            std::move(ifrt_sharding), absl::MakeSpan(shards),
-                            std::move(ifrt_user_context)));
+    if (is_fully_replicated && shards.size() == 1) {
+      TF_ASSIGN_OR_RETURN(
+          ifrt_array, MakeIfrtArrayFromFullyReplicatedShard(
+                          ifrt_client, std::move(ifrt_sharding), shards.front(),
+                          std::move(ifrt_user_context)));
+    } else {
+      TF_ASSIGN_OR_RETURN(ifrt_array,
+                          MakeIfrtArrayFromShardsInBatch(
+                              ifrt_client, ifrt_dtype, std::move(ifrt_shape),
+                              std::move(ifrt_sharding), absl::MakeSpan(shards),
+                              std::move(ifrt_user_context)));
+    }
   } else {
     TF_ASSIGN_OR_RETURN(
         ifrt_array, MakeIfrtArrayFromShardsWithAssembly(
