@@ -2199,7 +2199,8 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   fun = lu.wrap_init(f, debug_info=dbg)
   primals_flat, in_tree = tree_flatten(primals)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-  out_primals_flat, _, jaxpr, residuals = ad.linearize(fun, *primals_flat)
+  out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(fun, *primals_flat)
+  out_known = [pval.is_known() for pval in out_pvals]
   primals_filt, filt_tree = tree_flatten(tuple(p for w, p in zip(which, primals) if w))
   id_map = {id(x): i for i, x in enumerate(primals_filt)}
   opaque_residuals = []
@@ -2207,7 +2208,7 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
               RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
               for r in residuals]
   f_vjp = Partial(partial(_saved_input_vjpfun, res_spec, filt_tree, in_tree,
-                          out_tree(), jaxpr), opaque_residuals)
+                          out_tree(), out_known, jaxpr), opaque_residuals)
 
   if not allow_unused and not set(id_map).issubset(res_ids := {id(r) for r in residuals}):
     unused = [(i, core.get_aval(x)) for i, (x, w) in enumerate(zip(primals, which))
@@ -2232,8 +2233,8 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   out_primals = tree_unflatten(out_tree(), out_primals_flat)
   return out_primals, f_vjp
 
-def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, jaxpr,
-                        opaque_residuals, ct, *saved_primals):
+def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, out_known,
+                        jaxpr, opaque_residuals, ct, *saved_primals):
   primals_filtered, filtered_tree_ = tree_flatten(saved_primals)
   if filtered_tree != filtered_tree_:
     raise ValueError(
@@ -2253,8 +2254,9 @@ def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, jaxpr,
   dummy_args = [ad.UndefinedPrimal(v.aval) for v in jaxpr.invars]
   cts_flat, out_tree_ = tree_flatten(ct)
   assert out_tree_ == out_tree
+  cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
   arg_cts = ad.backward_pass(jaxpr, True, residuals, dummy_args, cts_flat)
-  return tree_unflatten(in_tree, arg_cts)
+  return tree_unflatten(in_tree, map(ad.instantiate_zeros, arg_cts))
 
 @dataclasses.dataclass(frozen=True)
 class RSpec:

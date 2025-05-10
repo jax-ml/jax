@@ -7323,6 +7323,11 @@ class InputSavedVJPTest(jtu.JaxTestCase):
     self.assertAllClose(x_grad, 2. * y_grad @ w.T)
     self.assertAllClose(w_grad, 2. * x.T @ y_grad)
 
+  def test_doesnt_leak_symbolic_zeros(self):
+    _, vjp = api.si_vjp(lambda x: 1., [False], 3.14)
+    ans, = vjp(1.0)
+    self.assertIsInstance(ans, jax.Array)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
