@@ -23,6 +23,7 @@ limitations under the License.
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -119,7 +120,12 @@ FailureOr<TypedValue<VectorType>> relayout(
               dst_bitwidth_layout);
     return cast<TypedValue<VectorType>>(cmp_op.getResult());
   }
-  return v;
+  // Fall through to generic relayout.
+  auto relayout_op =
+      builder.create<tpu::RelayoutOp>(v.getLoc(), v.getType(), v);
+  setLayout(relayout_op, src, dst);
+
+  return cast<TypedValue<VectorType>>(relayout_op.getResult());
 }
 
 // TODO(jevinjiang): make relayout to an op so we don't need decide when to

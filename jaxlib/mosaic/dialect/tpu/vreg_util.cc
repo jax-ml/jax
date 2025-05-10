@@ -25,6 +25,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
@@ -64,6 +65,19 @@ VectorType getNativeVregType(Type elem_ty,
                              const std::array<int64_t, 2> target_shape) {
   return getNativeVregOrVmaskTypeImpl(elem_ty, elem_ty.getIntOrFloatBitWidth(),
                                       target_shape);
+}
+
+TypedValue<VectorType> getFullVector(OpBuilder &builder, Location loc,
+                                     VectorType vty, Attribute value) {
+  return cast<TypedValue<VectorType>>(
+      builder.create<arith::ConstantOp>(loc, DenseElementsAttr::get(vty, value))
+          .getResult());
+}
+
+TypedValue<VectorType> getFullLikeVector(OpBuilder &builder, Location loc,
+                                         TypedValue<VectorType> vec,
+                                         Attribute value) {
+  return getFullVector(builder, loc, vec.getType(), value);
 }
 
 TypedValue<VectorType> getFullVector(ImplicitLocOpBuilder &builder,

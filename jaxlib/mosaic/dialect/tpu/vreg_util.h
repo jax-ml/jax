@@ -22,6 +22,7 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
@@ -41,6 +42,13 @@ TypedValue<VectorType> getZerosVector(ImplicitLocOpBuilder &builder,
 // Same as above, but takes a `vec` as input.
 TypedValue<VectorType> getZerosLikeVector(ImplicitLocOpBuilder &builder,
                                           TypedValue<VectorType> vec);
+
+TypedValue<VectorType> getFullVector(OpBuilder &builder, Location loc,
+                                     VectorType vty, Attribute value);
+
+TypedValue<VectorType> getFullLikeVector(OpBuilder &builder, Location loc,
+                                         TypedValue<VectorType> vec,
+                                         Attribute value);
 
 // Returns a constant of the same type as `vty` with the given `value`.
 TypedValue<VectorType> getFullVector(ImplicitLocOpBuilder &builder,
