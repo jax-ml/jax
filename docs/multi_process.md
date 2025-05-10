@@ -307,6 +307,83 @@ what it prints:
 
 Woohoo, look at all those TPU cores!
 
+### Kubernetes Example
+
+Running multi-controller JAX on a Kubernetes cluster is almost identical in spirit to the GPU and TPU examples above: every pod runs the same Python program, JAX discovers its peers, and the cluster behaves like one giant machine.
+
+1. **Container image** - start from a JAX-enabled image, e.g. one of the public JAX AI images on Google Artifact Registry ([TPU][google-artifact-tpu] / [GPU][google-artifact-gpu]) or NVIDIA ([NGC][nvidia-ngc] / [JAX-Toolbox][nvidia-jax-toolbox]).
+
+2. **Workload type** - use either a [JobSet][k8s-jobset] or an [indexed Job][k8s-indexed-job]. Each replica corresponds to one JAX process.
+
+3. **Service Account** - JAX needs permission to list the pods that belong to the job so that processes discover their peers. A minimal RBAC setup is provided in [examples/k8s/svc-acct.yaml][rbac-svc-acct].
+
+Below is a [minimal JobSet][minimal-jobset] that launches two replicas. Replace the placeholders - 
+image, GPU count, and any private registry secrets - with values that match your environment.
+
+```yaml
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: jaxjob
+spec:
+  replicatedJobs:
+  - name: workers
+    template:
+      spec:
+        parallelism: 2
+        completions: 2
+        backoffLimit: 0
+        template:
+          spec:
+            serviceAccountName: jax-job-sa  # kubectl apply -f svc-acct.yaml
+            restartPolicy: Never
+            imagePullSecrets:
+              # https://k8s.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+            - name: null
+            containers:
+            - name: main
+              image: null  # e.g. ghcr.io/nvidia/jax:jax
+              imagePullPolicy: Always
+              resources:
+                limits:
+                  cpu: 1
+                  # https://k8s.io/docs/tasks/manage-gpus/scheduling-gpus/
+                  nvidia.com/gpu: null
+              command: 
+                - python
+              args:
+                - -c
+                - |
+                  import jax
+                  jax.distributed.initialize()
+                  print(jax.devices())
+                  print(jax.local_devices())
+                  assert jax.process_count() > 1
+                  assert len(jax.devices()) > len(jax.local_devices())
+```
+
+Apply the manifest and watch the pods complete:
+
+```bash
+$ kubectl apply -f example.yaml
+$ kubectl get pods -l jobset.sigs.k8s.io/jobset-name=jaxjob
+NAME                       READY   STATUS      RESTARTS   AGE
+jaxjob-workers-0-0-xpx8l   0/1     Completed   0          8m32s
+jaxjob-workers-0-1-ddkq8   0/1     Completed   0          8m32s
+```
+
+When the job finishes, inspect the logs to confirm that every process saw all accelerators:
+
+```bash
+$ kubectl logs -l jobset.sigs.k8s.io/jobset-name=jaxjob
+[CudaDevice(id=0), CudaDevice(id=1)]
+[CudaDevice(id=0)]
+[CudaDevice(id=0), CudaDevice(id=1)]
+[CudaDevice(id=1)]
+```
+
+Every pod should have the same set of global devices and a different set of local devices. At this point, you can replace the inline script with your real JAX program.
+
 Once the processes are set up, we can start building global {class}`jax.Array`s
 and running computations. The remaining Python code examples in this tutorial
 are meant to be run on all processes simultaneously, after running
@@ -580,3 +657,11 @@ assert (np.all(
 [distributed_arrays]: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
 [gpu_machines]: https://cloud.google.com/compute/docs/gpus
 [unified_sharding]: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
+[google-artifact-tpu]: https://console.cloud.google.com/artifacts/docker/cloud-tpu-images/us/jax-ai-image/tpu
+[google-artifact-gpu]: https://console.cloud.google.com/artifacts/docker/deeplearning-images/us-central1/jax-ai-image/gpu
+[nvidia-ngc]: https://catalog.ngc.nvidia.com/orgs/nvidia/containers/jax
+[nvidia-jax-toolbox]: https://github.com/NVIDIA/JAX-Toolbox
+[k8s-jobset]: https://github.com/kubernetes-sigs/jobset
+[k8s-indexed-job]: https://kubernetes.io/docs/concepts/workloads/controllers/job/#parallel-jobs
+[rbac-svc-acct]: https://github.com/jax-ml/jax/blob/main/examples/k8s/svc-acct.yaml
+[minimal-jobset]: https://github.com/jax-ml/jax/blob/main/examples/k8s/example.yaml

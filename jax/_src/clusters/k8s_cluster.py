@@ -107,7 +107,9 @@ class K8sCluster(clusters.ClusterEnv):
           "this job does not have the permission for pod introspection. Please "
           "either grant the default SA permission to read pod info, or create a "
           "dedicated service account with the permission and associated with "
-          "the job. For more details, see <PLACERHOLDER_LINK>.",
+          "the job. For an example on setting up the service account, see the "
+          "example/k8s directory in the JAX repo. For more details, please refer to "
+          "https://docs.jax.dev/en/latest/multi_process.html#kubernetes-example",
           width=80
         ))
       raise RuntimeError('\n'.join(err_msg)) from e
