@@ -73,6 +73,7 @@ from jax._src.sharding_impls import (
 from jax._src.util import (safe_map, safe_zip, partition_list, wrap_name,
                            tuple_update, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache)
+from jax._src.weak_type_ndarray import WeakTypeNdArray
 from jax._src.state.types import AbstractRef, RefEffect
 
 
@@ -219,6 +220,7 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
   return results
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_np_array
+shard_arg_handlers[WeakTypeNdArray] = _shard_np_array
 
 def _shard_darray(xs, shardings, layouts, copy_semantics):
   return shard_args(shardings, layouts, copy_semantics, [x._data for x in xs])
