@@ -324,6 +324,41 @@ LogicalResult MemRefReshapeOp::verify() {
   return success();
 }
 
+LogicalResult RelayoutOp::verify() {
+  RelayoutOp op = *this;
+  auto in_layout_attr_array = op->getAttrOfType<ArrayAttr>("in_layout");
+  if (!in_layout_attr_array || in_layout_attr_array.size() != 1 ||
+      !isa<VectorLayoutAttr>(in_layout_attr_array[0])) {
+    return op.emitOpError(
+        "in_layout attribute must be an array containing a single "
+        "VectorLayoutAttr matching src_layout");
+  }
+
+  auto out_layout_attr_array = op->getAttrOfType<ArrayAttr>("out_layout");
+  if (!out_layout_attr_array || out_layout_attr_array.size() != 1 ||
+      !isa<VectorLayoutAttr>(out_layout_attr_array[0])) {
+    return op.emitOpError(
+        "out_layout attribute must be an array containing a single "
+        "VectorLayoutAttr.");
+  }
+
+  VectorType input_type = cast<VectorType>(op.getInput().getType());
+  VectorType output_type = cast<VectorType>(op.getOutput().getType());
+
+  if (input_type.getShape() != output_type.getShape()) {
+    return op.emitOpError("input and output shapes must match");
+  }
+  if (input_type.getElementType() != output_type.getElementType()) {
+    // Allow i1 to i1 even if bitwidth in layout changes.
+    if (!(input_type.getElementType().isInteger(1) &&
+          output_type.getElementType().isInteger(1))) {
+      return op.emitOpError(
+          "input and output element types must match for non-mask relayouts");
+    }
+  }
+  return success();
+}
+
 LogicalResult TransposeOp::verify() {
   auto source_type = getSourceVectorType();
   auto permutation = getPermutation();
