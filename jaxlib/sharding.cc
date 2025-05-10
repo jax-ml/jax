@@ -20,6 +20,7 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -29,7 +30,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
-#include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
