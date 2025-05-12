@@ -2895,9 +2895,9 @@ class MiscellaneousTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(out, state_utils.bitcast(x, jnp.uint32))
 
-  @only_passes_in_interpret()
-  def test_roll_partial(self):
-    """b/337384645"""
+  def test_roll_partial_with_static_shift(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 5, 15):
+      self.skipTest('Needs a newer libtpu')
     x = np.arange(8192, dtype=jnp.float32).reshape(128, 64)
 
     def kernel(x_ref, out_ref):
@@ -2907,6 +2907,22 @@ class MiscellaneousTest(PallasBaseTest):
         kernel, out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32)
     )(x)
     np.testing.assert_array_equal(out, np.roll(x, 3, 1))
+
+  def test_roll_partial_with_dynamic_shift(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 5, 15):
+      self.skipTest('Needs a newer libtpu')
+    if self.INTERPRET:
+      self.skipTest('Test only applies to non-interpret mode.')
+    x = np.arange(8192, dtype=jnp.float32).reshape(128, 64)
+
+    def kernel(x_ref, out_ref):
+      amount = x_ref[0, 0].astype(jnp.int32)
+      out_ref[...] = pltpu.roll(x_ref[...], amount, 1)
+
+    with self.assertRaisesRegex(Exception, 'unsupported unaligned shape'):
+      _ = self.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32)
+      )(x)
 
   @only_passes_in_interpret()
   def test_retiling1(self):
