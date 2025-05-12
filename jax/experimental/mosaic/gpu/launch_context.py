@@ -467,7 +467,7 @@ class LaunchContext:
           # We treat 8 bit floats as 8 bit integers
           elif ir.Float8E5M2Type.isinstance(ref_ty.element_type):
             tma_dtype = 1
-          elif ir.Float8E4M3Type.isinstance(ref_ty.element_type):
+          elif ir.Float8E4M3FNType.isinstance(ref_ty.element_type):
             tma_dtype = 1
           else:
             raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")

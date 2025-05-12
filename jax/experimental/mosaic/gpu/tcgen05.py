@@ -74,7 +74,7 @@ def create_instr_descriptor(
     desc = 0
     desc |= (acc_dtype == f32) << 4  # D dtype, bits 4-5
     # Bit 6 is reserved
-    if input_dtype == ir.Float8E4M3Type.get():
+    if input_dtype == ir.Float8E4M3FNType.get():
       input_dtype_enum = 0
     elif input_dtype == ir.Float8E5M2Type.get():
       input_dtype_enum = 1
@@ -173,7 +173,7 @@ def mma(
       )
   elif any(
       t.isinstance(element_type)
-      for t in {ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3Type}
+      for t in {ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3FNType}
   ):
     if d.dtype != f16 and d.dtype != f32:
       raise ValueError(
@@ -299,7 +299,7 @@ def _do_mma(
     kind = "f16"
   elif ir.Float8E5M2Type.isinstance(element_type):
     kind = "f8f6f4"
-  elif ir.Float8E4M3Type.isinstance(element_type):
+  elif ir.Float8E4M3FNType.isinstance(element_type):
     kind = "f8f6f4"
   else:
     raise NotImplementedError(f"Unsupported input element type: {element_type}")
