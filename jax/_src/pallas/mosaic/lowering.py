@@ -425,6 +425,7 @@ class MosaicGridMapping:
       dynamic_shape_replacement_fn: Callable[
           [tuple[jax.DimSize, ...]], tuple[int, ...]
       ],
+      arg_type_fn: Callable[..., ir.Type],
   ):
     self.grid = grid_mapping.grid
     self.grid_names = grid_mapping.grid_names
@@ -464,17 +465,17 @@ class MosaicGridMapping:
     operand_avals = in_avals[grid_mapping.slice_block_ops]
     scratch_avals = in_avals[grid_mapping.slice_scratch_ops]
     self.scalar_prefetch_types, _ = unzip2([
-        _get_arg_type(dynamic_shape_replacement_fn, aval, None)
+        arg_type_fn(dynamic_shape_replacement_fn, aval, None)
         for aval in scalar_prefetch_avals
     ])
     self.scalar_prefetch_block_shapes = tuple(
         aval.shape for aval in scalar_prefetch_avals)
     self.operand_types, self.operand_block_shapes = unzip2([
-        _get_arg_type(dynamic_shape_replacement_fn, aval, block_mapping)
+        arg_type_fn(dynamic_shape_replacement_fn, aval, block_mapping)
         for aval, block_mapping in zip(operand_avals, self.block_mappings)
     ])
     self.scratch_types, _ = unzip2([
-        _get_arg_type(dynamic_shape_replacement_fn, aval, None)
+        arg_type_fn(dynamic_shape_replacement_fn, aval, None)
         for aval in scratch_avals
     ])
     self.scratch_block_shapes = tuple(
@@ -482,7 +483,7 @@ class MosaicGridMapping:
         for aval in scratch_avals
     )
     self.grid_types, _ = unzip2([
-        _get_arg_type(
+        arg_type_fn(
             dynamic_shape_replacement_fn,
             pallas_core.index_map_grid_aval,
             None,
@@ -710,6 +711,7 @@ def lower_jaxpr_to_module(
       dimension_semantics,
       mesh,
       dynamic_shape_replacement_fn,
+      arg_type_fn=_get_arg_type,
   )
   mosaic_grid_mapping.maybe_compress_grid()
   m = ir.Module.create()
