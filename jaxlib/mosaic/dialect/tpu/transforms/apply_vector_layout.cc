@@ -2101,74 +2101,6 @@ LogicalResult tpu_assume_layout_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
-LogicalResult tpu_relayout_rule(RewriteContext &ctx, Operation &op,
-                                const ArrayRef<Layout> layouts_in,
-                                const ArrayRef<Layout> layouts_out) {
-  TPU_ASSERT_EQ_OP(op.getNumOperands(), 1);
-  TPU_ASSERT_EQ_OP(op.getNumResults(), 1);
-  TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
-  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
-  TPU_ASSERT_OP(layouts_in[0].has_value());
-  TPU_ASSERT_OP(layouts_out[0].has_value());
-  const auto& in_layout = *layouts_in[0];
-  const auto& out_layout = *layouts_out[0];
-  auto realyout_op = cast<tpu::RelayoutOp>(op);
-  auto in_bitwidth = in_layout.bitwidth();
-  auto out_bitwidth = out_layout.bitwidth();
-  auto vty = cast<VectorType>(realyout_op.getType());
-  ImplicitLocOpBuilder builder(op.getLoc(), &op);
-  if (in_layout == out_layout) {
-    realyout_op.replaceAllUsesWith(realyout_op.getInput());
-    realyout_op.erase();
-    return success();
-  }
-  FAILUREOR_ASSIGN_OR_RETURN(
-      xla::Array<Value> vals,
-      disassemble(builder, in_layout,
-                  cast<TypedValue<VectorType>>(realyout_op.getInput()),
-                  ctx.target_shape,
-                  /*use_implicit_shape=*/true));
-  // Packing vector masks from 32-bit to 16-bit.
-  if (vty.getElementType() == builder.getI1Type() && in_bitwidth == 32 &&
-      out_bitwidth == 16 &&
-      in_layout.tiling()[0] == in_layout.packing() * ctx.target_shape[0] &&
-      in_layout.tiling()[1] == ctx.target_shape[1] &&
-      in_layout.tiling() == out_layout.tiling() &&
-      in_layout.offsets() == out_layout.offsets() &&
-      in_layout.implicit_dim() == out_layout.implicit_dim()) {
-    std::vector<int64_t> vmsks_shape(vals.dimensions().begin(),
-                                     vals.dimensions().end());
-    *(vmsks_shape.end() - 1) = llvm::divideCeil(vmsks_shape.back(), 2);
-    xla::Array<Value> out_vmsks(vmsks_shape, nullptr);
-    SmallVector<int64_t> val_idx;
-    Value default_val =
-        getFullLikeVector(builder, cast<TypedValue<VectorType>>(*vals.begin()),
-                          IntegerAttr::get(builder.getI1Type(), 0));
-    out_vmsks.Each([&](absl::Span<const int64_t> idx, Value *v) {
-      val_idx.assign(idx.begin(), idx.end());
-      // TODO(jevinjiang): can be simplified when offset is replicated.
-      *(val_idx.end() - 1) *= 2;
-      Value low_part = *(val_idx.end() - 1) < *(vals.dimensions().end() - 1)
-                           ? vals(val_idx)
-                           : default_val;
-      *(val_idx.end() - 1) += 1;
-      Value high_part = *(val_idx.end() - 1) < *(vals.dimensions().end() - 1)
-                            ? vals(val_idx)
-                            : default_val;
-      const VectorType mask_ty = getNativeVregOrVmaskType(
-          builder.getI1Type(), in_bitwidth / 2, ctx.target_shape);
-      *v = builder.create<PackMaskOp>(mask_ty, low_part, high_part);
-    });
-    const RollVectorsOp rolled_op =
-        assemble(builder, vty, out_layout, out_vmsks, ctx.target_shape,
-                 /*use_implicit_shape=*/true);
-    op.replaceAllUsesWith(rolled_op);
-    op.erase();
-    return success();
-  }
-  return op.emitOpError("Not implemented: unsupported layout change");
-}
-
 Value createSubelementMask(OpBuilder &builder, const Location loc,
                            const int bitwidth, const int64_t from,
                            const int64_t to,
@@ -4827,60 +4759,6 @@ LogicalResult tpu_prng_random_bits_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
-const llvm::StringMap<rule_type> &rules() {
-  static const llvm::StringMap<rule_type> *rules = [] {
-    static auto rules = new llvm::StringMap<rule_type>{
-        {arith::ConstantOp::getOperationName(), arith_constant_rule},
-        {arith::ExtFOp::getOperationName(), arith_extf_rule},
-        {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
-        {arith::ExtUIOp::getOperationName(), arith_extui_rule},
-        {arith::TruncFOp::getOperationName(), arith_truncf_rule},
-        {arith::TruncIOp::getOperationName(), arith_trunci_rule},
-        {func::ReturnOp::getOperationName(), func_return_rule},
-        {scf::ForOp::getOperationName(), scf_for_rule},
-        {scf::WhileOp::getOperationName(), scf_while_rule},
-        {scf::ConditionOp::getOperationName(), scf_condition_rule},
-        {scf::IfOp::getOperationName(), scf_if_rule},
-        {scf::YieldOp::getOperationName(), yield_rule},
-        {tpu::YieldOp::getOperationName(), yield_rule},
-        {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
-        {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
-        {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
-        {tpu::IotaOp::getOperationName(), tpu_iota_rule},
-        {tpu::GatherOp::getOperationName(), tpu_gather_rule},
-        {tpu::DynamicGatherOp::getOperationName(), tpu_dynamic_gather_rule},
-        {tpu::LoadOp::getOperationName(), tpu_load_rule},
-        {tpu::StoreOp::getOperationName(), tpu_store_rule},
-        {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
-        {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
-        {tpu::VectorStoreOp::getOperationName(), tpu_vector_store_rule},
-        {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
-        {tpu::RegionOp::getOperationName(), tpu_region_rule},
-        {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
-        {tpu::TraceOp::getOperationName(), tpu_trace_rule},
-        {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
-        {tpu::PRNGRandomBitsOp::getOperationName(), tpu_prng_random_bits_rule},
-        {tpu::RelayoutOp::getOperationName(), tpu_relayout_rule},
-        {tpu::FPToSIOp::getOperationName(), tpu_fptosi_rule},
-        {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
-        {vector::ExtractOp::getOperationName(), vector_extract_rule},
-        {vector::LoadOp::getOperationName(), vector_load_rule},
-        {vector::MultiDimReductionOp::getOperationName(),
-         vector_multi_reduction_rule},
-        {vector::ExtractStridedSliceOp::getOperationName(),
-         vector_extract_strided_slice_rule},
-        {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
-        {vector::StoreOp::getOperationName(), vector_store_rule},
-        {tpu::TransposeOp::getOperationName(), vector_transpose_rule}};
-
-    for (const auto &[name, rule] : mlir::tpu::extensions::rules()) {
-      rules->insert({name, rule});
-    }
-    return rules;
-  }();
-  return *rules;
-}
-
 // Determines whether we should handle bank conflict for the given stride and
 // max_sublane_offset.
 //
@@ -6773,12 +6651,20 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
                                            VectorLayout src,
                                            VectorLayout dst) {
   const auto target_shape = ctx.target_shape;
+  VectorType vty = v.getType();
   const int8_t bitwidth = src.bitwidth();
-  if (bitwidth != dst.bitwidth()) {
+  const bool is_mask = vty.getElementTypeBitWidth() == 1;
+  const bool is_mask_pack =
+      is_mask && bitwidth == 32 && dst.bitwidth() == 16 &&
+      src.tiling()[0] == src.packing() * target_shape[0] &&
+      src.tiling()[1] == target_shape[1] && src.tiling() == dst.tiling() &&
+      src.offsets() == dst.offsets() &&
+      src.implicit_dim() == dst.implicit_dim();
+
+  if (bitwidth != dst.bitwidth() && !is_mask_pack) {
     return emitError(v.getLoc(), "Can't change bitwidth during a relayout");
   }
-  VectorType vty = v.getType();
-  const bool is_mask = vty.getElementTypeBitWidth() == 1;
+
   {
     // Replication imposes a replication constraint on the *logical* value of
     // the vector: When moving along a replicated axis, all elements must be
@@ -6812,6 +6698,38 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_tiles,
       disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
+  if (is_mask_pack) {
+    std::vector<int64_t> vmsks_shape(src_tiles.dimensions().begin(),
+                                     src_tiles.dimensions().end());
+    *(vmsks_shape.end() - 1) = llvm::divideCeil(vmsks_shape.back(), 2);
+    xla::Array<Value> out_vmsks(vmsks_shape, nullptr);
+    SmallVector<int64_t> val_idx;
+    Value default_val = getFullVector(
+        builder, v.getLoc(),
+        cast<TypedValue<VectorType>>(*src_tiles.begin()).getType(),
+        IntegerAttr::get(builder.getI1Type(), 0));
+    out_vmsks.Each([&](absl::Span<const int64_t> idx, Value *v_slot_in_array) {
+      val_idx.assign(idx.begin(), idx.end());
+      *(val_idx.end() - 1) *= 2;
+      Value low_part =
+          *(val_idx.end() - 1) < *(src_tiles.dimensions().end() - 1)
+              ? src_tiles(val_idx)
+              : default_val;
+      *(val_idx.end() - 1) += 1;
+      Value high_part =
+          *(val_idx.end() - 1) < *(src_tiles.dimensions().end() - 1)
+              ? src_tiles(val_idx)
+              : default_val;
+      const VectorType mask_ty = getNativeVregOrVmaskType(
+          builder.getI1Type(), bitwidth / 2, target_shape);
+      *v_slot_in_array =
+          builder.create<PackMaskOp>(v.getLoc(), mask_ty, low_part, high_part);
+    });
+    return assemble(builder, vty, dst, out_vmsks, target_shape,
+                    /*use_implicit_shape=*/true)
+        .getResult();
+  }
+
   if (is_mask) {
     auto new_tile_ty = getNativeVregOrVmaskType(
         builder.getIntegerType(bitwidth), bitwidth, target_shape);
@@ -6823,6 +6741,7 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
   }
   auto assemble_with_mask_check = [&](xla::Array<Value> &tiles,
                                       bool use_implicit_shape = false) {
+
     if (is_mask) {
       auto zeros_tile = builder.create<arith::ConstantOp>(
           tiles.begin()->getLoc(),
@@ -6941,9 +6860,110 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
       changeOffsets(ctx, builder, v.getLoc(), vty, src, std::move(src_tiles),
                     dst.offsets()));
 
-  CHECK_EQ(src, dst);  // At this point we've should be done.
-  return assemble_with_mask_check(src_tiles,
-                                  /*use_implicit_shape=*/true);
+  CHECK_EQ(src, dst);
+  return assemble_with_mask_check(src_tiles, /*use_implicit_shape=*/true);
+}
+
+LogicalResult tpu_relayout_rule(RewriteContext &ctx, Operation &op,
+                                const ArrayRef<Layout> layouts_in,
+                                const ArrayRef<Layout> layouts_out) {
+  auto tpu_relayout_op = cast<tpu::RelayoutOp>(op);
+  auto input_val = dyn_cast<TypedValue<VectorType>>(tpu_relayout_op.getInput());
+
+  auto in_layout_array_attr =
+      tpu_relayout_op->getAttrOfType<ArrayAttr>("in_layout");
+  if (!in_layout_array_attr || in_layout_array_attr.empty()) {
+    return tpu_relayout_op.emitOpError(
+        "missing or empty 'in_layout' attribute");
+  }
+  auto src_vla = dyn_cast<tpu::VectorLayoutAttr>(in_layout_array_attr[0]);
+  if (!src_vla) {
+    return tpu_relayout_op.emitOpError(
+        "'in_layout' attribute is not a VectorLayoutAttr");
+  }
+  VectorLayout src_layout = src_vla.getLayout().value();
+
+  auto out_layout_array_attr =
+      tpu_relayout_op->getAttrOfType<ArrayAttr>("out_layout");
+  if (!out_layout_array_attr || out_layout_array_attr.empty()) {
+    return tpu_relayout_op.emitOpError(
+        "missing or empty 'out_layout' attribute");
+  }
+  auto dst_vla = dyn_cast<tpu::VectorLayoutAttr>(out_layout_array_attr[0]);
+  if (!dst_vla) {
+    return tpu_relayout_op.emitOpError(
+        "'out_layout' attribute is not a VectorLayoutAttr");
+  }
+  VectorLayout dst_layout = dst_vla.getLayout().value();
+
+  if (src_layout == dst_layout) {
+    tpu_relayout_op.replaceAllUsesWith(tpu_relayout_op.getInput());
+    tpu_relayout_op.erase();
+    return success();
+  }
+
+  OpBuilder builder(&op);
+  FAILUREOR_ASSIGN_OR_RETURN(
+      TypedValue<VectorType> new_v,
+      relayout(ctx, builder, input_val, src_layout, dst_layout));
+
+  tpu_relayout_op.replaceAllUsesWith(new_v);
+  tpu_relayout_op.erase();
+  return success();
+}
+
+const llvm::StringMap<rule_type> &rules() {
+  static const llvm::StringMap<rule_type> *rules = [] {
+    static auto rules = new llvm::StringMap<rule_type>{
+        {arith::ConstantOp::getOperationName(), arith_constant_rule},
+        {arith::ExtFOp::getOperationName(), arith_extf_rule},
+        {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
+        {arith::ExtUIOp::getOperationName(), arith_extui_rule},
+        {arith::TruncFOp::getOperationName(), arith_truncf_rule},
+        {arith::TruncIOp::getOperationName(), arith_trunci_rule},
+        {func::ReturnOp::getOperationName(), func_return_rule},
+        {scf::ForOp::getOperationName(), scf_for_rule},
+        {scf::WhileOp::getOperationName(), scf_while_rule},
+        {scf::ConditionOp::getOperationName(), scf_condition_rule},
+        {scf::IfOp::getOperationName(), scf_if_rule},
+        {scf::YieldOp::getOperationName(), yield_rule},
+        {tpu::YieldOp::getOperationName(), yield_rule},
+        {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
+        {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
+        {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
+        {tpu::IotaOp::getOperationName(), tpu_iota_rule},
+        {tpu::GatherOp::getOperationName(), tpu_gather_rule},
+        {tpu::DynamicGatherOp::getOperationName(), tpu_dynamic_gather_rule},
+        {tpu::LoadOp::getOperationName(), tpu_load_rule},
+        {tpu::StoreOp::getOperationName(), tpu_store_rule},
+        {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
+        {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
+        {tpu::VectorStoreOp::getOperationName(), tpu_vector_store_rule},
+        {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
+        {tpu::RegionOp::getOperationName(), tpu_region_rule},
+        {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
+        {tpu::TraceOp::getOperationName(), tpu_trace_rule},
+        {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
+        {tpu::PRNGRandomBitsOp::getOperationName(), tpu_prng_random_bits_rule},
+        {tpu::RelayoutOp::getOperationName(), tpu_relayout_rule},
+        {tpu::FPToSIOp::getOperationName(), tpu_fptosi_rule},
+        {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
+        {vector::ExtractOp::getOperationName(), vector_extract_rule},
+        {vector::LoadOp::getOperationName(), vector_load_rule},
+        {vector::MultiDimReductionOp::getOperationName(),
+         vector_multi_reduction_rule},
+        {vector::ExtractStridedSliceOp::getOperationName(),
+         vector_extract_strided_slice_rule},
+        {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
+        {vector::StoreOp::getOperationName(), vector_store_rule},
+        {tpu::TransposeOp::getOperationName(), vector_transpose_rule}};
+
+    for (const auto &[name, rule] : mlir::tpu::extensions::rules()) {
+      rules->insert({name, rule});
+    }
+    return rules;
+  }();
+  return *rules;
 }
 
 // TODO(apaszke): Implement a debug mode that inserts additional assertions.
