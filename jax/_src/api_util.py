@@ -39,20 +39,112 @@ traceback_util.register_exclusion(__file__)
 map = safe_map
 
 def _ensure_index(x: Any) -> int | tuple[int, ...]:
-  """Ensure x is either an index or a tuple of indices."""
-  x = core.concrete_or_error(None, x, "expected a static index or sequence of indices.")
+  """Ensure x is either an index or a tuple of indices.
+  
+  Also supports slice objects, which are converted to a tuple of indices based on
+  the slice's start, stop, and step parameters.
+  
+  Args:
+    x: An integer, sequence of integers, or slice object.
+  
+  Returns:
+    Either an integer index or a tuple of integer indices.
+    
+  Raises:
+    ValueError: If a slice with None for both start and stop is provided, or if
+      only the stop is None (which would create an unbounded slice).
+    TypeError: If x is not an integer, sequence of integers, or slice object.
+  """
+  x = core.concrete_or_error(None, x, "expected a static index, sequence of indices, or slice object.")
+  
+  # Handle slice objects
+  if isinstance(x, slice):
+    # Validate slice parameters
+    if x.start is None and x.stop is None:
+      raise ValueError(
+          'slice with None for both start and stop is not supported for argnums. '
+          'Please provide explicit indices.')
+      
+    # Convert None to default values
+    start = 0 if x.start is None else operator.index(x.start)
+    if x.stop is None:
+      raise ValueError(
+          'slice stop must be specified for argnums to avoid unbounded slices. '
+          'Please provide an explicit stop value.')
+    stop = operator.index(x.stop)
+    step = 1 if x.step is None else operator.index(x.step)
+    
+    # Generate the tuple of indices
+    indices = tuple(range(start, stop, step))
+    if not indices:
+      raise ValueError(
+          f'slice({start}, {stop}, {step}) produced an empty sequence of indices. '
+          'Please provide a valid slice that generates at least one index.')
+    
+    return indices
+  
   try:
     return operator.index(x)
   except TypeError:
-    return tuple(map(operator.index, x))
+    try:
+      return tuple(map(operator.index, x))
+    except (TypeError, ValueError):
+      raise TypeError(
+          f'argnums must be an int, sequence of ints, or slice object, got {x}') from None
 
 def _ensure_index_tuple(x: Any) -> tuple[int, ...]:
-  """Convert x to a tuple of indices."""
-  x = core.concrete_or_error(None, x, "expected a static index or sequence of indices.")
+  """Convert x to a tuple of indices.
+  
+  Also supports slice objects, which are converted to a tuple of indices based on
+  the slice's start, stop, and step parameters.
+  
+  Args:
+    x: An integer, sequence of integers, or slice object.
+  
+  Returns:
+    A tuple of integer indices.
+    
+  Raises:
+    ValueError: If a slice with None for both start and stop is provided, or if
+      only the stop is None (which would create an unbounded slice).
+    TypeError: If x is not an integer, sequence of integers, or slice object.
+  """
+  x = core.concrete_or_error(None, x, "expected a static index, sequence of indices, or slice object.")
+  
+  # Handle slice objects
+  if isinstance(x, slice):
+    # Validate slice parameters
+    if x.start is None and x.stop is None:
+      raise ValueError(
+          'slice with None for both start and stop is not supported for argnums. '
+          'Please provide explicit indices.')
+      
+    # Convert None to default values
+    start = 0 if x.start is None else operator.index(x.start)
+    if x.stop is None:
+      raise ValueError(
+          'slice stop must be specified for argnums to avoid unbounded slices. '
+          'Please provide an explicit stop value.')
+    stop = operator.index(x.stop)
+    step = 1 if x.step is None else operator.index(x.step)
+    
+    # Generate the tuple of indices
+    indices = tuple(range(start, stop, step))
+    if not indices:
+      raise ValueError(
+          f'slice({start}, {stop}, {step}) produced an empty sequence of indices. '
+          'Please provide a valid slice that generates at least one index.')
+    
+    return indices
+  
   try:
     return (operator.index(x),)
   except TypeError:
-    return tuple(map(operator.index, x))
+    try:
+      return tuple(map(operator.index, x))
+    except (TypeError, ValueError):
+      raise TypeError(
+          f'argnums must be an int, sequence of ints, or slice object, got {x}') from None
 
 def _ensure_str(x: str) -> str:
   if not isinstance(x, str):
