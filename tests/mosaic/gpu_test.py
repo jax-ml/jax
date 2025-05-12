@@ -983,13 +983,15 @@ class TCGen05Test(TestCase):
   @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
-      in_jax_dtype=(jnp.float16, jnp.bfloat16),  # TODO(apaszke): f32
+      in_jax_dtype=(jnp.float16, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float16, jnp.float32,),
       m=(128,),  # TODO(apaszke): 64, 192, 256
       n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       swizzle=(32, 64, 128,),
   )
   def test_mma_basic(self, **kwargs):
+    if kwargs["n"] * jnp.dtype(kwargs["in_jax_dtype"]).itemsize < kwargs["swizzle"]:
+      self.skipTest("swizzle too large for input")
     self._basic_mma_test(
         **kwargs,
         k_steps=2,  # Reducing to 1 can be helpful while debugging.
@@ -1029,8 +1031,10 @@ class TCGen05Test(TestCase):
       rhs_transpose_tiles,
       lhs_transpose_tiles,
   ):
-    if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
-      self.skipTest("Only f16 input is supported for f16 output.")
+    if out_jax_dtype != jnp.float32 and (
+        in_jax_dtype == jnp.float32 or in_jax_dtype == jnp.bfloat16
+    ):
+      self.skipTest("Only f32 output is supported for f32 and bf16 input.")
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
     swizzle_elems = swizzle // bytewidth(in_mlir_dtype)

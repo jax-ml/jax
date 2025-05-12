@@ -56,17 +56,42 @@ def create_instr_descriptor(
   f32 = ir.F32Type.get()
   bf16 = ir.BF16Type.get()
   f16 = ir.F16Type.get()
-  if input_dtype not in {f16, bf16}:
-    raise NotImplementedError("Only float16 and bfloat16 inputs supported")
   if acc_dtype not in {f32, f16}:
     raise NotImplementedError("Only float32 and float16 accumulators supported")
+  if utils.bitwidth(input_dtype) == 16:
+    if input_dtype not in {f16, bf16}:
+      raise NotImplementedError(
+          "The only supported 16-bit input types are float16 and bfloat16, got"
+          f" {input_dtype}"
+      )
+    desc = 0
+    desc |= (acc_dtype == f32) << 4  # D dtype, bits 4-5
+    # Bit 6 is reserved
+    desc |= (input_dtype == bf16) << 7  # A dtype, bits 7-9
+    desc |= (input_dtype == bf16) << 10  # B dtype, bits 10-12
+    return _finish_instr_descriptor(desc, m, n, transpose_a, transpose_b)
+  elif utils.bitwidth(input_dtype) == 8:
+    desc = 0
+    desc |= (acc_dtype == f32) << 4  # D dtype, bits 4-5
+    # Bit 6 is reserved
+    if input_dtype == ir.Float8E4M3Type.get():
+      input_dtype_enum = 0
+    elif input_dtype == ir.Float8E5M2Type.get():
+      input_dtype_enum = 1
+    else:
+      raise NotImplementedError(f"Unsupported input dtype: {input_dtype}")
+    desc |= input_dtype_enum << 7  # A dtype, bits 7-9
+    desc |= input_dtype_enum << 10  # B dtype, bits 10-12
+    return _finish_instr_descriptor(desc, m, n, transpose_a, transpose_b)
+  else:
+    raise NotImplementedError(f"Unsupported input dtype: {input_dtype}")
 
-  desc = 0
+
+def _finish_instr_descriptor(
+    desc: int, m: int, n: int, transpose_a: bool, transpose_b: bool,
+):
   # We ignore sparsity in bits 0-3
-  desc |= (acc_dtype == f32) << 4  # D dtype, bits 4-5
-  # Bit 6 is reserved
-  desc |= (input_dtype == bf16) << 7  # A dtype, bits 7-9
-  desc |= (input_dtype == bf16) << 10  # B dtype, bits 10-12
+  # A, B and D types are set by the caller
   # We ignore negate bits 13-14
   desc |= transpose_a << 15  # Transpose A
   desc |= transpose_b << 16  # Transpose B
@@ -139,20 +164,24 @@ def mma(
         f"Accumulator layout mismatch: expected {expected_layout}, got {d.layout}"
     )
   f32 = ir.F32Type.get()
+  f16 = ir.F16Type.get()
   if element_type == f32 or element_type == ir.BF16Type.get():
     if d.dtype != f32:
       raise ValueError(
           f"MMA with element type {element_type} only supports accumulators"
           f" of type f32, but got: {d.dtype}"
       )
-  elif element_type == ir.F16Type.get():
-    if d.dtype != element_type and d.dtype != f32:
+  elif any(
+      t.isinstance(element_type)
+      for t in {ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3Type}
+  ):
+    if d.dtype != f16 and d.dtype != f32:
       raise ValueError(
-          "MMA with element type f16 only supports accumulators of type f32"
-          f" or f16, but got: {d.dtype}"
+          f"MMA with element type {element_type} only supports accumulators of"
+          f" type f32 or f16, but got: {d.dtype}"
       )
   else:
-    raise NotImplementedError(f"Unsupported element type: {element_type}")
+    raise NotImplementedError(f"Unsupported element type: {element_type}", type(element_type))
 
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.
@@ -268,6 +297,10 @@ def _do_mma(
 
   if ir.F16Type.isinstance(element_type) or ir.BF16Type.isinstance(element_type):
     kind = "f16"
+  elif ir.Float8E5M2Type.isinstance(element_type):
+    kind = "f8f6f4"
+  elif ir.Float8E4M3Type.isinstance(element_type):
+    kind = "f8f6f4"
   else:
     raise NotImplementedError(f"Unsupported input element type: {element_type}")
 
