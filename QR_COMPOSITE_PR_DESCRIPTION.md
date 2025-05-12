@@ -40,3 +40,4 @@ Added inline documentation for all components describing:
 ## Future Work
 
 This implementation could serve as a template for adding composite operations to other linear algebra functions in JAX, providing a consistent pattern for extending JAX's capabilities to custom backends.
+# End of file
