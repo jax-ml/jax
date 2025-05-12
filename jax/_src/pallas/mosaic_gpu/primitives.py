@@ -450,9 +450,6 @@ jax_core.pp_eqn_rules[copy_gmem_to_smem_p] = _copy_gmem_to_smem_pp_eqn
 @lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
-    copy_gmem_to_smem_p, mgpu.LoweringSemantics.Lane,
-    primitive_semantics=gpu_core.PrimitiveSemantics.Warp)
-@lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _copy_gmem_to_smem_lowering(
@@ -465,6 +462,7 @@ def _copy_gmem_to_smem_lowering(
     dst_transforms_treedef,
     barrier_transforms_treedef,
     collective_axes,
+    warpgroup_sync: bool = True,
 ):
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
@@ -509,6 +507,8 @@ def _copy_gmem_to_smem_lowering(
     # arrive with the whole transfer size, while everyone else arrives with 0.
     # But we should continue using this scheme as it's likely to be faster.
     bytes //= WARPGROUP_SIZE
+    if warpgroup_sync:
+      mgpu.warpgroup_barrier()  # Make sure all reads have completed.
     barrier.arrive_expect_tx(bytes)
     ctx.launch_ctx.async_copy(
         src_ref=src,
@@ -540,6 +540,12 @@ def _copy_gmem_to_smem_lowering(
       collective=ir.ArrayAttr.get([]),
   )
   return ()
+
+lowering.register_lowering_rule(
+    copy_gmem_to_smem_p,
+    mgpu.LoweringSemantics.Lane,
+    primitive_semantics=gpu_core.PrimitiveSemantics.Warp,
+)(functools.partial(_copy_gmem_to_smem_lowering, warpgroup_sync=False))
 
 
 def copy_gmem_to_smem(
