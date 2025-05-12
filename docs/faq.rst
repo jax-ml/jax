@@ -422,7 +422,6 @@ for comparing JAX versus NumPy, making using of IPython's convenient
 `%time and %timeit magics`_::
 
     import numpy as np
-    import jax.numpy as jnp
     import jax
 
     def f(x):  # function we're benchmarking (works in both NumPy & JAX)
@@ -431,7 +430,9 @@ for comparing JAX versus NumPy, making using of IPython's convenient
     x_np = np.ones((1000, 1000), dtype=np.float32)  # same as JAX default dtype
     %timeit f(x_np)  # measure NumPy runtime
 
-    %time x_jax = jax.device_put(x_np)  # measure JAX device transfer time
+    # measure JAX device transfer time
+    %time x_jax = jax.device_put(x_np).block_until_ready()
+
     f_jit = jax.jit(f)
     %time f_jit(x_jax).block_until_ready()  # measure JAX compilation time
     %timeit f_jit(x_jax).block_until_ready()  # measure JAX runtime
