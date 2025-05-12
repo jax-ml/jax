@@ -37,6 +37,7 @@ from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
 from jax._src.pallas.mosaic_gpu.core import state_types
@@ -452,6 +453,11 @@ jax_core.pp_eqn_rules[copy_gmem_to_smem_p] = _copy_gmem_to_smem_pp_eqn
 @lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.LoweringSemantics.Warpgroup
 )
+@lowering.register_lowering_rule(
+    copy_gmem_to_smem_p,
+    mgpu.LoweringSemantics.Lane,
+    primitive_semantics=gpu_core.PrimitiveSemantics.Warp,
+)
 def _copy_gmem_to_smem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
@@ -462,7 +468,6 @@ def _copy_gmem_to_smem_lowering(
     dst_transforms_treedef,
     barrier_transforms_treedef,
     collective_axes,
-    warpgroup_sync: bool = True,
 ):
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
@@ -490,26 +495,12 @@ def _copy_gmem_to_smem_lowering(
         lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)
         for axis in collective_axes
     )
-  dst_ty = ir.MemRefType(dst.type)
-  bits = math.prod(dst_ty.shape) * mgpu.bitwidth(dst_ty.element_type)
-  if bits % 8:
-    raise ValueError(
-        f"Can only transfer integer bytes (shape={dst_ty.shape},"
-        f" dtype={dst_ty.element_type})"
-    )
-  bytes = bits // 8
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    if bytes % WARPGROUP_SIZE:
-      raise NotImplementedError("Only aligned copies are supported")
     # We arrive uniformly from each thread in the WG, so we need to divide the
     # number of bytes by the number of threads in the WG.
     # TODO: apaszke - Relax this. We can just select the WG leader and have it
     # arrive with the whole transfer size, while everyone else arrives with 0.
     # But we should continue using this scheme as it's likely to be faster.
-    bytes //= WARPGROUP_SIZE
-    if warpgroup_sync:
-      mgpu.warpgroup_barrier()  # Make sure all reads have completed.
-    barrier.arrive_expect_tx(bytes)
     ctx.launch_ctx.async_copy(
         src_ref=src,
         dst_ref=dst,
@@ -529,24 +520,87 @@ def _copy_gmem_to_smem_lowering(
     indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
   assert copy_params.get("swizzle") is None
   assert not copy_params.get("gmem_transform")
-  barrier_ref = barrier.as_barrier_memref()
-  mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
   mgpu.dialect.async_load(
       src,
       dst,
-      barrier_ref,
+      barrier.as_barrier_memref(),
       indices,
       slice_lengths,
       collective=ir.ArrayAttr.get([]),
   )
   return ()
 
+
+arrive_expect_tx_p = jax_core.Primitive("arrive_expect_tx")
+arrive_expect_tx_p.multiple_results = True
+
+def arrive_expect_tx(barrier: _Ref, *refs):
+  barrier, barrier_transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "arrive_expect_tx", force_trailing_indexer=False,
+  )
+  flat_barrier_transforms, barrier_transforms_treedef = tree_util.tree_flatten(
+      barrier_transforms
+  )
+  return arrive_expect_tx_p.bind(
+      barrier,
+      *flat_barrier_transforms,
+      barrier_transforms_treedef=barrier_transforms_treedef,
+      shapes=[jax.ShapeDtypeStruct(shape=r.shape, dtype=r.dtype) for r in refs],
+  )
+
+@arrive_expect_tx_p.def_effectful_abstract_eval
+def _arrive_expect_tx_abstract_eval(barrier, *flat_barrier_transforms, shapes, barrier_transforms_treedef):
+  del flat_barrier_transforms, shapes, barrier_transforms_treedef  # Unused
+  _check_ref(barrier, "barrier", gpu_core.SMEM)
+  return (), {gpu_core._memory_effect}
+
+@lowering.register_lowering_rule(
+    arrive_expect_tx_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    arrive_expect_tx_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _arrive_expect_tx_lowering(
+    ctx,
+    barrier,
+    *flat_barrier_transforms,
+    shapes,
+    barrier_transforms_treedef,
+    warpgroup_sync=True,
+):
+  transforms = barrier_transforms_treedef.unflatten(flat_barrier_transforms)
+  indexer = _extract_barrier_indexer(transforms)
+  if indexer is not None:
+    barrier = barrier.__getitem__(*map(lowering._as_index, indexer.indices))
+
+  bytes = 0
+  for sh in shapes:
+    bits = pallas_utils.dtype_bitwidth(sh.dtype) * math.prod(sh.shape)
+    if bits % 8:
+      raise ValueError(
+          "Each transfer must have a sizes that is a number of whole bytes"
+          f" (shape={sh.shape}, dtype={sh.dtype})"
+      )
+    bytes += bits // 8
+
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    if warpgroup_sync:
+      mgpu.warpgroup_barrier()  # Make sure all reads have completed.
+    if bytes % WARPGROUP_SIZE:
+      raise NotImplementedError("Only aligned copies are supported")
+    bytes //= WARPGROUP_SIZE
+    barrier.arrive_expect_tx(bytes)
+  else:
+    if warpgroup_sync:
+      raise NotImplementedError(f"warpgroup_sync not supported for {ctx.module_ctx.lowering_semantics}")
+    barrier_ref = barrier.as_barrier_memref()
+    mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
+
+
 lowering.register_lowering_rule(
     copy_gmem_to_smem_p,
     mgpu.LoweringSemantics.Lane,
     primitive_semantics=gpu_core.PrimitiveSemantics.Warp,
-)(functools.partial(_copy_gmem_to_smem_lowering, warpgroup_sync=False))
-
+)(functools.partial(_arrive_expect_tx_lowering, warpgroup_sync=False))
 
 def copy_gmem_to_smem(
     src: _Ref,
@@ -554,6 +608,7 @@ def copy_gmem_to_smem(
     barrier: _Ref,
     *,
     collective_axes: str | tuple[str, ...] | None = None,
+    arrive: bool = True,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
@@ -561,6 +616,9 @@ def copy_gmem_to_smem(
     :func:`jax.experimental.mosaic.gpu.barrier_arrive`
     :func:`jax.experimental.mosaic.gpu.barrier_wait`
   """
+  if arrive:
+    arrive_expect_tx(barrier, dst)
+
   src, src_transforms = state_primitives.get_ref_and_transforms(
       src, None, "copy_gmem_to_smem", force_trailing_indexer=False,
   )

@@ -88,7 +88,7 @@ class BufferedRef:
         )
     )
 
-  def copy_in(self, slot, grid_indices, barrier_ref):
+  def copy_in(self, slot, grid_indices, barrier_ref, arrive=True):
     if not _in_smem(self.spec):
       return
     assert self.smem_ref is not None
@@ -97,6 +97,7 @@ class BufferedRef:
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
         self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
         barrier_ref.at[slot],
+        arrive=arrive,
     )
 
   def copy_out(self, slot, grid_indices, predicate=None):
@@ -242,8 +243,7 @@ def emit_pipeline(
         barrier_ref=None
         if arrival_count == 0
         else gpu_core.Barrier(
-            # TODO(slebedev): Change this to arrive only once.
-            arrival_count,
+            1,
             num_barriers=max_concurrent_steps,
         ),
     )
@@ -263,13 +263,20 @@ def emit_pipeline(
             out_specs, out_gmem_refs, out_smem_refs
         )
     ]
+    if barrier_ref is not None:
+      _arrive_at_slot = lambda slot: gpu_primitives.arrive_expect_tx(
+          barrier_ref.at[slot], *[br.get_ref_for_slot(slot) for br in in_brefs]
+      )
+    else:
+      _arrive_at_slot = lambda _: None
 
     # Initialize the pipeline.
     indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
     fetch_indices = indices
     for step in range(max_concurrent_steps):
+      _arrive_at_slot(step)
       for bref in in_brefs:
-        bref.copy_in(step, fetch_indices, barrier_ref)
+        bref.copy_in(step, fetch_indices, barrier_ref, arrive=False)
       fetch_indices = _inc_grid_by_1(fetch_indices, grid)
     del fetch_indices
 
@@ -332,8 +339,9 @@ def emit_pipeline(
       fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
 
       def do_fetch():
+        _arrive_at_slot(fetch_slot)
         for bref in in_brefs:
-          bref.copy_in(fetch_slot, fetch_indices, barrier_ref)
+          bref.copy_in(fetch_slot, fetch_indices, barrier_ref.at[fetch_slot], arrive=False)
 
       jax.lax.cond(
           lax.bitwise_and(step >= delay_release, fetch_step < num_steps),
