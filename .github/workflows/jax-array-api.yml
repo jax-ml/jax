@@ -32,7 +32,7 @@ jobs:
       with:
         repository: data-apis/array-api-tests
         # TODO(jakevdp) update this to a stable release/tag when available.
-        ref: 'c48410f96fc58e02eea844e6b7f6cc01680f77ce'  # Latest commit as of 2025-04-02
+        ref: 'c847143beb8d769bde5dbcc063fe19ed7acc2f9b'  # Latest commit as of 2025-05-12
         submodules: 'true'
         path: 'array-api-tests'
     - name: Install dependencies
