@@ -245,6 +245,7 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
         ),
         (plgpu.Barrier(num_arrivals=compute_wgs, num_barriers=max_concurrent_steps),) * 2,
         plgpu.Barrier(num_arrivals=compute_wgs),
+        collective_axes="wg",
     )
 
   num_q_tiles, rem = divmod(q_seq_len, block_q * 2)
@@ -740,6 +741,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
           scratch,
           plgpu.Barrier(1, num_barriers=compute_wgs),
           plgpu.Barrier(num_arrivals=compute_wgs),
+          collective_axes="wg",
       )
   @jax.jit
   def run_function(q, k, v, o, lse):

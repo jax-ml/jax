@@ -3347,7 +3347,9 @@ def _alloc_value(
 
 
 @register_lowering_rule(primitives.run_scoped_p)
-def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr):
+def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr, collective_axes):
+  if collective_axes:
+    raise NotImplementedError("run_scoped lowering does not support collective axes")
   out_type = [
       aval_to_ir_type(ctx.lowering_context.dynamic_shape_replacement_fn, aval)
       for aval in ctx.avals_out
