@@ -15,7 +15,7 @@
 """Module for lowering JAX to Mosaic-compatible MLIR dialects."""
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 import contextlib
 import dataclasses
 import functools
@@ -168,6 +168,7 @@ class LoweringContext:
   block_shapes: list[tuple[int | pallas_core.Squeezed, ...]]
   name_stack: source_info_util.NameStack
   mesh_context: MeshContext | None
+  kernel_type: tpu_core.KernelType
   traceback_caches: mlir.TracebackCaches
   for_verification: bool
   forward_compatible: bool
@@ -324,7 +325,7 @@ def ir_constant(x, mlir_type=None):
   raise NotImplementedError(x.dtype)
 
 
-lowering_rules = {}
+lowering_rules = {kernel_type: {} for kernel_type in tpu_core.KernelType}
 skip_mlir_conversions = set()
 
 
@@ -332,10 +333,14 @@ T = TypeVar("T")
 
 
 def register_lowering_rule(
-    prim: jax_core.Primitive, *, ensure_mlir_values: bool = True
+    prim: jax_core.Primitive,
+    *,
+    kernel_types: Collection[tpu_core.KernelType] = (tpu_core.KernelType.TC,),
+    ensure_mlir_values: bool = True,
 ) -> Callable[[T], T]:
   def decorator(rule: T) -> T:
-    lowering_rules[prim] = rule
+    for kernel_type in kernel_types:
+      lowering_rules[kernel_type][prim] = rule
     if not ensure_mlir_values:
       skip_mlir_conversions.add(prim)
     return rule
@@ -673,6 +678,7 @@ def lower_jaxpr_to_module(
     jaxpr: jax_core.Jaxpr,
     *,
     dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
+    kernel_type: tpu_core.KernelType,
     mesh: mesh_lib.Mesh | None = None,
     for_verification: bool = False,
     dynamic_shape_replacement_enabled: bool = False,
@@ -724,6 +730,7 @@ def lower_jaxpr_to_module(
       jaxpr,
       mosaic_grid_mapping=mosaic_grid_mapping,
       name="main",
+      kernel_type=kernel_type,
       for_verification=for_verification,
       forward_compatible=lowering_context.is_forward_compat(),
       dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
@@ -759,6 +766,7 @@ def lower_jaxpr_to_module(
           bm.block_aval,
           name=func_name,
           mosaic_grid_mapping=mosaic_grid_mapping,
+          kernel_type=kernel_type,
           for_verification=for_verification,
           forward_compatible=lowering_context.is_forward_compat(),
           dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
@@ -906,8 +914,9 @@ def lower_jaxpr_to_transform_func(
     *,
     name: str,
     mosaic_grid_mapping: MosaicGridMapping,
+    kernel_type: tpu_core.KernelType,
     for_verification: bool,
-     forward_compatible: bool,
+    forward_compatible: bool,
     dynamic_shape_replacement_fn: (
         Callable[[tuple[jax.DimSize, ...]], tuple[int, ...]] | None
     ) = None,
@@ -942,6 +951,7 @@ def lower_jaxpr_to_transform_func(
         arg_block_shapes,
         source_info_util.NameStack(),
         mesh_context=mesh_context,
+        kernel_type=kernel_type,
         traceback_caches=mlir.TracebackCaches(),
         for_verification=for_verification,
         forward_compatible=forward_compatible,
@@ -966,11 +976,19 @@ def lower_jaxpr_to_transform_func(
   return body.func_op
 
 
+lower_jaxpr_to_func_fns = {}
+
+
+def register_jaxpr_to_func(kernel_type: tpu_core.KernelType):
+  lower_jaxpr_to_func_fns[kernel_type] = lower_jaxpr_to_func
+
+
 def lower_jaxpr_to_func(
     jaxpr: jax_core.Jaxpr,
     *,
     mosaic_grid_mapping: MosaicGridMapping,
     name: str,
+    kernel_type: tpu_core.KernelType,
     for_verification: bool,
     forward_compatible: bool,
     dynamic_shape_replacement_fn: (
@@ -1012,6 +1030,7 @@ def lower_jaxpr_to_func(
         arg_block_shapes,
         source_info_util.NameStack(),
         mesh_context=mesh_context,
+        kernel_type=kernel_type,
         traceback_caches=mlir.TracebackCaches(),
         for_verification=for_verification,
         forward_compatible=forward_compatible,
@@ -1119,7 +1138,7 @@ def jaxpr_subcomp(
     loc = mlir._source_info_to_location(ctx, eqn.primitive, source_info)
     with (source_info_util.user_context(eqn.source_info.traceback), loc,
           eqn.ctx.manager):
-      if eqn.primitive in lowering_rules:
+      if eqn.primitive in lowering_rules[ctx.kernel_type]:
         if eqn.primitive not in skip_mlir_conversions:
           invals = [_ensure_mlir_value(x, v.aval)
                     for x, v in zip(invals, eqn.invars)]
@@ -1142,7 +1161,7 @@ def jaxpr_subcomp(
           tpu.trace_start(message=name, level=10)
 
         try:
-          ans = lowering_rules[eqn.primitive](
+          ans = lowering_rules[ctx.kernel_type][eqn.primitive](
               rule_context, *invals, **eqn.params
           )
         except LoweringException:
@@ -1162,9 +1181,10 @@ def jaxpr_subcomp(
           raise new_error from e
       else:
         raise NotImplementedError(
-            "Unimplemented primitive in Pallas TPU lowering: "
-            f"{eqn.primitive.name}. "
-            "Please file an issue on https://github.com/jax-ml/jax/issues.")
+            "Unimplemented primitive in Pallas TPU lowering for"
+            f" {ctx.kernel_type}: {eqn.primitive.name}. Please file an issue on"
+            " https://github.com/jax-ml/jax/issues."
+        )
       if eqn.primitive.multiple_results:
         foreach(write_env, eqn.outvars, ans)
       else:
@@ -1889,7 +1909,9 @@ def _broadcast_to_lowering_rule(
   )
 
 
-@register_lowering_rule(lax.broadcast_in_dim_p)
+@register_lowering_rule(
+    lax.broadcast_in_dim_p, kernel_types=[*tpu_core.KernelType]
+)
 def _broadcast_in_dim_lowering_rule(
     ctx: LoweringRuleContext, val, *, shape, broadcast_dimensions, sharding
 ):
@@ -2139,7 +2161,9 @@ def _convert_helper(x, *, to_dtype):
   raise NotImplementedError(f"Unsupported cast: {from_dtype} -> {to_dtype}")
 
 
-@register_lowering_rule(lax.convert_element_type_p)
+@register_lowering_rule(
+    lax.convert_element_type_p, kernel_types=[*tpu_core.KernelType]
+)
 def _convert_element_type_lowering_rule(
     ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
@@ -2397,7 +2421,9 @@ def _bcast(x, y, x_aval, y_aval, out_aval):
   return x, y
 
 
-@register_lowering_rule(lax.add_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.add_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
+)
 @register_lowering_rule(ad_util.add_any_p, ensure_mlir_values=False)
 def _add_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
@@ -2806,7 +2832,9 @@ def _cmp_lowering_rule(primitive, ctx: LoweringRuleContext, x, y):
 
 
 for prim in [lax.eq_p, lax.ne_p, lax.lt_p, lax.le_p, lax.gt_p, lax.ge_p]:
-  register_lowering_rule(prim)(functools.partial(_cmp_lowering_rule, prim))
+  register_lowering_rule(prim, kernel_types=[*tpu_core.KernelType])(
+      functools.partial(_cmp_lowering_rule, prim)
+  )
 
 
 @register_lowering_rule(lax.and_p, ensure_mlir_values=False)
@@ -3530,7 +3558,7 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   return []
 
 
-@register_lowering_rule(lax.axis_index_p)
+@register_lowering_rule(lax.axis_index_p, kernel_types=[*tpu_core.KernelType])
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   grid_names = ctx.lowering_context.grid_names
   if grid_names and axis_name in grid_names:
