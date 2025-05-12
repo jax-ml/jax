@@ -671,7 +671,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     jax.grad(f)(x)  # Warm up the cache.
     with jtu.count_pjit_cpp_cache_miss() as count:
-      jax.grad(f)(x)
+      jax.block_until_ready(jax.grad(f)(x))
     self.assertEqual(count(), 0)  # no cache miss i.e. cache hit
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
