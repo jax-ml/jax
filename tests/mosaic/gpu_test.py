@@ -983,7 +983,7 @@ class TCGen05Test(TestCase):
   @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
-      in_jax_dtype=(jnp.float16, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3),  # TODO(apaszke): f32
+      in_jax_dtype=(jnp.float16, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float16, jnp.float32,),
       m=(128,),  # TODO(apaszke): 64, 192, 256
       n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
