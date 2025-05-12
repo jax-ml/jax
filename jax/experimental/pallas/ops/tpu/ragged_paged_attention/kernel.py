@@ -215,6 +215,7 @@ def static_validate_inputs(
     mask_value: float | None = None,
     # Kernel specific params.
     num_kv_pages_per_block: int | None = None,
+    num_kv_pages_per_flash_attn_block: int | None = None,
     num_queries_per_block: int | None = None,
     vmem_limit_bytes: int | None = None,
 ):
@@ -262,6 +263,17 @@ def static_validate_inputs(
     raise ValueError(
         f"{num_kv_pages_per_block=} must be in range (0, {pages_per_seq}]."
     )
+  if num_kv_pages_per_flash_attn_block is not None:
+    if num_kv_pages_per_flash_attn_block > num_kv_pages_per_block:
+      raise ValueError(
+          f"{num_kv_pages_per_flash_attn_block=} must be less or equal to"
+          f" {num_kv_pages_per_block=}."
+      )
+    if num_kv_pages_per_block % num_kv_pages_per_flash_attn_block != 0:
+      raise ValueError(
+          f"{num_kv_pages_per_block=} must be divisible by"
+          f" {num_kv_pages_per_flash_attn_block=}."
+      )
   if num_queries_per_block is not None and num_queries_per_block <= 0:
     raise ValueError(f"{num_queries_per_block=} must be positive.")
   if vmem_limit_bytes is not None and vmem_limit_bytes <= 0:
@@ -291,6 +303,7 @@ def ragged_paged_attention_kernel(
     acc_ref,  # [num_q_per_blk, num_q_heads_per_blk, head_dim]
     *,
     sm_scale: float,
+    num_kv_pages_per_flash_attn_blk: int,
     sliding_window: int | None = None,
     soft_cap: float | None = None,
     mask_value: float | None = DEFAULT_MASK_VALUE,
@@ -304,6 +317,7 @@ def ragged_paged_attention_kernel(
   )
   num_kv_heads_per_blk = num_combined_kv_heads_per_blk // 2
   num_kv_per_blk = num_kv_pages_per_blk * page_size
+  num_kv_per_flash_attn_blk = num_kv_pages_per_flash_attn_blk * page_size
   num_q_heads_per_kv_head = num_q_heads_per_blk // num_kv_heads_per_blk
   heads_blk_idx, q_blk_idx = (
       pl.program_id(0),
@@ -334,22 +348,26 @@ def ragged_paged_attention_kernel(
   # TODO(jevinjiang): Add these to Mosaic:
   # 1. Support arbitrary strided load/store for any dtype.
   # 2. Support arbitrary strided load/store for any last dimension.
-  def strided_load_kv(ref, start, step):
+  def strided_load_kv(ref, start, step, end):
+    """Strided load the KV from VMEM to the VREG."""
+    # Note, Mosaic does not support strided load for non 32-bit data.
     if ref.dtype == jnp.float32:
-      return ref[start::step, :], ref[start + 1 :: step, :]
+      return ref[start:end:step, :], ref[start + 1 :end: step, :]
     packing = get_dtype_packing(ref.dtype)
     assert ref.dtype == jnp.bfloat16
     assert step % packing == 0
     b_start = start // packing
     b_step = step // packing
+    b_end = end // packing
     b_ref = ref.bitcast(jnp.uint32)
-    b = b_ref[b_start::b_step, :]
+    b = b_ref[b_start:b_end:b_step, :]
     bk = b << 16
     bv = b & jnp.uint32(0xffff0000)
     k = pltpu.bitcast(bk, jnp.float32).astype(jnp.bfloat16)
     v = pltpu.bitcast(bv, jnp.float32).astype(jnp.bfloat16)
     return k, v
 
+  # vec: [num_q_per_blk, num_q_heads_per_kv_head, head_dim]
   def fold_on_2nd_minor(vec):
     assert vec.dtype == jnp.bfloat16 or vec.dtype == jnp.float32
     assert len(vec.shape) >= 2
@@ -411,23 +429,23 @@ def ragged_paged_attention_kernel(
 
     def flash_attention(
         q,  # [num_q_per_blk * num_q_heads_per_kv_head, head_dim]
-        k,  # [num_kv_per_blk, head_dim]
-        v,  # [num_kv_per_blk, head_dim]
+        k,  # [num_kv_per_flash_attn_blk, head_dim]
+        v,  # [num_kv_per_flash_attn_blk, head_dim]
         head_l_ref,  # [num_q_per_blk * num_q_heads_per_kv_head, 128]
         head_m_ref,  # [num_q_per_blk * num_q_heads_per_kv_head, 128]
         head_acc_ref,  # [num_q_per_blk, num_q_heads_per_kv_head, head_dim]
         *,
-        kv_blk_idx,
+        kv_len_start,
     ):
       assert q.shape == (
           num_q_per_blk * num_q_heads_per_kv_head,
           head_dim,
       )
       assert k.shape == (
-          num_kv_per_blk,
+          num_kv_per_flash_attn_blk,
           head_dim,
-      ), f"{k.shape=}, {(num_kv_per_blk, head_dim)=} {k.dtype=}"
-      assert v.shape == (num_kv_per_blk, head_dim)
+      ), f"{k.shape=}, {(num_kv_per_flash_attn_blk, head_dim)=} {k.dtype=}"
+      assert v.shape == (num_kv_per_flash_attn_blk, head_dim)
       assert head_m_ref.shape == (
           num_q_per_blk * num_q_heads_per_kv_head,
           128,
@@ -441,7 +459,6 @@ def ragged_paged_attention_kernel(
           num_q_heads_per_kv_head,
           head_dim,
       )
-      kv_len_start = kv_blk_idx * num_kv_per_blk
 
       def masked_store(ref, val, start, end, group=1):
         iota = lax.broadcasted_iota(jnp.int32, ref.shape, 0) // group
@@ -455,7 +472,7 @@ def ragged_paged_attention_kernel(
       store_start = jnp.maximum(q_start - q_len_start, 0)
       store_end = jnp.minimum(q_end - q_len_start, num_q_per_blk)
 
-      @pl.when(kv_blk_idx == 0)
+      @pl.when(kv_len_start == 0)
       def init_scratch_ref():
         masked_store(
             head_m_ref,
@@ -484,14 +501,14 @@ def ragged_paged_attention_kernel(
           - q_start
           + jax.lax.broadcasted_iota(
               jnp.int32,
-              (num_q_per_blk * num_q_heads_per_kv_head, num_kv_per_blk),
+              (num_q_per_blk * num_q_heads_per_kv_head, num_kv_per_flash_attn_blk),
               0,
           )
           // num_q_heads_per_kv_head
       )
       col_ids = kv_len_start + jax.lax.broadcasted_iota(
           jnp.int32,
-          (num_q_per_blk * num_q_heads_per_kv_head, num_kv_per_blk),
+          (num_q_per_blk * num_q_heads_per_kv_head, num_kv_per_flash_attn_blk),
           1,
       )
       causal_mask = row_ids < col_ids
@@ -553,6 +570,7 @@ def ragged_paged_attention_kernel(
           store_start,
           store_end,
       )
+      # end of flash_attention.
 
     def is_valid_kv_blk_in_cur_seq(kv_states):
       kv_blk_idx, _ = kv_states
@@ -583,26 +601,41 @@ def ragged_paged_attention_kernel(
           num_kv_pages_per_blk * page_size * num_combined_kv_heads_per_blk,
           head_dim,
       )
+      print(f'xw32 lilne601 {num_kv_pages_per_blk=}, {page_size=}, {num_combined_kv_heads_per_blk=}, {head_dim=}, {num_kv_heads_per_blk=}, {(num_kv_pages_per_blk//num_kv_pages_per_flash_attn_blk)=}')
+      num_flash_attn_blks = num_kv_pages_per_blk//num_kv_pages_per_flash_attn_blk
       for kv_head_idx in range(num_kv_heads_per_blk):
-        q_head_idx = kv_head_idx * num_q_heads_per_kv_head
-        # TODO(jevinjiang): extra handlig for packed type that can start at
-        # unaligned position!
-        q = fold_on_2nd_minor(
-            q_ref[:, q_head_idx : q_head_idx + num_q_heads_per_kv_head, :]
-        )
-        k, v = strided_load_kv(
-            kv_ref, kv_head_idx * 2, num_combined_kv_heads_per_blk
-        )
-        flash_attention(
-            q,
-            k,
-            v,
-            l_ref.at[kv_head_idx],
-            m_ref.at[kv_head_idx],
-            acc_ref.at[:, q_head_idx : q_head_idx + num_q_heads_per_kv_head, :],
-            kv_blk_idx=kv_blk_idx,
-        )
+        for flash_attn_blk_idx in range(num_flash_attn_blks):
+          q_head_idx = kv_head_idx * num_q_heads_per_kv_head
+          # TODO(jevinjiang): extra handlig for packed type that can start at
+          # unaligned position!
+          q = fold_on_2nd_minor(
+              q_ref[:, q_head_idx : q_head_idx + num_q_heads_per_kv_head, :]
+          )
+          # Get the start and end index of kv_ref: [num_kv_pages_per_blk * page_size * num_combined_kv_heads_per_blk, head_dim]
+          start_kv_idx = flash_attn_blk_idx*num_kv_pages_per_flash_attn_blk * page_size*num_combined_kv_heads_per_blk + kv_head_idx*2
+          end_kv_idx = (flash_attn_blk_idx+1)*num_kv_pages_per_flash_attn_blk*page_size*num_combined_kv_heads_per_blk
+          k, v = strided_load_kv(
+              kv_ref, start_kv_idx, step=num_combined_kv_heads_per_blk, end=end_kv_idx,
+          )  # [num_kv_pages_per_flash_attn_blk * page_size * num_combined_kv_heads_per_blk, head_dim]
+          assert k.shape == (
+              num_kv_pages_per_flash_attn_blk * page_size,
+              head_dim,
+          ), f"{k.shape=}, {(num_kv_pages_per_flash_attn_blk * page_size, head_dim)=}"
+          assert v.shape == (
+              num_kv_pages_per_flash_attn_blk * page_size,
+              head_dim,
+          )
+          flash_attention(
+              q,
+              k,
+              v,
+              l_ref.at[kv_head_idx],  # [num_q_per_blk * num_q_heads_per_kv_head, 128]
+              m_ref.at[kv_head_idx],  # [num_q_per_blk * num_q_heads_per_kv_head, 128]
+              acc_ref.at[:, q_head_idx : q_head_idx + num_q_heads_per_kv_head, :],  # [num_q_per_blk, num_q_heads_per_kv_head, head_dim]
+              kv_len_start=kv_blk_idx * num_kv_per_blk + flash_attn_blk_idx*num_kv_pages_per_flash_attn_blk*page_size,
+          )
       return kv_blk_idx + 1, next_buf_idx
+      # end of compute_with_kv_blk_in_cur_seq.
 
     _, next_buf_idx = lax.while_loop(
         is_valid_kv_blk_in_cur_seq,
@@ -612,6 +645,7 @@ def ragged_paged_attention_kernel(
     next_seq_idx = lax.select(q_end <= q_len_end, cur_seq_idx + 1, cur_seq_idx)
     done = lax.select(q_end < q_len_end, done, 1)
     return done, next_seq_idx, next_buf_idx
+    # end of compute_with_cur_q_blk
 
   _, seq_idx, buf_idx = lax.while_loop(
       is_cur_q_blk_needed,
@@ -622,6 +656,7 @@ def ragged_paged_attention_kernel(
   seq_buf_idx_ref[0] = lax.select(seq_idx < num_seqs, seq_idx, 0)
   seq_buf_idx_ref[1] = buf_idx
   o_ref[...] = acc_ref[...].astype(q_ref.dtype)
+  # end of ragged_paged_attention_kernel.
 
 
 def cdiv(a, b):
@@ -682,6 +717,7 @@ def get_min_heads_per_blk(
         "sm_scale",
         "mask_value",
         "num_kv_pages_per_block",
+        "num_kv_pages_per_flash_attn_block",
         "num_queries_per_block",
         "vmem_limit_bytes",
         "sliding_window",
@@ -702,6 +738,7 @@ def ragged_paged_attention(
     soft_cap: float | None = None,
     mask_value: float | None = DEFAULT_MASK_VALUE,
     num_kv_pages_per_block: int | None = None,
+    num_kv_pages_per_flash_attn_block: int | None = None,
     num_queries_per_block: int | None = None,
     vmem_limit_bytes: int | None = None,
 ):
@@ -720,10 +757,12 @@ def ragged_paged_attention(
     sliding_window: the sliding window size for the attention.
     soft_cap: the logit soft cap for the attention.
     mask_value: mask value for causal mask.
-    num_kv_pages_per_block: number of kv pages to be processed in one flash
-      attention block in the pallas kernel.
-    num_queries_per_block: number of kv pages to be processed in one flash
-      attention block in the pallas kernel.
+    num_kv_pages_per_block: number of kv pages to be processed in one paged
+      attention pallas kernel block.
+    num_kv_pages_per_flash_attn_block: number of kv pages to be processed in one
+      flash attention block.
+    num_queries_per_block: number of query tokens to be processed in one paged
+      attention pallas kernel block..
     vmem_limit_bytes: the vmem limit for the pallas kernel.
 
   Returns:
@@ -741,6 +780,7 @@ def ragged_paged_attention(
       soft_cap=soft_cap,
       mask_value=mask_value,
       num_kv_pages_per_block=num_kv_pages_per_block,
+      num_kv_pages_per_flash_attn_block=num_kv_pages_per_flash_attn_block,
       num_queries_per_block=num_queries_per_block,
       vmem_limit_bytes=vmem_limit_bytes,
   )
@@ -754,9 +794,12 @@ def ragged_paged_attention(
   num_q_heads_per_blk, num_combined_kv_heads_per_blk = get_min_heads_per_blk(
       num_q_heads, num_combined_kv_heads, q.dtype, kv_pages.dtype
   )
-  num_q_per_blk = num_queries_per_block
   num_kv_pages_per_blk = num_kv_pages_per_block
-  if num_q_per_blk is None or num_kv_pages_per_blk is None:
+  num_kv_pages_per_flash_attn_blk = num_kv_pages_per_flash_attn_block
+  num_q_per_blk = num_queries_per_block
+  if (num_kv_pages_per_blk is None or
+      num_kv_pages_per_flash_attn_blk is None or
+      num_q_per_blk is None):
     num_kv_pages_per_blk, num_q_per_blk = get_tuned_block_sizes(
         q.dtype,
         kv_pages.dtype,
@@ -828,6 +871,7 @@ def ragged_paged_attention(
           sliding_window=sliding_window,
           soft_cap=soft_cap,
           mask_value=mask_value,
+          num_kv_pages_per_flash_attn_blk=num_kv_pages_per_flash_attn_blk,
       ),
       grid_spec=pltpu.PrefetchScalarGridSpec(
           num_scalar_prefetch=len(scalar_prefetches),
