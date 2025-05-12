@@ -40,6 +40,7 @@ from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 
 # mypy: ignore-errors
 
+WARP_SIZE: int = 32
 WARPGROUP_SIZE: int = 128
 DYNAMIC = -9223372036854775808
 DYNAMIC32 = -2147483648

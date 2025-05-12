@@ -906,7 +906,7 @@ class TCGen05Test(TestCase):
       self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
 
   @parameterized.parameters([(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2)])
-  def test_load_store_tmem(self, jax_dtype, packing):
+  def test_load_store_tmem_swizzle(self, jax_dtype, packing):
     swizzle = 128
     in_mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
     swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
@@ -934,6 +934,31 @@ class TCGen05Test(TestCase):
     x = self.prng.uniform(-1, 1, (128, 128)).astype(jax_dtype)
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x.shape, tiling), jax_dtype),
+        mgpu.TMABarrier(),
+        mgpu.TMEM(x.shape, jax_dtype, packing=packing),
+    ]
+    y = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+    )(x)
+    np.testing.assert_array_equal(x, y)
+
+  @parameterized.parameters([(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2)])
+  def test_load_store_tmem_native(self, jax_dtype, packing):
+
+    def kernel(ctx, input, output, scratch):
+      smem, barrier, tmem = scratch
+      ctx.async_copy(src_ref=input, dst_ref=smem, barrier=barrier)
+      barrier.wait()
+      tmem.store(fa.FragmentedArray.load_untiled(smem, layout=tcgen05.TMEM_NATIVE_LAYOUT, optimized=False))
+      tcgen05.commit_tmem()
+      tmem.load(tcgen05.TMEM_NATIVE_LAYOUT).store_untiled(smem, optimized=False)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem, dst_ref=output)
+      ctx.await_async_copy(0)
+
+    x = self.prng.uniform(-1, 1, (128, 128)).astype(jax_dtype)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(x.shape, jax_dtype),
         mgpu.TMABarrier(),
         mgpu.TMEM(x.shape, jax_dtype, packing=packing),
     ]
