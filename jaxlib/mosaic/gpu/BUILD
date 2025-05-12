@@ -23,10 +23,7 @@ package(
 py_library(
     name = "mosaic_gpu",
     data = [":libmosaic_gpu_runtime.so"],
-    deps = [
-        ":_mosaic_gpu_ext",
-        ":mosaic_gpu_support",
-    ],
+    deps = [":_mosaic_gpu_ext"],
 )
 
 cc_library(
