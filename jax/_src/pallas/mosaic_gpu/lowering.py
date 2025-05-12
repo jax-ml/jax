@@ -215,8 +215,11 @@ def _while_resource_estimator(
 
 @_register_resource_estimator(primitives.run_scoped_p)
 def _run_scoped_resource_estimator(
-    ctx: ResourceEstimatorContext, *consts, jaxpr: jax_core.Jaxpr
+    ctx: ResourceEstimatorContext, *consts, jaxpr: jax_core.Jaxpr, collective_axes
 ) -> int:
+  # NOTE: This rule assumes that the allocation happens collectively, although
+  # it can't be checked here due to limited context. We check this in the actual
+  # lowering rule.
   del consts  # Unused.
   rs = Resources()
   for v in jaxpr.invars:
@@ -298,7 +301,7 @@ AnyBarrierRef = (
 @dataclasses.dataclass
 class ModuleContext:
   name: str
-  axis_names: _AxisNames | None
+  axis_names: _AxisNames
   program_ids: Sequence[ir.Value] | None
   approx_math: bool
   single_wg_lane_predicate: ir.Value | None
@@ -602,9 +605,13 @@ def lower_pipelined_jaxpr_to_module(
     assert isinstance(gpu_mesh, gpu_core.GPUMesh)
     block = (128 * (gpu_mesh.num_threads or 1), 1, 1)
     grid = gpu_mesh.grid
+    thread_axis = (
+        gpu_mesh.thread_name if gpu_mesh.thread_name is not None else ()
+    )
   else:
     block = (128, 1, 1)
     grid = grid_mapping.grid
+    thread_axis = ()
 
   if params.dimension_semantics is None:
     which_parallel = [True] * len(grid)
@@ -659,6 +666,7 @@ def lower_pipelined_jaxpr_to_module(
             ref_for_aval(aval) if aval is not sem_placeholder else aval
             for aval in scratch_avals
         ],
+        collective_axes=thread_axis,  # scratch_refs are shared across threads
     )
     return ()  # ``wrap_init`` does not support functions returning None.
 
@@ -1937,6 +1945,14 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
     case mgpu.WGStridedFragLayout():
       if set(axes) != set(range(x_aval.ndim)):
         raise NotImplementedError("No support for axes yet")
+      # To relax the restriction below, you need to ensure sufficient
+      # synchronization with other places that use `scratch_view` (which at the
+      # time of writing is only `run_scoped`).
+      if ctx.module_ctx.axis_names.wg is not None:
+        raise NotImplementedError(
+            "No support for reduce_sum over all axes and multiple Pallas"
+            " threads"
+        )
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
       with ctx.module_ctx.scratch_view([scratch_ty]) as [scratch]:
         return x.reduce("add", axes, scratch)
@@ -2178,14 +2194,28 @@ def _debug_print_lowering_rule_wg(
 @register_lowering_rule(primitives.run_scoped_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(primitives.run_scoped_p, mgpu.LoweringSemantics.Warpgroup)
 def _run_scoped_lowering_rule(
-    ctx: LoweringRuleContext, *consts, jaxpr: jax_core.Jaxpr
+    ctx: LoweringRuleContext, *consts, jaxpr: jax_core.Jaxpr, collective_axes
 ):
   input_refs = []
   should_discharge = []
+  wg_axis = ctx.module_ctx.axis_names.wg
+  is_multithreaded = wg_axis is not None
+  is_thread_collective = is_multithreaded and collective_axes == (wg_axis,)
+  # Make sure everyone has exited previous scoped allocations. Note that we
+  # don't synchronize when we exit the allocation, but only when we might want
+  # to reuse its memory again.
+  if is_multithreaded and is_thread_collective:
+    gpu_dialect.barrier()
   with contextlib.ExitStack() as alloc_stack:
     for v in jaxpr.invars:
       aval = v.aval
       if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
+        if collective_axes:
+          raise ValueError(
+              "WGMMA accumulators can only be allocated non-collectively. Hint:"
+              " remove collective_axes from run_scoped. If other allocations"
+              " are performed as well, split the run_scoped into two."
+          )
         dtype = mlir.dtype_to_ir_type(aval.dtype)
         if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
           input_refs.append(mgpu.WGMMAAccumulator.zero(*aval.shape, dtype))
@@ -2196,7 +2226,17 @@ def _run_scoped_lowering_rule(
           nvvm_dialect.wgmma_fence_aligned()
           input_refs.append(acc)
         should_discharge.append(True)
-      elif isinstance(aval.dtype, gpu_core.BarrierType):
+        continue
+      # All other allocations must be made collectively across all threads.
+      if is_multithreaded and not is_thread_collective:
+        raise NotImplementedError(
+            "Only thread-collective allocations are supported in multithreaded"
+            " kernels. Hint: add"
+            f" collective_axes={ctx.module_ctx.axis_names.wg} to your"
+            " run_scoped if you intend all threads to share the same"
+            f" allocation (currently collective_axes={collective_axes})."
+        )
+      if isinstance(aval.dtype, gpu_core.BarrierType):
         multiplier = (1 if aval.dtype.for_tensor_core else
                       ctx.estimator_ctx.arrival_multiplier)
         barrier_ref = alloc_stack.enter_context(

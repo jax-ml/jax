@@ -182,13 +182,16 @@ def kernel(
   def wrapper(*operands):
     def stateful(operand_and_out_refs):
       operand_refs, out_refs = operand_and_out_refs
+      mesh = GPUMesh(**mesh_kwargs)
+      thread_name = mesh.thread_name if mesh.thread_name is not None else ()
       def cmap_body():
         pallas_primitives.run_scoped(
             lambda *scratch_refs: body(*operand_refs, *out_refs, *scratch_refs),
             *scratch_shapes,
+            collective_axes=thread_name,
         )
       pallas_core.core_map(
-          GPUMesh(**mesh_kwargs), compiler_params=compiler_params
+          mesh, compiler_params=compiler_params
       )(cmap_body)
     _, outs = state_discharge.run_state(stateful)(
         (operands, jax.tree.map(jnp.zeros_like, out_shape))

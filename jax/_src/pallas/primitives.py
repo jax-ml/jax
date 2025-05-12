@@ -19,6 +19,7 @@ from __future__ import annotations
 import enum
 import functools
 import string
+from collections.abc import Hashable
 from typing import Any, Callable
 
 import jax
@@ -878,13 +879,25 @@ run_scoped_p = jax_core.Primitive("run_scoped")
 run_scoped_p.multiple_results = True
 
 
-def run_scoped(f: Callable[..., Any], *types: Any, **kw_types: Any) -> Any:
+def run_scoped(
+    f: Callable[..., Any],
+    *types: Any,
+    collective_axes: Hashable | tuple[Hashable, ...] = (),
+    **kw_types: Any,
+) -> Any:
   """Calls the function with allocated references and returns the result.
 
   The positional and keyword arguments describe which reference types
   to allocate for each argument. Each backend has its own set of reference
   types in addition to :class:`jax.experimental.pallas.MemoryRef`.
+
+  When `collective_axes` is specified, the same allocation will be returned for
+  all programs that only differ in their program ids along the collective axes.
+  It is an error not to call the same `run_scoped` in all programs along that
+  axis.
   """
+  if not isinstance(collective_axes, tuple):
+    collective_axes = (collective_axes,)
   flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
   flat_fun, out_tree_thunk = api_util.flatten_fun(
       lu.wrap_init(f,
@@ -908,13 +921,13 @@ def run_scoped(f: Callable[..., Any], *types: Any, **kw_types: Any) -> Any:
   # are not in the invars of an operation so we just put them all
   # there.
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
-  out = run_scoped_p.bind(*consts, jaxpr=jaxpr)
+  out = run_scoped_p.bind(*consts, jaxpr=jaxpr, collective_axes=collective_axes)
   return tree_util.tree_unflatten(out_tree_thunk(), out)
 
 
 @run_scoped_p.def_effectful_abstract_eval
-def _run_scoped_abstract_eval(*args, jaxpr):
-  del args
+def _run_scoped_abstract_eval(*args, jaxpr, collective_axes):
+  del args, collective_axes
   # jaxpr will have effects for its inputs (Refs that are allocated) and for
   # constvars (closed over Refs). The effects for the allocated Refs are local
   # to the jaxpr and shouldn't propagate out.
@@ -935,8 +948,12 @@ def _run_scoped_discharge_rule(
     out_avals,
     *args_flat,
     jaxpr,
-    **_):
+    collective_axes):
   del out_avals
+  if collective_axes:
+    raise NotImplementedError(
+        "run_scoped discharge does not support collective_axes yet."
+    )
   num_consts = len(args_flat)
   # discharge_state only discharges invars, not consts, so in order to
   # discharge the requested refs we need to move them to the invar set.
@@ -956,7 +973,9 @@ def _run_scoped_discharge_rule(
 
   # Run_scoped discharged the external variables but the scoped ones
   # are not discharged.
-  out = run_scoped_p.bind(*args_flat, jaxpr=discharged_body)
+  out = run_scoped_p.bind(
+      *args_flat, jaxpr=discharged_body, collective_axes=collective_axes
+  )
   # Order of outputs:
   # (1) return values, (2) closed refs, (3) scoped refs.
   return_values = out[:num_return_values]
@@ -975,7 +994,12 @@ state_discharge.register_partial_discharge_rule(run_scoped_p)(
 
 
 @functools.partial(mlir.register_lowering, run_scoped_p)
-def _run_scoped_lowering_rule(ctx, *args, jaxpr):
+def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes):
+  if collective_axes:
+    raise ValueError(
+        "run_scoped lowering outside of Pallas does not support"
+        " collective_axes."
+    )
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_body, new_consts = state_discharge.discharge_state(

@@ -558,6 +558,7 @@ def emit_pipeline_warp_specialized(
         out_smem_refs=out_smem_refs,
         in_smem_barrier_refs=in_smem_barriers,
         consumed_barrier_refs=consumed_barriers,
+        collective_axes=wg_axis,
     )
 
   def scoped_pipeline(

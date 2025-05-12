@@ -1169,6 +1169,10 @@ def _interpret_jaxpr(jaxpr, *args, mesh, compiler_params, interpret_params):
         out = pjit.pjit_p.bind(*invals, **(eqn.params | {'jaxpr': new_jaxpr}))
 
       elif prim is primitives.run_scoped_p:
+        if eqn.params['collective_axes']:
+          raise NotImplementedError(
+              'run_scoped_p with collective axes is not supported'
+          )
         # Allocate a buffer or semaphore for each element of
         # eqn.params['jaxpr'].invars .
         allocs = []
