@@ -79,6 +79,19 @@ TypedValue<VectorType> getFullLikeVector(ImplicitLocOpBuilder &builder,
   return getFullVector(builder, vec.getType(), value);
 }
 
+TypedValue<VectorType> getFullVector(OpBuilder &builder, Location loc,
+                                     VectorType vty, Attribute value) {
+  return cast<TypedValue<VectorType>>(
+      builder.create<arith::ConstantOp>(loc, DenseElementsAttr::get(vty, value))
+          .getResult());
+}
+
+TypedValue<VectorType> getFullLikeVector(OpBuilder &builder, Location loc,
+                                         TypedValue<VectorType> vec,
+                                         Attribute value) {
+  return getFullVector(builder, loc, vec.getType(), value);
+}
+
 TypedValue<VectorType> getZerosVector(ImplicitLocOpBuilder &builder,
                                       VectorType vty) {
   return getFullVector(builder, vty, builder.getZeroAttr(vty.getElementType()));

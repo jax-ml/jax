@@ -343,6 +343,54 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
   return success();
 }
 
+LogicalResult RelayoutOp::verify() {
+  auto in_layout_array_attr =
+      getOperation()->getAttrOfType<ArrayAttr>("in_layout");
+  if (!in_layout_array_attr || in_layout_array_attr.empty()) {
+    return emitOpError("missing or empty 'in_layout' attribute");
+  }
+  if (in_layout_array_attr.size() != 1) {
+    return emitOpError(
+        "'in_layout' attribute must be an array containing a single "
+        "VectorLayoutAttr");
+  }
+  auto src_vla = dyn_cast<tpu::VectorLayoutAttr>(in_layout_array_attr[0]);
+  if (!src_vla) {
+    return emitOpError("'in_layout' attribute is not a VectorLayoutAttr");
+  }
+
+  auto out_layout_array_attr =
+      getOperation()->getAttrOfType<ArrayAttr>("out_layout");
+  if (!out_layout_array_attr || out_layout_array_attr.empty()) {
+    return emitOpError("missing or empty 'out_layout' attribute");
+  }
+  if (out_layout_array_attr.size() != 1) {
+    return emitOpError(
+        "'out_layout' attribute must be an array containing a single "
+        "VectorLayoutAttr");
+  }
+  auto dst_vla = dyn_cast<tpu::VectorLayoutAttr>(out_layout_array_attr[0]);
+  if (!dst_vla) {
+    return emitOpError("'out_layout' attribute is not a VectorLayoutAttr");
+  }
+
+  VectorType input_type = cast<VectorType>(getInput().getType());
+  VectorType output_type = cast<VectorType>(getOutput().getType());
+
+  if (input_type.getShape() != output_type.getShape()) {
+    return emitOpError("input and output shapes must match");
+  }
+  if (input_type.getElementType() != output_type.getElementType()) {
+    // Allow i1 to i1 even if bitwidth in layout changes.
+    if (!(input_type.getElementType().isInteger(1) &&
+          output_type.getElementType().isInteger(1))) {
+      return emitOpError(
+          "input and output element types must match for non-mask relayouts");
+    }
+  }
+  return success();
+}
+
 LogicalResult MemRefReshapeOp::verify() {
   auto src_ty = getMemRefType(getInput());
   auto tgt_ty = getType();

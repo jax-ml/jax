@@ -50,6 +50,15 @@ TypedValue<VectorType> getFullLikeVector(ImplicitLocOpBuilder &builder,
                                          TypedValue<VectorType> vec,
                                          Attribute value);
 
+// Same as above, but takes a `loc` as input, in case of an OpBuilder.
+TypedValue<VectorType> getFullVector(OpBuilder &builder, Location loc,
+                                     VectorType vty, Attribute value);
+
+// Same as above, but takes a `vec` as input.
+TypedValue<VectorType> getFullLikeVector(OpBuilder &builder, Location loc,
+                                         TypedValue<VectorType> vec,
+                                         Attribute value);
+
 // Creates a vmask with false flags to bottom (dim = 0)
 // or right (dim = 1) where the flag count corresponds to the (dim_size -
 // padding).
