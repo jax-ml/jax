@@ -1356,8 +1356,8 @@ def _swap_lowering_rule(
       case _:
         raise NotImplementedError(
             "Only a single indexing transform is supported for TMEM refs.")
-    old_value = x_ref[:]
-    x_ref[:] = value
+    old_value = x_ref.load(layout=value.layout)
+    x_ref.store(value)
     return old_value
 
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
