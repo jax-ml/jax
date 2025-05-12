@@ -42,6 +42,7 @@ from jax._src.lax import control_flow
 from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
+from jax._src.lax import qr_composite  # Import for QR composite implementation
 from jax._src.lax import utils as lax_utils
 from jax._src.lax.lax import _float, _complex, _int
 from jax._src.lib import gpu_linalg
@@ -1882,6 +1883,9 @@ qr_p = linalg_primitive(
     multiple_results=True)
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering))
+
+# Register composite lowerings for custom backends
+qr_composite.register_composite_lowerings()
 
 
 # Schur Decomposition

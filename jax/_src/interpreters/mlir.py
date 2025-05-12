@@ -3015,6 +3015,57 @@ def custom_call(
   return op
 
 
+def composite_call(
+    target_name: str,
+    *,
+    result_types: Sequence[ir.Type],
+    operands: Sequence[ir.Value],
+    backend_config: str | bytes | dict[str, ir.Attribute] = "",
+    has_side_effect: bool = False,
+    result_shapes: Sequence[ir.Value] | None = None,
+    operand_layouts: Sequence[Sequence[int]] | None = None,
+    result_layouts: Sequence[Sequence[int]] | None = None,
+    extra_attributes: dict[str, ir.Attribute] | None = None,
+) -> ir.Operation:
+  """Helper function for building a composite operation using StableHLO.
+  
+  Unlike custom_call which uses platform-specific native implementations,
+  composite operations are intended to provide an explicit implementation that can
+  be expanded during compilation, allowing backends to understand and optimize them.
+  
+  Args:
+    target_name: A string name for the composite operation (e.g., "qr.geqrf")
+    result_types: The MLIR types of the results
+    operands: The MLIR IR values that are arguments
+    backend_config: An opaque string/dict passed to the operation
+    has_side_effect: If True, marks the operation as effectful
+    result_shapes: Tensors representing result shapes for dynamic shapes
+    operand_layouts: A sequence of layouts (dimension orders) for each operand
+    result_layouts: A sequence of layouts (dimension orders) for each result
+    extra_attributes: Additional IR attributes to apply
+    
+  Returns:
+    An MLIR operation representing the composite operation
+  """
+  # Create a custom_call with the composite attribute
+  op = custom_call(
+      call_target_name=target_name,
+      result_types=result_types,
+      operands=operands,
+      backend_config=backend_config,
+      has_side_effect=has_side_effect,
+      result_shapes=result_shapes,
+      operand_layouts=operand_layouts,
+      result_layouts=result_layouts,
+      extra_attributes=extra_attributes or {}
+  )
+  
+  # Add the composite attribute to indicate this is a composite operation
+  op.operation.attributes["stablehlo.composite"] = ir.StringAttr.get(target_name)
+  
+  return op
+
+
 def reduce_window(
     ctx: LoweringRuleContext,
     *,
