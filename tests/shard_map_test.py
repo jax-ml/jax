@@ -36,7 +36,7 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import core
 from jax._src import prng
-from jax._src.shard_map import shard_map, smap, Infer
+from jax._src.shard_map import shard_map, smap
 from jax._src import test_util as jtu
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
@@ -971,7 +971,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     def f(x): return x
 
-    with self.assertRaisesRegex(TypeError, "but it was None"):
+    with self.assertRaisesRegex(TypeError, "but it was `None`"):
       shard_map(f, mesh=mesh, in_specs=None, out_specs=P())(3.)
 
     # TODO(mattjj): enable this test once we fix the tree_map(f, None, 3.0) bug
@@ -3182,7 +3182,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      return smap(h, in_axes=Infer, out_axes=0, axis_name='x')(x)
+      return smap(h, out_axes=0, axis_name='x')(x)
 
     out = f(arr)
     self.assertArraysEqual(out, np_inp * np_inp)
@@ -3214,6 +3214,64 @@ class ShardMapTest(jtu.JaxTestCase):
 
     out = g(np.arange(4), np.arange(8))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('data')))
+
+  @jtu.with_explicit_mesh((2,), ('x',), axis_types=(AxisType.Auto,))
+  def test_smap_auto_error(self, mesh):
+    with self.assertRaisesRegex(TypeError, "in_axes was not specified"):
+      smap(lambda x: x * 2, out_axes=0, axis_name='x')
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
+                          axis_types=(AxisType.Explicit, AxisType.Auto))
+  def test_smap_auto_explicit(self, mesh):
+    def f(x):
+      self.assertEqual(x.aval.vma, {'x'})
+      return x * 2
+
+    arr = jax.device_put(np.arange(4), P('x'))
+    out = jax.jit(smap(f, out_axes=0, axis_name='x'))(arr)
+    self.assertArraysEqual(out, np.arange(4) * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    def g(x):
+      self.assertEqual(x.aval.vma, {'y'})
+      return x * 2
+
+    arr = jax.device_put(np.arange(4), P('y'))
+    out = jax.jit(smap(g, in_axes=0, out_axes=0, axis_name='y'))(arr)
+    self.assertArraysEqual(out, np.arange(4) * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
+                          axis_types=(AxisType.Explicit, AxisType.Auto))
+  def test_smap_auto_explicit_nest(self, mesh):
+    def g(b):
+      self.assertEqual(b.aval.vma, {'x', 'y'})
+      return jnp.sin(b)
+
+    def f(a):
+      self.assertEqual(a.aval.vma, {'y'})
+      b = a * 2
+      return smap(g, in_axes=1, out_axes=1, axis_name='x')(b)
+
+    arr = jax.device_put(np.arange(16).reshape(8, 2), P('y'))
+    jax.jit(smap(f, in_axes=0, out_axes=0, axis_name='y'))(arr)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
+                          axis_types=(AxisType.Explicit, AxisType.Auto))
+  def test_smap_auto_explicit_nest_inner_none(self, mesh):
+    def g(b):
+      self.assertEqual(b.aval.vma, {'y'})
+      return jnp.sin(b)
+
+    def f(a):
+      self.assertEqual(a.aval.vma, {'y'})
+      b = a * 2
+      # Going manual over explicit axis `x` but in_axes is Infer and since
+      # input has no sharding, it will default to None.
+      return smap(g, out_axes=1, axis_name='x')(b)
+
+    arr = jax.device_put(np.arange(16).reshape(8, 2), P('y'))
+    jax.jit(smap(f, in_axes=0, out_axes=0, axis_name='y'))(arr)  # doesn't crash
 
 
 class FunSpec(NamedTuple):

@@ -146,7 +146,7 @@ def _get_default_infer():
 
 # TODO(yashkatariya): We need a singleton which users can provide to `in_axes`
 # to tell smap to infer in_specs from args when mesh is fully explicit.
-def smap(f, in_axes, out_axes, axis_name: AxisName):
+def smap(f, /, *, in_axes=Infer, out_axes, axis_name: AxisName):
   if isinstance(axis_name, (list, tuple)):
     raise TypeError(
         f"smap axis_name should be a `str` or a `Hashable`, but got {axis_name}")
@@ -164,6 +164,15 @@ def smap(f, in_axes, out_axes, axis_name: AxisName):
   if not all(isinstance(l, int) for l in tree_leaves(out_axes)):
     raise TypeError("smap out_axes must be an int, None, or (nested) container "
                     f"with those types as leaves, but got {out_axes}.")
+  mesh = get_abstract_mesh()
+  if mesh.empty:
+    raise ValueError(
+        "The context mesh cannot be empty. Use"
+        " `jax.sharding.use_mesh(mesh)` to enter into a mesh context.")
+  if mesh._name_to_type[axis_name] != AxisType.Explicit and in_axes is Infer:
+    raise TypeError(
+        f"in_axes was not specified when {axis_name=} was of type"
+        f" {mesh._name_to_type[axis_name]}.")
 
   in_specs = (None if in_axes is Infer else
               tree_map(partial(_axes_to_pspec, axis_name), in_axes,
@@ -215,12 +224,13 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
         f"jax.shard_map requires axis_names={axis_names} to be a subset of "
         f"mesh.axis_names={mesh.axis_names}")
 
-  # TODO(yashkatariya): Maybe we don't have to be this strict?
-  if mesh._any_axis_auto_or_manual and in_specs is None:
+  if (in_specs is None and
+      not all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
     raise TypeError(
         "shard_map in_specs argument must be a pytree of"
-        " `jax.sharding.PartitionSpec` instances, but it was None when mesh"
-        f" has `Auto` axes {mesh}")
+        " `jax.sharding.PartitionSpec` instances, but it was `None` when"
+        f" {axis_names=} are of type"
+        f" {', '.join(str(mesh._name_to_type[a]) for a in axis_names)}")
 
   if in_specs is not None:
     _check_specs(SpecErrorType.input, in_specs, axis_names)
@@ -242,9 +252,8 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
       e, *_ = prefix_errors(in_specs, args)
       raise e('shard_map in_specs') from None
 
-    # TODO(yashkatariya): Relax this and convert only `None`s in `in_specs_flat`
-    # and accept the other specs as is.
-    if mesh._are_all_axes_explicit and in_specs is None:
+    if (in_specs is None and
+        all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
       arg_s = [typeof(a).sharding for a in args_flat]
       assert all(i is None for i in in_specs_flat), in_specs_flat
       in_specs_flat = [_manual_spec(axis_names, s.spec) for s in arg_s]
@@ -597,7 +606,8 @@ def _as_manual_mesh(mesh, manual_axes: frozenset):
     if cur_mesh._name_to_type[a] == AxisType.Auto:
       auto_axes.add(a)
     else:
-      assert cur_mesh._name_to_type[a] == AxisType.Explicit, cur_mesh._name_to_type[a]
+      assert cur_mesh._name_to_type[a] == AxisType.Explicit, (
+          a, cur_mesh._name_to_type[a])
       explicit_axes.add(a)
 
   new_axis_types = []
