@@ -418,7 +418,7 @@ build:rbe_cross_compile_darwin_x86_64 --config=rbe_cross_compile_base
 #############################################################################
 
 build:debug_symbols --strip=never --per_file_copt="xla/pjrt|xla/python@-g3"
-build:debug --config debug_symbols -c fastbuild
+build:debug --config=debug_symbols -c fastbuild
 
 # Load `.jax_configure.bazelrc` file written by build.py
 try-import %workspace%/.jax_configure.bazelrc
