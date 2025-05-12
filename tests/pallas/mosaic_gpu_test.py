@@ -27,14 +27,15 @@ from absl.testing import parameterized
 import jax
 from jax import export
 from jax import lax
+from jax._src import checkify
 from jax._src import test_util as jtu
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
+from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
-from jax._src.pallas import primitives as pallas_primitives
 from jax._src.state import types as state_types
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -991,6 +992,22 @@ class PallasCallTest(PallasTest):
       jax.block_until_ready(kernel(x))
 
     self.assertIn("x: [1, 0, 43, 23]: 6871\n", output())
+
+  def test_check(self):
+    self.skip_if_wg_semantics()
+
+    self.enter_context(pallas_core._ENABLE_RUNTIME_ASSERT(True))
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+    )
+    def kernel(x_ref, o_ref):
+      checkify.check(x_ref[...].sum() > 0, "x.sum() is negative")
+      o_ref[...] = x_ref[...]
+
+    x = jnp.arange(256, dtype=jnp.int32)
+    np.testing.assert_array_equal(kernel(x), x)
 
   def test_load_scalar(self):
     @functools.partial(
