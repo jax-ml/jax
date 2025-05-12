@@ -49,6 +49,7 @@ def _ensure_index(x: Any) -> int | tuple[int, ...]:
   
   Returns:
     Either an integer index or a tuple of integer indices.
+    For example, slice(0, 3) returns (0, 1, 2) and slice(1, 7, 2) returns (1, 3, 5).
     
   Raises:
     ValueError: If a slice with None for both start and stop is provided, or if
