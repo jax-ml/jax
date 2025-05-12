@@ -25,7 +25,8 @@ extern "C" {
 void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
                               int64_t elem_type, int64_t rank,
                               int64_t *sizes, int64_t *strides,
-                              int64_t swizzle_bytes, int64_t *window_shape) {
+                              int64_t swizzle_bytes, int64_t *window_shape,
+                              mosaic::gpu::nvshmem_team_t team_id) {
   if (((uintptr_t)tma_desc) % 64 != 0) {
     fprintf(stderr,
             "TMA descriptor address must be 64 byte aligned, but got: %p\n",
@@ -155,6 +156,15 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     fprintf(stderr, "Unsupported swizzle: %ld\n", swizzle_bytes);
     abort();
   }
+
+  if (team_id != -1){
+    base_addr = mosaic::gpu::NvshmemApi::Default().mc_ptr(team_id, base_addr);
+    if (base_addr == nullptr) {
+      fprintf(stderr, "Failed to translate base_addr to multicast addr for TMA transfer.\n");
+      abort();
+    }
+  }
+
   CUresult result = cuTensorMapEncodeTiled(
       tma_desc, data_type, rank, base_addr, tma_sizes, tma_strides,
       tma_window_shape, element_strides, CU_TENSOR_MAP_INTERLEAVE_NONE, swizzle,
