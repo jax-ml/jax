@@ -983,11 +983,12 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         if (!IsSortedPyDictKeysEqual(keys, node.sorted_dict_keys)) {
           // Convert to a nb::list for nb::repr to avoid having to stringify a
           // vector. This is error path so it is fine to pay conversion cost.
-          throw std::invalid_argument(
-              absl::StrFormat("Dict key mismatch; expected keys: %s; dict: %s.",
-                              nb::cast<absl::string_view>(
-                                  nb::repr(nb::cast(node.sorted_dict_keys))),
-                              nb::cast<absl::string_view>(nb::repr(object))));
+          throw std::invalid_argument(absl::StrFormat(
+              "Dict key mismatch; expected keys: %s; found keys: %s; dict: %s.",
+              nb::cast<absl::string_view>(
+                  nb::repr(nb::cast(node.sorted_dict_keys))),
+              nb::cast<absl::string_view>(nb::repr(nb::cast(keys))),
+              nb::cast<absl::string_view>(nb::repr(object))));
         }
         for (nb::handle key : keys) {
           agenda.push_back(dict[key]);
