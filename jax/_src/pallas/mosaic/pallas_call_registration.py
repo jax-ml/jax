@@ -150,6 +150,7 @@ def pallas_call_tpu_lowering_rule(
           grid_mapping,
           jaxpr,
           dimension_semantics=mosaic_params.dimension_semantics,
+          kernel_type=mosaic_params.kernel_type,
           mesh=jax_mesh,
           for_verification=for_verification,
           dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
