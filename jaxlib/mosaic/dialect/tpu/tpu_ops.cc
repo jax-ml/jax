@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -22,6 +23,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -164,53 +166,115 @@ LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
   return success();
 }
 
+// Computes the dimensions that were squeezed from the source shape to match the
+// target shape. Returns the dimensions in increasing order.
+FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
+    Operation *op, ArrayRef<int64_t> source_shape,
+    ArrayRef<int64_t> target_shape) {
+  SmallVector<int> squeezed;
+  int source_index = source_shape.size() - 1;
+  int target_index = target_shape.size() - 1;
+
+  while (source_index >= 0 || target_index >= 0) {
+    int64_t target_dim = (target_index >= 0) ? target_shape[target_index] : -1;
+    if (source_index < 0) {
+      op->emitError() << llvm::formatv(
+          "Target shape is not valid. Source: {0}, Target: {1}.",
+          shapeToString(source_shape), shapeToString(target_shape));
+      return failure();
+    }
+    int64_t source_dim = source_shape[source_index];
+    if (source_dim == target_dim) {
+      source_index--;
+      target_index--;
+    } else {
+      if (source_dim != 1) {
+        op->emitError() << llvm::formatv(
+            "Target shape is not valid. Source: {0}, Target: {1}.",
+            shapeToString(source_shape), shapeToString(target_shape));
+        return failure();
+      }
+      squeezed.push_back(source_index);
+      source_index--;
+    }
+  }
+
+  if (source_index != -1 || target_index != -1) {
+    op->emitError() << "Shape mismatch after traversal. Source shape: "
+                    << shapeToString(source_shape)
+                    << ", target shape: " << shapeToString(target_shape);
+    return failure();
+  }
+  std::reverse(squeezed.begin(), squeezed.end());
+  return squeezed;
+}
+
 LogicalResult MemRefSqueezeOp::verify() {
   auto source_type = getMemRefType(getInput());
   auto target_type = getType();
-  // Source and target attributes may be different before propagation is done by
-  // the canonicalizer, so we allow this when attributes are "unset" in the
-  // target type.
+
   if (target_type.getMemorySpace() != nullptr &&
       target_type.getMemorySpace() != source_type.getMemorySpace()) {
-    emitOpError("Memory spaces do not match.");
-    return failure();
+    return emitOpError("Memory spaces do not match.");
   }
+
   if (target_type.getElementType() != source_type.getElementType()) {
-    this->emitOpError("Element types don't match.");
-    return failure();
+    return emitOpError("Element types don't match.");
   }
-  if (!HasMemorySpace(source_type, tpu::MemorySpace::kSemaphoreMem) &&
-      source_type.getRank() > 1 && target_type.getRank() == 1) {
-    return emitError("Not implemented: squeeze memref to 1d.");
-  }
+
   auto source_shape = source_type.getShape();
   auto target_shape = target_type.getShape();
-  int source_index = source_shape.size() - 1;
-  int target_index = target_shape.size() - 1;
-  auto error_msg = llvm::formatv(
-      "Target shape is not valid. "
-      "Source type: {0}. Target type: {1}.",
-      source_type, target_type);
-  while (source_index >= 0 || target_index >= 0) {
-    int target_dim = target_index < 0 ? -1 : target_shape[target_index];
-    if (source_index < 0) {
-       // We have run out of source shape but target shape still remains.
-       emitOpError(error_msg);
-       return failure();
+  auto squeezed_or =
+      computeSqueezedDimsChecked(*this, source_shape, target_shape);
+  if (failed(squeezed_or)) {
+    return failure();
+  }
+
+  auto erase_layout_op = getInput().getDefiningOp<tpu::EraseLayoutOp>();
+  if (!erase_layout_op) {
+    return success();
+  }
+
+  auto layout_ref = erase_layout_op.getOperand();
+  MemRefType layout_ty = getMemRefType(layout_ref);
+  auto layout_attr = dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
+  if (!layout_attr) {
+    return emitOpError(
+        "Input from EraseLayoutOp is expected to have a TiledLayoutAttr.");
+  }
+  auto &squeezed = squeezed_or.value();
+  if (squeezed.empty() && source_shape != target_shape) {
+    return failure();
+  }
+
+  auto tiles = layout_attr.getTiles();
+  if (tiles.size() == 1) {
+    auto tile = layout_attr.getTiles().front();
+    auto tile_dims = tile.dimensions();
+    int first_tiled = source_shape.size() - tile_dims.size();
+    for (int dim : squeezed) {
+      if (dim >= first_tiled) {
+        int tile_idx = dim - first_tiled;
+        if (tile_idx < 0 || tile_idx >= static_cast<int>(tile_dims.size())) {
+          return emitOpError() << "Internal error: tile index out of bounds.";
+        }
+        if (tile_dims[tile_idx] != 1) {
+          return emitOpError()
+                 << "All tiled squeezed dimensions must be of size 1.";
+        }
+      }
     }
-    int source_dim = source_shape[source_index];
-    if (source_dim == target_dim) {
-       source_index--;
-       target_index--;
-    } else {
-       // Only the source dim can be 1 here.
-       if (source_dim != 1) {
-         this->emitOpError(error_msg);
-         return failure();
-       }
-       source_index--;
+  } else {
+    auto first_tile = tiles.front();
+    for (int dim : squeezed) {
+      int first_tiled = source_shape.size() - first_tile.dimensions().size();
+      if (dim >= first_tiled) {
+        return emitOpError() << "When multiple tiles are present, no tiled "
+                                "dimensions can be squeezed.";
+      }
     }
   }
+
   return success();
 }
 
@@ -222,42 +286,60 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
   if (!erase_layout) {
     return failure();
   }
-  // Push layout erasure through squeezing. It is important we see the layout
-  // for lowering and don't make it hard for other ops to query it.
+
   auto layout_ref = erase_layout.getOperand();
-  MemRefType layout_ty = layout_ref.getType();
+  MemRefType layout_ty = getMemRefType(layout_ref);
+  auto layout_attr = dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
+  if (!layout_attr) {
+    return failure();
+  }
+
   auto source_shape = source_type.getShape();
   auto target_shape = target_type.getShape();
-  int source_index = source_shape.size() - 1;
-  int target_index = target_shape.size() - 1;
-  auto old_layout = dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
-  auto target_strides = old_layout.getTileStrides();
-  SmallVector<int64_t> tile_strides(target_strides.begin(),
-                                    target_strides.end());
-  // We want to remove all strides that correspond to squeezed dimensions and
-  // update the corresponding output layout.
-  while (source_index >= 0 || target_index >= 0) {
-    int target_dim = target_index < 0 ? -1 : target_shape[target_index];
-    int source_dim = source_shape[source_index];
-    if (source_dim == target_dim) {
-       source_index--;
-       target_index--;
-    } else {
-       // Source index must be 1 here (otherwise verification will have failed).
-       // We are safe to mutate the strides vector here because we are looping
-       // backwards.
-       tile_strides.erase(tile_strides.begin() + source_index);
-       source_index--;
-    }
+  auto squeezed_or = computeSqueezedDimsChecked(op, source_shape, target_shape);
+  if (failed(squeezed_or)) {
+    return failure();
   }
-  auto new_layout = tpu::TiledLayoutAttr::get(
-      source_type.getContext(), old_layout.getTiles(), tile_strides);
-  auto new_result_type = MemRefType::get(op.getResult().getType().getShape(),
-                                         layout_ty.getElementType(), new_layout,
-                                         layout_ty.getMemorySpace());
-  auto squeeze = rewriter.create<MemRefSqueezeOp>(op.getLoc(), new_result_type,
-                                                  layout_ref);
-  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), squeeze);
+  auto &squeezed = squeezed_or.value();
+  if (squeezed.empty() && source_shape != target_shape) {
+    return failure();
+  }
+
+  SmallVector<int64_t> tile_strides =
+      llvm::to_vector(layout_attr.getTileStrides());
+  for (int i = squeezed.size() - 1; i >= 0; --i) {
+    tile_strides.erase(tile_strides.begin() + squeezed[i]);
+  }
+
+  tpu::TiledLayoutAttr new_layout;
+  bool target_is_1d = target_shape.size() == 1;
+  auto tiles = layout_attr.getTiles();
+  if (target_is_1d && tiles.size() == 1) {
+    auto tile_dims = llvm::to_vector(tiles.front().dimensions());
+    int first_tiled = source_shape.size() - tile_dims.size();
+    for (int i = squeezed.size() - 1; i >= 0; --i) {
+      int dim = squeezed[i];
+      if (dim >= first_tiled) {
+        int tile_idx = dim - first_tiled;
+        if (tile_idx < 0 || tile_idx >= static_cast<int>(tile_dims.size())) {
+          return op.emitError() << "Internal error: tile index out of bounds.";
+        }
+        tile_dims.erase(tile_dims.begin() + tile_idx);
+      }
+    }
+    new_layout = tpu::TiledLayoutAttr::get(
+        op.getContext(), {xla::Tile(tile_dims)}, tile_strides);
+  } else {
+    new_layout = tpu::TiledLayoutAttr::get(
+        op.getContext(), layout_attr.getTiles(), tile_strides);
+  }
+
+  auto new_ty = MemRefType::get(target_shape, layout_ty.getElementType(),
+                                new_layout, layout_ty.getMemorySpace());
+
+  auto new_squeeze =
+      rewriter.create<MemRefSqueezeOp>(op.getLoc(), new_ty, layout_ref);
+  rewriter.replaceOpWithNewOp<tpu::EraseLayoutOp>(op, target_type, new_squeeze);
   return success();
 }
 
