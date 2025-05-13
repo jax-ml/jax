@@ -354,7 +354,7 @@ class PallasCallRaggedVmapTest(PallasBaseTest):
 
     with self.assertRaisesRegex(
         ValueError,
-        "Ragged input shape must be evenly divisble by the grid"  # noqa: W605
+        "Ragged input shape must be evenly divisible by the grid"  # noqa: W605
         " size at the ragged dimension 2",
     ):
       jax.vmap(
