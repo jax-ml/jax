@@ -23,7 +23,7 @@ from jax._src.custom_derivatives import (
   custom_gradient as custom_gradient,
   custom_jvp as custom_jvp,
   custom_jvp_call_p as custom_jvp_call_p,
-  custom_jvp_call_jaxpr_p as custom_jvp_call_jaxpr_p,
+  custom_jvp_call_jaxpr_p as _custom_jvp_call_jaxpr_p,
   custom_vjp as custom_vjp,
   custom_vjp_call_p as custom_vjp_call_p,
   custom_vjp_primal_tree_values as custom_vjp_primal_tree_values,
@@ -36,3 +36,22 @@ from jax._src.ad_util import (
   SymbolicZero as SymbolicZero,
   zero_from_primal as zero_from_primal
 )
+
+_deprecations = {
+    # Added May 12, 2025
+    "custom_jvp_call_jaxpr_p": (
+      ("jax.custom_derivatives.custom_jvp_call_jaxpr_p is deprecated, use "
+       "jax.extend.core.primitives.custom_jvp_call_p instead."),
+      _custom_jvp_call_jaxpr_p,
+    ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  custom_jvp_call_jaxpr_p = _custom_jvp_call_jaxpr_p
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing
+del _custom_jvp_call_jaxpr_p

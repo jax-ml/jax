@@ -24,7 +24,6 @@ from jax._src.core import (
 
 from jax._src.custom_derivatives import (
   custom_jvp_call_p as custom_jvp_call_p,
-  custom_jvp_call_jaxpr_p as custom_jvp_call_jaxpr_p,
   custom_vjp_call_p as custom_vjp_call_p,
 )
 

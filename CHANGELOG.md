@@ -27,6 +27,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * `jax.ShapeDtypeStruct` is immutable now. Please use `.update` method to
     update your `ShapeDtypeStruct` instead of doing in-place updates.
 
+* Deprecations
+  * `jax.custom_derivatives.custom_jvp_call_jaxpr_p` is deprecated, and will be
+    removed in JAX v0.7.0.
+
 ## JAX 0.6.0 (April 16, 2025)
 
 * Breaking changes
