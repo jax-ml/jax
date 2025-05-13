@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 
 #include "absl/container/inlined_vector.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/nb_numpy.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -135,6 +135,26 @@ H AbslHashValue(H h, const xla::PyArgSignature& s) {
   h = H::combine_contiguous(std::move(h), s.shape.data(), s.shape.size());
   return h;
 }
+
+// Tracks the number of DevicePut calls and subcases. For testing.
+struct DevicePutInfo {
+  // DevicePutWithDevice call count.
+  int device_put_with_device = 0;
+
+  // DevicePutWithSharding call count.
+  int device_put_with_sharding = 0;
+
+  // DevicePutWithSharding with a fully replicated sharding.
+  int device_put_fully_replicated = 0;
+  // DevicePutWithSharding that made a batched array creation call.
+  int device_put_batched = 0;
+  // DevicePutWithSharding that made per-shard creation calls followed by an
+  // assembly call.
+  int device_put_assembled = 0;
+
+  // Returns a map of the counters for the current thread.
+  static std::unordered_map<std::string, int64_t> GetInfo();
+};
 
 }  // namespace xla
 

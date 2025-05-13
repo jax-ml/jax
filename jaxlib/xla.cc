@@ -45,6 +45,7 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/unordered_map.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/ffi.h"
@@ -974,6 +975,9 @@ NB_MODULE(_jax, m) {
         nb::arg("input_size"), nb::arg("rank"), nb::arg("top_k"),
         nb::arg("recall_target"), nb::arg("aggregate_to_topk") = true,
         nb::arg("input_size_override") = -1);
+
+  m.def("get_internal_device_put_info",
+        []() { return DevicePutInfo::GetInfo(); });
 
 }  // NOLINT(readability/fn_size)
 
