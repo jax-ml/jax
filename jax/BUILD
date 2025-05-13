@@ -234,6 +234,20 @@ py_library(
 )
 
 py_library(
+    name = "test_multiprocess",
+    srcs = ["_src/test_multiprocess.py"],
+    visibility = [":internal"],
+    deps = if_building_jaxlib(
+        if_building = [
+            ":jax",
+            ":test_util",
+        ],
+        if_not_building = [],
+        if_not_building_for_cpu = [],
+    ),
+)
+
+py_library(
     name = "internal_export_back_compat_test_util",
     srcs = ["_src/internal_test_util/export_back_compat_test_util.py"],
     visibility = [
@@ -268,6 +282,7 @@ py_library_providing_imports_info(
         "_src/ad_checkpoint.py",
         "_src/api.py",
         "_src/array.py",
+        "_src/attrs.py",
         "_src/blocked_sampler.py",
         "_src/buffer_callback.py",
         "_src/callback.py",
@@ -650,6 +665,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":jaxpr_util",
         ":layout",
         ":mesh",
         ":op_shardings",
@@ -856,6 +872,7 @@ pytype_strict_library(
 py_library_providing_imports_info(
     name = "mosaic_gpu",
     srcs = glob(["experimental/mosaic/gpu/*.py"]),
+    data = py_deps("libnvshmem_device"),
     visibility = [
         ":mosaic_gpu_users",
     ],
@@ -1199,6 +1216,7 @@ py_library_providing_imports_info(
         ],
         [
             "experimental/buffer_callback.py",
+            "experimental/mosaic/gpu/*.py",
         ],
     ),
     visibility = ["//visibility:public"],

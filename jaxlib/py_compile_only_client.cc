@@ -70,7 +70,7 @@ class CompileOnlyPyClient : public PyClient {
     return client;
   }
 
-  absl::StatusOr<std::shared_ptr<ifrt::Executable>> CompileUnloaded(
+  absl::StatusOr<ifrt::ExecutableRef> CompileUnloaded(
       absl::string_view mlir_module, ifrt::DeviceListRef executable_devices,
       CompileOptions options, std::vector<nb::capsule> host_callbacks) {
     if (!host_callbacks.empty()) {
@@ -102,7 +102,7 @@ class CompileOnlyPyClient : public PyClient {
                                     *ifrt_client->topology().description()));
     TF_ASSIGN_OR_RETURN(auto ifrt_executable,
                         ifrt::PjRtExecutable::Create(std::move(executable)));
-    return std::shared_ptr<ifrt::Executable>(std::move(ifrt_executable));
+    return ifrt::ExecutableRef(std::move(ifrt_executable));
   }
 
  private:

@@ -89,7 +89,7 @@ class PyShardedToken {
 class PyExecuteResults {
  public:
   PyExecuteResults(const nb_class_ptr<PyClient>& client,
-                   std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays,
+                   std::vector<ifrt::ArrayRef> ifrt_arrays,
                    int num_computations, PyShardedToken token,
                    PjRtFuture<> result_status = PjRtFuture<>());
 
@@ -102,7 +102,7 @@ class PyExecuteResults {
       std::vector<std::variant<const PyArrayResultHandler*, nanobind::object>>
           out_handlers);
 
-  std::vector<tsl::RCReference<ifrt::Array>> Consume();
+  std::vector<ifrt::ArrayRef> Consume();
 
   PyShardedToken ConsumeToken();
 
@@ -117,7 +117,7 @@ class PyExecuteResults {
   bool is_exploded_ = false;
   bool token_consumed_ = false;
   nb_class_ptr<PyClient> client_;
-  std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays_;
+  std::vector<ifrt::ArrayRef> ifrt_arrays_;
   int num_computations_;
   PyShardedToken token_;
   // Only set if the computation has tokens.
@@ -131,11 +131,10 @@ using ExecuteShardedArg = std::variant<PyArray, std::vector<PyArray>>;
 // b) to add Python-specific functionality.
 class PyLoadedExecutable {
  public:
-  PyLoadedExecutable(
-      nb_class_ptr<PyClient> client,
-      std::shared_ptr<ifrt::LoadedExecutable> ifrt_loaded_executable,
-      std::optional<nb_traceback> traceback,
-      std::optional<std::string> fingerprint);
+  PyLoadedExecutable(nb_class_ptr<PyClient> client,
+                     ifrt::LoadedExecutableRef ifrt_loaded_executable,
+                     std::optional<nb_traceback> traceback,
+                     std::optional<std::string> fingerprint);
   ~PyLoadedExecutable();
 
   nb_class_ptr<PyClient> client() const { return client_; }
@@ -143,7 +142,7 @@ class PyLoadedExecutable {
     return ifrt_loaded_executable_.get();
   }
 
-  std::shared_ptr<ifrt::LoadedExecutable> shared_ifrt_loaded_executable() {
+  ifrt::LoadedExecutableRef shared_ifrt_loaded_executable() {
     return ifrt_loaded_executable_;
   }
 
@@ -161,13 +160,6 @@ class PyLoadedExecutable {
   absl::StatusOr<xla::ifrt::AttributeMap> GetCostAnalysis() const {
     return ifrt_loaded_executable_->GetCostAnalysis();
   }
-
-  void Delete() {
-    // TODO(hyeontaek): Return absl::Status.
-    TF_CHECK_OK(ifrt_loaded_executable_->Delete().Await());
-  }
-
-  bool is_deleted() { return ifrt_loaded_executable_->IsDeleted(); }
 
   // Takes args indexed by argid then deviceid, transposes them, and passes to
   // PjRtExecutable::Execute. The result is similarly transposed back into the
@@ -226,7 +218,7 @@ class PyLoadedExecutable {
   friend class PyClient;
 
   nb_class_ptr<PyClient> client_;
-  std::shared_ptr<ifrt::LoadedExecutable> ifrt_loaded_executable_;
+  ifrt::LoadedExecutableRef ifrt_loaded_executable_;
   std::optional<nb_traceback> traceback_;
 
   // Identical executables (i.e. representing the same program) will have the

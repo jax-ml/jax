@@ -29,6 +29,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import pjit
+from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
@@ -451,6 +452,8 @@ def make_kernel_function(
   _no_aval = object()
 
   def _get_block_aval(bs, aval):
+    if isinstance(aval, state.AbstractRef):
+      return aval
     if bs is pallas_core.no_block_spec or bs is None:
       return _no_aval
     return aval.update(shape=_remove_nones(bs.block_shape))  # pytype: disable=attribute-error
@@ -1065,6 +1068,171 @@ def _dynamic_slice_rule(
       len(ctx.avals_in) - 1
   )
 
+@register_pull_block_spec_rule(state_primitives.swap_p)
+def _swap_pull_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    **kwargs,
+):
+  del ctx, kwargs
+  # The output and val block spec are the same.
+  return [block_spec, block_spec]
+
+@register_eval_rule(state_primitives.swap_p)
+def _swap_eval_rule(
+    ctx: KernelEvalContext,
+    ref,
+    val,
+    *idx,
+    tree
+):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  ref_aval, _ = ctx.avals_in[:2]
+  indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[2:])
+  assert hasattr(ref_aval, 'shape')
+  if len(indexers) > 1:
+    raise NotImplementedError('swap not supported yet')
+  indexer_aval = indexers_avals[0]
+  for idx_aval, size in zip(indexer_aval.indices, ref_aval.shape, strict=True):
+    if not isinstance(idx_aval, indexing.Slice):
+      raise NotImplementedError('swap not supported yet')
+    if not isinstance(idx_aval.start, int):
+      raise NotImplementedError('swap not supported yet')
+    if not isinstance(idx_aval.size, int):
+      raise NotImplementedError('swap not supported yet')
+    if idx_aval.stride != 1:
+      raise NotImplementedError('swap not supported yet')
+    if idx_aval.start != 0:
+      raise NotImplementedError('swap not supported yet')
+    if idx_aval.size != size:
+      raise NotImplementedError('swap not supported yet')
+  # We have a pure slice so now we can just re-index the ref according to the
+  # block indices.
+  block_spec = ctx.out_block_specs[0]
+  block_idx = ctx.get_out_block_indices()[0]
+
+  def _slice(i, b):
+    if not isinstance(b, int):
+      raise NotImplementedError('swap not supported yet')
+    return i if b is None else indexing.ds(i * b, b)
+
+  indexer = tuple(
+      _slice(i, b) for i, b in zip(block_idx, block_spec.block_shape,
+                                   strict=True)
+  )
+  return ref.swap(val, idx=indexer)
+
+@register_pull_block_spec_rule(state_primitives.get_p)
+def _get_pull_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    tree
+):
+  ref_aval = ctx.avals_in[0]
+  assert hasattr(ref_aval, 'shape')
+  indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[1:])
+  if len(indexers_avals) > 1:
+    raise NotImplementedError('get not supported yet')
+  indexer_aval = indexers_avals[0]
+  block_shape_iter = iter(block_spec.block_shape)
+  block_shape = []
+  if not all(
+      isinstance(bd, (int, pallas_core.Blocked, pallas_core.Squeezed, None))
+      for bd in block_spec.block_shape
+  ):
+    raise NotImplementedError('get not supported yet')
+  for idx_aval, size in zip(indexer_aval.indices, ref_aval.shape, strict=True):
+    if not isinstance(idx_aval, indexing.Slice):
+      assert hasattr(idx_aval, 'shape') and not idx_aval.shape
+      block_shape.append(pallas_core.Squeezed())
+      continue
+    if not isinstance(idx_aval.start, int):
+      raise NotImplementedError('get not supported yet')
+    if not isinstance(idx_aval.size, int):
+      raise NotImplementedError('get not supported yet')
+    if idx_aval.stride != 1:
+      raise NotImplementedError('get not supported yet')
+    if idx_aval.start != 0:
+      raise NotImplementedError('get not supported yet')
+    if idx_aval.size != size:
+      raise NotImplementedError('get not supported yet')
+    bd = next(block_shape_iter)
+    block_shape.append(_block_size(bd))
+  assert next(block_shape_iter, None) is None
+  def new_index_map(*args):
+    idx = block_spec.index_map(*args)
+    idx_iter = iter(idx)
+    indices = tuple(
+        0
+        if (bd is None or isinstance(bd, pallas_core.Squeezed))
+        else next(idx_iter)
+        for bd in range(len(block_shape))
+    )
+    assert next(idx_iter, None) is None
+    return indices
+  block_spec = pallas_core.BlockSpec(block_shape, new_index_map)
+  return [block_spec] + [pallas_core.no_block_spec] * (len(ctx.avals_in) - 1)
+
+@register_eval_rule(state_primitives.get_p)
+def _get_eval_rule(
+    ctx: KernelEvalContext,
+    ref,
+    *idx,
+    tree
+):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  ref_aval = ctx.avals_in[0]
+  indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[1:])
+  ref_block_spec = ctx.in_block_specs[0]
+  assert hasattr(ref_aval, 'shape')
+  if len(indexers) > 1:
+    raise NotImplementedError('get not supported yet')
+  indexer = indexers[0]
+  indexer_aval = indexers_avals[0]
+  block_indexer = []
+
+  def _slice(i, b):
+    match b:
+      case int():
+        return indexing.ds(i * b, b)
+      case pallas_core.Blocked(bs):
+        return indexing.ds(i * bs, bs)
+      case pallas_core.Squeezed() | None:
+        return i
+      case _:
+        raise NotImplementedError('get not supported yet')
+
+  if ref_block_spec is pallas_core.no_block_spec:
+    # Short-circuit if the ref is not blocked.
+    return state_primitives.get_p.bind(ref, *idx, tree=tree)
+  block_idx_iter = iter(ctx.get_out_block_indices()[0])
+  for idx_aval, size, idx, bd in zip(
+      indexer_aval.indices,
+      ref_aval.shape,
+      indexer.indices,
+      ref_block_spec.block_shape,
+      strict=True,
+  ):
+    if not isinstance(idx_aval, indexing.Slice):
+      assert hasattr(idx_aval, 'shape') and not idx_aval.shape, idx_aval
+      assert bd is None or isinstance(bd, pallas_core.Squeezed)
+      block_indexer.append(idx)
+      continue
+    if not isinstance(idx_aval.start, int):
+      raise NotImplementedError('get not supported yet')
+    if not isinstance(idx_aval.size, int):
+      raise NotImplementedError('get not supported yet')
+    if idx_aval.stride != 1:
+      raise NotImplementedError('get not supported yet')
+    if idx_aval.start != 0:
+      raise NotImplementedError('get not supported yet')
+    if idx_aval.size != size:
+      raise NotImplementedError('get not supported yet')
+    bidx = next(block_idx_iter)
+    block_indexer.append(_slice(bidx, bd))
+  assert next(block_idx_iter, None) is None
+  return ref.get(idx=tuple(block_indexer))
 
 @register_eval_rule(lax.concatenate_p)
 def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):

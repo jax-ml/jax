@@ -53,7 +53,8 @@ setup(
     install_requires=[f"jax-cuda{cuda_version}-pjrt=={__version__}"],
     extras_require={
       'with-cuda': [
-          "nvidia-cublas-cu12>=12.1.3.1",
+          # cudnn has a bug with mxfp8 with multiple GPUs per process and cublas 12.9
+          "nvidia-cublas-cu12>=12.1.3.1,<12.9",
           "nvidia-cuda-cupti-cu12>=12.1.105",
           "nvidia-cuda-nvcc-cu12>=12.6.85",
           "nvidia-cuda-runtime-cu12>=12.1.105",
@@ -70,6 +71,9 @@ setup(
           # Until NVIDIA add version constraints, add a version constraint
           # here.
           "nvidia-nvjitlink-cu12>=12.1.105",
+          # NVSHMEM is used by Mosaic GPU collectives and can be used by XLA to
+          # speed up collectives too.
+          "nvidia-nvshmem-cu12>=3.2.5",
       ],
     },
     url="https://github.com/jax-ml/jax",

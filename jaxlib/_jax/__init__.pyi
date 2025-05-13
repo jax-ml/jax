@@ -328,7 +328,7 @@ class CompiledMemoryStats:
   host_output_size_in_bytes: int
   host_alias_size_in_bytes: int
   host_temp_size_in_bytes: int
-  serialized_hlo_proto: bytes
+  serialized_buffer_assignment_proto: bytes
   def __str__(self) -> str: ...
 
 class ExecutableBuildOptions:
@@ -511,7 +511,19 @@ class Client:
       compile_options: CompileOptions = ...,
       host_callbacks: Sequence[Any] = ...,
   ) -> LoadedExecutable: ...
+  def compile_and_load(
+      self,
+      computation: str | bytes,
+      executable_devices: DeviceList | Sequence[Device],
+      compile_options: CompileOptions = ...,
+      host_callbacks: Sequence[Any] = ...,
+  ) -> LoadedExecutable: ...
   def compile_ifrt_program(
+      self,
+      program: ifrt_programs.Program,
+      program_options: ifrt_programs.CompileOptions,
+  ) -> LoadedExecutable: ...
+  def compile_and_load_ifrt_program(
       self,
       program: ifrt_programs.Program,
       program_options: ifrt_programs.CompileOptions,
@@ -559,17 +571,6 @@ def get_tfrt_cpu_client(
     num_nodes: int = ...,
     collectives: CpuCollectives | None = ...,
     num_devices: int | None = ...,
-) -> Client: ...
-def get_gpu_client(
-    asynchronous: bool = ...,
-    allocator_config: GpuAllocatorConfig = ...,
-    distributed_client: DistributedRuntimeClient | None = ...,
-    node_id: int = ...,
-    num_nodes: int = ...,
-    allowed_devices: Any | None = ...,
-    platform_name: str | None = ...,
-    mock: bool | None = ...,
-    mock_gpu_topology: str | None = ...,
 ) -> Client: ...
 def get_mock_gpu_client(
     asynchronous: bool = ...,
@@ -678,7 +679,6 @@ class LoadedExecutable:
   client: Client
   def local_devices(self) -> list[Device]: ...
   def size_of_generated_code_in_bytes(self) -> int: ...
-  def delete(self) -> None: ...
   def execute(self, arguments: Sequence[ArrayImpl]) -> list[ArrayImpl]: ...
   def execute_with_token(
       self, arguments: Sequence[ArrayImpl]
@@ -836,6 +836,7 @@ def get_distributed_runtime_client(
 class PreemptionSyncManager:
   def initialize(self, client: DistributedRuntimeClient) -> _Status: ...
   def reached_sync_point(self, step_counter: int) -> bool: ...
+  def shutdown(self) -> None: ...
 
 def create_preemption_sync_manager() -> PreemptionSyncManager: ...
 def collect_garbage() -> None: ...
@@ -943,25 +944,6 @@ def pjit(
     shard_arg_fallback: Callable,
     cache: PjitFunctionCache | None = ...,
 ) -> PjitFunction: ...
-
-class HloPassInterface:
-  @property
-  def name(self) -> str: ...
-  def is_pass_pipeline(self) -> bool: ...
-  def run(self, module: HloModule) -> bool: ...
-  def run_on_module_group(self, module_group: HloModuleGroup) -> bool: ...
-
-class HloDCE(HloPassInterface):
-  def __init__(self) -> None: ...
-
-class CallInliner(HloPassInterface):
-  def __init__(self) -> None: ...
-
-class FlattenCallGraph(HloPassInterface):
-  def __init__(self) -> None: ...
-
-class TupleSimplifer(HloPassInterface):
-  def __init__(self) -> None: ...
 
 class WeakrefLRUCacheInfo:
   @property

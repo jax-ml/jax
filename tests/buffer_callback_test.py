@@ -95,11 +95,16 @@ class BufferCallbackTest(jtu.JaxTestCase):
 
     # We can't actually test the output because numpy doesn't support writable
     # DLPack tensors.
-    fun(data)
+    jax.block_until_ready(fun(data))
 
-  @parameterized.parameters(jtu.dtypes.all)
+  @parameterized.product(
+      dtype=jtu.dtypes.all, command_buffer_compatible=[True, False]
+  )
   @jtu.run_on_devices("cuda")
-  def test_cuda_array_interface(self, dtype):
+  def test_cuda_array_interface(self, dtype, command_buffer_compatible):
+    if command_buffer_compatible and jaxlib_extension_version < 337:
+      self.skipTest("Requires jaxlib extension version of at least 337.")
+
     def callback(ctx, out, arg):
       ctx.stream  # doesn't crash
 
@@ -121,9 +126,15 @@ class BufferCallbackTest(jtu.JaxTestCase):
     shape = (3, 4)
     data = rng(shape, dtype)
     fun = buffer_callback.buffer_callback(
-        callback, jax.ShapeDtypeStruct(data.shape, data.dtype)
+        callback, jax.ShapeDtypeStruct(data.shape, data.dtype),
+        command_buffer_compatible=command_buffer_compatible,
     )
-    fun(data)
+
+    # TODO: There's an XLA:GPU/CUDA bug that causes a segfault when
+    # instantiating an empty CUDA graph. Once that bug is fixed or worked
+    # around, add a test that checks that the Python callback is only executed
+    # once.
+    jax.block_until_ready(fun(data))
 
   @parameterized.parameters([
       "sequential", "sequential_unrolled", "expand_dims", "broadcast_all"
@@ -164,7 +175,7 @@ class BufferCallbackTest(jtu.JaxTestCase):
         callback, jax.ShapeDtypeStruct(data.shape, data.dtype),
         input_output_aliases={0: 0},
     )
-    fun(data)
+    jax.block_until_ready(fun(data))
 
   def test_side_effect(self):
     def callback(*_):
@@ -172,8 +183,9 @@ class BufferCallbackTest(jtu.JaxTestCase):
       called = True
 
     called = False
-    fun = buffer_callback.buffer_callback(callback, (), has_side_effect=True)
-    fun()
+    fun = buffer_callback.buffer_callback(
+        callback, jax.ShapeDtypeStruct((), jnp.float32), has_side_effect=True)
+    jax.block_until_ready(fun())
     self.assertTrue(called)
 
 

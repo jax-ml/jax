@@ -24,3 +24,6 @@ jax-cuda12-pjrt
 
 # TPU dependencies
 libtpu ; sys_platform == "linux" and platform_machine == "x86_64"
+
+# For Mosaic GPU collectives
+nvidia-nvshmem-cu12>=3.2.5 ; sys_platform == "linux"

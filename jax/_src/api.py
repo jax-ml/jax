@@ -576,8 +576,9 @@ def _check_output_dtype_revderiv(name, holomorphic, x):
 _check_output_dtype_grad = partial(_check_output_dtype_revderiv, "grad")
 
 def fwd_and_bwd(
-    fun: Callable, has_aux: bool = False, jitted: bool = True
-  ) -> tuple[Callable, Callable]:
+    fun: Callable, argnums: int | Sequence[int], has_aux: bool = False,
+    jitted: bool = True,
+) -> tuple[Callable, Callable]:
   """Creates functions ``fwd`` and ``bwd`` corresponding to the forward and
   backward pass of a given function ``fun``. The forward function ``fwd(*args)``
   functionally behaves much like ``y, fun_vjp = jax.vjp(fun, *args)``, but allows
@@ -598,7 +599,7 @@ def fwd_and_bwd(
   ...     cot_x, cot_W = f_vjp(cot_out)           # not jitted
   ...     cot_x, cot_W = jax.jit(f_vjp)(cot_out)  # recompiles on every iteration
   ...
-  >>> fwd, bwd = jax.fwd_and_bwd(f)
+  >>> fwd, bwd = jax.fwd_and_bwd(f, argnums=(0,1))
   >>> for i in range(3):
   ...     y, residuals = fwd(x, W)
   ...     cot_x, cot_W = bwd(residuals, cot_out)  # jitted, compiles once
@@ -606,6 +607,8 @@ def fwd_and_bwd(
 
   Args:
     fun: Function to produce a forward and backward of.
+    argnums: Integer or sequence of integers. Specifies which positional argument(s)
+      to differentiate with respect to.
     has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
@@ -624,13 +627,22 @@ def fwd_and_bwd(
 
     ``bwd`` is a function from ``residuals`` and a cotangent vector with the same
     shape as ``primals_out`` to a tuple of cotangent vectors with the same number
-    and shapes as ``primals``, representing the vector-Jacobian product of ``fun``
-    evaluated at ``primals``.
+    and shapes as the ``primals`` designated by ``argnums``, representing the
+    vector-Jacobian product of ``fun`` evaluated at ``primals``.
   """
-  def fwd(*args):
-    return vjp(fun, *args, has_aux=has_aux)  # type: ignore
+  check_callable(fun)
+  argnums = _ensure_index(argnums)
+
+  def fwd(*args, **kwargs):
+    dbg = debug_info('fwd_and_bwd', fun, args, kwargs)
+    f = lu.wrap_init(fun, params=kwargs, debug_info=dbg)
+    f_partial, dyn_args = argnums_partial(
+        f, argnums, args, require_static_args_hashable=False)
+    return _vjp(f_partial, *dyn_args, has_aux=has_aux)  # type: ignore
   def bwd(f_vjp, outgrad):
-    return f_vjp(outgrad)
+    g = f_vjp(outgrad)
+    g = g[0] if isinstance(argnums, int) else g
+    return g
   if jitted:
     fwd = jit(fwd)
     bwd = jit(bwd)
@@ -2187,7 +2199,8 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   fun = lu.wrap_init(f, debug_info=dbg)
   primals_flat, in_tree = tree_flatten(primals)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-  out_primals_flat, _, jaxpr, residuals = ad.linearize(fun, *primals_flat)
+  out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(fun, *primals_flat)
+  out_known = [pval.is_known() for pval in out_pvals]
   primals_filt, filt_tree = tree_flatten(tuple(p for w, p in zip(which, primals) if w))
   id_map = {id(x): i for i, x in enumerate(primals_filt)}
   opaque_residuals = []
@@ -2195,7 +2208,7 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
               RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
               for r in residuals]
   f_vjp = Partial(partial(_saved_input_vjpfun, res_spec, filt_tree, in_tree,
-                          out_tree(), jaxpr), opaque_residuals)
+                          out_tree(), out_known, jaxpr), opaque_residuals)
 
   if not allow_unused and not set(id_map).issubset(res_ids := {id(r) for r in residuals}):
     unused = [(i, core.get_aval(x)) for i, (x, w) in enumerate(zip(primals, which))
@@ -2220,8 +2233,8 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   out_primals = tree_unflatten(out_tree(), out_primals_flat)
   return out_primals, f_vjp
 
-def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, jaxpr,
-                        opaque_residuals, ct, *saved_primals):
+def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, out_known,
+                        jaxpr, opaque_residuals, ct, *saved_primals):
   primals_filtered, filtered_tree_ = tree_flatten(saved_primals)
   if filtered_tree != filtered_tree_:
     raise ValueError(
@@ -2241,8 +2254,9 @@ def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, jaxpr,
   dummy_args = [ad.UndefinedPrimal(v.aval) for v in jaxpr.invars]
   cts_flat, out_tree_ = tree_flatten(ct)
   assert out_tree_ == out_tree
+  cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
   arg_cts = ad.backward_pass(jaxpr, True, residuals, dummy_args, cts_flat)
-  return tree_unflatten(in_tree, arg_cts)
+  return tree_unflatten(in_tree, map(ad.instantiate_zeros, arg_cts))
 
 @dataclasses.dataclass(frozen=True)
 class RSpec:
@@ -2854,9 +2868,38 @@ class ShapeDtypeStruct:
               (other.shape, other.dtype, other.sharding, other.layout, other.weak_type))
 
   def __hash__(self):
-    # TODO(frostig): avoid the conversion from dict by addressing
-    # https://github.com/jax-ml/jax/issues/8182
-    return hash((self.shape, self.dtype, self.sharding, self.layout, self.weak_type))
+    return hash((self.shape, self.dtype, self.sharding, self.layout,
+                 self.weak_type))
+
+  def __setattr__(self, name, value):
+    if hasattr(self, name):
+      if getattr(self, name) == value:
+        # This can happen if two threads race, for example if two threads
+        # are trying to hash the same SDS instance.
+        return
+      raise RuntimeError(
+          f"Cannot reassign attributes ({name}) of immutable ShapeDtypeStruct"
+          " objects")
+    super().__setattr__(name, value)
+
+  def update(self, **kwargs):
+    if 'sharding' in kwargs:
+      s = kwargs['sharding']
+      if self._dll is not None and isinstance(s, Sharding):
+        raise ValueError(
+            f"You are updating ShapeDtypeStruct with a {type(s)} when the"
+            f" original ShapeDtypeStruct had a concrete layout {self.layout}."
+            " This might lead to bugs. If you want to do this, create a new"
+            " ShapeDtypeStruct via the constructor.")
+      sharding = s
+    else:
+      sharding = self.layout
+    return ShapeDtypeStruct(
+        shape=kwargs.pop('shape', self.shape),
+        dtype=kwargs.pop('dtype', self.dtype),
+        sharding=sharding,
+        weak_type=kwargs.pop('weak_type', self.weak_type))
+
 
 def _sds_aval_mapping(x):
   aval = ShapedArray(

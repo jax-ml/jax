@@ -92,6 +92,18 @@ def _resolve_transforms(
   return transforms
 
 
+def _transforms_from_uses(op: ir.OpView) -> ir.Attribute | None:
+  transforms = None
+
+  for result_use in cast(ir.OpResult, op.result).uses:
+    consumer = result_use.owner
+    op_user = consumer.operands[result_use.operand_number]
+    user_transforms = inference_utils.in_transforms_for_operand(
+        consumer, op_user
+    )
+    transforms = _resolve_transforms(transforms, user_transforms)
+  return transforms
+
 def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
   if len(ref_ty.shape) != 2:
     raise ValueError(f"Expected a 2D memref, got {ref_ty}")
@@ -195,19 +207,20 @@ def _infer_vector_load_store_transforms(
   return None if transforms is None else ([transforms], [])
 
 
+@partial(_add_transform_inference_rule, memref.StoreOp)
+def _infer_memref_store_transforms(op: memref.StoreOp) -> OptionalTransforms:
+  # memref.store is only used for scalar operations, so there are no transforms.
+  ref_shape = ir.MemRefType(op.memref.type).shape
+  if ref_shape != [] and ref_shape != [1]:
+    raise NotImplementedError(
+        f"Only scalar memrefs are supported, got {ref_shape}"
+    )
+
+  return None
+
 @partial(_add_transform_inference_rule, mgpu.SliceSMEMOp)
 def _infer_slice_smem_transforms(op: mgpu.SliceSMEMOp) -> OptionalTransforms:
-  transforms = None
-  uses = cast(ir.OpResult, op.result).uses
-
-  for op_operand_use in uses:
-    consumer = op_operand_use.owner
-    op_user = consumer.operands[op_operand_use.operand_number]
-    out_transforms = inference_utils.in_transforms_for_operand(
-        consumer, op_user
-    )
-    transforms = _resolve_transforms(transforms, out_transforms)
-
+  transforms = _transforms_from_uses(op)
   return None if transforms is None else ([], [transforms])
 
 
@@ -234,15 +247,7 @@ def _infer_memref_view_transforms(op: memref.ViewOp) -> OptionalTransforms:
     raise NotImplementedError(
         "memref view with in_transforms aren't yet supported"
     )
-  uses = cast(ir.OpResult, op.result).uses
-
-  for op_operand_use in uses:
-    consumer = op_operand_use.owner
-    op_user = consumer.operands[op_operand_use.operand_number]
-    out_transforms = inference_utils.in_transforms_for_operand(
-        consumer, op_user
-    )
-    transforms = _resolve_transforms(transforms, out_transforms)
+  transforms = _transforms_from_uses(op)
 
   # TODO(bchetioui): do we actually need to assign a transform to the input of
   # the view op? Presumably, it'll only be used to access scratch memory.
@@ -281,16 +286,7 @@ def _get_tile_and_swizzle_transforms(
 def _infer_memref_subview_transforms(
     op: memref.SubViewOp,
 ) -> OptionalTransforms:
-  transforms = None
-
-  for result_use in cast(ir.OpResult, op.result).uses:
-    consumer = result_use.owner
-    op_user = consumer.operands[result_use.operand_number]
-    user_transforms = inference_utils.in_transforms_for_operand(
-        consumer, op_user
-    )
-    transforms = _resolve_transforms(transforms, user_transforms)
-
+  transforms = _transforms_from_uses(op)
   in_transforms = inference_utils.value_transforms(op.source)
   transforms = _resolve_transforms(transforms, in_transforms)
 
@@ -342,17 +338,7 @@ def _infer_memref_transpose_transforms(
   out_strides, _ = ir.MemRefType(op.result.type).get_strides_and_offset()
   transpose = in_strides != out_strides
 
-  users = list(op.result.uses)
-  if len(users) != 1:
-    raise NotImplementedError(
-        f"Only memref.transpose with a single use are supported, got {op}"
-    )
-
-  op_operand_use = users[0]
-  consumer = op_operand_use.owner
-  op_user = consumer.operands[op_operand_use.operand_number]
-  out_transforms = inference_utils.in_transforms_for_operand(consumer, op_user)
-
+  out_transforms = _transforms_from_uses(op)
   in_transforms = []
   if not transpose:
     in_transforms = out_transforms
@@ -375,6 +361,18 @@ def _infer_memref_load_transforms(op: memref.LoadOp) -> OptionalTransforms:
     # memref.load returns a scalar, so there is nothing interesting to do here.
     return None
   raise NotImplementedError("Non-scalar memref.load transforms")
+
+
+@partial(_add_transform_inference_rule, memref.CastOp)
+def _infer_memref_cast_transforms(
+    op: memref.CastOp,
+) -> OptionalTransforms:
+  transforms = _transforms_from_uses(op)
+  in_transforms = inference_utils.value_transforms(op.source)
+  transforms = _resolve_transforms(transforms, in_transforms)
+  if transforms is None:
+    return None
+  return [transforms], [transforms]
 
 
 def _should_have_transforms(op: ir.OpView) -> bool:

@@ -293,12 +293,15 @@ def _real_property(self: Array) -> Array:
   return ufuncs.real(self)
 
 def _repeat(self: Array, repeats: ArrayLike, axis: int | None = None, *,
-            total_repeat_length: int | None = None) -> Array:
+            total_repeat_length: int | None = None,
+            out_sharding: NamedSharding | PartitionSpec | None = None) -> Array:
   """Construct an array from repeated elements.
 
   Refer to :func:`jax.numpy.repeat` for the full documentation.
   """
-  return lax_numpy.repeat(self, repeats=repeats, axis=axis, total_repeat_length=total_repeat_length)
+  return lax_numpy.repeat(self, repeats=repeats, axis=axis,
+                          total_repeat_length=total_repeat_length,
+                          out_sharding=out_sharding)
 
 def _reshape(self: Array, *args: Any, order: str = "C", out_sharding=None
              ) -> Array:
@@ -968,8 +971,6 @@ _array_operators = {
   "rsub": _defer_to_unrecognized_arg("-", ufuncs.subtract, swap=True),
   "mul": _defer_to_unrecognized_arg("*", ufuncs.multiply),
   "rmul": _defer_to_unrecognized_arg("*", ufuncs.multiply, swap=True),
-  "div": _defer_to_unrecognized_arg("/", ufuncs.divide),
-  "rdiv": _defer_to_unrecognized_arg("/", ufuncs.divide, swap=True),
   "truediv": _defer_to_unrecognized_arg("/", ufuncs.true_divide),
   "rtruediv": _defer_to_unrecognized_arg("/", ufuncs.true_divide, swap=True),
   "floordiv": _defer_to_unrecognized_arg("//", ufuncs.floor_divide),

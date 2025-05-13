@@ -238,7 +238,7 @@ mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
     cluster = as_32bit(launch.getClusterSizeOperandValues());
   } else {
     cluster.x = cluster.y = cluster.z = builder.create<mlir::LLVM::ConstantOp>(
-      launch.getLoc(), builder.getI32Type(), builder.getI32IntegerAttr(0));
+        launch.getLoc(), builder.getI32Type(), builder.getI32IntegerAttr(0));
   }
   mlir::Value stream = launch.getAsyncObject();
   builder.create<mlir::func::CallOp>(
@@ -337,15 +337,16 @@ class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
                             launch.getDynamicSharedMemorySize(), cluster_shape);
 
           // Add a new function argument for the kernel handle.
-          func.insertArgument(0, ptr_ty,
-                              mlir::DictionaryAttr::get(func.getContext()),
-                              mlir::UnknownLoc::get(func.getContext()));
+          if (failed(func.insertArgument(
+                  0, ptr_ty, mlir::DictionaryAttr::get(func.getContext()),
+                  mlir::UnknownLoc::get(func.getContext())))) {
+            return mlir::WalkResult::interrupt();
+          }
           mlir::Value kernel_handle = func.getArgument(0);
           if (launchPreloadedKernel(func, launch, kernel_handle).failed()) {
             return mlir::WalkResult::interrupt();
           }
           launch.erase();
-
           // TODO(apaszke): Generate a destructor function.
           // builder.CreateCall(getModuleUnloadFn(), {moduleObject});
 

@@ -151,6 +151,7 @@ jax_multiplatform_test(
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
         "JAX_PALLAS_VERBOSE_ERRORS": "0",
     },
+    shard_count = 16,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
@@ -360,6 +361,27 @@ jax_multiplatform_test(
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
     ],
+)
+
+jax_multiplatform_test(
+    name = "gpu_pallas_distributed_test",
+    srcs = ["gpu_pallas_distributed_test.py"],
+    args = [
+        "--num_processes=2",
+        "--gpus_per_process=1",
+    ],
+    enable_backends = [],
+    enable_configs = ["gpu_h100x2"],
+    env = {
+        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
+    },
+    tags = ["multiaccelerator"],
+    deps = [
+        "//jax:extend",
+        "//jax:pallas_mosaic_gpu",
+        "//jax:test_multiprocess",
+    ] + py_deps("portpicker"),
 )
 
 jax_multiplatform_test(

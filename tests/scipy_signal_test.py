@@ -388,7 +388,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     ],
     dtype=default_dtypes,
     fs=[1.0, 16000.0],
-    window=['boxcar', 'triang', 'blackman', 'hamming', 'hann'],
+    window=['boxcar', 'triang', 'blackman', 'hamming', 'hann', 'USE_ARRAY'],
     onesided=[False, True],
     boundary=[False, True],
   )
@@ -398,6 +398,11 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     if not onesided:
       new_freq_len = (shape[freqaxis] - 1) * 2
       shape = shape[:freqaxis] + (new_freq_len ,) + shape[freqaxis + 1:]
+
+    if window == 'USE_ARRAY':
+      # ensure dtype matches the expected dtype of `xsubs` within the implementation.
+      window = np.ones(nperseg, dtype=(
+        dtypes.to_floating_dtype(dtype) if onesided else dtypes.to_complex_dtype(dtype)))
 
     kwds = dict(fs=fs, window=window, nperseg=nperseg, noverlap=noverlap,
                 nfft=nfft, input_onesided=onesided, boundary=boundary,

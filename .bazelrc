@@ -33,6 +33,8 @@ build --output_filter=DONT_MATCH_ANYTHING
 build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
 build --copt=-DNB_DOMAIN=jax
 
+build --legacy_external_runfiles=false
+
 # #############################################################################
 # Platform Specific configs below. These are automatically picked up by Bazel
 # depending on the platform that is running the build.
@@ -257,10 +259,6 @@ build:ci_linux_aarch64_cuda --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm
 
 # Mac Arm64 CI configs
 build:ci_darwin_arm64 --macos_minimum_os=11.0
-# Clang 19 requires `-Wno-error=c23-extensions` but this flag is not supported
-# on Apple Clang in XCode 16.0 so we suppress unknown warning option errors
-# on Mac CI builds.
-build:ci_darwin_arm64 --copt=-Wno-unknown-warning-option
 build:ci_darwin_arm64 --config=macos_cache_push
 build:ci_darwin_arm64 --verbose_failures=true
 build:ci_darwin_arm64 --color=yes
@@ -420,7 +418,7 @@ build:rbe_cross_compile_darwin_x86_64 --config=rbe_cross_compile_base
 #############################################################################
 
 build:debug_symbols --strip=never --per_file_copt="xla/pjrt|xla/python@-g3"
-build:debug --config debug_symbols -c fastbuild
+build:debug --config=debug_symbols -c fastbuild
 
 # Load `.jax_configure.bazelrc` file written by build.py
 try-import %workspace%/.jax_configure.bazelrc

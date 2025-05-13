@@ -44,13 +44,13 @@ limitations under the License.
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "jaxlib/mosaic/dialect/tpu/vreg_util.h"
 
 namespace mlir::tpu {
@@ -205,6 +205,37 @@ LogicalResult tpu_matmul_rule(const CanonicalizeContext &ctx,
     }
   }
 
+  // Attempt to canonicalize matmul(x, transpose(y)) to a matmul with the
+  // dimension numbers changed which will later be lowered into a more efficient
+  // operation that fuses the transpose into the matmul.
+  auto transpose_op =
+      dyn_cast_if_present<tpu::TransposeOp>(rhs.getDefiningOp());
+  auto dimension_numbers = op.getDimensionNumbers();
+  if (transpose_op && transpose_op->hasOneUse() &&
+      dimension_numbers->getRhsContractingDims().size() == 1 &&
+      dimension_numbers->getRhsNonContractingDims().size() == 1) {
+    auto rhs_non_contracting_dim =
+        dimension_numbers->getRhsNonContractingDims()[0];
+    auto rhs_contracting_dim = dimension_numbers->getRhsContractingDims()[0];
+    auto permutation = transpose_op.getPermutation();
+    if (permutation[rhs_contracting_dim] == rhs_non_contracting_dim &&
+        permutation[rhs_non_contracting_dim] == rhs_contracting_dim &&
+        std::all_of(dimension_numbers->getRhsBatchDims().begin(),
+                    dimension_numbers->getRhsBatchDims().end(),
+                    [&](long batch_dim) {
+                      return permutation[batch_dim] == batch_dim;
+                    })) {
+      if (auto transpose_op_vector_operand =
+              dyn_cast<TypedValue<VectorType>>(transpose_op.getOperand())) {
+        // The transpose is DCE'ed away at a later point.
+        rhs = transpose_op_vector_operand;
+        transpose_rhs = !transpose_rhs;
+      } else {
+        return op->emitOpError("Unexpected operand type for transpose op.");
+      }
+    }
+  }
+
   auto dot_dim_matmul = [&](auto lhs, auto rhs, auto acc) {
     auto precision_attr = op.getPrecisionAttr();
 
@@ -228,7 +259,7 @@ LogicalResult tpu_matmul_rule(const CanonicalizeContext &ctx,
 
       const SmallVector<int64_t> perm_vec =
           SmallVector<int64_t>(perm.begin(), perm.end());
-      lhs = builder.create<vector::TransposeOp>(
+      lhs = builder.create<tpu::TransposeOp>(
           lhs_ty_transposed, lhs,
           DenseI64ArrayAttr::get(builder.getContext(), perm_vec));
     }
@@ -570,14 +601,10 @@ LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
     return op.emitOpError("Vector/scalar mismatch between input and output");
   }
   bool is_vector = static_cast<bool>(src_vty);
-  unsigned src_bitwidth, dst_bitwidth;
-  if (is_vector) {
-    src_bitwidth = src_vty.getElementTypeBitWidth();
-    dst_bitwidth = dst_vty.getElementTypeBitWidth();
-  } else {
-    src_bitwidth = op.getIn().getType().getIntOrFloatBitWidth();
-    dst_bitwidth = op.getType().getIntOrFloatBitWidth();
-  }
+  FAILUREOR_ASSIGN_OR_RETURN(const unsigned src_bitwidth,
+                             getElementTypeBitwidth(op.getIn().getType()));
+  FAILUREOR_ASSIGN_OR_RETURN(const unsigned dst_bitwidth,
+                             getElementTypeBitwidth(op.getType()));
   if (dst_bitwidth > 32) {
     return op.emitOpError("Target bitwidth too large");
   }
@@ -592,6 +619,14 @@ LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
     op.erase();
     return success();
   }
+
+  if ((src_bitwidth < 32 || dst_bitwidth < 32) && !ctx.compatibility_mode) {
+    return op.emitOpError(
+        "On this target float-to-integer conversions can only happen on "
+        "32-bit values. Enable compatibility mode or upcast to float32, cast "
+        "to int32 and truncate to desired bitwidth.");
+  }
+
   Value x = op.getIn();
   // Upcast the input to f32.
   if (src_bitwidth < 32) {
@@ -603,11 +638,6 @@ LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
     }
   }
   if (dst_bitwidth < 32) {
-    if (!ctx.compatibility_mode) {
-      return op.emitOpError(
-          "On this target only float-to-integer conversions can only happen on "
-          "32-bit values. Enable compatibility mode or upcast to float32.");
-    }
     // Need to clip values to match XLA
     auto clip = [&](Value x, Value low, Value high) {
       x = builder.create<arith::MaximumFOp>(x, low);
@@ -635,13 +665,53 @@ LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
     x = builder.create<arith::FPToSIOp>(builder.getI32Type(), x);
   }
   if (dst_bitwidth < 32) {
-    if (!ctx.compatibility_mode) {
-      return op.emitOpError(
-          "On this target only float-to-integer conversions can only happen on "
-          "32-bit values. Enable compatibility mode or cast to int32 and "
-          "truncate later.");
-    }
     x = builder.create<arith::TruncIOp>(op.getType(), x);
+  }
+  op.replaceAllUsesWith(x);
+  op.erase();
+  return success();
+}
+
+LogicalResult canonicalize_sitofp(const CanonicalizeContext &ctx,
+                                  Operation &raw_op) {
+  auto op = cast<arith::SIToFPOp>(raw_op);
+  ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
+  auto src_vty = dyn_cast<VectorType>(op.getIn().getType());
+  auto dst_vty = dyn_cast<VectorType>(op.getType());
+  if (static_cast<bool>(src_vty) != static_cast<bool>(dst_vty)) {
+    return op.emitOpError("Vector/scalar mismatch between input and output");
+  }
+  bool is_vector = static_cast<bool>(src_vty);
+  FAILUREOR_ASSIGN_OR_RETURN(const unsigned src_bitwidth,
+                             getElementTypeBitwidth(op.getIn().getType()));
+  FAILUREOR_ASSIGN_OR_RETURN(const unsigned dst_bitwidth,
+                             getElementTypeBitwidth(op.getType()));
+
+  if ((src_bitwidth < 32 || dst_bitwidth < 32) && !ctx.compatibility_mode) {
+    return op.emitOpError(
+        "On this target integer-to-float conversions can only happen on "
+        "32-bit values. Enable compatibility mode or upcast to int32, cast to "
+        "float32 and truncate to desired bitwidth.");
+  }
+
+  // Canonicalize (intX -> floatY) to (intX -> int32 -> float32 -> floatY).
+  Value x = op.getIn();
+  if (src_bitwidth < 32) {
+    if (is_vector) {
+      x = builder.create<arith::ExtSIOp>(
+          VectorType::get(src_vty.getShape(), builder.getI32Type()), x);
+    } else {
+      x = builder.create<arith::ExtSIOp>(builder.getI32Type(), x);
+    }
+  }
+  if (is_vector) {
+    x = builder.create<arith::SIToFPOp>(
+        VectorType::get(src_vty.getShape(), builder.getF32Type()), x);
+  } else {
+    x = builder.create<arith::SIToFPOp>(builder.getF32Type(), x);
+  }
+  if (dst_bitwidth < 32) {
+    x = builder.create<arith::TruncFOp>(op.getType(), x);
   }
   op.replaceAllUsesWith(x);
   op.erase();
@@ -672,6 +742,17 @@ LogicalResult canonicalize_repeat(const CanonicalizeContext &ctx,
   return success();
 }
 
+LogicalResult canonicalize_vector_transpose(const CanonicalizeContext &ctx,
+                                            Operation &raw_op) {
+  auto op = cast<vector::TransposeOp>(raw_op);
+  ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
+  auto new_op = builder.create<tpu::TransposeOp>(op.getType(), op.getVector(),
+                                                 op.getPermutation());
+  op.replaceAllUsesWith(new_op.getResult());
+  op.erase();
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(const CanonicalizeContext &ctx, Operation &op)>;
 
@@ -682,8 +763,10 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::ExtractOp::getOperationName(), canonicalize_extract},
       {vector::MultiDimReductionOp::getOperationName(),
        canonicalize_multi_dim_reduction},
+      {vector::TransposeOp::getOperationName(), canonicalize_vector_transpose},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
+      {arith::SIToFPOp::getOperationName(), canonicalize_sitofp},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
   return *rules;
 }

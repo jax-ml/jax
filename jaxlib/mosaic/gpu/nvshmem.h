@@ -17,14 +17,15 @@ limitations under the License.
 #define JAXLIB_MOSAIC_GPU_COMM_H_
 
 #include <dlfcn.h>
-#include <mutex>
+
 #include <cstdio>
+#include <cstdlib>
+#include <mutex>
 
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "cuda_runtime_api.h"
 
 #define NVSHMEM_SUCCESS 0
-#define NVSHMEM_LIB_SONAME "libnvshmem_host.so.3"
 
 namespace mosaic {
 namespace gpu {
@@ -33,19 +34,22 @@ namespace gpu {
   FnName = reinterpret_cast<decltype(FnName)>(dlsym(library, #FnName));   \
   if (!FnName) {                                                          \
     fprintf(stderr, #FnName " not available in this library.");           \
-    abort();                                                              \
   }
 
 class NvshmemApi {
  public:
   // Returns a default NvshmemApi for a current process.
   // NvshmemApi follows the Singleton design pattern
-  static NvshmemApi& Default() {
+  static NvshmemApi& Default(bool assert_ok = true) {
     static NvshmemApi instance;
+    if (assert_ok && !instance.is_loaded()) {
+      fprintf(stderr, "Failed to load the NVSHMEM library.\n");
+      abort();
+    }
     return instance;
   }
 
-  int cumodule_int(CUmodule module) {
+  int cumodule_init(CUmodule module) {
     std::lock_guard<std::mutex> lock(mutex_);
     return nvshmemx_cumodule_init(module);
   }
@@ -54,28 +58,32 @@ class NvshmemApi {
     nvshmemx_barrier_all_on_stream(stream);
   }
 
+  bool is_loaded() {
+    return nvshmemx_init_status != nullptr && nvshmemx_init_status() == 2;
+  }
+
   NvshmemApi(NvshmemApi const&)     = delete;
   void operator=(NvshmemApi const&) = delete;
 
  private:
   NvshmemApi() {
-    const char* env_value = getenv("NVSHMEM_LIBRARY_PATH");
+    const char* env_value = getenv("MOSAIC_GPU_NVSHMEM_SO_PATH");
     const char* libnvshmem_path =
-      env_value && *env_value != 0 ? env_value : NVSHMEM_LIB_SONAME;
+        env_value && *env_value != 0 ? env_value : nullptr;
     void* library = dlopen(libnvshmem_path, RTLD_LAZY);
     if (library == nullptr) {
-      fprintf(stderr, "Failed to open %s library: %s", libnvshmem_path, dlerror());
-      abort();
+      fprintf(stderr, "Failed to open library (from %s): %s",
+              libnvshmem_path ? libnvshmem_path : "<in process>", dlerror());
     }
 
-    // Initialize supported NVSHMEM host API
-    NVSHMEM_SET_FN(nvshmemx_cumodule_init)
     NVSHMEM_SET_FN(nvshmemx_barrier_all_on_stream)
+    NVSHMEM_SET_FN(nvshmemx_cumodule_init)
+    NVSHMEM_SET_FN(nvshmemx_init_status)
   }
 
-  // Dlopened NVSHMEM API
-  int (*nvshmemx_cumodule_init)(CUmodule);
   int (*nvshmemx_barrier_all_on_stream)(cudaStream_t);
+  int (*nvshmemx_cumodule_init)(CUmodule);
+  int (*nvshmemx_init_status)();
 
   std::mutex mutex_;
 };

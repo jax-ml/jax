@@ -2705,6 +2705,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
+  # TODO(dfm): Re-write this as a "reshard" when only the sharding changes.
   out_sharding = canonicalize_sharding(out_sharding, 'broadcast_in_dim')
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and
       isinstance(operand, Array) and out_sharding is None):
@@ -3953,7 +3954,7 @@ def broadcasting_sharding_rule(name, *avals):
 
   result_specs = [None] * len(shapes[0])
   for i, (ss, ds) in enumerate(zip(zip(*specs), zip(*shapes))):
-    if all(s == ss[0] for s in ss[1:]):
+    if all(ss[0] == s for s in ss[1:]):
       # if all dimension shardings are same, the resulting dimension sharding is
       # the same.
       result_specs[i] = ss[0]
@@ -3976,7 +3977,7 @@ def broadcasting_sharding_rule(name, *avals):
   return NamedSharding(mesh, P(*result_specs))
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
-           require_same_dtypes=True):
+           require_same_dtypes=True, unreduced_rule=None):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
                        allow_extended_dtype=allow_extended_dtype,
                        require_same=require_same_dtypes)
@@ -3984,7 +3985,8 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
   sharding_rule = partial(broadcasting_sharding_rule, name)
   prim = standard_primitive(
       shape_rule, dtype_rule, name, sharding_rule=sharding_rule,
-      vma_rule=partial(core.standard_vma_rule, name))
+      vma_rule=partial(core.standard_vma_rule, name),
+      unreduced_rule=unreduced_rule)
   batching.defbroadcasting(prim)
   pe.def_trivial_padding(prim)
   return prim
@@ -4572,8 +4574,30 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-# TODO(slebedev): Why does mypy fail to infer the type here?
-add_p: Primitive = standard_naryop([_num, _num], 'add')
+def _add_unreduced(out_sharding, x, y):
+  x_ur, y_ur = x.sharding.spec.unreduced, y.sharding.spec.unreduced
+  if x_ur and y_ur:
+    if x_ur != y_ur:
+      raise core.ShardingTypeError(
+          'lhs and rhs to `add` must be unreduced along the same mesh axes. '
+          f'Got lhs={x_ur}, rhs={y_ur}')
+    res_unreduced = x_ur
+  elif x_ur or y_ur:
+    if x_ur and not y_ur:
+      lhs_str, rhs_str = 'lhs', 'rhs'
+    else:
+      assert not x_ur and y_ur
+      lhs_str, rhs_str = 'rhs', 'lhs'
+    raise core.ShardingTypeError(
+        f'{lhs_str} is unreduced while {rhs_str} is not. `add` operation does'
+        ' not allow this because there will be implicit communication. Please'
+        f' reduce {lhs_str} via `reshard` before calling `add`.')
+  else:
+    res_unreduced = None
+  return out_sharding.with_spec(out_sharding.spec.with_unreduced(res_unreduced))
+
+add_p: Primitive = naryop(_input_dtype, [_num, _num], 'add',
+                          unreduced_rule=_add_unreduced)
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
@@ -4850,11 +4874,11 @@ def _convert_elt_type_folding_rule(consts, eqn):
 
 def _convert_elt_type_fwd_rule(eqn):
   v, = eqn.invars
-  if (not dtypes.issubdtype(eqn.params['new_dtype'], dtypes.extended) and
+  if (v.aval.dtype == eqn.params['new_dtype'] and
+      v.aval.weak_type == eqn.params['weak_type'] and
       not dtypes.issubdtype(v.aval.dtype, dtypes.extended) and
-      v.aval.dtype == eqn.params['new_dtype'] and
-      v.aval.weak_type == eqn.params['weak_type']):
-    return [v], None
+      (eqn.params['sharding'] is None or eqn.params['sharding'] == v.aval.sharding)):
+    return [0], None
   else:
     return [None], eqn
 
@@ -4883,7 +4907,8 @@ convert_element_type_p.def_abstract_eval(
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
             _convert_element_type_weak_type_rule,
             _convert_element_type_sharding_rule,
-            partial(core.standard_vma_rule, convert_element_type_p.name)))
+            partial(core.standard_vma_rule, convert_element_type_p.name),
+            None))
 ad.defjvp2(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 
@@ -5189,11 +5214,26 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
 
+  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
+  rhs_contracting_spec = tuple(rhs.sharding.spec[i] for i in rhs_contracting)
+
   if out_sharding is not None:
     assert isinstance(out_sharding, NamedSharding)
+    if out_sharding.spec.unreduced:
+      if lhs_contracting_spec != rhs_contracting_spec:
+        raise core.ShardingTypeError(
+            'lhs and rhs contracting dims should be sharded identically when'
+            ' out_sharding provided to dot_general mentions unreduced_axes.'
+            f' Got {out_sharding=}, {lhs_contracting_spec=},'
+            f' {rhs_contracting_spec=}')
+      if out_sharding.spec.unreduced != lhs_contracting_spec:
+        raise core.ShardingTypeError(
+            "out_sharding's unreduced axes should be equal to the contracting"
+            f' specs. Got unreduced axes={out_sharding.spec.unreduced} and'
+            f' contracting spec={lhs_contracting_spec}')
     return out_sharding
 
-  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_batch_spec = tuple(lhs.sharding.spec[i] for i in lhs_batch)
   rhs_batch_spec = tuple(rhs.sharding.spec[i] for i in rhs_batch)
   msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
@@ -5201,8 +5241,6 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
         f"{rhs_batch_spec}.")
   _check_specs_match(lhs_batch_spec, rhs_batch_spec, msg)
 
-  lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
-  rhs_contracting_spec = tuple(rhs.sharding.spec[i] for i in rhs_contracting)
   msg = ("dot_general requires contracting dimensions to have consistent "
         f"sharding, got {lhs_contracting_spec} and {rhs_contracting_spec}.")
   _check_specs_match(lhs_contracting_spec, rhs_contracting_spec, msg)
@@ -6447,8 +6485,10 @@ def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
 
 def _broadcast_in_dim_fwd_rule(eqn):
   v, *dyn = eqn.invars
-  if not dyn and core.definitely_equal_shape(eqn.params['shape'], v.aval.shape):
-    return [v], None
+  if (not dyn and core.definitely_equal_shape(eqn.params['shape'], v.aval.shape)
+      and (eqn.params['sharding'] is None or
+           eqn.params['sharding'] == v.aval.sharding)):
+    return [0], None
   else:
     return [None], eqn
 

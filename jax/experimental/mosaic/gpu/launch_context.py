@@ -323,6 +323,7 @@ class Scratch:
 
 @dataclasses.dataclass()
 class LaunchContext:
+  module: ir.Module
   scratch: Scratch
   cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
@@ -330,6 +331,7 @@ class LaunchContext:
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...]],
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
+  is_device_collective: bool = False
 
   @contextlib.contextmanager
   def named_region(self, *args, **kwargs):
@@ -454,12 +456,19 @@ class LaunchContext:
               tma_dtype = 3
             elif bitwidth == 64:
               tma_dtype = 4
+            else:
+              raise ValueError(f"Unsupported integer bitwidth: {bitwidth}")
           elif ir.F16Type.isinstance(ref_ty.element_type):
             tma_dtype = 5
           elif ir.F32Type.isinstance(ref_ty.element_type):
             tma_dtype = 6
           elif ir.BF16Type.isinstance(ref_ty.element_type):
             tma_dtype = 7
+          # We treat 8 bit floats as 8 bit integers
+          elif ir.Float8E5M2Type.isinstance(ref_ty.element_type):
+            tma_dtype = 1
+          elif ir.Float8E4M3FNType.isinstance(ref_ty.element_type):
+            tma_dtype = 1
           else:
             raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")
           dtype_or_bitwidth = c(tma_dtype, i64)
@@ -582,12 +591,18 @@ class LaunchContext:
           " multiple of 16 bytes"
       )
 
-    if reduction_op is not None and jaxlib.version < (0, 5, 4):
-      raise ValueError("TMA with reduction is only supported with jaxlib >= 0.5.4")
-    if reduction_op is not None and not isinstance(gmem_ref_ty.element_type, ir.FloatType):
-      raise ValueError("TMA with reduction is only supported with float dtype")
-    if reduction_op is not None and reduction_op != "add":
-      raise ValueError("TMA with reduction is only supported with add operation")
+    if reduction_op is not None:
+      if not any(
+          t.isinstance(gmem_ref_ty.element_type)
+          for t in (ir.F32Type, ir.BF16Type, ir.F16Type)
+      ):
+        raise ValueError(
+            "TMA with reduction is only supported with f32, f16 and bf16"
+        )
+      if reduction_op != "add":
+        raise ValueError(
+            "TMA with reduction is only supported with add operation"
+        )
 
     # NOTE: TMA supports OOB indices, so we skip the check.
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
@@ -845,3 +860,34 @@ class LaunchContext:
   ):
     nvvm.cp_async_bulk_wait_group(allow_groups, read=await_read_only)
     utils.warpgroup_barrier()
+
+  def _ensure_nvshmem_decls(self):
+    if self.is_device_collective:
+      return
+    self.is_device_collective = True
+    with ir.InsertionPoint(self.module.body):
+      nvshmem_my_pe_type = ir.TypeAttr.get(ir.Type.parse("!llvm.func<i32()>"))
+      llvm.LLVMFuncOp(
+          "nvshmem_my_pe", nvshmem_my_pe_type, sym_visibility="private"
+      )
+      nvshmem_ptr_type = ir.TypeAttr.get(
+          ir.Type.parse("!llvm.func<!llvm.ptr(!llvm.ptr,i32)>")
+      )
+      llvm.LLVMFuncOp("nvshmem_ptr", nvshmem_ptr_type, sym_visibility="private")
+
+  def to_remote(self, ref: ir.Value, peer: ir.Value):
+    self._ensure_nvshmem_decls()
+    if ir.MemRefType.isinstance(ref.type):
+      return utils.ptr_as_memref(
+          self.to_remote(utils.memref_ptr(ref), peer), ref.type
+      )
+    if ref.type != ir.Type.parse("!llvm.ptr"):
+      raise ValueError(f"Unsupported type for to_remote: {ref.type}")
+    if peer.type != ir.IntegerType.get_signless(32):
+      raise ValueError(f"peer index must be an i32, got {peer.type}")
+    return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
+
+  def device_id(self) -> ir.Value:
+    self._ensure_nvshmem_decls()
+    i32 = ir.IntegerType.get_signless(32)
+    return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")

@@ -26,6 +26,7 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -323,6 +324,41 @@ LogicalResult MemRefReshapeOp::verify() {
   return success();
 }
 
+LogicalResult TransposeOp::verify() {
+  auto source_type = getSourceVectorType();
+  auto permutation = getPermutation();
+  auto output_type = getResultVectorType();
+  auto input_shape = source_type.getShape();
+  auto output_shape = output_type.getShape();
+  if (source_type.getElementType() != output_type.getElementType()) {
+    return emitOpError("Expected input and output element types to match");
+  }
+  if (permutation.size() != source_type.getRank()) {
+    return emitOpError("Expected permutation rank to match input rank");
+  }
+  if (permutation.size() != output_type.getRank()) {
+    return emitOpError("Expected permutation rank to match output rank");
+  }
+  std::vector<bool> seen_dims(source_type.getRank(), false);
+  for (int64_t dim : permutation) {
+    if (dim < 0 || dim >= source_type.getRank()) {
+      return emitOpError("Permutation element out of bounds: ") << dim;
+    }
+    if (seen_dims[dim]) {
+      return emitOpError("Permutation element repeated: ") << dim;
+    }
+    seen_dims[dim] = true;
+  }
+  for (int i = 0; i < source_type.getRank(); ++i) {
+    if (input_shape[permutation[i]] != output_shape[i]) {
+      return emitOpError(
+          "Expected input shape permuted by the given permutation to match the "
+          "output shape");
+    }
+  }
+  return success();
+}
+
 LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
                                             PatternRewriter &rewriter) {
   auto src_ty = op.getInput().getType();
@@ -504,6 +540,36 @@ LogicalResult VectorStoreOp::verify() {
     }
     if (value_ty.getShape() != getMask().getType().getShape())
       return emitOpError("Expected valueToStore shape to match mask shape");
+  }
+  return success();
+}
+
+LogicalResult VectorLoadOp::verify() {
+  const MemRefType ref_ty = getBase().getType();
+  if (!getStrides().empty()) {
+    if (llvm::size(getStrides()) != ref_ty.getRank()) {
+      return emitOpError("Expected ") << ref_ty.getRank() << " strides.";
+    }
+    return emitError("Not implemented: general vector load with strides.");
+  }
+  const VectorType value_ty = getResult().getType();
+
+  if (value_ty.getElementType() != ref_ty.getElementType()) {
+    return emitOpError("Expected base and result element type to match.");
+  }
+  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+    return emitOpError("Expected ") << ref_ty.getRank() << " indices.";
+  }
+  if (getMask()) {
+    if (value_ty.getElementTypeBitWidth() != 32) {
+      return emitError(
+          "Not implemented: masked load with non-32-bit element type");
+    }
+    if (vector::isBroadcastableTo(getMask().getType(), value_ty) !=
+        vector::BroadcastableToResult::Success) {
+      return emitOpError(
+          "Expected mask shape to be broadcastable to result shape.");
+    }
   }
   return success();
 }
@@ -1265,6 +1331,50 @@ LogicalResult AssumeMultipleOp::verify() {
                  "Illegal user annotation, expected an integer that is "
                  "divisible by the multiple, but got ")
              << int_attr.getInt() << " % " << divisor;
+    }
+  }
+  return success();
+}
+
+LogicalResult SublaneShuffleOp::verify() {
+  auto lhs = getLhs();
+  auto rhs = getRhs();
+  auto result = getResult();
+  auto lhs_ty = dyn_cast<VectorType>(lhs.getType());
+  auto rhs_ty = dyn_cast<VectorType>(rhs.getType());
+  auto result_ty = dyn_cast<VectorType>(result.getType());
+
+  if (!lhs_ty || !rhs_ty || !result_ty) {
+    return emitOpError("Expected operands and result to be vector types");
+  }
+
+  if (lhs_ty.getShape() != rhs_ty.getShape() ||
+      lhs_ty.getShape() != result_ty.getShape()) {
+    return emitOpError("Expected lhs, rhs, and result shapes to match");
+  }
+  if (lhs_ty.getElementType() != rhs_ty.getElementType() ||
+      lhs_ty.getElementType() != result_ty.getElementType()) {
+    return emitOpError("Expected lhs, rhs, and result element types to match");
+  }
+
+  auto pattern = getPattern();
+  auto shape = result_ty.getShape();
+  if (shape.size() < 2 || shape.size() > 3) {
+    return emitOpError("Vreg rank should be 2 or 3");
+  }
+  auto sublane_count = shape[0];
+
+  if (pattern.size() != sublane_count) {
+    return emitOpError("Expected pattern size (")
+           << pattern.size() << ") to match result/operand sublanes ("
+           << sublane_count << ")";
+  }
+
+  int64_t total_input_sublanes = sublane_count * 2;
+  for (int32_t idx : pattern) {
+    if (idx < 0 || idx >= total_input_sublanes) {
+      return emitOpError("Pattern index ") << idx << " out of bounds [0, "
+                                           << (total_input_sublanes - 1) << "]";
     }
   }
   return success();

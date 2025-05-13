@@ -94,8 +94,7 @@ struct PyArray_Storage {
                   std::vector<int64_t> shape, nanobind::object sharding,
                   bool committed, nb_class_ptr<PyClient> py_client,
                   std::optional<nb_traceback> traceback,
-                  tsl::RCReference<ifrt::Array> ifrt_array,
-                  xla::PjRtFuture<> result_status);
+                  ifrt::ArrayRef ifrt_array, xla::PjRtFuture<> result_status);
 
   ~PyArray_Storage();
   nanobind::handle AsHandle();
@@ -111,7 +110,7 @@ struct PyArray_Storage {
 
   nb_class_ptr<PyClient> py_client;
   std::optional<nb_traceback> traceback;
-  tsl::RCReference<ifrt::Array> ifrt_array;
+  ifrt::ArrayRef ifrt_array;
   nanobind::object fully_replicated_array = nanobind::none();
 
   // optional field, used only in python
@@ -153,20 +152,19 @@ class PyArray : public nanobind::object {
   PyArray(nanobind::object aval, bool weak_type, nb_dtype dtype,
           std::vector<int64_t> shape, nanobind::object sharding,
           nb_class_ptr<PyClient> py_client,
-          std::optional<nb_traceback> traceback,
-          tsl::RCReference<ifrt::Array> ifrt_array, bool committed,
-          bool skip_checks,
+          std::optional<nb_traceback> traceback, ifrt::ArrayRef ifrt_array,
+          bool committed, bool skip_checks,
           xla::PjRtFuture<> result_status = xla::PjRtFuture<>());
 
   static PyArray MakeFromSingleDeviceArray(
       nb_class_ptr<PyClient> py_client, std::optional<nb_traceback> traceback,
-      tsl::RCReference<ifrt::Array> ifrt_array, bool weak_type, bool committed,
+      ifrt::ArrayRef ifrt_array, bool weak_type, bool committed,
       xla::PjRtFuture<> result_status = xla::PjRtFuture<>());
 
   static PyArray MakeFromIfrtArrayAndSharding(
       nb_class_ptr<PyClient> py_client, std::optional<nb_traceback> traceback,
-      tsl::RCReference<ifrt::Array> ifrt_array, nanobind::object sharding,
-      bool weak_type, bool committed, bool skip_checks);
+      ifrt::ArrayRef ifrt_array, nanobind::object sharding, bool weak_type,
+      bool committed, bool skip_checks);
 
   static absl::Status RegisterTypes(nanobind::module_& m);
 
@@ -325,7 +323,7 @@ class PyArray : public nanobind::object {
                                      nanobind::object sharding,
                                      nanobind::object aval);
 
-  void SetIfrtArray(tsl::RCReference<ifrt::Array> ifrt_array);
+  void SetIfrtArray(ifrt::ArrayRef ifrt_array);
 
   Storage& GetStorage();
   const Storage& GetStorage() const;
@@ -341,8 +339,7 @@ class PyArrayResultHandler {
   PyArray Call(absl::Span<const PyArray> py_arrays) const;
   PyArray Call(PyArray py_array) const;
 
-  PyArray Call(nb_class_ptr<PyClient> py_client,
-               tsl::RCReference<ifrt::Array> ifrt_array,
+  PyArray Call(nb_class_ptr<PyClient> py_client, ifrt::ArrayRef ifrt_array,
                xla::PjRtFuture<> result_status = xla::PjRtFuture<>()) const;
 
  private:

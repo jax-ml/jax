@@ -40,6 +40,7 @@ from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 
 # mypy: ignore-errors
 
+WARP_SIZE: int = 32
 WARPGROUP_SIZE: int = 128
 DYNAMIC = -9223372036854775808
 DYNAMIC32 = -2147483648
@@ -64,6 +65,9 @@ WORKGROUP_NVPTX_ADDRESS_SPACE = gpu_address_space_to_nvptx(
 
 
 def ptr_as_memref(ptr, memref_ty: ir.MemRefType, ptr_memory_space: int | None = None):
+  strides, offset = memref_ty.get_strides_and_offset()
+  if offset != 0:
+    raise ValueError("Non-zero offset is not supported for ptr_as_memref")
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
   ptr_ty = "ptr" if ptr_memory_space is None else f"ptr<{ptr_memory_space}>"
@@ -84,7 +88,7 @@ def ptr_as_memref(ptr, memref_ty: ir.MemRefType, ptr_memory_space: int | None = 
       desc = llvm.InsertValueOp(
           desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [3, i]
       )
-    for i, s in enumerate(get_contiguous_strides(memref_ty.shape)):
+    for i, s in enumerate(strides):
       desc = llvm.InsertValueOp(
           desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [4, i]
       )
@@ -1251,13 +1255,24 @@ def dyn_dot(x, y):
 
 def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   i32 = ir.IntegerType.get_signless(32)
+  index = ir.IndexType.get()
   if isinstance(distance, int):
     distance = c(distance, i32)
   if (result_type := x.type) != i32:
+    if (x_bitwidth := bitwidth(x.type)) < 32:  # Pad to 32-bits if necessary.
+      x = bitcast(x, ir.IntegerType.get_signless(x_bitwidth))
+      empty32 = llvm.mlir_undef(ir.VectorType.get((32 // x_bitwidth,), x.type))
+      x = vector.insertelement(x, empty32, position=c(0, index))
+    elif x_bitwidth != 32:
+      raise ValueError(f"Unsupported bitwidth {x_bitwidth}")
     x = bitcast(x, i32)
   y = nvvm.shfl_sync(
       i32, c(0xFFFFFFFF, i32), x, distance, c(0x1F, i32), nvvm.ShflKind.bfly,
   )
+  if (x_bitwidth := bitwidth(result_type)) < 32:
+    bits_ty = ir.IntegerType.get_signless(x_bitwidth)
+    y_vec = bitcast(y, ir.VectorType.get((32 // x_bitwidth,), x.type))
+    y = vector.extractelement(y_vec, position=c(0, index))
   return bitcast(y, result_type)
 
 

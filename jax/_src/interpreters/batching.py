@@ -458,6 +458,8 @@ class AxisData:
 
 def get_sharding_for_vmap(axis_data, orig_sharding, axis):
   val = axis_data.explicit_mesh_axis
+  # TODO(yashkatariya): Preserve unreduced here using
+  # `orig_sharding.spec.with_partitions`
   new_spec = P(*tuple_insert(orig_sharding.spec, axis, val))
   return NamedSharding(orig_sharding.mesh, new_spec)
 

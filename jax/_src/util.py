@@ -20,6 +20,7 @@ import functools
 from functools import partial
 import itertools as it
 import logging
+import math
 import operator
 from typing import (Any, Generic, SupportsIndex, TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
@@ -42,29 +43,32 @@ T1 = TypeVar("T1")
 T2 = TypeVar("T2")
 T3 = TypeVar("T3")
 
+# safe_zip cannot yet be fully annotated, so we use a strategy similar
+# to that used for builtins.zip in python/typeshed. This supports
+# return types matching input types for up to three arguments.
+@overload
+def safe_zip(__arg1: Iterable[T1], /) -> list[tuple[T1]]: ...
+@overload
+def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[tuple[T1, T2]]: ...
+@overload
+def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[tuple[T1, T2, T3]]: ...
+@overload
+def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> list[tuple[Any, ...]]: ...
 
-if TYPE_CHECKING:
-  # safe_zip cannot yet be fully annotated, so we use a strategy similar
-  # to that used for builtins.zip in python/typeshed. This supports
-  # return types matching input types for up to three arguments.
-  @overload
-  def safe_zip(__arg1: Iterable[T1]) -> list[tuple[T1]]: ...
-  @overload
-  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2]) -> list[tuple[T1, T2]]: ...
-  @overload
-  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> list[tuple[T1, T2, T3]]: ...
-  @overload
-  def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> list[tuple[Any, ...]]: ...
+def safe_zip(*args):
+  """
+  Like builtin :func:`zip`, but with additional safety checks.
 
-  def safe_zip(*args):
-    args = list(map(list, args))
-    n = len(args[0])
-    for arg in args[1:]:
-      assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
-    return list(zip(*args))
+  The differences from :func:`zip` are:
 
-else:
-  safe_zip = jaxlib_utils.safe_zip
+  - :func:`safe_zip` checks that at least one argument is provided.
+  - :func:`safe_zip` checks that all arguments have the same length.
+  - :func:`safe_zip` returns an eagerly-evaluated list instead of a
+    lazily-evaluated iterator.
+  """
+  if not args:
+    raise TypeError("safe_zip requires at least 1 argument.")
+  return list(zip(*args, strict=True))
 
 
 if TYPE_CHECKING:
@@ -672,3 +676,12 @@ def test_event(name: str, *args) -> None:
 
 if hasattr(jaxlib_utils, "Mutex"):
   Mutex = jaxlib_utils.Mutex
+
+
+def pprint_bytes(num_bytes: int | float) -> str:
+  prefixes = ("", "K", "M", "G", "T")
+  if num_bytes <= 0:
+    return "0.00B"
+  exponent = min(math.floor(math.log(num_bytes, 1000)), len(prefixes) - 1)
+  scaled_value = num_bytes / (1000**exponent)
+  return f"{scaled_value:.2f}{prefixes[exponent]}B"

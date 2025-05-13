@@ -487,10 +487,26 @@ NB_MODULE(_jax, m) {
               &CompiledMemoryStats::host_alias_size_in_bytes)
       .def_rw("host_temp_size_in_bytes",
               &CompiledMemoryStats::host_temp_size_in_bytes)
-      .def_prop_ro("serialized_hlo_proto",
+      .def_prop_ro("serialized_buffer_assignment_proto",
                    [](const CompiledMemoryStats& cms) -> nb::bytes {
-                     return nb::bytes(cms.serialized_hlo_proto.data(),
-                                      cms.serialized_hlo_proto.size());
+#if JAX_IFRT_VERSION_NUMBER >= 7
+                     if (cms.buffer_assignment.has_value()) {
+                       std::string s =
+                           cms.buffer_assignment->SerializeAsString();
+                       return nb::bytes(s.data(), s.size());
+                     } else {
+                       return nb::bytes();
+                     }
+#else
+                     xla::HloProto hlo;
+                     if (!cms.serialized_hlo_proto.empty() &&
+                         hlo.ParseFromString(cms.serialized_hlo_proto)) {
+                       std::string s =
+                           hlo.buffer_assignment().SerializeAsString();
+                       return nb::bytes(s.data(), s.size());
+                     }
+                     return nb::bytes();
+#endif
                    })
       .def("__str__", &CompiledMemoryStats::DebugString);
 
@@ -511,7 +527,6 @@ NB_MODULE(_jax, m) {
       .def(
           "get_compiled_memory_stats",
           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetCompiledMemoryStats))
-      .def("delete", &PyLoadedExecutable::Delete)
       .def("execute_sharded",
            xla::ValueOrThrowWrapper(&PyLoadedExecutable::ExecuteSharded),
            nb::arg("arguments"), nb::arg("with_tokens") = false)
@@ -612,7 +627,11 @@ NB_MODULE(_jax, m) {
       .def("reached_sync_point",
            [](tsl::PreemptionSyncManager& manager, int step_counter) {
              return manager.ReachedSyncPoint(step_counter);
-           });
+           })
+      .def("shutdown", [](tsl::PreemptionSyncManager& manager) {
+        nb::gil_scoped_release gil_release;
+        manager.Shutdown();
+      });
   m.def("create_preemption_sync_manager",
         []() { return tsl::CreatePreemptionSyncManager(); });
 

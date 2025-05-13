@@ -4652,7 +4652,7 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     return op.emitOpError("Not implemented: Unsupported 2D layouts");
   }
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
-  auto transpose_op = cast<vector::TransposeOp>(op);
+  auto transpose_op = cast<tpu::TransposeOp>(op);
   VectorType src_ty = transpose_op.getSourceVectorType();
   VectorType dst_ty = transpose_op.getResultVectorType();
   const int64_t rank = src_ty.getRank();
@@ -4735,7 +4735,7 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     const Value src_tile = assemble(builder, tile_ty_in, layout_in,
                                     src_tile_vregs, ctx.target_shape);
     auto new_transpose_op =
-        builder.create<vector::TransposeOp>(tile_ty_out, src_tile, minor_perm);
+        builder.create<tpu::TransposeOp>(tile_ty_out, src_tile, minor_perm);
     new_transpose_op->setAttr("out_layout",
                               builder.getAttr<VectorLayoutAttr>(layout_out));
     auto unroll_vectors_op = builder.create<tpu::UnrollVectorsOp>(
@@ -4871,7 +4871,7 @@ const llvm::StringMap<rule_type> &rules() {
          vector_extract_strided_slice_rule},
         {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
         {vector::StoreOp::getOperationName(), vector_store_rule},
-        {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
+        {tpu::TransposeOp::getOperationName(), vector_transpose_rule}};
 
     for (const auto &[name, rule] : mlir::tpu::extensions::rules()) {
       rules->insert({name, rule});

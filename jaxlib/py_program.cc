@@ -139,10 +139,10 @@ ifrt::MemoryKind GetIfrtMemoryKind(nb::handle sharding) {
 
 // Makes `ifrt::Sharding` from a JAX Sharding. It requires the number of shape
 // dimensions, which may become necessary when building an HLO sharding.
-absl::StatusOr<std::shared_ptr<const ifrt::Sharding>> GetIfrtSharding(
-    nb::handle sharding, int64_t num_dimensions) {
+absl::StatusOr<ifrt::ShardingRef> GetIfrtSharding(nb::handle sharding,
+                                                  int64_t num_dimensions) {
   auto ifrt_memory_kind = GetIfrtMemoryKind(sharding);
-  std::shared_ptr<const ifrt::Sharding> ifrt_sharding;
+  ifrt::ShardingRef ifrt_sharding;
   if (sharding.type().is(jax::SingleDeviceSharding::type())) {
     TF_ASSIGN_OR_RETURN(auto ifrt_device_list,
                         nb::cast<const jax::SingleDeviceSharding*>(sharding)

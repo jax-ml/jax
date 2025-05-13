@@ -110,7 +110,7 @@ struct ResultSpec {
 struct ShardArgResult {
   // Points to the on-device array.
   // ifrt_array->sharding().num_shards() == `num_devices`.
-  tsl::RCReference<xla::ifrt::Array> ifrt_array;
+  xla::ifrt::ArrayRef ifrt_array;
   // The Python argument will be always be copied to `owning_sda`.
   nb::object owning_sda;
 };
@@ -615,7 +615,7 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
   const int num_args = flat_dynamic_args.size();
 
   // We need [num_args] for the `Execute` call below.
-  std::vector<tsl::RCReference<xla::ifrt::Array>> num_args_arrays(num_args);
+  std::vector<xla::ifrt::ArrayRef> num_args_arrays(num_args);
   for (int i = 0; i < num_args; ++i) {
     TF_ASSIGN_OR_RETURN(
         ShardArgResult sharded_arg,
@@ -634,7 +634,7 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
       tsl::Env::Default()->GetCurrentThreadId();
 
   // A vector of [num_outputs].
-  std::vector<tsl::RCReference<xla::ifrt::Array>> output_arrays;
+  std::vector<xla::ifrt::ArrayRef> output_arrays;
   {
     nb::gil_scoped_release gil_release;
     auto ifrt_executable = cache_entry.executable->ifrt_executable();

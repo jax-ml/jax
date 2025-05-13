@@ -16,11 +16,12 @@
 from __future__ import annotations
 
 import collections
-import contextlib
 from collections.abc import Callable, Iterable, Iterator, Sequence
+import contextlib
 import dataclasses
 import functools
 from functools import partial
+import heapq
 import io
 import itertools
 import operator
@@ -31,14 +32,13 @@ import typing
 from typing import Any, NamedTuple, Protocol, Union, cast as type_cast
 import warnings
 
-import numpy as np
-
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects as effects_lib
+from jax._src import jaxpr_util
 from jax._src import linear_util as lu
 from jax._src import path
 from jax._src import sharding_impls
@@ -48,19 +48,20 @@ from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
-from jax._src.partition_spec import PartitionSpec
-from jax._src.mesh import AxisType
-from jax._src.sharding import Sharding as JSharding
-from jax._src.sharding_impls import (AUTO, NamedSharding,
-                                     modify_sdy_sharding_wrt_axis_types,
-                                     SdyArraySharding, SdyArrayShardingList)
-from jax._src.util import foreach
-from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir, passmanager
-from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir import register_jax_dialects
+from jax._src.lib.mlir.dialects import func as func_dialect, hlo
+from jax._src.mesh import AxisType
+from jax._src.partition_spec import PartitionSpec
+from jax._src.sharding import Sharding as JSharding
+from jax._src.sharding_impls import ( AUTO, NamedSharding,
+                                     SdyArraySharding, SdyArrayShardingList,
+                                     modify_sdy_sharding_wrt_axis_types)
 from jax._src.state.types import AbstractRef
+from jax._src.util import foreach
+import numpy as np
 
 # mypy: ignore-errors
 
@@ -1104,6 +1105,51 @@ def _get_unconstrained_variants(s, aval) -> UnconstrainedVariants:
       unconstrained_dims=unconstrained_dims)
 
 
+def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
+  """Check if a JAXPR contains an excessive amount of constants, if so, report where they were captured"""
+  if (threshold := config.captured_constants_warn_bytes.value) == -1:
+    return
+
+  # need the unaesthetic getter here as some of the consts in the test suite are arbitrary objects
+  total_iter, nbytes_iter = itertools.tee(
+      map(lambda c: getattr(c, "nbytes", 0), closed_jaxpr.consts)
+  )
+
+  if (total_bytes := sum(total_iter)) < threshold:
+    return
+
+  message = (
+      "A large amount of constants were captured during lowering"
+      f" ({util.pprint_bytes(total_bytes)} total). If this is intentional,"
+      " disable this warning by setting JAX_CAPTURED_CONSTANTS_WARN_BYTES=-1. "
+  )
+
+  if not (num_frames := config.captured_constants_report_frames.value):
+    message += (
+        "To obtain a report of where these constants were encountered, "
+        "set JAX_CAPTURED_CONSTANTS_REPORT_FRAMES=-1."
+    )
+    warnings.warn(message)
+    return
+
+  message += (
+      "The subsequent report may be disabled by setting JAX_CAPTURED_CONSTANTS_REPORT_FRAMES=0.\n\n"
+      f"Largest {min(num_frames, len(closed_jaxpr.consts))} allocation(s):\n"
+  )
+  try:
+    nbytes_var_const = zip(nbytes_iter, closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts)
+    for nbytes, var, const in heapq.nlargest(5, nbytes_var_const, key=operator.itemgetter(0)):
+      message += f"  Constant {type(const)}, {var.aval.str_short()}, {util.pprint_bytes(nbytes)} captured at:\n"
+
+      for eqn in jaxpr_util.eqns_using_var(closed_jaxpr.jaxpr, var):
+        call_frame_source_info = source_info_util.summarize(eqn.source_info, num_frames)
+        message += "  " * 2 + call_frame_source_info.replace("\n", "\n" + "  " * 2) + "\n\n"
+
+    warnings.warn(message)
+  except Exception as exc:
+    warnings.warn(message + f" Exception raised while generating report: {exc}")
+
+
 def lower_jaxpr_to_module(
     module_name: str,
     jaxpr: core.ClosedJaxpr,
@@ -1441,6 +1487,8 @@ def lower_jaxpr_to_fun(
     MLIR func op
   """
   util.test_event("lower_jaxpr_to_fun", name)
+  check_jaxpr_constants(jaxpr)
+
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
   dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars

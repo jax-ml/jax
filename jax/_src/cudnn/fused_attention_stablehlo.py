@@ -478,7 +478,7 @@ def _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key):
     batch = offsets.shape[0]
     offsets = jnp.where(
         offsets >= 0,
-        offsets + (jnp.arange(batch) * max_seq)[..., jnp.newaxis],
+        offsets + (jnp.arange(batch, dtype=offsets.dtype) * max_seq)[..., jnp.newaxis],
         offsets,
     )
     return offsets

@@ -91,7 +91,7 @@ limitations under the License.
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
-#include "jaxlib/mosaic/gpu/mosaic_gpu_comm.h"
+#include "jaxlib/mosaic/gpu/nvshmem.h"
 #include "jaxlib/mosaic/gpu/passes.h"
 #include "jaxlib/mosaic/gpu/serde.h"
 #include "jaxlib/mosaic/gpu/target.h"
@@ -99,6 +99,7 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace {
 
@@ -399,13 +400,15 @@ bool is_nvshmem_used(mlir::ModuleOp module) {
 }
 
 absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
-  const char * nvshmem_path_ptr = getenv("MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH");
-  if (!nvshmem_path_ptr) return absl::InternalError("Failed to get MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH");
+  const char* nvshmem_path_ptr = getenv("MOSAIC_GPU_NVSHMEM_BC_PATH");
+  if (!nvshmem_path_ptr)
+    return absl::InternalError("Failed to get MOSAIC_GPU_NVSHMEM_BC_PATH");
   return nvshmem_path_ptr;
 }
 
 absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     mlir::ModuleOp module) {
+  tsl::profiler::TraceMe trace("Compile");
   auto sm_and_ptx_isa = GetSmAndPtxIsaVersion();
   if (!sm_and_ptx_isa.ok()) {
     return sm_and_ptx_isa.status();
@@ -416,6 +419,11 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
   std::string nvshmem_path = "";
   if (is_comm_used) {
     TF_ASSIGN_OR_RETURN(nvshmem_path, get_nvshmem_llvm_lib_path());
+    if (!mosaic::gpu::NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
+      return absl::InternalError(
+          "Failed to load the NVSHMEM library. Make sure it is installed (e.g. "
+          "`pip install nvidia-nvshmem-cu12`).");
+    }
   }
   DumpCompilationOutput(module, sm, ptx_isa, nvshmem_path);
   auto passes = GetPassPipeline(
@@ -577,6 +585,7 @@ absl::StatusOr<CompiledKernel*> CachedCompileAndInit(
   absl::MutexLock lock(mutex);
   // We released the reader lock, another thread might have initialized it.
   if (cache->find(key) == cache->end()) {
+    tsl::profiler::TraceMe trace("Compilation cache miss");
     auto compiled = CompileAndInit(module);
     if (!compiled.ok()) {
       return compiled.status();

@@ -41,7 +41,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:mosaic_gpu",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 
 jax_multiplatform_test(
@@ -104,7 +104,10 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = ["gpu_h100"],
     main = "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
-    tags = ["notap"],
+    tags = [
+        "manual",
+        "notap",
+    ],
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("numpy"),

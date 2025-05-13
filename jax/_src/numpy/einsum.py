@@ -25,7 +25,7 @@ from jax._src.api import jit, named_call
 from jax._src.lax import lax
 from jax._src.lax.lax import PrecisionLike
 from jax._src.numpy import util
-from jax._src.sharding_impls import canonicalize_sharding, NamedSharding, PartitionSpec as P
+from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import partition_list, set_module, unzip2
 
@@ -422,7 +422,8 @@ def _einsum(
         " instances. Please file a bug if this is not enough for your use case.")
   dtypes.check_user_dtype_supported(preferred_element_type, "einsum")
   if preferred_element_type is None:
-    preferred_element_type, output_weak_type = dtypes.result_type(*operands, return_weak_type_flag=True)
+    preferred_element_type, output_weak_type = dtypes.result_type(
+        *operands, return_weak_type_flag=True)
   else:
     output_weak_type = False
 
@@ -557,7 +558,7 @@ def _einsum(
           spec = out_sharding.spec
           inverse_spec = tuple(spec[result_names.index(name)] for name in names)
           dot_general_out_sharding = NamedSharding(
-              out_sharding.mesh, P(*inverse_spec))
+              out_sharding.mesh, spec.with_partitions(inverse_spec))
         else:
           dot_general_out_sharding = out_sharding  # type: ignore
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))

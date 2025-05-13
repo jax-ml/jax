@@ -32,3 +32,7 @@ from jax._src.dtypes import (
 from jax._src.earray import (
     EArray as EArray
 )
+from jax._src.core import (
+    mutable_array as mutable_array,
+    MutableArray as MutableArray,
+)

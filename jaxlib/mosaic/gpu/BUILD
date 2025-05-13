@@ -23,7 +23,18 @@ package(
 py_library(
     name = "mosaic_gpu",
     data = [":libmosaic_gpu_runtime.so"],
-    deps = [":_mosaic_gpu_ext"],
+    deps = [
+        ":_mosaic_gpu_ext",
+        ":mosaic_gpu_support",
+    ],
+)
+
+cc_library(
+    name = "mosaic_gpu_support",
+    deps = [
+        ":custom_call",
+        ":runtime",
+    ],
 )
 
 cc_library(
@@ -112,17 +123,22 @@ cc_library(
     name = "runtime",
     srcs = ["runtime.cc"],
     # Linker may prune these symbols if they are not explicitly exported.
-    linkopts = ["-Wl,--export-dynamic-symbol='mosaic_gpu_*'"],
+    linkopts = [
+        "-Wl,--export-dynamic-symbol='mosaic_gpu_*'",
+        "-Wl,--export-dynamic-symbol='nvshmemx_barrier_all_on_stream'",
+        "-Wl,--export-dynamic-symbol='nvshmemx_cumodule_init'",
+        "-Wl,--export-dynamic-symbol='nvshmemx_init_status'",
+    ],
     deps = [
-        ":mosaic_gpu_comm",
+        ":nvshmem",
         "@local_config_cuda//cuda:cuda_headers",
     ],
     alwayslink = True,
 )
 
 cc_library(
-    name = "mosaic_gpu_comm",
-    hdrs = ["mosaic_gpu_comm.h"],
+    name = "nvshmem",
+    hdrs = ["nvshmem.h"],
     deps = [
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
@@ -133,7 +149,7 @@ cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     deps = [
-        ":mosaic_gpu_comm",
+        ":nvshmem",
         ":passes",
         ":target",
         "//jaxlib/cuda:cuda_vendor",
@@ -187,6 +203,7 @@ cc_library(
         "@llvm-project//mlir:UBToLLVM",
         "@llvm-project//mlir:VectorDialect",
         "@llvm-project//mlir:VectorToLLVM",
+        "@tsl//tsl/profiler/lib:traceme",
         "@xla//xla/ffi",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/service:custom_call_status",
@@ -224,7 +241,7 @@ cc_binary(
         "notap",
     ],
     deps = [
-        "//jaxlib/mosaic/gpu:mosaic_gpu_comm",
+        ":nvshmem",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
     ],

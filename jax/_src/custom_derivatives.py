@@ -487,6 +487,21 @@ def _custom_jvp_call_dce(
 pe.dce_rules[custom_jvp_call_p] = _custom_jvp_call_dce
 
 
+def _custom_jvp_call_pp_rule(eqn: core.JaxprEqn,
+                             context: core.JaxprPpContext,
+                             settings: core.JaxprPpSettings) -> core.pp.Doc:
+  params = dict(eqn.params)
+  if not params["num_consts"]:
+    params.pop("num_consts")
+  params["jvp"] = params.pop("jvp_jaxpr_fun").debug_info.func_name
+  names = sorted(params)
+  params["name"] = params["call_jaxpr"].jaxpr.debug_info.func_name
+  return core._pp_eqn(eqn.replace(params=params), context, settings,
+                      params=["name"] + names)
+
+
+core.pp_eqn_rules[custom_jvp_call_p] = _custom_jvp_call_pp_rule
+
 ### VJPs
 
 @custom_api_util.register_custom_decorator_type

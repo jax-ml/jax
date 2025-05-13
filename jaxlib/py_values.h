@@ -38,7 +38,7 @@ limitations under the License.
 namespace xla {
 
 struct DevicePutResult {
-  DevicePutResult(tsl::RCReference<ifrt::Array> ifrt_array, bool weak_type)
+  DevicePutResult(ifrt::ArrayRef ifrt_array, bool weak_type)
       : ifrt_array(std::move(ifrt_array)), weak_type(weak_type) {}
 
   // Disallow copy. `DevicePutResult` is expected to be consumed by one user.
@@ -48,7 +48,7 @@ struct DevicePutResult {
   DevicePutResult& operator=(DevicePutResult&&) noexcept = default;
 
   // Points to the on-device array.
-  tsl::RCReference<ifrt::Array> ifrt_array;
+  ifrt::ArrayRef ifrt_array;
   bool weak_type;
 };
 

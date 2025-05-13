@@ -1061,7 +1061,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     else:
       err, msg = Exception, "Unsupported dtype"
     with self.assertRaisesRegex(err, msg):
-      jnp.linalg.qr(arr)
+      jax.block_until_ready(jnp.linalg.qr(arr))
 
   @jtu.sample_product(
     shape=[(10, 4, 5), (5, 3, 3), (7, 6, 4)],
@@ -1229,6 +1229,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             args_maker, tol=1e-3)
     self._CompileAndCheck(partial(jnp.linalg.matrix_power, n=n), args_maker,
                           rtol=1e-3)
+
+  def testMatrixPowerBool(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/28603
+    mat = np.array([[True,True], [False,True]])
+    np_result = np.linalg.matrix_power(mat, 2)
+    jnp_result = jnp.linalg.matrix_power(mat, 2)
+    self.assertArraysEqual(np_result, jnp_result)
 
   @jtu.sample_product(
     shape=[(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50), (3, 4, 5),

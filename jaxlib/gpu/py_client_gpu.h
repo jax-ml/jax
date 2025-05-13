@@ -24,6 +24,7 @@ namespace JAX_GPU_NAMESPACE {
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kGpuTransposePlanCacheInstantiate);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaFfiPythonGpuCallback);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaBufferPythonGpuCallback);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaBufferPythonGpuCallbackCmdBuffer);
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
 

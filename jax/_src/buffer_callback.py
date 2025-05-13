@@ -46,6 +46,7 @@ def buffer_callback(
     has_side_effect: bool = False,
     vmap_method: str | None = None,
     input_output_aliases: dict[int, int] | None = None,
+    command_buffer_compatible: bool = False,
 ):
   """An experimental callback that operates in place on device buffers.
 
@@ -112,6 +113,10 @@ def buffer_callback(
     input_output_aliases: a dictionary mapping the index of some inputs to
       the index of the output that aliases them. These indices are in the
       flattened inputs and outputs.
+    command_buffer_compatible: if ``True``, the callback will be traced into
+      the command buffer. This means that the Python code should only be
+      executed once, and then the operations will be replayed for every
+      subsequent call.
 
   Returns:
     A new callable that accepts :class:`jax.Array` inputs (and pytrees thereof),
@@ -167,6 +172,7 @@ def buffer_callback(
         vmap_method=vmap_method,
         has_side_effect=has_side_effect,
         input_output_aliases=static_input_output_aliases,
+        command_buffer_compatible=command_buffer_compatible,
     )
     return tree_util.tree_unflatten(out_tree, out_flat)
 
@@ -228,6 +234,7 @@ def _buffer_callback_lowering(
     out_tree: Any,
     has_side_effect: bool,
     input_output_aliases: Sequence[tuple[int, int]],
+    command_buffer_compatible: bool,
     **_,
 ):
 
@@ -241,6 +248,9 @@ def _buffer_callback_lowering(
   }.get(platform)
   if target_name is None:
     raise ValueError(f"`buffer_callback` not supported on {platform} backend.")
+
+  if command_buffer_compatible and platform in ("cuda", "rocm"):
+    target_name += "_cmd_buffer"
 
   def wrapped_callback(exec_ctx, *args: Any):
     args_in, args_out = util.split_list(args, [in_tree.num_leaves])

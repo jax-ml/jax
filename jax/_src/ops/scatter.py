@@ -87,7 +87,7 @@ def _scatter_update(x: ArrayLike, idx: Index, y: ArrayLike, scatter_op: Callable
       unique_indices=unique_indices, mode=mode,
       normalize_indices=normalize_indices)
   if out_sharding is not None:
-    return auto_axes(internal_scatter, out_shardings=out_sharding
+    return auto_axes(internal_scatter, out_sharding=out_sharding
                      )(x, y, dynamic_idx)
   return internal_scatter(x, y, dynamic_idx)
 

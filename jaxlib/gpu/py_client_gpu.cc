@@ -35,8 +35,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
-#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/ffi.h"
+#include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/pjrt/host_callback.h"
@@ -279,10 +279,31 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .RemainingArgs()
         .RemainingRets());
 
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    kXlaBufferPythonGpuCallbackCmdBuffer,
+#ifdef JAX_GPU_CUDA
+    (jax::XlaBufferCallback<kDLCUDA>),
+#else
+    (jax::XlaBufferCallback<kDLROCM>),
+#endif
+    xla::ffi::Ffi::Bind()
+        .Ctx<xla::ffi::DeviceOrdinal>()
+        .Ctx<xla::ffi::FfiApi>()
+        .Ctx<xla::ffi::FfiExecutionContext>()
+        .Ctx<xla::ffi::UserData<xla::FfiLoadedHostCallbacks>>()
+        .Attr<uint64_t>("index")
+        .RemainingArgs()
+        .RemainingRets(),
+    {ffi::Traits::kCmdBufferCompatible});
+
 XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
                          "xla_buffer_python_gpu_callback",
                          absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
                          kXlaBufferPythonGpuCallback);
+XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
+                         "xla_buffer_python_gpu_callback_cmd_buffer",
+                         absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
+                         kXlaBufferPythonGpuCallbackCmdBuffer);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

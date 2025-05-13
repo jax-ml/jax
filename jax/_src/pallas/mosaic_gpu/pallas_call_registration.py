@@ -25,6 +25,7 @@ import warnings
 import jax
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
@@ -66,8 +67,14 @@ def pallas_call_lowering(
   else:
     params = gpu_core.GPUCompilerParams()
 
+  jax_mesh = None
+  axis_context = ctx.module_context.axis_context
+  if axis_context is not None:
+    if isinstance(axis_context, sharding_impls.SPMDAxisContext):
+      jax_mesh = axis_context.mesh
+
   lowering_result = lowering.lower_pipelined_jaxpr_to_module(
-      grid_mapping, mesh, jaxpr, params, cost_estimate
+      grid_mapping, mesh, jax_mesh, jaxpr, params, cost_estimate
   )
   if debug:
     print(f"\nThe Mosaic GPU module for pallas_call {debug_info.func_src_info}:")

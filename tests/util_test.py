@@ -175,28 +175,28 @@ class SafeZipTest(jtu.JaxTestCase):
     )
 
   def test_safe_zip_errors(self):
-    with self.assertRaisesRegex(
-        TypeError, "safe_zip requires at least 1 argument"
+    with self.assertRaisesWithLiteralMatch(
+        TypeError, "safe_zip requires at least 1 argument."
     ):
       util.safe_zip()
 
-    with self.assertRaisesRegex(
+    with self.assertRaisesWithLiteralMatch(
         TypeError, "'function' object is not iterable"
     ):
       util.safe_zip(lambda x: x)
 
-    with self.assertRaisesRegex(
-        ValueError, r"safe_zip\(\) argument 2 is longer than argument 1"
+    with self.assertRaisesWithLiteralMatch(
+        ValueError, "zip() argument 2 is longer than argument 1"
     ):
       util.safe_zip(range(3), range(4))
 
-    with self.assertRaisesRegex(
-        ValueError, r"safe_zip\(\) argument 2 is shorter than argument 1"
+    with self.assertRaisesWithLiteralMatch(
+        ValueError, "zip() argument 2 is shorter than argument 1"
     ):
       util.safe_zip(range(7), range(2))
 
-    with self.assertRaisesRegex(
-        ValueError, r"safe_zip\(\) argument 2 is longer than argument 1"
+    with self.assertRaisesWithLiteralMatch(
+        ValueError, "zip() argument 2 is longer than argument 1"
     ):
       util.safe_zip((), range(3))
 
