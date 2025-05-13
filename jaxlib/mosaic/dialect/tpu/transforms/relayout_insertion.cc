@@ -119,7 +119,26 @@ FailureOr<TypedValue<VectorType>> relayout(
               dst_bitwidth_layout);
     return cast<TypedValue<VectorType>>(cmp_op.getResult());
   }
-  return v;
+  // Fall through to generic relayout.
+  auto relayout_op =
+      builder.create<tpu::RelayoutOp>(v.getLoc(), v.getType(), v);
+  setLayout(relayout_op, src, dst);
+
+  return cast<TypedValue<VectorType>>(relayout_op.getResult());
+}
+
+LogicalResult insertRelayout(Operation &op, int hardware_generation,
+                             std::array<int64_t, 2> target_shape);
+
+LogicalResult insertRelayoutBlock(Block &block, int hardware_generation,
+                                  const std::array<int64_t, 2> target_shape) {
+  // We'll be modifying the block, so use early increment.
+  for (Operation &op : make_early_inc_range(block)) {
+    if (failed(insertRelayout(op, hardware_generation, target_shape))) {
+      return failure();
+    }
+  }
+  return success();
 }
 
 // TODO(jevinjiang): make relayout to an op so we don't need decide when to
@@ -166,6 +185,15 @@ LogicalResult insertRelayout(Operation &op, int hardware_generation,
         Value new_v, relayout(builder, vector_operand, /*src=*/*lo,
                               /*dst=*/*li, hardware_generation, target_shape));
     op.setOperand(idx, new_v);
+  }
+
+  for (auto &region : op.getRegions()) {
+    for (auto &block : region.getBlocks()) {
+      if (failed(
+              insertRelayoutBlock(block, hardware_generation, target_shape))) {
+        return failure();
+      }
+    }
   }
   return success();
 }
