@@ -2598,7 +2598,10 @@ def _while_lowering_rule(
 @register_lowering_rule(lax.cond_p,
   mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp)
 @register_lowering_rule(lax.cond_p, mgpu.LoweringSemantics.Warpgroup)
-def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
+def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
+                        **params):
+  if params:
+    raise NotImplementedError("platform_dependent cond")
   index_aval, *_arg_avals = ctx.avals_in
 
   def _yielded_values(outs, avals):

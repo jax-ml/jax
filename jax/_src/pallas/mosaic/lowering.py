@@ -47,7 +47,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
-from jax._src.lax.control_flow import for_loop
+from jax._src.lax.control_flow import for_loop, BranchesPlatforms
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -3128,7 +3128,7 @@ def _while_lowering_rule(
 
 
 @register_lowering_rule(lax.cond_p)
-def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches):
+def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
   index, *args = args
   constant_index = _fold_and_get_constant_value(index)
 
@@ -3898,16 +3898,12 @@ def _pad_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
 def _platform_index_lowering(
     ctx: mlir.LoweringRuleContext,
     *,
-    platforms: Sequence[Sequence[str]],
-    has_default: bool,
+    platforms: BranchesPlatforms,
 ):
   for i, ps in enumerate(platforms):
     # note - slightly odd structure here, as platforms is a seq[seq[str]]
-    if "mosaic" in ps:
+    if "mosaic" in ps or ps is None:
       return ir_constant(i)
-
-  if has_default:
-    return ir_constant(len(platforms))
 
   raise NotImplementedError(
       "No mosaic or default platform indexing rule found."

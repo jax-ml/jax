@@ -2080,6 +2080,11 @@ def _platforms_for_eqn_ctx(eqn_ctx: core.JaxprEqnContext | None
     return ('tpu',)
   return ()
 
+def _platforms_for_eqn(ctx: LoweringRuleContext) -> tuple[str, ...]:
+  """The lowering platforms for the current eqn"""
+  return tuple((_platforms_for_eqn_ctx(ctx.jaxpr_eqn_ctx) or
+               ctx.platforms or ctx.module_context.platforms))
+
 
 def lower_per_platform(ctx: LoweringRuleContext,
                        description: str,
@@ -2122,8 +2127,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
    rule_args: the args of the lowering rules.
    rule_kwargs: the kwargs of the lowering rules.
   """
-  platforms: Sequence[str] = (_platforms_for_eqn_ctx(ctx.jaxpr_eqn_ctx) or
-                              ctx.platforms or ctx.module_context.platforms)
+  platforms: Sequence[str] = _platforms_for_eqn(ctx)
   # Special case the common case (single-platform lowering)
   if len(platforms) == 1:
     rule = platform_rules.get(platforms[0], default_rule)
