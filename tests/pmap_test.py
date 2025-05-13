@@ -332,7 +332,10 @@ class PythonPmapTest(jtu.JaxTestCase):
     inp = jnp.arange(jax.device_count())
     x = jax.pmap(lambda x: x, in_axes=0, out_axes=None)(inp)
     out = jnp.copy(x)
-    self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
+    if config.pmap_shmap_merge.value:
+      self.assertIsInstance(out.sharding, jax.sharding.NamedSharding)
+    else:
+      self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
     self.assertArraysEqual(out, inp[0])
 
   def test_jit_lower_compile_with_compiler_options_multiple(self):
