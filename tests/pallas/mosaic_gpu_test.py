@@ -1218,8 +1218,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
   def test_while_loop(self):
-    self.skip_if_wg_semantics()
-
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
     )
@@ -1242,8 +1240,6 @@ class PallasCallTest(PallasTest):
     )
 
   def test_while_loop_layout_mismatch(self):
-    self.skip_if_wg_semantics()  # while and conditional are not yet supported.
-
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
     )
@@ -1261,8 +1257,17 @@ class PallasCallTest(PallasTest):
 
       _ = jax.lax.while_loop(cond, body, o_ref[...])
 
-    with self.assertRaisesRegex(ValueError, "has layout .*, when it should be"):
-      kernel()
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+      with self.assertRaisesRegex(
+          NotImplementedError,
+          "Cannot convert from WGStridedFragLayout.* to TiledLayout",
+      ):
+        kernel()
+    else:
+      with self.assertRaisesRegex(
+          ValueError, "has layout .*, when it should be"
+      ):
+        kernel()
 
   def test_cond(self):
     @functools.partial(
@@ -1722,10 +1727,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
 
   @parameterized.parameters(False, True)
   def test_fori_loop_accumulator(self, force_while):
-    if force_while:
-      # Layout inference and lowering for 'while' are not yet implemented for
-      # warpgroup semantics.
-      self.skip_if_wg_semantics()
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
       transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
     else:

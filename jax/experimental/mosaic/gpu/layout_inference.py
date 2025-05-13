@@ -336,38 +336,61 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
   return [], [layout]
 
 
-@partial(_add_layout_inference_rule, scf.YieldOp)
-def _infer_yield_op_layout(op: scf.YieldOp) -> OptionalLayouts:
+def _layouts_from_values(values: Sequence[ir.Value]) -> list[ir.Attribute] | None:
   layouts = []
-  for result in op.results_:
-    if not ir.VectorType.isinstance(result.type):
+  for value in values:
+    if not ir.VectorType.isinstance(value.type):
       continue
-    if (layout := inference_utils.value_layout(result)) is not None:
+    if (layout := inference_utils.value_layout(value)) is not None:
       if layouts_lib.is_splat_fragmented_layout(layout):
         return None
       layouts.append(layout)
     else:
       # Not all layouts could be inferred for vector ops. Return for now.
       return None
+  return layouts
 
+@partial(_add_layout_inference_rule, scf.YieldOp)
+def _infer_yield_op_layout(op: scf.YieldOp) -> OptionalLayouts:
+  layouts = _layouts_from_values(op.results_)
+  if layouts is None:
+    return None
   return (layouts, [])
+
+
+@partial(_add_layout_inference_rule, scf.ConditionOp)
+def _infer_condition_op_layout(op: scf.ConditionOp) -> OptionalLayouts:
+  layouts = _layouts_from_values(op.args)
+  if layouts is None:
+    return None
+  return (layouts, [])
+
+
+def _last_op(region: ir.Region, expected_op_type: type[ir.OpView]):
+  [block] = region.blocks
+  last_op = block.operations[len(block.operations) - 1]
+  assert isinstance(last_op, expected_op_type)
+  return last_op
+
+
+def _infer_from_op(op: ir.OpView) -> list[ir.Attribute] | None:
+  if not inference_utils.has_in_layouts_set(op):
+    return None
+  in_layouts = list(inference_utils.in_layouts(op))
+  if any(
+      layouts_lib.is_splat_fragmented_layout(layout)
+      for layout in in_layouts
+  ):
+    return None
+  return in_layouts
 
 
 def _infer_from_yield_ops(op: ir.Operation) -> list[ir.Attribute] | None:
   candidates = []
   for region in op.regions:
-    [block] = region.blocks
-    yield_op = block.operations[len(block.operations) - 1]
-    assert isinstance(yield_op, scf.YieldOp)
-    if not inference_utils.has_in_layouts_set(yield_op):
-      continue
-    yield_layouts = inference_utils.in_layouts(yield_op)
-    if any(
-        layouts_lib.is_splat_fragmented_layout(layout)
-        for layout in yield_layouts
-    ):
-      continue
-    candidates.append(yield_layouts)
+    yield_layouts = _infer_from_op(_last_op(region, scf.YieldOp))
+    if yield_layouts is not None:
+      candidates.append(yield_layouts)
   if not candidates:
     return None
   return [_choose_representative_layout(set(c)) for c in zip(*candidates)]
@@ -380,6 +403,27 @@ def _infer_for_op_layout(op: scf.ForOp) -> OptionalLayouts:
   if layouts := _infer_from_yield_ops(op):
     return layouts, layouts
   return None
+
+
+@partial(_add_layout_inference_rule, scf.WhileOp)
+def _infer_while_op_layout(op: scf.WhileOp) -> OptionalLayouts:
+  # TODO(dasenov): we don't attempt to propagate from outside for the moment.
+
+  # Note that the inputs or results do not necessarily contain vector types. If
+  # there is no vector type, the corresponding layouts (in_layouts or
+  # out_layouts) should be an empty list.
+
+  yield_op = _last_op(op.after, scf.YieldOp)
+  needs_in_layouts = inference_utils.should_have_layout(yield_op)
+  in_layouts = _infer_from_op(yield_op) if needs_in_layouts else []
+
+  condition_op = _last_op(op.before, scf.ConditionOp)
+  needs_out_layouts = inference_utils.should_have_layout(condition_op)
+  out_layouts = _infer_from_op(condition_op) if needs_out_layouts else []
+
+  if in_layouts is None or out_layouts is None:
+    return None
+  return in_layouts, out_layouts
 
 
 @partial(_add_layout_inference_rule, scf.IfOp)
