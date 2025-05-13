@@ -594,10 +594,16 @@ class OpsTest(PallasBaseTest):
   def test_cast_from_32bit(self, from_dtype, to_dtype, data):
     sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
     if to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
-      if not jtu.test_device_matches(["tpu"]) or jtu.get_tpu_version() < 5:
+      if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Not supported on this hardware")
-      if not jtu.if_cloud_tpu_at_least(2025, 3, 8):
+      if jtu.get_tpu_version() >= 5 and not jtu.if_cloud_tpu_at_least(
+          2025, 3, 8
+      ):
         self.skipTest("Test requires libtpu from 2025/3/8 or later")
+      if jtu.get_tpu_version() < 5 and not jtu.if_cloud_tpu_at_least(
+          2025, 5, 15
+      ):
+        self.skipTest("Test requires libtpu from 2025/5/15 or later")
     if from_dtype in {"int2", "uint2"} or to_dtype in {"int2", "uint2"}:
       if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
           2025, 4, 1
@@ -721,10 +727,16 @@ class OpsTest(PallasBaseTest):
         "float8_e5m2",
         "float8_e4m3fn",
     } or to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
-      if not jtu.test_device_matches(["tpu"]) or jtu.get_tpu_version() < 5:
+      if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Not supported on this hardware")
-      if not jtu.if_cloud_tpu_at_least(2025, 3, 9):
+      if jtu.get_tpu_version() >= 5 and not jtu.if_cloud_tpu_at_least(
+          2025, 3, 9
+      ):
         self.skipTest("Test requires libtpu from 2025/3/9 or later")
+      if jtu.get_tpu_version() < 5 and not jtu.if_cloud_tpu_at_least(
+          2025, 5, 15
+      ):
+        self.skipTest("Test requires libtpu from 2025/5/15 or later")
     if from_dtype == "int2" and to_dtype == "bool":
       self.skipTest(
           "TODO(b/343490729): XLA compare(s2, s2) yields wrong results"
