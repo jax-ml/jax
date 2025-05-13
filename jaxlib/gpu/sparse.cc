@@ -614,6 +614,8 @@ nb::dict Registrations() {
       EncapsulateFfiHandler(gtsv2_f32_ffi);
   dict[JAX_GPU_PREFIX "sparse_gtsv2_f64_ffi"] =
       EncapsulateFfiHandler(gtsv2_f64_ffi);
+  dict[JAX_GPU_PREFIX "sparse_gtsv2_ffi"] = EncapsulateFfiHandler(kGtsv2);
+
   // TODO(tomhennigan): Add support for gtsv2 complex 32/64.
   return dict;
 }

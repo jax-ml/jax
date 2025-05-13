@@ -33,6 +33,7 @@ from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.lib import jaxlib_extension_version
 from jax._src.numpy.util import promote_dtypes_inexact
 
 config.parse_flags_with_absl()
@@ -2202,7 +2203,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(shape=[(3,), (3, 4), (3, 4, 5)],
                       dtype=float_types + complex_types)
   def test_tridiagonal_solve(self, shape, dtype):
-    if dtype not in float_types and jtu.test_device_matches(["gpu"]):
+    if dtype not in float_types and jtu.test_device_matches(["gpu"]) and jaxlib_extension_version < 340:
       self.skipTest("Data type not supported on GPU")
     rng = self.rng()
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
@@ -2217,7 +2218,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
       build_tri = jax.vmap(build_tri)
 
     a = build_tri(dl, d, du)
-    self.assertAllClose(a @ x, b, atol=5e-5, rtol=1e-4)
+    with jax.default_matmul_precision("float32"):
+      self.assertAllClose(a @ x, b, atol={
+          np.float32: 1e-3, np.float64: 1e-10, np.complex64: 1e-3,
+          np.complex128: 1e-10})
 
   def test_tridiagonal_solve_endpoints(self):
     # tridagonal_solve shouldn't depend on the endpoints being explicitly zero.
@@ -2238,7 +2242,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types)
   def test_tridiagonal_solve_grad(self, shape, dtype):
-    if dtype not in float_types and jtu.test_device_matches(["gpu"]):
+    if dtype not in float_types and jtu.test_device_matches(["gpu"]) and jaxlib_extension_version < 340:
       self.skipTest("Data type not supported on GPU")
     rng = self.rng()
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
