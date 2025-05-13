@@ -565,12 +565,12 @@ class JVPTrace(Trace):
     _, res_tree = out_trees()
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
     avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
-    # TODO(frostig,mattjj): avoid instantiating zeros when we don't have to!
+    in_zeros = [type(t) is Zero for t in tangents_in]
+    nz_tangents_in = [t for z, t in zip(in_zeros, tangents_in) if not z]
     with core.set_current_trace(self.parent_trace):
-      tangents_in = map(instantiate_zeros, tangents_in)
       tangents_out = custom_lin_p.bind(
-        *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
-        out_avals=avals_out, symbolic_zeros=symbolic_zeros)
+          *res, *nz_tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
+          out_avals=avals_out, symbolic_zeros=symbolic_zeros, in_zeros=in_zeros)
     return map(partial(maybe_jvp_tracer, self), primals_out, tangents_out)
 
   def process_custom_transpose(self, prim, call, tracers, **params):
@@ -734,11 +734,12 @@ class LinearizeTrace(Trace):
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
     avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
 
-    tangents_in_zeros = map(instantiate_zeros, tangents_in)
+    in_zeros = [type(t) is Zero for t in tangents_in]
+    nz_tangents_in = [t for z, t in zip(in_zeros, tangents_in) if not z]
     with core.set_current_trace(self.tangent_trace):
       tangents_out = custom_lin_p.bind(
-        *res, *tangents_in_zeros, num_res=res_tree.num_leaves, bwd=bwd,
-        out_avals=avals_out, symbolic_zeros=symbolic_zeros)
+          *res, *nz_tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
+          out_avals=avals_out, symbolic_zeros=symbolic_zeros, in_zeros=in_zeros)
     tangent_nzs_out = [type(t) is not Zero for t in tangents_out]
     return map(partial(maybe_linearize_tracer, self), primals_out, tangent_nzs_out, tangents_out)
 
@@ -1223,7 +1224,7 @@ custom_lin_p.def_impl(raise_custom_vjp_error_on_jvp)
 
 def _custom_lin_transpose(cts_out, *invals, num_res,
                           bwd: lu.WrappedFun, out_avals,
-                          symbolic_zeros):
+                          symbolic_zeros, in_zeros):
   res, _ = split_list(invals, [num_res])
   if symbolic_zeros:
     cts_out = map(replace_internal_symbolic_zeros, cts_out)
@@ -1231,7 +1232,8 @@ def _custom_lin_transpose(cts_out, *invals, num_res,
     cts_out = map(instantiate_zeros, cts_out)
   cts_in = bwd.call_wrapped(*res, *cts_out)
   cts_in = map(replace_rule_output_symbolic_zeros, cts_in)
-  return [None] * num_res + list(cts_in)
+  nz_cts_in, _ = partition_list(in_zeros, cts_in)
+  return [None] * num_res + nz_cts_in
 primitive_transposes[custom_lin_p] = _custom_lin_transpose
 
 
