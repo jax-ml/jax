@@ -256,18 +256,13 @@ def _get_jax_test_deps(deps):
     """
     jax_build_deps = [d for d in deps if not d.startswith("@pypi//")]
 
-    # A lot of tests don't have explicit dependencies on absl/testing, numpy, etc. But the tests
+    # A lot of tests don't have explicit dependencies on scipy, ml_dtypes, etc. But the tests
     # transitively depends on them via //jax. So we need to make sure that these dependencies are
     # included in the test when JAX is built from source.
-    # TODO(ybaturina): Add individual dependencies for each test and remove this block.
     jax_transitive_pypi_test_deps = {k: "true" for k in py_deps([
-        "absl/testing",
-        "numpy",
         "ml_dtypes",
         "scipy",
         "opt_einsum",
-        "hypothesis",
-        "cloudpickle",
         "flatbuffers",
     ])}
 
