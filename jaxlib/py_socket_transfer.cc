@@ -127,12 +127,9 @@ class IfrtArrayEntry : public PullTable::Entry {
       auto req_id = base_req_id;
       ++base_req_id;
       for (size_t i = 0; i * xfer_size_ < arrs_[bid].buf_size; ++i) {
-        DmaCopyChunk blob;
-        blob.arr = std::move(arrs_[bid].arr);
-        blob.buffer = arrs_[bid].buffer;
-        blob.buffer_id = bid;
-        blob.offset = i * xfer_size_;
-        blob.size = std::min(xfer_size_, arrs_[bid].buf_size - blob.offset);
+        DmaCopyChunk blob = DmaCopyChunk::Make(
+            std::move(arrs_[bid].arr), arrs_[bid].buffer, bid, i * xfer_size_,
+            std::min(xfer_size_, arrs_[bid].buf_size - i * xfer_size_));
         bool is_largest = blob.size + blob.offset == arrs_[bid].buf_size;
         state_->ScheduleCopy(
             blob, [req_id, state, copier_state = state_, is_largest](
