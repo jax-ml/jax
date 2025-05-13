@@ -872,7 +872,10 @@ pytype_strict_library(
 py_library_providing_imports_info(
     name = "mosaic_gpu",
     srcs = glob(["experimental/mosaic/gpu/*.py"]),
-    data = py_deps("libnvshmem_device"),
+    data = select({
+        "@platforms//os:linux": py_deps("libnvshmem_device"),
+        "//conditions:default": [],
+    }),
     visibility = [
         ":mosaic_gpu_users",
     ],
