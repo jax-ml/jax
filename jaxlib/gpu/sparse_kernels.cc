@@ -16,19 +16,28 @@ limitations under the License.
 #include "jaxlib/gpu/sparse_kernels.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <string>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
+#include "jaxlib/ffi_helpers.h"
 #include "jaxlib/gpu/ffi_wrapper.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_helpers.h"
+#include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_status.h"
+
+#define JAX_FFI_RETURN_IF_GPU_ERROR(...) \
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(__VA_ARGS__))
+
+namespace ffi = ::xla::ffi;
 
 namespace jax {
 
@@ -640,6 +649,163 @@ void gtsv2_f64(gpuStream_t stream, void** buffers, const char* opaque,
                                   s.message().length());
   }
 }
+
+template <typename T, typename BufferSizeF, typename KernelF>
+ffi::Error Gtsv2Impl(BufferSizeF getBufferSize, KernelF kernel, int64_t batch,
+                     int64_t rows, int64_t cols, gpuStream_t stream,
+                     ffi::ScratchAllocator& scratch, ffi::AnyBuffer dl,
+                     ffi::AnyBuffer d, ffi::AnyBuffer du, ffi::AnyBuffer b,
+                     ffi::Result<ffi::AnyBuffer> out) {
+  FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
+
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
+  size_t buffer_size_in_bytes;
+  JAX_FFI_RETURN_IF_GPU_ERROR(getBufferSize(handle.get(), m, n, nullptr,
+                                            nullptr, nullptr, nullptr, m,
+                                            &buffer_size_in_bytes));
+  auto maybe_workspace = scratch.Allocate(buffer_size_in_bytes);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal("Unable to allocate workspace for gtsv2");
+  }
+  void* workspace = maybe_workspace.value();
+
+  auto dl_data = static_cast<T*>(dl.untyped_data());
+  auto d_data = static_cast<T*>(d.untyped_data());
+  auto du_data = static_cast<T*>(du.untyped_data());
+  auto b_data = static_cast<T*>(b.untyped_data());
+  auto out_data = static_cast<T*>(out->untyped_data());
+  if (b_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, b_data, b.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  for (int64_t i = 0; i < batch; ++i) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(kernel(handle.get(), m, n, dl_data, d_data,
+                                       du_data, out_data, m, workspace));
+    dl_data += m;
+    d_data += m;
+    du_data += m;
+    out_data += m * n;
+  }
+  return ffi::Error::Success();
+}
+
+template <typename T, typename BufferSizeF, typename KernelF>
+ffi::Error Gtsv2BatchedImpl(BufferSizeF getBufferSize, KernelF kernel,
+                            int64_t batch, int64_t rows, gpuStream_t stream,
+                            ffi::ScratchAllocator& scratch, ffi::AnyBuffer dl,
+                            ffi::AnyBuffer d, ffi::AnyBuffer du,
+                            ffi::AnyBuffer b, ffi::Result<ffi::AnyBuffer> out) {
+  FFI_ASSIGN_OR_RETURN(auto batch_count, MaybeCastNoOverflow<int>(batch));
+  FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
+
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
+  size_t buffer_size_in_bytes;
+  JAX_FFI_RETURN_IF_GPU_ERROR(getBufferSize(handle.get(), m, nullptr, nullptr,
+                                            nullptr, nullptr, batch_count, m,
+                                            &buffer_size_in_bytes));
+  auto maybe_workspace = scratch.Allocate(buffer_size_in_bytes);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal("Unable to allocate workspace for gtsv2");
+  }
+  void* workspace = maybe_workspace.value();
+
+  auto dl_data = static_cast<T*>(dl.untyped_data());
+  auto d_data = static_cast<T*>(d.untyped_data());
+  auto du_data = static_cast<T*>(du.untyped_data());
+  auto b_data = static_cast<T*>(b.untyped_data());
+  auto out_data = static_cast<T*>(out->untyped_data());
+  if (b_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, b_data, b.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(kernel(handle.get(), m, dl_data, d_data, du_data,
+                                     out_data, batch_count, m, workspace));
+  return ffi::Error::Success();
+}
+
+ffi::Error Gtsv2(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                 ffi::AnyBuffer dl, ffi::AnyBuffer d, ffi::AnyBuffer du,
+                 ffi::AnyBuffer b, ffi::Result<ffi::AnyBuffer> out) {
+  auto dataType = dl.element_type();
+  if (dataType != d.element_type() || dataType != du.element_type() ||
+      dataType != b.element_type() || dataType != out->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to gtsv2 must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(b.dimensions()));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "gtsv2"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(dl.dimensions(), {batch, rows}, "dl", "gtsv2"));
+  FFI_RETURN_IF_ERROR(CheckShape(d.dimensions(), {batch, rows}, "d", "gtsv2"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(du.dimensions(), {batch, rows}, "du", "gtsv2"));
+  if (batch > 1 && cols == 1) {
+    switch (dataType) {
+      case ffi::F32:
+        return Gtsv2BatchedImpl<float>(
+            gpusparseSgtsv2StridedBatch_bufferSizeExt,
+            gpusparseSgtsv2StridedBatch, batch, rows, stream, scratch, dl, d,
+            du, b, out);
+      case ffi::F64:
+        return Gtsv2BatchedImpl<double>(
+            gpusparseDgtsv2StridedBatch_bufferSizeExt,
+            gpusparseDgtsv2StridedBatch, batch, rows, stream, scratch, dl, d,
+            du, b, out);
+      case ffi::C64:
+        return Gtsv2BatchedImpl<gpuComplex>(
+            gpusparseCgtsv2StridedBatch_bufferSizeExt,
+            gpusparseCgtsv2StridedBatch, batch, rows, stream, scratch, dl, d,
+            du, b, out);
+      case ffi::C128:
+        return Gtsv2BatchedImpl<gpuDoubleComplex>(
+            gpusparseZgtsv2StridedBatch_bufferSizeExt,
+            gpusparseZgtsv2StridedBatch, batch, rows, stream, scratch, dl, d,
+            du, b, out);
+      default:
+        break;
+    }
+
+  } else {
+    switch (dataType) {
+      case ffi::F32:
+        return Gtsv2Impl<float>(gpusparseSgtsv2_bufferSizeExt, gpusparseSgtsv2,
+                                batch, rows, cols, stream, scratch, dl, d, du,
+                                b, out);
+      case ffi::F64:
+        return Gtsv2Impl<double>(gpusparseDgtsv2_bufferSizeExt, gpusparseDgtsv2,
+                                 batch, rows, cols, stream, scratch, dl, d, du,
+                                 b, out);
+      case ffi::C64:
+        return Gtsv2Impl<gpuComplex>(gpusparseCgtsv2_bufferSizeExt,
+                                     gpusparseCgtsv2, batch, rows, cols, stream,
+                                     scratch, dl, d, du, b, out);
+      case ffi::C128:
+        return Gtsv2Impl<gpuDoubleComplex>(gpusparseZgtsv2_bufferSizeExt,
+                                           gpusparseZgtsv2, batch, rows, cols,
+                                           stream, scratch, dl, d, du, b, out);
+      default:
+        break;
+    }
+  }
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in gtsv2", absl::FormatStreamed(dataType)));
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kGtsv2, Gtsv2,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // dl
+                                  .Arg<ffi::AnyBuffer>()  // d
+                                  .Arg<ffi::AnyBuffer>()  // du
+                                  .Arg<ffi::AnyBuffer>()  // b
+                                  .Ret<ffi::AnyBuffer>()  // out
+);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

@@ -152,7 +152,8 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUDNN_STATUS_SUCCESS CUDNN_STATUS_SUCCESS
 #define GPUDNN_WGRAD_MODE_ADD CUDNN_WGRAD_MODE_ADD
 #define GPUDNN_RNN_ALGO_STANDARD CUDNN_RNN_ALGO_STANDARD
-#define GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED CUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED
+#define GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED \
+  CUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED
 #define GPUDNN_RNN_PADDED_IO_ENABLED CUDNN_RNN_PADDED_IO_ENABLED
 #define GPUDNN_DEFAULT_MATH CUDNN_DEFAULT_MATH
 #define GPUDNN_FMA_MATH CUDNN_FMA_MATH
@@ -289,10 +290,28 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusparseSpMM_bufferSize cusparseSpMM_bufferSize
 #define gpusparseSpMV cusparseSpMV
 #define gpusparseSpMV_bufferSize cusparseSpMV_bufferSize
+
 #define gpusparseSgtsv2 cusparseSgtsv2
 #define gpusparseDgtsv2 cusparseDgtsv2
+#define gpusparseCgtsv2 cusparseCgtsv2
+#define gpusparseZgtsv2 cusparseZgtsv2
 #define gpusparseSgtsv2_bufferSizeExt cusparseSgtsv2_bufferSizeExt
 #define gpusparseDgtsv2_bufferSizeExt cusparseDgtsv2_bufferSizeExt
+#define gpusparseCgtsv2_bufferSizeExt cusparseCgtsv2_bufferSizeExt
+#define gpusparseZgtsv2_bufferSizeExt cusparseZgtsv2_bufferSizeExt
+
+#define gpusparseSgtsv2StridedBatch_bufferSizeExt \
+  cusparseSgtsv2StridedBatch_bufferSizeExt
+#define gpusparseDgtsv2StridedBatch_bufferSizeExt \
+  cusparseDgtsv2StridedBatch_bufferSizeExt
+#define gpusparseCgtsv2StridedBatch_bufferSizeExt \
+  cusparseCgtsv2StridedBatch_bufferSizeExt
+#define gpusparseZgtsv2StridedBatch_bufferSizeExt \
+  cusparseZgtsv2StridedBatch_bufferSizeExt
+#define gpusparseSgtsv2StridedBatch cusparseSgtsv2StridedBatch
+#define gpusparseDgtsv2StridedBatch cusparseDgtsv2StridedBatch
+#define gpusparseCgtsv2StridedBatch cusparseCgtsv2StridedBatch
+#define gpusparseZgtsv2StridedBatch cusparseZgtsv2StridedBatch
 
 #define GPUSPARSE_INDEX_16U CUSPARSE_INDEX_16U
 #define GPUSPARSE_INDEX_32I CUSPARSE_INDEX_32I
@@ -636,10 +655,28 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusparseSpMM_bufferSize hipsparseSpMM_bufferSize
 #define gpusparseSpMV hipsparseSpMV
 #define gpusparseSpMV_bufferSize hipsparseSpMV_bufferSize
+
 #define gpusparseSgtsv2 hipsparseSgtsv2
 #define gpusparseDgtsv2 hipsparseDgtsv2
+#define gpusparseCgtsv2 hipsparseCgtsv2
+#define gpusparseZgtsv2 hipsparseZgtsv2
 #define gpusparseSgtsv2_bufferSizeExt hipsparseSgtsv2_bufferSizeExt
 #define gpusparseDgtsv2_bufferSizeExt hipsparseDgtsv2_bufferSizeExt
+#define gpusparseCgtsv2_bufferSizeExt hipsparseCgtsv2_bufferSizeExt
+#define gpusparseZgtsv2_bufferSizeExt hipsparseZgtsv2_bufferSizeExt
+
+#define gpusparseSgtsv2StridedBatch_bufferSizeExt \
+  hipsparseSgtsv2StridedBatch_bufferSizeExt
+#define gpusparseDgtsv2StridedBatch_bufferSizeExt \
+  hipsparseDgtsv2StridedBatch_bufferSizeExt
+#define gpusparseCgtsv2StridedBatch_bufferSizeExt \
+  hipsparseCgtsv2StridedBatch_bufferSizeExt
+#define gpusparseZgtsv2StridedBatch_bufferSizeExt \
+  hipsparseZgtsv2StridedBatch_bufferSizeExt
+#define gpusparseSgtsv2StridedBatch hipsparseSgtsv2StridedBatch
+#define gpusparseDgtsv2StridedBatch hipsparseDgtsv2StridedBatch
+#define gpusparseCgtsv2StridedBatch hipsparseCgtsv2StridedBatch
+#define gpusparseZgtsv2StridedBatch hipsparseZgtsv2StridedBatch
 
 #define GPUSPARSE_INDEX_16U HIPSPARSE_INDEX_16U
 #define GPUSPARSE_INDEX_32I HIPSPARSE_INDEX_32I

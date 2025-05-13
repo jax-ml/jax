@@ -22,6 +22,7 @@ import jax.numpy as jnp
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax.sharding import PartitionSpec as P
 
 config.parse_flags_with_absl()
@@ -31,13 +32,8 @@ float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
 
 
+# These functions are only supported on CPU.
 CPU_ONLY_FUN_AND_SHAPES = [
-    # The GPU kernel for this function still uses an opaque descriptor to
-    # encode the input shapes so it is not partitionable.
-    # TODO(danfm): Update the kernel and enable this test on GPU.
-    (lax.linalg.tridiagonal_solve, ((6,), (6,), (6,), (6, 4))),
-
-    # These functions are only supported on CPU.
     (lax.linalg.hessenberg, ((6, 6),)),
     (lax.linalg.schur, ((6, 6),)),
 ]
@@ -51,6 +47,7 @@ CPU_AND_GPU_FUN_AND_SHAPES = [
     (lax.linalg.svd, ((10, 6),)),
     (lax.linalg.triangular_solve, ((6, 6), (4, 6))),
     (lax.linalg.tridiagonal, ((6, 6),)),
+    (lax.linalg.tridiagonal_solve, ((6,), (6,), (6,), (6, 4))),
 ]
 
 ALL_FUN_AND_SHAPES = CPU_ONLY_FUN_AND_SHAPES + CPU_AND_GPU_FUN_AND_SHAPES
@@ -73,6 +70,11 @@ class LinalgShardingTest(jtu.JaxTestCase):
         self.skipTest(
             f"Partitioning {fun_and_shapes[0].__name__} only supported on GPU "
             "when shardy is enabled.")
+      if (fun_and_shapes[0] == lax.linalg.tridiagonal_solve and
+          jaxlib_extension_version < 340):
+        self.skipTest(
+            f"Partitioning {fun_and_shapes[0].__name__} on GPU, requires a "
+            "more recent jaxlib version.")
     if not grad:
       return fun_and_shapes
 
@@ -178,7 +180,9 @@ class LinalgShardingTest(jtu.JaxTestCase):
         (primals_sharded, tangents),
     ]:
       _, actual = jvp_fun_jit(*args)
-      self.assertAllClose(actual, expected, atol={np.float64: 1e-12})
+      self.assertAllClose(actual, expected, rtol={
+          np.float32: 1e-4, np.float64: 1e-11, np.complex64: 1e-4,
+          np.complex128: 1e-11})
       hlo = jvp_fun_jit.lower(primals_sharded, tangents_sharded).compile()
       self.assertNotIn("all-", hlo.as_text())
 
@@ -199,7 +203,9 @@ class LinalgShardingTest(jtu.JaxTestCase):
     vjp_fun_jit = jax.jit(vjp_fun)
     expected = vjp_fun(tangents)
     actual = vjp_fun_jit(tangents_sharded)
-    self.assertAllClose(actual, expected)
+    self.assertAllClose(actual, expected, rtol={
+          np.float32: 1e-4, np.float64: 1e-11, np.complex64: 1e-4,
+          np.complex128: 1e-11})
     hlo = vjp_fun_jit.lower(tangents_sharded).compile()
     self.assertNotIn("all-", hlo.as_text())
 

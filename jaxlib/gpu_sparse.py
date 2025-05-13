@@ -35,3 +35,12 @@ def registrations() -> dict[str, list[tuple[str, Any, int]]]:
           for name, value in module.registrations().items()
       )
   return registrations  # pytype: disable=bad-return-type
+
+def batch_partitionable_targets() -> list[str]:
+  targets: list[str] = []
+  for module in [_cusparse, _hipsparse]:
+    if module:
+      targets.extend(
+          name for name in module.registrations() if name.endswith("gtsv2_ffi")
+      )
+  return targets
