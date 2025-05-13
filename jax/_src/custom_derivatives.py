@@ -425,16 +425,14 @@ def _custom_jvp_call_typecheck(_, *in_avals, call_jaxpr, jvp_jaxpr_fun,
   return call_jaxpr.out_avals, call_jaxpr.effects
 core.custom_typechecks[custom_jvp_call_p] = _custom_jvp_call_typecheck
 
-def _custom_jvp_call_mlir_translation(ctx, *args, call_jaxpr, jvp_jaxpr_fun,
-                                      num_consts, symbolic_zeros):
-  del jvp_jaxpr_fun, num_consts, symbolic_zeros
+def _custom_jvp_vjp_call_lowering(ctx, *args, call_jaxpr, **_):
   consts = mlir._ir_consts(call_jaxpr.consts)
   out, tokens = mlir.jaxpr_subcomp(ctx.module_context, call_jaxpr.jaxpr,
                                    ctx.name_stack, ctx.tokens_in, consts,
                                    *args, dim_var_values=ctx.dim_var_values)
   ctx.set_tokens_out(tokens)
   return out
-mlir.register_lowering(custom_jvp_call_p, _custom_jvp_call_mlir_translation)
+mlir.register_lowering(custom_jvp_call_p, _custom_jvp_vjp_call_lowering)
 
 # If a (multi)linear function is defined with a custom jvp, then
 # custom_jvp_call_ can appear in jaxprs to be transposed. Since it's already
@@ -936,8 +934,8 @@ def _temporary_dtype_exception(a, a_) -> bool:
 def _temporary_shape_exception(a, a_) -> bool:
   return config.custom_vjp_disable_shape_check.value
 
-class CustomVJPCallPrimitive(core.CallPrimitive):
-  initial_style: core.Primitive
+class CustomVJPCallPrimitive(core.Primitive):
+  multiple_results = True
 
   def bind(self, *args, **params):
     return self._true_bind(*args, **params)
@@ -946,107 +944,70 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
     fun, fwd, bwd, tracers = args[0], args[1], args[2], args[3:]
     return trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers, **params)
 
+  def impl(self, fun, fwd, bwd, *args):
+    raise NotImplementedError
+
+  def get_bind_params(self, params):
+    new_params = dict(params)
+    call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
+    num_consts: int = new_params.pop('num_consts')
+    fwd_jaxpr_thunk = new_params.pop('fwd_jaxpr_thunk')
+    fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
+                       debug_info=call_jaxpr.jaxpr.debug_info)
+    fwd = lift_fwd(num_consts, fwd_jaxpr_thunk)
+    const_avals, _ = split_list(call_jaxpr.in_avals, [num_consts])
+    bwd = _handle_consts_in_bwd(new_params.pop('bwd'), const_avals)
+    return [fun, fwd, bwd], new_params
+
+def lift_fwd(num_consts: int, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
+  def fwd(*args):
+    vals, zeros = args[::2], args[1::2]
+    assert len(vals) == len(zeros)
+    _, primals = split_list(vals, [num_consts])
+    const_zeros, in_zeros = split_list(zeros, [num_consts])
+    if any(const_zeros):
+      raise ad.CustomVJPException()
+    fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk.call_wrapped(*in_zeros)
+    return core.eval_jaxpr(fwd_jaxpr, fwd_consts, *primals)
+  return lu.wrap_init(fwd, debug_info=fwd_jaxpr_thunk.debug_info)
+
+@lu.transformation2
+def _handle_consts_in_bwd(f, const_avals, *args):
+  return [Zero(a) for a in const_avals] + list(f(*args))
+
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
+mlir.register_lowering(custom_vjp_call_p, _custom_jvp_vjp_call_lowering)
 
-def _custom_vjp_call_jaxpr_impl(*args, fun_jaxpr, **_):
-  return core.jaxpr_as_fun(fun_jaxpr)(*args)
-
-def _custom_vjp_call_jaxpr_abstract_eval(*_, fun_jaxpr, **__):
-  disallowed_effects = effects.custom_derivatives_allowed_effects.filter_not_in(fun_jaxpr.effects)
+def _custom_vjp_call_typecheck(_, *in_avals, call_jaxpr, **kwargs):
+  del in_avals, kwargs
+  disallowed_effects = effects.custom_derivatives_allowed_effects.filter_not_in(
+      call_jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `custom_vjp`: {disallowed_effects}')
-  return fun_jaxpr.out_avals, fun_jaxpr.effects
+  return call_jaxpr.out_avals, call_jaxpr.effects
+core.custom_typechecks[custom_vjp_call_p] = _custom_vjp_call_typecheck
 
-custom_vjp_call_jaxpr_p = core.Primitive('custom_vjp_call_jaxpr')
-custom_vjp_call_jaxpr_p.multiple_results = True
-custom_vjp_call_jaxpr_p.def_impl(_custom_vjp_call_jaxpr_impl)
-custom_vjp_call_jaxpr_p.def_effectful_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
-CustomVJPCallPrimitive.initial_style = custom_vjp_call_jaxpr_p
-
-mlir.register_lowering(custom_vjp_call_jaxpr_p, mlir.lower_fun(
-    _custom_vjp_call_jaxpr_impl, multiple_results=True))
-
-def _custom_vjp_call_jaxpr_jvp(
-    primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
-    fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],
-    num_consts: int, bwd: lu.WrappedFun,
-    out_trees: Callable[[], Sequence[PyTreeDef]],
-    symbolic_zeros: bool):
-  _, args = split_list(primals, [num_consts])
-  consts_dot, args_dot = split_list(tangents, [num_consts])
-  if any(type(t) is not Zero for t in consts_dot):
-    raise ad.CustomVJPException()
-  zeros = [type(t) is not Zero for t in args_dot]
-  fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk(*zeros)  # consts can be tracers!
-  _, res_tree = out_trees()
-  res_and_primals_out = core.eval_jaxpr(fwd_jaxpr, fwd_consts, *args)
-  res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-  avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
-  args_dot = map(ad.instantiate_zeros, args_dot)
-  tangents_out = ad.custom_lin_p.bind(
-      *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd,
-      out_avals=avals_out, symbolic_zeros=symbolic_zeros)
-  tangents_out = map(lax.tie_p.bind, primals_out, tangents_out)
-  return primals_out, tangents_out
-ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
-
-def _custom_vjp_call_jaxpr_vmap(
-    axis_data, args, in_dims, *,
-    fun_jaxpr: core.ClosedJaxpr,
-    fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],
-    num_consts: int, bwd: lu.WrappedFun,
-    out_trees: Callable, symbolic_zeros: bool):
-  args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
-          else x for x, d in zip(args, in_dims)]
-  in_batched = [d is not not_mapped for d in in_dims]
-  _, args_batched = split_list(in_batched, [num_consts])
-  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
-      fun_jaxpr, axis_data, in_batched, False)
-  out_dims1 = [0 if b else not_mapped for b in out_batched]
-  out_dims2 = []
-
-  @pe._memoize
-  def batched_fwd_jaxpr_thunk(*zeros):
-    fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk(*zeros))  # consts can be tracers
-    batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
-        fwd_jaxpr, axis_data, args_batched, False)
-    out_dims2.append([0 if b else not_mapped for b in out_batched])
-    return batched_fwd_jaxpr.jaxpr, batched_fwd_jaxpr.consts
-
-  fwd_args_batched = [0 if b else not_mapped for b in args_batched]
-  fwd_out_dims = lambda: out_dims2[0]
-  tag = core.TraceTag()
-  batched_bwd = batching.batch_custom_vjp_bwd(
-    bwd, tag, axis_data, fwd_out_dims, fwd_args_batched)
-
-  batched_outs = custom_vjp_call_jaxpr_p.bind(
-      *args, fun_jaxpr=batched_fun_jaxpr,
-      fwd_jaxpr_thunk=batched_fwd_jaxpr_thunk, bwd=batched_bwd,
-      num_consts=num_consts, out_trees=out_trees, symbolic_zeros=symbolic_zeros)
-  out_dims = out_dims2[0] if out_dims2 else out_dims1
-  return batched_outs, out_dims
-batching.fancy_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
-
-def _custom_vjp_call_jaxpr_dce(
+def _custom_vjp_call_dce(
     used_outs: Sequence[bool], eqn: core.JaxprEqn
 ) -> tuple[list[bool], core.JaxprEqn | None]:
   if not any(used_outs) and not pe.has_effects(eqn):
     return [False] * len(eqn.invars), None
-  fun_jaxpr: core.ClosedJaxpr = eqn.params["fun_jaxpr"]
+  call_jaxpr: core.ClosedJaxpr = eqn.params["call_jaxpr"]
   fwd_jaxpr_thunk = eqn.params["fwd_jaxpr_thunk"]
   bwd: lu.WrappedFun = eqn.params["bwd"]
   out_trees: Callable[[], Sequence[PyTreeDef]] = eqn.params["out_trees"]
   symbolic_zeros: bool = eqn.params["symbolic_zeros"]
-  dce_fun_jaxpr: core.ClosedJaxpr
+  dce_call_jaxpr: core.ClosedJaxpr
   used_ins: Sequence[bool]
-  dce_fun_jaxpr, used_ins = _cached_closed_call_dce_instantiate(
-      fun_jaxpr, tuple(used_outs))
+  dce_call_jaxpr, used_ins = _cached_closed_call_dce_instantiate(
+      call_jaxpr, tuple(used_outs))
   assert all(used_ins)
 
+  @partial(lu.wrap_init, debug_info=fwd_jaxpr_thunk.debug_info)
   @pe._memoize
   def dce_fwd_jaxpr_thunk(*zeros):
-    fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk(*zeros))
+    fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk.call_wrapped(*zeros))
     _, res_tree = out_trees()
     num_res = res_tree.num_leaves
     dce_fwd_jaxpr, _ = _cached_closed_call_dce_instantiate(
@@ -1058,7 +1019,7 @@ def _custom_vjp_call_jaxpr_dce(
     res, cts = split_list(args, [res_tree.num_leaves])
     cts_ = iter(cts)
     all_cts = []
-    for used, aval in zip(used_outs, fun_jaxpr.out_avals):
+    for used, aval in zip(used_outs, call_jaxpr.out_avals):
       if used:
         all_cts.append(next(cts_))
       else:
@@ -1075,17 +1036,15 @@ def _custom_vjp_call_jaxpr_dce(
   outvars = [v for used, v in zip(used_outs, eqn.outvars) if used]
   new_params = dict(
       eqn.params,
-      fun_jaxpr=dce_fun_jaxpr,
+      call_jaxpr=dce_call_jaxpr,
       fwd_jaxpr_thunk=dce_fwd_jaxpr_thunk,
       bwd=dce_bwd_wrapped,
   )
   new_eqn = pe.new_jaxpr_eqn(
-      eqn.invars, outvars, eqn.primitive, new_params, dce_fun_jaxpr.effects,
+      eqn.invars, outvars, eqn.primitive, new_params, dce_call_jaxpr.effects,
       eqn.source_info, eqn.ctx)
   return list(used_ins), new_eqn
-pe.dce_rules[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_dce
-
-xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
+pe.dce_rules[custom_vjp_call_p] = _custom_vjp_call_dce
 
 batching.primitive_batchers[ad.custom_lin_p] = ad.raise_custom_vjp_error_on_jvp
 mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp)
@@ -1585,7 +1544,6 @@ def custom_vjp_by_custom_transpose(fun, fwd, bwd):
 
 # TODO(mattjj): remove these stubs, which exist to avoid breaking internal users
 custom_jvp_call_jaxpr_p = core.Primitive("custom_jvp_call_jaxpr")
-
 
 # The following is a helper for optimizing the behavior of custom_vjp when used
 # under remat. This is really only useful when the `fwd` function to custom_vjp
