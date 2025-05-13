@@ -3217,7 +3217,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',), axis_types=(AxisType.Auto,))
   def test_smap_auto_error(self, mesh):
-    with self.assertRaisesRegex(TypeError, "in_axes was not specified"):
+    with self.assertRaisesRegex(TypeError, "smap in_axes should be specified"):
       smap(lambda x: x * 2, out_axes=0, axis_name='x')(np.arange(4))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
@@ -3228,7 +3228,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x * 2
 
     arr = jax.device_put(np.arange(4), P('x'))
-    out = jax.jit(smap(f, out_axes=0, axis_name='x'))(arr)
+    out = jax.jit(smap(f, in_axes=0, out_axes=0, axis_name='x'))(arr)
     self.assertArraysEqual(out, np.arange(4) * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
@@ -3271,7 +3271,8 @@ class ShardMapTest(jtu.JaxTestCase):
       return smap(g, out_axes=1, axis_name='x')(b)
 
     arr = jax.device_put(np.arange(16).reshape(8, 2), P('y'))
-    jax.jit(smap(f, in_axes=0, out_axes=0, axis_name='y'))(arr)  # doesn't crash
+    with self.assertRaisesRegex(TypeError, "smap in_axes should be specified"):
+      jax.jit(smap(f, in_axes=0, out_axes=0, axis_name='y'))(arr)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
                           axis_types=(AxisType.Explicit, AxisType.Auto))

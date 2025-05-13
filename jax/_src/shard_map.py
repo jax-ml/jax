@@ -186,11 +186,11 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
   @traceback_util.api_boundary
   def wrapped(*args):
     nonlocal mesh, axis_names
-    mesh, axis_names = _shmap_checks(mesh, axis_names, in_specs, out_specs,
-                                     _skip_mesh_check, _smap)
     fun = lu.wrap_init(
         f, debug_info=api_util.debug_info("shard_map", f, args, {}))
     args_flat, in_tree = tree_flatten(args)
+    mesh, axis_names = _shmap_checks(mesh, axis_names, in_specs, out_specs,
+                                     args_flat, _skip_mesh_check, _smap)
     fun, out_tree = api_util.flatten_fun_nokwargs(fun, in_tree)
 
     try:
@@ -200,11 +200,9 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
       e, *_ = prefix_errors(in_specs, args)
       raise e('shard_map in_specs') from None
 
-    if (in_specs is None and
-        all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
-      arg_s = [typeof(a).sharding for a in args_flat]
-      assert all(i is None for i in in_specs_flat), in_specs_flat
-      in_specs_flat = [_manual_spec(axis_names, s.spec) for s in arg_s]
+    if in_specs is None:
+      in_specs_flat = _infer_sharding_from_args(
+          args_flat, in_specs_flat, axis_names)
 
     dyn_argnums, in_specs_flat = unzip2((i, s) for i, s in enumerate(in_specs_flat)
                                         if s is not None)
@@ -253,8 +251,8 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
   return wrapped
 
 
-def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
-                  _smap):
+def _shmap_checks(mesh, axis_names, in_specs, out_specs, args_flat,
+                  _skip_mesh_check, _smap):
   if mesh is None:
     mesh = get_abstract_mesh()
     if mesh.empty:
@@ -287,17 +285,23 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
         f"jax.shard_map requires axis_names={axis_names} to be a subset of "
         f"mesh.axis_names={mesh.axis_names}")
 
-  if (in_specs is None and
-      not all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
-    axis_types = ', '.join(str(mesh._name_to_type[a]) for a in axis_names)
-    if _smap:
-      msg = (f"in_axes was not specified when axis_name={axis_names} was of"
-             f" type {axis_types}")
-    else:
-      msg = ("shard_map in_specs argument must be a pytree of"
-             " `jax.sharding.PartitionSpec` instances, but it was `None` when"
-             f" {axis_names=} are of type {axis_types}")
-    raise TypeError(msg)
+  if in_specs is None:
+    for arg in args_flat:
+      aval = typeof(arg)
+      # TODO(yashkatariya): Maybe relax this condition to allow inputs sharded
+      # only on explicit mesh axes even with the mesh is a mixture of axis
+      # types. See test `test_smap_auto_explicit`.
+      if not aval.sharding.mesh._are_all_axes_explicit:
+        if _smap:
+          msg = ("smap in_axes should be specified, but it was `None` for input"
+                 f" arg of shape {aval.str_short()} with mesh axis types "
+                 f"{aval.sharding.mesh}")
+        else:
+          msg = ("shard_map in_specs argument must be a pytree of"
+                " `jax.sharding.PartitionSpec` instances, but it was `None` for"
+                f" input arg of shape {aval.str_short()} with mesh axis types"
+                f" {aval.sharding.mesh}")
+        raise TypeError(msg)
 
   if in_specs is not None:
     _check_specs(SpecErrorType.input, in_specs, axis_names)
@@ -305,6 +309,16 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
     _check_specs(SpecErrorType.out, out_specs, axis_names)
   return mesh, axis_names
 
+
+def _infer_sharding_from_args(args_flat, in_specs_flat, axis_names):
+  out = []
+  for arg, in_spec in zip(args_flat, in_specs_flat):
+    aval_s = typeof(arg).sharding
+    if aval_s.mesh._are_all_axes_explicit:
+      out.append(_manual_spec(axis_names, aval_s.spec))
+    else:
+      out.append(in_spec)
+  return out
 
 # Internally use AxisNames = dict[int, tuple[AxisName, ...]], not PartitionSpecs
 AxisNames = dict[int, tuple[AxisName, ...]]  # TODO(mattjj): make it hashable
