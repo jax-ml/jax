@@ -115,7 +115,7 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     if (tma_stride_i % 16 != 0 || tma_stride_i >= static_cast<cuuint64_t>(1)
                                                       << 40) {
       fprintf(stderr,
-              "Byte strides must be divisble by 16 and less than 2**40, but "
+              "Byte strides must be divisible by 16 and less than 2**40, but "
               "got %ld (item stride = %ld, item size = %ld) at index %ld\n",
               tma_stride_i, strides[rank - 1], elem_bytewidth, rank - i - 2);
       abort();
