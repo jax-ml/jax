@@ -3117,6 +3117,35 @@ class CustomVJPTest(jtu.JaxTestCase):
     ):
       f(0.5, 0.1, z=1.0)
 
+  def test_pretty_print(self):
+    @jax.custom_vjp
+    def f(x):
+      return x + 1
+
+    def f_fwd(x):
+      return f(x), ()
+
+    def f_bwd(_, g):
+      return g
+    f.defvjp(f_fwd, f_bwd)
+
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(f)(x)
+    actual = jaxpr.pretty_print(use_color=False)
+    expected = textwrap.dedent(
+        """
+        { lambda ; a:f32[1]. let
+            b:f32[1] = custom_vjp_call[
+              name=f
+              bwd=f_bwd
+              call_jaxpr={ lambda ; c:f32[1]. let d:f32[1] = add c 1.0:f32[] in (d,) }
+              fwd=f_fwd
+              symbolic_zeros=False
+            ] a
+          in (b,) }
+        """).strip()
+    self.assertEqual(actual, expected)
+
 
 def transpose_unary(f, x_example):
   def transposed(y):
