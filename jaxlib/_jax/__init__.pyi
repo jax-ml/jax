@@ -645,7 +645,9 @@ def batched_device_put(
     sharding: Any,
     shards: Sequence[Any],
     devices: list[Device],
-    committed: bool = True,
+    committed: bool = ...,
+    force_copy: bool = ...,
+    host_buffer_semantics: Any = ...,
 ) -> ArrayImpl: ...
 def reorder_shards(
     x: ArrayImpl,
