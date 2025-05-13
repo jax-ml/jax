@@ -214,7 +214,8 @@ class XlaBridgeTest(jtu.JaxTestCase):
       return options
 
     def make_c_api_client(plugin_name, new_options, *args, **kwargs):
-      self.assertContainsSubset(new_options, options)
+      for k in options:
+        self.assertEqual(new_options[k], options[k])
 
     with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
       with mock.patch.object(
