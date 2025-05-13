@@ -38,14 +38,34 @@ import hypothesis.strategies as hps
 jax.config.parse_flags_with_absl()
 jtu.setup_hypothesis(max_examples=100)
 
-_JAX_DTYPES = (
+_JAX_DTYPES_NO_BOOL = (
     jnp.float32,
     jnp.bfloat16,
     jnp.int32,
     jnp.int16,
     jnp.int8,
+    jnp.int4,
+    jnp.float8_e5m2,
+)
+
+_JAX_DTYPES = (
+    *_JAX_DTYPES_NO_BOOL,
     jnp.bool_,
 )
+
+
+def rand(
+    shape: tuple[int, ...], dtype: np.dtype | jnp.dtype, seed: int = 1234
+) -> np.ndarray:
+  """A helper function to generate random data for testing."""
+  rng = np.random.Generator(np.random.Philox(counter=0, key=seed))
+  if jnp.issubdtype(dtype, jnp.floating):
+    return rng.normal(size=shape).astype(dtype)
+  if jnp.issubdtype(dtype, jnp.integer):
+    return rng.integers(
+        jnp.iinfo(dtype).min, jnp.iinfo(dtype).max, shape, dtype=np.int32
+    ).astype(dtype)
+  raise NotImplementedError(f"Unsupported random data generation for {dtype=}")
 
 
 class PallasBaseTest(jtu.JaxTestCase):
@@ -510,6 +530,45 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(
         output[tuple(slice(0, d) for d in src_shape)], x
     )
+
+  # TODO(jevinjiang): we need to support strided load for bool.
+  @parameterized.product(dtype=_JAX_DTYPES_NO_BOOL)
+  @hp.given(
+      slice_start=hps.integers(0, 3),
+      slice_size=hps.integers(1, 3),
+      m=hps.integers(1, 32),
+      # Need to make sure the 2nd minor has no padding.
+      n=hps.sampled_from([1, 2, 4, 8, 16, 24, 32]),
+  )
+  @hp.settings(max_examples=20)  # 20 examples for each dtype.
+  def test_load_to_reshape(self, dtype, slice_start, slice_size, m, n):
+    if not jtu.if_cloud_tpu_at_least(2025, 5, 15):
+      self.skipTest("Requires libtpu built after 2025-05-15")
+    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    if jtu.get_tpu_version() < 4 and bitwidth != 32:
+      self.skipTest("Requires TPUv4+ for non-32-bit types")
+    if jtu.get_tpu_version() == 4 and bitwidth <= 8:
+      self.skipTest("Int8 is not supported on this target")
+    packing = 32 // bitwidth
+    n *= packing
+    slices = (
+        slice(slice_start, slice_start + slice_size),
+        slice(slice_start, slice_start + m),
+        slice(None),
+        slice(None),
+    )
+    inp_shape = (8, 64, n, 128)
+    out_shape = (slice_size, m, n * 128)
+
+    def kernel(inp_ref, out_ref):
+      inp = inp_ref[slices]
+      out_ref[...] = inp.reshape(out_shape)
+
+    inp = rand(inp_shape, dtype, seed=1234)
+    run = pl.pallas_call(kernel, jax.ShapeDtypeStruct(out_shape, dtype))
+    output = run(inp)
+    expected = inp[slices].reshape(out_shape)
+    np.testing.assert_array_equal(output, expected)
 
 
 @jtu.thread_unsafe_test_class()  # hypothesis is not thread safe

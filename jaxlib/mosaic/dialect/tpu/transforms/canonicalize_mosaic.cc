@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -66,6 +67,8 @@ struct CanonicalizeContext {
   bool compatibility_mode;
 
   int hardware_generation;
+
+  std::array<int64_t, 2> target_shape;
 };
 
 bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
@@ -753,6 +756,149 @@ LogicalResult canonicalize_vector_transpose(const CanonicalizeContext &ctx,
   return success();
 }
 
+LogicalResult canonicalize_reshape(const CanonicalizeContext &ctx,
+                                   Operation &raw_op) {
+  auto op = cast<vector::ShapeCastOp>(raw_op);
+  // We can canonicalize some reshape(load(x)) -> strided load + ALU ops.
+  auto src = op.getSource();
+  auto src_ty = src.getType();
+  auto tgt_ty = op.getType();
+  if (auto load_op = src.getDefiningOp<vector::LoadOp>()) {
+    // Pattern match (..., M, N, 128) -> (..., M, N * 128).
+    // This reshape can be folded into the load for any dtype and tiling
+    // as long as the minormost dim is 128 and N is aligned to packing. The
+    // pseudo code is:
+    // ```
+    // src_ref: (M, N, 128) with src_ty
+    //
+    // def load_to_reshape(src_ref):
+    //   b_ref = src_ref.bitcast(i32) # i32[M, N / packing, 128]
+    //   r_ref = b_ref.reshape(M * N / packing, 128)
+    //   chunks = []
+    //   for i in range(N / packing):
+    //     v = r_ref[i::N / packing, :] # i32[M, 128]
+    //     for j in range(packing):
+    //       chunk = v >> (j * bitwidth)
+    //       chunks.append(chunk)
+    //   res = concat(chunks, axis=-1) # i32[M, N * 128]
+    //   # int_src_ty refers to int type with the same bitwidth as src_ty.
+    //   res = res.astype(int_src_ty) # Trigger i32 -> int_src_ty packing.
+    //   return bitcast(res, src_ty) # src_ty[M, N * 128]
+    // ```
+    // TODO(jevinjiang): we can extend this to support folding more dims to last
+    // dim not just last 2 dims.
+    auto bitwidth = src_ty.getElementTypeBitWidth();
+    auto packing = 32 / bitwidth;
+    if (packing <= 0) {
+      return op.emitOpError("Unsupported bitwidth = ") << bitwidth;
+    }
+    // Memref bitcast is not supported if HW generation is below 4. We don't
+    // return failure because we will rely on vector reshape.
+    if ((ctx.hardware_generation < 4 && packing > 1) ||
+        (ctx.hardware_generation == 4 && packing > 2)) {
+      return success();
+    }
+    auto ref = load_op.getBase();
+    auto indices = load_op.getIndices();
+    auto ref_shape = ref.getType().getShape();
+    auto src_shape = src_ty.getShape();
+    auto tgt_shape = tgt_ty.getShape();
+    int ref_rank = ref_shape.size();
+    int src_rank = src_shape.size();
+    int tgt_rank = tgt_shape.size();
+    if (ref_rank != src_rank) {
+      return op.emitOpError("Loaded vector rank and memref rank mismatch");
+    }
+    // Check the memref's eligibility.
+    if (!isContiguousMemref(ref) || ref_rank <= 2 ||
+        // TODO(jevinjiang): add support for partial load on last 2 dims where
+        // last 2 indices are not necessarily 0 or load shape is not full.
+        getIntConst(indices[ref_rank - 1]) != 0 ||
+        getIntConst(indices[ref_rank - 2]) != 0 ||
+        ref_shape[ref_rank - 1] != src_shape[src_rank - 1] ||
+        ref_shape[ref_rank - 2] != src_shape[src_rank - 2]) {
+      return success();
+    }
+    // Check the reshape's eligibility.
+    if (src_rank != tgt_rank + 1 || src_shape[src_rank - 2] % packing != 0 ||
+        src_shape[src_rank - 1] != ctx.target_shape[1] ||
+        src_shape[src_rank - 2] * src_shape[src_rank - 1] !=
+            tgt_shape[tgt_rank - 1]) {
+      return success();
+    }
+    // At this point, the pattern is matched.
+    ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
+    auto loc = op.getLoc();
+    // First, we bitcast and reshape src ref from (..., M, N, 128) to
+    // i32(..., M * N / packing, 128).
+    SmallVector<int64_t> bitcast_shape(ref_shape);
+    // TODO(jevinjiang): once we have memref pad op, we can use ceiling
+    // division to ref_shape[ref_rank - 2] and packing to get sublane_cnt.
+    CHECK_EQ(ref_shape[ref_rank - 2] % packing, 0);
+    auto i32_2nd_minor_size = ref_shape[ref_rank - 2] / packing;
+    bitcast_shape[ref_rank - 2] = i32_2nd_minor_size;
+    auto i32_ref = builder.create<tpu::MemRefBitcastOp>(
+        MemRefType::get(bitcast_shape, builder.getI32Type()), ref);
+
+    SmallVector<int64_t> reshape_shape(ref_shape.begin(),
+                                       ref_shape.begin() + tgt_rank);
+    reshape_shape[tgt_rank - 1] = ctx.target_shape[1];
+    reshape_shape[tgt_rank - 2] = ref_shape[ref_rank - 3] * i32_2nd_minor_size;
+    auto reshape_ref = builder.create<tpu::MemRefReshapeOp>(
+        MemRefType::get(reshape_shape, builder.getI32Type()), i32_ref);
+
+    // We also need to transform the indices while transforming the memref.
+    SmallVector<Value> new_indices(indices.begin(), indices.begin() + tgt_rank);
+    new_indices[tgt_rank - 1] = IdxConst(0, builder, loc);
+    new_indices[tgt_rank - 2] = builder.create<arith::MulIOp>(
+        builder.getIndexType(), indices[ref_rank - 3],
+        IdxConst(i32_2nd_minor_size, builder, loc));
+    // Then, we strided load the bitcasted ref by stride (N / packing).
+    int stride = i32_2nd_minor_size;
+    // Expect to hold src_shape[src_rank - 2] number of chunks which have the
+    // shape (..., src_shape[src_rank - 3], 128) and wait to be concatenated
+    // along the last dim.
+    SmallVector<Value> chunks(src_shape[src_rank - 2]);
+    SmallVector<int64_t> chunk_shape(tgt_shape);
+    chunk_shape[tgt_rank - 1] = ctx.target_shape[1];
+    SmallVector<int32_t> strides(tgt_rank, 1);
+    strides[tgt_rank - 2] = stride;
+    auto tgt_2nd_minor_idx = new_indices[tgt_rank - 2];
+    for (int i = 0; i < stride; ++i) {
+      new_indices[tgt_rank - 2] = builder.create<arith::AddIOp>(
+          builder.getIndexType(), tgt_2nd_minor_idx, IdxConst(i, builder, loc));
+      auto chunk = builder.create<tpu::StridedLoadOp>(
+          VectorType::get(chunk_shape, builder.getI32Type()), reshape_ref,
+          new_indices, strides);
+      for (int j = 0; j < packing; ++j) {
+        int idx = i * packing + j;
+        chunks[idx] = builder.create<arith::ShRUIOp>(
+            chunk.getType(), chunk,
+            I32Const(j * bitwidth, chunk_shape, builder, loc));
+      }
+    }
+    // Concatenate the chunks along the last dim to get i32(..., M, N * 128).
+    CHECK_GT(chunks.size(), 0);
+    Value i32_tgt = chunks[0];
+    if (chunks.size() > 1) {
+      i32_tgt = builder.create<tpu::ConcatenateOp>(
+          VectorType::get(tgt_shape, builder.getI32Type()), chunks,
+          /*dimension=*/tgt_rank - 1);
+    }
+    Value tgt = i32_tgt;
+    // Convert to target dtype.
+    if (packing > 1) {
+      tgt = builder.create<arith::TruncIOp>(
+          VectorType::get(tgt_shape, builder.getIntegerType(bitwidth)),
+          i32_tgt);
+    }
+    tgt = builder.create<arith::BitcastOp>(tgt_ty, tgt);
+    op.replaceAllUsesWith(tgt);
+    op.erase();
+  }
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(const CanonicalizeContext &ctx, Operation &op)>;
 
@@ -764,6 +910,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::MultiDimReductionOp::getOperationName(),
        canonicalize_multi_dim_reduction},
       {vector::TransposeOp::getOperationName(), canonicalize_vector_transpose},
+      {vector::ShapeCastOp::getOperationName(), canonicalize_reshape},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {arith::SIToFPOp::getOperationName(), canonicalize_sitofp},
@@ -808,12 +955,15 @@ bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
 
 class MosaicCanonicalizer {
  public:
-  MosaicCanonicalizer(int hardware_generation, bool compatibility_mode)
+  MosaicCanonicalizer(int hardware_generation, bool compatibility_mode,
+                      std::array<int64_t, 2> target_shape)
       : hardware_generation_(hardware_generation),
-        compatibility_mode_(compatibility_mode) {}
+        compatibility_mode_(compatibility_mode),
+        target_shape_(target_shape) {}
 
   int hardware_generation_;
   bool compatibility_mode_;
+  std::array<int64_t, 2> target_shape_;
 
   LogicalResult canonicalize(func::FuncOp op) {
     if (!op.getBody().hasOneBlock()) {
@@ -834,7 +984,8 @@ class MosaicCanonicalizer {
   }
 
   LogicalResult canonicalizeOp(Operation &any_op) {
-    CanonicalizeContext ctx({compatibility_mode_, hardware_generation_});
+    CanonicalizeContext ctx(
+        {compatibility_mode_, hardware_generation_, target_shape_});
     // We must iterate over the op first, because canonicalization can cause
     // us to .erase() an op, and accessing getRegions on it after is not sound.
     // Invariant - top level ops with regions may never be invalidated.
@@ -859,14 +1010,18 @@ class MosaicCanonicalizer {
 
 struct CanonicalizeMosaicPass
     : public impl::CanonicalizeMosaicPassBase<CanonicalizeMosaicPass> {
-  CanonicalizeMosaicPass(int hardware_generation_p, bool compatibility_mode_p)
+  CanonicalizeMosaicPass(int hardware_generation_p, bool compatibility_mode_p,
+                         std::array<int64_t, 2> target_shape)
       : compatibility_mode_(compatibility_mode_p) {
     this->hardware_generation = hardware_generation_p;
+    this->sublane_count = target_shape[0];
+    this->lane_count = target_shape[1];
   }
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    MosaicCanonicalizer vlc(hardware_generation, compatibility_mode_);
+    MosaicCanonicalizer vlc(hardware_generation, compatibility_mode_,
+                            {sublane_count, lane_count});
     if (vlc.canonicalize(func).failed()) {
       signalPassFailure();
     }
@@ -878,9 +1033,10 @@ struct CanonicalizeMosaicPass
 }  // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
-    int hardware_generation, bool compatibility_mode) {
-  return std::make_unique<CanonicalizeMosaicPass>(hardware_generation,
-                                                  compatibility_mode);
+    int hardware_generation, bool compatibility_mode,
+    std::array<int64_t, 2> target_shape) {
+  return std::make_unique<CanonicalizeMosaicPass>(
+      hardware_generation, compatibility_mode, target_shape);
 }
 
 }  // namespace mlir::tpu
