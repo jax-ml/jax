@@ -6811,6 +6811,7 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_tiles,
       disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
+
   if (is_mask_pack) {
     std::vector<int64_t> vmsks_shape(src_tiles.dimensions().begin(),
                                      src_tiles.dimensions().end());
@@ -6854,6 +6855,7 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
   }
   auto assemble_with_mask_check = [&](xla::Array<Value> &tiles,
                                       bool use_implicit_shape = false) {
+
 
     if (is_mask) {
       auto zeros_tile = builder.create<arith::ConstantOp>(
@@ -6985,34 +6987,18 @@ LogicalResult tpu_relayout_rule(RewriteContext &ctx, Operation &op,
 
   auto in_layout_array_attr =
       tpu_relayout_op->getAttrOfType<ArrayAttr>("in_layout");
-  if (!in_layout_array_attr || in_layout_array_attr.empty()) {
-    return tpu_relayout_op.emitOpError(
-        "missing or empty 'in_layout' attribute");
-  }
   auto src_vla = dyn_cast<tpu::VectorLayoutAttr>(in_layout_array_attr[0]);
-  if (!src_vla) {
-    return tpu_relayout_op.emitOpError(
-        "'in_layout' attribute is not a VectorLayoutAttr");
-  }
   VectorLayout src_layout = src_vla.getLayout().value();
 
   auto out_layout_array_attr =
       tpu_relayout_op->getAttrOfType<ArrayAttr>("out_layout");
-  if (!out_layout_array_attr || out_layout_array_attr.empty()) {
-    return tpu_relayout_op.emitOpError(
-        "missing or empty 'out_layout' attribute");
-  }
   auto dst_vla = dyn_cast<tpu::VectorLayoutAttr>(out_layout_array_attr[0]);
-  if (!dst_vla) {
-    return tpu_relayout_op.emitOpError(
-        "'out_layout' attribute is not a VectorLayoutAttr");
-  }
   VectorLayout dst_layout = dst_vla.getLayout().value();
 
   if (src_layout == dst_layout) {
-    tpu_relayout_op.replaceAllUsesWith(tpu_relayout_op.getInput());
-    tpu_relayout_op.erase();
-    return success();
+    return op.emitError(
+        "Source and destination layouts are the same - did you forget to run "
+        "relayout-insertion-pass?");
   }
 
   OpBuilder builder(&op);
@@ -7079,9 +7065,6 @@ const llvm::StringMap<rule_type> &rules() {
   return *rules;
 }
 
-// TODO(apaszke): Implement a debug mode that inserts additional assertions.
-// For example, we should verify that ops that were supposed to generate
-// replicated outputs satisfy that requirement.
 LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
   // When an operation does not have any operands, the layout_in tuple is empty.
   // If one of the operands is not of vector type, the corresponding entry in
@@ -7117,14 +7100,11 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
                                  getOutLayouts(*def_op, ctx.target_shape));
       const Layout lo = def_layouts[res_idx];
       TPU_ASSERT_OP(lo.has_value());
-      if (*lo == *li) {
-        continue;
+      if (*lo != *li) {
+        return op.emitError(
+            "Invariant violation: Input layout does not match output layout - "
+            "did you forget to run relayout-insertion?");
       }
-      OpBuilder builder(&op);
-      FAILUREOR_ASSIGN_OR_RETURN(
-          Value new_v, relayout(ctx, builder, vector_operand, /*src=*/*lo,
-                                /*dst=*/*li));
-      op.setOperand(idx, new_v);
     }
   }
 
@@ -7132,7 +7112,8 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
   // support for offsets outside of the first tile. When support is more broad,
   // any op without support should check it within their own rule.
   if (!isa<arith::TruncFOp, arith::TruncIOp, vector::BroadcastOp,
-           vector::ExtractStridedSliceOp, vector::ShapeCastOp>(op)) {
+           vector::ExtractStridedSliceOp, vector::ShapeCastOp, tpu::RelayoutOp>(
+          op)) {
     for (const Layout &layout : layouts_in) {
       if (layout && layout->offsets()[1].has_value() &&
           layout->offsets()[1].value() >= layout->tiling()[1]) {
