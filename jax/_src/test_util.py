@@ -54,6 +54,7 @@ from jax._src import util
 from jax._src import mesh as mesh_lib
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
@@ -354,6 +355,20 @@ def assert_num_jit_and_pmap_compilations(times):
     raise AssertionError(f"Expected exactly {times} XLA compilations, "
                          f"but executed {count()}")
 
+@contextmanager
+def count_internal_device_puts():
+  if jaxlib_extension_version >= 341:
+    before = jax._src.lib._jax.get_internal_device_put_info()
+  counts = {}
+  try:
+    yield lambda: counts
+  finally:
+    if jaxlib_extension_version >= 341:
+      after = jax._src.lib._jax.get_internal_device_put_info()
+      for k, v in after.items():
+        diff = v - before.get(k, 0)
+        if diff != 0:
+          counts[k] = diff
 
 def jaxlib_version() -> tuple[int, ...]:
   return _jaxlib.version
