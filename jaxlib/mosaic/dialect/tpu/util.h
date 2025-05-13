@@ -195,11 +195,6 @@ ArrayRef<std::remove_const_t<T>> toArrayRef(absl::Span<T> span) {
   return ArrayRef<std::remove_const_t<T>>(span.data(), span.size());
 }
 
-inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder &builder,
-                                  Location loc) {
-  return builder.create<arith::ConstantOp>(loc, builder.getIndexType(),
-                                           builder.getIndexAttr(idx));
-}
 
 // Debug only util.
 template <typename T>
@@ -242,6 +237,8 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
                                    const std::array<int64_t, 2> &target_shape,
                                    bool allow_minormost_padding = false);
 
+bool isContiguousMemref(TypedValue<MemRefType> memref);
+
 // Determines whether the given MemRefType has the given memory space.
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space);
 
@@ -264,6 +261,30 @@ void setLayout(Operation *op, Layout in, Layout out);
 void setLayout(Operation *op, ArrayRef<Layout> in, Layout out);
 void setLayout(Operation *op, Layout in, ArrayRef<Layout> out);
 void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out);
+
+// Helper functions to create constants.
+inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder &builder,
+                                  Location loc) {
+  return builder.create<arith::ConstantOp>(loc, builder.getIndexType(),
+                                           builder.getIndexAttr(idx));
+}
+
+inline arith::ConstantOp I32Const(int32_t value, OpBuilder &builder,
+                                  Location loc) {
+  return builder.create<arith::ConstantOp>(loc, builder.getI32Type(),
+                                           builder.getI32IntegerAttr(value));
+}
+
+inline arith::ConstantOp I32Const(int32_t value, ArrayRef<int64_t> shape,
+                                  OpBuilder &builder, Location loc) {
+  return builder.create<arith::ConstantOp>(
+      loc, DenseElementsAttr::get(
+               VectorType::get(shape, builder.getI32Type()),
+               builder.getIntegerAttr(builder.getI32Type(), value)));
+}
+
+// TODO(jevinjiang): consolidate this with getIntConst in apply-vector-layout.
+std::optional<int64_t> getIntConst(Value v);
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

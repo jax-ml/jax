@@ -27,7 +27,9 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
@@ -159,6 +161,17 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
          *(tiled_layout.getTileStrides().end() - 2) == 1;
 }
 
+bool isContiguousMemref(TypedValue<MemRefType> memref) {
+  auto memref_ty = getMemRefType(memref);
+  if (auto tiled_layout =
+          dyn_cast<tpu::TiledLayoutAttr>(memref_ty.getLayout())) {
+    auto contiguous_tile_strides = ComputeTileStrides(
+        memref_ty, tiled_layout.getTiles().front().dimensions());
+    return contiguous_tile_strides == tiled_layout.getTileStrides();
+  }
+  return true;
+}
+
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space) {
   auto memory_space =
       dyn_cast_or_null<tpu::MemorySpaceAttr>(ty.getMemorySpace());
@@ -278,4 +291,14 @@ void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out) {
   setInLayout(op, in);
   setOutLayout(op, out);
 }
+
+std::optional<int64_t> getIntConst(Value v) {
+  if (auto const_op = v.getDefiningOp<arith::ConstantOp>()) {
+    if (auto cst_attr = dyn_cast<IntegerAttr>(const_op.getValue())) {
+      return cst_attr.getValue().getSExtValue();
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace mlir::tpu
