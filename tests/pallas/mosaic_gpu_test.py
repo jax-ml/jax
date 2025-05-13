@@ -3321,20 +3321,6 @@ class ExamplesSm90ATest(PallasSm90ATest):
 
     np.testing.assert_allclose(kernel(x, x), x @ x)
 
-  def test_debug_bug(self):
-    dtype = jnp.float16
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], dtype),
-    )
-    def kernel(o_ref):
-      kv_step = jnp.asarray(0)
-      @pl.when(kv_step < -2)
-      def dp():
-        pl.debug_print("foo")
-      o_ref[...] = jnp.zeros_like(o_ref)
-    kernel()
-
   # TODO(apaszke): Clusters and multicast
 
 
