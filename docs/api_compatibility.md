@@ -59,6 +59,11 @@ Any API or import path prefixed with an underscore is explicitly private,
 and may change without warning between JAX releases. We are working to move
 all private APIs into `jax._src` to make these expectations more clear.
 
+### jaxlib
+Any import path in the `jaxlib` package is considered private, and may change
+without warning between releases. Some APIs defined in `jaxlib` have public
+aliases in the `jax` package.
+
 ### Legacy internal APIs
 In addition, there are several legacy modules that currently expose some
 private APIs without an underscore, including:
