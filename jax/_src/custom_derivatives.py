@@ -917,7 +917,8 @@ def _flatten_bwd(f: Callable,
                "shape/dtypes as the args tuple of the primal function, but at "
                f"output{keystr(kp)} the bwd rule produced an output of "
                f"shape/dtype {a_.str_short()} corresponding "
-               f"to an input of shape/dtype {a.str_short()}.")
+               f"to an input of shape/dtype {a.str_short()}"
+               f"{core.aval_mismatch_extra(a, a_)}")
         raise ValueError(msg)
       results.append(ct)
   return results

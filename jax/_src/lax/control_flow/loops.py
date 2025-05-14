@@ -51,7 +51,7 @@ from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
     _avals_short, _initial_style_jaxpr,
     _initial_style_jaxpr_attrs, _make_closed_jaxpr_attrs, _prune_zeros,
-    _typecheck_param, _aval_mismatch_extra)
+    _typecheck_param)
 from jax._src.lax.other import logaddexp
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -478,7 +478,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
   if not all(_map(core.typematch, in_avals, out_avals)):
     diffs = [f'{component(path)} has type {in_aval.str_short()}'
              ' but the corresponding output carry component has type '
-             f'{out_aval.str_short()}{_aval_mismatch_extra(in_aval, out_aval)}'
+             f'{out_aval.str_short()}{core.aval_mismatch_extra(in_aval, out_aval)}'
              for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
              if not core.typematch(in_aval, out_aval)]
 
