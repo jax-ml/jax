@@ -348,7 +348,7 @@ def build_kernel(
           mma_done_barrier.wait(for_tensor_core=True)
 
           # TODO make optimized an autotuned variable
-          acc_slot[:].astype(ir.F16Type.get()).store_untiled(d_smem, swizzle=128, optimized=False)
+          acc_slot.load().astype(ir.F16Type.get()).store_untiled(d_smem, swizzle=128, optimized=False)
           mgpu.commit_shared()
 
           store_row = cx(0)
