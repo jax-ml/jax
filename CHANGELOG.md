@@ -21,6 +21,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     given its name.
 
 * Changes
+  * Additional checking for the versions of CUDA package dependencies was
+    reenabled, having been accidentally disabled in a previous release.
   * JAX nightly packages are now published to artifact registry. To install
     these packages, see the [JAX installation guide](https://docs.jax.dev/en/latest/installation.html#jax-nightly-installation).
   * `jax.sharding.PartitionSpec` no longer inherits from a tuple.
