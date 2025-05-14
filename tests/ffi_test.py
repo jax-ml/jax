@@ -28,6 +28,7 @@ from jax.sharding import PartitionSpec as P
 
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
@@ -284,6 +285,8 @@ class FfiTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu", "cpu")
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_extend_import_shim(self):
+    if deprecations.is_accelerated_attribute(jex.ffi, "ffi_call"):
+      self.skipTest("FFI call deprecation is accelerated.")
     ffi_call_geqrf(jnp.ones((4, 5), dtype=np.float32), _use_extend=True)
 
   def test_extended_dtype_lowering(self):
