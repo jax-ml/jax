@@ -38,7 +38,8 @@ from jax._src.named_sharding import (  # noqa: F401
     SdyArray, SdyDim, UnspecifiedValue, AUTO,
     _check_unique_resources, NamedSharding, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
-    array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding)
+    array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding,
+    modify_sdy_sharding_wrt_axis_types)
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
@@ -93,27 +94,6 @@ class SdyArrayList:
   def build(self) -> sdy.TensorShardingPerValueAttr:
     return sdy.TensorShardingPerValueAttr.get(
         [sharding.build() for sharding in self.shardings])
-
-
-# TODO(yashkatariya): Upstream this into `_to_sdy_sharding` maybe with an extra
-# parameter to it `_to_sdy_sharding(self, ndim, modify_wrt_axis_types=False)`
-def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArray, mesh):
-  if mesh._any_axis_auto:
-    dim_shardings, used_axes = [], []  # type: ignore
-    for d in sdy_sharding.dimension_shardings:
-      # TODO(yashkatariya): Maybe if any mesh axis is auto, mark all axes as open?
-      dim_shardings.append(SdyDim(axes=[], is_open=True)
-                           if not d.axes and not d.is_open else d)
-      used_axes.extend(d.axes)
-    remaining_axes = set(mesh.axis_names) - set(used_axes)
-    # Sort wrt mesh axis names so order is deterministic and doesn't hang in
-    # McJAX.
-    remaining_axes = [n for n in mesh.axis_names if n in remaining_axes]
-    replicated_axes = tuple(r for r in remaining_axes
-                            if mesh._name_to_type[r] == mesh_lib.AxisType.Explicit)
-    return SdyArray(sdy_sharding.mesh_shape, dim_shardings,
-                    sdy_sharding.logical_device_ids, replicated_axes)
-  return sdy_sharding
 
 
 replicated_hlo_sharding = xc.HloSharding.replicate()
@@ -188,7 +168,7 @@ class SingleDeviceSharding(jsharding.Sharding):
   def _to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
     sdy_dim_sharding = [SdyDim(axes=[], is_open=False)
                         for _ in range(num_dimensions)]
-    return SdyArray(None, sdy_dim_sharding)
+    return SdyArray(mesh_shape=None, dim_shardings=sdy_dim_sharding)
 
   @property
   def is_fully_replicated(self) -> bool:
