@@ -64,9 +64,23 @@ string_flag(
 )
 
 config_setting(
-    name = "enable_jaxlib_build",
+    name = "config_build_jaxlib_true",
     flag_values = {
         ":build_jaxlib": "true",
+    },
+)
+
+config_setting(
+    name = "config_build_jaxlib_false",
+    flag_values = {
+        ":build_jaxlib": "false",
+    },
+)
+
+config_setting(
+    name = "config_build_jaxlib_wheel",
+    flag_values = {
+        ":build_jaxlib": "wheel",
     },
 )
 
@@ -212,7 +226,6 @@ py_library(
             ":jax",
         ],
         if_not_building = [],
-        if_not_building_for_cpu = [],
     ) + py_deps("numpy"),
 )
 
@@ -229,7 +242,6 @@ py_library(
             "//jax/_src/lib",
         ],
         if_not_building = [],
-        if_not_building_for_cpu = [],
     ) + py_deps("numpy"),
 )
 
@@ -243,7 +255,6 @@ py_library(
             ":test_util",
         ],
         if_not_building = [],
-        if_not_building_for_cpu = [],
     ),
 )
 
@@ -259,7 +270,6 @@ py_library(
             ":test_util",
         ],
         if_not_building = [],
-        if_not_building_for_cpu = [],
     ) + py_deps("numpy"),
 )
 

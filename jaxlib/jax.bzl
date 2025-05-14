@@ -158,28 +158,20 @@ def if_building_jaxlib(
         if_building,
         if_not_building = [
             "@pypi//jaxlib",
-            "@pypi//jax_cuda12_plugin",
-            "@pypi//jax_cuda12_pjrt",
-        ],
-        if_not_building_for_cpu = [
-            "@pypi//jaxlib",
         ]):
-    """Adds jaxlib and jaxlib cuda plugin wheels as dependencies instead of depending on sources.
+    """Adds jaxlib wheels as dependencies instead of depending on sources.
 
     This allows us to test prebuilt versions of jaxlib wheels against the rest of the JAX codebase.
 
     Args:
       if_building: the source code targets to depend on in case we don't depend on the jaxlib wheels
-      if_not_building: the wheels to depend on including gpu-specific plugins in case of
-                       gpu-enabled builds
-      if_not_building_for_cpu: the wheels to depend on in case of cpu-only builds
+      if_not_building: the wheels to depend on if we are not depending directly on //jaxlib.
     """
 
     return select({
-        "//jax:enable_jaxlib_build": if_building,
-        "//jax_plugins/cuda:disable_jaxlib_for_cpu_build": if_not_building_for_cpu,
-        "//jax_plugins/cuda:disable_jaxlib_for_cuda12_build": if_not_building,
-        "//conditions:default": [],
+        "//jax:config_build_jaxlib_true": if_building,
+        "//jax:config_build_jaxlib_false": if_not_building,
+        "//jax:config_build_jaxlib_wheel": [],
     })
 
 def _get_test_deps(deps, backend_independent):
@@ -192,14 +184,14 @@ def _get_test_deps(deps, backend_independent):
     Returns:
       A list of test deps for the given backend.
         For CPU builds:
-          If --//jax:enable_jaxlib_build=true, returns pypi test deps.
-          If --//jax:enable_jaxlib_build=false, returns jaxlib pypi wheel dep and pypi test deps.
-          If --//jax:enable_jaxlib_build=wheel, returns jaxlib py_import dep and pypi test deps.
+          If --//jax:build_jaxlib=true, returns pypi test deps.
+          If --//jax:build_jaxlib=false, returns jaxlib pypi wheel dep and pypi test deps.
+          If --//jax:build_jaxlib=wheel, returns jaxlib py_import dep and pypi test deps.
         For GPU builds:
-          If --//jax:enable_jaxlib_build=true, returns pypi test deps and gpu build deps.
-          If --//jax:enable_jaxlib_build=false, returns jaxlib, jax-cuda-plugin,
+          If --//jax:build_jaxlib=true, returns pypi test deps and gpu build deps.
+          If --//jax:build_jaxlib=false, returns jaxlib, jax-cuda-plugin,
             jax-cuda-pjrt pypi wheel deps and pypi test deps.
-          If --//jax:enable_jaxlib_build=wheel, returns jaxlib,
+          If --//jax:build_jaxlib=wheel, returns jaxlib,
             jax-cuda-plugin, jax-cuda-pjrt py_import deps and pypi test deps.
     """
     gpu_build_deps = [
@@ -234,7 +226,7 @@ def _get_test_deps(deps, backend_independent):
         gpu_py_import_deps = gpu_py_imports
 
     return select({
-        "//jax:enable_jaxlib_build": test_deps,
+        "//jax:config_build_jaxlib_true": test_deps,
         "//jax_plugins/cuda:disable_jaxlib_for_cpu_build": jaxlib_pypi_wheel_deps,
         "//jax_plugins/cuda:disable_jaxlib_for_cuda12_build": gpu_pypi_wheel_deps,
         "//jax_plugins/cuda:enable_py_import_for_cpu_build": cpu_py_imports,
@@ -250,9 +242,9 @@ def _get_jax_test_deps(deps):
     Returns:
       A list of jax test deps.
 
-      If --//jax:enable_jax_build=true, returns jax build deps.
-      If --//jax:enable_jax_build=false, returns jax pypi wheel dep and transitive pypi test deps.
-      If --//jax:enable_jax_build=wheel, returns jax py_import dep and transitive pypi test deps.
+      If --//jax:build_jax=true, returns jax build deps.
+      If --//jax:build_jax=false, returns jax pypi wheel dep and transitive pypi test deps.
+      If --//jax:build_jax=wheel, returns jax py_import dep and transitive pypi test deps.
     """
     jax_build_deps = [d for d in deps if not d.startswith("@pypi//")]
 
