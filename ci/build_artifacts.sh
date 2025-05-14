@@ -95,7 +95,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     local_python_archive_path="/cpython/python314.tgz"
     if [[ -f "$local_python_archive_path" ]]; then
       export PYTHON_SHA256=($(sha256sum "$local_python_archive_path"))
-      python_prefix = "cpython314/"
+      python_prefix="cpython314/"
       local_python_config="--bazel_options=--repo_env=HERMETIC_PYTHON_URL=file://${local_python_archive_path} --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX=${python_prefix}"
     else
       echo "Error: Failed to find a python archive file under ${local_python_archive_path}."
