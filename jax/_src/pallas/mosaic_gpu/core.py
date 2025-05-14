@@ -33,6 +33,7 @@ from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
 import jax._src.pallas.utils as pallas_utils
 from jax._src.state import discharge as state_discharge
@@ -194,14 +195,28 @@ def kernel(
           mesh, compiler_params=compiler_params
       )(cmap_body)
     _, outs = state_discharge.run_state(stateful)(
-        (operands, jax.tree.map(jnp.zeros_like, out_shape))
+        (operands, empty_like(out_shape))
     )
     return outs[0] if unwrap_out else outs
   return wrapper
 
 
+def empty_like(shape):
+  return pallas_call.pallas_call(
+      lambda *_: None,
+      out_shape=shape,
+      out_specs=jax.tree.map(
+          lambda _: pallas_core.BlockSpec(memory_space=GPUMemorySpace.GMEM),
+          shape,
+      ),
+      backend="mosaic_gpu",
+  )()
+
+
 def _is_known_divisible(value, divisor, fuel=10) -> bool:
   """Returns True if the value is statically known to be divisible by the divisor."""
+  if divisor == 1:
+    return True
   if fuel < 0:
     return False
   if not isinstance(value.owner, ir.Operation):

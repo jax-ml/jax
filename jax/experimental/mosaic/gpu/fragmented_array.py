@@ -2166,10 +2166,12 @@ class FragmentedArray:
       raise ValueError()
     nested_ref_shape = tuple(
         (ref_ty.shape[i], ref_ty.shape[i + ref_logical_rank])
+        if ref_ty.shape[i + ref_logical_rank] != 1 else (ref_ty.shape[i],)
         for i in range(ref_logical_rank)
     )
     nested_ref_strides = tuple(
         (ref_strides[i], ref_strides[i + ref_logical_rank])
+        if ref_ty.shape[i + ref_logical_rank] != 1 else (ref_strides[i],)
         for i in range(ref_logical_rank)
     )
     tiled_nested_shape, tiled_nested_strides = tiling.tile_nested_shape_strides(
