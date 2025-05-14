@@ -65,7 +65,7 @@ jobs:
         runner: ${{ matrix.runner }}
         artifact: ${{ matrix.artifact }}
         python: ${{ matrix.python }}
-        clone_main_xla: 1
+        clone_main_xla: 0
         upload_artifacts_to_gcs: true
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
