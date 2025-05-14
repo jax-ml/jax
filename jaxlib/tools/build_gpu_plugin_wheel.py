@@ -120,7 +120,7 @@ def prepare_cuda_plugin_wheel(
       ],
   )
   copy_files(
-      f"{source_file_prefix}jaxlib/tools/pjrt_c_api_gpu_plugin.so",
+      f"{source_file_prefix}jax_plugins/cuda/pjrt_c_api_gpu_plugin.so",
       dst_dir=plugin_dir,
       dst_filename="xla_cuda_plugin.so",
   )
@@ -158,7 +158,7 @@ def prepare_rocm_plugin_wheel(
       ],
   )
   copy_files(
-      f"{source_file_prefix}jaxlib/tools/pjrt_c_api_gpu_plugin.so",
+      f"{source_file_prefix}jax_plugins/rocm/pjrt_c_api_gpu_plugin.so",
       dst_dir=plugin_dir,
       dst_filename="xla_rocm_plugin.so",
   )
