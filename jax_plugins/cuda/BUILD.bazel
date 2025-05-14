@@ -14,7 +14,6 @@
 
 load(
     "//jaxlib:jax.bzl",
-    "if_windows",
     "py_library_providing_imports_info",
     "pytype_library",
 )
@@ -57,36 +56,4 @@ py_library_providing_imports_info(
     ],
     data = [":pjrt_c_api_gpu_plugin.so"],
     lib_rule = pytype_library,
-)
-
-config_setting(
-    name = "disable_jaxlib_for_cpu_build",
-    flag_values = {
-        "//jax:build_jaxlib": "false",
-        "@local_config_cuda//:enable_cuda": "False",
-    },
-)
-
-config_setting(
-    name = "disable_jaxlib_for_cuda12_build",
-    flag_values = {
-        "//jax:build_jaxlib": "false",
-        "@local_config_cuda//:enable_cuda": "True",
-    },
-)
-
-config_setting(
-    name = "enable_py_import_for_cpu_build",
-    flag_values = {
-        "//jax:build_jaxlib": "wheel",
-        "@local_config_cuda//:enable_cuda": "False",
-    },
-)
-
-config_setting(
-    name = "enable_py_import_for_cuda12_build",
-    flag_values = {
-        "//jax:build_jaxlib": "wheel",
-        "@local_config_cuda//:enable_cuda": "True",
-    },
 )
