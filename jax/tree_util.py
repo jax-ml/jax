@@ -90,5 +90,5 @@ if _typing.TYPE_CHECKING:
 else:
   from jax._src.deprecations import deprecation_getattr
   __getattr__ = deprecation_getattr(__name__, _deprecations)
-  del deprecation_getattr, _deprecations
+  del deprecation_getattr
 del _typing
