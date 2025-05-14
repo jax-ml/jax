@@ -60,6 +60,7 @@ limitations under the License.
 #include "xla/python/transfer/streaming_ifrt.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -109,6 +110,7 @@ absl::StatusOr<xla::PjRtMemorySpace*> MemorySpaceFromSharding(
   }
 }
 
+#if JAX_IFRT_VERSION_NUMBER < 8
 class IfrtArrayEntry : public PullTable::Entry {
  public:
   struct BufferRef {
@@ -153,10 +155,48 @@ class IfrtArrayEntry : public PullTable::Entry {
   std::shared_ptr<PremappedCopierState> state_;
   size_t xfer_size_;
 };
+#endif
 
-absl::StatusOr<tsl::RCReference<IfrtArrayEntry>> CreatePullEntry(
+absl::StatusOr<tsl::RCReference<PullTable::Entry>> CreatePullEntry(
     const std::vector<xla::ifrt::ArrayRef>& arrs,
-    std::shared_ptr<PremappedCopierState> state, size_t xfer_size) {
+    std::shared_ptr<PremappedCopierState> state, size_t xfer_size,
+    bool use_raw_buffers) {
+#if JAX_IFRT_VERSION_NUMBER >= 8
+  if (use_raw_buffers) {
+    std::vector<RawBufferEntry::BufferRef> refs;
+    for (auto& arr : arrs) {
+      auto* pjrt_arr = llvm::dyn_cast_or_null<xla::ifrt::PjRtArray>(arr.get());
+      if (pjrt_arr == nullptr) {
+        return absl::InvalidArgumentError(
+            "Cannot remote transfer non-pjrt arrays.");
+      }
+      for (auto& pjrt_buf : pjrt_arr->pjrt_buffers()) {
+        TF_ASSIGN_OR_RETURN(size_t buf_size,
+                            pjrt_buf->GetOnDeviceSizeInBytes());
+        TF_ASSIGN_OR_RETURN(
+            auto raw_buffer,
+            xla::PjRtRawBuffer::CreateRawAliasOfBuffer(pjrt_buf.get()));
+        refs.push_back(
+            {pjrt_buf->GetReadyFuture(), std::move(raw_buffer), buf_size});
+      }
+    }
+    return tsl::MakeRef<RawBufferEntry>(std::move(refs), state, xfer_size);
+  }
+
+  std::vector<PjRtBufferEntry::BufferRef> refs;
+  for (auto& arr : arrs) {
+    auto* pjrt_arr = llvm::dyn_cast_or_null<xla::ifrt::PjRtArray>(arr.get());
+    if (pjrt_arr == nullptr) {
+      return absl::InvalidArgumentError(
+          "Cannot remote transfer non-pjrt arrays.");
+    }
+    for (auto& pjrt_buf : pjrt_arr->pjrt_buffers()) {
+      TF_ASSIGN_OR_RETURN(size_t buf_size, pjrt_buf->GetOnDeviceSizeInBytes());
+      refs.push_back({pjrt_buf, buf_size});
+    }
+  }
+  return tsl::MakeRef<PjRtBufferEntry>(std::move(refs), state, xfer_size);
+#else
   std::vector<IfrtArrayEntry::BufferRef> refs;
   for (auto& arr : arrs) {
     auto* pjrt_arr = llvm::dyn_cast_or_null<xla::ifrt::PjRtArray>(arr.get());
@@ -170,6 +210,7 @@ absl::StatusOr<tsl::RCReference<IfrtArrayEntry>> CreatePullEntry(
     }
   }
   return tsl::MakeRef<IfrtArrayEntry>(std::move(refs), state, xfer_size);
+#endif
 }
 
 class PyTransferServerConnection {
@@ -195,7 +236,8 @@ class PyTransferServer {
   absl::Status Start(xla::ifrt::Client* client, size_t max_num_parallel_copies,
                      size_t xfer_size, const SocketAddress& addr,
                      const std::vector<SocketAddress>& transport_addresses,
-                     bool supports_pinned_allocator) {
+                     bool supports_pinned_allocator, bool use_raw_buffers) {
+    use_raw_buffers_ = use_raw_buffers;
     std::shared_ptr<BulkTransportFactory> factory;
     if (transport_addresses.empty()) {
       factory = BulkTransportFactory::CreateLocal();
@@ -235,8 +277,9 @@ class PyTransferServer {
   }
 
   void AwaitPull(uint64_t uuid, const std::vector<xla::ifrt::ArrayRef>& arrs) {
-    server_->AwaitPull(uuid, xla::ValueOrThrow(CreatePullEntry(
-                                 arrs, premapped_copier_, xfer_size_)));
+    server_->AwaitPull(
+        uuid, xla::ValueOrThrow(CreatePullEntry(arrs, premapped_copier_,
+                                                xfer_size_, use_raw_buffers_)));
   }
 
   size_t xfer_size() { return xfer_size_; }
@@ -249,6 +292,7 @@ class PyTransferServer {
   std::shared_ptr<SocketServer> server_;
   std::shared_ptr<PremappedCopierState> premapped_copier_;
   size_t xfer_size_;
+  bool use_raw_buffers_ = false;
 };
 
 absl::StatusOr<xla::ifrt::ArraySpec> ArraySpecFromShapeDtypeStruct(
@@ -394,7 +438,8 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       [](xla::nb_class_ptr<xla::PyClient> py_client, std::string address,
          std::vector<std::string> transport_addresses_str,
          size_t max_num_parallel_copies, size_t transfer_size,
-         bool supports_pinned_allocator) -> PyTransferServer {
+         bool supports_pinned_allocator,
+         bool use_raw_buffers) -> PyTransferServer {
         PyTransferServer result;
         std::vector<SocketAddress> transport_addresses;
         transport_addresses.reserve(transport_addresses_str.size());
@@ -405,7 +450,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
         xla::ThrowIfError(result.Start(
             py_client->ifrt_client(), max_num_parallel_copies, transfer_size,
             xla::ValueOrThrow(SocketAddress::Parse(address)),
-            transport_addresses, supports_pinned_allocator));
+            transport_addresses, supports_pinned_allocator, use_raw_buffers));
         return result;
       },
       nb::arg("client"), nb::arg("address") = SocketAddress().ToString(),
@@ -413,7 +458,10 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       nb::arg("max_num_parallel_copies") = 8,
       nb::arg("transfer_size") = 256 * 1024 * 1024,
       // Dual pinning not confirmed to be supported.
-      nb::arg("supports_pinned_allocator") = false);
+      nb::arg("supports_pinned_allocator") = false,
+      // Technically unsafe (because a future donation won't wait for the
+      // transfer to complete).
+      nb::arg("use_raw_buffers") = false);
 }
 
 }  // namespace aux
