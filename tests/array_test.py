@@ -35,8 +35,8 @@ from jax._src.mesh import AxisType, AbstractMesh
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     _op_sharding_to_pos_sharding, pmap_sharding_devices_indices_map,
-    NamedSharding, GSPMDSharding, PositionalSharding, SdyDimSharding,
-    SdyArraySharding)
+    NamedSharding, GSPMDSharding, PositionalSharding, SdyDim,
+    SdyArray)
 from jax.experimental.pjit import pjit
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
@@ -1476,12 +1476,12 @@ class ShardyShardingTest(jtu.JaxTestCase):
     sdy_sharding = s._to_sdy_sharding(3)
     self.assertEqual(
         sdy_sharding,
-        SdyArraySharding(
+        SdyArray(
             mesh.shape_tuple,
-            [SdyDimSharding(
+            [SdyDim(
              ('sequence', 'data'), False),
-             SdyDimSharding(('model',), False),
-             SdyDimSharding([], False)]))
+             SdyDim(('model',), False),
+             SdyDim([], False)]))
     with ir.Context() as ctx:
       dialects.sdy.register_dialect(ctx)
       self.assertEqual(
@@ -1496,11 +1496,11 @@ class ShardyShardingTest(jtu.JaxTestCase):
     sdy_sharding = s._to_sdy_sharding(3)
     self.assertEqual(
         sdy_sharding,
-        SdyArraySharding(
+        SdyArray(
             mesh.shape_tuple,
-            [SdyDimSharding([], False),
-             SdyDimSharding([], True),
-             SdyDimSharding(('x',), False)]))
+            [SdyDim([], False),
+             SdyDim([], True),
+             SdyDim(('x',), False)]))
     with ir.Context() as ctx:
       dialects.sdy.register_dialect(ctx)
       self.assertEqual(

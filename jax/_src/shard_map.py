@@ -773,7 +773,7 @@ def _valid_repeats(mesh: Mesh, vma: Set[AxisName], names: AxisNames) -> bool:
 
 def _shardy_shard_map_sharding(
     ctx: mlir.LoweringRuleContext, mesh, manual_axes, names, aval_in
-) -> sharding_impls.SdyArraySharding:
+) -> sharding_impls.SdyArray:
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
@@ -808,10 +808,10 @@ def _shard_map_lowering_shardy(
           dim_var_values=ctx.dim_var_values)
     return out_nodes
 
-  in_shardings = sharding_impls.SdyArrayShardingList(map(
+  in_shardings = sharding_impls.SdyArrayList(map(
       partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
       in_names, ctx.avals_in)).build()
-  out_shardings = sharding_impls.SdyArrayShardingList(map(
+  out_shardings = sharding_impls.SdyArrayList(map(
       partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
       out_names, ctx.avals_out)).build()
   output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
