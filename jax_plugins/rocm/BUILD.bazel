@@ -34,14 +34,26 @@ exports_files([
     "setup.py",
 ])
 
+cc_binary(
+    name = "pjrt_c_api_gpu_plugin.so",
+    linkopts = [
+        "-Wl,--version-script,$(location :gpu_version_script.lds)",
+        "-Wl,--no-undefined",
+    ],
+    linkshared = True,
+    deps = [
+        ":gpu_version_script.lds",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu",
+        "@xla//xla/service:gpu_plugin",
+        "@xla//xla/stream_executor:rocm_platform",
+    ],
+)
+
 py_library_providing_imports_info(
     name = "rocm_plugin",
     srcs = [
         "__init__.py",
     ],
-    data = if_windows(
-        ["@xla//xla/pjrt/c/pjrt_c_api_gpu_plugin.pyd"],
-        ["@xla//xla/pjrt/c:pjrt_c_api_gpu_plugin.so"],
-    ),
+    data = [":pjrt_c_api_gpu_plugin.so"],
     lib_rule = pytype_library,
 )

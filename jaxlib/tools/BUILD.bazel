@@ -64,10 +64,10 @@ py_binary(
         "LICENSE.txt",
         "//jaxlib",
         "//jaxlib:README.md",
+        "//jaxlib:_jax",
         "//jaxlib:jaxlib_binaries",
         "//jaxlib:setup.py",
         "//jaxlib:xla_client.py",
-        "//jaxlib:_jax",
         "@xla//xla/ffi/api:api.h",
         "@xla//xla/ffi/api:c_api.h",
         "@xla//xla/ffi/api:ffi.h",
@@ -90,35 +90,15 @@ jax_py_test(
     ],
 )
 
-cc_binary(
-    name = "pjrt_c_api_gpu_plugin.so",
-    linkopts = [
-        "-Wl,--version-script,$(location :gpu_version_script.lds)",
-        "-Wl,--no-undefined",
-    ],
-    linkshared = True,
-    deps = [
-        ":gpu_version_script.lds",
-        "@xla//xla/pjrt/c:pjrt_c_api_gpu",
-        "@xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds",
-        "@xla//xla/service:gpu_plugin",
-    ] + if_cuda([
-        "//jaxlib/mosaic/gpu:custom_call",
-        "@xla//xla/stream_executor:cuda_platform",
-    ]) + if_rocm([
-        "@xla//xla/stream_executor:rocm_platform",
-    ]),
-)
-
 py_binary(
     name = "build_gpu_plugin_wheel",
     srcs = ["build_gpu_plugin_wheel.py"],
     data = [
         "LICENSE.txt",
-        ":pjrt_c_api_gpu_plugin.so",
     ] + if_cuda([
         "//jaxlib:version",
         "//jaxlib/cuda:cuda_gpu_support",
+        "//jax_plugins/cuda:pjrt_c_api_gpu_plugin.so",
         "//jax_plugins/cuda:pyproject.toml",
         "//jax_plugins/cuda:setup.py",
         "//jax_plugins/cuda:__init__.py",
@@ -126,6 +106,7 @@ py_binary(
     ]) + if_rocm([
         "//jaxlib:version",
         "//jaxlib/rocm:rocm_gpu_support",
+        "//jax_plugins/rocm:pjrt_c_api_gpu_plugin.so",
         "//jax_plugins/rocm:pyproject.toml",
         "//jax_plugins/rocm:setup.py",
         "//jax_plugins/rocm:__init__.py",
@@ -387,10 +368,6 @@ jax_wheel(
 )
 
 # JAX PJRT wheel targets.
-pytype_strict_library(
-    name = "pjrt_c_api_gpu_plugin_so",
-    data = [":pjrt_c_api_gpu_plugin.so"],
-)
 
 py_binary(
     name = "build_gpu_plugin_wheel_tool",
@@ -407,12 +384,12 @@ py_binary(
 
 wheel_sources(
     name = "jax_pjrt_sources",
-    data_srcs = [
-        ":pjrt_c_api_gpu_plugin_so",
-    ] + if_cuda([
+    data_srcs = if_cuda([
+        "//jax_plugins/cuda:cuda_plugin",
         "//jaxlib/cuda:cuda_gpu_support",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
+        "//jax_plugins/rocm:rocm_plugin",
         "//jaxlib/rocm:rocm_gpu_support",
     ]),
     py_srcs = [
