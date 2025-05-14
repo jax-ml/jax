@@ -53,8 +53,8 @@ from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
-    _avals_short, _typecheck_param, _aval_mismatch_extra,
-    _initial_style_jaxprs_with_common_consts, _make_closed_jaxpr, _prune_zeros)
+    _avals_short, _typecheck_param, _initial_style_jaxprs_with_common_consts,
+    _make_closed_jaxpr, _prune_zeros)
 
 map, unsafe_map = safe_map, map
 
@@ -351,7 +351,7 @@ def _check_branch_outputs(
   if not all(map(core.typematch, out_avals1, out_avals2)):
     diffs = [f'the output of {name1}{component(p)} has type {a1.str_short()}'
              f' but the corresponding output of {name2} has type '
-             f'{a2.str_short()}{_aval_mismatch_extra(a1, a2)}'
+             f'{a2.str_short()}{core.aval_mismatch_extra(a1, a2)}'
              for p, a1, a2 in zip(paths, out_avals1, out_avals2)
              if not core.typematch(a1, a2)]
     if len(diffs) == 0:
