@@ -132,9 +132,9 @@ class IfrtArrayEntry : public PullTable::Entry {
             std::min(xfer_size_, arrs_[bid].buf_size - i * xfer_size_));
         bool is_largest = blob.size + blob.offset == arrs_[bid].buf_size;
         state_->ScheduleCopy(
-            blob, [req_id, state, copier_state = state_, is_largest](
-                      PremappedCopierState* copier_state_ptr, void* buf,
-                      const DmaCopyChunk& chunk) {
+            std::move(blob), [req_id, state, copier_state = state_, is_largest](
+                                 PremappedCopierState* copier_state_ptr,
+                                 void* buf, const DmaCopyChunk& chunk) {
               state->Send(
                   req_id, buf, chunk.offset, chunk.size, is_largest,
                   [copier_state, buf]() { copier_state->ReturnBuffer(buf); });
