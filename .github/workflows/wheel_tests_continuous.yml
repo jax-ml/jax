@@ -22,6 +22,9 @@ permissions:
       contents: read
 
 on:
+  # DO NOT SUBMIT IT. REMOVE THIS TRIGGER AFTER TESTING.
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
   workflow_dispatch: # allows triggering the workflow run manually
@@ -71,7 +74,7 @@ jobs:
           # Python values need to match the matrix stategy in the CUDA tests job below
           runner: ["linux-x86-n2-16"]
           artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
-          python: ["3.10",]
+          python: ["3.10", "3.14"]
     name: "Build ${{ format('{0}', 'CUDA') }} artifacts"
     with:
       runner: ${{ matrix.runner }}
