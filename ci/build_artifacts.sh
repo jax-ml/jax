@@ -91,10 +91,24 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     bazelrc_config="${bazelrc_config}_cuda"
   fi
 
+  if [[ "JAXCI_HERMETIC_PYTHON_VERSION"== "3.14" ]]; then
+    local local_python_archive_path = "/cpython/python314.tgz"
+    if [[ -f "$local_python_archive_path" ]]; then
+      export PYTHON_SHA256=($(sha256sum "$local_python_archive_path"))
+      python_prefix = "cpython314/"
+      local_python_config="--bazel_options=--repo_env=HERMETIC_PYTHON_URL=file://${local_python_archive_path} --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX=${python_prefix}"
+    else
+      echo "Error: Failed to find a python archive file under ${local_python_archive_path}."
+      exit 1
+    fi
+  else
+    local_python_config=""
+  fi
+
   # Build the artifact.
   python build/build.py build --wheels="$artifact" \
     --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
-    --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
+    --python_version=$JAXCI_HERMETIC_PYTHON_VERSION $local_python_config \
     --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
     --output_path="$JAXCI_OUTPUT_DIR" \
     $artifact_tag_flags

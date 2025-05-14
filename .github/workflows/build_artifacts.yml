@@ -130,6 +130,12 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@main
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Install python3.14.0b1 archive file for linux x86 python3.14 build
+        if: contains(inputs.python, '3.14')
+        run:
+          mkdir /cpython
+          gsutil cp gs://louhi-flow-test/cpython/python314.tgz /cpython
+          ls /cpython
       - name: Build ${{ inputs.artifact }}
         timeout-minutes: 60
         run: ./ci/build_artifacts.sh "${{ inputs.artifact }}"
