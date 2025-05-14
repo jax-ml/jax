@@ -136,13 +136,13 @@ jobs:
       - name: Upload artifacts to a GCS bucket (non-Windows runs)
         if: >-
           ${{ inputs.upload_artifacts_to_gcs && !contains(inputs.runner, 'windows-x86') }}
-        run:  gsutil -m cp -r "$(pwd)/dist/*.whl" "${{ inputs.gcs_upload_uri }}"/
+        run:  gcloud storage cp -r "$(pwd)/dist/*.whl" "${{ inputs.gcs_upload_uri }}"/
       # Set shell to cmd to avoid path errors when using gcloud commands on Windows
       - name: Upload artifacts to a GCS bucket (Windows runs)
         if: >-
           ${{ inputs.upload_artifacts_to_gcs &&  contains(inputs.runner, 'windows-x86') }}
         shell: cmd
-        run:  gsutil -m cp -r "dist/*.whl" "${{ inputs.gcs_upload_uri }}"/
+        run:  gcloud storage cp -r "dist/*.whl" "${{ inputs.gcs_upload_uri }}"/
       - name: Store the GCS upload URI as an output
         id: store-gcs-upload-uri
         if: ${{ inputs.upload_artifacts_to_gcs }}
