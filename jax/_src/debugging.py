@@ -165,11 +165,11 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
       # program has per-device semantics, so we run the callback on each device.
       if config.use_shardy_partitioner.value:
         assert len(ctx.avals_out) == 1
-        sharding = sharding_impls.SdyArrayShardingList([
-            sharding_impls.SdyArraySharding(
+        sharding = sharding_impls.SdyArrayList([
+            sharding_impls.SdyArray(
                 mesh_shape=(),
                 dimension_shardings=[
-                    sharding_impls.SdyDimSharding(axes=[], is_open=False)
+                    sharding_impls.SdyDim(axes=[], is_open=False)
                 ] * ctx.avals_out[0].ndim,
                 logical_device_ids=())])
       else:
@@ -182,8 +182,8 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
     if config.use_shardy_partitioner.value:
-      sharding = sharding_impls.SdyArrayShardingList([
-          sharding_impls.SdyArraySharding(
+      sharding = sharding_impls.SdyArrayList([
+          sharding_impls.SdyArray(
               mesh_shape=(), dimension_shardings=[], logical_device_ids=(0,))])
     else:
       sharding = xc.OpSharding()

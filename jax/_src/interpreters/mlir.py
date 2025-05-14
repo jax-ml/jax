@@ -57,7 +57,7 @@ from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import ( AUTO, NamedSharding,
-                                     SdyArraySharding, SdyArrayShardingList,
+                                     SdyArray, SdyArrayList,
                                      modify_sdy_sharding_wrt_axis_types)
 from jax._src.state.types import AbstractRef
 from jax._src.util import foreach
@@ -1034,7 +1034,7 @@ def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
 def _to_physical_op_sharding(
     ctx: ModuleContext,
     aval: core.AbstractValue, sharding: JSharding | AUTO | None,
-) -> xc.OpSharding | SdyArraySharding | None:
+) -> xc.OpSharding | SdyArray | None:
   if sharding is None:
     return None
   if all_unconstrained(sharding, aval):
@@ -1839,10 +1839,10 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   if config.use_shardy_partitioner.value:
     physical_ndim = core.physical_aval(aval).ndim
-    s = SdyArraySharding(
+    s = SdyArray(
         mesh_shape=None,
         dimension_shardings=[
-            sharding_impls.SdyDimSharding(axes=[], is_open=i < aval.ndim)
+            sharding_impls.SdyDim(axes=[], is_open=i < aval.ndim)
             for i in range(physical_ndim)
         ])
     return wrap_with_sharding_op(ctx, val, aval, s)
@@ -2665,7 +2665,7 @@ def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
                        x: ir.Value,
                        aval_out: core.AbstractValue,
-                       sharding: xc.OpSharding | SdyArraySharding,
+                       sharding: xc.OpSharding | SdyArray,
                        unspecified_dims: set[int] | None = None,
                        has_side_effect: bool = False,
                        allow_shardy_lowering: bool = False):
@@ -2730,7 +2730,7 @@ def lower_with_sharding_in_types(ctx, op, aval, sharding_proto=None):
     return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
 
 
-def set_sharding(op, sharding: xc.OpSharding | SdyArraySharding | SdyArrayShardingList):
+def set_sharding(op, sharding: xc.OpSharding | SdyArray | SdyArrayList):
   if config.use_shardy_partitioner.value:
     op.attributes["sdy.sharding"] = get_sharding_attr(sharding)
   else:
@@ -2738,7 +2738,7 @@ def set_sharding(op, sharding: xc.OpSharding | SdyArraySharding | SdyArrayShardi
 
 
 def get_sharding_attr(
-    sharding: xc.OpSharding | SdyArraySharding | SdyArrayShardingList
+    sharding: xc.OpSharding | SdyArray | SdyArrayList
 ) -> ir.Attribute:
   if config.use_shardy_partitioner.value:
     return sharding.build()  # type: ignore

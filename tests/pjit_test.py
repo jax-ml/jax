@@ -8593,26 +8593,26 @@ class ShardyTest(jtu.JaxTestCase):
     self.assertIn('sdy.mesh @mesh = <["x"=8]>', lowered_str)
 
   def test_array_sharding_repr_with_priority(self):
-    sharding = sharding_impls.SdyArraySharding(
+    sharding = sharding_impls.SdyArray(
         mesh_shape=(('data', 4), ('model', 8), ('expert', 2)),
         dimension_shardings=[
-            sharding_impls.SdyDimSharding(axes=['data', 'expert'], is_open=False),
-            sharding_impls.SdyDimSharding(axes=['model'], is_open=True, priority=2)])
-    self.assertEqual(repr(sharding), "SdyArraySharding([{'data', 'expert'}, {'model', ?}p2])")
+            sharding_impls.SdyDim(axes=['data', 'expert'], is_open=False),
+            sharding_impls.SdyDim(axes=['model'], is_open=True, priority=2)])
+    self.assertEqual(repr(sharding), "SdyArray([{'data', 'expert'}, {'model', ?}p2])")
 
   def test_array_sharding_repr_with_logical_ids(self):
     abstract_mesh = jax.sharding.AbstractMesh((4, 8, 2), ('x', 'y', 'z'))
     ns = NamedSharding(abstract_mesh, P(('x', 'y'), 'z', P.UNCONSTRAINED, None),
                        _logical_device_ids=[4, 5, 6, 7, 0, 1, 2, 3])
     self.assertEqual(repr(ns._to_sdy_sharding(4)),
-                     "SdyArraySharding([{'x', 'y'}, {'z'}, {?}, {}], "
+                     "SdyArray([{'x', 'y'}, {'z'}, {?}, {}], "
                      "device_ids=[4, 5, 6, 7, 0, 1, 2, 3])")
 
   def test_dimension_sharding_repr(self):
-    dim_sharding = sharding_impls.SdyDimSharding(
+    dim_sharding = sharding_impls.SdyDim(
         axes=['data', 'model'], is_open=True, priority=2)
     self.assertEqual(repr(dim_sharding),
-                     "SdyDimSharding({'data', 'model', ?}p2)")
+                     "SdyDim({'data', 'model', ?}p2)")
 
   def test_tensor_dialect(self):
     # While this doesn't emit any `mlir::TensorDialect` ops, some pass in the
