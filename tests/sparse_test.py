@@ -16,6 +16,8 @@ import contextlib
 from functools import partial
 import itertools
 import math
+import os
+from pathlib import Path
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -41,6 +43,15 @@ import jax.numpy as jnp
 from jax._src.util import split_list
 import numpy as np
 import scipy.sparse
+
+def get_rocm_version():
+  rocm_path = os.environ.get("ROCM_PATH", "/opt/rocm")
+  version_path = Path(rocm_path) / ".info" / "version"
+  if not version_path.exists():
+    raise FileNotFoundError(f"Expected ROCm version file at {version_path}")
+  version_str = version_path.read_text().strip()
+  major, minor, *_ = version_str.split(".")
+  return int(major), int(minor)
 
 jax.config.parse_flags_with_absl()
 
@@ -208,6 +219,14 @@ class cuSparseTest(sptu.SparseTestCase):
     transpose=[True, False],
   )
   def test_csr_matvec(self, shape, dtype, transpose):
+    if (
+        jtu.is_device_rocm() and
+        get_rocm_version() < (6, 4) and
+        dtype in (jtu.dtypes.floating + jtu.dtypes.complex)
+    ):
+      # TODO: Remove this check when ROCm 6.4+ is the minimum supported version
+      self.skipTest("ROCm <6.4 bug: NaN propagation when beta==0 (fixed in ROCm 6.4.0)")
+
     op = lambda M: M.T if transpose else M
 
     v_rng = jtu.rand_default(self.rng())
@@ -228,6 +247,14 @@ class cuSparseTest(sptu.SparseTestCase):
       transpose=[True, False],
   )
   def test_csr_matmat(self, shape, dtype, transpose):
+    if (
+        jtu.is_device_rocm() and
+        get_rocm_version() < (6, 4) and
+        dtype in (jtu.dtypes.floating + jtu.dtypes.complex)
+    ):
+      # TODO: Remove this check when ROCm 6.4+ is the minimum supported version
+      self.skipTest("ROCm <6.4 bug: NaN propagation when beta==0 (fixed in ROCm 6.4.0)")
+
     op = lambda M: M.T if transpose else M
 
     B_rng = jtu.rand_default(self.rng())
