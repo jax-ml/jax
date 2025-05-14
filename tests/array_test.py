@@ -1477,8 +1477,8 @@ class ShardyShardingTest(jtu.JaxTestCase):
     self.assertEqual(
         sdy_sharding,
         SdyArray(
-            mesh.shape_tuple,
-            [SdyDim(
+            mesh_shape=mesh.shape_tuple,
+            dim_shardings=[SdyDim(
              ('sequence', 'data'), False),
              SdyDim(('model',), False),
              SdyDim([], False)]))
@@ -1497,8 +1497,8 @@ class ShardyShardingTest(jtu.JaxTestCase):
     self.assertEqual(
         sdy_sharding,
         SdyArray(
-            mesh.shape_tuple,
-            [SdyDim([], False),
+            mesh_shape=mesh.shape_tuple,
+            dim_shardings=[SdyDim([], False),
              SdyDim([], True),
              SdyDim(('x',), False)]))
     with ir.Context() as ctx:

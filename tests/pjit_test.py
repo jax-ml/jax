@@ -7735,6 +7735,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     f(arr)  # doesn't crash
     jax.jit(f)(arr)  # doesn't crash
 
+  @config.use_shardy_partitioner(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_basic(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
@@ -7758,7 +7759,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(out.aval.sharding.spec, P('x', None))
       return out
 
-    f.trace(x, y, a, b)  # doesn't crash
+    traced = f.trace(x, y, a, b)
+    lowered_text = traced.lower().as_text()
+    self.assertIn('unreduced={"y"}', lowered_text)
+    self.assertTrue(lowered_text.count('unreduced={"y"}') == 3)
 
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_dot_general_unreduced_error(self, mesh):
@@ -8595,7 +8599,7 @@ class ShardyTest(jtu.JaxTestCase):
   def test_array_sharding_repr_with_priority(self):
     sharding = sharding_impls.SdyArray(
         mesh_shape=(('data', 4), ('model', 8), ('expert', 2)),
-        dimension_shardings=[
+        dim_shardings=[
             sharding_impls.SdyDim(axes=['data', 'expert'], is_open=False),
             sharding_impls.SdyDim(axes=['model'], is_open=True, priority=2)])
     self.assertEqual(repr(sharding), "SdyArray([{'data', 'expert'}, {'model', ?}p2])")

@@ -158,7 +158,7 @@ def _callback_op_sharding(
       op_sharding = sharding_impls.SdyArrayList([
           sharding_impls.SdyArray(
               mesh_shape=(),
-              dimension_shardings=[
+              dim_shardings=[
                   sharding_impls.SdyDim(axes=[], is_open=False)
               ] * avals_out[0].ndim,
               logical_device_ids=())])
@@ -200,7 +200,7 @@ def _callback_op_sharding(
       op_sharding = sharding_impls.SdyArrayList(num_sdy_shardings * [
           sharding_impls.SdyArray(
               mesh_shape=(),
-              dimension_shardings=[],
+              dim_shardings=[],
               logical_device_ids=(device_index,))])
     else:
       op_sharding = xc.OpSharding()  # type: ignore[assignment]
@@ -610,7 +610,7 @@ def send_to_host(
       assert len(sharding.shardings) >= 1
       sharding = SdyArrayList([
           SdyArray(
-              mesh_shape=(), dimension_shardings=[],
+              mesh_shape=(), dim_shardings=[],
               logical_device_ids=sharding.shardings[0].logical_device_ids)])
     mlir.set_sharding(send_op, sharding)
   return send_op.result
@@ -645,7 +645,7 @@ def receive_from_host(
       sharding = SdyArrayList([
           sharding.shardings[0],
           SdyArray(
-              mesh_shape=(), dimension_shardings=[],
+              mesh_shape=(), dim_shardings=[],
               logical_device_ids=sharding.shardings[0].logical_device_ids)])
     mlir.set_sharding(recv_op, sharding)
   # Token should be at the end of the results

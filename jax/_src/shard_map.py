@@ -781,7 +781,7 @@ def _shardy_shard_map_sharding(
     aval_in = core.physical_aval(aval_in)
   sdy_sharding = ns._to_sdy_sharding(aval_in.ndim)
   if len(manual_axes) < len(mesh.axis_names):
-    for dim_sharding in sdy_sharding.dimension_shardings:
+    for dim_sharding in sdy_sharding.dim_shardings:
       dim_sharding.is_open = True
   return sdy_sharding
 

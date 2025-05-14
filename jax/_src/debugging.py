@@ -168,7 +168,7 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
         sharding = sharding_impls.SdyArrayList([
             sharding_impls.SdyArray(
                 mesh_shape=(),
-                dimension_shardings=[
+                dim_shardings=[
                     sharding_impls.SdyDim(axes=[], is_open=False)
                 ] * ctx.avals_out[0].ndim,
                 logical_device_ids=())])
@@ -184,7 +184,7 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
     if config.use_shardy_partitioner.value:
       sharding = sharding_impls.SdyArrayList([
           sharding_impls.SdyArray(
-              mesh_shape=(), dimension_shardings=[], logical_device_ids=(0,))])
+              mesh_shape=(), dim_shardings=[], logical_device_ids=(0,))])
     else:
       sharding = xc.OpSharding()
       sharding.type = xc.OpSharding.Type.MAXIMAL
