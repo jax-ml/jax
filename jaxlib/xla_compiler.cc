@@ -488,7 +488,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
         LayoutProto result;
         nb::bytes serialized = nb::cast<nb::bytes>(t[0]);
         result.ParseFromArray(serialized.c_str(), serialized.size());
-        new (self) Layout(Layout::CreateFromProto(result));
+        new (self) Layout(ValueOrThrow(Layout::FromProto(result)));
       });
 
   nb::class_<Shape> shape_class(m, "Shape");
