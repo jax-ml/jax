@@ -134,6 +134,8 @@ jobs:
         if: contains(inputs.python, '3.14')
         run: |
           mkdir /cpython
+          # This is a temporary experiment bucket.
+          # TODO: Move this archive file to an official bucket.
           gsutil cp gs://louhi-flow-test/cpython/python314.tgz /cpython
           ls /cpython
       - name: Build ${{ inputs.artifact }}
