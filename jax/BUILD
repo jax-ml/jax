@@ -1180,6 +1180,7 @@ pytype_strict_library(
         ":abstract_arrays",
         ":config",
         ":core",
+        ":deprecations",
         ":dtypes",
         ":sharding_impls",
         ":source_info_util",
