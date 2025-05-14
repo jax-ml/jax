@@ -326,7 +326,8 @@ def emit_pipeline(
             predicate=lax.bitwise_or(slices_changed, is_last_step),
         )
 
-      gpu_primitives.commit_smem_to_gmem_group()
+      if copies_out_in_loop:
+        gpu_primitives.commit_smem_to_gmem_group()
 
       fetch_step = step + (max_concurrent_steps - delay_release)
       fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
@@ -367,6 +368,7 @@ def emit_pipeline(
     # loop. This is the only place where we store them.
     if not copies_out_in_loop:
       gpu_primitives.commit_smem()
+
     last_slot = lax.rem(num_steps - 1, max_concurrent_steps)
     for bref in out_brefs:
       if bref.is_index_invariant:
