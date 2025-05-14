@@ -1033,6 +1033,7 @@ cc_library(
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:types",
+        "@xla//xla/python:version",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/python/pjrt_ifrt:pjrt_dtype",
