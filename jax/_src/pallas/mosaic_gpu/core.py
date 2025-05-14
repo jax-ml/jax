@@ -215,6 +215,8 @@ def empty_like(shape):
 
 def _is_known_divisible(value, divisor, fuel=10) -> bool:
   """Returns True if the value is statically known to be divisible by the divisor."""
+  if divisor == 1:
+    return True
   if fuel < 0:
     return False
   if not isinstance(value.owner, ir.Operation):
