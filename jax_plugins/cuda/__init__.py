@@ -51,7 +51,7 @@ def _get_library_path():
     runfiles_dir = os.getenv('RUNFILES_DIR', None)
     if runfiles_dir:
       local_path = os.path.join(
-          runfiles_dir, '__main__/jaxlib/tools/pjrt_c_api_gpu_plugin.so'
+          runfiles_dir, '__main__/jax_plugins/cuda/pjrt_c_api_gpu_plugin.so'
       )
 
   if os.path.exists(local_path):
