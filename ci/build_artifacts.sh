@@ -91,7 +91,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     bazelrc_config="${bazelrc_config}_cuda"
   fi
 
-  if [[ "JAXCI_HERMETIC_PYTHON_VERSION" == "3.14" ]]; then
+  if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == "3.14" ]]; then
     local local_python_archive_path = "/cpython/python314.tgz"
     if [[ -f "$local_python_archive_path" ]]; then
       export PYTHON_SHA256=($(sha256sum "$local_python_archive_path"))
