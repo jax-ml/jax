@@ -7617,6 +7617,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jnp.repeat(a, np.array((2,2,2,2)) - 1, axis=0, out_sharding=P('x'))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
+    a = jax.device_put(jnp.eye(16).reshape(16, 16), P('x'))
+    @jax.jit
+    def f(x):
+      return jnp.repeat(x, 3, axis=-1)
+    f(a)
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_scatter_gather(self, mesh):
     x = np.random.uniform(size=(mesh.size * 2, 3))

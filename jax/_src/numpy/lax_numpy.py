@@ -6698,9 +6698,8 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
            [3, 3, 4, 4, 4, 4, 4]], dtype=int32)
   """
   if out_sharding is not None:
-    return auto_axes(
-        partial(_repeat, axis=axis, total_repeat_length=total_repeat_length),
-        out_sharding=out_sharding)(a, repeats)
+    return _auto_repeat(_repeat, a, repeats, axis, total_repeat_length,
+                        out_sharding)
   ctx_mesh = get_abstract_mesh()
   if ctx_mesh._are_all_axes_explicit:
     aval = core.typeof(a)
@@ -6710,17 +6709,26 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
     assert axis is not None and aval.sharding.spec[axis] is None
     out_sharding = (NamedSharding(ctx_mesh, P())
                     if aval.sharding.mesh.empty else aval.sharding)
-    return auto_axes(
-        partial(_repeat, axis=axis, total_repeat_length=total_repeat_length),
-        out_sharding=out_sharding)(a, repeats)
+    return _auto_repeat(_repeat, a, repeats, axis, total_repeat_length,
+                        out_sharding)
   try:
-    return _repeat(a, repeats, axis=axis,
+    return _repeat(a, repeats=repeats, axis=axis,
                    total_repeat_length=total_repeat_length)
   except core.ShardingTypeError as e:
     raise ValueError(
         "Please pass sharding to `jnp.repeat` via `out_sharding` parameter.")
 
-def _repeat(a: ArrayLike, repeats: ArrayLike, *, axis: int | None = None,
+def _auto_repeat(fun, a, repeats, axis, total_repeat_length, out_sharding):
+  if total_repeat_length is None:
+    return auto_axes(partial(fun, repeats=repeats, axis=axis,
+                             total_repeat_length=total_repeat_length),
+                     out_sharding=out_sharding)(a)
+  else:
+    return auto_axes(
+        partial(fun, axis=axis, total_repeat_length=total_repeat_length),
+        out_sharding=out_sharding)(a, repeats=repeats)
+
+def _repeat(a: ArrayLike, *, repeats: ArrayLike, axis: int | None = None,
             total_repeat_length: int | None = None) -> Array:
   if core.is_dim(repeats):
     util.check_arraylike("repeat", a)
