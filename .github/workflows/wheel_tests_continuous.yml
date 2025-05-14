@@ -54,6 +54,9 @@ jobs:
             runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
             artifact: ["jaxlib"]
             python: ["3.10", "3.14"]
+            exclude:
+              - runner: "windows-x86-n2-16"
+                python: "3.14"
     # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
     # dashboard only if we use an expression in the "name" field. Otherwise, it appends the matrix
     # values to the name and creates a separate entry for each matrix combination.
