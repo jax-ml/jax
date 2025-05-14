@@ -18,7 +18,3 @@ race:dscal_k_
 race:scal_k_
 race:gemm_beta
 race:gemm_oncopy
-
-# https://github.com/python/cpython/issues/132214
-# Should be fixed
-# race_top:update_one_slot

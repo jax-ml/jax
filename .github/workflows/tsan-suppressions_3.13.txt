@@ -40,7 +40,3 @@ race:gemm_oncopy
 # https://github.com/python/cpython/issues/132245
 race:split_keys_entry_added
 race_top:dict_dict_merge
-
-# https://github.com/python/cpython/issues/132013
-# Fixed on 3.14 and not backported to 3.13
-race_top:frozenset_hash
