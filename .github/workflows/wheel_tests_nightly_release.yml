@@ -12,9 +12,6 @@
 name: CI - Wheel Tests (Nightly/Release)
 
 on:
-  # DO NOT SUBMIT IT. REMOVE THIS TRIGGER AFTER TESTING.
-  pull_request:
-    types: [opened, edited, synchronize, reopened]
   workflow_dispatch:
     inputs:
       gcs_download_uri:
@@ -46,15 +43,11 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-n2-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
-          python: ["3.10","3.11", "3.12", "3.13", "3.13-nogil", "3.14"]
+          python: ["3.10","3.11", "3.12", "3.13", "3.13-nogil"]
           enable-x64: [0]
           exclude:
             - runner: "windows-x86-n2-64"
               python: "3.13-nogil"
-            - runner: "windows-x86-n2-64"
-              python: "3.14"
-            - runner: "linux-arm64-t2a-48"
-              python: "3.14"
     name: "Pytest CPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}

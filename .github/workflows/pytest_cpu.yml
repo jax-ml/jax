@@ -101,12 +101,7 @@ jobs:
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
             echo "JAX only release. Only downloading the jax wheel from the release bucket."
           else
-            if [[ "${JAXCI_PYTHON}" == "python3.14" ]]; then
-              # TODO: Remove this once python3.14.0b1 wheels are released in the nightly flow
-              gsutil cp "gs://louhi-flow-test/python314/python3.14.0b1/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
-            else
-              gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
-            fi
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
           fi
       - name: Download wheels from GCS (Windows runs)
         id: download-wheel-artifacts-w
@@ -137,21 +132,6 @@ jobs:
       - name: Install Python dependencies
         run: |
           $JAXCI_PYTHON -m pip install uv~=0.5.30
-
-          # For prerelease python 3.14, some pre-built dependency wheels aren't available,
-          # so we need to download their deps or build them from source.
-          if [[ $JAXCI_PYTHON == "python3.14" ]]; then
-            # Build numpy from source
-            # Need to include fixes for https://github.com/numpy/numpy/issues/28681.
-            $JAXCI_PYTHON -m uv pip install "git+https://github.com/numpy/numpy@2ddc86163e6b194edb975629bdfc60bd5af40c0f"
-
-            # Install build requirements for scipy
-            apt update && apt upgrade -y && apt-get install -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
-
-            # Install build requirements for pillow
-            apt install -q -y libjpeg-dev --no-install-recommends
-          fi
-
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
 
           # CPU Pytests crash with NumPy 2.2+ on Linux Aarch64; b/399168632
