@@ -54,6 +54,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src import debugging
 from jax._src import pjit as pjit_lib
+from jax._src import sharding_impls
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
@@ -2047,10 +2048,12 @@ class APITest(jtu.JaxTestCase):
     per_device_arrs = {
         # Use uncommitted arrays that are not aligned with the destination
         # sharding so that we trigger `BatchedDevicePut`.
-        index: jnp.array(arr[index])
+        sharding_impls.hashed_index(index): jnp.array(arr[index])
         for _, index in sharding.devices_indices_map(arr.shape).items()
     }
-    data_callback = lambda index: per_device_arrs[index]
+    data_callback = lambda index: per_device_arrs[
+        sharding_impls.hashed_index(index)
+    ]
     with jtu.count_internal_device_puts() as counts:
       jax.make_array_from_callback(arr.shape, sharding, data_callback)
     self.assertEqual(
