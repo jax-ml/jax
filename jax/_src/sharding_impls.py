@@ -637,9 +637,46 @@ class GSPMDSharding(jsharding.Sharding):
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return self._hlo_sharding
 
+  def _to_named_sharding_via_mesh(self, mesh: mesh_lib.Mesh) -> NamedSharding:
+    spec = parse_flatten_op_sharding(self._hlo_sharding, mesh)[0]
+    return create_mesh_pspec_sharding(mesh, spec, memory_kind=self.memory_kind)
+
   def _to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
-    raise NotImplementedError(
-        "GSPMDSharding can't be converted to SdyArray.")
+    if self._hlo_sharding.tuple_elements():
+      raise NotImplementedError(
+          "Tuple GSPMDSharding can't be converted to SdyArray."
+      )
+    elif self._hlo_sharding.is_replicated():
+      sdy_dim_sharding = [
+          SdyDim(axes=[], is_open=True) for _ in range(num_dimensions)
+      ]
+      return SdyArray(mesh_shape=None, dim_shardings=sdy_dim_sharding)
+    elif self._hlo_sharding.is_maximal():
+      sdy_dim_sharding = [
+          SdyDim(axes=[], is_open=False) for _ in range(num_dimensions)
+      ]
+      return SdyArray(mesh_shape=None, dim_shardings=sdy_dim_sharding)
+    elif self._hlo_sharding.is_tiled():
+      devices = [
+          self._devices[dev_id]
+          for dev_id in self._hlo_sharding.tile_assignment_devices()
+      ]
+      devices_for_mesh = np.array(devices, dtype=object).reshape(
+          self._hlo_sharding.tile_assignment_dimensions()
+      )
+      mesh = mesh_lib.Mesh(
+          devices_for_mesh,
+          tuple(
+              [f'axis_{i}' for i in range(self._hlo_sharding.num_dimensions())]
+          ),
+      )
+      return self._to_named_sharding_via_mesh(mesh)._to_sdy_sharding(
+          num_dimensions
+      )
+    else:
+      raise AssertionError(
+          'Unhandled GSPMDSharding type when converting to SdyArray.'
+      )
 
   @functools.cached_property
   def is_fully_replicated(self) -> bool:
@@ -1238,13 +1275,6 @@ def create_mesh_pspec_sharding(
   if pspec is None:
     pspec = PartitionSpec()
   return NamedSharding(mesh, pspec, memory_kind=memory_kind)
-
-
-def _gspmd_to_named_sharding_via_mesh(
-    out_s: GSPMDSharding, mesh: mesh_lib.Mesh) -> NamedSharding:
-  spec = parse_flatten_op_sharding(out_s._hlo_sharding, mesh)[0]
-  return create_mesh_pspec_sharding(
-      mesh, spec, memory_kind=out_s.memory_kind)
 
 def flatten_spec(spec):
   out = []
