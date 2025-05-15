@@ -3088,8 +3088,8 @@ def block_until_ready(x):
 
   arrays = []
   for leaf in tree_leaves(x):
-    if isinstance(leaf, array.ArrayImpl):
-      arrays.append(leaf)
+    if (array := _resolve_jax_array(leaf)) is not None:
+      arrays.append(array)
     else:
       try_to_block(leaf)
 
@@ -3105,6 +3105,13 @@ def block_until_ready(x):
     xc.batched_block_until_ready(arrays)
 
   return x
+
+def _resolve_jax_array(x: Any) -> array.ArrayImpl | None:
+  if isinstance(x, array.ArrayImpl):
+    return x
+  elif hasattr(x, "__jax_array__"):
+    x = x.__jax_array__()
+  return x if isinstance(x, array.ArrayImpl) else None
 
 def copy_to_host_async(x):
   """
