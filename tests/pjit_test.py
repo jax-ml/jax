@@ -872,6 +872,9 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     self.assertAllClose(res0, res, check_dtypes=True)
 
+  @jtu.ignore_warning(
+      category=DeprecationWarning, message=".*(infeed|outfeed) was deprecated.*"
+  )
   def testOutfeed(self):
     if xla_bridge.using_pjrt_c_api():
       raise unittest.SkipTest('outfeed not implemented in PJRT C API')
