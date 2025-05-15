@@ -244,6 +244,10 @@ build:ci_linux_aarch64_base --config=clang --verbose_failures=true
 build:ci_linux_aarch64_base --action_env=TF_SYSROOT="/dt10"
 build:ci_linux_aarch64_base --color=yes
 
+# Workaround for https://github.com/numpy/numpy/issues/28843
+# TODO(phawkins): remove this after upgrading to NumPy 2.2.6.
+build:ci_linux_aarch64_base --test_env=OMP_NUM_THREADS=8
+
 build:ci_linux_aarch64 --config=ci_linux_aarch64_base
 build:ci_linux_aarch64 --host_crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
 build:ci_linux_aarch64 --crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
