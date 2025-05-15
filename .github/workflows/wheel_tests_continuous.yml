@@ -22,6 +22,9 @@ permissions:
       contents: read
 
 on:
+  # DO NOT SUBMIT IT. REMOVE THIS TRIGGER AFTER TESTING.
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
   workflow_dispatch: # allows triggering the workflow run manually
@@ -50,7 +53,10 @@ jobs:
             # Runner OS and Python values need to match the matrix stategy in the CPU tests job
             runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
             artifact: ["jaxlib"]
-            python: ["3.10"]
+            python: ["3.10", "3.14"]
+            exclude:
+              - runner: "windows-x86-n2-16"
+                python: "3.14"
     # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
     # dashboard only if we use an expression in the "name" field. Otherwise, it appends the matrix
     # values to the name and creates a separate entry for each matrix combination.
@@ -59,7 +65,7 @@ jobs:
         runner: ${{ matrix.runner }}
         artifact: ${{ matrix.artifact }}
         python: ${{ matrix.python }}
-        clone_main_xla: 1
+        clone_main_xla: 0
         upload_artifacts_to_gcs: true
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
@@ -71,7 +77,7 @@ jobs:
           # Python values need to match the matrix stategy in the CUDA tests job below
           runner: ["linux-x86-n2-16"]
           artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
-          python: ["3.10",]
+          python: ["3.10", "3.14"]
     name: "Build ${{ format('{0}', 'CUDA') }} artifacts"
     with:
       runner: ${{ matrix.runner }}
