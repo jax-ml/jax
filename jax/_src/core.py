@@ -88,7 +88,7 @@ DebugInfo = lu.DebugInfo
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
-               '_effects', '_debug_info']
+               '_effects', '_debug_info', '_is_high', '_mut_types']
 
   _constvars: list[Var]
   _invars: list[Var]
@@ -96,6 +96,8 @@ class Jaxpr:
   _eqns: list[JaxprEqn]
   _effects: Effects
   _debug_info: DebugInfo
+  _is_high: bool
+  _mut_types: dict[Var, Any]
 
   @property
   def constvars(self) -> list[Var]:
@@ -121,6 +123,14 @@ class Jaxpr:
   def debug_info(self) -> DebugInfo:
     return self._debug_info
 
+  @property
+  def is_high(self) -> bool:
+    return self._is_high
+
+  @property
+  def mut_types(self) -> dict[Var, Any]:
+    return self._mut_types
+
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
@@ -128,6 +138,8 @@ class Jaxpr:
                # compatibility we have to allow calls when the debug_info
                # is missing.
                debug_info: DebugInfo = None,  # type: ignore[annotation-type-mismatch,assignment]
+               is_high: bool = False,
+               mut_types: dict | None = None,
                ):
     """
     Args:
@@ -152,6 +164,8 @@ class Jaxpr:
     # TODO(necula): re-enable these safety checks
     # assert (len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
+    self._is_high = is_high
+    self._mut_types = mut_types or {}
 
   def __str__(self):
     return str(self.pretty_print())
@@ -178,6 +192,8 @@ class Jaxpr:
         eqns=kwargs.pop("eqns", self.eqns),
         effects=kwargs.pop("effects", self.effects),
         debug_info=kwargs.pop("debug_info", self.debug_info),
+        is_high=kwargs.pop("is_high", self.is_high),
+        mut_types=kwargs.pop("mut_types", self.mut_types),
     )
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
@@ -517,7 +533,7 @@ class Primitive:
     for arg in args:
       if isinstance(arg, Tracer) and not arg._trace.is_valid():
         raise escaped_tracer_error(arg)
-    # TODO: figure out how to handle function arguments
+    # TODO: figure out how to handle function arguments for this assert
     # assert (not config.enable_checks.value or
     #         all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
 
@@ -525,6 +541,10 @@ class Primitive:
     # is called frequently and it's slightly faster to avoid using a context
     # manager object.
     prev_trace = trace_ctx.trace
+
+    if self.is_high(**params) and prev_trace.requires_low:
+      return self.to_lojax(*args, **params)  # type: ignore
+
     trace_ctx.set_trace(eval_trace)
     try:
       return self.bind_with_trace(prev_trace, args, params)
@@ -560,6 +580,9 @@ class Primitive:
 
   def get_bind_params(self, params):
     return [], params
+
+  def is_high(self, **params) -> bool:
+    return False
 
 
 def _effect_free_abstract_eval(abstract_eval):
@@ -627,12 +650,13 @@ def check_avals_context_mesh(avals, prim_name):
 TracerType = TypeVar('TracerType', bound='Tracer')
 
 class Trace(Generic[TracerType]):
-  __slots__ = ("__weakref__", "_invalidated", "_weakref")
+  __slots__ = ("__weakref__", "_invalidated", "_weakref", "requires_low")
 
   def __init__(self):
     self._invalidated = False
     # We frequently need a weakref to a trace, so let's precompute one.
     self._weakref = weakref.ref(self)
+    self.requires_low = True
 
   def process_primitive(self, primitive, tracers, params):
     raise NotImplementedError("must override")
@@ -1445,6 +1469,8 @@ def definitely_equal(x, y):
 
 class AbstractValue:
   __slots__: list[str] = []
+  is_high = False
+  mutable = False
 
   def to_tangent_aval(self):
     raise NotImplementedError("must override")
@@ -1947,6 +1973,10 @@ class ShapedArray(UnshapedArray):
     self.weak_type = weak_type
     self.sharding = get_sharding(sharding, self.shape)
     self.vma = get_vma(vma, self.sharding.mesh)
+
+  def lower_val(self, val): return [val]
+  def raise_val(self, val): return val
+  def lo_ty(self): return [self]
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
