@@ -50,7 +50,10 @@ jax_multiplatform_test(
     shard_count = 10,
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
