@@ -47,6 +47,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
       num_pages,
       *,
       num_kv_pages_per_block=8,
+      num_kv_pages_per_flash_attn_block=None,
       num_queries_per_block=64,
       vmem_limit_bytes=32 * 1024 * 1024,
       max_num_batched_tokens=512,
@@ -56,6 +57,8 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
   ):
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Expect TPUv4+")
+    if num_kv_pages_per_flash_attn_block is None:
+      num_kv_pages_per_flash_attn_block=num_kv_pages_per_block
     cu_q_lens = [0]
     kv_lens = []
     for q_len, kv_len in seq_lens:
@@ -103,6 +106,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     )
 
     actual_num_q_tokens = cu_q_lens[num_seqs[0]]
+    assert num_kv_pages_per_block <= pages_per_seq, f"{num_kv_pages_per_block=} should be less or equal to {pages_per_seq=}"
     output = ragged_paged_attention(
         q,
         kv_pages,
@@ -110,7 +114,8 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
         page_indices,
         cu_q_lens,
         num_seqs=num_seqs,
-        num_kv_pages_per_block=min(num_kv_pages_per_block, pages_per_seq),
+        num_kv_pages_per_block=num_kv_pages_per_block,
+        num_kv_pages_per_flash_attn_block=num_kv_pages_per_flash_attn_block,
         num_queries_per_block=num_queries_per_block,
         vmem_limit_bytes=vmem_limit_bytes,
         sliding_window=sliding_window,
@@ -133,6 +138,17 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     }
     tol = tols[jnp.dtype(dtype).name]
     self.assertAllClose(output, expected, atol=tol, rtol=tol)
+
+  def _prepare_q_kv_lens(self, num_seqs, num_kv_pages_per_block, page_size):
+    seq_lens = []
+    for _ in range(num_seqs-1):
+      q_len = random.randint(1, 100)
+      kv_len = q_len + random.randint(0, 50)
+      seq_lens.append((q_len, kv_len))
+    q_len = random.randint(1, 100)
+    kv_len = num_kv_pages_per_block*page_size + q_len + random.randint(0, 50)
+    seq_lens.append((q_len, kv_len))
+    return seq_lens
 
   @parameterized.product(
       dtype=[jnp.float32, jnp.bfloat16],
@@ -277,14 +293,12 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
       num_kv_pages_per_block,
       num_queries_per_block,
   ):
-    seq_lens = []
-    for _ in range(num_seqs):
-      q_len = random.randint(1, 100)
-      kv_len = q_len + random.randint(0, 50)
-      seq_lens.append((q_len, kv_len))
+    page_size = 16
+    seq_lens = self._prepare_q_kv_lens(
+        num_seqs, num_kv_pages_per_block, page_size
+    )
     # TODO(jevinjiang): Support non-128 head_dim!
     head_dim = 128
-    page_size = 16
     num_pages = 1000
 
     self._test_ragged_paged_attention(
@@ -295,6 +309,72 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
         dtype,
         num_pages,
         num_kv_pages_per_block=num_kv_pages_per_block,
+        num_queries_per_block=num_queries_per_block,
+    )
+
+  @parameterized.product(
+      num_heads=[(32, 8), (32, 16), (12, 2), (4, 4), (8, 1)],
+      dtype=[jnp.float32, jnp.bfloat16],
+      num_kv_pages_per_block=[4, 8],
+      num_kv_pages_per_flash_attn_block=[2, 4],
+  )
+  def test_ragged_paged_attention_num_kv_pages_per_flash_attn_block(
+      self,
+      num_heads,
+      dtype,
+      num_kv_pages_per_block,
+      num_kv_pages_per_flash_attn_block,
+  ):
+    num_seqs = 16
+    num_queries_per_block = 32
+    page_size = 16
+    seq_lens = self._prepare_q_kv_lens(
+        num_seqs, num_kv_pages_per_block, page_size
+    )
+    # TODO(jevinjiang): Support non-128 head_dim!
+    head_dim = 128
+    num_pages = 1000
+
+    self._test_ragged_paged_attention(
+        seq_lens,
+        num_heads,
+        head_dim,
+        page_size,
+        dtype,
+        num_pages,
+        num_kv_pages_per_block=num_kv_pages_per_block,
+        num_kv_pages_per_flash_attn_block=num_kv_pages_per_flash_attn_block,
+        num_queries_per_block=num_queries_per_block,
+    )
+
+  # TODO(xw32): delete the test before merge.
+  def test_ragged_paged_attention_num_kv_pages_per_flash_attn_block_one_off_tobedeleted(
+      self,
+  ):
+    num_heads=(32, 8)
+    dtype=jnp.bfloat16
+    num_kv_pages_per_block=4
+    num_kv_pages_per_flash_attn_block=2
+
+    num_seqs = 16
+    num_queries_per_block = 32
+    page_size = 16
+    seq_lens = self._prepare_q_kv_lens(
+        num_seqs, num_kv_pages_per_block, page_size
+    )
+    # TODO(jevinjiang): Support non-128 head_dim!
+    head_dim = 128
+    num_pages = 1000
+
+    self._test_ragged_paged_attention(
+        seq_lens,
+        num_heads,
+        head_dim,
+        page_size,
+        dtype,
+        num_pages,
+        num_kv_pages_per_block=num_kv_pages_per_block,
+        num_kv_pages_per_flash_attn_block=num_kv_pages_per_flash_attn_block,
         num_queries_per_block=num_queries_per_block,
     )
 
@@ -312,14 +392,12 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     num_seqs = 5
     num_heads = (4, 4)
     dtype = jnp.float32
-    seq_lens = []
-    for _ in range(num_seqs):
-      q_len = random.randint(1, 100)
-      kv_len = q_len + random.randint(0, 50)
-      seq_lens.append((q_len, kv_len))
+    page_size = 16
+    seq_lens = self._prepare_q_kv_lens(
+        num_seqs, num_kv_pages_per_block, page_size
+    )
     # TODO(jevinjiang): Support non-128 head_dim!
     head_dim = 128
-    page_size = 16
     num_pages = 1000
 
     self._test_ragged_paged_attention(
@@ -348,13 +426,11 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     num_heads = (12, 2)
     num_seqs = 2
     dtype = jnp.float32
-    seq_lens = []
-    for _ in range(num_seqs):
-      q_len = random.randint(1, 100)
-      kv_len = q_len + random.randint(0, 50)
-      seq_lens.append((q_len, kv_len))
-    head_dim = 128
     page_size = 16
+    seq_lens = self._prepare_q_kv_lens(
+        num_seqs, num_kv_pages_per_block, page_size
+    )
+    head_dim = 128
     num_pages = 1000
 
     self._test_ragged_paged_attention(
