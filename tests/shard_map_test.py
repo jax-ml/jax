@@ -869,8 +869,6 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   @jtu.thread_unsafe_test()
   def test_debug_print_jit(self, jit):
-    if config.use_shardy_partitioner.value:
-      self.skipTest('TODO(b/384938613): Failing under shardy')
     mesh = Mesh(jax.devices(), ('i',))
 
     @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
@@ -891,6 +889,23 @@ class ShardMapTest(jtu.JaxTestCase):
       jax.effects_barrier()
     for i in range(len(jax.devices())):
       self.assertIn(f'instance {i} has value', output())
+
+  @jtu.run_on_devices('cpu', 'gpu', 'tpu')
+  @jtu.thread_unsafe_test()
+  def test_debug_print_jit_partial_auto(self):
+    mesh = jtu.create_mesh((2,2), ('x', 'y'))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'),
+             axis_names=frozenset({'x'}))
+    def f(x):
+      idx = jax.lax.axis_index('x')
+      jax.debug.print("instance {i} has value x={x}", i=idx, x=x)
+      y = jnp.cos(x)
+      return y
+
+    f = jax.jit(f)
+    x = jnp.arange(2 * len(jax.devices()))
+    f(x)  # don't crash!
 
   def test_debug_print_eager(self):
     mesh = Mesh(jax.devices(), ('i',))

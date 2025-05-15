@@ -4485,8 +4485,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
               in_shardings=NamedSharding(mesh, P(P.UNCONSTRAINED, 'x')))
 
   def test_empty_io_callback_under_shard_map(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/384938613): Failing under shardy.")
     mesh = jtu.create_mesh((4,), 'i')
 
     def empty_callback(x):
