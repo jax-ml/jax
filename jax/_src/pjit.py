@@ -1597,21 +1597,18 @@ def _is_high(jaxpr, **_) -> bool:
   return jaxpr.jaxpr.is_high
 pjit_p.is_high = _is_high  # type: ignore
 
-def _to_lojax(*hi_args, jaxpr, out_shardings, out_layouts, **params):
-  num_mut = [len(ty.lo_ty()) for ty in jaxpr.jaxpr.mut_types.values()]
-  out_shardings = (UNSPECIFIED,) * sum(num_mut) + out_shardings
-  out_layouts = (None,) * sum(num_mut) + out_layouts
+def _to_lojax( *hi_args, jaxpr, **params):
+  params, num_mutants = _lojax_expand_params(jaxpr, **params)
 
   lo_args = [lo_val for t, hi_val in zip(jaxpr.in_avals, hi_args)
              for lo_val in t.lower_val(hi_val)]
   lo_jaxpr = pe.lower_jaxpr(jaxpr)
-  all_outs = pjit_p.bind(*lo_args, jaxpr=lo_jaxpr, out_shardings=out_shardings,
-                         out_layouts=out_layouts, **params)
-  out_mut, lo_outs = split_list(all_outs, [sum(num_mut)])
+  all_outs = pjit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
+  out_mut, lo_outs = split_list(all_outs, [num_mutants])
 
   out_mut_ = iter(out_mut)
   in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
-  for var, ty in jaxpr.jaxpr.mut_types.items():
+  for var, ty in jaxpr.jaxpr.final_typechange_env.items():
     ty.set(hi_args[in_idx[var]], *it.islice(out_mut_, len(ty.lo_ty())))
   assert next(out_mut_, None) is None
 
@@ -1622,6 +1619,31 @@ def _to_lojax(*hi_args, jaxpr, out_shardings, out_layouts, **params):
 
   return hi_outs
 pjit_p.to_lojax = _to_lojax
+
+def _lojax_expand_params(
+    hi_jaxpr, *, donated_invars, in_shardings, in_layouts, out_shardings,
+    out_layouts, **params):
+  # some pjit params match the length of hi_jaxpr.invars/outvars, so when
+  # lowering we must expand them to match their number of lojax types
+  def expand(hi_tys, xs):
+    return tuple(y for hi, x in zip(hi_tys, xs) for y in (x,) * len(hi.lo_ty()))
+  donated_invars = expand(hi_jaxpr.in_avals , donated_invars)
+  in_shardings   = expand(hi_jaxpr.in_avals , in_shardings  )
+  in_layouts     = expand(hi_jaxpr.in_avals , in_layouts    )
+  out_shardings  = expand(hi_jaxpr.out_avals, out_shardings )
+  out_layouts    = expand(hi_jaxpr.out_avals, out_layouts   )
+
+  # also, the lo_jaxpr has pure outputs corresponding to mutable hi_jaxpr types
+  num_mutants = sum(len(hi_ty.lo_ty()) for hi_ty in
+                    hi_jaxpr.jaxpr.final_typechange_env.values())
+  out_shardings = (UNSPECIFIED,) * num_mutants + out_shardings
+  out_layouts = (None,) * num_mutants + out_layouts
+
+  new_params = dict(params, donated_invars=donated_invars,
+                    in_shardings=in_shardings, in_layouts=in_layouts,
+                    out_shardings=out_shardings, out_layouts=out_layouts)
+  return new_params, num_mutants
+
 
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   # If device or backend is set, return the default layout. This is because you
