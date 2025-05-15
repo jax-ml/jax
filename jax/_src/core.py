@@ -88,7 +88,7 @@ DebugInfo = lu.DebugInfo
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
-               '_effects', '_debug_info', '_is_high', '_mut_types']
+               '_effects', '_debug_info', '_is_high', '_final_typechange_env']
 
   _constvars: list[Var]
   _invars: list[Var]
@@ -97,7 +97,7 @@ class Jaxpr:
   _effects: Effects
   _debug_info: DebugInfo
   _is_high: bool
-  _mut_types: dict[Var, Any]
+  _final_typechange_env: dict[Var, Any]
 
   @property
   def constvars(self) -> list[Var]:
@@ -128,8 +128,8 @@ class Jaxpr:
     return self._is_high
 
   @property
-  def mut_types(self) -> dict[Var, Any]:
-    return self._mut_types
+  def final_typechange_env(self) -> dict[Var, Any]:
+    return self._final_typechange_env
 
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
@@ -139,7 +139,7 @@ class Jaxpr:
                # is missing.
                debug_info: DebugInfo = None,  # type: ignore[annotation-type-mismatch,assignment]
                is_high: bool = False,
-               mut_types: dict | None = None,
+               final_typechange_env: dict | None = None,
                ):
     """
     Args:
@@ -165,7 +165,7 @@ class Jaxpr:
     # assert (len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
     self._is_high = is_high
-    self._mut_types = mut_types or {}
+    self._final_typechange_env = final_typechange_env or {}
 
   def __str__(self):
     return str(self.pretty_print())
@@ -193,7 +193,8 @@ class Jaxpr:
         effects=kwargs.pop("effects", self.effects),
         debug_info=kwargs.pop("debug_info", self.debug_info),
         is_high=kwargs.pop("is_high", self.is_high),
-        mut_types=kwargs.pop("mut_types", self.mut_types),
+        final_typechange_env=kwargs.pop("final_typechange_env",
+                                        self.final_typechange_env),
     )
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")

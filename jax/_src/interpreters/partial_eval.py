@@ -1183,13 +1183,13 @@ def _partial_eval_jaxpr_custom_cached(
   known_effects = make_jaxpr_effects(jaxpr.constvars, ins_known_and_ref_res,
                                      known_outvars, known_eqns)
   known_mut, staged_mut, ins_known_ = {}, {}, set(ins_known)  # type: ignore
-  for v, t in jaxpr.mut_types.items():
+  for v, t in jaxpr.final_typechange_env.items():
     [staged_mut, known_mut][v in ins_known_][v] = t
 
   # TODO(mattjj,necula): debug info should be updated here
   jaxpr_known = jaxpr.replace(
       invars=ins_known_and_ref_res, outvars=known_outvars,
-      eqns=known_eqns, effects=known_effects, mut_types=known_mut)
+      eqns=known_eqns, effects=known_effects, final_typechange_env=known_mut)
   config.enable_checks.value and core.check_jaxpr(jaxpr_known)
 
   _, ins_staged = partition_list(in_inst, jaxpr.invars)
@@ -1200,7 +1200,7 @@ def _partial_eval_jaxpr_custom_cached(
   # TODO(mattjj,necula): debug info should be updated here
   jaxpr_staged = jaxpr.replace(
       invars=staged_invars, outvars=outs_staged, eqns=staged_eqns,
-      effects=staged_effects, mut_types=staged_mut)
+      effects=staged_effects, final_typechange_env=staged_mut)
   config.enable_checks.value and core.check_jaxpr(jaxpr_staged)
 
   return (jaxpr_known, jaxpr_staged, out_unknowns, out_inst, len(residuals),
@@ -1713,6 +1713,7 @@ class JaxprStackFrame:
   attrs_vars: list[Var]
   debug_info: core.DebugInfo
   is_high: bool
+  final_typechange_env: dict
 
   def __init__(self, debug_info: core.DebugInfo):
     self.gensym = core.gensym()
@@ -1728,6 +1729,7 @@ class JaxprStackFrame:
     self.attrs_vars = []
     self.debug_info = debug_info
     self.is_high = False
+    self.final_typechange_env = {}
 
   def add_eqn(self, eqn: core.JaxprEqn):
     self.eqns.append(eqn)
@@ -1753,9 +1755,8 @@ class JaxprStackFrame:
     outvars = state_outvars + explicit_outvars
     constvars, constvals = unzip2(self.constvar_to_val.items())
     jaxpr_effects = make_jaxpr_effects(constvars, self.invars, explicit_outvars, self.eqns)
-    mut_types = {v: v.aval for v in invars if v.aval.mutable} if self.is_high else {}
     jaxpr = Jaxpr(constvars, invars, outvars, self.eqns, jaxpr_effects,
-                  debug_info, self.is_high, mut_types)
+                  debug_info, self.is_high, self.final_typechange_env)
     jaxpr, constvals = _drop_unused_vars(jaxpr, constvals)
     init_trees = [tree_structure(init_val) for init_val in self.attrs_inits]
     return jaxpr, list(constvals), zip(init_trees, end_trees, self.attrs_tracked)
@@ -1872,6 +1873,8 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.tracers.append(tracer)
     self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
     self.frame.invars.append(var)
+    if aval.mutable:
+      self.frame.final_typechange_env[var] = aval
     return tracer
 
   def new_const(self, c, source_info: SourceInfo):
@@ -2692,7 +2695,7 @@ def lower_traceable(jaxpr, *lo_args):
   assert (problem := next(lo_args_, None)) is None
   hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
   in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
-  mut_outs = [lo_val for v, ty in jaxpr.jaxpr.mut_types.items()
+  mut_outs = [lo_val for v, ty in jaxpr.jaxpr.final_typechange_env.items()
               for lo_val in ty.get(hi_args[in_idx[v]])]
   lo_outs = [lo_val for t, hi_val in zip(jaxpr.out_avals, hi_outs)
              for lo_val in t.lower_val(hi_val)]
