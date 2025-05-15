@@ -162,7 +162,6 @@ jax_multiplatform_test(
     ],
     env = {
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
-        "JAX_PALLAS_VERBOSE_ERRORS": "0",
     },
     shard_count = 16,
     tags = [
@@ -239,9 +238,6 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "gpu_h100",
     ],
-    env = {
-        "JAX_PALLAS_VERBOSE_ERRORS": "0",
-    },
     deps = [
         "//jax:pallas",
         "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
