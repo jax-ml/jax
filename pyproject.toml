@@ -113,6 +113,8 @@ ignore = [
     "C901",
     # Local variable is assigned to but never used
     "F841",
+    # Class could be dataclass or namedtuple
+    "B903",
     # Raise with from clause inside except block
     "B904",
     # Zip without explicit strict parameter
