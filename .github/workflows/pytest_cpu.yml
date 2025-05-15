@@ -52,7 +52,7 @@ jobs:
         # Explicitly set the shell to bash to override Windows's default (cmd)
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-rbe:753621568') ||
                    (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
                    (contains(inputs.runner, 'windows-x86') && null) }}
 
@@ -134,8 +134,17 @@ jobs:
           $JAXCI_PYTHON -m pip install uv~=0.5.30
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
 
+          # For py 3.14.0a7, some pre-built dependency wheels aren't available,
+          # so we need to download their deps or build them from source.
+          if [[ $JAXCI_PYTHON == "python3.14" ]]; then
+            echo "Building some dependencies from source for Python 3.14.0a7"
+            # Build numpy 2.3.0.dev0 from source at the current github repo head. This is
+            # needed to include fixes for https://github.com/numpy/numpy/issues/28681.
+            $JAXCI_PYTHON -m uv pip install "git+https://github.com/numpy/numpy@2ddc86163e6b194edb975629bdfc60bd5af40c0f"
+          fi
+
           # CPU Pytests crash with NumPy 2.2+ on Linux Aarch64; b/399168632
-          if [[ $OS == "linux" && $ARCH == "aarch64" ]]; then
+          if [[ $OS == "linux" && $ARCH == "aarch64" && $JAXCI_PYTHON != "python3.14" ]]; then
             $JAXCI_PYTHON -m uv pip install numpy~=2.1.0
           fi
       # Halt for testing
