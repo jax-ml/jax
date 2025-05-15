@@ -273,10 +273,6 @@ def _get_fastpath_data(
       and not box_data
       # no ref state effects
       and not any(isinstance(e, RefEffect) for e in effects)
-      # no prng reuse checking
-      and not (config.debug_key_reuse.value and any(
-        hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
-        for arg in (*args_flat, *out_flat, *consts)))
       and not _need_to_rebuild_with_fdo(pgle_profiler)
       )
 

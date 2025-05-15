@@ -170,7 +170,7 @@ class KeyReuseSignature:
       key = args[sink.idx]
       if not isinstance(key, prng.PRNGKeyArray):
         continue
-      if np.any(key._consumed & sink.mask):
+      if np.any(key._consumed[...] & sink.mask):
         msg = f"Previously-consumed key passed to {funcname} at index {sink.idx}"
         if context:
           msg += " {context}"
@@ -181,15 +181,15 @@ class KeyReuseSignature:
     for sink in self.sinks:
       arg = args_in[sink.idx]
       if isinstance(arg, prng.PRNGKeyArray):
-        arg._consumed = arg._consumed | sink.mask
+        arg._consumed[...] |= sink.mask
         if np.any(sink.mask):
           arg._source_info = source_info_util.current()
     for arg in args_out:
       if isinstance(arg, prng.PRNGKeyArray):
-        arg._consumed = True
+        arg._consumed[...] |= True
     for source in self.sources:
       if isinstance(args_out[source.idx], prng.PRNGKeyArray):
-        args_out[source.idx]._consumed = ~np.asarray(source.mask)
+        args_out[source.idx]._consumed[...] &= ~np.asarray(source.mask)
     for forward in self.forwards:
       arg_in = args_in[forward.in_idx]
       arg_out = args_out[forward.out_idx]
