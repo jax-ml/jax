@@ -100,7 +100,6 @@ _py_deps = {
     "tensorstore": get_optional_dep("@pypi//tensorstore"),
     "torch": [],
     "zstandard": get_zstandard(),
-    "libnvshmem_device": ["@pypi//nvidia_nvshmem_cu12"],
 }
 
 def all_py_deps(excluded = []):
@@ -188,14 +187,17 @@ def _gpu_test_deps():
             "//jaxlib/cuda:gpu_only_test_deps",
             "//jaxlib/rocm:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
+            "@pypi//nvidia_nvshmem_cu12",
         ],
         "//jax:config_build_jaxlib_false": [
             "@pypi//jax_cuda12_plugin",
             "@pypi//jax_cuda12_pjrt",
+            "@pypi//nvidia_nvshmem_cu12",
         ],
         "//jax:config_build_jaxlib_wheel": [
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
+            "@pypi//nvidia_nvshmem_cu12",
         ],
     })
 
