@@ -1235,7 +1235,7 @@ _PALLAS_USE_MOSAIC_GPU = config.bool_state(
 
 _PALLAS_VERBOSE_ERRORS = config.bool_flag(
     "jax_pallas_verbose_errors",
-    default=config.bool_env("JAX_PALLAS_VERBOSE_ERRORS", True),
+    default=config.bool_env("JAX_PALLAS_VERBOSE_ERRORS", False),
     help=(
         "If True, print verbose error messages for Pallas kernels."
     ),
