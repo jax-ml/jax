@@ -1732,6 +1732,7 @@ jax_multiplatform_test(
         "tpu_v3_x4",
         "tpu_v4_x4",
         "tpu_v3_x4_shardy",
+        "tpu_v4_shardy",
         "gpu_p100x2_shardy",
     ],
     tags = ["multiaccelerator"],

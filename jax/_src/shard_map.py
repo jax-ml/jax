@@ -812,17 +812,13 @@ def _shard_map_lowering_shardy(
   if np.prod([mesh.shape[a] for a in manual_axes]) == 1:
     # No need for a `ManualComputationOp` if all manual axes are size 1.
     with _extend_axis_env(mesh, manual_axes), config._check_vma(check_vma):
-      args = (*ctx.dim_var_values, *tokens, *in_nodes)
       out_nodes, tokens_out = mlir.jaxpr_subcomp(
           sub_ctx, jaxpr, ctx.name_stack,
-          mlir.TokenSet(zip(ctx.tokens_in.effects(), in_nodes[:num_tokens])),
-        (), *args[num_tokens:],
+          mlir.TokenSet(zip(ctx.tokens_in.effects(), tokens)),
+          (), *in_nodes,
           dim_var_values=ctx.dim_var_values)
-      num_tokens = len(tokens_out.effects())
-      tokens_out = tokens_out.update_tokens(mlir.TokenSet(zip(
-          ctx.tokens_in.effects(), out_nodes[:num_tokens])))
       ctx.set_tokens_out(tokens_out)
-    return out_nodes[num_tokens:]
+    return out_nodes
 
   in_shardings = list(map(
       partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
