@@ -40,7 +40,7 @@ from jax._src.lax.control_flow.loops import map as lax_map
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding_impls import SdyArray, SdyArrayList, SingleDeviceSharding
+from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
 from jax._src.typing import DeprecatedArg
 import numpy as np
 
@@ -157,11 +157,11 @@ def _callback_op_sharding(
       ndim = 0
       if avals_out and isinstance(avals_out[0], core.ShapedArray):
         ndim = avals_out[0].ndim
-      op_sharding = sharding_impls.SdyArrayList([
-          sharding_impls.SdyArray(
+      op_sharding = SdyArrayList([
+          SdyArray(
               mesh_shape=(),
               dim_shardings=[
-                  sharding_impls.SdyDim(axes=[], is_open=False)
+                  SdyDim(axes=[], is_open=False)
               ] * ndim,
               logical_device_ids=())])
     else:
@@ -199,8 +199,8 @@ def _callback_op_sharding(
       # number of result ops. If there are no result ops, we need 1 shardy
       # annotation.
       num_sdy_shardings = max(1, len(avals_out))
-      op_sharding = sharding_impls.SdyArrayList(num_sdy_shardings * [
-          sharding_impls.SdyArray(
+      op_sharding = SdyArrayList(num_sdy_shardings * [
+          SdyArray(
               mesh_shape=(),
               dim_shardings=[],
               logical_device_ids=(device_index,))])
@@ -838,14 +838,17 @@ def emit_python_callback(
         config.use_shardy_partitioner.value
         and sharding is not None
         and len(ctx.avals_out) > 0
-        and isinstance(sharding, sharding_impls.SdyArrayList)
+        and isinstance(sharding, SdyArrayList)
     ):
       # Add a sharding annotation for the token if we have at least one
       # output. Otherwise, the single shardy annotation required of all ops
       # (even those without any results) can annotate the token.
-      sharding = sharding_impls.SdyArrayList(
-          [*sharding.shardings, sharding.shardings[-1]]
-      )
+      sharding = SdyArrayList([
+          SdyArray(
+              mesh_shape=(),
+              dim_shardings=[],
+              logical_device_ids=()),
+          *sharding.shardings])
     ctx = dataclasses.replace(
         ctx,
         avals_in=[core.abstract_token, *ctx.avals_in],
