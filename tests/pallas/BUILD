@@ -427,7 +427,11 @@ jax_multiplatform_test(
         "//jax:extend",
         "//jax:pallas_mosaic_gpu",
         "//jax:test_multiprocess",
-    ] + py_deps("portpicker"),
+    ] + py_deps([
+        "portpicker",
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
