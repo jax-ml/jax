@@ -9,7 +9,7 @@
 
 repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: 2c9f875913ee60ca25ce70243dc24d5b6415598c  # frozen: v4.6.0
+  rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # frozen: v5.0.0
   hooks:
   - id: check-ast
   - id: check-merge-conflict
