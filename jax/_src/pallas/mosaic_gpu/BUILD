@@ -123,3 +123,9 @@ pytype_strict_library(
         "//jax/_src/pallas",
     ],
 )
+
+pytype_strict_library(
+    name = "helpers",
+    srcs = ["helpers.py"],
+    deps = ["//jax"],
+)
