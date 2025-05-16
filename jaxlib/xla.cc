@@ -490,7 +490,10 @@ NB_MODULE(_jax, m) {
               &CompiledMemoryStats::host_temp_size_in_bytes)
       .def_prop_ro("serialized_buffer_assignment_proto",
                    [](const CompiledMemoryStats& cms) -> nb::bytes {
-#if JAX_IFRT_VERSION_NUMBER >= 7
+#if JAX_IFRT_VERSION_NUMBER >= 9
+                     const std::string& s = cms.serialized_buffer_assignment;
+                     return nb::bytes(s.data(), s.size());
+#elif JAX_IFRT_VERSION_NUMBER >= 7
                      if (cms.buffer_assignment.has_value()) {
                        std::string s =
                            cms.buffer_assignment->SerializeAsString();
