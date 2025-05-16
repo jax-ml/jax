@@ -812,7 +812,6 @@ def lower_jaxpr_to_module(
         mesh=jax_mesh,
     )
     del runtime_smem, grouped_barriers, runtime_barriers
-
     _ = lower_jaxpr_to_mosaic_gpu(
         module_ctx, launch_ctx, jaxpr, buffers_gmem, consts
     )
@@ -1288,8 +1287,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
 
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
     raise TypeError(f"Can only load from references (got {x_ref}).")
-
-  x_aval = ctx.avals_in[0]
+  dtype = ctx.avals_out[0].dtype
 
   transforms = jax.tree.unflatten(tree, leaves)
   x_smem, transforms = _handle_transforms(
@@ -1300,21 +1298,21 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if tiling != (
           8,
-          (swizzle * 8) // pallas_utils.dtype_bitwidth(x_aval.dtype),
+          (swizzle * 8) // pallas_utils.dtype_bitwidth(dtype),
       ):
         raise NotImplementedError("Tiling does not fit swizzle")
       return mgpu.FragmentedArray.load_tiled(
-          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
+          x_smem, is_signed=mgpu_utils.is_signed(dtype), swizzle=swizzle
       )
     case ():
       # Handle scalar indexing.
       if not ctx.avals_out[0].shape:
-        is_signed = mgpu_utils.is_signed(x_aval.dtype)
+        is_signed = mgpu_utils.is_signed(dtype)
         val = memref_dialect.load(x_smem, [])
         return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
 
       return mgpu.FragmentedArray.load_strided(
-          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+          x_smem, is_signed=mgpu_utils.is_signed(dtype)
       )
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
@@ -1325,12 +1323,11 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only load from references (got {x_smem}).")
 
-  x_aval = ctx.avals_in[0]
-
   transforms = jax.tree.unflatten(tree, leaves)
   x_smem, transforms = _handle_transforms(
       ctx, x_smem, transforms, allow_peer_refs=True
   )
+  mlir_dtype = ir.MemRefType(x_smem.type).element_type
 
   if transforms:
     raise NotImplementedError(
@@ -1338,7 +1335,7 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
     )
 
   shape = ctx.avals_out[0].shape
-  ty = ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype))
+  ty = ir.VectorType.get(shape, mlir_dtype)
   if shape:
     zero_index = arith_dialect.constant(ir.IndexType.get(), 0)
     indices = [zero_index for _ in range(len(shape))]
@@ -1374,7 +1371,8 @@ def _swap_lowering_rule(
   transforms = jax.tree.unflatten(tree, leaves)
   transposed_value = value.layout == mgpu.WGMMA_TRANSPOSED_LAYOUT
   x_smem, transforms = _handle_transforms(
-      ctx, x_ref, transforms, handle_transposes=not transposed_value, allow_peer_refs=True
+      ctx, x_ref, transforms, handle_transposes=not transposed_value,
+      allow_peer_refs=True
   )
   mgpu.warpgroup_barrier()  # Make sure reads have completed before we write.
   match transforms:
@@ -1437,16 +1435,15 @@ def _swap_lowering_rule_wg(
   if not ir.MemRefType.isinstance(x_smem.type):
     raise TypeError(f"Can only store to references (got {x_smem}).")
 
-  x_aval = ctx.avals_in[0]
-
   transforms = jax.tree.unflatten(tree, leaves)
-  x_smem, transforms = _handle_transforms(ctx, x_smem, transforms, allow_peer_refs=True)
+  x_smem, transforms = _handle_transforms(
+      ctx, x_smem, transforms, allow_peer_refs=True)
   if transforms:
     raise NotImplementedError(
         "Transforms are not yet implemented for warpgroup semantics"
     )
-
-  ty = ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype))
+  x_mlir_dtype = ir.MemRefType(x_smem.type).element_type
+  ty = ir.VectorType.get(shape, x_mlir_dtype)
   if shape:
     zero_index = arith_dialect.constant(ir.IndexType.get(), 0)
     indices = [zero_index for _ in range(len(shape))]
