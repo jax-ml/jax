@@ -57,7 +57,7 @@ setup(
     long_description_content_type='text/markdown',
     author='JAX team',
     author_email='jax-dev@google.com',
-    packages=find_packages(exclude=["*examples*", "*internal_test_util*"]),
+    packages=find_packages(exclude=["examples"]),
     package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
     python_requires='>=3.10',
     install_requires=[
