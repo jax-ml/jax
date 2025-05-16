@@ -1077,7 +1077,7 @@ def get_grid_mapping(
     if in_specs_tree != in_tree:
       raise ValueError(
           pytreedef_mismatch_err_msg("`in_specs`", in_specs_tree,
-                                     "inputs", in_tree))
+                                     "`inputs`", in_tree))
   else:
     flat_in_specs = [no_block_spec] * len(in_avals)
 
