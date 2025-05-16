@@ -637,7 +637,10 @@ async def main():
       if "ML_WHEEL_BUILD_DATE" in option:
         wheel_build_date = option.split("=")[-1].replace("-", "")
       if "ML_WHEEL_GIT_HASH" in option:
-        wheel_git_hash = option.split("=")[-1][:9]
+        # Strip leading zeros as they end up being stripped by setuptools,
+        # which leads to a mismatch between expected and actual wheel names
+        # https://peps.python.org/pep-0440/
+        wheel_git_hash = option.split("=")[-1][:9].lstrip('0')
 
   with open(".jax_configure.bazelrc", "w") as f:
     jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command_base.get_command_as_list(), args.use_new_wheel_build_rule)
