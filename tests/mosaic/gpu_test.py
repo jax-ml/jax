@@ -20,6 +20,7 @@ import enum
 import itertools
 import math
 import operator
+import sys
 import re
 import unittest
 
@@ -236,6 +237,8 @@ class TestCase(parameterized.TestCase):
 
   @contextlib.contextmanager
   def capture_stdout(self):
+    if "pytest" in sys.modules:
+      self.skipTest("pytest interacts badly with GPU stdout capture")
     if mosaic_gpu_lib is None:
       raise ValueError("Running tests but missing Mosaic GPU extension")
     with jtu.capture_stdout() as stdout:

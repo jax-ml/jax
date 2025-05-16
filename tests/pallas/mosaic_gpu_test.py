@@ -19,6 +19,7 @@ import math
 import operator
 import os
 import re
+import sys
 import tempfile
 from typing import ClassVar
 
@@ -106,6 +107,8 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
 
   @contextlib.contextmanager
   def capture_stdout(self):
+    if "pytest" in sys.modules:
+      self.skipTest("pytest interacts badly with GPU stdout capture")
     if mosaic_gpu_lib is None:
       raise ValueError("Running tests but missing Mosaic GPU extension")
     with jtu.capture_stdout() as stdout:
