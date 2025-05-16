@@ -2603,7 +2603,7 @@ def _gspmd_to_named_sharding(
         out_aval.sharding.mesh, out_s._device_assignment)
   else:
     mesh = orig_in_s.mesh
-  return sharding_impls._gspmd_to_named_sharding_via_mesh(out_s, mesh)
+  return out_s._to_named_sharding_via_mesh(mesh)
 _orig_out_sharding_handlers[NamedSharding] = _gspmd_to_named_sharding
 
 def _gspmd_to_positional_sharding(
@@ -2674,7 +2674,7 @@ def maybe_recover_user_shardings(
           new_shardings, new_avals, ns, None)
 
   if context_mesh is not None and not context_mesh.empty:
-    return [sharding_impls._gspmd_to_named_sharding_via_mesh(n, context_mesh)
+    return [n._to_named_sharding_via_mesh(context_mesh)
             if isinstance(n, GSPMDSharding) else n
             for n in new_shardings]
 

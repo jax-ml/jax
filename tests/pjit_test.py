@@ -2632,6 +2632,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     op.tile_assignment_dimensions = [8]
     op.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
     gs = GSPMDSharding(tuple(mesh.devices.flat), op)
+    self.assertEqual(repr(gs._to_sdy_sharding(1)), "SdyArray([{'axis_0'}])")
     b = jax.device_put(x, gs)
     self.assertTrue(jax.dtypes.issubdtype(b.dtype, jax.dtypes.prng_key))
     self.assertEqual(b.sharding, gs)
