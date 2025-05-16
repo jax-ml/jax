@@ -1554,7 +1554,7 @@ class OpsTest(PallasBaseTest):
   def test_iota(self, shape, dtype, dimension):
     self.skip_if_mosaic_gpu()
 
-    if jtu.test_device_matches(["tpu"]):
+    if jtu.test_device_matches(["tpu"]) and dtype != jnp.int32:
       self.skipTest("Only 32-bit integer iota supported")
 
     f = lambda: jax.lax.broadcasted_iota(dtype, shape, dimension)
@@ -1565,7 +1565,15 @@ class OpsTest(PallasBaseTest):
     def kernel(o_ref):
       o_ref[...] = f()
 
-    np.testing.assert_allclose(f(), kernel())
+    if len(shape) == 1:
+      # assertRaises* methods do not support inspecting the __cause__, so
+      # we have to check it manually.
+      try:
+        kernel()
+      except Exception as e:
+        self.assertEqual(e.args[0], "1D iota is not supported")
+    else:
+      np.testing.assert_allclose(f(), kernel())
 
   @parameterized.parameters("float16", "bfloat16", "float32")
   def test_approx_tanh(self, dtype):
