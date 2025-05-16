@@ -283,7 +283,6 @@ inline arith::ConstantOp I32Const(int32_t value, ArrayRef<int64_t> shape,
                builder.getIntegerAttr(builder.getI32Type(), value)));
 }
 
-// TODO(jevinjiang): consolidate this with getIntConst in apply-vector-layout.
 std::optional<int64_t> getIntConst(Value v);
 }  // namespace mlir::tpu
 

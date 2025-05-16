@@ -209,23 +209,18 @@ bool incrementIndex(const MutableArrayRef<int64_t> idx,
   return false;
 }
 
-FailureOr<int64_t> getIntConst(Value v, bool silent = false) {
-  if (auto constant_op = v.getDefiningOp<arith::ConstantOp>()) {
-    if (auto integer_attr = dyn_cast<IntegerAttr>(constant_op.getValue())) {
-      return integer_attr.getValue().getSExtValue();
-    }
-  }
-  if (silent) {
-    return failure();
+FailureOr<int64_t> expectIntConst(Value v) {
+  if (auto cst = getIntConst(v)) {
+    return cst.value();
   }
   return emitError(v.getLoc(), "Expected an integer constant");
 }
 
-FailureOr<SmallVector<int64_t>> getIntConstsFromOperandRange(
-    ValueRange vals, bool silent = false) {
+FailureOr<SmallVector<int64_t>> expectIntConstsFromOperandRange(
+    ValueRange vals) {
   SmallVector<int64_t> res(vals.size());
   for (int i = 0; i < vals.size(); ++i) {
-    FAILUREOR_ASSIGN_OR_RETURN(res[i], getIntConst(vals[i], silent));
+    FAILUREOR_ASSIGN_OR_RETURN(res[i], expectIntConst(vals[i]));
   }
   return res;
 }
@@ -265,7 +260,7 @@ FailureOr<std::pair<Value, SmallVector<int64_t>>> sliceRef(
   Value c0 = nullptr;
   SmallVector<int64_t> indices_within_slice(indices.size() - tiling.size(), 0);
   for (auto tiled_idx : indices.take_back(tiling.size())) {
-    if (auto cst = getIntConst(tiled_idx, /*silent=*/true); succeeded(cst)) {
+    if (auto cst = getIntConst(tiled_idx)) {
       indices_within_slice.push_back(*cst);
       if (!c0) {
         c0 = builder.create<arith::ConstantOp>(i32,
@@ -1548,7 +1543,7 @@ LogicalResult tpu_load_rule(RewriteContext &ctx, Operation &op,
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       const SmallVector<int64_t> indices,
-      getIntConstsFromOperandRange(load_op.getIndices()));
+      expectIntConstsFromOperandRange(load_op.getIndices()));
   TPU_ASSERT_EQ_OP(indices.size(), 2);
   if (indices[1] % ctx.target_shape[1] != 0) {
     return op.emitOpError("Not implemented: Lane index is not a multiple of ")
@@ -1606,8 +1601,8 @@ LogicalResult strided_op_rule_impl(RewriteContext &ctx, Operation &op,
   if (strides[rank - 1] != 1) {
     return op.emitOpError("Not Implemented: Stride on last dim is not 1");
   }
-  auto last_idx = getIntConst(indices[rank - 1], /*silent=*/true);
-  if (failed(last_idx)) {
+  auto last_idx = getIntConst(indices[rank - 1]);
+  if (!last_idx.has_value()) {
     return op.emitOpError("Not Implemented: Dynamic index on last dim");
   } else if (last_idx.value() != 0) {
     return op.emitOpError("Not Implemented: Index on last dim is not 0");
@@ -1975,7 +1970,7 @@ LogicalResult tpu_store_rule(RewriteContext &ctx, Operation &op,
   tpu::StoreOp store_op = cast<tpu::StoreOp>(op);
   FAILUREOR_ASSIGN_OR_RETURN(
       const SmallVector<int64_t> indices,
-      getIntConstsFromOperandRange(store_op.getIndices()));
+      expectIntConstsFromOperandRange(store_op.getIndices()));
   TPU_ASSERT_EQ_OP(indices.size(), 2);
   if (indices[1] % ctx.target_shape[1] != 0) {
     return op.emitOpError("Not implemented: Lane index is not a multiple of ")
@@ -2143,15 +2138,14 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
     return op.emitOpError("Not implemented: unsupported layout for input");
   }
   LayoutOffsets expected_offsets_out = layout_in.offsets();
-  auto shift = getIntConst(amount, /*silent=*/true);
-  const bool has_static_shift = succeeded(shift);
+  auto shift = getIntConst(amount);
   int rotated_tiled_dim = op.getDimension() - (op.getType().getRank() - 2);
   bool has_padding_along_rotation =
       (rotated_tiled_dim == 0 || rotated_tiled_dim == 1) &&
       op.getType().getShape()[op.getDimension()] %
               layout.tiling()[rotated_tiled_dim] !=
           0;
-  if (has_static_shift && has_padding_along_rotation) {
+  if (shift.has_value() && has_padding_along_rotation) {
     // We checked above that there are no implicit dims.
     const int64_t dim_size = op.getType().getShape()[op.getDimension()];
     // TODO(b/337384645): Currently we assume {0, 0} offsets in the input
@@ -2173,7 +2167,7 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
   // TODO(b/411170715): Allow sublane rotation once the bug is fixed.
   // TODO(b/337384645): Support non-zero stride.
   if (has_padding_along_rotation &&
-      (!has_static_shift ||
+      (!shift.has_value() ||
        (rotated_tiled_dim == 0 ||
         (rotated_tiled_dim == 1 && op.getStride().value_or(0) != 0)))) {
     return op.emitOpError("Not implemented: unsupported unaligned shape");
@@ -2200,19 +2194,19 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
         builder.getIntegerAttr(builder.getIndexType(), d));
   };
   auto modI = [&](const Value &v, unsigned d) -> Value {
-    if (auto cst = getIntConst(v, /*silent=*/true); succeeded(cst)) {
+    if (auto cst = getIntConst(v)) {
       return mlirI32Const(cst.value() % d);
     }
     return builder.create<arith::RemUIOp>(v, mlirI32Const(d));
   };
   auto divI = [&](const Value &v, unsigned d) -> Value {
-    if (auto cst = getIntConst(v, /*silent=*/true); succeeded(cst)) {
+    if (auto cst = getIntConst(v)) {
       return mlirI32Const(cst.value() / d);
     }
     return builder.create<arith::DivUIOp>(v, mlirI32Const(d));
   };
   auto addI = [&](const Value &v, unsigned d) -> Value {
-    if (auto cst = getIntConst(v, /*silent=*/true); succeeded(cst)) {
+    if (auto cst = getIntConst(v)) {
       return mlirI32Const(cst.value() + d);
     }
     return builder.create<arith::AddIOp>(v, mlirI32Const(d));
@@ -2239,8 +2233,7 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
   auto getVmaskByPaddingEnd = [&](Value padding, int dim, int stride = 0) {
     CHECK(dim == 0 || dim == 1);
     Value padding_vreg;
-    if (auto padding_cst = getIntConst(padding, /*silent=*/true);
-        succeeded(padding_cst)) {
+    if (auto padding_cst = getIntConst(padding)) {
       CHECK_GE(padding_cst.value(), 0);
       CHECK_LE(padding_cst.value(), ctx.target_shape[dim]);
       padding_vreg = builder.create<arith::ConstantOp>(DenseElementsAttr::get(
@@ -2269,8 +2262,7 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
   // and blend the data from contiguous vregs to emulate circular rotation.
   auto rotateOnTilingDim = [&](const xla::Array<Value> &vregs,
                                const Value &shift, int axis, int stride = 0) {
-    if (auto shift_cst = getIntConst(shift, /*silent=*/true);
-        succeeded(shift_cst)) {
+    if (auto shift_cst = getIntConst(shift)) {
       if (shift_cst.value() == 0 && stride == 0) {
         return vregs;
       }
@@ -2395,8 +2387,7 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
     CHECK((tiling_dim != 1 && stride == 0) || (tiling_dim == 1 && stride >= 0));
     SmallVector<xla::Array<Value>, 4> chunks;
     // Handle rotation with static shift.
-    if (auto shift_cst = getIntConst(shift, /*silent=*/true);
-        succeeded(shift_cst)) {
+    if (auto shift_cst = getIntConst(shift)) {
       int64_t static_shift = shift_cst.value();
       if (has_padding_along_rotation) {
         return lazyRotate(vregs, static_shift, axis);
@@ -2519,8 +2510,7 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
                                  vty.getDimSize(dim));
         // After applying stride, we expect all shifts in a vreg are less or
         // equal to the vreg's lane count for now.
-        if (auto base_amount_cst = getIntConst(base_amount, /*silent=*/true);
-            succeeded(base_amount_cst)) {
+        if (auto base_amount_cst = getIntConst(base_amount)) {
           int64_t static_base_amount = base_amount_cst.value();
           auto max_shift_in_vreg = static_base_amount % ctx.target_shape[1] +
                                    (ctx.target_shape[0] - 1) * stride;
@@ -3163,7 +3153,7 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
   bool must_support_unaligned_dynamic_index = false;
   if (load_op.getIndices().size() > 1) {
     auto second_minor_idx = load_op.getIndices().take_back(2)[0];
-    if (failed(getIntConst(second_minor_idx, /*silent=*/true)) &&
+    if (!getIntConst(second_minor_idx).has_value() &&
         !isGuaranteedDivisible(second_minor_idx, memref_tiling[0])) {
       must_support_unaligned_dynamic_index = true;
     }
@@ -3196,7 +3186,7 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
   }
 
   auto add_idx = [&](const Value &v, int64_t d) -> Value {
-    if (auto cst = getIntConst(v, /*silent=*/true); succeeded(cst)) {
+    if (auto cst = getIntConst(v)) {
       return IdxConst(cst.value() + d, builder, op.getLoc());
     }
     return builder.create<arith::AddIOp>(v, IdxConst(d, builder, op.getLoc()));
@@ -4476,7 +4466,7 @@ LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
   bool must_support_unaligned_dynamic_index = false;
   if (store_op.getIndices().size() > 1) {
     auto second_minor_idx = store_op.getIndices().take_back(2)[0];
-    if (failed(getIntConst(second_minor_idx, /*silent=*/true)) &&
+    if (!getIntConst(second_minor_idx).has_value() &&
         !isGuaranteedDivisible(second_minor_idx, memref_tiling[0])) {
       must_support_unaligned_dynamic_index = true;
     }
@@ -4507,7 +4497,7 @@ LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
   }
 
   auto add_idx = [&](const Value &v, int64_t d) -> Value {
-    if (auto cst = getIntConst(v, /*silent=*/true); succeeded(cst)) {
+    if (auto cst = getIntConst(v)) {
       return IdxConst(cst.value() + d, builder, op.getLoc());
     }
     return builder.create<arith::AddIOp>(v, IdxConst(d, builder, op.getLoc()));
