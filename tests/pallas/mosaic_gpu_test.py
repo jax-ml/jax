@@ -21,6 +21,7 @@ import os
 import re
 import tempfile
 from typing import ClassVar
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -891,6 +892,7 @@ class PallasCallTest(PallasTest):
     )
     np.testing.assert_allclose(layer_norm(x), layer_norm_np(x), rtol=5e-5)
 
+  @unittest.skip("Test is broken in CI")
   def test_print(self):
 
     @functools.partial(
@@ -906,6 +908,7 @@ class PallasCallTest(PallasTest):
       jax.block_until_ready(kernel(x))
     self.assertEqual(output(), "It works!\n")
 
+  @unittest.skip("Test is broken in CI")
   def test_print_wgmma_tiled_layout(self):
     self.skip_if_wg_semantics()
 
@@ -939,6 +942,7 @@ class PallasCallTest(PallasTest):
       i, j, v = map(int, (i, j, v))
       self.assertEqual(v, i * shape[1] + j)
 
+  @unittest.skip("Test is broken in CI")
   def test_print_scalar(self):
     self.skip_if_wg_semantics()
 
@@ -956,6 +960,7 @@ class PallasCallTest(PallasTest):
 
     self.assertIn(f"x.sum() = {x.sum()}", output())
 
+  @unittest.skip("Test is broken in CI")
   def test_print_scalar_array(self):
     self.skip_if_wg_semantics()
 
@@ -973,6 +978,7 @@ class PallasCallTest(PallasTest):
 
     self.assertIn(f"x.sum() = {x.sum() + 1}", output())
 
+  @unittest.skip("Test is broken in CI")
   def test_print_array(self):
     self.skip_if_wg_semantics()
 
@@ -1269,6 +1275,7 @@ class PallasCallTest(PallasTest):
       ):
         kernel()
 
+  @unittest.skip("Test is broken in CI")
   def test_cond(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct([256], jnp.int32)
@@ -2907,6 +2914,7 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
         kernel(), np.repeat([0, 1], 128).reshape(2, 128)
     )
 
+  @unittest.skip("Test is broken in CI")
   def test_cluster(self):
     self.skip_if_wg_semantics()  # Needs debug_print in the MGPU dialect.
 

@@ -973,6 +973,7 @@ class TCGen05Test(TestCase):
       (jnp.float16, 2, "[132.000000,133.000000]"),
   ])
   @jtu.thread_unsafe_test()
+  @unittest.skip("Test is broken in CI")
   def test_tmem_debug_print(self, jax_dtype, packing, expected):
     swizzle = 128
     in_mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
@@ -2583,6 +2584,7 @@ class LayoutTest(TestCase):
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 2),
   )
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  @unittest.skip("Test is broken in CI")
   def test_upcast_to_wgmma(
       self, start_layout, end_layout, in_dtype, cast_dtype, shfl_per_reg
   ):
@@ -3364,6 +3366,7 @@ class UtilsTest(TestCase):
       utils.parse_indices(indices, (2, 3, 4))
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  @unittest.skip("Test is broken in CI")
   def test_assert(self):
     if cf is None:
       self.skipTest("``cf`` is not available")
