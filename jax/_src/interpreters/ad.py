@@ -609,7 +609,8 @@ class JVPTrace(Trace):
 
 def maybe_jvp_tracer(trace, primal, tangent):
   if (type(tangent) is Zero or
-      core.typeof(tangent) is core.ShapedArray and dtype(tangent) == float0):
+      isinstance(core.typeof(tangent), core.ShapedArray)
+      and dtype(tangent) == float0):
     return primal
   else:
     return JVPTracer(trace, primal, tangent)
