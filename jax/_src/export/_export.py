@@ -760,8 +760,8 @@ def _export_lowered(
         elif cur_mesh.shape_tuple != sharding.mesh.shape_tuple:
           raise ValueError(
               "Mesh for all inputs/outputs should be equal. Got one mesh "
-              f"{cur_mesh} on an array {cur_arg._aval} at "
-              f"{shape_poly.args_kwargs_path_to_str(cur_k_path)} and another mesh: "
+              f"{cur_mesh} on an array {cur_arg._aval} at "  # type: ignore[union-attr]
+              f"{shape_poly.args_kwargs_path_to_str(cur_k_path)} and another mesh: "  # type: ignore[arg-type]
               f"{sharding.mesh}' on a tensor {arg._aval} at "
               f"{shape_poly.args_kwargs_path_to_str(k_path)}")
     if cur_mesh and isinstance(cur_mesh, mesh_lib.Mesh):
