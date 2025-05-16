@@ -121,6 +121,14 @@ jax_py_test(
 jax_multiplatform_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
+    # TODO(b/411472145): Re-enable once fixed.
+    backend_variant_args = {
+        "h100_tfrt_gpu": {
+            "args": [
+                "--jax_use_tfrt_gpu_client=false ",
+            ],
+        },
+    },
     enable_backends = [
         "cpu",
         "gpu",
@@ -1134,6 +1142,14 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
+    # TODO(b/411472145): Re-enable once fixed.
+    backend_variant_args = {
+        "h100_tfrt_gpu": {
+            "args": [
+                "--jax_use_tfrt_gpu_client=false ",
+            ],
+        },
+    },
     enable_backends = [
         "cpu",
         "gpu",
