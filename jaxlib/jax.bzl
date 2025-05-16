@@ -151,7 +151,7 @@ def py_library_providing_imports_info(*, name, lib_rule = py_library, pytype_src
 def py_extension(name, srcs, copts, deps, linkopts = []):
     nanobind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
 
-ALL_BACKENDS = ["cpu", "gpu", "tpu"]
+ALL_BACKENDS = ["cpu", "se_gpu", "tfrt_gpu", "tpu"]
 
 def if_building_jaxlib(
         if_building,
@@ -173,7 +173,7 @@ def if_building_jaxlib(
     })
 
 def _cpu_test_deps():
-    """Returns the test depencies needed for a CPU-only JAX test."""
+    """Returns the test dependencies needed for a CPU-only JAX test."""
     return select({
         "//jax:config_build_jaxlib_true": [],
         "//jax:config_build_jaxlib_false": ["@pypi//jaxlib"],
@@ -283,9 +283,13 @@ def jax_multiplatform_test(
             "//jax",
             "//jax:test_util",
         ] + deps)
-        if backend == "gpu":
+        if backend.endswith("gpu"):
             test_deps += _gpu_test_deps()
             test_tags += tf_cuda_tests_tags()
+            if backend == "se_gpu":
+                test_args.append("--jax_use_tfrt_gpu_client=false")
+            else:
+                test_args.append("--jax_use_tfrt_gpu_client=true")
         elif backend == "tpu":
             test_deps += ["@pypi//libtpu"]
         native.py_test(
@@ -293,7 +297,11 @@ def jax_multiplatform_test(
             srcs = srcs,
             args = test_args,
             env = env,
-            deps = test_deps,
+            deps = _get_test_deps(deps, backend_independent = False) +
+                   _get_jax_test_deps([
+                       "//jax",
+                       "//jax:test_util",
+                   ] + deps),
             data = data,
             shard_count = test_shards,
             tags = test_tags,
