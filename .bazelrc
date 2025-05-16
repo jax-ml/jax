@@ -383,6 +383,10 @@ build:rbe_cross_compile_base --remote_instance_name=projects/tensorflow-testing/
 build:rbe_cross_compile_linux_aarch64 --config=cross_compile_linux_aarch64
 build:rbe_cross_compile_linux_aarch64 --config=rbe_cross_compile_base
 
+# Workaround for https://github.com/numpy/numpy/issues/28843
+# TODO(phawkins): remove this after upgrading to NumPy 2.2.6.
+build:rbe_cross_compile_linux_aarch64 --test_env=OMP_NUM_THREADS=8
+
 # Mac x86
 build:cross_compile_darwin_x86_64 --config=cross_compile_base
 build:cross_compile_darwin_x86_64 --config=nonccl
