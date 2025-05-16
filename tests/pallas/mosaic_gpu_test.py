@@ -1671,6 +1671,45 @@ class PallasCallTest(PallasTest):
     test_as_i8 = jax.lax.convert_element_type(kernel(x), new_dtype=jnp.int8)
     np.testing.assert_array_equal(test_as_i8[:256], unpack_i4_as_i8(x))
 
+  def test_smem_aliasing_works_for_quantization(self):
+    self.skip_if_wg_semantics()
+    shape = (64, 256)
+    large_ty, small_ty = jnp.bfloat16, jnp.uint4
+    large_swizzle = plgpu.SwizzleTransform(64 * jnp.finfo(large_ty).bits // 8)
+    small_swizzle = plgpu.SwizzleTransform(64 * jnp.iinfo(small_ty).bits // 8)
+    tiling = plgpu.TilingTransform((8, 64))
+
+    def kernel(x_gmem, o_gmem):
+      return pl.run_scoped(
+          functools.partial(scoped_kernel, x_gmem, o_gmem),
+          plgpu.RefUnion(
+              plgpu.SMEM(shape, large_ty, transforms=(tiling, large_swizzle)),
+              plgpu.SMEM(shape, small_ty, transforms=(tiling, small_swizzle))
+          ),
+          plgpu.Barrier(1, num_barriers=1),
+      )
+
+    def scoped_kernel(x_gmem, o_gmem, aliased_ref, barrier):
+      ref_large_ty, ref_small_ty = aliased_ref
+      plgpu.copy_gmem_to_smem(x_gmem, ref_small_ty, barrier=barrier)
+      plgpu.barrier_wait(barrier)
+      ref_large_ty[...] = ref_small_ty[...].astype(ref_large_ty.dtype) * 3
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(ref_large_ty, o_gmem)
+      plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+
+    kernel_fn = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, large_ty),
+        grid=(1, 1),
+    )
+    key = jax.random.key(42)
+    x = jax.random.randint(key, shape, 0, 4).astype(small_ty)
+    expected = x * 3
+    np.testing.assert_array_equal(kernel_fn(x), expected)
+
   def test_assigning_to_ref_union_raises(self):
     @functools.partial(
         self.pallas_call,

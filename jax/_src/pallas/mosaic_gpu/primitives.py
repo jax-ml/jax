@@ -85,7 +85,7 @@ def _load_p_lowering_rule(
   if not isinstance(x_ref, ir.Value) or not ir.MemRefType.isinstance(x_ref.type):
     raise TypeError(f"Can only load from references (got {x_ref}).")
 
-  x_aval = ctx.avals_in[0]
+  out_aval = ctx.avals_out[0]
 
   transforms = jax.tree.unflatten(args_tree, leaves)
   x_ref, transforms = lowering._handle_transforms(ctx, x_ref, transforms)
@@ -93,10 +93,10 @@ def _load_p_lowering_rule(
   if layout is not None:
     layout = layout.to_mgpu()
 
-  is_signed = mgpu_utils.is_signed(x_aval.dtype)
+  is_signed = mgpu_utils.is_signed(out_aval.dtype)
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
-      if tiling != (8, swizzle // x_aval.dtype.itemsize):
+      if tiling != (8, swizzle // out_aval.dtype.itemsize):
         raise NotImplementedError("Tiling does not fit swizzle")
       return mgpu.FragmentedArray.load_tiled(
           x_ref,
@@ -106,8 +106,8 @@ def _load_p_lowering_rule(
       )
     case ():
       # Handle scalar indexing.
-      if not ctx.avals_out[0].shape:
-        is_signed = mgpu_utils.is_signed(x_aval.dtype)
+      if not out_aval.shape:
+        is_signed = mgpu_utils.is_signed(out_aval.dtype)
         val = memref_dialect.load(x_ref, [])
         return mgpu.FragmentedArray.splat(
             val, shape=(), layout=layout, is_signed=is_signed
@@ -259,7 +259,9 @@ def _copy_smem_to_gmem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
-  src, src_transforms = lowering._handle_transforms(ctx, src, src_transforms, handle_transposes=False)
+  src, src_transforms = lowering._handle_transforms(
+      ctx, src, src_transforms, handle_transposes=False
+  )
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     ctx.launch_ctx.async_copy(
@@ -475,7 +477,9 @@ def _copy_gmem_to_smem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
-  dst, dst_transforms = lowering._handle_transforms(ctx, dst, dst_transforms, handle_transposes=False)
+  dst, dst_transforms = lowering._handle_transforms(
+      ctx, dst, dst_transforms, handle_transposes=False
+  )
   copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(src_transforms)
   barrier_indexer = _extract_barrier_indexer(
       barrier_transforms_treedef.unflatten(flat_barrier_transforms)
@@ -921,7 +925,6 @@ def _wgmma_lowering(
     a_transforms_tree,
     b_transforms_tree,
 ):
-  _, a_aval, *_ = ctx.avals_in
   lhs_swizzle: int | None = None
   if a_transforms_tree is not None:
     a_transforms_leaves, b_transforms_leaves = util.split_list(
@@ -942,7 +945,8 @@ def _wgmma_lowering(
         lhs_transpose = True
       case _:
         raise ValueError(f"WGMMA lhs has unsupported transforms: {a_transforms}.")
-    swizzle_elems = lhs_swizzle // a_aval.dtype.itemsize
+    a_mlir_dtype = ir.MemRefType(a.type).element_type
+    swizzle_elems = lhs_swizzle // mgpu_utils.bytewidth(a_mlir_dtype)
     if tiling != (8, swizzle_elems):
       raise NotImplementedError("WGMMA lhs tiling does not fit swizzle")
   else:
@@ -991,7 +995,8 @@ def _wgmma_lowering(
       raise ValueError(f"WGMMA rhs has unsupported transforms: {b_transforms}.")
 
   if lhs_swizzle is not None:
-    swizzle_elems = rhs_swizzle // a_aval.dtype.itemsize
+    b_mlir_dtype = ir.MemRefType(b.type).element_type
+    swizzle_elems = rhs_swizzle // mgpu_utils.bytewidth(b_mlir_dtype)
     if rhs_swizzle != lhs_swizzle:
       raise NotImplementedError("WGMMA rhs swizzle must match lhs swizzle")
     if rhs_tiling != (8, swizzle_elems):
@@ -1917,7 +1922,9 @@ def _inline_mgpu_lowering_rule(
       assert transforms is None
       continue
     assert isinstance(aval, pallas_core.AbstractMemoryRef)
-    a, user_transforms = lowering._handle_transforms(ctx, a, transforms, handle_transposes=False)
+    a, user_transforms = lowering._handle_transforms(
+        ctx, a, transforms, handle_transposes=False
+    )
     # Transforms that do not originate from a MemoryRefTransform are
     # applied implicitly (eg by emit-pipeline) and therefore we do not
     # expect the user to pass them to the type. The transforms not
