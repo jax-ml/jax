@@ -845,14 +845,14 @@ class KeyArrayTest(jtu.JaxTestCase):
 
   def test_vmap(self):
     ks = self.make_keys(3, 4, 5)
-    ys = jax.vmap(jax.jit(lambda k: k.T))(ks)
+    ys = jax.vmap(jax.jit(lambda k: k.transpose()))(ks)
     self.assertEqual(ys.shape, (3, 5, 4))
 
   # -- dtype-polymorphic operation (esp. lowerings)
 
   def test_scan_jaxpr(self):
     ks = self.make_keys(3, 4, 5)
-    f = lambda ks: jax.lax.scan(lambda _, k: (None, k.T), None, ks)
+    f = lambda ks: jax.lax.scan(lambda _, k: (None, k.transpose()), None, ks)
     jaxpr = jax.make_jaxpr(f)(ks).jaxpr
     # { lambda ; a:key<fry>[3,4,5]. let
     #     b:key<fry>[3,5,4] = scan[
@@ -876,7 +876,7 @@ class KeyArrayTest(jtu.JaxTestCase):
 
   def test_scan_lowering(self):
     ks = self.make_keys(3, 4)
-    f = lambda ks: jax.lax.scan(lambda _, k: (None, k.T), None, ks)
+    f = lambda ks: jax.lax.scan(lambda _, k: (None, k.transpose()), None, ks)
     _, out = jax.jit(f)(ks)  # doesn't crash
     self.assertIsInstance(out, prng_internal.PRNGKeyArray)
     self.assertEqual(out.shape, (3, 4))
