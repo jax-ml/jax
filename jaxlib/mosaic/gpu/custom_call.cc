@@ -100,6 +100,7 @@ limitations under the License.
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "triton/Target/LLVMIR/Passes.h"
 
 namespace {
 
@@ -174,8 +175,10 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mosaic::gpu::registerConvertGpuToLLVMPass();
     mosaic::gpu::registerByvalInsertionPass();
     mlir::arith::registerArithExpandOpsPass();
+    mlir::registerLLVMDIScopePass();
     return true;
   });
+  bool emit_line_info = getenv("MOSAIC_GPU_LINE_INFO") != nullptr;
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
@@ -188,23 +191,35 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         convert-scf-to-cf,
         convert-nvvm-to-llvm,
         expand-strided-metadata,
-        nvvm-attach-target{O=3 chip=)",
-      sm, R"( fast=false features=+)", ptx_isa,
+        nvvm-attach-target{)",
+      // TODO(slebedev): Always use O=3 once
+      // https://github.com/llvm/llvm-project/pull/140146 is merged.
+      emit_line_info ? "O=0" : "O=3", " chip=", sm, " fast=false features=+",
+      ptx_isa,
       R"( ftz=false  module= triple=nvptx64-nvidia-cuda},
         lower-affine,
         convert-arith-to-llvm{index-bitwidth=0},
         convert-index-to-llvm{index-bitwidth=64},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
-        gpu.module(strip-debuginfo),
+        )",
+      emit_line_info ? "" : "gpu.module(strip-debuginfo),",
+      R"(
         gpu.module(convert-gpu-to-nvvm{has-redux=false index-bitwidth=64 use-bare-ptr-memref-call-conv=false}),
         gpu.module(canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true}),
         gpu.module(cse),
         gpu.module(mosaic-byval-insertion),
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
+        )",
+      // TODO(slebedev): Switch to the ensure-debug-info-scope-on-llvm-func
+      // pass in MLIR once Triton upstreams its changes.
+      emit_line_info ? "enable-line-info," : "",
+      R"(
         gpu-module-to-binary{format=)" +
-      mlir::gpu::stringifyCompilationTarget(target).str() + (!nvshmem_path.empty() ? R"( l=)" + nvshmem_path : "")  + R"(},
+          mlir::gpu::stringifyCompilationTarget(target).str() +
+          (!nvshmem_path.empty() ? R"( l=)" + nvshmem_path : "") +
+          (emit_line_info ? "  opts=-lineinfo" : "") + R"(},
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
