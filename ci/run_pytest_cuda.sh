@@ -79,7 +79,9 @@ export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
 # End of test environment variable setup
 
 echo "Running CUDA tests..."
-"$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short --maxfail=20 \
+# capture=sys is needed to avoid pytest capturing the prints coming from the
+# CUDA runtime
+"$JAXCI_PYTHON" -m pytest -n $num_processes --capture=tee-sys --tb=short --maxfail=20 \
 tests examples \
 --deselect=tests/multi_device_test.py::MultiDeviceTest::test_computation_follows_data \
 --deselect=tests/multiprocess_gpu_test.py::MultiProcessGpuTest::test_distributed_jax_visible_devices \
