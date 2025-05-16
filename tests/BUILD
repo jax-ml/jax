@@ -400,6 +400,7 @@ jax_multiplatform_test(
     ],
     shard_count = {
         "cpu": 5,
+        "gpu": 5,
         "tpu": 5,
     },
     tags = ["multiaccelerator"],
@@ -1839,7 +1840,7 @@ jax_multiplatform_test(
     ],
     shard_count = {
         "cpu": 50,
-        "gpu": 10,
+        "gpu": 20,
         "tpu": 50,
     },
     tags = [
