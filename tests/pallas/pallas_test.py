@@ -1081,10 +1081,10 @@ class ApiErrorTest(PallasBaseTest):
                                    pl.BlockSpec((4,), lambda: 0)])
     with self.assertRaisesRegex(
         ValueError,
-        re.compile("Pytree for `in_specs` and inputs do not match. "
+        re.compile("Pytree for `in_specs` and `inputs` do not match. "
                    "There are 1 mismatches, including:"
                    ".* at \\[1\\], `in_specs` is a pytree leaf but "
-                   "inputs is a.*", re.DOTALL)):
+                   "`inputs` is a.*", re.DOTALL)):
       f(a, dict(a=a))
 
   def test_pallas_call_index_map_wrong_number_of_arguments(self):
