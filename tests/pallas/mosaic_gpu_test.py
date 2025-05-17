@@ -31,11 +31,11 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
+from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
-from jax._src.pallas import primitives as pallas_primitives
 from jax._src.state import types as state_types
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -1728,6 +1728,27 @@ class PallasCallTest(PallasTest):
 
     with self.assertRaisesRegex(ValueError, "can't be assigned to"):
       kernel(jnp.arange(128).astype(jnp.float32))
+
+  def test_partitioned_nd_loop(self):
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((132, 128), jnp.int32),
+        grid=(132,),
+        grid_names=("sm",),
+    )
+    def kernel(o_ref):
+      def body(idx, _):
+        assert len(idx) == 2
+        # We need to use `mode="clip"`, because the indices are not static.
+        o_ref[lax.axis_index("sm")] = lax.broadcast(
+            jnp.ravel_multi_index(idx, (4, 33), mode="clip"), o_ref.shape[1:]
+        )
+
+      plgpu.partitioned_nd_loop((4, 33), body, None, axis_name="sm")
+
+    np.testing.assert_array_equal(
+        kernel(), jnp.tile(jnp.arange(132)[:, None], 128)
+    )
 
 
 class PallasCallWGTest(
