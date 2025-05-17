@@ -3075,7 +3075,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_pjit_keep_unused_true(self):
     @partial(pjit, keep_unused=True)
     def f(x, y, z, a, b, c):  # pylint: disable=unused-argument
-      return c @ c.T
+      return c @ c.transpose()
 
     inp = jnp.arange(4)
     unused_inp = jnp.arange(8)
@@ -3084,8 +3084,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # Run it again to take the C++ dispatch.
     out_again = f(unused_inp, unused_inp, unused_inp, unused_inp, unused_inp, inp)
 
-    self.assertArraysEqual(out, inp @ inp.T)
-    self.assertArraysEqual(out_again, inp @ inp.T)
+    self.assertArraysEqual(out, inp @ inp.transpose())
+    self.assertArraysEqual(out_again, inp @ inp.transpose())
 
     compiled = f.lower(
         unused_inp, unused_inp, unused_inp, unused_inp, unused_inp, inp).compile()
@@ -3095,7 +3095,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_pjit_keep_unused_default_false(self):
     @pjit
     def f(x, y, z, a, b, c):  # pylint: disable=unused-argument
-      return c @ c.T
+      return c @ c.transpose()
 
     inp = jax.device_put(jnp.arange(4), jax.devices()[0])
     unused_inp = jax.device_put(jnp.arange(8), jax.devices()[0])
@@ -3104,8 +3104,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # Run it again to take the C++ dispatch.
     out_again = f(unused_inp, unused_inp, unused_inp, unused_inp, unused_inp, inp)
 
-    self.assertArraysEqual(out, inp @ inp.T)
-    self.assertArraysEqual(out_again, inp @ inp.T)
+    self.assertArraysEqual(out, inp @ inp.transpose())
+    self.assertArraysEqual(out_again, inp @ inp.transpose())
 
     compiled = f.lower(
         unused_inp, unused_inp, unused_inp, unused_inp, unused_inp, inp).compile()
@@ -4202,7 +4202,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     def make_keys(seeds):
       make_key = partial(prng.random_seed, impl=prng.threefry_prng_impl)
       key = make_key(seeds)
-      return key.T
+      return key.transpose()
 
     out = make_keys(seeds)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'x')))
@@ -4257,7 +4257,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     def make_keys(seeds):
       make_key = partial(prng.random_seed, impl=prng.threefry_prng_impl)
       key = make_key(seeds)
-      return key.T
+      return key.transpose()
 
     make_keys(seeds)
     out = make_keys(seeds)  # cpp dispatch
@@ -4946,7 +4946,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = lax.with_sharding_constraint(x, NamedSharding(mesh, P()))
-      return y.T
+      return y.transpose()
     f(jax.random.key(0))  # doesn't crash
 
     @jax.jit
