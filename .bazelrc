@@ -46,6 +46,8 @@ build:linux --copt=-Wno-unknown-warning-option
 # See https://github.com/tensorflow/tensorflow/issues/39467
 build:linux --copt=-Wno-stringop-truncation
 build:linux --copt=-Wno-array-parameter
+build:linux --copt=-Wno-deprecated-register
+build:linux --copt=-Wno-register
 
 build:macos --config=posix
 build:macos --apple_platform_type=macos
@@ -98,6 +100,18 @@ build:windows --incompatible_strict_action_env=true
 # configs such as `avx_linux` and `mkl_open_source_only`, `ci_linux_x86_64_cuda`
 # inherits `cuda` and `build_cuda_with_nvcc`, etc.
 # #############################################################################
+build --repo_env=USE_PYWRAP_RULES=True
+build --copt=-DGRPC_BAZEL_BUILD
+build --host_copt=-DGRPC_BAZEL_BUILD
+build --action_env=GRPC_BAZEL_RUNTIME=1
+build --repo_env=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=upb
+build --action_env=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=upb
+build --repo_env=RULES_PYTHON_ENABLE_PYSTAR=0
+# Do not do this. This is how gRPC builds itself by default, but we don't want
+# that as it would link protobuf into its own set of dynamic libraries, which
+# would conflict with our protobuf linkage.
+#build --define=use_fast_cpp_protos=true
+
 build:nonccl --define=no_nccl_support=true
 
 build --repo_env USE_PYWRAP_RULES=1
