@@ -134,6 +134,7 @@ exclude_patterns = [
     'notebooks/*.md',
     'pallas/quickstart.md',
     'pallas/pipelining.md',
+    'pallas/gpu/pipelining.md',
     'pallas/tpu/pipelining.md',
     'pallas/tpu/distributed.md',
     'pallas/tpu/sparse.md',
@@ -230,6 +231,7 @@ nb_execution_excludepatterns = [
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/pipelining.*',
+    'pallas/gpu/pipelining.*',
     'pallas/tpu/pipelining.*',
     'pallas/tpu/distributed.*',
     'pallas/tpu/sparse.*',
