@@ -1876,6 +1876,17 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "hijax_test",
+    srcs = ["hijax_test.py"],
+    deps = [
+        "//jax:experimental",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "colocated_python_test",
     srcs = ["colocated_python_test.py"],
     deps = [
