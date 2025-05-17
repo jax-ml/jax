@@ -32,7 +32,6 @@ import numpy as np
 import jax
 from jax import lax
 from jax import custom_derivatives
-from jax import random
 from jax import numpy as jnp
 from jax import tree_util
 from jax import sharding
@@ -2813,14 +2812,7 @@ def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
           *args, _in_avals=_in_avals, _out_aval=_out_aval)
   return res
 
-
 tf_impl_with_avals[prng.threefry2x32_p] = _threefry2x32_jax_impl
-
-# Use the vmap implementation, otherwise on TPU the performance is really bad
-# With use_vmap=True on, we get about the same performance for JAX and jax2tf.
-tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
-    partial(random_internal._gamma_impl, use_vmap=True),
-    multiple_results=False, extra_name_stack="random_gamma")
 
 
 def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm,
