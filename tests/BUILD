@@ -1125,6 +1125,7 @@ jax_multiplatform_test(
     enable_backends = [
         "cpu",
         "gpu",
+        "tpu",
     ],
     deps = [
         "//jax:profiler",
