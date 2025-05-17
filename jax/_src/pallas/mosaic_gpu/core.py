@@ -835,6 +835,11 @@ TMEM = GPUMemorySpace.TMEM
 REGS = GPUMemorySpace.REGS
 
 
+class ThreadScope(enum.Enum):
+  WARP = "warp"
+  WARPGROUP = "warpgroup"
+
+
 class barrier_dtype(dtypes.extended):
   pass
 
@@ -846,6 +851,7 @@ class BarrierType(dtypes.ExtendedDType):
 
   num_arrivals: int
   for_tensor_core: bool
+  thread_scope: ThreadScope
 
   def __str__(self):
     return self.name
@@ -872,16 +878,27 @@ class Barrier:
       barriers can be accessed by indexing into the barrier Ref.
     for_tensor_core: Whether this barrier is used for synchronizing with
       the tensor core. This should be set to True when waiting on Blackwell
-      (TC Gen 5) asynchoronous matmul instructions.
+      (TC Gen 5) asynchronous matmul instructions.
+    thread_scope: A manual override for the thread context when using this
+      barrier. Either WARP or WARPGROUP can be specified. The default
+      if WARPGROUP.
   """
   num_arrivals: int
   num_barriers: int = 1
   for_tensor_core: bool = dataclasses.field(default=False, kw_only=True)
+  thread_scope: ThreadScope | None = dataclasses.field(
+      default=None, kw_only=True)
 
   def get_ref_aval(self) -> AbstractMemoryRef:
+    if self.thread_scope is None:
+      thread_scope = ThreadScope.WARPGROUP
+    else:
+      thread_scope = self.thread_scope
+
     aval = jax_core.ShapedArray(
         [self.num_barriers], BarrierType(self.num_arrivals,
-                                         for_tensor_core=self.for_tensor_core)
+                                         for_tensor_core=self.for_tensor_core,
+                                         thread_scope=thread_scope)
     )
     return AbstractMemoryRef(aval, SMEM)
 
@@ -890,6 +907,7 @@ class Barrier:
       raise ValueError(
           f"Num arrivals must be at least 1, but got {self.num_arrivals}"
       )
+
 
 @dataclasses.dataclass(frozen=True)
 class ClusterBarrier:
