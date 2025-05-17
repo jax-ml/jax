@@ -279,9 +279,7 @@ def paged_flash_attention_kernel(
     v = async_copy_v.wait_and_get_loaded()
     o_curr = jnp.einsum("gt,td->gd", s_curr, v)
 
-    o_ref[...] = (
-        (l_prev * alpha * o_ref[...] + beta * o_curr) / l_next
-    ).astype(o_ref.dtype)
+    o_ref[...] = (alpha * o_ref[...] + beta * o_curr).astype(o_ref.dtype)
 
 
 def paged_flash_attention_kernel_inline_seq_dim(
@@ -618,7 +616,7 @@ def paged_attention(
         pltpu.SemaphoreType.DMA,
     )
 
-  out, _, _ = pl.pallas_call(
+  out, _, l = pl.pallas_call(
       functools.partial(
           kernel,
           pages_per_sequence=pages_per_sequence,
@@ -660,4 +658,5 @@ def paged_attention(
       v_pages,
       v_scales_pages,
   )
+  out /= l
   return out.reshape(batch_size, num_q_heads, head_dim).astype(q.dtype)
