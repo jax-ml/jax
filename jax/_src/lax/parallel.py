@@ -1122,14 +1122,27 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
   def source_to_front(group):
     return [group[source]] + list(group[:source]) + list(group[source + 1:])
   replica_groups = [source_to_front(group) for group in replica_groups]
-  channel = ctx.module_context.new_channel()
+  is_spmd = isinstance(
+      ctx.module_context.axis_context,
+      (SPMDAxisContext, ShardingContext),
+  )
+  if is_spmd:
+    # We want to emit the collective-broadcast with global device IDs and a unique
+    # channel ID, as otherwise it interprets the devices as replicas instead
+    # of partitions - and XLA is configured with only a single replica.
+    channel = ctx.module_context.new_channel()
+    channel_handle = hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE)
+    other_args = dict(channel_handle=channel_handle)
+  else:
+    other_args = {}
   return hlo.CollectiveBroadcastOp(
-      x, replica_groups=_replica_groups_hlo(replica_groups)).results
+      x, replica_groups=_replica_groups_hlo(replica_groups), **other_args
+  ).results
 
 pbroadcast_p = core.Primitive('pbroadcast')
 pbroadcast_p.def_abstract_eval(_raise_to_shaped_abstract_eval)
 ad.deflinear2(pbroadcast_p, _pbroadcast_transpose_rule)
-mlir.register_lowering(pbroadcast_p, _pbroadcast_lowering)
+mlir.register_lowering(pbroadcast_p, _pbroadcast_lowering, platform='gpu')
 batching.fancy_primitive_batchers[pbroadcast_p] = _pbroadcast_batcher
 batching.skippable_batchers[pbroadcast_p] = partial(_names_in_param, 'axis_name')
 
