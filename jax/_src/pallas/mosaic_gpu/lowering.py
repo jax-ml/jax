@@ -85,8 +85,10 @@ class ResourceEstimatorContext:
   axis_names: _AxisNames
   lowering_semantics: mgpu.LoweringSemantics
 
-  @property
-  def arrival_multiplier(self) -> int:
+  def arrival_multiplier(self, barrier_type: gpu_core.BarrierType) -> int:
+    if (barrier_type.for_tensor_core or
+        barrier_type.thread_scope == gpu_core.ThreadScope.WARP):
+      return 1
     return (
         WARPGROUP_SIZE
         if self.lowering_semantics == mgpu.LoweringSemantics.Lane
@@ -225,7 +227,7 @@ def _run_scoped_resource_estimator(
   for v in jaxpr.invars:
     aval = v.aval
     if isinstance(aval.dtype, gpu_core.BarrierType):
-      multiplier = 1 if aval.dtype.for_tensor_core else ctx.arrival_multiplier
+      multiplier = ctx.arrival_multiplier(aval.dtype)
       rs += Resources(
           barrier_counts=collections.Counter([
               mgpu.Barrier(
@@ -1682,6 +1684,19 @@ mosaic_lowering_rules[gpu_core.LANExWG_SEMANTICS].update({
     lax.not_p: lambda ctx, x: ~x,
 })
 
+def _unary_warp_lowering_rule(impl):
+  def _lowering_rule(ctx: LoweringRuleContext, x):
+    if not all(aval_in.shape == () for aval_in in ctx.avals_in):
+      raise NotImplementedError(
+          "Non-scalar arithmetic is not supported in warp-level lowering.")
+    return impl(x)
+  return _lowering_rule
+
+mosaic_lowering_rules[gpu_core.LANExWARP_SEMANTICS].update({
+    lax.neg_p: _unary_warp_lowering_rule(lambda x: -x),
+    lax.not_p: _unary_warp_lowering_rule(lambda x: ~x)
+})
+
 mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS].update({
     lax.neg_p: _lower_fun(lambda x: jnp.subtract(0, x), multiple_results=False),
     lax.not_p: _lower_fun(
@@ -2147,6 +2162,8 @@ def _axis_index_warp_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
 
 
 @register_lowering_rule(primitives.debug_print_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(primitives.debug_print_p, mgpu.LoweringSemantics.Lane,
+                          gpu_core.PrimitiveSemantics.Warp)
 def _debug_print_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -2155,6 +2172,9 @@ def _debug_print_lowering_rule(
 ):
   del has_placeholders  # Unused.
   primitives.check_debug_print_format(fmt, *args)
+  scope = mgpu.ThreadSubset.WARPGROUP
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    scope = mgpu.ThreadSubset.WARP
   if not any(aval.shape for aval in ctx.avals_in):
     mgpu.debug_print(
         fmt,
@@ -2162,6 +2182,7 @@ def _debug_print_lowering_rule(
             _ensure_ir_value(arg, aval.dtype)
             for arg, aval in zip(args, ctx.avals_in)
         ),
+        scope=scope
     )
   elif len(ctx.avals_in) == 1:
     [arg] = args
@@ -2234,8 +2255,7 @@ def _run_scoped_lowering_rule(
             f" allocation (currently collective_axes={collective_axes})."
         )
       if isinstance(aval.dtype, gpu_core.BarrierType):
-        multiplier = (1 if aval.dtype.for_tensor_core else
-                      ctx.estimator_ctx.arrival_multiplier)
+        multiplier = ctx.estimator_ctx.arrival_multiplier(aval.dtype)
         barrier_ref = alloc_stack.enter_context(
             ctx.module_ctx.reserve_barrier(
                 mgpu.Barrier(
@@ -2418,6 +2438,8 @@ def _lower_jaxpr_to_for_loop(
 
 
 @register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Lane,
+                        gpu_core.PrimitiveSemantics.Warp)
 @register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Warpgroup)
 def _scan_lowering_rule(
     ctx: LoweringRuleContext,
