@@ -1694,6 +1694,54 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
                                 "Unsupported precision in dot_general"):
       jax2tf.convert(f_jax, native_serialization=False)(x)
 
+  def test_jvp_through_loop(self):
+    # Context: b/388929258
+
+    num_actions = 512
+
+    def tf_preprocessor(features):
+      features["num_c_actions"] = tf.constant(256, tf.int32)
+      return features
+
+    def postprocessor(prob, features):
+      actions = jnp.arange(num_actions, dtype=jnp.int32)
+      r = actions // features["num_c_actions"]
+      c = actions - r * features["num_c_actions"]
+      rr = jnp.array([0.12, 0.3])[r] * prob
+      rc = (jnp.arange(256) * 0.7)[c] * prob
+      return rr, rc
+
+    def loop_step(features, params):
+      features = jax2tf.call_tf(tf_preprocessor)(features)
+      odds = features["f1"] @ params["w1"] + features["f2"] @ params["w2"]
+      prob = jax.nn.sigmoid(odds)
+      rr, rc = postprocessor(prob, features)
+      new_f1 = jnp.mean(rr, keepdims=True)
+      new_f2 = jnp.mean(rc, keepdims=True)
+      return new_f1, new_f2
+
+    def loop(init_features, params):
+      def body(carry, unused_x):
+        f1, f2 = carry
+        return loop_step({"f1": f1, "f2": f2}, params), None
+
+      (rr, rc), _ = jax.lax.scan(
+          body, (init_features["f1"], init_features["f2"]), length=10
+      )
+      return rr, rc
+
+    def loss(features, params):
+      rr, rc = loop(features, params)
+      return jnp.mean((rr - rc) ** 2)
+
+    jax.grad(loss, argnums=(1,))(
+        {"f1": jnp.array([0.5]), "f2": jnp.array([0.7])},
+        {
+            "w1": jnp.ones((1, num_actions)) * 0.01,
+            "w2": jnp.ones((1, num_actions)) * 0.01,
+        },
+    )
+
 
 @jtu.with_config(jax_enable_custom_prng=True)
 class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
