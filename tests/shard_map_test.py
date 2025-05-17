@@ -290,6 +290,39 @@ class ShardMapTest(jtu.JaxTestCase):
     c = fwd(a)
     assert (c == jnp.reshape(a.T, (1, 64))).all()
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name='_partial_replicated', replicate_on_axes='x',
+      ),
+      dict(
+          testcase_name='_fully_replicated',
+          replicate_on_axes=('x', 'y'),
+      ),
+  )
+  @jtu.run_on_devices("gpu")
+  def test_pbroadcast(self, replicate_on_axes):
+    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
+    sharded_axes = set(mesh.axis_names) - set(replicate_on_axes)
+    sharded_axes = None if not sharded_axes else list(sharded_axes)
+    in_out_sharding = jax.sharding.NamedSharding(mesh, P(sharded_axes, None))
+    a = jax.device_put(jnp.arange(16).reshape((4, 4)), in_out_sharding)
+
+    @jax.jit
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=(in_out_sharding.spec,),
+        out_specs=in_out_sharding.spec,
+        check_vma=False,
+    )
+    def fwd(x):
+      axis_index = lax.axis_index(replicate_on_axes)
+      x = jnp.where(axis_index == 0, x + 1, x)
+      return lax.pbroadcast(x, replicate_on_axes, source=0)
+
+    c = fwd(a)  # Don't crash
+    self.assertAllClose(c, a + 1)
+
   def test_all_to_all_with_axis_index_groups(self):
     mesh = jtu.create_mesh((4,), ('x',))
     a = jax.device_put(
