@@ -18,6 +18,7 @@ from array import array as make_python_array
 import collections
 from collections.abc import Iterator
 import copy
+import dataclasses
 from functools import partial, wraps
 import inspect
 import io
@@ -38,7 +39,6 @@ except ImportError:
   numpy_dispatch = None
 
 import jax
-import jax.ops
 from jax import lax
 from jax import numpy as jnp
 from jax.sharding import SingleDeviceSharding
@@ -3900,6 +3900,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(ans, 3.)
 
   def testJaxArrayOps(self):
+    # Needs tree util registration for use with JIT
+    @jax.tree_util.register_dataclass
+    @dataclasses.dataclass
     class arraylike:
       def __jax_array__(self):
         return jnp.array(3.)
