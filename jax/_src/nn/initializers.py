@@ -47,13 +47,13 @@ RealNumeric = Any  # Scalar jnp array or float
 class Initializer(Protocol):
   def __call__(self,
                key: Array,
-               shape: core.Shape,
+               shape: Sequence[int],
                dtype: DTypeLikeInexact = jnp.float_) -> Array:
     raise NotImplementedError
 
 @export
 def zeros(key: Array,
-          shape: core.Shape,
+          shape: Sequence[int],
           dtype: DTypeLikeInexact = jnp.float_) -> Array:
   """An initializer that returns a constant array full of zeros.
 
@@ -68,7 +68,7 @@ def zeros(key: Array,
 
 @export
 def ones(key: Array,
-         shape: core.Shape,
+         shape: Sequence[int],
          dtype: DTypeLikeInexact = jnp.float_) -> Array:
   """An initializer that returns a constant array full of ones.
 
@@ -99,7 +99,7 @@ def constant(value: ArrayLike,
          [-7., -7., -7.]], dtype=float32)
   """
   def init(key: Array,
-           shape: core.Shape,
+           shape: Sequence[int],
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
     return jnp.full(shape, value, dtype=dtype)
@@ -125,7 +125,7 @@ def uniform(scale: RealNumeric = 1e-2,
          [2.0818567, 1.8662417, 5.5022564]], dtype=float32)
   """
   def init(key: Array,
-           shape: core.Shape,
+           shape: Sequence[int],
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
     return random.uniform(key, shape, dtype) * jnp.array(scale, dtype)
@@ -151,7 +151,7 @@ def normal(stddev: RealNumeric = 1e-2,
          [-4.063663  , -4.4520254 ,  0.63115686]], dtype=float32)
   """
   def init(key: Array,
-           shape: core.Shape,
+           shape: Sequence[int],
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
     return random.normal(key, shape, dtype) * jnp.array(stddev, dtype)
@@ -188,7 +188,7 @@ def truncated_normal(stddev: RealNumeric = 1e-2,
   """
 
   def init(key: Array,
-           shape: core.Shape,
+           shape: Sequence[int],
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
     return random.truncated_normal(
@@ -314,7 +314,7 @@ def variance_scaling(
   """
 
   def init(key: Array,
-           shape: core.Shape,
+           shape: Sequence[int],
            dtype: DTypeLikeInexact = dtype) -> Array:
     shape = core.canonicalize_shape(shape)
     dtype = dtypes.canonicalize_dtype(dtype)
@@ -600,7 +600,7 @@ def orthogonal(scale: RealNumeric = 1.0,
          [ 8.8047469e-01, -4.7409311e-01, -1.3157725e-04]],            dtype=float32)
   """
   def init(key: Array,
-           shape: core.Shape,
+           shape: Sequence[int],
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) < 2:
@@ -650,7 +650,7 @@ def delta_orthogonal(
   .. _delta orthogonal initializer: https://arxiv.org/abs/1806.05393
   """
   def init(key: Array,
-           shape: core.Shape,
+           shape: Sequence[int],
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) not in [3, 4, 5]:
