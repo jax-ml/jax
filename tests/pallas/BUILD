@@ -120,7 +120,7 @@ jax_multiplatform_test(
     ],
     shard_count = {
         "cpu": 16,
-        "gpu": 16,
+        "gpu": 32,
         "tpu": 16,
     },
     tags = [
