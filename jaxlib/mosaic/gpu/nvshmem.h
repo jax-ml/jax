@@ -36,6 +36,8 @@ namespace gpu {
     fprintf(stderr, #FnName " not available in this library.");           \
   }
 
+typedef int32_t nvshmem_team_t;
+
 class NvshmemApi {
  public:
   // Returns a default NvshmemApi for a current process.
@@ -61,6 +63,10 @@ class NvshmemApi {
   bool is_loaded() {
     return nvshmemx_init_status != nullptr && nvshmemx_init_status() == 2;
   }
+  
+  void* mc_ptr(nvshmem_team_t team, void* addr){
+    return nvshmemx_mc_ptr(team,addr);
+  }
 
   NvshmemApi(NvshmemApi const&)     = delete;
   void operator=(NvshmemApi const&) = delete;
@@ -79,11 +85,13 @@ class NvshmemApi {
     NVSHMEM_SET_FN(nvshmemx_barrier_all_on_stream)
     NVSHMEM_SET_FN(nvshmemx_cumodule_init)
     NVSHMEM_SET_FN(nvshmemx_init_status)
+    NVSHMEM_SET_FN(nvshmemx_mc_ptr)
   }
 
   int (*nvshmemx_barrier_all_on_stream)(cudaStream_t);
   int (*nvshmemx_cumodule_init)(CUmodule);
   int (*nvshmemx_init_status)();
+  void* (*nvshmemx_mc_ptr)(int, void*);
 
   std::mutex mutex_;
 };
