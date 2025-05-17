@@ -590,6 +590,8 @@ def _infer_params_impl(
     in_type = in_avals = tuple(core.shaped_abstractify(x) for x in explicit_args)  # type: ignore
   else:
     in_type = in_avals  # type: ignore
+    in_type = tuple(core.TypeChange(a, x.type_state(), None) if a.mutable  # type: ignore
+                    else a for a, x in zip(in_type, explicit_args))
   assert in_avals is not None
 
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
@@ -705,7 +707,7 @@ def _infer_params_internal(
   if entry.pjit_params is None:
     p, args_flat = _infer_params_impl(
         fun, ji, ctx_mesh, dbg, args, kwargs, in_avals=avals)
-    if p.attrs_tracked or p.box_data:  # if attrs/boxes, don't populate cache
+    if p.attrs_tracked or p.box_data or p.params['jaxpr'].jaxpr.is_high:
       return p, p.consts + args_flat
     entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
@@ -1407,16 +1409,14 @@ def _create_pjit_jaxpr(
           lu.annotate(fun, cast(core.InputType, in_type)))
       attrs_tracked = []
     else:
-      jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
-          fun, in_type)
-      # assert attr_data is sentinel or attr_data matches attrs_tracked
+      jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(fun, in_type)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr
     check_key_reuse_jaxpr(jaxpr)
 
-  if any(isinstance(c, core.Tracer) for c in consts):
+  if any(isinstance(c, core.Tracer) or core.typeof(c).mutable for c in consts):
     closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
     final_consts = consts
   else:
@@ -1561,21 +1561,41 @@ def _is_high(jaxpr, **_) -> bool:
   return jaxpr.jaxpr.is_high
 pjit_p.is_high = _is_high  # type: ignore
 
-def _to_lojax( *hi_args, jaxpr, **params):
-  params, num_mutants = _lojax_expand_params(jaxpr, **params)
+def _to_lojax(*hi_args, jaxpr, **params):
+  ienv, fenv = jaxpr.jaxpr.initial_typechange_env, jaxpr.jaxpr.final_typechange_env
 
-  lo_args = [lo_val for t, hi_val in zip(jaxpr.in_avals, hi_args)
-             for lo_val in t.lower_val(hi_val)]
+  # convert closed-over boxes to explicit args
+  jaxpr, closed_over_himutables = pe.convert_const_himutables(jaxpr)
+  hi_args = [*closed_over_himutables, *hi_args]
+  params = _converted_mutables_add_params(len(closed_over_himutables), **params)
+
+  # expand pjit params that must match number of lo inputs/outputs
+  lo_nums_in = [len(v.aval.lo_ty() if not v.aval.mutable
+                    else v.aval.lo_ty_(ienv[v]))
+                for v in jaxpr.jaxpr.invars]
+  lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
+  lo_muts_out = sum(len(m.leaf_avals) for m in fenv.values())  # TODO hardcoded
+  params = _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out, **params)
+
+  # collect lo input values
+  lo_args = [lo_val for v, x in zip(jaxpr.jaxpr.invars, hi_args)
+             for lo_val in (v.aval.read_loval(ienv[v], x) if v.aval.mutable
+                            else v.aval.lower_val(x))]
+
+  # lower the jaxpr and bind it using lo input values
   lo_jaxpr = pe.lower_jaxpr(jaxpr)
   all_outs = pjit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
-  out_mut, lo_outs = split_list(all_outs, [num_mutants])
+  out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
 
+  # collect and apply mutations
   out_mut_ = iter(out_mut)
   in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
   for var, ty in jaxpr.jaxpr.final_typechange_env.items():
-    ty.set(hi_args[in_idx[var]], *it.islice(out_mut_, len(ty.lo_ty())))
+    lo_vals = it.islice(out_mut_, len(var.aval.lo_ty_(ty)))
+    var.aval.update_from_loval(ty, hi_args[in_idx[var]], *lo_vals)
   assert next(out_mut_, None) is None
 
+  # collect output values into hi types
   lo_outs_ = iter(lo_outs)
   hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty())))
              for t in jaxpr.out_avals]
@@ -1584,29 +1604,35 @@ def _to_lojax( *hi_args, jaxpr, **params):
   return hi_outs
 pjit_p.to_lojax = _to_lojax
 
+def _converted_mutables_add_params(
+    n, *, donated_invars, in_shardings, in_layouts, **params):
+  donated_invars = (False,) * n + donated_invars
+  in_shardings = (UNSPECIFIED,) * n + in_shardings
+  in_layouts = (None,) * n + in_layouts
+  return dict(params, donated_invars=donated_invars, in_shardings=in_shardings,
+              in_layouts=in_layouts)
+
 def _lojax_expand_params(
-    hi_jaxpr, *, donated_invars, in_shardings, in_layouts, out_shardings,
-    out_layouts, **params):
+    nums_in, nums_out, muts_out, *, donated_invars, in_shardings, in_layouts,
+    out_shardings, out_layouts, **params):
   # some pjit params match the length of hi_jaxpr.invars/outvars, so when
   # lowering we must expand them to match their number of lojax types
-  def expand(hi_tys, xs):
-    return tuple(y for hi, x in zip(hi_tys, xs) for y in (x,) * len(hi.lo_ty()))
-  donated_invars = expand(hi_jaxpr.in_avals , donated_invars)
-  in_shardings   = expand(hi_jaxpr.in_avals , in_shardings  )
-  in_layouts     = expand(hi_jaxpr.in_avals , in_layouts    )
-  out_shardings  = expand(hi_jaxpr.out_avals, out_shardings )
-  out_layouts    = expand(hi_jaxpr.out_avals, out_layouts   )
+  def expand(ns, xs):
+    return tuple(y for n, x in zip(ns, xs) for y in (x,) * n)
+  donated_invars = expand(nums_in , donated_invars)
+  in_shardings   = expand(nums_in , in_shardings  )
+  in_layouts     = expand(nums_in , in_layouts    )
+  out_shardings  = expand(nums_out, out_shardings )
+  out_layouts    = expand(nums_out, out_layouts   )
 
   # also, the lo_jaxpr has pure outputs corresponding to mutable hi_jaxpr types
-  num_mutants = sum(len(hi_ty.lo_ty()) for hi_ty in
-                    hi_jaxpr.jaxpr.final_typechange_env.values())
-  out_shardings = (UNSPECIFIED,) * num_mutants + out_shardings
-  out_layouts = (None,) * num_mutants + out_layouts
+  out_shardings = (UNSPECIFIED,) * muts_out + out_shardings
+  out_layouts = (None,) * muts_out + out_layouts
 
   new_params = dict(params, donated_invars=donated_invars,
                     in_shardings=in_shardings, in_layouts=in_layouts,
                     out_shardings=out_shardings, out_layouts=out_layouts)
-  return new_params, num_mutants
+  return new_params
 
 
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
@@ -1948,6 +1974,7 @@ def pjit_staging_rule(trace, *args, **params):
 
   jaxpr = params['jaxpr']
   source_info = source_info_util.current()
+  consts = []
   if config.dynamic_shapes.value:
     jaxpr, in_fwd, out_shardings, out_layouts = _pjit_forwarding(
         jaxpr, params['out_shardings'], params['out_layouts'])
@@ -1981,6 +2008,14 @@ def pjit_staging_rule(trace, *args, **params):
         pjit_p, (*args, *consts), new_params)
   else:
     out_tracers = trace.default_process_primitive(pjit_p, args, params)
+
+  trace.frame.is_high = jaxpr.jaxpr.is_high
+  invars = [trace.frame.tracer_to_var[id(t)] for t in it.chain(args, consts)]
+  var_map = dict(zip(jaxpr.jaxpr.invars, invars))
+  final_env = {var_map[v]: ty for v, ty in
+               jaxpr.jaxpr.final_typechange_env.items()}
+  trace.frame.current_typechange_env.update(final_env)
+
   return out_tracers
 pe.custom_staging_rules[pjit_p] = pjit_staging_rule
 
