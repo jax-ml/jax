@@ -2108,6 +2108,16 @@ jax_multiplatform_test(
     ]),
 )
 
+jax_py_test(
+    name = "triangular_matmul_test",
+    srcs = ["triangular_matmul_test.py"],
+    deps = [
+        "//jax",
+        "//jax:experimental",
+        "//jax:test_util",
+    ],
+)
+
 jax_multiplatform_test(
     name = "cudnn_fusion_test",
     srcs = ["cudnn_fusion_test.py"],
