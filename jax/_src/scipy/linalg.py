@@ -30,7 +30,7 @@ from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import (
     check_arraylike, promote_dtypes, promote_dtypes_inexact,
-    promote_dtypes_complex)
+    promote_dtypes_complex, promote_args_inexact)
 from jax._src.tpu.linalg import qdwh
 from jax._src.typing import Array, ArrayLike
 
@@ -2250,3 +2250,156 @@ def _binom(n, k):
   b = lax.lgamma(n - k + 1.0)
   c = lax.lgamma(k + 1.0)
   return lax.exp(a - b - c)
+
+
+def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
+  """
+  Solves the Sylvester equation using Bartels-Stewart algorithm
+  .. math::
+
+    RY + YS^T = F
+
+  where R and S are upper triangular matrices following a Schur decomposition.
+
+  Args:
+    R: Matrix of shape m x m
+    S: Matrix of shape n x n
+    F: Matrix of shape m x n
+
+  Returns:
+    Y: Matrix of shape m x n
+  """
+  R, S, F = promote_args_inexact("_solve_sylvester_triangular_scan", R, S, F)
+
+  m, n = F.shape
+  total = m * n
+  # scan the matrix from bottom-right to top-left
+  flat_indices = jnp.arange(total - 1, -1, -1)
+  Y0 = jnp.zeros((m * n,), dtype=F.dtype)
+
+  def scan_fn(Y_flat, idx):
+    i = idx // n
+    j = idx % n
+    Y = Y_flat.reshape((m, n))
+    rhs = F[i, j]
+
+    # Row term: gets contributions from R and already filled in Y. mask ensures that we only get non-zero elements from R because it is upper triangular
+    k_row = jnp.arange(m)
+    row_mask = k_row > i
+    r_row = R[i, :]
+    y_col = Y[:, j]
+    row_term = jnp.sum(jnp.where(row_mask, r_row * y_col, 0.0))
+
+    # Col term: same as Row term but now uses S instead of R.
+    k_col = jnp.arange(n)
+    col_mask = k_col > j
+    y_row = Y[i, :]
+    s_col = S[:, j]
+    col_term = jnp.sum(jnp.where(col_mask, y_row * s_col, 0.0))
+
+    # Here we are solving for the current Y[i, j]
+    rhs -= row_term + col_term
+    val = rhs / (R[i, i] + S[j, j])
+
+    Y_flat = Y_flat.at[i * n + j].set(val)
+    return Y_flat, None
+
+  Y_flat_final, _ = lax.scan(scan_fn, Y0, flat_indices)
+  return Y_flat_final.reshape((m, n))
+
+
+@partial(jit, static_argnames=["method", "tol"])
+def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "schur", tol: float = 1e-8) -> Array:
+  """
+  Solves the Sylvester equation
+  .. math::
+
+    AX + XB = C
+
+  Using one of two methods.
+
+  (1) Bartell-Stewart (schur) algorithm (default) [CPU ONLY]:
+
+  Where A and B are first decomposed using Schur decomposition to construct and alternate sylvester equation:
+  .. math::
+
+    RY + YS^T = F
+
+  Where R and S are in quasitriangular form when A and B are real valued and triangular when A and B are complex.
+
+  (2) The Eigen decomposition algorithm [CPU and GPU]
+
+  Args:
+    A: Matrix of shape m x m
+    B: Matrix of shape n x n
+    C: Matrix of shape m x n
+    method: "schur" is the default and is accurate but slow, and "eigen" is an alternative that is faster but less accurate for ill-conditioned matrices.
+    tol: How close the sum of the eigenvalues from A and B can be to zero before returning matrix of NaNs
+
+  Returns:
+    X: Matrix of shape m x n
+
+  Examples:
+    >>> A = jax.numpy.array([[1, 2], [3, 4]])
+    >>> B = jax.numpy.array([[5, 6], [7, 8]])
+    >>> C = jax.numpy.array([[6, 8], [10, 12]])
+    >>> X = jax.scipy.linalg.solve_sylvester(A, B, C)
+    >>> with jax.numpy.printoptions(precision=0):
+    ...   print(X)
+    [[ 1.e+00 -4.e-07]
+      [-3.e-07  1.e+00]]
+
+  Notes:
+    The Bartel-Stewart algorithm is robust because a Schur decomposition always exists even for defective matrices,
+    and it handles complex and ill-conditioned problems better than the eigen decomposition method.
+    However, there are a couple of drawbacks. First, It is computationally more expensive than
+    the eigen decomposition method because you need to perform a Schur decomposition and then scan the entire solution matrix.
+    Second, it requires more system memory compared to the eigen decomposition method.
+
+    The eigen decomposition method is the fastest method to solve a sylvester equation. However, this speed brings with it a couple of drawbacks.
+    First, A and B must be diagonalizable otherwise the eigenvectors will be linearly dependent and ill-conditioned leading to accuracy issues.
+    Second, when the eigenvectors are not orthogonal roundoff errors are amplified.
+
+    The tol argument allows you to specify how ill-conditioned a matrix can be and still estimate a solution.
+    For matrices that are ill-conditioned we recommend using float64 instead of the default float32 dtype. The solver
+    can still return good estimates for ill-conditioned matrices depending on how close to zero the sums of the eigenvalues of A and B
+    are.
+  """
+  A, B, C = promote_args_inexact("solve_sylvester", A, B, C)
+
+  m, n = C.shape
+
+  if A.shape != (m, m) or B.shape != (n, n) or C.shape != (m, n):
+    raise ValueError(f"Incompatible shapes for Sylvester equation:\nA: {A.shape}\nB: {B.shape}\nC: {C.shape}")
+
+  if method == "schur":
+    # Schur decomposition
+    R, U = schur(A, output='complex')
+    S, V = schur(B.conj().T, output='complex')
+
+    # Transform right-hand side
+    F = U.conj().T @ C.astype(R.dtype) @ V
+
+    # Solve triangular Sylvester system
+    Y = _solve_sylvester_triangular_scan(R, S.conj().T, F)
+
+    # Transform back
+    X = U @ Y @ V.conj().T
+  elif method == "eigen":
+    RA, UA = jnp.linalg.eig(A)
+    RB, UB = jnp.linalg.eig(B)
+    F = solve(UA, C.astype(RA.dtype) @ UB)
+    W = RA[:, None] + RB[None, :]
+    Y = F / W
+    X = UA[:m,:m] @ Y[:m,:n] @ inv(UB)[:n,:n]
+  else:
+    raise ValueError(f"Unrecognized method {method}. The two valid methods are either \"schur\" or \"eigen\".")
+
+  if not dtypes.issubdtype(C.dtype, np.complexfloating):
+    X = X.real
+
+  return lax.cond(
+    jnp.any(jnp.abs(jnp.add.outer(jnp.linalg.eigvals(A), jnp.linalg.eigvals(B))) < tol),
+    lambda: jnp.zeros_like(X) * jnp.nan,
+    lambda: X,
+  )
