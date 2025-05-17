@@ -1417,3 +1417,9 @@ def scaled_dot_general(
   )
 
   return out
+  @jax.jit
+  def mish(x: ArrayLike) -> Array:
+   '''Mish is a self-regularized, non-monotonic activation function for neural networks. 
+   It has several advantages over other functions, including improved performance, reducing vanishing gradients, and also self-gating, which is important for self-adapting to the input and adjusting its output accordingly.
+   More info can be found on https://arxiv.org/vc/arxiv/papers/1908/1908.08681v1.pdf'''
+   return x * jnp.tanh(jax.nn.softplus(x))
