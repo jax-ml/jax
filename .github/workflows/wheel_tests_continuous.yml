@@ -154,7 +154,7 @@ jobs:
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
 
-  run-bazel-test-cuda:
+  run-bazel-test-cuda-general:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
@@ -177,6 +177,74 @@ jobs:
       jaxlib-version: ${{ matrix.jaxlib-version }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+  run-bazel-test-cuda-h100:
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    if: ${{ !cancelled() }}
+    runs-on: linux-x86-a3-8g-h100-8gpu
+    container: 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest'
+    name: "Bazel multiple H100 CUDA tests"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+      - name: Run Bazel multiple H100 CUDA Tests
+        run: |
+            nvidia-smi
+            bazel test --config=rbe_linux_x86_64_cuda \
+            --config=resultstore \
+            --config=rbe_cache \
+            --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
+            --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
+            --test_output=errors \
+            --strategy=TestRunner=local \
+            --local_test_jobs=8 \
+            --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
+            --test_tag_filters=multiaccelerator \
+            --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
+            --test_env=JAX_SKIP_SLOW_TESTS=true \
+            --action_env=JAX_ENABLE_X64="1" \
+            --action_env=NCCL_DEBUG=WARN \
+            --color=yes \
+            //tests:gpu_tests //tests:backend_independent_tests \
+            //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
+            //tests/mosaic:gpu_tests //tests/mosaic:backend_independent_tests
+
+  run-bazel-test-cuda-b200:
+    if: ${{ !cancelled() }}
+    runs-on: linux-x86-a4-224-b200-1gpu
+    container: 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest'
+    name: "Bazel B200 CUDA tests"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+      - name: Run Bazel single B200 CUDA Tests
+        run: |
+            nvidia-smi
+            bazel test --config=rbe_linux_x86_64_cuda \
+            --config=resultstore \
+            --config=rbe_cache \
+            --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
+            --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
+            --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
+            --test_output=errors \
+            --test_env=JAX_ACCELERATOR_COUNT=1 \
+            --test_env=JAX_TESTS_PER_ACCELERATOR=8 \
+            --strategy=TestRunner=local \
+            --local_test_jobs=8 \
+            --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
+            --test_tag_filters=-multiaccelerator \
+            --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
+            --test_env=JAX_SKIP_SLOW_TESTS=true \
+            --test_timeout=420 \
+            --action_env=JAX_ENABLE_X64="1" \
+            --action_env=NCCL_DEBUG=WARN \
+            --color=yes \
+            //tests:gpu_tests //tests:backend_independent_tests \
+            //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
+            //tests/mosaic:gpu_tests //tests/mosaic:backend_independent_tests
 
   run-pytest-tpu:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
