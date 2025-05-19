@@ -44,8 +44,6 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
     super().setUp()
 
   def test_basic_remote_dma(self):
-    if jax.process_count() < 2:
-      self.skipTest("Test requires multiple processes.")
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
@@ -85,6 +83,34 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
 
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
+  def test_wait_twice(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    def kernel(y_ref, sem):
+      other_dev_id = 1 - lax.axis_index('x')
+      pl.semaphore_signal(sem, 2, device_id=other_dev_id,
+                          device_id_type=pl.DeviceIdType.LOGICAL)
+      pl.semaphore_wait(sem)
+      pl.semaphore_wait(sem)
+      y_ref[...] = jnp.ones_like(y_ref)
+
+    kernel_call = pl.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+    )
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    y = jax.jit(
+        shard_map.shard_map(
+            kernel_call, mesh, in_specs=(), out_specs=P(None), check_rep=False,
+        )
+    )()
+    np.testing.assert_allclose(y, jnp.ones_like(y))
 
 
 if __name__ == '__main__':

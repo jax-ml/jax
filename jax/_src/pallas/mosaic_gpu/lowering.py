@@ -2999,6 +2999,11 @@ def _semaphore_signal_lowering_rule(
     )
   # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
   val = _ir_constant(value, i32)
+  # We only signal the semaphore from a single lane, which does not guarantee
+  # anything about the state of the other three warps in the warpgroup (they
+  # might still be e.g. reading memory that someone will overwrite once they
+  # receive a signal).
+  mgpu.utils.warpgroup_barrier()
   pred = ctx.module_ctx.single_wg_lane_predicate
   llvm_dialect.inline_asm(
     i32,
@@ -3022,23 +3027,25 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem_ptr = mgpu.utils.memref_ptr(sem)
   i32_ty = ir.IntegerType.get_signless(32)
   ne_pred = arith_dialect.CmpIPredicate.ne
-  zero_const = mgpu.utils.c(0, i32_ty)
   val = _ir_constant(value, i32_ty)
 
   with mgpu.single_thread(scope=mgpu.ThreadSubset.WARPGROUP):
     # Create the while loop for busy waiting
-    while_op = scf_dialect.WhileOp([i32_ty], [zero_const])
+    while_op = scf_dialect.WhileOp([i32_ty], [val])
     before_block = while_op.before.blocks.append(i32_ty)
     with ir.InsertionPoint.at_block_begin(before_block):
-      old_val = llvm_dialect.inline_asm(
+      [expected_in_memory] = before_block.arguments
+      new_val = arith_dialect.subi(expected_in_memory, val)
+      in_memory = llvm_dialect.inline_asm(
         i32_ty,
-        [sem_ptr, val, zero_const],
+        [sem_ptr, expected_in_memory, new_val],
         "atom.acquire.sys.global.cas.b32 $0, [$1], $2, $3;",
         "=r,l,r,r",
         has_side_effects=True,
       )
-      comparison = arith_dialect.cmpi(ne_pred, old_val, val)
-      scf_dialect.condition(comparison, before_block.arguments)
+      comparison = arith_dialect.cmpi(ne_pred, in_memory, expected_in_memory)
+      new_expected_in_memory = arith_dialect.maxui(in_memory, val)
+      scf_dialect.condition(comparison, [new_expected_in_memory])
     after_block = while_op.after.blocks.append(i32_ty)
     with ir.InsertionPoint.at_block_begin(after_block):
       scf_dialect.yield_(after_block.arguments)
