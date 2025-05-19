@@ -1147,10 +1147,26 @@ class PallasCallTest(PallasTest):
     )
     def kernel(x_ref, o_ref):
       # Equivalent to x_ref[...] + 2 + 3.
-      o_ref[...] = _fori_loop(force_while, 2, 4, lambda i, x: x + i, x_ref[...])
+      o_ref[...] = _fori_loop(
+          force_while, 2, 4, lambda i, x: x + i, x_ref[...]
+      )
 
     x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), x + 2 + 3)
+
+  @parameterized.product(unroll=[1, 2])
+  def test_fori_loop_array_unrolled(self, unroll):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct([256], jnp.int32)
+    )
+    def kernel(x_ref, o_ref):
+      # Equivalent to x_ref[...] + 2 + 3 + 4 + 5.
+      o_ref[...] = lax.fori_loop(
+          2, 6, lambda i, x: x + i, x_ref[...], unroll=unroll
+      )
+
+    x = jnp.arange(256, dtype=jnp.int32)
+    np.testing.assert_array_equal(kernel(x), x + 2 + 3 + 4 + 5)
 
   @parameterized.product(force_while=[False, True])
   def test_fori_loop_scalar(self, force_while):
