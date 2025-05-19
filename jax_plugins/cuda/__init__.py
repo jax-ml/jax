@@ -180,11 +180,14 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                  cuda_versions.cufft_build_version,
                  # Ignore patch versions.
                  scale_for_comparison=100)
-  _version_check("cuSOLVER", cuda_versions.cusolver_get_version,
-                 cuda_versions.cusolver_build_version,
-                 # Ignore patch versions.
-                 scale_for_comparison=100,
-                 min_supported_version=11400)
+  # TODO(phawkins): for some reason this check fails with a cusolver internal
+  # error when fetching the version. This may be a path error from our stubs.
+  # Figure out what's happening here and reenable.
+  # _version_check("cuSOLVER", cuda_versions.cusolver_get_version,
+  #                cuda_versions.cusolver_build_version,
+  #                # Ignore patch versions.
+  #                scale_for_comparison=100,
+  #                min_supported_version=11400)
   _version_check("cuPTI", cuda_versions.cupti_get_version,
                  cuda_versions.cupti_build_version,
                  min_supported_version=18)
