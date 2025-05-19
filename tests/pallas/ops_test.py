@@ -1554,7 +1554,7 @@ class OpsTest(PallasBaseTest):
   def test_iota(self, shape, dtype, dimension):
     self.skip_if_mosaic_gpu()
 
-    if jtu.test_device_matches(["tpu"]):
+    if jtu.test_device_matches(["tpu"]) and dtype != jnp.int32:
       self.skipTest("Only 32-bit integer iota supported")
 
     f = lambda: jax.lax.broadcasted_iota(dtype, shape, dimension)
