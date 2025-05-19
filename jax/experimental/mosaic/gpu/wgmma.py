@@ -85,10 +85,11 @@ class WGMMAAccumulator:
 
 def _supported_wgmma_types(dtype, abtype) -> bool:
   input_types_are = lambda ty: ty.isinstance(abtype)
+  f16_acc_types = (ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3FNType)
   if ir.F32Type.isinstance(dtype):
-    return any(input_types_are(ty) for ty in (ir.FloatTF32Type, ir.BF16Type, ir.F16Type))
+    return any(input_types_are(ty) for ty in (ir.FloatTF32Type, ir.BF16Type, *f16_acc_types))
   elif ir.F16Type.isinstance(dtype):
-    return input_types_are(ir.F16Type)
+    return any(input_types_are(ty) for ty in f16_acc_types)
   else:
     return False
 
@@ -187,8 +188,12 @@ def wgmma_m64(
   b_desc_reg, use_out_reg = take_regs(2)
   imm_regs = ", ".join(take_regs(num_imm_regs))  # Immediate regs (scale, ...).
   assert next(reg_count) == len(reg_constraints_list)
-  el_ty = element_type
   k_instr = 32 // bytewidth(element_type)
+  el_ty = str(element_type)
+  if ir.Float8E5M2Type.isinstance(element_type):
+    el_ty = "e5m2"
+  elif ir.Float8E4M3FNType.isinstance(element_type):
+    el_ty = "e4m3"
   wgmma_instr = (
       f"wgmma.mma_async.sync.aligned.m64n{n}k{k_instr}.{out_ty}.{el_ty}.{el_ty} "
       f"{acc_reg_vector}, {a_regs}, {b_desc_reg}, p, {imm_regs};"
@@ -291,18 +296,24 @@ def wgmma(
         f"Accumulator shape mismatch: expected {(m, n)}, got {acc.value.shape}"
     )
   f32 = ir.F32Type.get()
+  f16 = ir.F16Type.get()
   if element_type == f32 or element_type == ir.BF16Type.get():
     if acc.value.mlir_dtype != f32:
       raise ValueError(
           f"WGMMA with element type {element_type} only supports accumulators"
           f" of type f32, but got: {acc.value.mlir_dtype}"
       )
-  elif element_type == ir.F16Type.get():
-    if acc.value.mlir_dtype != element_type and acc.value.mlir_dtype != f32:
+  elif any(
+      t.isinstance(element_type)
+      for t in {ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3FNType}
+  ):
+    if acc.value.mlir_dtype != f16 and acc.value.mlir_dtype != f32:
       raise ValueError(
-          "WGMMA with element type f16 only supports accumulators of type f32"
-          f" or f16, but got: {acc.value.mlir_dtype}"
+          f"WGMMA with element type {element_type} only supports accumulators "
+          f"of type f32 or f16, but got: {acc.value.mlir_dtype}"
       )
+  else:
+    raise NotImplementedError(f"Unsupported element type: {element_type}")
 
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.

@@ -195,7 +195,7 @@ def mma(
           f" type f32 or f16, but got: {d.dtype}"
       )
   else:
-    raise NotImplementedError(f"Unsupported element type: {element_type}", type(element_type))
+    raise NotImplementedError(f"Unsupported element type: {element_type}")
 
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.
