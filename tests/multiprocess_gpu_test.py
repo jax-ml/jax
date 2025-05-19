@@ -82,9 +82,11 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
 
       try:
         for proc in subprocesses:
-          out, _ = proc.communicate()
+          out, err = proc.communicate()
           self.assertEqual(proc.returncode, 0)
-          self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+          self.assertEqual(
+              out, f"{num_gpus_per_task},{num_gpus}", msg=f"Process failed:\n\n{err}",
+          )
       finally:
         for proc in subprocesses:
           proc.kill()
