@@ -878,8 +878,18 @@ class LaunchContext:
   def to_remote(self, ref: ir.Value, peer: ir.Value):
     self._ensure_nvshmem_decls()
     if ir.MemRefType.isinstance(ref.type):
+      # We replace the offset in the ref type by 0, because memref_ptr always
+      # folds the offset into the pointer.
+      ref_ty = ir.MemRefType(ref.type)
+      strides, _ = ref_ty.get_strides_and_offset()
+      result_type = ir.MemRefType.get(
+          ref_ty.shape,
+          ref_ty.element_type,
+          ir.StridedLayoutAttr.get(0, strides),
+          ref_ty.memory_space,
+      )
       return utils.ptr_as_memref(
-          self.to_remote(utils.memref_ptr(ref), peer), ref.type
+          self.to_remote(utils.memref_ptr(ref), peer), result_type
       )
     if ref.type != ir.Type.parse("!llvm.ptr"):
       raise ValueError(f"Unsupported type for to_remote: {ref.type}")

@@ -1993,7 +1993,7 @@ class FragmentedArray:
       idxs = ([i] for i in self.layout.linear_thread_idxs())
     except NotImplementedError:
       ref_ = ref
-      idxs = self.layout.thread_idxs()
+      idxs = self.layout.thread_idxs(self.shape)
     ref_shape = tuple(ref_ty.shape)
     if ref_shape != self.shape:
       raise ValueError((ref_shape, self.shape))
