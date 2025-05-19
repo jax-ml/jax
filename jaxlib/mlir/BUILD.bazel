@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_python//python:py_library.bzl", "py_library")
 load("//jaxlib:symlink_files.bzl", "symlink_files", "symlink_inputs")
 
 package(
