@@ -114,11 +114,11 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p $(pwd)/dist
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
             echo "JAX only release. Only downloading the jax wheel from the release bucket."
           else
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
           fi
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts.outcome == 'failure'
