@@ -62,7 +62,7 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
                           device_id_type=pl.DeviceIdType.LOGICAL)
       pl.semaphore_wait(recv_sem)
 
-    x = jnp.arange(2 * 8 * 128.0).reshape((2 * 8, 128))
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
     def body(x):
       return pl.pallas_call(
           kernel,
