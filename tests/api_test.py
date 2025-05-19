@@ -2748,6 +2748,14 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(pytree[2], np.ones(3), check_dtypes=False)
     self.assertEqual(pytree[3], 4)
 
+  def test_block_until_ready_wrapped_array(self):
+    x = device_put(1.)
+    y = unittest.mock.MagicMock()
+    y.__jax_array__ = unittest.mock.Mock(return_value=x)
+    self.assertIs(jax.block_until_ready(y), y)
+    y.__jax_array__.assert_called_once()
+    y.block_until_ready.assert_not_called()
+
   def test_copy_to_host_async(self):
     x = device_put(1.)
     y = jax.copy_to_host_async(x)
