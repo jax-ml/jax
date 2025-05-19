@@ -33,6 +33,7 @@ class TuningConfig:
   block_kv: int
   max_concurrent_steps: int
   use_schedule_barrier: bool = True
+  causal: bool = False
   compute_wgs_bwd: int = 1
 
   block_q_dkv: int | None = None
@@ -84,6 +85,8 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
       config.max_concurrent_steps, kv_seq_len // config.block_kv
   )
   block_q, block_kv = config.block_q, config.block_kv
+  if kv_seq_len % block_kv:
+    raise ValueError(f"{kv_seq_len=} must be a multiple of {block_kv=}")
 
   def kernel(q_ref, k_ref, v_ref, out_ref, lse_ref, scoped):
     batch = lax.axis_index("batch")
@@ -97,12 +100,23 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
       plgpu.barrier_arrive(schedule_barrier)
       plgpu.barrier_wait(schedule_barrier)
 
+    if config.causal:
+      block_q_end = (lax.axis_index("q_seq") + 1) * (2 * block_q)
+      block_max_kv_steps = pl.cdiv(block_q_end, jnp.array(block_kv, jnp.int32))
+    else:
+      block_max_kv_steps = kv_seq_len // block_kv
+
     @pl.when(wg_idx < 2)
     def _compute_wg():
       plgpu.set_max_registers(232, action="increase")
       qo_smem = qo_smem2.at[wg_idx]
       lse_smem = lse_smem2.at[wg_idx] if lse_smem2 is not None else None
       q_seq_base = lax.axis_index("q_seq") * (2 * block_q) + wg_idx * block_q
+
+      if config.causal:
+        kv_steps = pl.cdiv(q_seq_base + block_q, jnp.array(block_kv, jnp.int32))
+      else:
+        kv_steps = block_max_kv_steps
 
       plgpu.copy_gmem_to_smem(
           q_ref.at[batch, pl.ds(q_seq_base, block_q), q_head],
@@ -121,12 +135,14 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
           jnp.full((block_q, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
       )
 
-      plgpu.barrier_wait(k_barriers.at[0])
+      @pl.when(kv_steps > 0)
+      def _():
+        plgpu.barrier_wait(k_barriers.at[0])
 
       pl.when(wg_idx == 1)(perform_schedule_barrier)
-      def kv_loop(kv_step, carry):
+      def kv_loop(kv_step, carry, causal: bool = False):
         acc, m_i, l_i = carry
-        slot = lax.rem(kv_step, max_concurrent_steps)
+        slot = lax.rem(kv_step, jnp.array(max_concurrent_steps, kv_step.dtype))
 
         # QK
         def compute_qk(acc_ref):
@@ -135,6 +151,12 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
           return acc_ref[...]
         qk = pl.run_scoped(compute_qk, plgpu.ACC((block_q, block_kv), jnp.float32))
         plgpu.barrier_arrive(k_consumed_barriers.at[slot])
+
+        if causal:
+          q_ids = plgpu.broadcasted_iota(jnp.int32, (block_q, block_kv), 0, layout=plgpu.Layout.WGMMA)
+          kv_ids = plgpu.broadcasted_iota(jnp.int32, (block_q, block_kv), 1, layout=plgpu.Layout.WGMMA)
+          mask = (q_ids + q_seq_base) >= (kv_ids + kv_step * block_kv)
+          qk = jnp.where(mask, qk, -jnp.inf)
 
         # Softmax
         # We keep m scaled by log2e to use FMA instructions when computing p.
@@ -166,18 +188,35 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
           plgpu.wgmma(acc_ref, p16, v_smem.at[slot])
 
           wait_step = kv_step + 1
-          wait_slot = lax.rem(wait_step, max_concurrent_steps)
-          @pl.when(wait_step < kv_seq_len // block_kv)
+          wait_slot = lax.rem(wait_step, jnp.array(max_concurrent_steps, kv_step.dtype))
+          @pl.when(wait_step < kv_steps)
           def _wait():
             plgpu.barrier_wait(k_barriers.at[wait_slot])
         acc = pl.run_state(compute_pv)(plgpu.ACC.init(acc))
         plgpu.barrier_arrive(v_consumed_barriers.at[slot])
         return acc, m_i, l_i
-      if kv_seq_len % block_kv:
-        raise ValueError(f"{kv_seq_len=} must be a multiple of {block_kv=}")
-      acc, m_i, l_i = lax.fori_loop(
-          0, kv_seq_len // block_kv, kv_loop, (acc, m_i, l_i)
-      )
+
+      if not config.causal:
+        acc, m_i, l_i = lax.fori_loop(0, block_max_kv_steps, kv_loop, (acc, m_i, l_i))
+      else:
+        def epilogue_kv_loop(kv_step, _):
+          # This loop makes sure that all the pipelined KV data is processed, even
+          # if one compute wg finishes early like with causal masking.
+          slot = lax.rem(kv_step, jnp.array(max_concurrent_steps, kv_step.dtype))
+          plgpu.barrier_arrive(k_consumed_barriers.at[slot])
+          plgpu.barrier_arrive(v_consumed_barriers.at[slot])
+          perform_schedule_barrier()
+          perform_schedule_barrier()
+
+        causal_kv_loop = functools.partial(kv_loop, causal=True)
+        full_kv_steps = lax.div(q_seq_base, jnp.array(block_kv, jnp.int32))
+        # With causal masking, the KV loop unrolling is split in 3 sections:
+        # 1. A fast path where no causal mask is needed.
+        acc, m_i, l_i = lax.fori_loop(0, full_kv_steps, kv_loop, (acc, m_i, l_i))
+        # 2. Causal masking.
+        acc, m_i, l_i = lax.fori_loop(full_kv_steps, kv_steps, causal_kv_loop, (acc, m_i, l_i))
+        # 3. Epilogue to flush the data pipeline.
+        lax.fori_loop(kv_steps, block_max_kv_steps, epilogue_kv_loop, None)
       pl.when(wg_idx == 0)(perform_schedule_barrier)
 
       # TODO(apaszke): Invert and multiply to avoid expensive divisions.
@@ -208,13 +247,13 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
 
       def kv_loop(kv_step, _):
         tma_step = kv_step + max_concurrent_steps
-        tma_slot = lax.rem(kv_step, max_concurrent_steps)
+        tma_slot = lax.rem(kv_step, jnp.array(max_concurrent_steps, kv_step.dtype))
         s = (batch, pl.ds(tma_step * block_kv, block_kv), kv_head)
         plgpu.barrier_wait(k_consumed_barriers.at[tma_slot])
         plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[tma_slot], k_barriers.at[tma_slot])
         plgpu.barrier_wait(v_consumed_barriers.at[tma_slot])
         plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[tma_slot], v_barriers.at[tma_slot])
-      lax.fori_loop(0, kv_seq_len // block_kv - max_concurrent_steps, kv_loop, None)
+      lax.fori_loop(0, block_max_kv_steps - max_concurrent_steps, kv_loop, None)
 
   def entry(q_ref, k_ref, v_ref, out_ref, lse_ref):
     compute_wgs = 2
@@ -290,6 +329,9 @@ def _attention_fwd(q, k, v, config: TuningConfig, save_residuals: bool):
 def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
   del save_residuals
   q, k, v, out, lse = res
+
+  if config.causal:
+    raise NotImplementedError("Causal attention not supported in the backwards pass yet.")
 
   if not config.has_backward_blocks:
     raise ValueError("Need to specify backward blocks.")
@@ -586,6 +628,8 @@ attention.defvjp(_attention_fwd, _attention_bwd)
 
 @functools.partial(jax.jit, static_argnames=["config", "save_residuals"])
 def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residuals=False):
+  if config.causal:
+    raise NotImplementedError("Causal attention is not supported with the pipeline emitter yet.")
   if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
     raise ValueError(f"q, k, and v should all be 4D, got: {q.ndim=}, {k.ndim=}, {v.ndim=}")
   batch_size, q_seq_len, num_q_heads, head_dim = q.shape
@@ -762,15 +806,21 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
   return out
 
 
-@functools.partial(jax.jit, static_argnames=["save_residuals"])
-def attention_reference(q, k, v, save_residuals=False):
+@functools.partial(jax.jit, static_argnames=["causal", "save_residuals"])
+def attention_reference(q, k, v, causal=False, save_residuals=False):
   batch_size, q_seq_len, num_q_heads, head_dim = q.shape
-  num_kv_heads = k.shape[2]
+  kv_seq_len, num_kv_heads = k.shape[1], k.shape[2]
   q, k, v = map(lambda x: x.astype(jnp.float32), (q, k, v))
   q_reshaped = q.reshape(
       batch_size, q_seq_len, num_kv_heads, num_q_heads // num_kv_heads, head_dim
   )
   logits = jnp.einsum("bqHhc,bkHc->bqHhk", q_reshaped, k)
+
+  if causal:
+    mask = jnp.arange(q_seq_len)[:, None] >= jnp.arange(kv_seq_len)[None, :]
+    mask = jnp.broadcast_to(mask[:, None, None, :], logits.shape)
+    logits = jnp.where(mask, logits, -jnp.inf)
+
   m = logits.max(axis=-1, keepdims=True)
   unnormalized = jnp.exp(logits - m)
   l = unnormalized.sum(axis=-1, keepdims=True)
@@ -798,11 +848,13 @@ def main(unused_argv):
     schedule_barrier_opts = (True,)
 
   problem_it = itertools.product(
-      (1,), (4096, 32768,), (64, 128, 256,), schedule_barrier_opts)
-  for batch_size, seq_len, head_dim, use_schedule_barrier in problem_it:
+      (1,), (4096, 32768,), (64, 128, 256,), schedule_barrier_opts, (False, True))
+  for batch_size, seq_len, head_dim, use_schedule_barrier, causal in problem_it:
+    if causal and use_pipeline_emitter:
+      continue
     q_seq_len = kv_seq_len = seq_len
     print(f"==== {batch_size=:<6} {kv_seq_len=:<6} {q_seq_len=:<6}"
-          f"{num_q_heads=:<4} {head_dim=:<6} {use_schedule_barrier=:} ====")
+          f"{num_q_heads=:<4} {head_dim=:<6} {use_schedule_barrier=:} {causal=:} ====")
     k1, k2, k3 = jax.random.split(jax.random.key(42), 3)
     q = jax.random.normal(k1, (batch_size, q_seq_len, num_q_heads, head_dim), jnp.float16)
     k = jax.random.normal(k2, (batch_size, kv_seq_len, num_kv_heads, head_dim), jnp.float16)
@@ -810,11 +862,11 @@ def main(unused_argv):
     block_q = 64
     best = None
     for block_kv in (256, 128, 64):
-      config = TuningConfig(block_q=block_q, block_kv=block_kv, max_concurrent_steps=2, use_schedule_barrier=use_schedule_barrier)
+      config = TuningConfig(block_q=block_q, block_kv=block_kv, max_concurrent_steps=2, use_schedule_barrier=use_schedule_barrier, causal=causal)
       try:
         out, runtime_ms = profiler.measure(functools.partial(attention_impl, config=config))(q, k, v)
         if seq_len < 32768:
-          out_ref = attention_reference(q, k, v)
+          out_ref = attention_reference(q, k, v, causal=causal)
           np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
       except ValueError as e:
         if "exceeds available shared memory" in e.args[0]:
@@ -824,6 +876,8 @@ def main(unused_argv):
       matmul_flops = (
           4 * q_seq_len * kv_seq_len * head_dim * num_q_heads * batch_size
       )
+      if causal:
+        matmul_flops //= 2
       peak_flops = 1e15  # f16 TensorCore peak = 1000TFLOPS
       optimal_time = matmul_flops / peak_flops * 1e6  # us
       achieved_tc_util = optimal_time / runtime_us * 100
