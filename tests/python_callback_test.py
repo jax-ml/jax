@@ -1363,9 +1363,18 @@ class IOCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(_collected, expected)
 
-  def test_can_shard_io_callback_manually(self):
+  @parameterized.named_parameters(
+    dict(testcase_name='multi_device',
+         single_device=False),
+    dict(testcase_name='single_device',
+         single_device=True)
+  )
+  def test_can_shard_io_callback_manually(self, single_device: bool):
 
-    mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
+    devices = jax.devices()
+    if single_device:
+      devices = devices[:1]
+    mesh = Mesh(np.array(devices), axis_names=('x',))
 
     spec = jax.sharding.PartitionSpec('x')
     sharding = jax.sharding.NamedSharding(mesh, spec)
