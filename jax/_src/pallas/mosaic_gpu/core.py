@@ -33,7 +33,7 @@ from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import pallas_call
+from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import primitives as pallas_primitives
 import jax._src.pallas.utils as pallas_utils
 from jax._src.state import discharge as state_discharge
@@ -175,7 +175,7 @@ def kernel(
     out_shape: object,
     *,
     scratch_shapes: pallas_core.ScratchShapeTree = (),
-    compiler_params: object | None = None,
+    compiler_params: pallas_core.CompilerParams | None = None,
     **mesh_kwargs: object,
 ):
   if unwrap_out := not isinstance(out_shape, (tuple, list)):
@@ -195,22 +195,10 @@ def kernel(
           mesh, compiler_params=compiler_params
       )(cmap_body)
     _, outs = state_discharge.run_state(stateful)(
-        (operands, empty_like(out_shape))
+        (operands, pallas_helpers.empty_like(out_shape, backend="mosaic_gpu"))
     )
     return outs[0] if unwrap_out else outs
   return wrapper
-
-
-def empty_like(shape):
-  return pallas_call.pallas_call(
-      lambda *_: None,
-      out_shape=shape,
-      out_specs=jax.tree.map(
-          lambda _: pallas_core.BlockSpec(memory_space=GPUMemorySpace.GMEM),
-          shape,
-      ),
-      backend="mosaic_gpu",
-  )()
 
 
 def _is_known_divisible(value, divisor, fuel=10) -> bool:
