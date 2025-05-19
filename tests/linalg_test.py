@@ -70,7 +70,9 @@ def _axis_for_ndim(ndim: int) -> Iterator[None | int | tuple[int, ...]]:
 
 def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
   """scipy.linalg.toeplitz with v1.17+ batching semantics."""
-  if scipy_version >= (1, 17, 0):
+  # TODO(dfm,jakevdp): Remove dev check after upstream PR is merged:
+  # https://github.com/scipy/scipy/issues/21466.
+  if scipy_version >= (1, 17, 0) and "dev0" not in scipy.version.version:
     return scipy.linalg.toeplitz(c, r)
   elif r is None:
     c = np.atleast_1d(c)
