@@ -1469,6 +1469,25 @@ class TMATest(TestCase):
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
 
+  def test_tma_with_1d_tiling(self):
+    swizzle = 128
+    dtype = jnp.float16
+    shape = (64, 128)
+    tiling = (1, swizzle // jnp.dtype(dtype).itemsize)
+    def kernel(ctx, dst, smem):
+      iota_tensor(*shape, dtype=dtype).store_tiled(smem, swizzle=swizzle)
+      ctx.async_copy(
+          src_ref=smem,
+          dst_ref=dst,
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(tiling),
+      )
+      ctx.await_async_copy(0)
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    smem = jax.ShapeDtypeStruct(utils.tile_shape(shape, tiling), dtype)
+    y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (), x, smem)()
+    np.testing.assert_array_equal(y, x)
+
   @parameterized.named_parameters(
       (
           f"_{''.join(map(str, collective_dims))}={collective_size}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
