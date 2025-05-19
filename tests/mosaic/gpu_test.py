@@ -653,7 +653,13 @@ class WGMMATest(TestCase):
   @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
-      in_mlir_dtype_cls=(ir.F16Type, ir.BF16Type, ir.F32Type),
+      in_mlir_dtype_cls=(
+          ir.F16Type,
+          ir.BF16Type,
+          ir.F32Type,
+          ir.Float8E5M2Type,
+          ir.Float8E4M3FNType,
+      ),
       m=(64, 128, 192),
       n=(64, 128, 192),
       k_steps=(1, 2),
@@ -675,8 +681,8 @@ class WGMMATest(TestCase):
       rhs_tiling_kind,
       lhs_tiling_kind,
   ):
-    if jax_out_dtype == jnp.float16 and in_mlir_dtype_cls is not ir.F16Type:
-      self.skipTest("Only f16 input is supported for f16 output.")
+    if jax_out_dtype == jnp.float16 and in_mlir_dtype_cls in {ir.F32Type, ir.BF16Type}:
+      self.skipTest(f"{in_mlir_dtype_cls.get()} does not support f16 output.")
     if swizzle != 128 and lhs_transpose and lhs_tiling_kind == "large":
       self.skipTest("Transpose only supported in 128B swizzled WGMMA")
     if rhs_tiling_kind == "small+no_transpose" and not rhs_transpose:
@@ -686,10 +692,10 @@ class WGMMATest(TestCase):
 
     in_mlir_dtype = in_mlir_dtype_cls.get()
     out_mlir_dtype = utils.dtype_to_ir_type(jax_out_dtype)
+    if (lhs_transpose or not rhs_transpose) and bytewidth(in_mlir_dtype) != 2:
+      self.skipTest("Transpose only supported in 16-bit WGMMA")
     if ir.F32Type.isinstance(in_mlir_dtype):  # We actually use tf32 instead
       in_jax_dtype = jnp.float32
-      if lhs_transpose or not rhs_transpose:
-        self.skipTest("Transpose only supported in 16-bit WGMMA")
       exponent_bits, mantissa_bits = 8, 10  # Use tf32
     elif bytewidth(in_mlir_dtype) == 2:
       if n % 64 != 0:
@@ -702,10 +708,18 @@ class WGMMATest(TestCase):
         exponent_bits, mantissa_bits = 8, 7
       else:
         raise NotImplementedError(in_mlir_dtype)
+    elif in_mlir_dtype_cls == ir.Float8E5M2Type:
+      in_jax_dtype = jnp.float8_e5m2
+      exponent_bits, mantissa_bits = 5, 2
+    elif in_mlir_dtype_cls == ir.Float8E4M3FNType:
+      in_jax_dtype = jnp.float8_e4m3fn
+      exponent_bits, mantissa_bits = 4, 3
     else:
       raise NotImplementedError(in_mlir_dtype)
     nk_tile = swizzle // bytewidth(in_mlir_dtype)
     k = nk_tile * k_steps
+    if n % nk_tile:
+      self.skipTest("tiling does not divide N")
     assert m % 64 == 0 and n % nk_tile == 0
 
     small_rhs_tile = rhs_tiling_kind != "large"
@@ -781,6 +795,8 @@ class WGMMATest(TestCase):
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     ref = (x32.T if lhs_transpose else x32) @ (y32.T if rhs_transpose else y32)
     atol = 2e-2 if jax_out_dtype == jnp.float16 else 5e-6
+    if utils.bitwidth(in_mlir_dtype) == 8:
+      atol = 3e-2
     np.testing.assert_allclose(z, ref, atol=atol)
 
   # TODO(apaszke): Add support for f32
