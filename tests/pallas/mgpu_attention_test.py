@@ -21,6 +21,7 @@ import numpy as np
 from absl.testing import absltest, parameterized
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lib import cuda_versions
 from jax._src.pallas import pallas_call
 import jax.numpy as jnp
 
@@ -63,11 +64,13 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
           (4, 4),
       ),  # MHA
       head_dim=(64, 128, 256),
+      blocks=((64, 64), (64, 128), (128, 64)),
       attention_impl=(
           attention_mgpu.attention,
           attention_mgpu.attention_with_pipeline_emitter,
       ),
       save_residuals=(True,),
+      causal=(True, False,),
   )
   def test_flash_attention(
       self,
@@ -76,10 +79,24 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       kv_seq_len,
       num_q_and_kv_heads,
       head_dim,
+      blocks,
       attention_impl,
       save_residuals,
+      causal,
   ):
+    cuda_runtime_version = cuda_versions.cuda_runtime_get_version()
+    # TODO(pobudzey): Undo when we upgrade to cuda 12.9.1.
+    if causal and (cuda_runtime_version >= 12080 and cuda_runtime_version < 12091):
+      self.skipTest("Skipping because of ptxas miscompilation.")
+
+    if causal and attention_impl == attention_mgpu.attention_with_pipeline_emitter:
+      self.skipTest("Pipeline emitter does not support causal attention.")
+
+    if head_dim >= 256 and max(blocks) >= 128:
+      self.skipTest("Head dim too large for block sizes.")
+
     num_q_heads, num_kv_heads = num_q_and_kv_heads
+    block_q, block_kv = blocks
     k1, k2, k3 = jax.random.split(jax.random.key(42), 3)
     q = jax.random.normal(k1, (batch_size, q_seq_len, num_q_heads, head_dim), jnp.float16)
     k = jax.random.normal(k2, (batch_size, kv_seq_len, num_kv_heads, head_dim), jnp.float16)
@@ -89,11 +106,12 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
         k,
         v,
         attention_mgpu.TuningConfig(
-            block_q=64, block_kv=64, max_concurrent_steps=2
+            block_q=block_q, block_kv=block_kv, max_concurrent_steps=2, causal=causal
         ),
         save_residuals=save_residuals,
     )
-    out_ref, *res_ref = attention_mgpu.attention_reference(q, k, v, save_residuals=save_residuals)
+    out_ref, *res_ref = attention_mgpu.attention_reference(
+        q, k, v, causal=causal, save_residuals=save_residuals)
     np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
     if save_residuals:
       (lse,) = res[0]
