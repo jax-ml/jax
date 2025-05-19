@@ -19,8 +19,8 @@ wheel
 jaxlib
 
 # The with-cuda extra also includes NVIDIA's pip packages.
-jax-cuda12-plugin[with-cuda]
-jax-cuda12-pjrt
+jax-cuda12-plugin[with-cuda] ; sys_platform == "linux"
+jax-cuda12-pjrt ; sys_platform == "linux"
 
 # TPU dependencies
 libtpu ; sys_platform == "linux" and platform_machine == "x86_64"
