@@ -2370,11 +2370,11 @@ def _lower_jaxpr_to_for_loop(
     ctx: LoweringRuleContext,
     jaxpr: jax_core.Jaxpr,
     start: ir.Value,
-    length: ir.Value | int,
+    length: int | ir.Value,
     consts,
     *args,
     has_loop_index: bool,
-    unroll: bool = False,
+    unroll: int | None = None,
 ):
   _consts_avals, arg_avals = util.split_list(ctx.avals_in, [len(consts)])
   arg_avals = arg_avals[has_loop_index:]
@@ -2395,22 +2395,42 @@ def _lower_jaxpr_to_for_loop(
     return [v if a else _ensure(v, av) for a, v, av in zip(is_acc, vals, avals)]
 
   def loop(loop_index, body_args):
-    if has_loop_index:
-      loop_index = arith_dialect.addi(loop_index, start)
-      jaxpr_args = [*consts, loop_index, *body_args]
-    else:
-      jaxpr_args = [*consts, *body_args]
-    outs = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, jaxpr, jaxpr_args
-    )
+    outs = body_args
+    if unroll is not None:
+      loop_index = arith_dialect.muli(
+          loop_index, _ir_constant(unroll, start.type)
+      )
+    loop_index = arith_dialect.addi(loop_index, start)
+    for step in range(unroll or 1):
+      if has_loop_index:
+        loop_index = arith_dialect.addi(
+            loop_index, _ir_constant(step, start.type)
+        )
+        jaxpr_args = [*consts, loop_index, *outs]
+      else:
+        jaxpr_args = [*consts, *outs]
+      outs = lower_jaxpr_to_mosaic_gpu(
+          ctx.module_ctx, ctx.launch_ctx, jaxpr, jaxpr_args
+      )
     return as_values(outs, out_avals)
 
-  if unroll:
-    assert isinstance(length, int)
-    outs = as_values(args, arg_avals)
-    for i in range(length):
-      outs = loop(_ir_constant(i, start.type), outs)
-    return outs
+  if unroll is not None:
+    if not isinstance(length, int):
+      raise NotImplementedError(
+          "``length`` must be an integer when ``unroll` is specified, got"
+          f" {length}"
+      )
+    if length % unroll:
+      # TODO(slebedev): Emit an epilogue taking care of the remaining steps.
+      raise NotImplementedError(
+          f"``unroll`` must divide ``length``, got {unroll=} and {length=}"
+      )
+    if unroll == length:
+      # Special-case: the loop is fully unrolled.
+      return loop(_ir_constant(0, start.type), as_values(args, arg_avals))
+    return mgpu.fori(
+        _ir_constant(length // unroll, start.type), as_values(args, arg_avals)
+    )(loop).results
   else:
     if not isinstance(length, ir.Value):
       length = _ir_constant(length, start.type)
@@ -2432,11 +2452,7 @@ def _scan_lowering_rule(
     _split_transpose: bool,
 ):
   # Can only handle fori_loop-like scans.
-  if (
-      (num_extensive := len(args) - num_consts - num_carry)
-      or reverse
-      or not (unroll == 1 or unroll == length)
-  ):
+  if (num_extensive := len(args) - num_consts - num_carry) or reverse:
     raise NotImplementedError
   del linear, num_extensive, reverse
 
@@ -2465,7 +2481,7 @@ def _scan_lowering_rule(
       consts,
       *args,
       has_loop_index=has_loop_index,
-      unroll=unroll == length,
+      unroll=unroll,
   )
   if has_loop_index:
     # Need to return the final loop index value if the outer scan expects
