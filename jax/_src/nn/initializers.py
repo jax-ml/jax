@@ -223,6 +223,8 @@ def _compute_fans(shape: Sequence[int],
     batch_size = shape[batch_axis]
   else:
     batch_size = math.prod([shape[i] for i in batch_axis])
+  if 0 in [in_size, out_size, batch_size]:
+    return 0, 0
   receptive_field_size = math.prod(shape) / in_size / out_size / batch_size
   fan_in = in_size * receptive_field_size
   fan_out = out_size * receptive_field_size
