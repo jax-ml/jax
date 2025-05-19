@@ -181,13 +181,13 @@ iniconfig==2.0.0 \
     --hash=sha256:2d91e135bf72d31a410b17c16da610a82cb55f6b0477d1a902134b24a455b8b3 \
     --hash=sha256:b6a85871a79d2e3b22d2d1b94ac2824226a63c6b741c88f7ae975f18b6778374
     # via pytest
-jax-cuda12-pjrt==0.6.0 \
+jax-cuda12-pjrt==0.6.0 ; sys_platform == "linux" \
     --hash=sha256:68371bd9c135244b89663039be208255698a75bec9854d419ea3c3f957ca4646 \
     --hash=sha256:9bfebb06a39614cb6899f7730ea8561f11156ac81cbb3ec6884a62afb3b15ff3
     # via
     #   -r build/requirements.in
     #   jax-cuda12-plugin
-jax-cuda12-plugin[with-cuda]==0.6.0 \
+jax-cuda12-plugin[with-cuda]==0.6.0 ; sys_platform == "linux" \
     --hash=sha256:0d9ecede66c40258702a42261e868cdb56a103551a7c3c884b35f531c9acd48e \
     --hash=sha256:28ae6cb1a09b1824d4baeb68386bc615976e89f7a65d403a93822b76dcd1e508 \
     --hash=sha256:530ad851ca462991ce82db26ad47f02b08cebe483c9c8d0c0037e9e27a7b529f \

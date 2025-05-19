@@ -48,7 +48,7 @@ ml-dtypes==0.5.1
     #   tensorstore
 mpmath==1.4.0a4
     # via -r build/test-requirements.txt
-numpy==2.2.5
+numpy==2.2.6
     # via
     #   -r build/nonfreethreading-requirements.txt
     #   contourpy
