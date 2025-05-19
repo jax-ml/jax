@@ -121,7 +121,7 @@ rich==14.0.0
     # via -r build/test-requirements.txt
 scipy==1.15.2
     # via -r build/requirements.in
-setuptools==80.0.0
+setuptools==78.1.1
     # via
     #   -r build/requirements.in
     #   -r build/test-requirements.txt
@@ -135,7 +135,7 @@ typing-extensions==4.13.2
     # via etils
 wheel==0.45.1
     # via -r build/test-requirements.txt
-zipp==3.21.0
+zipp==3.19.1
     # via etils
 zstandard==0.23.0
     # via -r build/nonfreethreading-requirements.txt
