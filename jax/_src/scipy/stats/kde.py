@@ -194,7 +194,7 @@ class gaussian_kde:
                                      jnp.zeros(self.d, self.covariance.dtype),
                                      self.covariance,
                                      shape=shape,
-                                     dtype=self.dataset.dtype).T
+                                     dtype=self.dataset.dtype).transpose()
     return self.dataset[:, ind] + eps
 
   def pdf(self, x):

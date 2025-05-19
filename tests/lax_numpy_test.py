@@ -1511,6 +1511,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     shape=array_shapes,
     dtype=default_dtypes,
   )
+  def testTransposeProperty(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    jnp_fun = lambda x: jnp.asarray(x).T
+    np_fun = lambda x: np.asarray(x).T
+
+    if len(shape) != 2:
+      with self.assertDeprecationWarnsOrRaises('jax-numpy-T-2dim',
+                                               'Calling the arr.T property on an array with ndim != 2'):
+        jnp_fun(*args_maker())
+    else:
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+      self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    shape=array_shapes,
+    dtype=default_dtypes,
+  )
   def testPermuteDims(self, shape, dtype):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]

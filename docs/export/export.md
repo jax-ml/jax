@@ -352,7 +352,7 @@ devices in the mesh are ignored for tracing and lowering:
 >>> export_mesh = AbstractMesh((4,), ("a",))
 
 >>> def f(x):
-...   return x.T
+...   return x.transpose()
 
 >>> exp = export.export(jax.jit(f))(
 ...    jax.ShapeDtypeStruct((32,), dtype=np.int32,
@@ -415,7 +415,7 @@ of devices than it was exported for:
 >>> export_devices = jax.local_devices()
 >>> export_mesh = Mesh(np.array(export_devices), ("a",))
 >>> def f(x):
-...   return x.T
+...   return x.transpose()
 
 >>> exp = export.export(jax.jit(f))(
 ...    jax.ShapeDtypeStruct((4 * len(export_devices),), dtype=np.int32,
@@ -440,7 +440,7 @@ artifacts using a new mesh constructed at the call site:
 >>> export_devices = jax.local_devices()
 >>> export_mesh = Mesh(np.array(export_devices), ("a",))
 >>> def f(x):
-...   return x.T
+...   return x.transpose()
 
 
 >>> exp = export.export(jax.jit(f))(

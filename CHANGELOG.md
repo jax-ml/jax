@@ -32,6 +32,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Deprecations
   * `jax.custom_derivatives.custom_jvp_call_jaxpr_p` is deprecated, and will be
     removed in JAX v0.7.0.
+  * The `arr.T` property is now deprecated for arrays with `arr.ndim != 2`, following
+    a similar deprecation in NumPy v2.3. `arr.transpose()` is a drop-in replacement.
+    For batched matrix transpose, use the `arr.mT` property instead.
 
 ## JAX 0.6.0 (April 16, 2025)
 

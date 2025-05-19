@@ -2105,7 +2105,7 @@ class ShardMapTest(jtu.JaxTestCase):
                            {AxisType.Manual: ('i', 'j'),
                             AxisType.Explicit: ('k', 'l')})
       self.assertEqual(x.aval.sharding.spec, P(None, None, 'k', 'l'))
-      out = x.T
+      out = x.transpose()
       self.assertEqual(out.aval.sharding.spec, P('l', 'k', None, None))
       return out
 
@@ -3348,7 +3348,7 @@ class FunSpec(NamedTuple):
 fun_specs = [
     FunSpec('id', 1, lambda x: x, lambda r: r),
     FunSpec('flip', 2, lambda x, y: (y, x), lambda r_x, r_y: (r_y, r_x)),
-    FunSpec('transpose', 1, lambda x: x.T, lambda r: r),
+    FunSpec('transpose', 1, lambda x: x.transpose(), lambda r: r),
     FunSpec('ravel', 1, lambda x: x.ravel(), lambda r: r),
     FunSpec(
         'dot', 2, jnp.dot, lambda r1, r2: r1 & r2,
