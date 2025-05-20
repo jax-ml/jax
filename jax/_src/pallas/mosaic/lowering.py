@@ -235,7 +235,7 @@ def _memory_space_to_mosaic_attribute(memory_space: MemorySpace | None
   tpu_memory_space = _memory_space_to_tpu_memory_space(memory_space)
   return ir.Attribute.parse(f"#tpu.memory_space<{tpu_memory_space}>")
 
-def _dtype_to_ir_type(dtype: jnp.dtype,
+def _dtype_to_ir_type(dtype: jax.typing.DTypeLike,
                       is_kernel_boundary: bool = False) -> ir.Type:
   if jnp.issubdtype(dtype, pallas_core.semaphore_dtype):
     if jnp.issubdtype(dtype, tpu_core.dma_semaphore):
@@ -246,11 +246,11 @@ def _dtype_to_ir_type(dtype: jnp.dtype,
       return ir.Type.parse("!tpu.semaphore")
     else:
       raise NotImplementedError
-  if is_kernel_boundary and jnp.issubdtype(dtype, jnp.dtype('bool')):
+  if is_kernel_boundary and jnp.issubdtype(dtype, jnp.bool):
     dtype = BOOL_MEMREF_TYPE
   # TODO(justinfu): Remove after mosaic supports unsigned types.
   # This conversion makes mosaic interpret all unsigned types as signed types.
-  type =  mlir.dtype_to_ir_type(dtype)
+  type =  mlir.dtype_to_ir_type(jnp.dtype(dtype))
   if isinstance(type, ir.IntegerType):
     return ir.IntegerType.get_signless(type.width)
   else:
@@ -3766,14 +3766,15 @@ def _join_key_lowering_rule(ctx: LoweringRuleContext, *scalars, impl):
 @register_lowering_rule(checkify.check_p)
 def _checkify_lowering_rule(
     ctx: LoweringRuleContext, *err_args, err_tree, debug):
-  if not tpu_core.runtime_assert_enabled():
+  if not pallas_core.runtime_assert_enabled():
     if debug:
       return []
     else:
-      raise LoweringException("Non-debug check must be functionalized. "
-                              "Enable runtime asserts with "
-                              "--jax_pallas_enable_runtime_assert "
-                              "or functionalize with checkify.check.")
+      raise LoweringException(
+          "Non-debug check must be functionalized. Enable runtime asserts via"
+          " ``pl.enable_runtime_assert`` or --jax_pallas_enable_runtime_assert"
+          " or, alternatively, functionalize with ``checkify.check``."
+      )
 
   if cf is None:
     # TODO(slebedev): Remove once the minimal jaxlib version is 0.6.1.
@@ -3782,20 +3783,16 @@ def _checkify_lowering_rule(
     )
 
   error = jax.tree.unflatten(err_tree, err_args)
-  assert len(error._pred) == 1
-  assert len(error._metadata) == 1
-  assert len(error._payload) == 1
-  pred = list(error._pred.items())[0][1]
-  metadata = list(error._metadata.items())[0]
-  payload = list(error._payload.items())[0][1]
-  exception_tree = metadata[1]
+  [pred] = error._pred.values()
+  [exception_tree] = error._metadata.values()
+  [payload] = error._payload.values()
   exception = jax.tree.unflatten(exception_tree, payload)
   assert isinstance(exception, checkify.FailedCheckError)
+  assert isinstance(exception, checkify.FailedCheckError)
 
-  # check_p has an inverted predicate compared to assert,
-  # so we need to compute not(pred) here.
-  out_scalar_type = _dtype_to_ir_type(jnp.dtype('bool'))
-  minus_one = ir_constant(-1, out_scalar_type)
+  # check_p has an inverted predicate compared to assert, so we need to compute
+  # ``not pred`` here.
+  minus_one = ir_constant(-1, _dtype_to_ir_type(jnp.bool))
   not_pred = arith.xori(pred, minus_one)
   cf.assert_(not_pred, exception.fmt_string)
   return []

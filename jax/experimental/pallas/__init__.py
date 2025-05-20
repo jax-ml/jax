@@ -18,6 +18,7 @@ See the Pallas documentation at
 https://docs.jax.dev/en/latest/pallas.html.
 """
 
+from jax._src.pallas.core import _ENABLE_RUNTIME_ASSERT as enable_runtime_assert  # noqa: F401
 from jax._src.pallas.core import BlockDim as BlockDim
 from jax._src.pallas.core import Blocked as Blocked
 from jax._src.pallas.core import BlockSpec as BlockSpec
@@ -32,6 +33,7 @@ from jax._src.pallas.core import lower_as_mlir as lower_as_mlir
 from jax._src.pallas.core import MemoryRef as MemoryRef
 from jax._src.pallas.core import MemorySpace as MemorySpace
 from jax._src.pallas.core import no_block_spec as no_block_spec
+from jax._src.pallas.core import runtime_assert_enabled as runtime_assert_enabled
 from jax._src.pallas.core import semaphore as semaphore
 from jax._src.pallas.core import Squeezed as Squeezed
 from jax._src.pallas.core import squeezed as squeezed
