@@ -14,7 +14,7 @@ kernelspec:
 (sharded-computation)=
 # Introduction to parallel programming
 
-<!--* freshness: { reviewed: '2024-05-10' } *-->
+<!--* freshness: { reviewed: '2025-05-19' } *-->
 
 This tutorial serves as an introduction to device parallelism for Single-Program Multi-Data (SPMD) code in JAX. SPMD is a parallelism technique where the same computation, such as the forward pass of a neural network, can be run on different input data (for example, different inputs in a batch) in parallel on different devices, such as several GPUs or Google TPUs.
 
@@ -193,7 +193,7 @@ print(f"replicated_array type: {jax.typeof(replicated_array)}")
 print(f"sharded_array type: {jax.typeof(sharded_array)}")
 ```
 
-We should read the type `f32[4@X, 2]` as "a 4-by-2 array of 32-bit floats whose first dimension
+We should read the type `int32[4@X, 2]` as "a 4-by-2 array of 32-bit ints whose first dimension
 is sharded along mesh axis 'X'. The array is replicated along all other mesh
 axes"
 
