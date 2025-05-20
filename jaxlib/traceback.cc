@@ -68,11 +68,12 @@ Traceback::Traceback() {
 #else  // PY_VERSION_HEX < 0x030b0000
 
 #ifdef PLATFORM_GOOGLE
-  // This code is equivalent to the version using public APIs, but it saves us
-  // an allocation of one object per stack frame. However, this is definitely
-  // violating the API contract of CPython, so we only use this where we can be
-  // confident we know exactly which CPython we are using (internal to Google).
-  // Feel free to turn this on if you like, but it might break at any time!
+// This code is equivalent to the version using public APIs, but it saves us
+// an allocation of one object per stack frame. However, this is definitely
+// violating the API contract of CPython, so we only use this where we can be
+// confident we know exactly which CPython we are using (internal to Google).
+// Feel free to turn this on if you like, but it might break at any time!
+#if PY_VERSION_HEX < 0x030d0000
   for (_PyInterpreterFrame* f = thread_state->cframe->current_frame;
        f != nullptr; f = f->previous) {
     if (_PyFrame_IsIncomplete(f)) continue;
@@ -80,6 +81,16 @@ Traceback::Traceback() {
     frames_.emplace_back(f->f_code,
                          _PyInterpreterFrame_LASTI(f) * sizeof(_Py_CODEUNIT));
   }
+#else   // PY_VERSION_HEX < 0x030d0000
+  for (_PyInterpreterFrame* f = thread_state->current_frame; f != nullptr;
+       f = f->previous) {
+    if (_PyFrame_IsIncomplete(f)) continue;
+    Py_INCREF(f->f_executable);
+    frames_.emplace_back(reinterpret_cast<PyCodeObject*>(f->f_executable),
+                         _PyInterpreterFrame_LASTI(f) * sizeof(_Py_CODEUNIT));
+  }
+#endif  // PY_VERSION_HEX < 0x030d0000
+
 #else   // PLATFORM_GOOGLE
   PyFrameObject* next;
   for (PyFrameObject* py_frame = PyThreadState_GetFrame(thread_state);
