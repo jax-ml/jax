@@ -114,7 +114,7 @@ def build_kernel(
             swizzle=swizzle,
             barrier=full_barrier,
             arrive=False,
-            uniform=False,
+            predicate=None,
             collective=gpu.Dimension.x,
             partitioned=0,  # Non-contracting dim is always 0.
         )

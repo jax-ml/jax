@@ -309,7 +309,7 @@ def build_kernel(
                 gmem_slice=(kv_head_idx, ds(kv_seq_base, blocks.kv)),
                 gmem_transform=transform,
                 barrier=barrier,
-                uniform=False,
+                predicate=None,
                 swizzle=128,
             )
         def start_k_copy(slot, kv_seq_base):
@@ -403,7 +403,7 @@ def build_kernel(
               gmem_transform=t,
               barrier=barriers[slot],
               arrive=False,
-              uniform=False,
+              predicate=None,
               swizzle=128,
           )
 
