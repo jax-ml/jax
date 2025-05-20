@@ -1762,6 +1762,35 @@ class PallasCallTest(PallasTest):
     with self.assertRaisesRegex(ValueError, "can't be assigned to"):
       kernel(jnp.arange(128).astype(jnp.float32))
 
+  @parameterized.parameters(1, 2, 3)
+  def test_nd_loop(self, sm_steps):
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((sm_steps, 132, 128), jnp.int32),
+        grid=(132,),
+        grid_names=("sm",),
+    )
+    def kernel(o_ref):
+      def body(idx, _):
+        assert len(idx) == 3
+        # We need to use `mode="clip"`, because the indices are not static.
+        flat_idx = jnp.ravel_multi_index(idx, (sm_steps, 4, 33), mode="clip")
+        sm_step = lax.div(
+            flat_idx, lax.convert_element_type(lax.axis_size("sm"), jnp.int32)
+        )
+        o_ref[sm_step, lax.axis_index("sm")] = lax.broadcast(
+            flat_idx, o_ref.shape[-1:]
+        )
+
+      plgpu.nd_loop((sm_steps, 4, 33), body, None, collective_axes="sm")
+
+    result = kernel()
+    for sm_step in range(sm_steps):
+      np.testing.assert_array_equal(
+          result[sm_step],
+          jnp.tile((132 * sm_step + jnp.arange(132))[:, None], 128),
+      )
+
 
 class PallasCallWGTest(
     PallasCallTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
