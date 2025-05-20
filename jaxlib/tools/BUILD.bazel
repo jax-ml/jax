@@ -487,6 +487,19 @@ py_import(
     wheel_deps = if_cuda([":nvidia_wheel_deps"]),
 )
 
+# The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
+py_import(
+    name = "pypi_jax_cuda_plugin_with_cuda_deps",
+    wheel = "@pypi_jax_cuda12_plugin//:whl",
+    wheel_deps = if_cuda([":nvidia_wheel_deps"]),
+)
+
+py_import(
+    name = "pypi_jax_cuda_pjrt_with_cuda_deps",
+    wheel = "@pypi_jax_cuda12_pjrt//:whl",
+    wheel_deps = if_cuda([":nvidia_wheel_deps"]),
+)
+
 # Wheel tests.
 
 AARCH64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "aarch64")])
