@@ -321,6 +321,10 @@ class Scratch:
         init_callback(self._alloc_op.result)
 
 
+class _DefaultPredicate:
+  pass
+
+
 @dataclasses.dataclass()
 class LaunchContext:
   module: ir.Module
@@ -506,12 +510,10 @@ class LaunchContext:
       barrier: utils.BarrierRef | None = None,
       swizzle: int | None = None,
       arrive: bool | None = None,
-      uniform: bool = True,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
       partitioned: int | None = None,
-      predicate: (
-          ir.Value | None
-      ) = None,  # Should select 0 or 1 threads from the WG.
+      # Should select 0 or 1 threads from the WG.
+      predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
       reduction_op: ReductionOp | None = None,
   ):
     """Initiates an async copy between GMEM and SMEM.
@@ -553,8 +555,8 @@ class LaunchContext:
           f"Expected same element type, got {element_type} and"
           f" {dst_ref_ty.element_type}"
       )
-    if predicate is not None and not uniform:
-      raise ValueError("Predicate can only be defined when uniform is True")
+    if isinstance(predicate, _DefaultPredicate):
+      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
     if not isinstance(gmem_transform, tuple):
       gmem_transform = (gmem_transform,)
 
@@ -756,13 +758,6 @@ class LaunchContext:
         arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
     ]
 
-    uniform_ctx = (
-        functools.partial(
-            utils.single_thread, scope=utils.ThreadSubset.WARPGROUP)
-        if uniform and predicate is None
-        else contextlib.nullcontext
-    )
-
     if max(slice_shape) > 256:
       raise ValueError(
           "Async copies only support copying <=256 elements along each"
@@ -792,68 +787,65 @@ class LaunchContext:
           np.prod(slice_shape) * element_bitwidth * collective_size // 8, i32
       )
       barrier_ptr = barrier.get_ptr()
-      with uniform_ctx():
-        assert reduction_op is None
-        if collective_size > 1 and partitioned is not None:
-          if predicate is None:
-            predicate = c(1, ir.IntegerType.get_signless(1))
-          if arrive:
-            first_block = arith.cmpi(
-                arith.CmpIPredicate.eq, self.cluster_idx(collective), c(0, index),
-            )
-            arrive_predicate = arith.andi(predicate, first_block)
-            nvvm.mbarrier_arrive_expect_tx_shared(
-                barrier_ptr, transfer_bytes, predicate=arrive_predicate
-            )
-          rank = len(slice_shape)
-          idx_operands = ",".join(f"${i}" for i in range(4, 4 + rank))
-          llvm.inline_asm(
-              ir.Type.parse("!llvm.void"),
-              [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices],
-              f"""
-              {{
-              .reg .b32 mapped_addr;
-              @$0 mapa.shared::cluster.u32 mapped_addr, $3, 0;
-              @$0 cp.async.bulk.tensor.{rank}d.shared::cta.global.tile.mbarrier::complete_tx::bytes.cta_group::2
-                                   [$1], [$2, {{{idx_operands}}}], [mapped_addr];
-              }}
-              """,
-              "b,r,l,r" + ",r" * rank,
-              has_side_effects=True,
+      assert reduction_op is None
+      if collective_size > 1 and partitioned is not None:
+        if predicate is None:
+          predicate = c(1, ir.IntegerType.get_signless(1))
+        if arrive:
+          first_block = arith.cmpi(
+              arith.CmpIPredicate.eq, self.cluster_idx(collective), c(0, index),
           )
-        else:
-          if arrive:
-            nvvm.mbarrier_arrive_expect_tx_shared(
-                barrier_ptr, transfer_bytes, predicate=predicate
-            )
-          nvvm.cp_async_bulk_tensor_shared_cluster_global(
-              smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [],
-              multicast_mask=multicast_mask, predicate=predicate
+          arrive_predicate = arith.andi(predicate, first_block)
+          nvvm.mbarrier_arrive_expect_tx_shared(
+              barrier_ptr, transfer_bytes, predicate=arrive_predicate
           )
+        rank = len(slice_shape)
+        idx_operands = ",".join(f"${i}" for i in range(4, 4 + rank))
+        llvm.inline_asm(
+            ir.Type.parse("!llvm.void"),
+            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices],
+            f"""
+            {{
+            .reg .b32 mapped_addr;
+            @$0 mapa.shared::cluster.u32 mapped_addr, $3, 0;
+            @$0 cp.async.bulk.tensor.{rank}d.shared::cta.global.tile.mbarrier::complete_tx::bytes.cta_group::2
+                                  [$1], [$2, {{{idx_operands}}}], [mapped_addr];
+            }}
+            """,
+            "b,r,l,r" + ",r" * rank,
+            has_side_effects=True,
+        )
+      else:
+        if arrive:
+          nvvm.mbarrier_arrive_expect_tx_shared(
+              barrier_ptr, transfer_bytes, predicate=predicate
+          )
+        nvvm.cp_async_bulk_tensor_shared_cluster_global(
+            smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [],
+            multicast_mask=multicast_mask, predicate=predicate
+        )
     else:
       assert multicast_mask is None
       if reduction_op is not None:
-        with uniform_ctx():
-          if predicate is None:
-            predicate = c(1, ir.IntegerType.get_signless(1))
-          rank = len(slice_shape)
-          idx_operands = ",".join(f"${i}" for i in range(3, 3 + rank))
-          llvm.inline_asm(
-            ir.Type.parse("!llvm.void"),
-            [predicate,smem_ptr,tma_desc,*rev_dyn_base_indices],
-            f"@$0 cp.reduce.async.bulk.tensor.{rank}d.global.shared::cta.{reduction_op}.tile.bulk_group [$2,{{{idx_operands}}}], [$1];",
-            "b,r,l" + ",r" * rank,
-            has_side_effects=True,
-          )
-          if arrive:
-            nvvm.cp_async_bulk_commit_group()
+        if predicate is None:
+          predicate = c(1, ir.IntegerType.get_signless(1))
+        rank = len(slice_shape)
+        idx_operands = ",".join(f"${i}" for i in range(3, 3 + rank))
+        llvm.inline_asm(
+          ir.Type.parse("!llvm.void"),
+          [predicate,smem_ptr,tma_desc,*rev_dyn_base_indices],
+          f"@$0 cp.reduce.async.bulk.tensor.{rank}d.global.shared::cta.{reduction_op}.tile.bulk_group [$2,{{{idx_operands}}}], [$1];",
+          "b,r,l" + ",r" * rank,
+          has_side_effects=True,
+        )
+        if arrive:
+          nvvm.cp_async_bulk_commit_group()
       else:
-        with uniform_ctx():
-          nvvm.cp_async_bulk_tensor_global_shared_cta(
-              tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate
-          )
-          if arrive:
-            nvvm.cp_async_bulk_commit_group()
+        nvvm.cp_async_bulk_tensor_global_shared_cta(
+            tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate
+        )
+        if arrive:
+          nvvm.cp_async_bulk_commit_group()
 
   def await_async_copy(
       self, allow_groups: int, await_read_only: bool = False

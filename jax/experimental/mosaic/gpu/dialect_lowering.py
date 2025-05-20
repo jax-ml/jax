@@ -713,7 +713,6 @@ def _mgpu_async_load_op_lowering_rule(
       gmem_slice=tuple(gmem_slice),
       barrier=barrier.barrier_ref,
       arrive=False,
-      uniform=True,
       swizzle=swizzle,
       gmem_transform=transforms,
       predicate=ctx.single_thread_per_warpgroup_predicate,
@@ -755,7 +754,6 @@ def _mgpu_async_store_op_lowering_rule(
       gmem_slice=tuple(gmem_slice),
       swizzle=swizzle,
       gmem_transform=transforms,
-      uniform=True,
       predicate=ctx.single_thread_per_warpgroup_predicate,
       arrive=store_op.commit_group,
   )

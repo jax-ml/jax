@@ -206,7 +206,7 @@ def build_kernel(
       rhs_tma_tile_bytes = int(np.prod(block_tiling.kn) * rhs_elem_bytes)
       txcount = lhs_tma_tile_bytes + rhs_tma_tile_bytes
       common_copy_args = dict(
-          swizzle=swizzle, barrier=barrier, arrive=False, uniform=False,
+          swizzle=swizzle, barrier=barrier, arrive=False, predicate=None,
       )
       with single_thread():
         barrier.arrive_expect_tx(txcount)
