@@ -649,7 +649,7 @@ def lower_pipelined_jaxpr_to_module(
     aval = v.aval
     if (isinstance(aval, pallas_core.AbstractMemoryRef) and
         jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype)):
-      if aval.memory_space != gpu_core.MemorySpace.GMEM:
+      if aval.memory_space != gpu_core.GMEM:
         raise ValueError(
             "Only GMEM memory space is supported for semaphores in Mosaic GPU."
         )
