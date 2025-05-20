@@ -27,6 +27,7 @@ from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.util import safe_zip, safe_map
+from jax._src.weak_type_ndarray import as_weak_type_ndarray
 
 from jax._src.typing import Shape
 
@@ -119,8 +120,8 @@ def _canonicalize_ndarray_dtype(x):
   return np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
 
 def _canonicalize_python_scalar_dtype(typ, x):
-  return np.asarray(
-      x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
+  dtype = dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x))
+  return as_weak_type_ndarray(x, dtype, True)
 
 canonicalize_dtype_handlers: dict[Any, Callable] = {}
 canonicalize_dtype_handlers.update(
