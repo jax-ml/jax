@@ -190,8 +190,8 @@ def _gpu_test_deps():
             "@pypi//nvidia_nvshmem_cu12",
         ],
         "//jax:config_build_jaxlib_false": [
-            "@pypi//jax_cuda12_plugin",
-            "@pypi//jax_cuda12_pjrt",
+            "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
+            "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
             "@pypi//nvidia_nvshmem_cu12",
         ],
         "//jax:config_build_jaxlib_wheel": [
