@@ -511,12 +511,42 @@ def memref_reshape(ref: ir.Value, shape: tuple[int, ...]) -> ir.Value:
         f" allowed) {shape}"
     )
 
-  return _reshape(ref, list(ref_ty.shape), list(shape))
+  src_shape = list(ref_ty.shape)
+  dst_shape = list(shape)
+  if src_shape == dst_shape:
+    return ref
+  if not src_shape:
+    _, offset = ref_ty.get_strides_and_offset()
+    identity = ir.AffineMapAttr.get(ir.AffineMap.get_identity(0))
+    if ref_ty.layout == identity:
+      new_layout = ir.AffineMapAttr.get(ir.AffineMap.get_identity(len(dst_shape)))
+    else:
+      new_layout = ir.StridedLayoutAttr.get(offset, [1] * len(dst_shape))
+    result_ty = ir.MemRefType.get(dst_shape, ref_ty.element_type, new_layout, ref_ty.memory_space)
+    return memref.expand_shape(result_ty, ref, [], [], dst_shape)
+  if not dst_shape:
+    _, offset = ref_ty.get_strides_and_offset()
+    identity = ir.AffineMapAttr.get(ir.AffineMap.get_identity(ref_ty.rank))
+    contig_strided_1d = ir.Attribute.parse("strided<[1]>")
+    if ref_ty.layout == identity or ref_ty.layout == contig_strided_1d:
+      new_layout = ir.AffineMapAttr.get(ir.AffineMap.get_identity(0))
+    else:
+      new_layout = ir.StridedLayoutAttr.get(offset, [])
+    result_ty = ir.MemRefType.get((), ref_ty.element_type, new_layout, ref_ty.memory_space)
+    return memref.collapse_shape(result_ty, ref, [])
+  return _reshape(ref, src_shape, dst_shape)
 
 
 def memref_fold(ref: ir.Value, dim, fold_rank) -> ir.Value:
   ref_ty = ir.MemRefType(ref.type)
   new_shape = list(ref_ty.shape)
+  if dim < 0:
+    raise ValueError(f"Dimension {dim} is negative")
+  if dim + fold_rank > len(new_shape):
+    raise ValueError(
+        f"Folding {fold_rank} dimensions starting from {dim} is out of bounds"
+        f" for shape {new_shape}"
+    )
   new_shape[dim : dim + fold_rank] = [np.prod(new_shape[dim : dim + fold_rank])]
   identity = ir.AffineMapAttr.get(ir.AffineMap.get_identity(ref_ty.rank))
   contig_strided_1d = ir.Attribute.parse("strided<[1]>")

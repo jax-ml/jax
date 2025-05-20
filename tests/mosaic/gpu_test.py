@@ -389,17 +389,19 @@ class MemRefTest(TestCase):
       ("add_1s", (5, 1, 2), (1, 1, 5, 1, 1, 2, 1, 1)),
       ("fold", (1, 5, 2, 1,), (1, 10, 1)),
       ("un", (1, 10, 1), (1, 5, 2, 1,)),
+      ("to_scalar", (1, 1, 1), ()),
+      ("from_scalar", (), (1, 1, 1)),
   )
   def test_reshape(self, inp_shape, out_shape):
     def kernel(ctx, inp, out, _):
       copy(memref_reshape(inp, out_shape), out)
 
-    x = np.arange(math.prod(inp_shape), dtype=jnp.float32).reshape(*inp_shape)
+    x = np.arange(math.prod(inp_shape), dtype=jnp.float32).reshape(inp_shape)
     out_ty = jax.ShapeDtypeStruct(out_shape, jnp.float32)
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), x, out_ty, ()
     )(x)
-    np.testing.assert_array_equal(y, x.reshape(*out_shape))
+    np.testing.assert_array_equal(y, x.reshape(out_shape))
 
   @parameterized.named_parameters([
       ("packed", (4, 4, 4), (16, 4, 1), 1, 2, False),
