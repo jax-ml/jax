@@ -1231,6 +1231,7 @@ cc_library(
         "@xla//xla/pjrt:exceptions",
         "@xla//xla/pjrt:pjrt_executable",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/pjrt/proto:compile_options_proto_cc",
         "@xla//xla/python:nb_absl_span",
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
