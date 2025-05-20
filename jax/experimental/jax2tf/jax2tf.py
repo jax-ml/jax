@@ -944,6 +944,11 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       if DisabledSafetyCheck.platform() in exported.disabled_safety_checks:
         call_module_attrs["platforms"] = ()  # No platform checking
 
+  if version >= 10:
+    call_module_attrs["use_shardy_partitioner"] = (
+        config.use_shardy_partitioner.value
+    )
+
   if logging.vlog_is_on(3):
     # We already logged the MLIR module when we exported it.
     logging.vlog(3, "XlaCallModule %s", str(call_module_attrs))
