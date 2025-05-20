@@ -72,7 +72,8 @@ from jax._src.sharding_impls import (
     PartitionSpec as P)
 from jax._src.util import (safe_map, safe_zip, partition_list, wrap_name,
                            tuple_update, tuple_delete, distributed_debug_log,
-                           unzip2, HashableFunction, weakref_lru_cache)
+                           unzip2, HashableFunction, weakref_lru_cache,
+                           tuple_insert)
 from jax._src.state.types import AbstractRef, RefEffect
 
 
@@ -3339,6 +3340,12 @@ def check_array_xla_sharding_layout_match(
           "compiled with. "
           f"Here are {num_mismatch_str}:\n{str_errors}")
 
+def batch_spec(spec, dim, val):
+  too_short = dim - len(spec)
+  if too_short > 0:
+    spec += (None,) * too_short
+  new_partitions = tuple_insert(spec, dim, val)  # type: ignore
+  return PartitionSpec(*new_partitions)
 
 def get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
   pspec = sharding_impls.prepare_axis_resources(pspec, "pspec to array_mapping")
