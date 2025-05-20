@@ -658,10 +658,9 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
   if rem:
     raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
 
-  def fa3_kernel(q_ref, k_ref, v_ref, out_ref, lse_ref, scoped):
+  def fa3_kernel(q_ref, k_ref, v_ref, out_ref, lse_ref, smem_buffers, q_barriers, schedule_barrier):
     batch = lax.axis_index("batch")
     wg_idx = lax.axis_index("wg")
-    smem_buffers, q_barriers, schedule_barrier = scoped
     qo_smem2, lse_smem2 = smem_buffers
     q_seq_base = lax.axis_index("q_seq") * (2 * block_q) + wg_idx * block_q
     q_head = lax.axis_index("heads")
@@ -758,46 +757,31 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
     k_ref = k_ref.at[batch, :, kv_head, :]
     v_ref = v_ref.at[batch, :, kv_head, :]
     pipeline(k_ref, v_ref)
-  mesh = plgpu.Mesh(
+
+  out_shape = [q, None]
+  if save_residuals:
+    out_shape[1] = jax.ShapeDtypeStruct((batch_size, num_q_heads, q_seq_len), jnp.float32)
+
+  qo_scratch = plgpu.SMEM((compute_wgs, block_q, head_dim), jnp.float16)
+  smem_scratch = [qo_scratch, None]
+  if save_residuals:
+    smem_scratch[1] = plgpu.SMEM((compute_wgs, block_q), jnp.float32)
+
+  out, lse = plgpu.kernel(
+      fa3_kernel,
       grid=(batch_size, num_q_tiles, num_q_heads),
       grid_names=("batch", "q_seq", "heads"),
       num_threads=3,
       thread_name="wg",
-  )
-  def run(refs):
-    q_ref, k_ref, v_ref, out_ref, lse_ref = refs
-
-    @pl.core_map(
-        mesh,
-        compiler_params=plgpu.CompilerParams(
-            approx_math=True, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
-        ),
-    )
-    def _kernel_entry():
-      qo_scratch = plgpu.SMEM(
-          (compute_wgs, block_q, head_dim), jnp.float16,
-      )
-      scratch = [qo_scratch, None]
-      if save_residuals:
-        scratch[1] = plgpu.SMEM((compute_wgs, block_q), jnp.float32)
-      pl.run_scoped(
-          lambda *args: fa3_kernel(q_ref, k_ref, v_ref, out_ref, lse_ref, args),
-          scratch,
-          plgpu.Barrier(1, num_barriers=compute_wgs),
-          plgpu.Barrier(num_arrivals=compute_wgs),
-          collective_axes="wg",
-      )
-  @jax.jit
-  def run_function(q, k, v, o, lse):
-    *_, out, lse = pl.run_state(run)((q, k, v, o, lse))
-    return out, lse
-
-  lse = (
-      jnp.full((batch_size, num_q_heads, q_seq_len), -jnp.inf, dtype=jnp.float32)
-      if save_residuals
-      else None
-  )
-  out, lse = run_function(q, k, v, jnp.full_like(q, jnp.inf), lse)
+            out_shape=out_shape,
+      scratch_shapes=(
+          tuple(smem_scratch),  # type: ignore
+          plgpu.Barrier(1, num_barriers=compute_wgs),  # type: ignore
+          plgpu.Barrier(num_arrivals=compute_wgs),),  # type: ignore
+      compiler_params=plgpu.CompilerParams(
+          approx_math=True, lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
+      ),
+  )(q, k, v)
 
   if save_residuals:
     assert lse is not None
