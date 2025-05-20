@@ -1007,6 +1007,8 @@ We list here a history of the serialization version numbers:
     available in JAX since October 20th, 2023 (JAX 0.4.20),
     and the default since February 1st, 2024 (JAX 0.4.24).
     This is the only supported version as of 27th of March, 2024.
+  * Version 10 propagate the `jax.config.use_shardy_partitioner` value to
+    XlaCallModule.
 
 ## Known issues
 
