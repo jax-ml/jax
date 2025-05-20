@@ -77,7 +77,7 @@ from jax._src.tree_util import (
     treedef_children, broadcast_prefix, all_leaves, prefix_errors, keystr,
     PyTreeDef, none_leaf_registry as none_lr, tree_map, tree_flatten_with_path)
 from jax._src.util import (
-    HashableFunction, safe_map, safe_zip, wraps, tuple_insert,
+    HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, split_list_checked, weakref_lru_cache,
     merge_lists, subs_list, fun_name, fun_qual_name)
 from jax._src.attrs import (Box, List, dne_sentinel, jax_setattr, jax_getattr,
@@ -2190,12 +2190,6 @@ def _pjit_batcher(axis_data, vals_in,
 batching.fancy_primitive_batchers[pjit_p] = _pjit_batcher
 batching.ragged_prop_rules[pjit_p] = batching.ragged_mask_no_op_rule
 
-def _insert_axis_partitions(spec, dim, val):
-  too_short = dim - len(spec)
-  if too_short > 0:
-    spec += (None,) * too_short
-  new_partitions = tuple_insert(spec, dim, val)  # type: ignore
-  return PartitionSpec(*new_partitions)
 
 def _pjit_batcher_for_sharding(
     s: Sharding | UnspecifiedValue,
@@ -2209,7 +2203,7 @@ def _pjit_batcher_for_sharding(
       return s
     if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
       return NamedSharding(
-          s.mesh, _insert_axis_partitions(s.spec, dim, PartitionSpec.UNCONSTRAINED))
+          s.mesh, pxla.batch_spec(s.spec, dim, PartitionSpec.UNCONSTRAINED))
     new_op = hlo_s.to_proto().clone()
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)  # type: ignore
@@ -2221,7 +2215,7 @@ def _pjit_batcher_for_sharding(
   else:
     if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
       return NamedSharding(
-          s.mesh, _insert_axis_partitions(s.spec, dim, spmd_axis_name))
+          s.mesh, pxla.batch_spec(s.spec, dim, spmd_axis_name))
     if isinstance(s, NamedSharding):
       mesh = s.mesh
     if mesh is None or mesh.empty:
@@ -2234,7 +2228,7 @@ def _pjit_batcher_for_sharding(
           f' manager scope{s!r}')
     spec = parse_flatten_op_sharding(hlo_s, mesh)[0]
     return NamedSharding(
-        mesh, _insert_axis_partitions(spec, dim, spmd_axis_name))
+        mesh, pxla.batch_spec(spec, dim, spmd_axis_name))
 
 
 def _pjit_jvp(primals_in, tangents_in,

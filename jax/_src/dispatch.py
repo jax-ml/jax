@@ -264,14 +264,12 @@ def get_intermediate_shardings(
       out.extend((i, source_info) for i in eqn.params['in_shardings'])
       out.extend((o, source_info) for o in eqn.params['out_shardings'])
     elif eqn.primitive is shard_map.shard_map_p:
-      if isinstance(eqn.params['mesh'], AbstractMesh):
+      mesh = eqn.params['mesh']
+      if isinstance(mesh, AbstractMesh):
         continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
-      def _names_to_pspec(names):
-        ndmin = max(names) + 1 if names else 0
-        return PartitionSpec(*(names.get(i) for i in range(ndmin)))
-      out.extend((NamedSharding(eqn.params['mesh'], _names_to_pspec(names)), source_info)
-                 for names in [*eqn.params['in_names'], *eqn.params['out_names']])
+      out.extend((NamedSharding(mesh, spec), source_info)
+                 for spec in [*eqn.params['in_specs'], *eqn.params['out_specs']])
     elif eqn.primitive is device_put_p:
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       out.extend((s, source_info) for s in eqn.params['devices']

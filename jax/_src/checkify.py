@@ -53,6 +53,7 @@ from jax._src.tree_util import tree_flatten
 from jax._src.tree_util import tree_map
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import Array
+from jax._src.partition_spec import PartitionSpec as P
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
                            unzip3, weakref_lru_cache, HashableWrapper, foreach)
 
@@ -958,7 +959,7 @@ error_checks[ad_checkpoint.remat_p] = remat_error_check
 
 def shard_map_error_check(
     error: Error, enabled_errors, *vals_in,
-    jaxpr: core.Jaxpr, in_names, out_names, **kwargs
+    jaxpr: core.Jaxpr, in_specs, out_specs, **kwargs
 ):
   if (mesh := kwargs.get('mesh')) is None:
     raise ValueError('Mesh must be provided for shard_map with checkify.')
@@ -966,7 +967,7 @@ def shard_map_error_check(
   err_vals, err_tree = jtu.tree_flatten(error)
   num_error_vals = len(err_vals)
   # Replicated sharding for in errors.
-  new_in_names = (*([{}] * num_error_vals), *in_names)
+  new_in_specs = (*([P()] * num_error_vals), *in_specs)
   new_vals_in = [*err_vals, *vals_in]
   in_avals = list(map(core.get_aval, new_vals_in))
   manual_axes = kwargs.get('manual_axes')
@@ -974,7 +975,7 @@ def shard_map_error_check(
   for i, v in enumerate(in_avals):
     if not (sharder := core.shard_aval_handlers.get(type(v))):
       raise ValueError(f'Unsupported aval type: {type(v)}')
-    in_avals[i] = sharder(mesh, manual_axes, check_vma, new_in_names[i], v)
+    in_avals[i] = sharder(mesh, manual_axes, check_vma, new_in_specs[i], v)
 
   with (jshmap._extend_axis_env(mesh, manual_axes),
         mesh_lib.use_abstract_mesh(jshmap._as_manual_mesh(mesh, manual_axes)),  # type: ignore[arg-type]
@@ -983,7 +984,7 @@ def shard_map_error_check(
     checked_jaxpr, out_tree, _ = jaxpr_to_checkify_jaxpr(
         pe.close_jaxpr(jaxpr), enabled_errors, err_tree, *in_avals
     )
-  num_out_error_vals = out_tree.num_leaves - len(out_names)
+  num_out_error_vals = out_tree.num_leaves - len(out_specs)
 
   def expand_errors_leading_dim(*xs):
     outs = core.eval_jaxpr(checked_jaxpr.jaxpr, checked_jaxpr.consts, *xs)
@@ -1001,15 +1002,15 @@ def shard_map_error_check(
 
   # Update shard_map params to account for extra error values.
   # Use fully sharded partitioning for out errors.
-  new_out_names = (*([{0: mesh.axis_names}] * num_out_error_vals), *out_names)
+  new_out_specs = (*([P(mesh.axis_names)] * num_out_error_vals), *out_specs)
   subfun = lu.hashable_partial(
       lu.wrap_init(core.eval_jaxpr, debug_info=checked_jaxpr.jaxpr.debug_info),
       checked_jaxpr.jaxpr, checked_jaxpr.consts
   )
   new_params = dict(
       jaxpr=checked_jaxpr.jaxpr,
-      in_names=new_in_names,
-      out_names=new_out_names,
+      in_specs=new_in_specs,
+      out_specs=new_out_specs,
       **kwargs,
   )
   _, new_params = jshmap.shard_map_p.get_bind_params(new_params)

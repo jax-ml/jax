@@ -736,10 +736,10 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jnp.arange(4 * 4).reshape(4, 4)
     jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name='y'))(x).jaxpr
     e, = jaxpr.eqns
-    self.assertIn('in_names', e.params)
-    self.assertEqual(e.params['in_names'], ({0: ('y',), 1: ('x',)},))
-    self.assertIn('out_names', e.params)
-    self.assertEqual(e.params['out_names'], ({0: ('y',), 1: ('x',)},))
+    self.assertIn('in_specs', e.params)
+    self.assertEqual(e.params['in_specs'], (P('y', 'x'),))
+    self.assertIn('out_specs', e.params)
+    self.assertEqual(e.params['out_specs'], (P('y', 'x'),))
 
   def test_vmap_of_grad_spmd_axis_name(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -771,10 +771,10 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jnp.arange(4 * 4).reshape(4, 4)
     jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name=('x', 'y')))(x).jaxpr
     e, = jaxpr.eqns
-    self.assertIn('in_names', e.params)
-    self.assertEqual(e.params['in_names'], ({0: ('x', 'y',)},))
-    self.assertIn('out_names', e.params)
-    self.assertEqual(e.params['out_names'], ({0: ('x', 'y',)},))
+    self.assertIn('in_specs', e.params)
+    self.assertEqual(e.params['in_specs'][0], P(('x', 'y')))
+    self.assertIn('out_specs', e.params)
+    self.assertEqual(e.params['out_specs'][0], P(('x', 'y')))
 
   def test_nested_vmap_with_capture_spmd_axis_name(self):
     self.skipTest('https://github.com/jax-ml/jax/issues/23476')
