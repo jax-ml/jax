@@ -2238,7 +2238,7 @@ def _run_scoped_lowering_rule(
   # don't synchronize when we exit the allocation, but only when we might want
   # to reuse its memory again.
   if is_multithreaded and is_thread_collective:
-    gpu_dialect.barrier()
+    mgpu.warpgroup_barrier()
   with contextlib.ExitStack() as alloc_stack:
     for v in jaxpr.invars:
       aval = v.aval
