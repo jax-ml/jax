@@ -60,7 +60,6 @@ using ImplicitDim = VectorLayout::ImplicitDim;
 
 static constexpr int kLayoutLog = 10;
 
-
 bool is_fully_replicated(const Layout &layout) {
   static LayoutOffsets replicated_offsets = {std::nullopt, std::nullopt};
   return layout.has_value() && layout->offsets() == replicated_offsets;
@@ -1520,7 +1519,30 @@ class VectorLayoutInferer {
                              native_tiling, ImplicitDim::kNone));
       return success();
     }
-    op.emitOpError("unsupported shape cast");
+
+    // Shape cast (..., m, n, k * target_shape_[1]) -> (..., m, n * k *
+    // target_shape_[1]) for 32-bit types. We allow multiple major or minor
+    // dimensions to be folded or unfolded.
+    if (kNativeBitwidth == bitwidth && res_shape.size() >= 2 &&
+        src_shape.size() >= 2 && src_shape.back() % native_tiling[1] == 0 &&
+        res_shape.back() % native_tiling[1] == 0 &&
+        (mlir::tpu::canFoldMinorDimsToSize(src_shape, res_shape.back()) ||
+         mlir::tpu::canFoldMinorDimsToSize(res_shape, src_shape.back()))) {
+      // TODO(jsreeram): Add support for picking space-efficient tilings for
+      // small 2nd minor dim shapes.
+      // Example 1: (4, 2, 1024) -> (4, 2048) If we infer src and tgt layout to
+      // be (1, 128), it is no-op because essentially we just shufflle the VREGs
+      // in VREG array.
+      // Example 2: (4, 256) -> (1, 1024) is actually sublane
+      // shuffle inside each vreg from [0, 1, 2, 3, 4,..7] to [0, 4, 1, 5, ...]
+      setLayout(op,
+                VectorLayout(layout.bitwidth(), {0, 0}, native_tiling,
+                             ImplicitDim::kNone),
+                VectorLayout(layout.bitwidth(), {0, 0}, native_tiling,
+                             ImplicitDim::kNone));
+      return success();
+    }
+    op.emitOpError("infer-vector-layout: unsupported shape cast");
     return failure();
   }
 
