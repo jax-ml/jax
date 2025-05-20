@@ -40,3 +40,6 @@ race:gemm_oncopy
 # https://github.com/python/cpython/issues/132245
 race:split_keys_entry_added
 race_top:dict_dict_merge
+
+# https://github.com/python/cpython/issues/132214
+race:type_update_dict
