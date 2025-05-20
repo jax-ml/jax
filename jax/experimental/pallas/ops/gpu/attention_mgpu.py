@@ -306,7 +306,7 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
       grid_names=("batch", "q_seq", "heads"),
       num_threads=3,
       thread_name="wg",
-      compiler_params=plgpu.GPUCompilerParams(approx_math=True),
+      compiler_params=plgpu.CompilerParams(approx_math=True),
   )(q, k, v)
 
   if save_residuals:
@@ -451,11 +451,11 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
         manual_consumed_barriers=True,
         compute_context=_compute_thread,
         in_specs=[
-            plgpu.GPUBlockSpec(  # k
+            plgpu.BlockSpec(  # k
                 block_shape=(block_kv, head_dim),
                 index_map=lambda i: (i, 0),
                 transforms=[tiling, swizzle]),
-            plgpu.GPUBlockSpec(  # v
+            plgpu.BlockSpec(  # v
                 block_shape=(block_kv, head_dim),
                 index_map=lambda i: (i, 0),
                 transforms=[tiling, swizzle]),
@@ -558,16 +558,16 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       manual_consumed_barriers=True,
       compute_context=_compute_thread,
       in_specs=[
-          plgpu.GPUBlockSpec(  # q
+          plgpu.BlockSpec(  # q
               block_shape=(block_q, head_dim),
               index_map=lambda i: (i, 0),
               transforms=[tiling, swizzle]),
-          plgpu.GPUBlockSpec(  # do
+          plgpu.BlockSpec(  # do
               block_shape=(block_q, head_dim),
               index_map=lambda i: (i, 0),
               transforms=[tiling, swizzle]),
-          plgpu.GPUBlockSpec(block_shape=(block_q,), index_map=lambda i: (i,)),
-          plgpu.GPUBlockSpec(block_shape=(block_q,), index_map=lambda i: (i,))
+          plgpu.BlockSpec(block_shape=(block_q,), index_map=lambda i: (i,)),
+          plgpu.BlockSpec(block_shape=(block_q,), index_map=lambda i: (i,))
       ])
     q_ref = q_ref.at[batch, :, q_head, :]
     do_ref = do_ref.at[batch, :, q_head, :]
@@ -589,7 +589,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
           (q_scratch, do_scratch, lse_scratch, delta_scratch),  # type: ignore
           (plgpu.Barrier(1, num_barriers=compute_wgs),) * 4  # type: ignore
       ],
-      compiler_params=plgpu.GPUCompilerParams(approx_math=True),
+      compiler_params=plgpu.CompilerParams(approx_math=True),
       grid=(batch_size, num_q_tiles, num_q_heads),
       grid_names=("batch", "q_seq", "heads"),
       num_threads=compute_wgs + 1,
@@ -610,7 +610,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
         (k_scratch, v_scratch),  # type: ignore
         (plgpu.Barrier(1, num_barriers=compute_wgs),) * 2  # type: ignore
   ],
-    compiler_params=plgpu.GPUCompilerParams(approx_math=True),
+    compiler_params=plgpu.CompilerParams(approx_math=True),
     grid=(batch_size, num_kv_tiles, num_q_heads),
     grid_names=("batch", "kv_seq", "heads"),
     num_threads=compute_wgs + 1,
@@ -746,10 +746,10 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
         manual_consumed_barriers=True,
         compute_context=_compute_thread,
         in_specs=[
-            plgpu.GPUBlockSpec(  # k
+            plgpu.BlockSpec(  # k
                 block_shape=(block_kv, head_dim),
                 index_map=lambda i: (i, 0)),
-            plgpu.GPUBlockSpec(  # v
+            plgpu.BlockSpec(  # v
                 block_shape=(block_kv, head_dim),
                 index_map=lambda i: (i, 0)),
         ],
@@ -758,7 +758,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
     k_ref = k_ref.at[batch, :, kv_head, :]
     v_ref = v_ref.at[batch, :, kv_head, :]
     pipeline(k_ref, v_ref)
-  mesh = plgpu.GPUMesh(
+  mesh = plgpu.Mesh(
       grid=(batch_size, num_q_tiles, num_q_heads),
       grid_names=("batch", "q_seq", "heads"),
       num_threads=3,
@@ -769,7 +769,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
 
     @pl.core_map(
         mesh,
-        compiler_params=plgpu.GPUCompilerParams(
+        compiler_params=plgpu.CompilerParams(
             approx_math=True, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
         ),
     )

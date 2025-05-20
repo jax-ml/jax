@@ -1551,7 +1551,7 @@ def pallas_call(
       backend-specific dataclass
       (:class:`jax.experimental.pallas.tpu.TPUCompilerParams`,
       :class:`jax.experimental.pallas.triton.TritonCompilerParams`,
-      :class:`jax.experimental.pallas.mosaic_gpu.GPUCompilerParams`) or a dict
+      :class:`jax.experimental.pallas.mosaic_gpu.CompilerParams`) or a dict
       mapping backend name to the corresponding platform-specific dataclass.
     backend: Optional string literal one of  ``"mosaic_tpu"``, ``"triton"`` or
       ``"mosaic_gpu"`` determining the backend to be used. None means let Pallas
