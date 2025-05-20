@@ -357,12 +357,11 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     if use_nperseg:
       kwargs['nperseg'] = nperseg
     if use_window:
-      kwargs['window'] = jnp.array(osp_signal.get_window('hann', nperseg),
-                                   dtype=dtypes.to_complex_dtype(dtype))
+      kwargs['window'] = jnp.array(osp_signal.get_window('hann', nperseg))
     if use_noverlap:
       kwargs['noverlap'] = noverlap
 
-    @jtu.ignore_warning(message="nperseg = 256 is greater than")
+    @jtu.ignore_warning(message="nperseg")
     def osp_fun(x):
       freqs, Pxx = osp_signal.welch(x, **kwargs)
       return freqs.astype(_real_dtype(dtype)), Pxx.astype(_real_dtype(dtype))

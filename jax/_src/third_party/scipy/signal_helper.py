@@ -57,7 +57,7 @@ def _triage_segments(window: ArrayLike | str | tuple[Any, ...], nperseg: int | N
       win = get_window(window, nperseg_int)
     win = jnp.array(win, dtype=dtype)
   else:
-    win = jnp.asarray(window)
+    win = jnp.asarray(window, dtype=dtype)
     nperseg_int = win.size if nperseg is None else int(nperseg)
     if win.ndim != 1:
       raise ValueError('window must be 1-D')
