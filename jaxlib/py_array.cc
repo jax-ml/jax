@@ -1655,9 +1655,9 @@ void PyArray_bf_releasebuffer(PyObject*, Py_buffer* buffer) {
 // Returns if shape has a major-to-minor layout.
 bool HasMajorToMinorLayout(const xla::Shape& shape) {
   if (shape.has_layout()) {
-    for (int i = 0; i < shape.layout().minor_to_major_size(); ++i) {
+    for (int i = 0; i < shape.layout().minor_to_major().size(); ++i) {
       if (shape.layout().minor_to_major(i) !=
-          shape.layout().minor_to_major_size() - 1 - i) {
+          shape.layout().minor_to_major().size() - 1 - i) {
         return false;
       }
     }
