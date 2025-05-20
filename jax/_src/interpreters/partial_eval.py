@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections import namedtuple
 from collections.abc import Callable, Sequence, Hashable
 import contextlib
+from dataclasses import dataclass
 from functools import partial
 import itertools as it
 import operator as op
@@ -2663,3 +2664,79 @@ def _linearize_of_pmap_hack(f: lu.WrappedFun, jaxpr, consts) -> tuple[Jaxpr, lis
     _, jaxpr = f.f.closure
     return convert_constvars_jaxpr(jaxpr), []
   return jaxpr, consts
+
+# IRTrace is like DynamicJaxprTrace but with the ability to do DCE on the fly
+# using Python refcounting. This avoids some eager-mode OOMs when using direct
+# linearization. It also has less baggage. TODO(dougalm, fixit): remove
+# JaxprTrace and DynamicJaxprTrace and replace with this.
+
+class IRTrace(core.Trace):
+  arg_tracers = list[Tracer]
+  eqn_count: int
+  reachable_tracers: list[Tracer]
+  debug_info: core.DebugInfo
+
+  def __init__(self, debug_info: core.DebugInfo):
+    super().__init__()
+    self.debug_info = debug_info
+    self.arg_tracers = []
+    self.eqn_count = 0
+    self.reachable_tracers = []
+
+  def to_jaxpr(self,
+               in_tracers: Sequence[Tracer],
+               out_tracers: Sequence[Tracer],
+               debug_info: core.DebugInfo):
+    assert False
+
+  def new_arg(self, aval, source_info: SourceInfo):
+    tracer = IRTracer(self, aval, [], source_info)
+    self.arg_tracers.append(tracer)
+    return tracer
+
+  def _new_var(self, aval):
+    assert False
+
+  def to_tracer(self, val: Any):
+    assert False
+
+
+  def process_primitive(self, primitive, tracers, params):
+    tracers = map(self.to_tracer, tracers)
+    eqn = TempEqn(primitive, params, tracers)
+    avals = [t.aval for t in tracers]
+    out_aval, effects = primitive.abstract_eval(*avals, **params)
+    out_var = self._new_var(out_aval)
+    out_tracer = IRTracer(self, out_aval, [eqn], None, out_var)
+    eqn.result = weakref.ref(out_tracer)
+    return out_tracer
+
+  def invalidate(self):
+    assert False
+
+# An Eqn with IRTracers and consts instead of variables
+@dataclass
+class TempEqn:
+  position: int
+  prim: core.Primitive
+  params: dict
+  args: tuple[IRTracer]
+  result: IRTrace
+
+class IRTracer(core.Tracer):
+  __slots__ = ['aval', 'requires', 'constval', 'var']
+  def __init__(self,
+               trace: IRTrace,
+               aval: core.AbstractValue,
+               requires: list[TempEqn],
+               constval=None,
+               var=None,
+               line_info: source_info_util.SourceInfo | None = None,
+               ):
+    self._trace = trace
+    self._line_info = line_info
+    self._trace = trace
+    self.aval = aval  # type: ignore[misc]
+    self.requires = requires
+    self.constval = constval
+    self.var = var

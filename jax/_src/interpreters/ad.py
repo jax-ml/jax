@@ -91,8 +91,7 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _tag: core.TraceTag,
                        *primals, **params):
   source_info = source_info_util.current()
   with core.take_current_trace() as parent_trace:
-    tangent_trace = pe.DynamicJaxprTrace(debug_info)
-    tangent_trace.tag = _tag
+    tangent_trace = pe.IRTrace(debug_info)
     linearize_trace = LinearizeTrace(parent_trace, tangent_trace, tag=_tag)
     tracers = [LinearizeTracer(linearize_trace, p,
                                tangent_trace.new_arg(get_aval(p).to_tangent_aval(),
@@ -105,7 +104,7 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _tag: core.TraceTag,
       del linearize_trace, ans, tracers
   nzs_out = tuple(type(t) is not Zero for t in out_tangents)
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
-  out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_tangents)  # type: ignore[assignment]
+  out_tangents = map(partial(tangent_trace.to_tracer, source_info=source_info), out_tangents)  # type: ignore[assignment]
   jaxpr, consts, attrs_tracked = tangent_trace.to_jaxpr(out_tangents, debug_info)
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
@@ -170,9 +169,8 @@ def _linearize_jaxpr(
   ) -> tuple[core.ClosedJaxpr, int, Sequence[bool], core.ClosedJaxpr]:
   dbg = jaxpr.jaxpr.debug_info
   primal_trace = pe.DynamicJaxprTrace(dbg)
-  tangent_trace = pe.DynamicJaxprTrace(dbg)
+  tangent_trace = pe.IRTrace(dbg)
   lin_trace = LinearizeTrace(primal_trace, tangent_trace)
-  tangent_trace.tag = lin_trace.tag
 
   def new_arg(trace, primal_aval, nz, source_info):
     primal = primal_trace.new_arg(primal_aval, source_info)
@@ -216,11 +214,10 @@ def direct_linearize(traceable: lu.WrappedFun,
                      primals, kwargs, *, has_aux=False, tag=None):
   with core.take_current_trace() as parent_trace:
     source_info = source_info_util.current()
-    tangent_trace = pe.DynamicJaxprTrace(traceable.debug_info)
+    tangent_trace = pe.IRTrace(traceable.debug_info)
     tangents = [tangent_trace.new_arg(get_aval(p).to_tangent_aval(), source_info) for p in primals]
     tangents = [Zero.from_primal_value(t) if dtype(t) == float0 else t for t in tangents]
     linearize_trace = LinearizeTrace(parent_trace, tangent_trace, tag=tag)
-    tangent_trace.tag = linearize_trace.tag
     tracers = [LinearizeTracer(linearize_trace, p, t) for p, t in zip(primals, tangents)]
     tracers = [t.full_lower() for t in tracers]
     with (core.set_current_trace(linearize_trace, check_leaks=True),
