@@ -304,6 +304,7 @@ HostBufferSemantics = _xla.HostBufferSemantics
 
 XlaComputation = _xla.XlaComputation
 Client = _xla.Client
+CompileOnlyPyClient = _xla.CompileOnlyPyClient
 Memory = _xla.Memory
 Array = _xla.Array
 ArrayImpl = _xla.ArrayImpl

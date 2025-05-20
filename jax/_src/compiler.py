@@ -293,6 +293,19 @@ def backend_compile(
     options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
 ) -> xc.LoadedExecutable:
+  return backend_compile_and_load(
+      backend, module, executable_devices, options, host_callbacks
+  )
+
+
+@profiler.annotate_function
+def backend_compile_and_load(
+    backend: xc.Client,
+    module: ir.Module,
+    executable_devices: xc.DeviceList,
+    options: xc.CompileOptions,
+    host_callbacks: Sequence[Any],
+) -> xc.LoadedExecutable:
   sym_name = module.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
   # Convert ir.Module to a string representation, unless the backend
@@ -322,18 +335,35 @@ def backend_compile(
 
     # we use a separate function call to ensure that XLA compilation appears
     # separately in Python profiling results
-    if host_callbacks:
+    elif jaxlib_extension_version < 342 or isinstance(backend, xc.CompileOnlyPyClient):
+      if host_callbacks:
+        return backend.compile(
+            built_c,
+            executable_devices=executable_devices,  # type: ignore
+            compile_options=options,
+            host_callbacks=host_callbacks,
+        )
+      # Some backends don't have `host_callbacks` option yet
+      # TODO(sharadmv): remove this fallback when all backends allow `compile`
+      # to take in `host_callbacks`
       return backend.compile(
+          built_c, executable_devices=executable_devices, compile_options=options)  # type: ignore
+    else:
+      if host_callbacks:
+        return backend.compile_and_load(
+            built_c,
+            executable_devices=executable_devices,
+            compile_options=options,
+            host_callbacks=host_callbacks,
+        )
+      # Some backends don't have `host_callbacks` option yet
+      # TODO(sharadmv): remove this fallback when all backends allow `compile`
+      # to take in `host_callbacks`
+      return backend.compile_and_load(
           built_c,
-          executable_devices=executable_devices,  # type: ignore
+          executable_devices=executable_devices,
           compile_options=options,
-          host_callbacks=host_callbacks,
       )
-    # Some backends don't have `host_callbacks` option yet
-    # TODO(sharadmv): remove this fallback when all backends allow `compile`
-    # to take in `host_callbacks`
-    return backend.compile(
-        built_c, executable_devices=executable_devices, compile_options=options)  # type: ignore
   except xc.XlaRuntimeError as e:
     for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
       handler_result = error_handler(e)
@@ -398,7 +428,7 @@ def compile_or_get_cached(
   )
 
   if cache_key is None:
-    return backend_compile(
+    return backend_compile_and_load(
         backend, computation, executable_devices, compile_options,
         host_callbacks)
 
@@ -426,7 +456,7 @@ def compile_or_get_cached(
       config.share_binary_between_hosts.value
       and is_multi_process
       and distributed.global_state.client is not None
-      # Host callbacks are currently baked into the HLO module so we cant share
+      # Host callbacks are currently baked into the HLO module so we can't share
       # them.
       and len(host_callbacks) == 0
   ):
@@ -716,7 +746,7 @@ def _compile_and_write_cache(
     cache_key: str,
 ) -> xc.LoadedExecutable:
   start_time = time.monotonic()
-  executable = backend_compile(
+  executable = backend_compile_and_load(
       backend, computation, executable_devices, compile_options, host_callbacks
   )
   compile_time = time.monotonic() - start_time
