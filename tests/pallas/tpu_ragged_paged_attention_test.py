@@ -19,6 +19,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.ragged_paged_attention import (
+    cdiv,
     dynamic_validate_inputs,
     ragged_paged_attention,
     ref_ragged_paged_attention,
@@ -29,13 +30,8 @@ import jax.numpy as jnp
 jax.config.parse_flags_with_absl()
 
 
-def ceil_div(x, a):
-  assert a != 0
-  return (x + a - 1) // a
-
-
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
-class PagedAttentionKernelTest(jtu.JaxTestCase):
+class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
 
   def _test_ragged_paged_attention(
       self,
@@ -66,29 +62,56 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     max_num_batched_tokens = max(cu_q_lens[-1], max_num_batched_tokens)
     max_num_seq = max(len(seq_lens), max_num_seq)
     max_kv_len = max(kv_lens)
-    pages_per_seq = ceil_div(max_kv_len, page_size)
+    pages_per_seq = cdiv(max_kv_len, page_size)
     num_q_heads, num_kv_heads = num_heads
 
-    cu_q_lens = jnp.array(cu_q_lens, dtype=jnp.int32)
-    kv_lens = jnp.array(kv_lens, dtype=jnp.int32)
-    cu_q_lens = jnp.pad(cu_q_lens, (0, max_num_seq + 1 - cu_q_lens.shape[0]))
-    kv_lens = jnp.pad(kv_lens, (0, max_num_seq - kv_lens.shape[0]))
     prng_key = jax.random.key(1234)
-    k0, k1, k2 = jax.random.split(prng_key, 3)
+    k0, k1 = jax.random.split(prng_key, 2)
     q = jax.random.normal(
         k0,
         (max_num_batched_tokens, num_q_heads, head_dim),
         dtype=dtype,
     )
-    kv_pages = jax.random.normal(
-        k1,
-        (num_pages, page_size, num_kv_heads * 2, head_dim),
-        dtype=dtype,
-    )
-    page_indices = jax.random.randint(
-        k2, (max_num_seq, pages_per_seq), 0, num_pages, dtype=jnp.int32
-    )
+    page_cnt = 0
+    page_indices_list = []
+    kv_pages_list = []
+    for kv_len in kv_lens:
+      kv = jax.random.normal(
+          k1,
+          (kv_len, num_kv_heads * 2, head_dim),
+          dtype=dtype,
+      )
+      kv = jnp.pad(
+          kv,
+          ((0, cdiv(kv_len, page_size) * page_size - kv_len), (0, 0), (0, 0)),
+          constant_values=jnp.nan,
+      ).reshape(-1, page_size, num_kv_heads * 2, head_dim)
+      indices = page_cnt + jnp.arange(kv.shape[0], dtype=jnp.int32)
+      indices = jnp.pad(
+          indices,
+          ((0, pages_per_seq - indices.shape[0]),),
+          constant_values=jnp.nan,
+      )
+      page_indices_list.append(indices)
+      page_cnt += kv.shape[0]
+      kv_pages_list.append(kv)
 
+    kv_pages = jnp.concatenate(kv_pages_list, axis=0)
+    kv_pages = jnp.pad(
+        kv_pages,
+        ((0, num_pages - kv_pages.shape[0]), (0, 0), (0, 0), (0, 0)),
+        constant_values=jnp.nan,
+    )
+    page_indices = jnp.stack(page_indices_list, axis=0)
+    page_indices = jnp.pad(
+        page_indices,
+        ((0, max_num_seq - page_indices.shape[0]), (0, 0)),
+        constant_values=jnp.nan,
+    )
+    cu_q_lens = jnp.array(cu_q_lens, dtype=jnp.int32)
+    cu_q_lens = jnp.pad(cu_q_lens, (0, max_num_seq + 1 - cu_q_lens.shape[0]))
+    kv_lens = jnp.array(kv_lens, dtype=jnp.int32)
+    kv_lens = jnp.pad(kv_lens, (0, max_num_seq - kv_lens.shape[0]))
     num_seqs = jnp.array([len(seq_lens)], dtype=jnp.int32)
 
     dynamic_validate_inputs(
