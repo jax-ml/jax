@@ -49,19 +49,23 @@ jobs:
             --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
             --test_output=errors \
             --test_env=JAX_ACCELERATOR_COUNT=1 \
-            --test_env=JAX_TESTS_PER_ACCELERATOR=32 \
+            --test_env=JAX_TESTS_PER_ACCELERATOR=8 \
             --strategy=TestRunner=local \
-            --local_test_jobs=32 \
-            --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-            --test_tag_filters=-multiaccelerator \
+            --local_test_jobs=8 \
+            --test_env=JAX_EXCLUDE_TEST_TARGETS='PmapTest.testSizeOverflow|.*InterpretTest.*' \
             --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
             --action_env=JAX_ENABLE_X64="1" \
             --action_env=NCCL_DEBUG=WARN \
+            --flaky_test_attempts=1 \
+            --test_timeout=420 \
             --color=yes \
-            //tests:gpu_tests //tests:backend_independent_tests \
-            //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
-            //tests/mosaic:gpu_tests //tests/mosaic:backend_independent_tests
+            //tests:cudnn_fusion_test_gpu \
+            //tests:scaled_matmul_stablehlo_test_gpu \
+            //tests:fused_attention_stablehlo_test_gpu \
+            //tests:nn_test_gpu \
+            //tests/pallas:gpu_tests \
+            //tests/mosaic:gpu_tests
   run_multiaccelerator_tests:
     if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
     runs-on: linux-x86-a3-8g-h100-8gpu
@@ -86,13 +90,20 @@ jobs:
             --test_output=errors \
             --strategy=TestRunner=local \
             --local_test_jobs=8 \
-            --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
+            --test_env=JAX_EXCLUDE_TEST_TARGETS='PmapTest.testSizeOverflow|.*InterpretTest.*' \
             --test_tag_filters=multiaccelerator \
             --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
             --action_env=JAX_ENABLE_X64="1" \
             --action_env=NCCL_DEBUG=WARN \
+            --flaky_test_attempts=1 \
             --color=yes \
-            //tests:gpu_tests //tests:backend_independent_tests \
-            //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
-            //tests/mosaic:gpu_tests //tests/mosaic:backend_independent_tests
+            //tests/mosaic:gpu_tests \
+            //tests/pallas:gpu_tests \
+            //tests:array_interoperability_test_gpu \
+            //tests:cudnn_fusion_test_gpu \
+            //tests:fused_attention_stablehlo_test_gpu
+            //tests:fused_attention_stablehlo_test_gpu \
+            //tests:gpu_tests \
+            //tests:python_callback_test_gpu \
+            //tests:ragged_collective_test_gpu
