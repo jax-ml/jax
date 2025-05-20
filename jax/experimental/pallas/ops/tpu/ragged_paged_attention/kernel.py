@@ -39,19 +39,16 @@ class MultiPageAsyncCopyDescriptor:
       vmem_buf,  # [num_kv_pages_per_blk, page_size, num_combined_kv_heads_per_blk, head_dim]
       sem,
       page_indices_ref,  # i32[max_num_seqs, pages_per_seq]
-      offset,  # [seq_idx, kv_pages_start]
+      metadata,  # [seq_idx, start_page_idx, end_page_idx]
   ):
     self._vmem_buf = vmem_buf
-    seq_id, kv_pages_start = offset
-    pages_per_seq = page_indices_ref.shape[1]
+    seq_id, start_page_idx, end_page_idx = metadata
     self._async_copies = []
     # TODO(jevinjiang): Only fetch dynamic shape in need! This will insert
     # a bunch of if-ops. Check the performance when we have benchmarking setup.
     for i in range(vmem_buf.shape[0]):
-      page_idx = kv_pages_start + i
-      page_idx = jax.lax.select(
-          page_idx < pages_per_seq, page_idx, pages_per_seq - 1
-      )
+      page_idx = start_page_idx + i
+      page_idx = jax.lax.select(page_idx < end_page_idx, page_idx, 0)
       self._async_copies.append(
           pltpu.make_async_copy(
               pages_hbm_ref.at[page_indices_ref[seq_id, page_idx]],
@@ -298,6 +295,7 @@ def ragged_paged_attention_kernel(
   if mask_value is None:
     mask_value = DEFAULT_MASK_VALUE
   num_q_per_blk, num_q_heads_per_blk, head_dim = q_ref.shape
+  pages_per_seq = page_indices_ref.shape[-1]
   num_seqs = num_seqs_ref[0]
   _, num_kv_pages_per_blk, page_size, num_combined_kv_heads_per_blk, _ = (
       kv_bufs.shape
@@ -318,7 +316,11 @@ def ragged_paged_attention_kernel(
   def create_kv_async_copy_descriptors(
       heads_blk_idx, seq_idx, kv_blk_idx, buf_idx
   ):
-    offset = (seq_idx, kv_blk_idx * num_kv_pages_per_blk)
+    start_kv_page_idx = kv_blk_idx * num_kv_pages_per_blk
+    end_kv_page_idx = jnp.minimum(
+        pages_per_seq, cdiv(kv_lens_ref[seq_idx], page_size)
+    )
+    metadata = (seq_idx, start_kv_page_idx, end_kv_page_idx)
     heads_start = heads_blk_idx * num_combined_kv_heads_per_blk
     async_copy_kv = MultiPageAsyncCopyDescriptor(
         kv_pages_hbm_ref.at[
@@ -327,7 +329,7 @@ def ragged_paged_attention_kernel(
         kv_bufs.at[buf_idx],
         sems.at[buf_idx],
         page_indices_ref,
-        offset,
+        metadata,
     )
     return async_copy_kv
 
@@ -423,18 +425,22 @@ def ragged_paged_attention_kernel(
           num_q_per_blk * num_q_heads_per_kv_head,
           head_dim,
       )
-      assert k.shape == (
-          num_kv_per_blk,
-          head_dim,
-      ), f"{k.shape=}, {(num_kv_per_blk, head_dim)=} {k.dtype=}"
-      assert v.shape == (num_kv_per_blk, head_dim)
-      assert head_m_ref.shape == (
-          num_q_per_blk * num_q_heads_per_kv_head,
-          128,
+      assert (
+          k.shape
+          == v.shape
+          == (
+              num_kv_per_blk,
+              head_dim,
+          )
       )
-      assert head_l_ref.shape == (
-          num_q_per_blk * num_q_heads_per_kv_head,
-          128,
+      assert k.dtype == v.dtype
+      assert (
+          head_m_ref.shape
+          == head_l_ref.shape
+          == (
+              num_q_per_blk * num_q_heads_per_kv_head,
+              128,
+          )
       )
       assert head_acc_ref.shape == (
           num_q_per_blk,
@@ -447,6 +453,13 @@ def ragged_paged_attention_kernel(
         iota = lax.broadcasted_iota(jnp.int32, ref.shape, 0) // group
         mask = jnp.logical_and(iota >= start, iota < end)
         pl.store(ref, idx=tuple(slice(None) for _ in ref.shape), val=val, mask=mask)
+
+      # kv lens will be contracting dim, we should mask out the NaNs.
+      kv_mask = (
+          lax.broadcasted_iota(jnp.int32, k.shape, 0) < kv_len - kv_len_start
+      )
+      k = jnp.where(kv_mask, k.astype(jnp.float32), 0).astype(k.dtype)
+      v = jnp.where(kv_mask, v.astype(jnp.float32), 0).astype(v.dtype)
 
       qk = (
           jnp.einsum("nd,md->nm", q, k, preferred_element_type=jnp.float32)
@@ -709,7 +722,7 @@ def ragged_paged_attention(
 
   Args:
     q: concatenated all sequences' queries.
-    kv_pages: paged K cache. Normally in HBM.
+    kv_pages: paged KV cache. Normally in HBM.
     kv_lens: padded kv lengths. Only the first num_seqs values are valid.
     page_indices: the first index indicates which page to use in the kv cache
       for each sequence. Only the first num_seqs values are valid.
