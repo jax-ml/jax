@@ -640,7 +640,7 @@ async def main():
         # Strip leading zeros as they end up being stripped by setuptools,
         # which leads to a mismatch between expected and actual wheel names
         # https://peps.python.org/pep-0440/
-        wheel_git_hash = option.split("=")[-1][:9].lstrip('0')
+        wheel_git_hash = option.split("=")[-1].lstrip('0')[:9]
 
   with open(".jax_configure.bazelrc", "w") as f:
     jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command_base.get_command_as_list(), args.use_new_wheel_build_rule)
