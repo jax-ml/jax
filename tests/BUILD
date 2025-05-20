@@ -121,6 +121,10 @@ jax_py_test(
 jax_multiplatform_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
+    disable_configs = [
+        "gpu_h100_tfrt",  # TODO(b/411472145): Re-enable once fixed.
+        "gpu_h100x2_tfrt",
+    ],
     enable_backends = [
         "cpu",
         "gpu",
@@ -128,7 +132,9 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100x2",
     ],
-    tags = ["multiaccelerator"],
+    tags = [
+        "multiaccelerator",
+    ],
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -1134,6 +1140,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
+    disable_configs = [
+        "gpu_h100_tfrt",  # TODO(b/411472145): Re-enable once fixed.
+        "gpu_h100x2_tfrt",
+    ],
     enable_backends = [
         "cpu",
         "gpu",
