@@ -551,17 +551,6 @@ class Client:
   ) -> PjRtLayout: ...
   def __getattr__(self, name: str) -> Any: ...
 
-
-class CompileOnlyPyClient(Client):
-  def compile(
-      self,
-      computation: str | bytes,
-      executable_devices: DeviceList | Sequence[Device],
-      compile_options: CompileOptions = ...,
-      host_callbacks: Sequence[Any] = ...,
-  ) -> LoadedExecutable: ...
-
-
 class CpuCollectives: ...
 
 def make_gloo_tcp_collectives(

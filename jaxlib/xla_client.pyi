@@ -24,7 +24,6 @@ from jaxlib._jax import ArrayCopySemantics as ArrayCopySemantics
 from jaxlib._jax import ArrayImpl as ArrayImpl
 from jaxlib._jax import AutotuneCacheMode as AutotuneCacheMode
 from jaxlib._jax import Client as Client
-from jaxlib._jax import CompileOnlyPyClient as CompileOnlyPyClient
 from jaxlib._jax import CompileOptions as CompileOptions
 from jaxlib._jax import Device as Device
 from jaxlib._jax import DeviceAssignment as DeviceAssignment
