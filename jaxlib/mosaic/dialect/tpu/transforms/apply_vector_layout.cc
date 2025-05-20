@@ -4301,6 +4301,43 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
+// Copy one sublane from a vreg to another vreg.
+//
+// Arguments:
+//  src_vreg: The source vreg to copy a sublane from.
+//  src_sl_idx: The sublane index in src_vreg to copy from.
+//  dst_vreg: The base vreg to copy the sublane into. May be null.
+//  dst_sl_idx: The sublane index in the result.
+//
+// Returns:
+//  A new dst_vreg with the copied sublane.
+Value copyOneSublane(OpBuilder &builder, Value src_vreg, int src_sl_idx,
+                     Value dst_vreg, int dst_sl_idx,
+                     const std::array<int64_t, 2> target_shape) {
+  src_vreg = builder.create<tpu::RotateOp>(
+      src_vreg.getLoc(), src_vreg,
+      /*amount=*/(dst_sl_idx - src_sl_idx + target_shape[0]) % target_shape[0],
+      /*dimension=*/0, /*stride=*/nullptr, /*stride_dimension=*/nullptr);
+  if (dst_vreg) {
+    auto boundIdxConst =
+        std::bind(IdxConst, std::placeholders::_1, builder, src_vreg.getLoc());
+    const int bitwidth =
+        cast<VectorType>(src_vreg.getType()).getElementTypeBitWidth();
+    CHECK_EQ(bitwidth,
+             cast<VectorType>(dst_vreg.getType()).getElementTypeBitWidth());
+    const VectorType vmask_ty =
+        getNativeVregOrVmaskType(builder.getI1Type(), bitwidth, target_shape);
+    auto sublanes_mask = builder.create<tpu::CreateMaskOp>(
+        src_vreg.getLoc(), vmask_ty,
+        ValueRange{boundIdxConst(dst_sl_idx), boundIdxConst(0)},
+        ValueRange{boundIdxConst(dst_sl_idx + 1),
+                   boundIdxConst(target_shape[1])});
+    src_vreg = builder.create<arith::SelectOp>(src_vreg.getLoc(), sublanes_mask,
+                                               src_vreg, dst_vreg);
+  }
+  return src_vreg;
+}
+
 LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
                                      const ArrayRef<Layout> layouts_in,
                                      const ArrayRef<Layout> layouts_out) {
@@ -4397,6 +4434,132 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
       dst_vregs_local.Reshape(
           layout_out.tileArrayImplicitShape(dst_shape, ctx.target_shape));
       return dst_vregs_local;
+    } else if (
+        // Lower shape_casts for 32-bit types where the minor dimension both
+        // before and after the shape cast is a multiple of 128. We allow
+        // folding or unfolding multiple number of minor dimensions and folding
+        // or unfolding some number of leading dimensions. For example (given
+        // k % 128 == 0 in the following):
+        // (q, m, n, k) -> (q, m, n * k)
+        // (p, q, m, n, k) -> (p, q * m * n * k)
+        // (q, m, n, k) -> (q, m, 1, n * k) (in 2 steps, first to fold n, k then
+        //    to add the unit dimension)
+        // (q, m, n, k) -> (q * m, n * k)
+        // (q * m, n, k) -> (q, m, n * k)
+        // (q * m, n * k) -> (q, m, n, k)
+        // (q, m, n * k) -> (q * m, n, k)
+        dst_shape.size() > 1 && src_shape.size() > 1 &&
+        (mlir::tpu::canFoldMinorDimsToSize(src_shape, dst_shape.back()) ||
+         mlir::tpu::canFoldMinorDimsToSize(dst_shape, src_shape.back())) &&
+        dst_shape.back() % ctx.target_shape[1] == 0 &&
+        src_shape.back() % ctx.target_shape[1] == 0 &&
+        layout_in.offsets() == LayoutOffsets{0, 0} &&
+        layout_in.hasNativeTiling(ctx.target_shape) &&
+        layout_in.bitwidth() == 32 &&
+        layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+        layout_out == layout_in) {
+      auto target_sublanes = ctx.target_shape[0];
+      auto target_lanes = ctx.target_shape[1];
+      xla::Array<Value> dst_vregs(
+          layout_out.tileArrayShape(false, false, dst_shape, ctx.target_shape));
+
+      auto to_linear_index = [&](absl::Span<const int64_t> indices,
+                                 absl::Span<const int64_t> bounds) {
+        CHECK_EQ(indices.size(), bounds.size());
+        int linear_index = 0;
+        int multiplier = 1;
+        for (int i = indices.size() - 1; i >= 0; --i) {
+          linear_index += multiplier * indices[i];
+          multiplier *= bounds[i];
+        }
+        return linear_index;
+      };
+      auto from_linear_index = [&](int linear_index,
+                                   absl::Span<const int64_t> bounds) {
+        SmallVector<int64_t> indices(bounds.size(), 0);
+        int64_t divisor = std::accumulate(bounds.begin(), bounds.end(), 1,
+                                          std::multiplies<int64_t>());
+        CHECK_GT(divisor, 0);
+        int64_t remainder = linear_index % divisor;
+        for (int i = 0; i < bounds.size(); ++i) {
+          int64_t radix = bounds[i];
+          CHECK_GT(radix, 0);
+          divisor /= radix;
+          CHECK_GT(divisor, 0);
+          indices[i] = remainder / divisor;
+          remainder = remainder % divisor;
+        }
+        return indices;
+      };
+      // Gather sublanes from src_vregs via rotating and selecting each relevant
+      // sublane from the source, into the destination vreg.
+      // Args:
+      // * src_sublane_indices: the mixed-radix indices of the sublanes to
+      // gather in the order they should be gathered.
+      // * src_vregs: the vregs to gather from.
+      // Returns:
+      // * a vreg with the gathered sublanes.
+      auto gather_sublanes = [target_sublanes](
+                                 RewriteContext &ctx, Operation &op,
+                                 SmallVector<SmallVector<int64_t>>
+                                     src_sublane_indices,
+                                 const xla::Array<Value> &src_vregs) {
+        ImplicitLocOpBuilder builder(op.getLoc(), &op);
+        Value dst_vreg = getZerosVector(
+            builder, cast<VectorType>(src_vregs.begin()->getType()));
+        for (int sublane_number = 0;
+             sublane_number < src_sublane_indices.size(); ++sublane_number) {
+          SmallVector<int64_t> src_vreg_index =
+              src_sublane_indices[sublane_number];
+          src_vreg_index[src_vreg_index.size() - 2] /= target_sublanes;
+          Value src_vreg = src_vregs(src_vreg_index);
+          int sublane_within_src_vreg =
+              src_sublane_indices[sublane_number]
+                                 [src_sublane_indices[sublane_number].size() -
+                                  2] %
+              target_sublanes;
+          dst_vreg = copyOneSublane(builder, src_vreg, sublane_within_src_vreg,
+                                    dst_vreg, sublane_number, ctx.target_shape);
+        }
+        return dst_vreg;
+      };
+      SmallVector<int64_t> dst_shape_in_sublanes(dst_shape);
+      dst_shape_in_sublanes[dst_shape.size() - 1] =
+          dst_shape[dst_shape.size() - 1] / target_lanes;
+      SmallVector<int64_t> src_shape_in_sublanes(src_shape);
+      src_shape_in_sublanes[src_shape.size() - 1] =
+          src_shape[src_shape.size() - 1] / target_lanes;
+      // The algorithm operates on 1 destination vreg at a time:
+      // 1. For each destination vreg, compute the linear index of each sublane
+      // within it
+      // 2. Map the destination sublane linear index to a source sublane linear
+      // index
+      // 3. convert that to a mixed-radix index into the source shape
+      // 4. Gather from those source sublane indices.
+      SmallVector<int64_t> indices;
+      dst_vregs.Each([&](absl::Span<const int64_t> dst_vreg_indices,
+                         Value *dst_vreg) {
+        indices.assign(dst_vreg_indices.begin(), dst_vreg_indices.end());
+        indices[indices.size() - 2] *= target_sublanes;
+        int sublane_offset = to_linear_index(indices, dst_shape_in_sublanes);
+
+        // Only move non-padding sublanes to the destination vreg.
+        int num_non_padding_sublanes = std::min(
+            dst_shape_in_sublanes[dst_shape_in_sublanes.size() - 2] -
+                dst_vreg_indices[dst_vreg_indices.size() - 2] * target_sublanes,
+            target_sublanes);
+        CHECK_EQ(dst_shape.back() % target_lanes, 0);
+        int stride_in_sublanes = dst_shape.back() / target_lanes;
+        SmallVector<SmallVector<int64_t>> gathered_sublanes(
+            num_non_padding_sublanes);
+        for (int i = 0; i < gathered_sublanes.size(); ++i) {
+          gathered_sublanes[i] =
+              from_linear_index(sublane_offset, src_shape_in_sublanes);
+          sublane_offset += stride_in_sublanes;
+        }
+        *dst_vreg = gather_sublanes(ctx, op, gathered_sublanes, src_vregs);
+      });
+      return dst_vregs;
     } else {
       return shape_cast_op.emitOpError(
                  "Not implemented: Unsupported vector.shape_cast: ")
@@ -5261,45 +5424,6 @@ xla::Array<Value> retileToReducedSublanes(
   });
   return dst_vreg_array;
 }
-
-
-// Copy one sublane from a vreg to another vreg.
-//
-// Arguments:
-//  src_vreg: The source vreg to copy a sublane from.
-//  src_sl_idx: The sublane index in src_vreg to copy from.
-//  dst_vreg: The base vreg to copy the sublane into. May be null.
-//  dst_sl_idx: The sublane index in the result.
-//
-// Returns:
-//  A new dst_vreg with the copied sublane.
-Value copy_one_sublane(OpBuilder &builder, Value src_vreg, int src_sl_idx,
-                       Value dst_vreg, int dst_sl_idx,
-                       const std::array<int64_t, 2> target_shape) {
-  src_vreg = builder.create<tpu::RotateOp>(
-      src_vreg.getLoc(), src_vreg,
-      /*amount=*/(dst_sl_idx - src_sl_idx + target_shape[0]) % target_shape[0],
-      /*dimension=*/0, /*stride=*/nullptr, /*stride_dimension=*/nullptr);
-  if (dst_vreg) {
-    auto boundIdxConst =
-        std::bind(IdxConst, std::placeholders::_1, builder, src_vreg.getLoc());
-    const int bitwidth =
-        cast<VectorType>(src_vreg.getType()).getElementTypeBitWidth();
-    CHECK_EQ(bitwidth,
-             cast<VectorType>(dst_vreg.getType()).getElementTypeBitWidth());
-    const VectorType vmask_ty =
-        getNativeVregOrVmaskType(builder.getI1Type(), bitwidth, target_shape);
-    auto sublanes_mask = builder.create<tpu::CreateMaskOp>(
-        src_vreg.getLoc(), vmask_ty,
-        ValueRange{boundIdxConst(dst_sl_idx), boundIdxConst(0)},
-        ValueRange{boundIdxConst(dst_sl_idx + 1),
-                   boundIdxConst(target_shape[1])});
-    src_vreg = builder.create<arith::SelectOp>(src_vreg.getLoc(), sublanes_mask,
-                                               src_vreg, dst_vreg);
-  }
-  return src_vreg;
-}
-
 
 void rotateVregs(OpBuilder &builder, xla::Array<Value> &vregs,
                  const int64_t amount, const int dimension) {
@@ -6714,9 +6838,9 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
         for (int tile_idx = 0; tile_idx < tiles_per_vreg; ++tile_idx) {
           int tile_off = tile_idx * sublanes_per_tile;
           *tile =
-              copy_one_sublane(builder, vregs(src_idx),
-                               tile_off + src.offsets()[0].value_or(dst_sl_idx),
-                               *tile, tile_off + dst_sl_idx, target_shape);
+              copyOneSublane(builder, vregs(src_idx),
+                             tile_off + src.offsets()[0].value_or(dst_sl_idx),
+                             *tile, tile_off + dst_sl_idx, target_shape);
         }
       }
     });

@@ -284,6 +284,12 @@ inline arith::ConstantOp I32Const(int32_t value, ArrayRef<int64_t> shape,
 }
 
 std::optional<int64_t> getIntConst(Value v);
+
+// Returns true if the product of up to `shape.size() - 1` minor-most dimensions
+// in `shape` equals `target_size`. The major-most dimension is not considered.
+// Precondition: `shape` has at least 2 dimensions.
+bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size);
+
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
