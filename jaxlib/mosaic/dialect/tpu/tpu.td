@@ -466,10 +466,19 @@ def TPU_GatherOp : TPU_Op<"gather", [Pure]> {
   }];
 }
 
-def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure]> {
+def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, SameOperandsAndResultShape, AllTypesMatch<["source", "output"]>]> {
+  let description = [{
+    Gathers elements from `source` using `indices`.
+
+    Given a shape `N0 x N1 x ...`, `output[i0, i1, ...]` is given by
+    `input[j0, j1, ...]` where `jn = indices[i0, i1, ...] mod Ni` for
+    `n = dimension` and `jn = in` otherwise.
+
+    Similar to `np.take_along_axis`, except that OOB indices wrap.
+  }];
   let arguments = (ins
     AnyVectorOfNonZeroRank:$source,
-    AnyVectorOfNonZeroRank:$indices,
+    VectorOfNonZeroRankOf<[AnyInteger]>:$indices,
     I32Attr:$dimension
   );
   let results = (outs AnyVectorOfNonZeroRank:$output);

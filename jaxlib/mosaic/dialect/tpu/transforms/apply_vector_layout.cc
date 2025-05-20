@@ -3537,12 +3537,13 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
                  std::array{false, true}) {  // Lane broadcast
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 1), 1);
         TPU_ASSERT_OP(offsets_in[1].has_value());
+        VectorType i32_vreg_ty =
+            getNativeVregType(builder.getI32Type(), ctx.target_shape);
         const int64_t offset = *offsets_in[1];
         const int64_t lane_offset = offset % ctx.target_shape[1];
         const int64_t tile_offset = offset / ctx.target_shape[1];
         Value lane_offset_cst = getFullVector(
-            builder, getNativeVregType(builder.getI32Type(), ctx.target_shape),
-            builder.getI32IntegerAttr(lane_offset));
+            builder, i32_vreg_ty, builder.getI32IntegerAttr(lane_offset));
         DenseI32ArrayAttr sublane_pattern;
         if (num_tiles != 1) {
           SmallVector<int32_t> pattern;
@@ -3555,7 +3556,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
           sublane_pattern = builder.getDenseI32ArrayAttr(pattern);
         }
         src_tiles.Each([&](const absl::Span<const int64_t> src_idx,
-                           Value *const src_tile) {
+                           Value *const src_vreg) {
           SmallVector<int64_t> dst_starts(dst_tiles_implicit_shape.size());
           SmallVector<int64_t> dst_limits(dst_tiles_implicit_shape.size());
           for (int64_t i = 0; i < dst_tiles.num_dimensions(); ++i) {
@@ -3567,10 +3568,13 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
               dst_limits[i] = dst_starts[i] + 1;
             }
           }
-          Value res_vreg = builder.create<tpu::DynamicGatherOp>(
-              broadcast_op.getLoc(), src_tile->getType(), *src_tile,
-              lane_offset_cst,
+          Value src_vreg_i32 =
+              builder.create<tpu::BitcastVregOp>(i32_vreg_ty, *src_vreg);
+          Value res_vreg_i32 = builder.create<tpu::DynamicGatherOp>(
+              broadcast_op.getLoc(), i32_vreg_ty, src_vreg_i32, lane_offset_cst,
               /*dimension=*/1);
+          Value res_vreg = builder.create<tpu::BitcastVregOp>(
+              src_vreg->getType(), res_vreg_i32);
           if (num_tiles != 1) {
             res_vreg = builder.create<tpu::GatherOp>(
                 broadcast_op.getLoc(), res_vreg.getType(), res_vreg,
