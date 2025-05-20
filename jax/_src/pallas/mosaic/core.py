@@ -23,7 +23,6 @@ import functools
 from typing import Any, ClassVar, Literal
 
 import jax
-from jax._src import config
 from jax._src import core as jax_core
 from jax._src import util
 from jax._src.pallas import core as pallas_core
@@ -47,16 +46,6 @@ no_block_spec = pallas_core.no_block_spec
 _convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
 _out_shape_to_aval_mapping = pallas_core._out_shape_to_aval_mapping
 split_list = util.split_list
-
-_ENABLE_RUNTIME_ASSERT = config.bool_state(
-    "jax_pallas_enable_runtime_assert",
-    default=False,
-    help=(
-        "If set, enables runtime assertions in the kernel via checkify.check."
-        " Otherwise, runtime asserts will be ignored unless functionalized"
-        " using checkify.checkify."
-    ),
-)
 
 
 class KernelType(enum.Enum):
@@ -219,11 +208,6 @@ def create_tensorcore_mesh(
       np.array([TensorCore(i) for i in range(num_cores)]),
       [axis_name],
   )
-
-
-def runtime_assert_enabled() -> bool:
-  """Returns whether runtime asserts are enabled."""
-  return _ENABLE_RUNTIME_ASSERT.value
 
 
 def _tensorcore_mesh_discharge_rule(

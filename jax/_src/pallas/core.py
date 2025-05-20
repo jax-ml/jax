@@ -44,6 +44,23 @@ from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
 import jax.numpy as jnp
 
+# TODO(slebedev): Rename to --jax_pallas_debug_assertions.
+_ENABLE_RUNTIME_ASSERT = config.bool_state(
+    "jax_pallas_enable_runtime_assert",
+    default=False,
+    help=(
+        "If set, enables runtime assertions in the kernel via checkify.check."
+        " Otherwise, runtime asserts will be ignored unless functionalized"
+        " using checkify.checkify."
+    ),
+)
+
+
+def runtime_assert_enabled() -> bool:
+  """Returns whether runtime asserts are enabled."""
+  return _ENABLE_RUNTIME_ASSERT.value
+
+
 class DynamicGridDim:
   def __repr__(self):
     return "DynamicGridDim"

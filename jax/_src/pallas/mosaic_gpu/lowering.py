@@ -29,6 +29,7 @@ from typing import Any, Protocol, cast
 import jax
 from jax import api_util
 from jax import lax
+from jax._src import checkify
 from jax._src import core as jax_core
 from jax._src import lib as jaxlib
 from jax._src import linear_util as lu
@@ -41,6 +42,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
+from jax._src.lib.mlir.dialects import cf as cf_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import llvm as llvm_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
@@ -3051,3 +3053,38 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
       scf_dialect.yield_(after_block.arguments)
   mgpu_utils.warpgroup_barrier()
   return ()
+
+
+@register_lowering_rule(checkify.check_p, mgpu.LoweringSemantics.Lane)
+def _checkify_lowering_rule(
+    ctx: LoweringRuleContext, *err_args, err_tree, debug
+):
+  if not pallas_core.runtime_assert_enabled():
+    if debug:
+      return []
+    else:
+      raise LoweringError(
+          "Non-debug check must be functionalized. Enable runtime asserts via"
+          " ``pl.enable_runtime_assert`` or --jax_pallas_enable_runtime_assert"
+          " or, alternatively, functionalize with ``checkify.check``."
+      )
+
+  if cf_dialect is None:
+    # TODO(slebedev): Remove once the minimal jaxlib version is 0.6.1.
+    raise ValueError(
+        "cf dialect is not available. Make sure you have jaxlib 0.6.1 or later."
+    )
+
+  error = jax.tree.unflatten(err_tree, err_args)
+  [pred] = error._pred.values()
+  [exception_tree] = error._metadata.values()
+  [payload] = error._payload.values()
+  exception = jax.tree.unflatten(exception_tree, payload)
+  assert isinstance(exception, checkify.FailedCheckError)
+
+  # check_p has an inverted predicate compared to assert, so we need to compute
+  # ``not pred`` here.
+  minus_one = _ir_constant(-1, mgpu_utils.dtype_to_ir_type(jnp.bool))
+  not_pred = arith_dialect.xori(pred.registers.item(), minus_one)
+  cf_dialect.assert_(not_pred, exception.fmt_string)
+  return []
