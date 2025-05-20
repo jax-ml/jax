@@ -115,7 +115,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
         executable = backend.compile(
             jax_hlo, compile_options=compile_options)  # type: ignore
       else:
-        executable = backend.compile(
+        executable = backend.compile_and_load(
             jax_hlo, xc.DeviceList(tuple(self.devices.flat)), compile_options)  # type: ignore
       jax_optimized_hlo = executable.hlo_modules()[0].to_string()
       logging.info("[%s] got JAX optimized HLO for platform %s %s",

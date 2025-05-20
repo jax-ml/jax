@@ -150,9 +150,9 @@ class CompilationCacheTest(CompilationCacheTestCase):
       executable1 = backend.compile(computation1, compile_options)
       executable2 = backend.compile(computation2, compile_options)
     else:
-      executable1 = backend.compile(
+      executable1 = backend.compile_and_load(
           computation1, executable_devices, compile_options)
-      executable2 = backend.compile(
+      executable2 = backend.compile_and_load(
           computation2, executable_devices, compile_options)
     cc.put_executable_and_time(
         "key1", "computation1", executable1, backend, FAKE_COMPILE_TIME)
@@ -180,7 +180,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
     if jax._src.lib.jaxlib_extension_version < 331:
       executable = backend.compile(str(computation), compile_options)
     else:
-      executable = backend.compile(
+      executable = backend.compile_and_load(
           str(computation), executable_devices, compile_options)
     key = cc.get_cache_key(computation, devices, compile_options, backend)
     cc.put_executable_and_time(
@@ -251,7 +251,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
           g = jit(lambda x: x * 3)
           g(2)
           cache = cc._get_cache(backend)
-          self.assertIsNotNone(cache) # Cache should be initalized
+          self.assertIsNotNone(cache) # Cache should be initialized
 
   def test_xla_autofdo_profile_version(self):
     original_profile_version = config.jax_xla_profile_version.value
