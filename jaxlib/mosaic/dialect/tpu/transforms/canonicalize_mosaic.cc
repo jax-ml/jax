@@ -359,12 +359,7 @@ LogicalResult canonicalize_elementwise(const CanonicalizeContext &ctx,
       auto element_type = ty.getElementType();
       // There's an annoying hodgepodge of elementwise ops that need to be
       // rewritten to f32 on later hardware.
-      // TODO(mvoz): Look into (1) what it would take to support these ops
-      // natively on later hardware, and (2) how to better organize this list.
-      bool needs_cast = ctx.hardware_generation <= 5 || isa<math::PowFOp>(op) ||
-                        isa<math::TanhOp>(op) || isa<math::ExpOp>(op) ||
-                        isa<math::LogOp>(op);
-      if (needs_cast && element_type.isBF16()) {
+      if (element_type.isBF16()) {
         if (ctx.compatibility_mode) {
           auto target_f32 =
               builder.create<arith::ExtFOp>(op.getLoc(), target_f32_ty, operand)
@@ -918,21 +913,22 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
   return *rules;
 }
 
-const llvm::StringMap<int> &bf16_upcast_min_supported_versions() {
+const llvm::StringMap<int> &bf16_ops_min_supported_versions() {
   constexpr int kAlwaysUpcast = std::numeric_limits<int>::max();
   static const auto m = new llvm::StringMap<int>{
       {arith::DivFOp::getOperationName(), 4},
       {arith::SelectOp::getOperationName(), 5},
       {arith::CmpFOp::getOperationName(), 5},
-      {arith::MulFOp::getOperationName(), kAlwaysUpcast},
-      {arith::AddFOp::getOperationName(), kAlwaysUpcast},
-      {arith::SubFOp::getOperationName(), kAlwaysUpcast},
-      {arith::MaximumFOp::getOperationName(), kAlwaysUpcast},
-      {arith::MinimumFOp::getOperationName(), kAlwaysUpcast},
+      {arith::MulFOp::getOperationName(), 6},
+      {arith::AddFOp::getOperationName(), 6},
+      {arith::SubFOp::getOperationName(), 6},
+      {arith::MaximumFOp::getOperationName(), 6},
+      {arith::MinimumFOp::getOperationName(), 6},
       {math::PowFOp::getOperationName(), kAlwaysUpcast},
-      {math::TanhOp::getOperationName(), kAlwaysUpcast},
-      {math::ExpOp::getOperationName(), kAlwaysUpcast},
-      {math::LogOp::getOperationName(), kAlwaysUpcast},
+      {math::TanhOp::getOperationName(), 6},
+      {math::ExpOp::getOperationName(), 6},
+      {math::Exp2Op::getOperationName(), 6},
+      {math::LogOp::getOperationName(), 6},
   };
   return *m;
 }
@@ -941,9 +937,8 @@ bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
                                        Operation &op) {
   // Only rewrite when the hardware generation is below the minimum supported
   // version.
-  auto it =
-      bf16_upcast_min_supported_versions().find(op.getName().getStringRef());
-  if (it == bf16_upcast_min_supported_versions().end() ||
+  auto it = bf16_ops_min_supported_versions().find(op.getName().getStringRef());
+  if (it == bf16_ops_min_supported_versions().end() ||
       ctx.hardware_generation >= it->second) {
     return false;
   }
