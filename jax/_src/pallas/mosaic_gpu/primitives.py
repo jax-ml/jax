@@ -56,7 +56,7 @@ _Ref = pallas_core.AbstractMemoryRef | state_types.TransformedRef
 
 
 def _check_ref(
-    aval: object, name: str, memory_space: gpu_core.GPUMemorySpace
+    aval: object, name: str, memory_space: gpu_core.MemorySpace
 ) -> None:
   if not isinstance(aval, state_types.AbstractRef):
     raise TypeError(f"{name} must be a reference, got {aval}")
@@ -1200,19 +1200,19 @@ def _tcgen05_mma_abstract_eval(acc, a, b, barrier, accumulate,
                                collective_axis):
   del (accumulate, transforms_leaves, a_transforms_tree, b_transforms_tree)
 
-  if acc.memory_space != gpu_core.GPUMemorySpace.TMEM:
+  if acc.memory_space != gpu_core.MemorySpace.TMEM:
     raise ValueError("Accumulator must be a TMEM Ref.")
-  if a.memory_space not in (gpu_core.GPUMemorySpace.SMEM,
-                            gpu_core.GPUMemorySpace.TMEM):
+  if a.memory_space not in (gpu_core.MemorySpace.SMEM,
+                            gpu_core.MemorySpace.TMEM):
     raise ValueError("LHS must be a TMEM/SMEM Ref.")
-  if b.memory_space != gpu_core.GPUMemorySpace.SMEM:
+  if b.memory_space != gpu_core.MemorySpace.SMEM:
     raise ValueError("RHS must be an SMEM Ref.")
 
   if collective_axis is not None:
     if not acc.collective:
       raise ValueError(
           "Accumulator Ref must be collective if collective_axis is set.")
-    if a.memory_space == gpu_core.GPUMemorySpace.TMEM and not a.collective:
+    if a.memory_space == gpu_core.MemorySpace.TMEM and not a.collective:
       raise ValueError(
           "LHS TMEM Ref must be collective if collective_axis is set.")
 

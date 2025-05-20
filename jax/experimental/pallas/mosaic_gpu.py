@@ -19,10 +19,10 @@ These APIs are highly unstable and can change weekly. Use at your own risk.
 
 from jax._src.pallas.mosaic_gpu.core import Barrier as Barrier
 from jax._src.pallas.mosaic_gpu.core import ClusterBarrier as ClusterBarrier
-from jax._src.pallas.mosaic_gpu.core import GPUBlockSpec as GPUBlockSpec
-from jax._src.pallas.mosaic_gpu.core import GPUCompilerParams as GPUCompilerParams
-from jax._src.pallas.mosaic_gpu.core import GPUMesh as GPUMesh
-from jax._src.pallas.mosaic_gpu.core import GPUMemorySpace as GPUMemorySpace
+from jax._src.pallas.mosaic_gpu.core import BlockSpec as BlockSpec
+from jax._src.pallas.mosaic_gpu.core import CompilerParams as CompilerParams
+from jax._src.pallas.mosaic_gpu.core import Mesh as Mesh
+from jax._src.pallas.mosaic_gpu.core import MemorySpace as MemorySpace
 from jax._src.pallas.mosaic_gpu.core import kernel as kernel
 from jax._src.pallas.mosaic_gpu.core import PeerMemRef as PeerMemRef
 from jax._src.pallas.mosaic_gpu.core import RefUnion as RefUnion
@@ -63,9 +63,15 @@ from jax._src.pallas.mosaic_gpu.primitives import commit_tmem as commit_tmem
 from jax.experimental.mosaic.gpu.core import LoweringSemantics as LoweringSemantics
 
 
-#: Alias of :data:`jax.experimental.pallas.mosaic_gpu.GPUMemorySpace.GMEM`.
-GMEM = GPUMemorySpace.GMEM
-#: Alias of :data:`jax.experimental.pallas.mosaic_gpu.GPUMemorySpace.SMEM`.
-SMEM = GPUMemorySpace.SMEM
-#: Alias of :data:`jax.experimental.pallas.mosaic_gpu.GPUMemorySpace.TMEM`.
-TMEM = GPUMemorySpace.TMEM
+#: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.GMEM`.
+GMEM = MemorySpace.GMEM
+#: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.SMEM`.
+SMEM = MemorySpace.SMEM
+#: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.TMEM`.
+TMEM = MemorySpace.TMEM
+
+# TODO(slebedev): Deprecate and remove these aliases.
+GPUBlockSpec = BlockSpec
+GPUCompilerParams = CompilerParams
+GPUMemorySpace = MemorySpace
+GPUMesh = Mesh

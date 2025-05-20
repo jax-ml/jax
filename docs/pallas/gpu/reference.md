@@ -225,16 +225,19 @@ def body(..., scratch_ref):
 There are two ways in which references are allocated and each has a way to select
 the desired transforms:
 
-**1. Using `GPUBlockSpec`**
+**1. Using `plgpu.BlockSpec`**
 
 ```python
 transforms = (plgpu.TileTransform((8, 64)), plgpu.SwizzleTransform(128))
 f = pl.pallas_call(
-  in_specs=plgpu.GPUBlockSpec(in_block_shape, in_index_map, transforms=transforms),
-  out_specs=plgpu.GPUBlockSpec(out_block_shape, out_index_map, transforms=transforms),
+  in_specs=plgpu.BlockSpec(in_block_shape, in_index_map, transforms=transforms),
+  out_specs=plgpu.BlockSpec(out_block_shape, out_index_map, transforms=transforms),
   ...
 )
 ```
+
+Note that unlike `plgpu.BlockSpec`, `pl.BlockSpec` does *not* allow specifying
+transforms.
 
 **2. Specifying the `transforms` argument on the allocated `SMEM`**
 
