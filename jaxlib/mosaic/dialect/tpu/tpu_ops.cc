@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -52,15 +53,15 @@ LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
   RollVectorsOp roll_op =
       dyn_cast_or_null<RollVectorsOp>(op.getOperand().getDefiningOp());
   if (!roll_op) {
-     return failure();
+    return failure();
   }
   if (roll_op.getNumOperands() != op.getNumResults()) {
-     return failure();
+    return failure();
   }
   for (auto [v1, v2] :
        llvm::zip(roll_op.getOperandTypes(), op.getResultTypes())) {
     if (v1 != v2) {
-       return failure();
+      return failure();
     }
   }
   rewriter.replaceOp(op, roll_op.getOperands());
@@ -499,8 +500,7 @@ LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
   }
   auto layout_ref = erase_layout_op.getOperand();
   auto layout_ty = layout_ref.getType();
-  auto layout =
-      dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
+  auto layout = dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
   CHECK(!layout.getTiles().empty());
   auto tile = layout.getTiles().front().dimensions();
   auto new_tile_strides = ComputeTileStrides(dst_ty, tile);
@@ -594,8 +594,8 @@ LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
   if (tile[0] * src_bitwidth % tgt_bitwidth != 0) {
     return failure();
   }
-  SmallVector<xla::Tile, 2> new_tiles =
-      {xla::Tile({tile[0] * src_bitwidth / tgt_bitwidth, 128})};
+  SmallVector<xla::Tile, 2> new_tiles = {
+      xla::Tile({tile[0] * src_bitwidth / tgt_bitwidth, 128})};
   if (tgt_bitwidth < 32) {
     new_tiles.push_back(xla::Tile({32 / tgt_bitwidth, 1}));
   }
@@ -1325,10 +1325,20 @@ LogicalResult LogOp::verify() {
     return failure();
   }
   CoreType logging_core_type = logging_core_type_maybe->value_or(CoreType::kTc);
-  if ((logging_core_type == CoreType::kScScalarSubcore ||
-       logging_core_type == CoreType::kScVectorSubcore) &&
-      getFormattedAttr() != nullptr && getFormattedAttr().getValue()) {
+  bool is_sc_core = logging_core_type == CoreType::kScScalarSubcore ||
+                    logging_core_type == CoreType::kScVectorSubcore;
+  if (is_sc_core && getFormattedAttr() != nullptr &&
+      getFormattedAttr().getValue()) {
     return emitOpError("Formatted logging is not supported on SC");
+  }
+  if (is_sc_core && getInputs().size() > 1) {
+    return emitOpError("SC logging only supports 0 or 1 inputs");
+  }
+  if (is_sc_core && getInputs().size() == 1) {
+    Type input_type = getInputs().front().getType();
+    if (!llvm::isa<MemRefType, IntegerType, FloatType, IndexType>(input_type)) {
+      return emitOpError("SC logging only supports memrefs or scalars");
+    }
   }
   switch (logging_core_type) {
     case CoreType::kTc:
