@@ -548,6 +548,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compiler",
     srcs = ["_src/compiler.py"],
+    visibility = [":internal"] + jax_visibility("compiler"),
     deps = [
         ":cache_key",
         ":compilation_cache_internal",
