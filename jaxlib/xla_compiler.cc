@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "mlir/Support/LLVM.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/ndarray.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -71,6 +72,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_import.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
@@ -1447,6 +1449,13 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("subgroup_types", &xla::HloSharding::subgroup_types)
       .def("__repr__",
            [](const xla::HloSharding& self) { return self.ToString(); })
-      .def("to_proto", &xla::HloSharding::ToProto);
+      .def("to_proto", &xla::HloSharding::ToProto)
+      .def("get_axis_sizes", [](const xla::HloSharding& self) {
+        // If returning the SmallVector, we encounter the error "unable to
+        // convert function return value to a Python type!".
+        mlir::SmallVector<int64_t> mesh_shape =
+            xla::sdy::getAxisSizes(self.tile_assignment());
+        return std::vector<int64_t>(mesh_shape.begin(), mesh_shape.end());
+      });
 }  // NOLINT(readability/fn_size)
 }  // namespace xla
