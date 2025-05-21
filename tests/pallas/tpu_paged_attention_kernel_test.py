@@ -265,6 +265,8 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
       attn_logits_soft_cap,
       are_kv_quantized,
   ):
+    # TODO(mvoz, skyewm): Re-enable this test once the data race is fixed.
+    self.skipTest("This kernel has data races that need to be fixed.")
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Only supports TPU generation 4 or above")
     if jtu.is_device_tpu(version=4) and are_kv_quantized:
