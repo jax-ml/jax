@@ -23,9 +23,6 @@ race_top:PyMember_GetOne
 race_top:new_reference
 race:_Py_IsOwnedByCurrentThread
 
-# https://github.com/python/cpython/issues/129748
-race:mi_block_set_nextx
-
 # https://github.com/python/cpython/issues/128130
 race_top:run_eval_code_obj
 

@@ -8,9 +8,6 @@ race:dnnl_sgemm
 # https://github.com/python/cpython/issues/128050
 race:partial_vectorcall_fallback
 
-# https://github.com/python/cpython/issues/129748
-race:mi_block_set_nextx
-
 # Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
 race:heevd_ffi
 race:gesdd_ffi
