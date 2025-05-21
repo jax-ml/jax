@@ -749,6 +749,24 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "triton_pallas_test",
+    srcs = [
+        "triton_pallas_test.py",
+    ],
+    enable_backends = ["cpu"],
+    enable_configs = [
+        "gpu_h100_x32",
+    ],
+    shard_count = 1,
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",
+    ] + py_deps([
+        "absl/testing",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "mgpu_attention_run",
     srcs = ["//jax/experimental/pallas/ops/gpu:attention_mgpu.py"],
     enable_backends = [],
