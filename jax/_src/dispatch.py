@@ -24,7 +24,7 @@ import itertools
 import logging
 import threading
 import time
-from typing import Any, Callable, NamedTuple
+from typing import Any, Callable
 
 import jax
 from jax._src import api
@@ -34,7 +34,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import lib
-from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.abstract_arrays import array_types
@@ -52,6 +51,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, SingleDeviceSharding, TransferToMemoryKind, GSPMDSharding,
     is_single_device_sharding)
+from jax._src.stages import SourceInfo
 import numpy as np
 
 
@@ -238,11 +238,6 @@ def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr) -> bool:
     if jaxpr_has_prim_requiring_devices(subjaxpr):
       return True
   return False
-
-
-class SourceInfo(NamedTuple):
-  source_info: source_info_util.SourceInfo
-  eqn_name: str
 
 
 @util.weakref_lru_cache
