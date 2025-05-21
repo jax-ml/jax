@@ -460,6 +460,9 @@ jax_multiplatform_test(
     backend_tags = {
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
+    disable_configs = [
+        "gpu_h100x2_tfrt",  # TODO(b/419192167): Doesn't work
+    ],
     enable_backends = ["gpu"],
     tags = [
         "config-cuda-only",
@@ -1844,6 +1847,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "shard_map_test",
     srcs = ["shard_map_test.py"],
+    disable_configs = [
+        "gpu_h100x2_tfrt",  # TODO(b/419192167): Doesn't work
+    ],
     enable_configs = [
         "gpu_p100x2_shardy",
         "tpu_v3_x4_shardy",
