@@ -158,20 +158,24 @@ class PRNGKeyArray(jax.Array):
 
   _impl: PRNGImpl
   _base_array: jax.Array
-  _consumed: bool | np.ndarray  # Used in jax.experimental.key_reuse.
+  _consumed: core.MutableArray  # Used in jax.experimental.key_reuse.
   _source_info: None | source_info_util.SourceInfo = None
 
   def __init__(self, impl, key_data: Any):
     assert not isinstance(key_data, core.Tracer)
     _check_prng_key_data(impl, key_data)
     self._impl = impl
-    self._consumed = False  # TODO(jakevdp): default to True here?
     if isinstance(key_data, np.ndarray):
       aval = core.get_aval(key_data)
       device = pxla.get_default_device()
       key_data = pxla.batched_device_put(aval, SingleDeviceSharding(device),
                                          [key_data], [device], committed=False)
     self._base_array = key_data
+
+    # work around potential transfer guard exception by jit-compiling zeros
+    zeros = jax.jit(jnp.zeros, static_argnums=(0, 1))
+    shape = base_arr_shape_to_keys_shape(impl, key_data.shape)
+    self._consumed = core.mutable_array(zeros(shape, bool))
 
   def _replace_with(self, value: PRNGKeyArray):
     self._base_array._replace_with(value._base_array)
