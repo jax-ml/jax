@@ -6887,7 +6887,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
 
 FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
     RewriteContext &ctx, OpBuilder &builder, const Location loc, VectorType vty,
-    const VectorLayout src, xla::Array<Value> vregs,
+    VectorLayout src, xla::Array<Value> vregs,
     const VectorLayout::ImplicitDim dst_implicit_dim,
     const LayoutOffsets dst_offset_hints) {
   const auto &target_shape = ctx.target_shape;
@@ -7031,6 +7031,18 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
     VectorLayout dst(src.bitwidth(), {std::nullopt, dst_minor_offset},
                      src.tiling(), VectorLayout::ImplicitDim::kSecondMinor);
     return std::make_pair(dst, std::move(dst_vregs));
+  }
+  if (src.implicit_dim() == VectorLayout::ImplicitDim::kMinor &&
+      dst_implicit_dim == VectorLayout::ImplicitDim::kNone &&
+      src.bitwidth() == 32 && src.hasNativeTiling(ctx.target_shape)) {
+    FAILUREOR_ASSIGN_OR_RETURN(
+        std::tie(src, vregs),
+        changeImplicitDim(ctx, builder, loc, vty, src, std::move(vregs),
+                          VectorLayout::ImplicitDim::kSecondMinor,
+                          dst_offset_hints));
+    return changeImplicitDim(ctx, builder, loc, vty, src, std::move(vregs),
+                             VectorLayout::ImplicitDim::kNone,
+                             dst_offset_hints);
   }
   return emitError(loc,
                    "Not implemented: Unsupported implicit dim change: from ")
