@@ -29,6 +29,7 @@
 import inspect
 import operator
 import os
+from pathlib import Path
 import sys
 
 sys.path.insert(0, os.path.abspath('..'))
@@ -354,7 +355,11 @@ def linkcode_resolve(domain, info):
     source, linenum = inspect.getsourcelines(obj)
   except:
     return None
-  filename = os.path.relpath(filename, start=os.path.dirname(jax.__file__))
+  try:
+    filename = Path(filename).relative_to(Path(jax.__file__).parent)
+  except ValueError:
+    # Source file is not a relative to jax; this must be a re-exported function.
+    return None
   lines = f"#L{linenum}-L{linenum + len(source)}" if linenum else ""
   return f"https://github.com/jax-ml/jax/blob/main/jax/{filename}{lines}"
 
