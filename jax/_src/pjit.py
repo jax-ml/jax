@@ -350,11 +350,17 @@ def jit_lower(jit_func, *args, **kwargs):
 @api_boundary
 def jit_eval_shape(jit_func, *args, **kwargs):
   p, _ = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
-  out_s = [None if isinstance(s, UnspecifiedValue) else s for s in p.params['out_shardings']]
-  # TODO(yashkatariya): Add `Layout` to SDS.
-  out = [api.ShapeDtypeStruct(x.shape, x.dtype, sharding=s,
-                              weak_type=x.weak_type)
-         for x, s in zip(p.params['jaxpr'].out_avals, out_s)]
+  out_shardings = [None if isinstance(s, UnspecifiedValue) else s
+                   for s in p.params['out_shardings']]
+  out = []
+  for a, out_s in zip(p.params['jaxpr'].out_avals, out_shardings):
+    if out_s is None:
+      s = a.sharding if a.sharding.mesh._are_all_axes_explicit else out_s
+    else:
+      s = out_s
+    # TODO(yashkatariya): Add `Layout` to SDS.
+    out.append(api.ShapeDtypeStruct(a.shape, a.dtype, sharding=s,
+                                    weak_type=a.weak_type))
   return tree_unflatten(p.out_tree, out)
 
 def jit_evict_fn(self):
