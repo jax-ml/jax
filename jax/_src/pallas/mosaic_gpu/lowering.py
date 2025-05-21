@@ -1298,11 +1298,14 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
 
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
-      if tiling != (
-          8,
-          (swizzle * 8) // pallas_utils.dtype_bitwidth(dtype),
-      ):
-        raise NotImplementedError("Tiling does not fit swizzle")
+      if len(tiling) != 2:
+        raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
+      expected_minor_tiling = swizzle * 8 // pallas_utils.dtype_bitwidth(dtype)
+      if tiling[-1] != expected_minor_tiling:
+        raise NotImplementedError(
+            "Minor tiling dimension does not fit swizzle: "
+            f" expected {expected_minor_tiling}, got {tiling[-1]}"
+        )
       return mgpu.FragmentedArray.load_tiled(
           x_smem, is_signed=mgpu_utils.is_signed(dtype), swizzle=swizzle
       )
@@ -1383,8 +1386,15 @@ def _swap_lowering_rule(
         gpu_core.UntileRef(tiling),
         *maybe_transpose,
     ):
-      if tiling != (8, swizzle // v_aval.dtype.itemsize):
-        raise NotImplementedError("Tiling does not fit swizzle")
+      if len(tiling) != 2:
+        raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
+      bw = pallas_utils.dtype_bitwidth(v_aval.dtype)
+      expected_minor_tiling = swizzle * 8 // bw
+      if tiling[-1] != expected_minor_tiling:
+        raise NotImplementedError(
+            "Minor tiling dimension does not fit swizzle: "
+            f" expected {expected_minor_tiling}, got {tiling[-1]}"
+        )
 
       if transposed_value != bool(maybe_transpose):
         raise ValueError(
