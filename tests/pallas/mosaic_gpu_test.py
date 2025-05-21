@@ -998,6 +998,36 @@ class PallasCallTest(PallasTest):
 
     self.assertIn("x: [1, 0, 43, 23]: 6871\n", output())
 
+  @parameterized.parameters(
+          (plgpu.TilingTransform((1, 32)), plgpu.SwizzleTransform(128)),
+          (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),
+          (),
+  )
+  def test_get_swap_with_transforms(self, *transforms):
+    self.skip_if_wg_semantics()
+
+    shape = (128, 128)
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=[plgpu.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        scratch_shapes=[
+            plgpu.SMEM(shape, jnp.int32, transforms=tuple(transforms)),
+            plgpu.Barrier(num_arrivals=1),
+        ]
+    )
+    def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, scratch_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      scratch_ref[...] = scratch_ref[...] * 2
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x * 2)
+
   def test_check(self):
     self.skip_if_wg_semantics()
 
