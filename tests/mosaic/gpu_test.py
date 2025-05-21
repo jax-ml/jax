@@ -645,6 +645,19 @@ class WGMMALayoutTest(TestCase):
     np.testing.assert_array_equal(iota, expected)
 
 
+class I8Type:
+  """A type that represents a 8-bit signed integer.
+
+  This is a workaround to bypass the fact that we don't have a proper 8-bit
+  integer type class available in MLIR, and can't instantiate types without a
+  MLIR context.
+  """
+
+  @staticmethod
+  def get():  # pylint: disable=no-method-argument
+    return ir.IntegerType.get_signless(8)
+
+
 class WGMMATest(TestCase):
 
   def setUp(self):
@@ -670,7 +683,67 @@ class WGMMATest(TestCase):
       rhs_tiling_kind=("large", "small", "small+no_transpose"),
       lhs_tiling_kind=("large", "small", "small+no_transpose"),
   )
-  def test_wgmma_basic(
+  def test_wgmma_basic_float(
+      self,
+      lhs_transpose,
+      rhs_transpose,
+      in_mlir_dtype_cls,
+      m,
+      n,
+      k_steps,
+      swizzle,
+      jax_out_dtype,
+      rhs_tiling_kind,
+      lhs_tiling_kind,
+  ):
+    self._test_wgmma_basic(
+        m,
+        n,
+        k_steps,
+        in_mlir_dtype_cls,
+        lhs_transpose,
+        rhs_transpose,
+        swizzle,
+        jax_out_dtype,
+        rhs_tiling_kind,
+        lhs_tiling_kind,
+    )
+
+  @parameterized.product(
+      in_mlir_dtype_cls=(I8Type,),
+      m=(64, 128, 192),
+      n=(64, 128, 192),
+      k_steps=(1, 2),
+      swizzle=(32, 64, 128),
+      jax_out_dtype=(jnp.int32,),
+      rhs_tiling_kind=("large", "small", "small+no_transpose"),
+      lhs_tiling_kind=("large", "small"),
+  )
+  def test_wgmma_basic_int(
+      self,
+      in_mlir_dtype_cls,
+      m,
+      n,
+      k_steps,
+      swizzle,
+      jax_out_dtype,
+      rhs_tiling_kind,
+      lhs_tiling_kind,
+  ):
+    self._test_wgmma_basic(
+        m,
+        n,
+        k_steps,
+        in_mlir_dtype_cls,
+        lhs_transpose=False,
+        rhs_transpose=True,
+        swizzle=swizzle,
+        jax_out_dtype=jax_out_dtype,
+        rhs_tiling_kind=rhs_tiling_kind,
+        lhs_tiling_kind=lhs_tiling_kind,
+    )
+
+  def _test_wgmma_basic(
       self,
       m,
       n,
@@ -683,6 +756,10 @@ class WGMMATest(TestCase):
       rhs_tiling_kind,
       lhs_tiling_kind,
   ):
+    if jax_out_dtype == jnp.int32 and in_mlir_dtype_cls != I8Type:
+      self.skipTest("s32 accumulator only supported with s8 inputs")
+    if jax_out_dtype != jnp.int32 and in_mlir_dtype_cls == I8Type:
+      self.skipTest("s8 inputs only supported with s32 accumulator")
     if jax_out_dtype == jnp.float16 and in_mlir_dtype_cls in {ir.F32Type, ir.BF16Type}:
       self.skipTest(f"{in_mlir_dtype_cls.get()} does not support f16 output.")
     if swizzle != 128 and lhs_transpose and lhs_tiling_kind == "large":
@@ -716,6 +793,9 @@ class WGMMATest(TestCase):
     elif in_mlir_dtype_cls == ir.Float8E4M3FNType:
       in_jax_dtype = jnp.float8_e4m3fn
       exponent_bits, mantissa_bits = 4, 3
+    elif in_mlir_dtype_cls == I8Type:
+      in_jax_dtype = jnp.int8
+      exponent_bits = mantissa_bits = None
     else:
       raise NotImplementedError(in_mlir_dtype)
     nk_tile = swizzle // bytewidth(in_mlir_dtype)
@@ -755,7 +835,8 @@ class WGMMATest(TestCase):
       )
       for i in range(2):
         barriers[i].wait()
-      init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n, dtype=out_mlir_dtype)
+      is_signed = True if ir.IntegerType.isinstance(in_mlir_dtype) else None
+      init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n, dtype=out_mlir_dtype, is_signed=is_signed)
       if lhs_transpose:
         perm = (0, 1, 3, 2) if transpose_lhs_tiles else (1, 0, 3, 2)
         lhs_smem = memref_transpose(lhs_smem, perm)
@@ -772,9 +853,13 @@ class WGMMATest(TestCase):
       return jax.lax.reduce_precision(x, exponent_bits, mantissa_bits)
 
     x_shape = (k, m) if lhs_transpose else (m, k)
-    x = quantize(self.prng.uniform(-1, 1, x_shape)).astype(in_jax_dtype)
     y_shape = (n, k) if rhs_transpose else (k, n)
-    y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
+    if in_mlir_dtype_cls == I8Type:
+      x = self.prng.integers(-128, 127, x_shape).astype(in_jax_dtype)
+      y = self.prng.integers(-128, 127, y_shape).astype(in_jax_dtype)
+    else:
+      x = quantize(self.prng.uniform(-1, 1, x_shape)).astype(in_jax_dtype)
+      y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), jax_out_dtype)
     if transpose_rhs_tiles:
       rhs_tiling_t = rhs_tiling[::-1] if rhs_transpose else rhs_tiling
@@ -797,7 +882,9 @@ class WGMMATest(TestCase):
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     ref = (x32.T if lhs_transpose else x32) @ (y32.T if rhs_transpose else y32)
     atol = 2e-2 if jax_out_dtype == jnp.float16 else 5e-6
-    if utils.bitwidth(in_mlir_dtype) == 8:
+    if ir.IntegerType.isinstance(in_mlir_dtype) and ir.IntegerType.isinstance(out_mlir_dtype):
+      atol = 0
+    elif utils.bitwidth(in_mlir_dtype) == 8:
       atol = 3e-2
     np.testing.assert_allclose(z, ref, atol=atol)
 
