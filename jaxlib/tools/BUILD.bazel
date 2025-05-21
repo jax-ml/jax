@@ -15,7 +15,7 @@
 # JAX is Autograd and XLA
 
 load("@bazel_skylib//lib:selects.bzl", "selects")
-load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load(
@@ -29,6 +29,7 @@ load(
 load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
+    "if_pypi_cuda_wheel_deps",
     "jax_py_test",
     "jax_wheel",
     "pytype_strict_library",
@@ -470,6 +471,20 @@ filegroup(
     ],
 )
 
+# The flag configures whether to add the pypi NVIDIA CUDA deps to py_import.
+bool_flag(
+    name = "add_pypi_cuda_wheel_deps",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "pypi_cuda_wheel_deps",
+    flag_values = {
+        ":add_pypi_cuda_wheel_deps": "True",
+        "@local_config_cuda//:enable_cuda": "True",
+    },
+)
+
 py_import(
     name = "jaxlib_py_import",
     wheel = ":jaxlib_wheel",
@@ -478,26 +493,26 @@ py_import(
 py_import(
     name = "jax_cuda_plugin_py_import",
     wheel = ":jax_cuda_plugin_wheel",
-    wheel_deps = if_cuda([":nvidia_wheel_deps"]),
+    wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
 py_import(
     name = "jax_cuda_pjrt_py_import",
     wheel = ":jax_cuda_pjrt_wheel",
-    wheel_deps = if_cuda([":nvidia_wheel_deps"]),
+    wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
 py_import(
     name = "pypi_jax_cuda_plugin_with_cuda_deps",
     wheel = "@pypi_jax_cuda12_plugin//:whl",
-    wheel_deps = if_cuda([":nvidia_wheel_deps"]),
+    wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
 py_import(
     name = "pypi_jax_cuda_pjrt_with_cuda_deps",
     wheel = "@pypi_jax_cuda12_pjrt//:whl",
-    wheel_deps = if_cuda([":nvidia_wheel_deps"]),
+    wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
 # Wheel tests.

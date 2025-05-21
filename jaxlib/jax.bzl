@@ -637,3 +637,10 @@ def wheel_sources(
         ":{}_data".format(name),
         ":{}_hdrs".format(name),
     ] + static_srcs)
+
+def if_pypi_cuda_wheel_deps(if_true, if_false = []):
+    """ select() on whether we're adding pypi CUDA wheel deps. """
+    return select({
+        "//jaxlib/tools:pypi_cuda_wheel_deps": if_true,
+        "//conditions:default": if_false,
+    })
