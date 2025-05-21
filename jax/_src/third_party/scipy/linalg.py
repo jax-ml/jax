@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import jax
 from jax import jit, lax
 import jax.numpy as jnp
-from jax._src.numpy.linalg import norm, eig, inv
-from jax._src.scipy.linalg import rsf2csf, schur, solve
+from jax._src.numpy.linalg import norm
+from jax._src.scipy.linalg import rsf2csf, schur
 from jax._src.typing import ArrayLike, Array
-from functools import partial
 
 
 @jit
@@ -112,74 +110,3 @@ def funm(A: ArrayLike, func: Callable[[Array], Array],
           tol, (tol / minden) * norm(jnp.triu(T, 1), 1))))
 
   return F, err
-
-
-@jit
-def solve_sylvester(A: jnp.ndarray, B: jnp.ndarray, C: jnp.ndarray) -> jnp.ndarray:
-    """
-    Solves the Sylvester equation:
-      .. math:: AX + XB = C
-
-    Parameters
-    ----------
-    A: jnp.ndarray
-        A matrix of shape m x m
-    B: jnp.ndarray
-        A matrix of shape n x n
-    C: jnp.ndarray
-        A matrix of shape m x n
-
-    Returns
-    -------
-    X: jnp.ndarray
-        A matrix of shape m x n
-    """
-    n, m = A.shape[-1], B.shape[-1]
-
-    @partial(jit, static_argnums=2)
-    def is_sylvester_solvable(A: jnp.ndarray, B: jnp.ndarray, tol: float = 1e-12):
-        """
-        Returns None if the Sylvester equation has a unique solution
-        for any C, based on eigenvalue conditions.Otherwise raises a runtime error.
-
-        Parameters
-        ----------
-        A: jnp.array
-            m x m matrix
-        B: jnp.array
-            n x n matrix
-        tol: float
-            tolerance for floating-point comparison
-
-        Returns
-        -------
-        bool:
-            True if unique solution exists for all C
-        """
-        def _is_solvable():
-            raise RuntimeError("Sylvester Equation has no solution!")
-            return 0
-
-        eig_A = jnp.linalg.eigvals(A)
-        eig_B = jnp.linalg.eigvals(B)
-
-        # check all combinations of λ + μ = 0
-        sum_matrix = eig_A[:, None] + eig_B[None, :]
-
-        # If any sum is (approximately) zero, no unique solution
-        return jax.lax.cond(
-            jnp.any(jnp.isclose(sum_matrix, 0.0, atol=tol)),
-            lambda: jax.debug.callback(_is_solvable),
-            lambda: None,
-        )
-
-    # Check if there is a solution first
-    is_sylvester_solvable(A, B)
-
-    RA, UA = eig(A)
-    RB, UB = eig(B)
-    F = solve(UA, (C + 0j) @ UB)
-    W = RA[:, None] + RB[None, :]
-    Y = F / W
-    X = UA[:n,:n] @ Y[:n,:m] @ inv(UB)[:m,:m]
-    return jnp.real(X)
