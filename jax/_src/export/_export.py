@@ -25,7 +25,7 @@ import json
 import re
 from typing import Any, Protocol, TypeVar, Union, cast
 
-from absl import logging
+import logging
 import numpy as np
 
 import jax
@@ -54,6 +54,8 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 
 from jax._src.export import shape_poly
+
+logger = logging.getLogger(__name__)
 
 map = util.safe_map
 zip = util.safe_zip
@@ -704,16 +706,15 @@ def _export_lowered(
     out_avals_flat = lowered.compile_args["out_avals"]  # type: ignore
 
   # Log and then check the module.
-  if logging.vlog_is_on(3):
-    logmsg = (f"fun_name={fun_name} version={version} "
-              f"lowering_platforms={lowering._platforms} "  # type: ignore[unused-ignore,attribute-error]
-              f"disabled_checks={disabled_checks}")
-    logging.info("Exported JAX function: %s\n", logmsg)
-    logging.info(mlir.dump_module_message(mlir_module, "export"))
-    logging.info(
-        "Size of mlir_module_serialized: %d byte",
-        len(mlir_module_serialized),
-    )
+  logmsg = (f"fun_name={fun_name} version={version} "
+            f"lowering_platforms={lowering._platforms} "  # type: ignore[unused-ignore,attribute-error]
+            f"disabled_checks={disabled_checks}")
+  logger.debug("Exported JAX function: %s\n", logmsg)
+  logger.debug(mlir.dump_module_message(mlir_module, "export"))
+  logger.debug(
+      "Size of mlir_module_serialized: %d byte",
+      len(mlir_module_serialized),
+  )
 
   _check_module(mlir_module,
                 disabled_checks=disabled_checks,
