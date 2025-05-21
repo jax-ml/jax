@@ -38,11 +38,11 @@ sys.path.insert(0, os.path.abspath('..'))
 from typing import ForwardRef
 
 def _do_not_evaluate_in_jax(
-    self, globalns, *args, _evaluate=ForwardRef._evaluate,
+    self, globalns, *args, _evaluate=ForwardRef._evaluate, **kwargs,
 ):
   if globalns.get('__name__', '').startswith('jax'):
     return self
-  return _evaluate(self, globalns, *args)
+  return _evaluate(self, globalns, *args, **kwargs)
 
 ForwardRef._evaluate = _do_not_evaluate_in_jax
 
