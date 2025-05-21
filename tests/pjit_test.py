@@ -7857,6 +7857,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         core.ShardingTypeError, "lhs is unreduced while rhs is not"):
       g.trace(x, y)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_eval_shape(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    out = jax.eval_shape(f, arr)
+    self.assertIsInstance(out, jax.ShapeDtypeStruct)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh.abstract_mesh, P('x', 'y')))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
