@@ -2826,9 +2826,10 @@ class ShapeDtypeStruct:
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
     self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-    if sharding is not None and not isinstance(sharding, (Sharding, Layout)):
+    if sharding is not None and not isinstance(sharding, (Sharding, Layout, P)):
       raise ValueError(
-          "sharding should be an instance of `jax.sharding.Sharding` or"
+          "sharding should be an instance of `jax.sharding.Sharding`, "
+          "`jax.sharding.PartitionSpec` or"
           f" `jax.experimental.layout.Layout`. Got {sharding} of type"
           f" {type(sharding)}.")
     if (isinstance(sharding, Layout) and
@@ -2836,7 +2837,19 @@ class ShapeDtypeStruct:
       raise TypeError(
           "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")
-    self.sharding = sharding.sharding if isinstance(sharding, Layout) else sharding
+    if isinstance(sharding, Layout):
+      self.sharding = sharding.sharding
+    elif isinstance(sharding, P):
+      # TODO(yashkatariya): Should this be abstract mesh?
+      cur_mesh = get_concrete_mesh()
+      if cur_mesh is None:
+        raise TypeError(
+            "When specifying PartitionSpec to `ShapeDtypeStruct`, the context"
+            " mesh cannot be empty. Please use `jax.sharding.use_mesh` to set"
+            " the mesh context.")
+      self.sharding = NamedSharding(cur_mesh, sharding)
+    else:
+      self.sharding = sharding
     self._dll = sharding.device_local_layout if isinstance(sharding, Layout) else None
     self.weak_type = weak_type
 
