@@ -63,6 +63,7 @@ from jax._src.interpreters import pxla
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -7761,6 +7762,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @config.use_shardy_partitioner(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_basic(self, mesh):
+    if jaxlib_extension_version < 342:
+      self.skipTest("Test requires a newer jaxlib")
     np_inp = np.arange(16).reshape(8, 2)
     x = jax.device_put(np_inp, P('x', 'y'))
     y = jax.device_put(np_inp.T, P('y', None))

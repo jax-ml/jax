@@ -34,6 +34,8 @@ partial = functools.partial
 class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
 
   def setUp(self):
+    if jtu.jaxlib_version() < (0, 6, 1):
+      self.skipTest("Test requires jaxlib >= 0.6.1")
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
