@@ -176,10 +176,10 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
               f"Argument '{name}' of shape {aval.str_short()} of type"
               f' {type(arg)} is not a valid JAX type.') from e
       raise AssertionError("Unreachable") from e
-  except dispatch.InternalFloatingPointError as e:
+  except api_util.InternalFloatingPointError as e:
     if getattr(fun, '_apply_primitive', False):
       raise FloatingPointError(f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
-    dispatch.maybe_recursive_nan_check(e, fun, args, kwargs)
+    api_util.maybe_recursive_nan_check(e, fun, args, kwargs)
 
   if p.box_data:
     box_treedef, out_tree = p.out_tree.children()
@@ -2562,7 +2562,7 @@ def _pjit_transpose(cts_in, *primals_in,
         keep_unused=keep_unused,
         inline=inline,
         compiler_options_kvs=compiler_options_kvs)
-  except dispatch.InternalFloatingPointError as e:
+  except api_util.InternalFloatingPointError as e:
     print("Invalid nan value encountered in the backward pass of a jax.jit "
           "function. Calling the de-optimized backward pass.")
     try:
@@ -2572,7 +2572,7 @@ def _pjit_transpose(cts_in, *primals_in,
     else:
       # If control reaches this line, we got a NaN on the output of `compiled`
       # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-      dispatch._raise_no_nan_in_deoptimized(e)
+      api_util._raise_no_nan_in_deoptimized(e)
 
   if attrs_tracked:
     final_states, nz_cts_out = split_list(nz_cts_out, [num_attr_outs])

@@ -316,7 +316,6 @@ py_library_providing_imports_info(
         "_src/ffi.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
-        "_src/interpreters/ad.py",
         "_src/interpreters/batching.py",
         "_src/interpreters/pxla.py",
         "_src/pjit.py",
@@ -381,6 +380,7 @@ py_library_providing_imports_info(
     visibility = ["//visibility:public"],
     deps = [
         ":abstract_arrays",
+        ":ad",
         ":ad_util",
         ":api_util",
         ":basearray",
@@ -669,6 +669,23 @@ pytype_strict_library(
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "ad",
+    srcs = ["_src/interpreters/ad.py"],
+    deps = [
+        ":ad_util",
+        ":api_util",
+        ":config",
+        ":core",
+        ":dtypes",
+        ":mesh",
+        ":partial_eval",
+        ":source_info_util",
+        ":tree_util",
+        ":util",
+    ],
 )
 
 pytype_strict_library(
