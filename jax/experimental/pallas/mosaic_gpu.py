@@ -69,9 +69,3 @@ GMEM = MemorySpace.GMEM
 SMEM = MemorySpace.SMEM
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.TMEM`.
 TMEM = MemorySpace.TMEM
-
-# TODO(slebedev): Deprecate and remove these aliases.
-GPUBlockSpec = BlockSpec
-GPUCompilerParams = CompilerParams
-GPUMemorySpace = MemorySpace
-GPUMesh = Mesh
