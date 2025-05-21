@@ -441,6 +441,121 @@ FailureOr<Value> maskOOB(RewriteContext &ctx, ImplicitLocOpBuilder &builder,
       .getResult();
 }
 
+// Transpose the 2nd minor dimension of the implicit shape.
+//
+// Shape of (..., N, 1) becomes (..., 1, N)
+FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
+    RewriteContext &ctx, OpBuilder &builder, const Location loc,
+    xla::Array<Value> vregs, const ArrayRef<int64_t> ishape,
+    VectorLayout layout, const int64_t new_minor_offset) {
+  if (layout.bitwidth() != 32 || !layout.hasNativeTiling(ctx.target_shape)) {
+    // Note: For non-native tilings it is probably better to retile first, to
+    //       to make the most out of each lane rotate (they are expensive).
+    return emitError(loc, "Not implemented: Unsupported bitwidth or tiling");
+  }
+  auto create_index_const = [&](const int64_t idx) {
+    return builder.create<arith::ConstantIndexOp>(loc, idx);
+  };
+  auto create_i32_vreg_const = [&](const int64_t val) {
+    return I32Const(val, ctx.target_shape, builder, loc);
+  };
+  if (layout.offsets()[1].has_value()) {
+    // Replicate minor dimension
+    // TODO(tlongeri): Move into its own function (it will be needed for
+    // relayout) and make this a precondition of this function, so that we have
+    // "building block" functions with minimal overlap
+    vregs.Each([&](const absl::Span<const int64_t> idxs, Value *vreg) {
+      *vreg = builder.create<tpu::DynamicGatherOp>(
+          loc, vreg->getType(), *vreg,
+          create_i32_vreg_const(*layout.offsets()[1]), 1);
+    });
+    layout =
+        VectorLayout(layout.bitwidth(), {layout.offsets()[0], std::nullopt},
+                     layout.tiling(), VectorLayout::ImplicitDim::kNone);
+  }
+  if (!layout.offsets()[0].has_value()) {
+    return vregs;
+  }
+  const int64_t old_2nd_minor_offset = *layout.offsets()[0];
+  SmallVector<int64_t> new_ishape(ishape);
+  CHECK_EQ(new_ishape.back(), 1);
+  std::iter_swap(new_ishape.end() - 2, new_ishape.end() - 1);
+  // new_layout is only to get the new vreg array shape, the implicit dim is
+  // irrelevant (since we already have the implicit shape):
+  const VectorLayout new_layout(
+      layout.bitwidth(), {std::nullopt, new_minor_offset}, layout.tiling(),
+      VectorLayout::ImplicitDim::kNone);
+  xla::Array<Value> new_vregs(new_layout.tileArrayShape(
+      /*src_is_implicit=*/true, /*res_is_implicit=*/true, new_ishape,
+      ctx.target_shape));
+  VectorType iota_vreg_ty =
+      getNativeVregType(builder.getI32Type(), ctx.target_shape);
+  // Preallocate an indices vector to avoid repeated allocations:
+  SmallVector<int64_t> old_idxs;
+  new_vregs.Each([&](const absl::Span<const int64_t> new_idxs,
+                     Value *new_vreg) {
+    const int64_t uncorrected_shape_start =
+        ctx.target_shape[1] * new_idxs.back() - new_minor_offset;
+    // The start and end of the data contained by new_vreg in the implicit shape
+    const int64_t shape_start = std::max<int64_t>(uncorrected_shape_start, 0);
+    const int64_t shape_end = std::min(
+        uncorrected_shape_start + ctx.target_shape[1], new_ishape.back());
+    old_idxs.assign(new_idxs.begin(), new_idxs.end());
+    CHECK_EQ(*(old_idxs.end() - 2), 0);
+    old_idxs.back() = 0;
+    *new_vreg = nullptr;
+    VectorType vmask_ty =
+        getNativeVregOrVmaskType(builder.getI1Type(), 32, ctx.target_shape);
+    int64_t shape_offset = shape_start;
+    // The data in the new vreg is composed of data from multiple of the old
+    // vregs, so iterate over them until the new vreg is full
+    while (shape_offset < shape_end) {
+      // Find the vreg that contains the data at shape_offset
+      *(old_idxs.end() - 2) =
+          (shape_offset + old_2nd_minor_offset) / ctx.target_shape[0];
+      const int64_t old_sublane_offset =
+          (shape_offset + old_2nd_minor_offset) % ctx.target_shape[0];
+      const int64_t new_lane_offset =
+          (shape_offset + new_minor_offset) % ctx.target_shape[1];
+      // We will blend in all the relevant data contained by the old vreg
+      const int64_t data_size =
+          std::min(ctx.target_shape[0] - old_sublane_offset,
+                   ctx.target_shape[1] - new_lane_offset);
+      // [ a a a a a a a a ]    [ . . a b c . . . ]
+      // [ b b b b b b b b ] => [ . . a b c . . . ]
+      // [ c c c c c c c c ]    [ . . a b c . . . ]
+      // [ . . . . . . . . ]    [ . . a b c . . . ]
+      // Every lane has all the data, so at each sublane we can just pick out
+      // the element that we want using a sublane shuffle.
+      Value vreg = vregs(old_idxs);
+      Value iota_vreg = builder.create<tpu::IotaOp>(
+          loc, iota_vreg_ty,
+          /*dimension =*/builder.getI32IntegerAttr(1));
+      iota_vreg = builder.create<arith::AddIOp>(
+          loc, iota_vreg,
+          create_i32_vreg_const(old_sublane_offset - new_lane_offset));
+      vreg = builder.create<tpu::DynamicGatherOp>(loc, vreg.getType(), vreg,
+                                                  iota_vreg, 0);
+      // Now, blend the transposed data into new_vreg
+      if (*new_vreg == nullptr) {
+        *new_vreg = vreg;
+      } else {
+        Value mask = builder.create<tpu::CreateMaskOp>(
+            loc, vmask_ty,
+            ArrayRef<Value>{create_index_const(0),
+                            create_index_const(new_lane_offset)},
+            ArrayRef<Value>{create_index_const(ctx.target_shape[0]),
+                            create_index_const(new_lane_offset + data_size)});
+        *new_vreg = builder.create<arith::SelectOp>(loc, mask, vreg, *new_vreg);
+      }
+      shape_offset += data_size;
+      ++*(old_idxs.end() - 2);
+    }
+    CHECK(*new_vreg != nullptr);
+  });
+  return new_vregs;
+}
+
 // Insert a minor dimension to the implicit shape. The original minor dimension
 // becomes the new second minor dimension, laid out across sublanes.
 //
@@ -6902,6 +7017,19 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
         insertImplicitMinorDimension(ctx, builder, loc, vregs,
                                      src.implicitShape(vty.getShape()), src,
                                      dst.offsets()));
+    return std::make_pair(dst, std::move(dst_vregs));
+  }
+  if (src.implicit_dim() == VectorLayout::ImplicitDim::kMinor &&
+      dst_implicit_dim == VectorLayout::ImplicitDim::kSecondMinor &&
+      src.bitwidth() == 32 && src.hasNativeTiling(ctx.target_shape)) {
+    const int64_t dst_minor_offset = dst_offset_hints[1].value_or(0);
+    FAILUREOR_ASSIGN_OR_RETURN(
+        xla::Array<Value> dst_vregs,
+        transposeSingletonMinorDimension(ctx, builder, loc, vregs,
+                                         src.implicitShape(vty.getShape()), src,
+                                         dst_minor_offset));
+    VectorLayout dst(src.bitwidth(), {std::nullopt, dst_minor_offset},
+                     src.tiling(), VectorLayout::ImplicitDim::kSecondMinor);
     return std::make_pair(dst, std::move(dst_vregs));
   }
   return emitError(loc,
