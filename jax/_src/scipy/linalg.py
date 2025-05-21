@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from functools import partial
 
+import jax.scipy
 import numpy as np
 import textwrap
 from typing import overload, Any, Literal
@@ -2248,3 +2249,41 @@ def _binom(n, k):
   b = lax.lgamma(n - k + 1.0)
   c = lax.lgamma(k + 1.0)
   return lax.exp(a - b - c)
+
+
+@jit
+def solve_sylvester(A: jnp.ndarray, B: jnp.ndarray, C: jnp.ndarray) -> jnp.ndarray:
+    """
+    Solves the Sylvester equation:
+    .. math::
+
+      AX + XB = C
+
+    Args:
+      A: Matrix of shape m x m
+      B: Matrix of shape n x n
+      C: Matrix of shape m x n
+
+    Returns:
+      X: Matrix of shape m x n
+
+    Examples:
+      >>> A = jax.numpy.array([[1, 2], [3, 4]])
+      >>> B = jax.numpy.array([[5, 6], [7, 8]])
+      >>> C = jax.numpy.array([[6, 8], [10, 12]])
+      >>> jax.scipy.linalg.solve_sylvester(A, B, C)
+      Array([[1.00000000e+00, 2.36169983e-16],
+             [1.79761733e-16, 1.00000000e+00]], dtype=float64)
+
+    Notes:
+      This function returns NaNs in the event that there is no solution.
+    """
+    n, m = A.shape[-1], B.shape[-1]
+
+    RA, UA = jnp.linalg.eig(A)
+    RB, UB = jnp.linalg.eig(B)
+    F = jax.scipy.linalg.solve(UA, (C + 0j) @ UB)
+    W = RA[:, None] + RB[None, :]
+    Y = F / W
+    X = UA[:n,:n] @ Y[:n,:m] @ inv(UB)[:m,:m]
+    return jnp.real(X)
