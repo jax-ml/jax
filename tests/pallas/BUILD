@@ -772,10 +772,8 @@ jax_multiplatform_test(
     srcs = ["mgpu_attention_test.py"],
     enable_backends = [],
     enable_configs = [
-        "gpu_h100_x32",
         "gpu_h100",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 8,
     deps = [
         "//jax:pallas",

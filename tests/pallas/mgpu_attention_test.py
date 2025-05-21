@@ -36,8 +36,6 @@ else:
 
 
 config.parse_flags_with_absl()
-os.environ["XLA_FLAGS"] = (
-    os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0")
 
 
 @jtu.with_config(jax_traceback_filtering="off")
@@ -180,4 +178,6 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
         self.skipTest("Not enough SMEM for this configuration.")
 
 if __name__ == "__main__":
+  os.environ["XLA_FLAGS"] = (
+      os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0")
   absltest.main(testLoader=jtu.JaxTestLoader())
