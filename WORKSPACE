@@ -145,3 +145,10 @@ load(
 )
 
 nccl_configure(name = "local_config_nccl")
+
+load(
+    "@xla//third_party/nvshmem/hermetic:nvshmem_redist_init_repository.bzl",
+    "nvshmem_redist_init_repository",
+)
+
+nvshmem_redist_init_repository()
