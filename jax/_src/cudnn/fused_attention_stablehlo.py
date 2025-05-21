@@ -138,7 +138,6 @@ def create_dot_product_attention_backend_config_base(
       "algo_id": "0",
       "math_type": "TENSOR_OP_MATH",
       "tuning_knobs": {"17": "1", "24": "0"},
-      "is_cudnn_frontend": True,
       "workspace_size": "0",
     },
     "fmha_scale": fmha_scale,
