@@ -48,11 +48,17 @@ import tensorflow as tf
 config.parse_flags_with_absl()
 
 
-@unittest.skip("Failing after jax 0.6.1 release")
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):
     super().setUp()
+    versions = tf.version.VERSION.split(".")
+    if versions < ["2", "19", "1"]:
+      # StableHLO changed on March 18th, 2025 ,to version 1.10.0, and this
+      # introduces ops like vhlo_sine_v2. These ops require a TF version
+      # released after this date.
+      self.skipTest("Need version of TensorFlow at least 2.19.1")
+
     # One TF device of each device_type
     self.tf_devices = []
     for tf_device in (tf.config.list_logical_devices("TPU") +
@@ -1783,11 +1789,17 @@ class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
     jax_result = func()
     self.assertEqual(tf_result, jax_result)
 
-@unittest.skip("Failing after jax 0.6.1 release")
+
 class Jax2TfVersioningTest(tf_test_util.JaxToTfTestCase):
   # Use a separate test case with the default jax_serialization_version
   def setUp(self):
     self.use_max_serialization_version = False
+    versions = tf.version.VERSION.split(".")
+    if versions < ["2", "19", "1"]:
+      # StableHLO changed on March 18th, 2025 ,to version 1.10.0, and this
+      # introduces ops like vhlo_sine_v2. These ops require a TF version
+      # released after this date.
+      self.skipTest("Need version of TensorFlow at least 2.19.1")
     super().setUp()
 
   @jtu.ignore_warning(
