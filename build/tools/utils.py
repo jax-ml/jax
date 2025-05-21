@@ -293,9 +293,12 @@ def copy_dir_recursively(src, dst):
   logging.info("Editable wheel path: %s" % dst)
 
 
-def copy_individual_files(src, dst, regex):
+def copy_individual_files(src: str, dst: str, glob_pattern: str):
   os.makedirs(dst, exist_ok=True)
-  for f in glob.glob(os.path.join(src, regex)):
+  logging.debug(
+    f"Copying files matching pattern {glob_pattern!r} from {src!r} to {dst!r}"
+  )
+  for f in glob.glob(os.path.join(src, glob_pattern)):
     dst_file = os.path.join(dst, os.path.basename(f))
     if os.path.exists(dst_file):
       os.remove(dst_file)
