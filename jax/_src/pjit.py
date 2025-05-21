@@ -96,48 +96,6 @@ MeshShardingMinusUnspecified = Union[NamedSharding, AUTO]
 logger = logging.getLogger(__name__)
 
 
-def _find_arg_mismatch(arg_list, fails, fun_name):
-  mismatched_args_msg = []
-  def mismatch(err):
-    for name, inp_da, aval in arg_list:
-      if err.m_type == pxla.MismatchType.ARG_SHARDING and err.da == inp_da:
-        mismatched_args_msg.append(
-            f"argument {name} of {fun_name} with shape {aval.str_short()} and "
-            f"{err._dev_ids_plat_str}")
-        break
-  first_err, second_err = fails
-  mismatch(first_err)
-  mismatch(second_err)
-  return mismatched_args_msg
-
-
-def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
-                                      arg_names):
-  arg_list = []
-  if arg_names is None:
-    arg_names = [''] * len(args_flat)
-  for a, n in zip(args_flat, arg_names):
-    da = (a.sharding._device_assignment
-          if getattr(a, 'sharding', None) is not None else None)
-    arg_list.append((n, da, core.shaped_abstractify(a)))
-
-  mismatched_args_msg = _find_arg_mismatch(arg_list, fails, fun_name)
-
-  if len(mismatched_args_msg) == 2:
-    first, second = mismatched_args_msg  # pytype: disable=bad-unpacking
-    extra_msg = f" Got {first} and {second}"
-  elif len(mismatched_args_msg) == 1:
-    first, second  = fails
-    # Choose the failure left which is not already covered by ARG_SHARDING.
-    left = second if first.m_type == pxla.MismatchType.ARG_SHARDING else first
-    extra_msg = f" Got {mismatched_args_msg[0]} and{left._str(api_name)}"
-  else:
-    first, second = fails
-    extra_msg = f" Got{first._str(api_name)} and{second._str(api_name)}"
-  msg = (f"Received incompatible devices for {api_name}ted computation.{extra_msg}")
-  return msg
-
-
 class PjitInfo(NamedTuple):
   """Things that we know about a jit instance before it is called.
 
@@ -197,10 +155,10 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
       out_flat = pjit_p.bind(*args_flat, **p.params)
       compiled = None
       profiler = None
-  except pxla.DeviceAssignmentMismatchError as e:
+  except stages.DeviceAssignmentMismatchError as e:
     fails, = e.args
     fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
-    msg = _device_assignment_mismatch_error(
+    msg = stages._device_assignment_mismatch_error(
         fun_name, fails, args_flat, 'jit', p.arg_names)
     raise ValueError(msg) from None
   except xla.InvalidInputException as e:
@@ -1740,7 +1698,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
     if isinstance(arg_s, PmapSharding):
       continue
     if getattr(a, '_committed', True):
-      committed_arg_shardings.append((arg_s, pxla.MismatchType.ARG_SHARDING, None))
+      committed_arg_shardings.append((arg_s, stages.MismatchType.ARG_SHARDING, None))
 
   resolved_in_shardings: list[PjitSharding] = []
   for arg, pjit_in_s in zip(args, pjit_in_shardings):

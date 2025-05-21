@@ -326,7 +326,6 @@ py_library_providing_imports_info(
         "_src/shard_alike.py",
         "_src/shard_map.py",
         "_src/sourcemap.py",
-        "_src/stages.py",
         "_src/tree.py",
     ] + glob(
         [
@@ -415,6 +414,7 @@ py_library_providing_imports_info(
         ":sharding_impls",
         ":sharding_specs",
         ":source_info_util",
+        ":stages",
         ":traceback_util",
         ":tree_util",
         ":typing",
@@ -997,6 +997,25 @@ pytype_strict_library(
         ":op_shardings",
         ":util",
         ":xla_bridge",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "stages",
+    srcs = ["_src/stages.py"],
+    deps = [
+        ":config",
+        ":core",
+        ":layout",
+        ":mlir",
+        ":sharding",
+        ":sharding_impls",
+        ":source_info_util",
+        ":traceback_util",
+        ":tree_util",
+        ":typing",
+        ":util",
         "//jax/_src/lib",
     ],
 )

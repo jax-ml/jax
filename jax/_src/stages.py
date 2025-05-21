@@ -30,18 +30,20 @@ executable protocols described above.
 """
 from __future__ import annotations
 
+import dataclasses
+import enum
 import functools
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
 
-import jax
-
 from jax._src import core
 from jax._src import config
+from jax._src import sharding as sharding_lib
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
+from jax._src import typing
 from jax._src import util
 from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.layout import Layout
@@ -79,7 +81,7 @@ class Executable:
     """Optionally constructs a fast c++ dispatcher."""
     return None
 
-  def input_shardings(self) -> Sequence[jax.sharding.Sharding]:
+  def input_shardings(self) -> Sequence[sharding_lib.Sharding]:
     """Flat sequence of input shardings.
 
     May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
@@ -88,7 +90,7 @@ class Executable:
     raise NotImplementedError(
         "compiled executable carries no input sharding information")
 
-  def output_shardings(self) -> Sequence[jax.sharding.Sharding]:
+  def output_shardings(self) -> Sequence[sharding_lib.Sharding]:
     """Flat sequence of output shardings.
 
     May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
@@ -310,8 +312,8 @@ class ArgInfo:
 @dataclass(frozen=True)
 class OutInfo:
   shape: tuple[int, ...]
-  dtype: jax.typing.DTypeLike
-  sharding: jax.sharding.Sharding | None = None
+  dtype: typing.DTypeLike
+  sharding: sharding_lib.Sharding | None = None
 
 
 class Stage:
@@ -689,9 +691,6 @@ class Traced(Stage):
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):
     """Lower to compiler input, returning a ``Lowered`` instance."""
-    from jax._src.interpreters import pxla
-    from jax._src import pjit
-
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
     new_callable = functools.partial(
@@ -699,9 +698,9 @@ class Traced(Stage):
         lowering_parameters=_private_parameters)
     try:
       lowering = new_callable()
-    except pxla.DeviceAssignmentMismatchError as e:
+    except DeviceAssignmentMismatchError as e:
       fails, = e.args
-      msg = pjit._device_assignment_mismatch_error(
+      msg = _device_assignment_mismatch_error(
           self.fun_name, fails, self._args_flat, 'jit', self._arg_names)
       raise ValueError(msg) from None
     return Lowered(lowering, self.args_info, self._out_tree)
@@ -745,3 +744,108 @@ class Wrapped(Protocol):
       A ``Lowered`` instance representing the lowering.
     """
     raise NotImplementedError
+
+
+class MismatchType(enum.Enum):
+  ARG_SHARDING = 0
+  OUT_SHARDING = 1
+  SHARDING_INSIDE_COMPUTATION = 2
+  CONTEXT_DEVICES = 3
+  IN_SHARDING = 4
+
+  def __str__(self):
+    if self.name == 'IN_SHARDING':
+      return 'explicit input sharding'
+    elif self.name == 'OUT_SHARDING':
+      return 'explicit output sharding'
+    elif self.name == 'CONTEXT_DEVICES':
+      return 'context mesh'
+    return f'{self.name}'
+
+
+class SourceInfo(NamedTuple):
+  source_info: source_info_util.SourceInfo
+  eqn_name: str
+
+
+@dataclasses.dataclass
+class DeviceAssignmentMismatch:
+  da: Sequence[xc.Device]
+  m_type: MismatchType
+  source_info: SourceInfo | None
+
+  @property
+  def device_ids(self) -> Sequence[int]:
+    return [d.id for d in self.da]
+
+  @property
+  def platform(self) -> str:
+    return self.da[0].platform.upper()
+
+  def _maybe_api_name(self, api_name) -> str:
+    return f" {api_name}'s" if self.m_type == MismatchType.CONTEXT_DEVICES else ""
+
+  @property
+  def source_info_str(self):
+    return (
+        "" if self.source_info is None
+        else f" at {source_info_util.summarize(self.source_info.source_info)}"
+    )
+
+  @property
+  def _dev_ids_plat_str(self):
+    return f"device ids {self.device_ids} on platform {self.platform}"
+
+  def m_type_str(self, api_name):
+    return (f'{self.source_info and self.source_info.eqn_name} inside {api_name}'
+            if self.m_type == MismatchType.SHARDING_INSIDE_COMPUTATION else self.m_type)
+
+  def _str(self, api_name):
+    return (f"{self._maybe_api_name(api_name)} {self.m_type_str(api_name)} with "
+            f"{self._dev_ids_plat_str}{self.source_info_str}")
+
+
+class DeviceAssignmentMismatchError(Exception):
+  pass
+
+
+def _find_arg_mismatch(arg_list, fails, fun_name):
+  mismatched_args_msg = []
+  def mismatch(err):
+    for name, inp_da, aval in arg_list:
+      if err.m_type == MismatchType.ARG_SHARDING and err.da == inp_da:
+        mismatched_args_msg.append(
+            f"argument {name} of {fun_name} with shape {aval.str_short()} and "
+            f"{err._dev_ids_plat_str}")
+        break
+  first_err, second_err = fails
+  mismatch(first_err)
+  mismatch(second_err)
+  return mismatched_args_msg
+
+
+def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
+                                      arg_names):
+  arg_list = []
+  if arg_names is None:
+    arg_names = [''] * len(args_flat)
+  for a, n in zip(args_flat, arg_names):
+    da = (a.sharding._device_assignment
+          if getattr(a, 'sharding', None) is not None else None)
+    arg_list.append((n, da, core.shaped_abstractify(a)))
+
+  mismatched_args_msg = _find_arg_mismatch(arg_list, fails, fun_name)
+
+  if len(mismatched_args_msg) == 2:
+    first, second = mismatched_args_msg  # pytype: disable=bad-unpacking
+    extra_msg = f" Got {first} and {second}"
+  elif len(mismatched_args_msg) == 1:
+    first, second  = fails
+    # Choose the failure left which is not already covered by ARG_SHARDING.
+    left = second if first.m_type == MismatchType.ARG_SHARDING else first
+    extra_msg = f" Got {mismatched_args_msg[0]} and{left._str(api_name)}"
+  else:
+    first, second = fails
+    extra_msg = f" Got{first._str(api_name)} and{second._str(api_name)}"
+  msg = (f"Received incompatible devices for {api_name}ted computation.{extra_msg}")
+  return msg

@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import enum
 import collections
 from collections import namedtuple
 from collections.abc import Callable, Sequence, Iterable
@@ -1660,67 +1659,10 @@ def check_if_any_auto(
       return True
   return False
 
-class MismatchType(enum.Enum):
-  ARG_SHARDING = 0
-  OUT_SHARDING = 1
-  SHARDING_INSIDE_COMPUTATION = 2
-  CONTEXT_DEVICES = 3
-  IN_SHARDING = 4
-
-  def __str__(self):
-    if self.name == 'IN_SHARDING':
-      return 'explicit input sharding'
-    elif self.name == 'OUT_SHARDING':
-      return 'explicit output sharding'
-    elif self.name == 'CONTEXT_DEVICES':
-      return 'context mesh'
-    return f'{self.name}'
-
-
-@dataclasses.dataclass
-class DeviceAssignmentMismatch:
-  da: Sequence[xc.Device]
-  m_type: MismatchType
-  source_info: dispatch.SourceInfo | None
-
-  @property
-  def device_ids(self) -> Sequence[int]:
-    return [d.id for d in self.da]
-
-  @property
-  def platform(self) -> str:
-    return self.da[0].platform.upper()
-
-  def _maybe_api_name(self, api_name) -> str:
-    return f" {api_name}'s" if self.m_type == MismatchType.CONTEXT_DEVICES else ""
-
-  @property
-  def source_info_str(self):
-    return (
-        "" if self.source_info is None
-        else f" at {source_info_util.summarize(self.source_info.source_info)}"
-    )
-
-  @property
-  def _dev_ids_plat_str(self):
-    return f"device ids {self.device_ids} on platform {self.platform}"
-
-  def m_type_str(self, api_name):
-    return (f'{self.source_info and self.source_info.eqn_name} inside {api_name}'
-            if self.m_type == MismatchType.SHARDING_INSIDE_COMPUTATION else self.m_type)
-
-  def _str(self, api_name):
-    return (f"{self._maybe_api_name(api_name)} {self.m_type_str(api_name)} with "
-            f"{self._dev_ids_plat_str}{self.source_info_str}")
-
-
-class DeviceAssignmentMismatchError(Exception):
-  pass
-
 
 ShardingInfo = tuple[
     Union[JSharding, UnspecifiedValue, AUTO],
-    MismatchType,
+    stages.MismatchType,
     Union[Any, None],  # Any is dispatch.SourceInfo to avoid circular imports
 ]
 
@@ -1752,14 +1694,14 @@ def _get_and_check_device_assignment(
                              else sh._device_assignment)
     if not devices:
       if first_sharding_info[0] != arr_device_assignment:
-        raise DeviceAssignmentMismatchError([
-            DeviceAssignmentMismatch(*first_sharding_info),
-            DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
+        raise stages.DeviceAssignmentMismatchError([
+            stages.DeviceAssignmentMismatch(*first_sharding_info),
+            stages.DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
     else:
       if devices != arr_device_assignment:
-        raise DeviceAssignmentMismatchError([
-            DeviceAssignmentMismatch(devices, MismatchType.CONTEXT_DEVICES, None),
-            DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
+        raise stages.DeviceAssignmentMismatchError([
+            stages.DeviceAssignmentMismatch(devices, stages.MismatchType.CONTEXT_DEVICES, None),
+            stages.DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
   if first_sharding_info is None and devices:
     final_device_assignment = devices
   elif first_sharding_info is None:
@@ -2283,9 +2225,9 @@ def lower_sharding_computation(
   unique_out_shardings = util.stable_unique(out_shardings)
   backend, device_assignment = _get_and_check_device_assignment(
       it.chain(
-          ((i, MismatchType.ARG_SHARDING, None) for i in unique_in_shardings),
-          ((o, MismatchType.OUT_SHARDING, None) for o in unique_out_shardings),
-          ((js, MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)
+          ((i, stages.MismatchType.ARG_SHARDING, None) for i in unique_in_shardings),
+          ((o, stages.MismatchType.OUT_SHARDING, None) for o in unique_out_shardings),
+          ((js, stages.MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)
            for js, source_info in unique_intermediate_shardings)),
       devices_from_context)
   unique_intermediate_shardings = [js for js, _ in unique_intermediate_shardings]
