@@ -6,15 +6,23 @@
 version: 2
 
 build:
-  os: "ubuntu-22.04"
+  os: "ubuntu-24.04"
   tools:
-    python: "3.10"
+    python: "3.12"
   jobs:
     post_checkout:
       # Skip building PRs unless tagged with the "documentation" label.
       - |
         [ "${READTHEDOCS_VERSION_TYPE}" != "external" ] && echo "Building latest" && exit 0
         (curl -sL https://api.github.com/repos/jax-ml/jax/issues/${READTHEDOCS_VERSION}/labels | grep -q "https://api.github.com/repos/jax-ml/jax/labels/documentation") && echo "Building PR with label" || exit 183
+    create_environment:
+      - asdf plugin add uv
+      - asdf install uv latest
+      - asdf global uv latest
+      - uv venv $READTHEDOCS_VIRTUALENV_PATH
+      - UV_PROJECT_ENVIRONMENT=$READTHEDOCS_VIRTUALENV_PATH uv pip install -r docs/requirements.txt
+    install:
+      - "true"  # skip
 
 # Build documentation in the docs/ directory with Sphinx
 sphinx:
@@ -24,8 +32,3 @@ sphinx:
 # Optionally build your docs in additional formats such as PDF and ePub
 formats:
   - htmlzip
-
-# Optionally set the version of Python and requirements required to build your docs
-python:
-  install:
-    - requirements: docs/requirements.txt
