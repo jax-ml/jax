@@ -181,7 +181,7 @@ jobs:
       run: |
         pip install uv~=0.5.30
         uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
-        uv pip install --system --pre tensorflow==2.19.0rc0
+        uv pip install --system --pre tensorflow==2.19.0
 
     - name: Run tests
       env:
