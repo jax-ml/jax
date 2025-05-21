@@ -14,7 +14,7 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## Unreleased
+## JAX 0.6.1
 
 * New features:
   * Added {func}`jax.lax.axis_size` which returns the size of the mapped axis
