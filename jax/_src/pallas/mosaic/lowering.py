@@ -2444,7 +2444,7 @@ class FoldingError(Exception):
 def _fold_and_get_constant_value(x):
   def _fold(x, fuel):
     if fuel <= 0:
-      raise FoldingError("Folding depth exceeded")
+      raise FoldingError()
     op_name = getattr(x.owner, "name", None)
     binop_folds = {
         "arith.maxsi": max,
@@ -2459,7 +2459,7 @@ def _fold_and_get_constant_value(x):
         raise ValueError(f"Unsupported constant type: {x.type}")
     if op_name in binop_folds:
       return binop_folds[op_name](_fold(v, fuel - 1) for v in x.owner.operands)
-    raise FoldingError(f"Folding not supported for {x.owner}")
+    raise FoldingError()
 
   try:
     return _fold(x, 10)
