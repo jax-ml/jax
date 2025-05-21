@@ -710,10 +710,7 @@ total 32
 -rw-rw-r--@ 1 necula  wheel  2333 Jun 19 11:04 jax_ir3_jit_my_fun_export.mlir
 ```
 
-Inside Google, you can turn on logging by using the `--vmodule` argument to
-specify the logging levels for different modules,
-e.g., `--vmodule=_export=3`.
-
+Set [`JAX_DEBUG_LOG_MODULES=jax._src.export`](https://docs.jax.dev/en/latest/config_options.html#jax_debug_log_modules) to enable extra debugging logging.
 
 (export_ensuring_compat)=
 ### Ensuring forward and backward compatibility
