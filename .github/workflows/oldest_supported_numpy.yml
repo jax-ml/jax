@@ -10,7 +10,6 @@ on:
   push:
     branches:
       - main
-      - 'release/**'
 
 # This should also be set to read-only in the project settings, but it's nice to
 # document and enforce the permissions here.
@@ -24,7 +23,7 @@ concurrency:
 
 jobs:
   test-oldest-supported-numpy:
-    if: github.event.repository.fork == false
+    if: "github.event.repository.fork == false && !startsWith(github.head_ref, 'release/')"
     defaults:
       run:
         shell: bash
