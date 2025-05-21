@@ -335,7 +335,10 @@ NB_MODULE(_jax, m) {
          std::shared_ptr<DistributedRuntimeClient> distributed_client,
          int node_id, int num_nodes,
          std::shared_ptr<xla::cpu::CpuCollectives> collectives,
-         std::optional<int> num_devices) -> nb_class_ptr<PyClient> {
+         std::optional<int> num_devices,
+         std::optional<int> get_local_topology_timeout_minutes,
+         std::optional<int> get_global_topology_timeout_minutes)
+          -> nb_class_ptr<PyClient> {
         std::unique_ptr<ifrt::PjRtClient> ifrt_client;
         {
           nb::gil_scoped_release gil_release;
@@ -357,6 +360,14 @@ NB_MODULE(_jax, m) {
             ifrt_options.process_id = node_id;
             ifrt_options.num_processes = num_nodes;
           }
+          if (get_local_topology_timeout_minutes.has_value()) {
+            ifrt_options.get_local_topology_timeout =
+                absl::Minutes(*get_local_topology_timeout_minutes);
+          }
+          if (get_global_topology_timeout_minutes.has_value()) {
+            ifrt_options.get_global_topology_timeout =
+                absl::Minutes(*get_global_topology_timeout_minutes);
+          }
           ifrt_client =
               ValueOrThrow(ifrt::PjRtClient::Create(std::move(ifrt_options)));
         }
@@ -366,7 +377,9 @@ NB_MODULE(_jax, m) {
       nb::arg("node_id") = 0, nb::arg("num_nodes") = 1,
       nb::arg("collectives").none() =
           std::shared_ptr<xla::cpu::CpuCollectives>(),
-      nb::arg("num_devices").none() = std::nullopt);
+      nb::arg("num_devices").none() = std::nullopt,
+      nb::arg("get_local_topology_timeout_minutes").none() = std::nullopt,
+      nb::arg("get_global_topology_timeout_minutes").none() = std::nullopt);
   m.def("pjrt_plugin_loaded", [](std::string platform_name) -> bool {
     absl::StatusOr<const PJRT_Api*> pjrt_api = pjrt::PjrtApi(platform_name);
     return pjrt_api.ok();
