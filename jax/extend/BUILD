@@ -43,6 +43,7 @@ py_library_providing_imports_info(
     deps = [
         "//jax",
         "//jax:abstract_arrays",
+        "//jax:ad",
         "//jax:ad_util",
         "//jax:core",
     ],

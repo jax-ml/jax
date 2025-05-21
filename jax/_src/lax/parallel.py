@@ -2059,3 +2059,10 @@ def _psum_invariant_transpose_rule(cts, *args, axes, axis_index_groups):
   del args
   return core.pvary_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups)
 ad.deflinear2(psum_invariant_p, _psum_invariant_transpose_rule)
+
+########################### pvary ##################################
+
+def _pvary_transpose_rule(cts, *_, axes, axis_index_groups):
+  return psum_invariant_p.bind(
+      *cts, axes=axes, axis_index_groups=axis_index_groups)
+ad.deflinear2(core.pvary_p, _pvary_transpose_rule)

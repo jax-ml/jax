@@ -21,12 +21,12 @@ import itertools as it
 from functools import partial
 from typing import Any
 
+from jax._src import api_util
 from jax._src import config
-from jax._src import dispatch
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
-from jax.tree_util import (tree_flatten, tree_unflatten,
-                           register_pytree_node, Partial, PyTreeDef)
+from jax._src.tree_util import (tree_flatten, tree_unflatten,
+                                register_pytree_node, Partial, PyTreeDef)
 from jax._src import mesh as mesh_lib
 from jax._src import core
 from jax._src import source_info_util
@@ -1125,7 +1125,7 @@ def map_transpose(primitive: core.Primitive, params,
 
   try:
     out_flat = primitive.bind(fun, *all_args, **new_params)
-  except dispatch.InternalFloatingPointError as e:
+  except api_util.InternalFloatingPointError as e:
     print("Invalid nan value encountered in the backward pass of a jax.jit "
           "function. Calling the de-optimized backward pass.")
     try:
@@ -1135,7 +1135,7 @@ def map_transpose(primitive: core.Primitive, params,
     else:
       # If control reaches this line, we got a NaN on the output of `compiled`
       # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-      dispatch._raise_no_nan_in_deoptimized(e)
+      api_util._raise_no_nan_in_deoptimized(e)
   arg_cts = tree_unflatten(out_tree(), out_flat)
 
   # The freevars are being fanned out (not mapped). During transpose the
@@ -1266,11 +1266,3 @@ class CustomVJPException(Exception):
 
 # TODO(mattjj): remove this vestigial dict
 reducing_transposes: dict[core.Primitive, Callable] = {}
-
-########################### pvary ##################################
-
-def _pvary_transpose_rule(cts, *_, axes, axis_index_groups):
-  from jax._src.lax import parallel as lax_parallel
-  return lax_parallel.psum_invariant_p.bind(
-      *cts, axes=axes, axis_index_groups=axis_index_groups)
-deflinear2(core.pvary_p, _pvary_transpose_rule)

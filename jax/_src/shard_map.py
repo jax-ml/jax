@@ -1054,7 +1054,7 @@ def _maybe_check_special(outs):
           for s in getattr(leaf, 'addressable_shards', [])]
   try:
     dispatch.check_special('shard_map', bufs)
-  except dispatch.InternalFloatingPointError as e:
+  except api_util.InternalFloatingPointError as e:
     raise FloatingPointError(f'Invalid value ({e.ty}) encountered in sharded computation.') from None
 
 class ShardMapTrace(core.Trace):
@@ -1562,7 +1562,7 @@ def _shard_map_transpose(out_cts, *args,
     except (FloatingPointError, ZeroDivisionError) as e2:
       raise e2 from None
     else:
-      dispatch._raise_no_nan_in_deoptimized(e)
+      api_util._raise_no_nan_in_deoptimized(e)
   return tree_unflatten(out_tree(), out_flat)
 ad.primitive_transposes[shard_map_p] = _shard_map_transpose
 
