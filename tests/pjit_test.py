@@ -5006,6 +5006,25 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "updating ShapeDtypeStruct"):
       s4.update(sharding=NamedSharding(mesh, P('x')))
 
+  @jtu.with_explicit_mesh((2, 1), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+  def test_sds_pspec_input(self, mesh):
+    inp = jax.ShapeDtypeStruct((2, 2), np.float32, sharding=P('x'))
+    lowered = jax.jit(lambda x: x * 2).lower(inp)
+    self.assertIn('num_partitions = 2', lowered.as_text())
+
+    np_inp = np.arange(4, dtype=np.float32).reshape(2, 2)
+    arr = jax.device_put(np_inp, P('x'))
+    out = lowered.compile()(arr)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+  def test_sds_pspec_no_mesh_ctx_error(self):
+    with self.assertRaisesRegex(
+        TypeError,
+        'When specifying PartitionSpec to `ShapeDtypeStruct`, the context mesh'
+        ' cannot be empty'):
+      jax.ShapeDtypeStruct((2, 2), np.float32, sharding=P('x'))
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")

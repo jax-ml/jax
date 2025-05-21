@@ -4525,13 +4525,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "applied to foo"):
       f_vjp(1.0, 1.0)
 
-  def test_shapedtypestruct_sharding_error(self):
-    with self.assertRaisesRegex(
-        ValueError,
-        "sharding should be an instance of `jax.sharding.Sharding`."):
-      jax.ShapeDtypeStruct((8, 2), np.float32,
-                           sharding=jax.sharding.PartitionSpec('x'))
-
   def test_make_jaxpr_weakref(self):
     class Foo(NamedTuple):
       x: int
