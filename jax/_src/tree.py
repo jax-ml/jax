@@ -378,3 +378,34 @@ def map_with_path(
     - :func:`jax.tree_util.register_pytree_with_keys`
   """
   return tree_util.tree_map_with_path(f, tree, *rest, is_leaf=is_leaf)
+
+
+def broadcast(prefix_tree: Any, full_tree: Any,
+              is_leaf: Callable[[Any], bool] | None = None
+              ) -> list[Any]:
+  """Broadcasts a tree prefix into the full structure of a given tree.
+
+    Args:
+      prefix_tree: a pytree that is a tree prefix of full_tree.
+      full_tree: a pytree with the structure to broadcast the prefix leaves into.
+      is_leaf: an optionally specified function that will be called at each
+        flattening step. It should return a boolean, with true stopping the
+        traversal and the whole subtree being treated as a leaf, and false
+        indicating the flattening should traverse the current object.
+
+    Returns:
+      A pytree matching the structure of full_tree where the leaves of prefix_tree have been
+      broadcasted into the leaves of each corresponding subtree.
+
+    Examples:
+      >>> import jax
+      >>> prefix = (1, 2, 3)
+      >>> full = (0, {'a': 0, 'b': 0}, (0, 0))
+      >>> jax.tree.broadcast(prefix, full)
+      (1, {'a': 2, 'b': 2}, (3, 3))
+
+    See Also:
+      - :func:`jax.tree.leaves`
+      - :func:`jax.tree.structure`
+  """
+  return tree_util.tree_broadcast(prefix_tree, full_tree, is_leaf=is_leaf)

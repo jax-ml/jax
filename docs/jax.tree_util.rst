@@ -38,6 +38,7 @@ These APIs are now accessed via :mod:`jax.tree`.
    :toctree: _autosummary
 
    tree_all
+   tree_broadcast
    tree_flatten
    tree_leaves
    tree_map

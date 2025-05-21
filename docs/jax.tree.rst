@@ -12,6 +12,7 @@ List of Functions
    :toctree: _autosummary
 
    all
+   broadcast
    flatten
    flatten_with_path
    leaves

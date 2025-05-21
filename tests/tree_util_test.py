@@ -627,6 +627,39 @@ class TreeTest(jtu.JaxTestCase):
                                       FlatCache({"a": [3, 4], "b": [5, 6]}))
     self.assertEqual(expected, actual)
 
+  @parameterized.parameters(*TREES)
+  def testBroadcast(self, tree):
+    if isinstance(tree, FlatCache):
+      # The tree_map construction below fails for FlatCache, because
+      # the cached metadata becomes out of sync.
+      self.skipTest("Test does not work properly for FlatCache.")
+    def make_inner(x):
+      return [x, x, x]
+    nested = tree_util.tree_map(make_inner, tree)
+    actual = tree_util.tree_broadcast(tree, nested)
+    self.assertEqual(actual, nested)
+
+  def testBroadcastSimple(self):
+    prefix = (1, 2, 3)
+    full = (0, {'a': 0, 'b': 0}, (0, 0))
+    actual = tree_util.tree_broadcast(prefix, full)
+    expected = (1, {'a': 2, 'b': 2}, (3, 3))
+    self.assertEqual(actual, expected)
+
+  def testBroadcastError(self):
+    prefix = (1, 2, 3)
+    full = (0, {'a': 0, 'b': 0})
+    with self.assertRaisesRegex(ValueError, "pytree structure error"):
+      tree_util.tree_broadcast(prefix, full)
+    prefix = (1, 2)
+    full = (0, {'a': 0, 'b': 0}, (0, 0))
+    with self.assertRaisesRegex(ValueError, "pytree structure error"):
+      tree_util.tree_broadcast(prefix, full)
+    prefix = (1, {'a': 0})
+    full = (0, {'a': 0, 'b': 0})
+    with self.assertRaisesRegex(ValueError, "pytree structure error"):
+      tree_util.tree_broadcast(prefix, full)
+
   @parameterized.parameters([(*t, s) for t, s in zip(TREES, TREE_STRINGS)])
   def testStringRepresentation(self, tree, correct_string):
     """Checks that the string representation of a tree works."""
@@ -1443,6 +1476,13 @@ class TreeAliasTest(jtu.JaxTestCase):
       jax.tree.transpose(outer_treedef, inner_treedef, obj),
       tree_util.tree_transpose(outer_treedef, inner_treedef, obj)
     )
+
+  def test_tree_broadcast(self):
+    prefix = (1, 2, 3)
+    full = (0, {'a': 0, 'b': 0}, (0, 0))
+    actual = jax.tree.broadcast(prefix, full)
+    expected = (1, {'a': 2, 'b': 2}, (3, 3))
+    self.assertEqual(actual, expected)
 
   def test_tree_unflatten(self):
     leaves, treedef = jax.tree.flatten([1, 2, (3, 4)])
