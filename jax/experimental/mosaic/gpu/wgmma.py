@@ -63,7 +63,10 @@ class WGMMAAccumulator:
     f32 = ir.F32Type.get()
     if dtype is None:
       dtype = f32
-    zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
+    if ir.IntegerType.isinstance(dtype):
+      zero = arith.constant(dtype, ir.IntegerAttr.get(dtype, 0))
+    else:
+      zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
     return cls(
         _value=fa.FragmentedArray.splat(
             zero, (m, n), fa.WGMMA_LAYOUT, is_signed=is_signed
@@ -90,6 +93,8 @@ def _supported_wgmma_types(dtype, abtype) -> bool:
     return any(input_types_are(ty) for ty in (ir.FloatTF32Type, ir.BF16Type, *f16_acc_types))
   elif ir.F16Type.isinstance(dtype):
     return any(input_types_are(ty) for ty in f16_acc_types)
+  elif ir.IntegerType.get_signless(32).isinstance(dtype):
+    return input_types_are(ir.IntegerType.get_signless(8))
   else:
     return False
 
@@ -135,7 +140,7 @@ def wgmma_m64(
     if a_transpose is None:
       raise ValueError
 
-  if ir.F32Type.isinstance(out_ty):
+  if ir.F32Type.isinstance(out_ty) or out_ty == i32:
     num_acc_regs = n // 2
     out_ty_field = out_ty
     acc_regs = [  # pylint: disable=g-complex-comprehension
@@ -143,8 +148,9 @@ def wgmma_m64(
         for reg in acc.flat
         for pos in range(2)
     ]
-    to_acc_vec_regs = functools.partial(_as_fragmented_reg_ndarray, dtype=out_ty, shape=acc.shape)
-    acc_constraint = "f"
+    to_acc_vec_regs = functools.partial(
+        _as_fragmented_reg_ndarray, dtype=out_ty, shape=acc.shape)
+    acc_constraint = "r" if ir.IntegerType.isinstance(out_ty) else "f"
   elif ir.F16Type.isinstance(out_ty):
     num_acc_regs = n // 4
     out_ty_field = i32
@@ -153,9 +159,15 @@ def wgmma_m64(
     to_acc_vec_regs = lambda regs : np.array([_unpack_i32(vec_ty, reg) for reg in regs]).reshape(acc.shape)
     acc_constraint = "r"
   else:
-    raise ValueError(f"WGMMA instruciton only supports f32 and f16 out (got {out_ty})")
+    raise ValueError(
+        f"WGMMA instruction only supports f32, f16 and s32 out (got {out_ty})")
 
-  num_imm_regs = 4 if supports_transpose else 2
+  if supports_transpose:
+    num_imm_regs = 4
+  elif out_ty == i32:
+    num_imm_regs = 0
+  else:
+    num_imm_regs = 2
 
   if a_in_regs:
     a_reg_constraints = ["r"] * 4  # 4x f16x2 registers
@@ -172,7 +184,6 @@ def wgmma_m64(
       + ["n"] * (1 + num_imm_regs)  # literal constants
   )
   reg_constraints = ",".join(reg_constraints_list)
-
   reg_count = itertools.count()
 
   def take_regs(n):
@@ -186,7 +197,8 @@ def wgmma_m64(
   else:
     a_regs, = take_regs(1)
   b_desc_reg, use_out_reg = take_regs(2)
-  imm_regs = ", ".join(take_regs(num_imm_regs))  # Immediate regs (scale, ...).
+  # Immediate regs (scale, ...).
+  imm_regs = "".join(f", {r}" for r in take_regs(num_imm_regs))
   assert next(reg_count) == len(reg_constraints_list)
   k_instr = 32 // bytewidth(element_type)
   el_ty = str(element_type)
@@ -194,9 +206,19 @@ def wgmma_m64(
     el_ty = "e5m2"
   elif ir.Float8E4M3FNType.isinstance(element_type):
     el_ty = "e4m3"
+  elif ir.IntegerType.get_signless(8).isinstance(element_type):
+    # TODO(bchetioui): add u8 support in the future. Currently we always assume
+    # that 8-bit integers are s8, and we would need to change the signature of
+    # `wgmma` to indicate whether the input should be treated as signed or not.
+    el_ty = "s8"
+
+  out_ty_str = str(out_ty)
+  if out_ty == i32:
+    out_ty_str = "s32"
+
   wgmma_instr = (
-      f"wgmma.mma_async.sync.aligned.m64n{n}k{k_instr}.{out_ty}.{el_ty}.{el_ty} "
-      f"{acc_reg_vector}, {a_regs}, {b_desc_reg}, p, {imm_regs};"
+      f"wgmma.mma_async.sync.aligned.m64n{n}k{k_instr}.{out_ty_str}.{el_ty}.{el_ty} "
+      f"{acc_reg_vector}, {a_regs}, {b_desc_reg}, p{imm_regs};"
   )
   ptx = f"{{ .reg .pred p; setp.ne.b32 p, {use_out_reg}, 0; {wgmma_instr} }}\n"
 
@@ -297,6 +319,8 @@ def wgmma(
     )
   f32 = ir.F32Type.get()
   f16 = ir.F16Type.get()
+  i32 = ir.IntegerType.get_signless(32)
+  i8 = ir.IntegerType.get_signless(8)
   if element_type == f32 or element_type == ir.BF16Type.get():
     if acc.value.mlir_dtype != f32:
       raise ValueError(
@@ -311,6 +335,14 @@ def wgmma(
       raise ValueError(
           f"WGMMA with element type {element_type} only supports accumulators "
           f"of type f32 or f16, but got: {acc.value.mlir_dtype}"
+      )
+  elif element_type == i8:
+    if a_in_regs and not a.is_signed:
+      raise NotImplementedError("WGMMA with lhs of type u8")
+    if acc.value.mlir_dtype != i32 or not acc.value.is_signed:
+      raise ValueError(
+          f"WGMMA with element type {element_type} only supports accumulators "
+          f"of type s32, but got: {acc.value.mlir_dtype}"
       )
   else:
     raise NotImplementedError(f"Unsupported element type: {element_type}")

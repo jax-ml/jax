@@ -2551,7 +2551,7 @@ def optimization_barrier(*arrays: mgpu.FragmentedArray):
   for array in arrays:
     reg_ty = array.registers.flat[0].type
     dtype = array.mlir_dtype
-    if ir.F32Type.isinstance(dtype):
+    if ir.F32Type.isinstance(dtype) or dtype == i32:
       if ir.VectorType.isinstance(reg_ty):
         [vec_len] = ir.VectorType(reg_ty).shape
         array_regs = [  # pylint: disable=g-complex-comprehension
@@ -2561,7 +2561,7 @@ def optimization_barrier(*arrays: mgpu.FragmentedArray):
         ]
       else:
         array_regs = list(array.registers.flat)
-      reg_constraint = "f"
+      reg_constraint = "r" if dtype == i32 else "f"
     elif ir.BF16Type.isinstance(dtype) or ir.F16Type.isinstance(dtype):
       if not ir.VectorType.isinstance(reg_ty):
         raise NotImplementedError(array.mlir_dtype)
