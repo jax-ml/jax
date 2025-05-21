@@ -154,6 +154,12 @@ class VectorLayoutInferer {
         if (inferExt(&any_op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::SIToFPOp>(any_op);
+                 op && op.getIn().getType().getElementTypeBitWidth() <
+                           op.getType().getElementTypeBitWidth()) {
+        if (inferExt(&any_op).failed()) {
+          return failure();
+        }
       } else if (isa<arith::TruncFOp, arith::TruncIOp>(any_op)) {
         if (inferTrunc(&any_op).failed()) {
           return failure();

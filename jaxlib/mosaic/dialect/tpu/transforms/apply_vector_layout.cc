@@ -1027,6 +1027,40 @@ LogicalResult tpu_fptosi_rule(RewriteContext &ctx, Operation &op,
   return op.emitOpError("Unsupported FPToSI conversion");
 }
 
+LogicalResult tpu_sitofp_rule(RewriteContext &ctx, Operation &op,
+                              const ArrayRef<Layout> layouts_in,
+                              const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
+  TPU_ASSERT_OP(layouts_in.front().has_value());
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_out.front().has_value());
+  auto &layout_in = *layouts_in.front();
+  auto &layout_out = *layouts_out.front();
+  if (layout_in.bitwidth() == layout_out.bitwidth()) {
+    return elementwise_op_rule(ctx, op, layouts_in, layouts_out);
+  } else if (layout_in.bitwidth() < layout_out.bitwidth()) {
+    auto sitofp_op = cast<tpu::SIToFPOp>(op);
+    switch (sitofp_op.getRoundingMode()) {
+      case tpu::RoundingMode::kToNearestEven: {
+        ImplicitLocOpBuilder builder(op.getLoc(), &op);
+        FAILUREOR_ASSIGN_OR_RETURN(
+            xla::Array<Value> vregs,
+            ext_op_rule_impl(ctx, builder, sitofp_op, layout_in, layout_out));
+        sitofp_op.replaceAllUsesWith(assemble(builder, sitofp_op.getType(),
+                                              layout_out, std::move(vregs),
+                                              ctx.target_shape)
+                                         .getResult());
+        sitofp_op.erase();
+        return success();
+      }
+      case tpu::RoundingMode::kTowardsZero:
+        return op.emitOpError(
+            "Not implemented: SIToFP with rounding mode kTowardsZero");
+    }
+  }
+  return op.emitOpError("Unsupported SIToFP conversion");
+}
+
 LogicalResult func_return_rule(RewriteContext &ctx, Operation &op,
                                const ArrayRef<Layout> layouts_in,
                                const ArrayRef<Layout> layouts_out) {
@@ -7164,6 +7198,7 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::PRNGRandomBitsOp::getOperationName(), tpu_prng_random_bits_rule},
         {tpu::RelayoutOp::getOperationName(), tpu_relayout_rule},
         {tpu::FPToSIOp::getOperationName(), tpu_fptosi_rule},
+        {tpu::SIToFPOp::getOperationName(), tpu_sitofp_rule},
         {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
         {vector::ExtractOp::getOperationName(), vector_extract_rule},
         {vector::LoadOp::getOperationName(), vector_load_rule},
