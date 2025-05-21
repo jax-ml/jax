@@ -685,6 +685,18 @@ LogicalResult canonicalize_sitofp(const CanonicalizeContext &ctx,
   FAILUREOR_ASSIGN_OR_RETURN(const unsigned dst_bitwidth,
                              getElementTypeBitwidth(op.getType()));
 
+  // We have low-level optimized code for s8->bf16 and s4->bf16 casts on v6.
+  if (ctx.hardware_generation >= 6 && is_vector &&
+      (src_vty.getElementType().isSignlessInteger(8) ||
+       src_vty.getElementType().isSignlessInteger(4)) &&
+      dst_vty.getElementType().isBF16()) {
+    auto new_op = builder.create<tpu::SIToFPOp>(
+        op.getType(), op.getIn(), tpu::RoundingMode::kToNearestEven);
+    op.replaceAllUsesWith(new_op.getResult());
+    op.erase();
+    return success();
+  }
+
   if ((src_bitwidth < 32 || dst_bitwidth < 32) && !ctx.compatibility_mode) {
     return op.emitOpError(
         "On this target integer-to-float conversions can only happen on "
