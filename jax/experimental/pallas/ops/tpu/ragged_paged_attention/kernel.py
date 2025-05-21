@@ -454,6 +454,11 @@ def ragged_paged_attention_kernel(
         mask = jnp.logical_and(iota >= start, iota < end)
         pl.store(ref, idx=tuple(slice(None) for _ in ref.shape), val=val, mask=mask)
 
+      def load_with_init(ref, init_val):
+        return jnp.where(
+            kv_blk_idx == 0, jnp.full_like(ref, init_val), ref[...]
+        )
+
       # kv lens will be contracting dim, we should mask out the NaNs.
       kv_mask = (
           lax.broadcasted_iota(jnp.int32, k.shape, 0) < kv_len - kv_len_start
@@ -467,29 +472,6 @@ def ragged_paged_attention_kernel(
       )
       store_start = jnp.maximum(q_start - q_len_start, 0)
       store_end = jnp.minimum(q_end - q_len_start, num_q_per_blk)
-
-      @pl.when(kv_blk_idx == 0)
-      def init_scratch_ref():
-        masked_store(
-            head_m_ref,
-            jnp.full_like(head_m_ref, -jnp.inf),
-            store_start,
-            store_end,
-            num_q_heads_per_kv_head,
-        )
-        masked_store(
-            head_l_ref,
-            jnp.zeros_like(head_l_ref),
-            store_start,
-            store_end,
-            num_q_heads_per_kv_head,
-        )
-        masked_store(
-            head_acc_ref,
-            jnp.zeros_like(head_acc_ref),
-            store_start,
-            store_end,
-        )
 
       row_ids = (
           (kv_len - q_len)
@@ -522,8 +504,8 @@ def ragged_paged_attention_kernel(
       l_curr = jnp.broadcast_to(
           s_curr.sum(axis=1, keepdims=True), lm_store_shape
       )
-      m_prev = head_m_ref[...]
-      l_prev = head_l_ref[...]
+      m_prev = load_with_init(head_m_ref, -jnp.inf)
+      l_prev = load_with_init(head_l_ref, 0.0)
       m_next = jnp.maximum(m_prev, m_curr)
       masked_store(
           head_m_ref, m_next, store_start, store_end, num_q_heads_per_kv_head
@@ -552,7 +534,7 @@ def ragged_paged_attention_kernel(
             [arr for _ in range(shape[1] // arr.shape[1])], axis=1
         )
 
-      o_curr = head_acc_ref[...].reshape(-1, head_dim)
+      o_curr = load_with_init(head_acc_ref, 0.0).reshape(-1, head_dim)
       l_alpha = broadcast_to_shape(l_alpha, qkv.shape)
       beta = broadcast_to_shape(beta, qkv.shape)
       l_next_safe = broadcast_to_shape(l_next_safe, qkv.shape)
