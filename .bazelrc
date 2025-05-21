@@ -244,6 +244,9 @@ build:ci_linux_aarch64_base --config=clang --verbose_failures=true
 build:ci_linux_aarch64_base --action_env=TF_SYSROOT="/dt10"
 build:ci_linux_aarch64_base --color=yes
 
+# This appears to help avoid a timeout in CI for linalg_test.
+build:ci_linux_aarch64_base --test_env=OMP_NUM_THREADS=8
+
 build:ci_linux_aarch64 --config=ci_linux_aarch64_base
 build:ci_linux_aarch64 --host_crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
 build:ci_linux_aarch64 --crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
@@ -378,6 +381,9 @@ build:rbe_cross_compile_base --remote_instance_name=projects/tensorflow-testing/
 # RBE cross-compile configs for Linux Aarch64
 build:rbe_cross_compile_linux_aarch64 --config=cross_compile_linux_aarch64
 build:rbe_cross_compile_linux_aarch64 --config=rbe_cross_compile_base
+
+# Avoids a timeout in linalg_test on ARM.
+build:rbe_cross_compile_linux_aarch64 --test_env=OMP_NUM_THREADS=8
 
 # Mac x86
 build:cross_compile_darwin_x86_64 --config=cross_compile_base
