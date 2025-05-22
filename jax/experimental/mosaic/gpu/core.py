@@ -102,15 +102,15 @@ else:
 def supports_cross_device_collectives():
   try:
     nvshmem_bc_path = os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"]
-    nvshmem_so_path = os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"]
   except KeyError:
     return False
-  try:
-    # This both ensures that the file exists, and it populates the dlopen cache
-    # helping XLA find the library even if the RPATH is not exactly right...
-    ctypes.CDLL(nvshmem_so_path)
-  except OSError:
-    return False
+  if nvshmem_so_path := os.environ.get("MOSAIC_GPU_NVSHMEM_SO_PATH", ""):
+    try:
+      # This both ensures that the file exists, and it populates the dlopen
+      # cache, helping XLA find the library even if the RPATH is not right...
+      ctypes.CDLL(nvshmem_so_path)
+    except OSError:
+      return False
   xla_flags = os.environ.get("XLA_FLAGS", "")
   return (
       os.path.exists(nvshmem_bc_path)
