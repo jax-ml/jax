@@ -137,9 +137,9 @@ jobs:
             $JAXCI_PYTHON -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
           elif [[ "${{ inputs.libtpu-version-type }}" == "pypi_latest" ]]; then
             echo "Using latest libtpu from PyPI"
-            # Set JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI to "tpu_pypi". The `run_pytest_tpu.sh`
-            # script will install the latest libtpu wheel from PyPI.
-            echo "JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI=tpu_pypi" >> $GITHUB_ENV
+            # Set JAXCI_JAX_PYPI_EXTRAS to "tpu". The `run_pytest_tpu.sh` script will install the
+            # latest libtpu wheel from PyPI.
+            echo "JAXCI_JAX_PYPI_EXTRAS=tpu" >> $GITHUB_ENV
           elif [[ "${{ inputs.libtpu-version-type }}" == "oldest_supported_libtpu" ]]; then
             echo "Using oldest supported libtpu"
             $JAXCI_PYTHON -m uv pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
