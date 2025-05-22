@@ -621,6 +621,32 @@ class ShardMapTest(jtu.JaxTestCase):
     x = f()
     self.assertAllClose(x, jnp.arange(4), check_dtypes=False)
 
+  def test_optimize_remat(self):
+    mesh = jtu.create_mesh((4,), 'x')
+
+    @jax.custom_vjp
+    def f(x):
+      return jnp.tan(x)
+
+    def f_fwd(x):
+      return jax.lax.psum(x, 'x'), (x,)
+
+    def f_bwd(res, g):
+      x, = res
+      cos_x = jnp.cos(x)
+      return (cos_x * g,)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, in_specs=P(), out_specs=P())
+    def temp(x):
+      out = jax.remat(f)(x)
+      out = out ** 2
+      return out
+
+    jax.grad(lambda x: temp(x).sum())(jnp.arange(4.))
+
   def test_remat_basic(self):
     # this tests remat-of-shmap
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
