@@ -145,6 +145,9 @@ absl::Status RunCUDATool(const char* tool,
   if (posix_spawn_file_actions_init(&file_actions)) {
     return absl::InternalError("Failed to initialize spawn file actions");
   }
+  absl::Cleanup file_actions_destroyer = [&file_actions] {
+    posix_spawn_file_actions_destroy(&file_actions);
+  };
   if (pipe(stdout_pipe) == -1) {
     return absl::InternalError("Failed to set up pipe");
   }
@@ -197,9 +200,6 @@ absl::Status RunCUDATool(const char* tool,
     return absl::InternalError("Failed to wait for CUDA tool invocation");
   }
   if (status != 0) return absl::InternalError(stdout);
-  if (posix_spawn_file_actions_destroy(&file_actions) != 0) {
-    return absl::InternalError("Failed to clean up after posix_spawn");
-  }
   return absl::OkStatus();
 }
 
