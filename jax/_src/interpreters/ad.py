@@ -400,7 +400,8 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
          else contextlib.nullcontext())
   with ctx:
     foreach(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
-    for eqn in lin_eqns[::-1]:
+    metadata_producers, metadata_closures = locate_metadata(lin_eqns)
+    for i, eqn in enumerate(lin_eqns[::-1]):
       if eqn.primitive.ref_primitive:
         if eqn.primitive is core.mutable_array_p:
           val_var, = eqn.invars
@@ -446,8 +447,30 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
             e.args = e.args[0] + f'\n{source_info_util.summarize(eqn.source_info)}',
             raise e from None
         cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
-        # FIXME: Some invars correspond to primals!
+
+        if metadata_producers.get(i, None):
+          metadata = metadata_producers[i]
+          tagging_fn = metadata.get("_metadata_tagging_fn", None)
+          if tagging_fn is not None:
+            # We want to tag only the last ct that is successfully written
+            # i.e. not a Zero or None (as specified in `write_cotangent`)
+            for j in range(len(cts_out)-1, -1, -1):
+              if not isinstance(cts_out[j], Zero) and cts_out[j] is not None:
+                cts_out[j] = tagging_fn(cts_out[j], metadata)
+                break
+
         foreach(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
+
+        if metadata_closures.get(i, None):
+          metadata = metadata_closures[i]
+          tagging_fn = metadata.get("_metadata_tagging_fn", None)
+          if tagging_fn is not None:
+            # We want to tag only the last ct that is successfully written
+            # i.e. not a Zero or None (as specified in `write_cotangent`)
+            for j in range(len(cts_out)-1, -1, -1):
+              if not isinstance(cts_out[j], Zero) and cts_out[j] is not None:
+                ct_env[eqn.invars[j]] = tagging_fn(ct_env[eqn.invars[j]], metadata)
+                break
 
   cotangents_out = map(read_cotangent, jaxpr.invars)
   return cotangents_out
@@ -456,6 +479,69 @@ def closed_backward_pass(jaxpr: core.ClosedJaxpr, transform_stack,
                          primals_in, cotangents_in):
   return backward_pass(jaxpr.jaxpr, transform_stack, jaxpr.consts,
                        primals_in, cotangents_in)
+
+
+def locate_metadata(lin_eqns: list[core.JaxprEqn]) -> tuple[dict[int, Any], dict[int, Any]]:
+  """Locates occurrences of xla_metadata and finds producer and closure indices.
+  Supports multiple, independent producers and closures existing for same Jaxpr.
+  Tracking closures is necessary to tag `add_p`s produced by merging cotangents.
+  """
+  producers: dict[int, Any] = {}
+  closures: dict[int, Any] = {}
+
+  # 'active_chains' tracks the state of each metadata primitive encountered.
+  # The key is a unique identifier for a chain (the frozenset of initial variables).
+  # The value is a dictionary holding the chain's state:
+  #   - 'metadata': The metadata tuple.
+  #   - 'vars': A set of all variables identified as part of this chain.
+  #   - 'producer_idx': The index of the most recent producer found for the chain.
+  #   - 'is_closed': A flag to mark if a closure has been found.
+  active_chains: dict[frozenset[Any], dict[str, Any]] = {}
+
+  # Iterate through equations in reverse to trace data dependencies backward.
+  for i, eqn in enumerate(reversed(lin_eqns)):
+    # Check if the equation applies metadata, starting a new chain.
+    if eqn.primitive.name == 'xla_metadata_value':
+      metadata = tuple(sorted(dict(eqn.params.get('xla_metadata', {})).items()))
+      initial_vars = frozenset(eqn.invars)
+
+      if initial_vars not in active_chains:
+        active_chains[initial_vars] = {
+            'metadata': metadata,
+            'vars': set(initial_vars),
+            'producer_idx': -1,  # -1 indicates no producer found yet.
+            'is_closed': False,
+        }
+      continue
+
+    if not active_chains:
+      continue
+
+    # For each active chain, check if the current equation is part of it.
+    for chain_info in active_chains.values():
+      if chain_info['is_closed']:
+        continue
+
+      # An equation is part of a chain if it produces a variable already in the chain's var set.
+      if not set(eqn.outvars).isdisjoint(chain_info['vars']):
+        # A closure occurs if the equation also consumes an input that is already in the chain.
+        is_closure = not set(eqn.invars).isdisjoint(chain_info['vars'])
+
+        if is_closure:
+          closures[i] = dict(chain_info['metadata'])
+          chain_info['is_closed'] = True
+        else:
+          # Not a closure, so it's a producer. Record its index.
+          chain_info['producer_idx'] = i
+          # Expand the chain's variable set to include the producer's inputs.
+          chain_info['vars'] = chain_info['vars'] | set(eqn.invars)
+
+  # Assemble the final list of producers from chains that were not closed.
+  for chain_info in active_chains.values():
+    if not chain_info['is_closed'] and chain_info['producer_idx'] != -1:
+      producers[chain_info['producer_idx']] = dict(chain_info['metadata'])
+
+  return producers, closures
 
 
 class UndefinedPrimal:
