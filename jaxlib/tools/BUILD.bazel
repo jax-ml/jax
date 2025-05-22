@@ -461,6 +461,7 @@ filegroup(
     srcs = [
         "@pypi_nvidia_cublas_cu12//:whl",
         "@pypi_nvidia_cuda_cupti_cu12//:whl",
+        "@pypi_nvidia_cuda_nvcc_cu12//:whl",
         "@pypi_nvidia_cuda_runtime_cu12//:whl",
         "@pypi_nvidia_cudnn_cu12//:whl",
         "@pypi_nvidia_cufft_cu12//:whl",
