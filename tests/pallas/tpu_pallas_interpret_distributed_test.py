@@ -38,6 +38,7 @@ jtu.request_cpu_devices(8)
 P = jax.sharding.PartitionSpec
 
 
+@jtu.thread_unsafe_test_class()
 class InterpretDistributedTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()

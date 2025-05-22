@@ -82,6 +82,7 @@ class GridPointRecorderContext(object):
     return self._grid_points
 
 
+@jtu.thread_unsafe_test_class()
 class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
