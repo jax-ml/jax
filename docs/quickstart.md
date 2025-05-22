@@ -121,7 +121,7 @@ print(first_finite_differences(sum_logistic, x_small))
 ```
 
 The {func}`~jax.grad` and {func}`~jax.jit` transformations compose and can be mixed arbitrarily.
-In the above example we jitted `sum_logistic` and then took its derivative. We can go further:
+For instance, while the `sum_logistic` function was differentiated directly in the previous example, it could also be JIT-compiled, and these operations can be combined. We can go further:
 
 ```{code-cell}
 print(grad(jit(grad(jit(grad(sum_logistic)))))(1.0))
