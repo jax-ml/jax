@@ -2745,9 +2745,7 @@ class _TempAxisName:
 @dataclass(frozen=True)
 class NamedAxisEffect(effects.Effect):
   """A side-effect introducing a new named axis into the current scope."""
-
   name: AxisName
-
 
 effects.control_flow_allowed_effects.add_type(NamedAxisEffect)
 effects.custom_derivatives_allowed_effects.add_type(NamedAxisEffect)
