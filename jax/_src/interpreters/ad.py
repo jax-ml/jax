@@ -159,15 +159,19 @@ def convert_constvars_jaxpr_constvars_at_end(jaxpr: core.Jaxpr) -> core.Jaxpr:
 
 def linearize_jaxpr(
     jaxpr: core.ClosedJaxpr,
-    nonzeros: Sequence[bool]
+    nonzeros: Sequence[bool],
+    instantiate: bool | Sequence[bool] = False,
   ) -> tuple[core.ClosedJaxpr, int, Sequence[bool], core.ClosedJaxpr]:
-  return _linearize_jaxpr(jaxpr, tuple(nonzeros))
+  if type(instantiate) is bool:
+    instantiate = (instantiate,) * len(jaxpr.out_avals)
+  return _linearize_jaxpr(jaxpr, tuple(nonzeros), tuple(instantiate))
 
 @weakref_lru_cache
 @source_info_util.reset_name_stack()
 def _linearize_jaxpr(
     jaxpr: core.ClosedJaxpr,
-    nonzeros: tuple[bool, ...]
+    nonzeros: tuple[bool, ...],
+    instantiate: tuple[bool, ...],
   ) -> tuple[core.ClosedJaxpr, int, Sequence[bool], core.ClosedJaxpr]:
   dbg = jaxpr.jaxpr.debug_info
   primal_trace = pe.DynamicJaxprTrace(dbg)
@@ -188,6 +192,8 @@ def _linearize_jaxpr(
   with core.set_current_trace(lin_trace, check_leaks=True):
     ans = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *tracers)
     out_primals, out_tangents = unzip2(map(lin_trace.to_primal_tangent_pair, ans))
+    out_tangents = tuple(instantiate_zeros(t) if inst else t
+                         for t, inst in zip(out_tangents, instantiate))
     del lin_trace, ans, tracers, new_arg
 
   debug_info = jaxpr.jaxpr.debug_info

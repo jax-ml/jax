@@ -562,6 +562,52 @@ def _cond_jvp(primals, tangents, *, branches, **params):
                   for p, nz in zip(out_primals, out_nz)]
   return out_primals, out_tangents
 
+def _cond_lin(nzs, *args, branches, **params):
+  idx_nz, *ops_nz = nzs
+  assert idx_nz is False
+  idx, *ops = args
+  branches_nz = [ad.linearize_jaxpr(b, ops_nz, False)[2] for b in branches]
+  nzs_out = [any(nz) for nz in zip(*branches_nz)]
+  num_out = len(nzs_out)
+  branch_res_avals, branch_primal_jaxprs, branch_tangent_jaxprs = [], [], []
+  for branch_jaxpr in branches:
+    primal_jaxpr, num_res, _, tangent_jaxpr = ad.linearize_jaxpr(
+        branch_jaxpr, ops_nz, nzs_out)
+    branch_res_avals.append(primal_jaxpr.out_avals[:num_res])
+    # ad.linearize_jaxpr uses a convention where the primal jaxpr returns the
+    # residuals at the front, and the tangent jaxpr accepts the residuals at
+    # the back. The logic below is simpler if we swap both of these locations.
+    primal_jaxpr = pe.move_outvars_to_back(
+        primal_jaxpr, [True] * num_res + [False] * num_out)
+    tangent_jaxpr = pe.move_binders_to_front(
+        tangent_jaxpr, [False] * sum(nzs) + [True] * num_res)
+    branch_primal_jaxprs.append(primal_jaxpr)
+    branch_tangent_jaxprs.append(tangent_jaxpr)
+
+  # Since the residuals must have the same avals on each branch, we construct
+  # the smallest set of residual avals that cover all values needed by all
+  # branches, then update the jaxprs to only return or use the appropriate
+  # subset.
+  all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
+  branch_primal_jaxprs = _join_cond_outputs(
+      branch_primal_jaxprs, all_res_avals, res_avals_per_branch, num_out)
+  branch_tangent_jaxprs = _join_cond_pe_staged_jaxpr_inputs(
+      branch_tangent_jaxprs, all_res_avals, res_avals_per_branch)
+
+  def tangent_fun(res, *tangents):
+    nz_tangents_in = [t for nz, t in zip(nzs, tangents) if nz]
+    nz_tangents_out = cond_p.bind(idx, *res, *nz_tangents_in,
+                                  branches=branch_tangent_jaxprs, **params)
+    tangent_avals_out = [v.to_tangent_aval() for v in branches[0].out_avals]
+    nz_tangents_out_ = iter(nz_tangents_out)
+    tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
+                   for (aval, nz) in zip(tangent_avals_out, nzs_out)]
+    return tangents_out
+
+  ans = cond_p.bind(idx, *ops, branches=branch_primal_jaxprs, **params)
+  primals_out, residuals = split_list(ans, [num_out])
+  return primals_out, nzs_out, residuals, tangent_fun
+
 def _cond_partial_eval(trace, *tracers, branches, **params):
   in_unknowns = [t.pval[0] is not None for t in tracers]
   index_uk, *ops_uk = in_unknowns
@@ -937,6 +983,7 @@ cond_p.skip_canonicalization = True
 cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
 ad.primitive_jvps[cond_p] = _cond_jvp
+ad.primitive_linearizations[cond_p] = _cond_lin
 ad.primitive_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.fancy_primitive_batchers[cond_p] = _cond_batching_rule
