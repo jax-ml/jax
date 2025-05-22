@@ -366,6 +366,7 @@ py_library_providing_imports_info(
         ":ad_util",
         ":api",
         ":api_util",
+        ":attach_metadata",
         ":basearray",
         ":batching",
         ":blocked_sampler",
@@ -1671,6 +1672,24 @@ pytype_strict_library(
     srcs = ["_src/xla_metadata.py"],
     deps = [
         ":config",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "attach_metadata",
+    srcs = ["_src/attach_metadata.py"],
+    deps = [
+        ":ad",
+        ":api",
+        ":batching",
+        ":config",
+        ":core",
+        ":custom_derivatives",
+        ":mlir",
+        ":tree_util",
+        ":util",
+        ":xla_metadata",
         "//jax/_src/lib",
     ],
 )
