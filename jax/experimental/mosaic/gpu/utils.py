@@ -226,15 +226,19 @@ def when(cond):
     scf.yield_([])
 
 
-def thread_idx():
+def _3d_to_1d_idx(dim_idx_fn, dim_size_fn):
   i32 = ir.IntegerType.get_signless(32)
   as_i32 = lambda x: arith.index_cast(i32, x)
-  tidx = as_i32(gpu.thread_id(gpu.Dimension.x))
-  stride = as_i32(gpu.block_dim(gpu.Dimension.x))
+  idx = as_i32(dim_idx_fn(gpu.Dimension.x))
+  stride = as_i32(dim_size_fn(gpu.Dimension.x))
   for dim in (gpu.Dimension.y, gpu.Dimension.z):
-    tidx = arith.addi(tidx, arith.muli(as_i32(gpu.thread_id(dim)), stride))
-    stride = arith.muli(stride, as_i32(gpu.block_dim(dim)))
-  return tidx
+    idx = arith.addi(idx, arith.muli(as_i32(dim_idx_fn(dim)), stride))
+    stride = arith.muli(stride, as_i32(dim_size_fn(dim)))
+  return idx
+
+
+thread_idx = functools.partial(_3d_to_1d_idx, gpu.thread_id, gpu.block_dim)
+block_idx = functools.partial(_3d_to_1d_idx, gpu.block_id, gpu.grid_dim)
 
 
 def _warp_bcast(val, lane_idx=0):
