@@ -1369,7 +1369,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
                  for a in out_avals]
   effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
-  eqn = pe.new_eqn_recipe((*const_tracers, *env_tracers, *unk_arg_tracers),
+  eqn = pe.new_eqn_recipe(trace, (*const_tracers, *env_tracers, *unk_arg_tracers),
                           out_tracers, shard_map_p, unk_params,
                           effs, source_info_util.current())
   for t in out_tracers: t.recipe = eqn
