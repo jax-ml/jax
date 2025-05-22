@@ -35,7 +35,6 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import jaxlib_extension_version
 from jax._src.numpy.util import promote_dtypes_inexact
-# from jax._src.third_party.scipy.linalg import solve_sylvester
 from jax.scipy.linalg import solve_sylvester
 
 config.parse_flags_with_absl()
