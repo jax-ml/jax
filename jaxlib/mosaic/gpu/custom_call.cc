@@ -220,7 +220,7 @@ void EnsureLLVMNVPTXTargetIsRegistered() {
   });
 }
 
-absl::StatusOr<std::string> GetPtxIsaVersion() {
+absl::StatusOr<int> GetLatestPtxasPtxIsaVersion() {
   std::vector<const char*> ptxas_args = {"ptxas", "--input-as-string",
                                          ".version 99.99", nullptr};
   auto status = RunCUDATool("ptxas", ptxas_args);
@@ -241,22 +241,36 @@ absl::StatusOr<std::string> GetPtxIsaVersion() {
                         "MAJOR.MINOR, instead got: %s",
                         chunks[1]));
   }
-  int preliminary_major;
-  if (!absl::SimpleAtoi(major_minor[0], &preliminary_major)) {
+  int major;
+  if (!absl::SimpleAtoi(major_minor[0], &major)) {
     return absl::InternalError(
         absl::StrFormat("Failed to parse PTX ISA major version, expected a "
                         "parsable integer, instead got: %s",
                         major_minor[0]));
   }
-  int preliminary_minor;
-  if (!absl::SimpleAtoi(major_minor[1], &preliminary_minor)) {
+  int minor;
+  if (!absl::SimpleAtoi(major_minor[1], &minor)) {
     return absl::InternalError(
         absl::StrFormat("Failed to parse PTX ISA minor version, expected a "
                         "parsable integer, instead got: %s",
                         major_minor[1]));
   }
+  return major * 10 + minor;
+}
 
-  return mosaic::gpu::GetPtxIsaVersion(preliminary_major, preliminary_minor);
+absl::StatusOr<std::string> GetPtxIsaVersion() {
+  int ptxas_latest_version;
+  TF_ASSIGN_OR_RETURN(ptxas_latest_version, GetLatestPtxasPtxIsaVersion());
+  // We'd like to target the latest PTX ISA version supported by
+  // ptxas. However, it doesn't make sense to ask LLVM to target a PTX
+  // ISA that it isn't aware of yet. Find the latest version supported
+  // by LLVM and return the minimum of the two versions, one from
+  // ptxas and the other from LLVM.
+  int llvm_latest_version;
+  TF_ASSIGN_OR_RETURN(llvm_latest_version,
+                      mosaic::gpu::GetLatestLlvmPtxIsaVersion());
+  int final_version = std::min(ptxas_latest_version, llvm_latest_version);
+  return absl::StrFormat("ptx%d", final_version);
 }
 
 absl::StatusOr<std::string> GetSmVersion() {
@@ -280,7 +294,6 @@ absl::StatusOr<std::string> GetSmVersion() {
   EnsureLLVMNVPTXTargetIsRegistered();
   return mosaic::gpu::GetSmVersion(major, minor);
 }
-
 
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target,

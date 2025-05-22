@@ -67,7 +67,7 @@ absl::StatusOr<std::string> GetSmVersion(int major, int minor) {
   return sm_arch_specific ? sm_arch_specific : sm_base;
 }
 
-absl::StatusOr<std::string> GetPtxIsaVersion(int major, int minor) {
+absl::StatusOr<int> GetLatestLlvmPtxIsaVersion() {
   const std::string triple = "nvptx64-nvidia-cuda";
   std::string error;
   const llvm::Target* target =
@@ -98,8 +98,7 @@ absl::StatusOr<std::string> GetPtxIsaVersion(int major, int minor) {
           version > llvm_latest_version ? version : llvm_latest_version;
     }
   }
-  int final_version = std::min(llvm_latest_version, major * 10 + minor);
-  return absl::StrFormat("ptx%d", final_version);
+  return llvm_latest_version;
 }
 
 }  // namespace mosaic::gpu

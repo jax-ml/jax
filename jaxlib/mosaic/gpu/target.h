@@ -23,7 +23,7 @@ limitations under the License.
 namespace mosaic::gpu {
 
 absl::StatusOr<std::string> GetSmVersion(int major, int minor);
-absl::StatusOr<std::string> GetPtxIsaVersion(int major, int minor);
+absl::StatusOr<int> GetLatestLlvmPtxIsaVersion();
 
 }  // namespace mosaic::gpu
 
