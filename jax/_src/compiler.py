@@ -241,7 +241,7 @@ def get_compile_options(
   else:
     compile_options.profile_version = _NO_PROFILE_DONT_RETRIEVE
     if backend is None:
-      logging.info("get_compile_options: no backend supplied; "
+      logger.info("get_compile_options: no backend supplied; "
                    "disabling XLA-AutoFDO profile")
     else:
       fdo_profile_version = get_latest_profile_version(backend)
@@ -369,7 +369,7 @@ def compile_or_get_cached(
   module_name = ir.StringAttr(sym_name).value
 
   if dumped_to := mlir.dump_module_to_file(computation, "compile"):
-    logging.info("Dumped the module to %s.", dumped_to)
+    logger.info("Dumped the module to %s.", dumped_to)
 
   is_multi_process = (
       len({device.process_index for device in devices.flatten()}) > 1
@@ -514,7 +514,7 @@ def _resolve_compilation_strategy(
     # The compilation cache is enabled and AutoPGLE is enabled/expected
     if _is_executable_in_cache(backend, pgle_optimized_cache_key):
       if config.compilation_cache_expect_pgle.value:
-        logging.info(f"PGLE-optimized {module_name} loaded from compilation cache")
+        logger.info(f"PGLE-optimized {module_name} loaded from compilation cache")
       # No need to record N profiles in this case
       if pgle_profiler is not None:
         pgle_profiler.disable()
