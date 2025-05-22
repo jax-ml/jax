@@ -139,7 +139,7 @@ absl::Status RunCUDATool(const char* tool,
   std::string tool_path(cuda_path_ptr);
   tool_path += "/bin/";
   tool_path += tool;
-  int stdout_pipe[2];
+  int stdout_pipe[2] = {-1, -1};
   pid_t child_pid;
   posix_spawn_file_actions_t file_actions;
   if (posix_spawn_file_actions_init(&file_actions)) {
@@ -148,6 +148,10 @@ absl::Status RunCUDATool(const char* tool,
   if (pipe(stdout_pipe) == -1) {
     return absl::InternalError("Failed to set up pipe");
   }
+  absl::Cleanup pipe_closer = [&stdout_pipe] {
+    if (stdout_pipe[0] != -1) close(stdout_pipe[0]);
+    if (stdout_pipe[1] != -1) close(stdout_pipe[1]);
+  };
   // close read end in child
   if (posix_spawn_file_actions_addclose(&file_actions, stdout_pipe[0])) {
     return absl::InternalError("Failed to close read end of the pipe in child");
@@ -168,12 +172,17 @@ absl::Status RunCUDATool(const char* tool,
     return absl::InternalError(
         absl::StrCat("Process spawn failed: ", strerror(status)));
   }
-  // close write end in parent
+  // Proactively close write end in parent. If we don't do this, read
+  // will block since the pipe will have an open write end in the
+  // parent process.
   if (close(stdout_pipe[1]) == -1) {
     return absl::InternalError(
         absl::StrCat("Failed to close write end of pipe in parent process: ",
                      strerror(errno)));
   }
+  // Mark the write end as successfully closed, so it doesn't get
+  // closed a second time by the deferred pipe_closer.
+  stdout_pipe[1] = -1;
   std::string stdout;
   char buf[1024];
   while (int status = read(stdout_pipe[0], buf, sizeof buf)) {
@@ -182,11 +191,6 @@ absl::Status RunCUDATool(const char* tool,
           absl::StrCat("Failed to read from pipe: ", strerror(errno)));
     }
     stdout += buf;
-  }
-  if (close(stdout_pipe[0]) == -1) {
-    return absl::InternalError(
-        absl::StrCat("Failed to close read end of pipe in parent process: ",
-                     strerror(errno)));
   }
   int status;
   if (waitpid(child_pid, &status, 0) == -1) {
