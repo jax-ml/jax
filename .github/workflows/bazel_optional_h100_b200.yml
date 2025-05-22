@@ -48,6 +48,7 @@ jobs:
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
             --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
             --test_output=errors \
+            --test_tag_filters=-multiaccelerator \
             --test_env=JAX_ACCELERATOR_COUNT=1 \
             --test_env=JAX_TESTS_PER_ACCELERATOR=8 \
             --strategy=TestRunner=local \
@@ -102,7 +103,6 @@ jobs:
             //tests/pallas:gpu_tests \
             //tests:array_interoperability_test_gpu \
             //tests:cudnn_fusion_test_gpu \
-            //tests:fused_attention_stablehlo_test_gpu
             //tests:fused_attention_stablehlo_test_gpu \
             //tests:gpu_tests \
             //tests:python_callback_test_gpu \

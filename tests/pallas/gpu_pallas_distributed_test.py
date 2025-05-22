@@ -15,6 +15,8 @@
 """Tests for distributed pallas GPU operations."""
 
 import functools
+import os
+
 import jax
 from jax import lax
 from jax._src import test_util as jtu
@@ -41,6 +43,8 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
       self.skipTest("NVSHMEM library unavailable.")
     if jax.process_count() == 1:
       self.skipTest("Test requires multiple processes.")
+    if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
+      self.skipTest("NVSHMEM doesn't work with the platform allocator.")
     super().setUp()
 
   def test_basic_remote_dma(self):
@@ -114,4 +118,9 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
 
 
 if __name__ == '__main__':
+  # This test doesn't work with the platform allocator, so we override it
+  # if it's ran alone. If it's part of a larger test suite and the platform
+  # allocator is used, setUp will skip the test.
+  os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.01'
+  os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'default'
   jt_multiprocess.main()
