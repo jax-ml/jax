@@ -34,6 +34,7 @@ from jax._src.interpreters.partial_eval import (
   PartialEvalCustomResult as PartialEvalCustomResult,
   PartialEvalCustomRule as PartialEvalCustomRule,
   PartialVal as PartialVal,
+  Recompute as Recompute,
   ResAvalUpdater as ResAvalUpdater,
   TracerAsName as TracerAsName,
   TracerId as TracerId,
