@@ -153,7 +153,7 @@ class FusedAttentionTest(PallasBaseTest):
       batch_size=(1, 2),
       seq_len=(128, 384),
       num_heads=(1, 2, 8),
-      head_dim=(32, 64, 128),
+      head_dim=(32, 64, 72, 128),
       block_sizes=(
         (("block_q", 128), ("block_k", 128)),
         (("block_q", 64), ("block_k", 64)),
@@ -226,7 +226,7 @@ class FusedAttentionTest(PallasBaseTest):
       batch_size=(1, 2),
       seq_len=(128, 384),
       num_heads=(1, 2),
-      head_dim=(32, 64, 128,),
+      head_dim=(32, 64, 72, 128,),
       block_sizes=(
           (
               ("block_q", 128),
