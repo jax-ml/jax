@@ -82,7 +82,7 @@ jobs:
     # End Presubmit Naming Check github-tpu-presubmits
 
     env:
-      LIBTPU_OLDEST_VERSION_DATE: 20250226
+      LIBTPU_OLDEST_VERSION_DATE: 20250228
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_RUN_FULL_TPU_TEST_SUITE: "${{ inputs.run-full-tpu-test-suite }}"
