@@ -286,8 +286,9 @@ class DistributionsTest(RandomTestBase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.integer,
     weighted=[True, False],
+    mode=[None, 'low', 'high']
   )
-  def testChoice(self, dtype, input_range_or_shape, shape, replace, weighted, axis):
+  def testChoice(self, dtype, input_range_or_shape, shape, replace, weighted, axis, mode):
     # This is the function API that we test against (note that self.rng().choice differs)
     np_choice = np.random.default_rng(0).choice
     p_dtype = dtypes.to_inexact_dtype(dtype)
@@ -303,7 +304,7 @@ class DistributionsTest(RandomTestBase):
       p /= p.sum()
     else:
       p = None
-    rand = lambda key, x: random.choice(key, x, shape, replace, p, axis)
+    rand = lambda key, x: random.choice(key, x, shape, replace, p, axis, mode=mode)
     sample = rand(key(), x)
     if not is_range:
       self.assertEqual(dtype, sample.dtype)
@@ -397,15 +398,16 @@ class DistributionsTest(RandomTestBase):
       ]
     ],
     sample_shape=[(10000,), (5000, 2)],
+    mode=[None, 'low', 'high'],
     dtype=jtu.dtypes.floating,
   )
-  def testCategorical(self, p, axis, dtype, sample_shape):
+  def testCategorical(self, p, axis, dtype, sample_shape, mode):
     key = lambda: self.make_key(0)
     p = np.array(p, dtype=dtype)
     logits = np.log(p) - 42 # test unnormalized
     out_shape = tuple(np.delete(logits.shape, axis))
     shape = sample_shape + out_shape
-    rand = partial(random.categorical, shape=shape, axis=axis)
+    rand = partial(random.categorical, shape=shape, axis=axis, mode=mode)
     crand = jax.jit(rand)
 
     uncompiled_samples = rand(key(), logits)
