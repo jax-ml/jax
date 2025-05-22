@@ -828,7 +828,7 @@ def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
                    is_initialized=(True,) * len(jaxpr_unknown.invars))
   _, eqn_effects = run_state_p.abstract_eval(*[v.aval for v in unknown_inputs],
                                              **uk_params)
-  eqn = pe.new_eqn_recipe(unknown_inputs, res_ref_unknown_outputs,
+  eqn = pe.new_eqn_recipe(trace, unknown_inputs, res_ref_unknown_outputs,
                           run_state_p, uk_params,
                           eqn_effects, source)
   for t in res_ref_unknown_outputs: t.recipe = eqn

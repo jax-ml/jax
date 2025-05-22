@@ -498,7 +498,7 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
 
   assert len(unknown_inputs) == len(res_ref_unknown_outputs)
   assert len(unknown_inputs) == len(jaxpr_unknown.invars) - 1
-  eqn = pe.new_eqn_recipe(unknown_inputs, res_ref_unknown_outputs,
+  eqn = pe.new_eqn_recipe(trace, unknown_inputs, res_ref_unknown_outputs,
                           for_p, dict(jaxpr=jaxpr_unknown, nsteps=nsteps,
                                       reverse=reverse,
                                       which_linear=which_linear_unknown,

@@ -127,7 +127,7 @@ def debug_callback_jvp_rule(primals, tangents, **params):
 ad.primitive_jvps[debug_callback_p] = debug_callback_jvp_rule
 
 def debug_callback_transpose_rule(*flat_args, callback: Callable[..., Any],
-    effect: DebugEffect):
+                                  effect: DebugEffect, partitioned):
   del flat_args, callback, effect
   raise ValueError("Transpose doesn't support debugging callbacks.")
 ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
