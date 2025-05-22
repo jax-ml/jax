@@ -633,7 +633,8 @@ def choice(key: ArrayLike,
            shape: Shape = (),
            replace: bool = True,
            p: RealArray | None = None,
-           axis: int = 0) -> Array:
+           axis: int = 0,
+           mode: str | None = None) -> Array:
   """Generates a random sample from a given array.
 
   .. warning::
@@ -656,6 +657,12 @@ def choice(key: ArrayLike,
       entries in a.
     axis: int, optional. The axis along which the selection is performed.
       The default, 0, selects by row.
+    mode: optional, "high" or "low" for how many bits to use in the gumbel sampler
+      when `p is None` and `replace = False`. The default is determined by the
+      ``use_high_dynamic_range_gumbel`` config, which defaults to "low". With mode="low",
+      in float32 sampling will be biased for choices with probability less than about
+      1E-7; with mode="high" this limit is pushed down to about 1E-14. mode="high"
+      approximately doubles the cost of sampling.
 
   Returns:
     An array of shape `shape` containing samples from `a`.
@@ -701,7 +708,7 @@ def choice(key: ArrayLike,
       ind = jnp.searchsorted(p_cuml, r).astype(int)
     else:
       # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
-      g = gumbel(key, (n_inputs,), dtype=p_arr.dtype) + jnp.log(p_arr)
+      g = gumbel(key, (n_inputs,), dtype=p_arr.dtype, mode=mode) + jnp.log(p_arr)
       ind = lax.top_k(g, k=n_draws)[1].astype(int)
     result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
 
@@ -940,7 +947,8 @@ def bernoulli(key: ArrayLike,
     mode: optional, "high" or "low" for how many bits to use when sampling.
       default='low'. Set to "high" for correct sampling at small values of
       `p`. When sampling in float32, bernoulli samples with mode='low' produce
-      incorrect results for p < ~1E-7.
+      incorrect results for p < ~1E-7. mode="high" approximately doubles the
+      cost of sampling.
 
   Returns:
     A random array with boolean dtype and shape given by ``shape`` if ``shape``
@@ -1544,7 +1552,7 @@ def poisson(key: ArrayLike,
 def gumbel(key: ArrayLike,
            shape: Shape = (),
            dtype: DTypeLikeFloat = float,
-           mode: str | None =None) -> Array:
+           mode: str | None = None) -> Array:
   """Sample Gumbel random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1559,6 +1567,11 @@ def gumbel(key: ArrayLike,
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
     mode: optional, "high" or "low" for how many bits to use when sampling.
+      The default is determined by the ``use_high_dynamic_range_gumbel`` config,
+      which defaults to "low". When drawing float32 samples, with mode="low" the
+      uniform resolution is such that the largest possible gumbel logit is ~16;
+      with mode="high" this is increased to ~32, at approximately double the
+      computational cost.
 
   Returns:
     A random array with the specified shape and dtype.
@@ -1599,6 +1612,7 @@ def categorical(
   axis: int = -1,
   shape: Shape | None = None,
   replace: bool = True,
+  mode: str | None = None,
 ) -> Array:
   """Sample random values from categorical distributions.
 
@@ -1615,6 +1629,12 @@ def categorical(
       The default (None) produces a result shape equal to ``np.delete(logits.shape, axis)``.
     replace: If True (default), perform sampling with replacement. If False, perform
       sampling without replacement.
+    mode: optional, "high" or "low" for how many bits to use in the gumbel sampler.
+      The default is determined by the ``use_high_dynamic_range_gumbel`` config,
+      which defaults to "low". With mode="low", in float32 sampling will be biased
+      for events with probability less than about 1E-7; with mode="high" this limit
+      is pushed down to about 1E-14. mode="high" approximately doubles the cost of
+      sampling.
 
   Returns:
     A random array with int dtype and shape given by ``shape`` if ``shape``
@@ -1644,11 +1664,11 @@ def categorical(
     logits_shape = list(shape[len(shape) - len(batch_shape):])
     logits_shape.insert(axis % len(logits_arr.shape), logits_arr.shape[axis])
     return jnp.argmax(
-        gumbel(key, (*shape_prefix, *logits_shape), logits_arr.dtype) +
+        gumbel(key, (*shape_prefix, *logits_shape), logits_arr.dtype, mode=mode) +
         lax.expand_dims(logits_arr, tuple(range(len(shape_prefix)))),
         axis=axis)
   else:
-    logits_arr += gumbel(key, logits_arr.shape, logits_arr.dtype)
+    logits_arr += gumbel(key, logits_arr.shape, logits_arr.dtype, mode=mode)
     k = math.prod(shape_prefix)
     if k > logits_arr.shape[axis]:
       raise ValueError(
