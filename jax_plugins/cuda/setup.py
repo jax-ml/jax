@@ -51,8 +51,9 @@ setup(
     url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 5 - Production/Stable",
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     package_data={
         package_name: ["xla_cuda_plugin.so"],

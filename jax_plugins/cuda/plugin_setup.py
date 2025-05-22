@@ -78,10 +78,12 @@ setup(
     url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 5 - Production/Stable",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     package_data={
         package_name: [
