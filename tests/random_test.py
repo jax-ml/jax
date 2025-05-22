@@ -991,7 +991,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_make_array_from_single_device_arrays(self):
     devices = jax.devices()
     shape = (len(devices),)
-    mesh = jtu.create_mesh((len(devices),), ('x',))
+    mesh = jtu.create_mesh((len(devices),), ('x',), iota_order=True)
     sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     keys = random.split(random.key(0), len(devices))
     arrays = [jax.device_put(keys[i:i + 1], device) for i, device in enumerate(devices)]
