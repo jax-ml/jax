@@ -1021,6 +1021,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "stages",
     srcs = ["_src/stages.py"],
+    visibility = [":internal"] + jax_visibility("stages"),
     deps = [
         ":config",
         ":core",
