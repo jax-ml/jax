@@ -93,6 +93,14 @@ class JitTest(jtu.BufferDonationTestCase):
     jitted = jit(my_function)
     self.assertEqual(repr(jitted), f"<PjitFunction of {repr(my_function)}>")
 
+  def test_jit_decorator_factory(self):
+    @jit(static_argnames=['flag'])
+    def func(x, flag):
+      return x if flag else -x
+
+    self.assertEqual(func(1, True), 1)
+    self.assertEqual(func(1, False), -1)
+
   def test_fun_name(self):
     def my_function():
       return
