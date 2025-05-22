@@ -8781,6 +8781,16 @@ class ShardyTest(jtu.JaxTestCase):
                                 "to Shardy"):
       jax.jit(f)(x)
 
+  def test_reshard_empty_mesh_error(self):
+    arr = jax.device_put(np.arange(8), jax.devices()[0])
+    with self.assertRaisesRegex(ValueError, "nonempty mesh"):
+      reshard(arr, NamedSharding(mesh_lib.empty_abstract_mesh, P(None)))
+
+  def test_reshard_none_sharding_error(self):
+    arr = jax.device_put(np.arange(8), jax.devices()[0])
+    with self.assertRaisesRegex(ValueError, "non-None"):
+      reshard(arr, None)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
