@@ -27,6 +27,7 @@ from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.pallas.ops.gpu import collective_matmul_mgpu
+from jax.experimental import shard
 import jax.numpy as jnp
 import numpy as np
 
@@ -51,8 +52,13 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
     context_stack = contextlib.ExitStack()
-    context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
     self.addCleanup(context_stack.close)
+    context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
+    num_devices = jax.device_count()
+    mesh = jax.make_mesh(
+        (num_devices,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
+    )
+    context_stack.enter_context(jax.sharding.use_mesh(mesh))
 
   @parameterized.product(
       m_shard=(1024, 8192),
@@ -90,28 +96,17 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     k1, k2 = random.split(random.key(1234), num=2)
     lhs = random.normal(k1, (num_devices * m_shard, k), dtype)
     rhs = random.normal(k2, (k, num_devices * n_shard), dtype)
-
-    mesh = jax.sharding.Mesh(jax.devices(), ["x"])
-    lhs = jax.device_put(lhs, jax.sharding.NamedSharding(mesh, P("x", None)))
-    rhs = jax.device_put(rhs, jax.sharding.NamedSharding(mesh, P(None, "x")))
+    lhs = shard.reshard(lhs, P("x", None))
+    rhs = shard.reshard(rhs, P(None, "x"))
 
     def run(body):
       out = jax.jit(
-          jax.shard_map(
-              body,
-              mesh=mesh,
-              in_specs=(P("x", None), P(None, "x")),
-              out_specs=P(None, "x"),
-              check_vma=False,
-          )
+          jax.shard_map(body, out_specs=P(None, "x"), check_vma=False)
       )(lhs, rhs)
       # Gather output, for NumPy comparison on the host.
       out = jax.shard_map(
           lambda x: lax.all_gather(x, "x", axis=1, tiled=True),
-          mesh=mesh,
-          in_specs=P(None, "x"),
-          out_specs=P(None),
-          check_vma=False,
+          out_specs=P(None), check_vma=False,
       )(out)
       return out
 

@@ -865,6 +865,7 @@ jax_multiplatform_test(
         "notap",
     ],
     deps = [
+        "//jax:experimental",
         "//jax:pallas",
         "//jax:pallas_experimental_gpu_ops",
         "//jax:pallas_mosaic_gpu",
