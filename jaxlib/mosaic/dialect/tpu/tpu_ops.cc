@@ -1449,9 +1449,6 @@ LogicalResult DynamicGatherOp::verify() {
   if (getIndices().getType().getShape() != getIndices().getType().getShape()) {
     return emitOpError("Expected indices and result shapes must match");
   }
-  if (!getIndices().getType().getElementType().isInteger(32)) {
-    return emitOpError("Not implemented: Only i32 indices supported");
-  }
   return success();
 }
 
