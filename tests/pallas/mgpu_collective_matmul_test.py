@@ -48,6 +48,8 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       self.skipTest("NVSHMEM library unavailable.")
     if jax.process_count() == 1:
       self.skipTest("Test requires multiple processes.")
+    if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
+      self.skipTest("NVSHMEM doesn't work with the platform allocator.")
     context_stack = contextlib.ExitStack()
     context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
     self.addCleanup(context_stack.close)
@@ -128,6 +130,11 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
+  # This test doesn't work with the platform allocator, so we override it
+  # if it's ran alone. If it's part of a larger test suite and the platform
+  # allocator is used, setUp will skip the test.
+  os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.01"
+  os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "default"
   os.environ["XLA_FLAGS"] = (
       os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0"
   )
