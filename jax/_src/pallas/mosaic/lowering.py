@@ -2996,7 +2996,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   return for_op.results
 
 
-@register_lowering_rule(lax.scan_p, ensure_mlir_values=False)
+@register_lowering_rule(lax.scan_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False)
 def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
