@@ -1698,6 +1698,19 @@ mosaic_lowering_rules[gpu_core.LANExWG_SEMANTICS].update({
     lax.not_p: lambda ctx, x: ~x,
 })
 
+def _unary_warp_lowering_rule(impl):
+  def _lowering_rule(ctx: LoweringRuleContext, x):
+    if not all(aval_in.shape == () for aval_in in ctx.avals_in):
+      raise NotImplementedError(
+          "Non-scalar arithmetic is not supported in warp-level lowering.")
+    return impl(x)
+  return _lowering_rule
+
+mosaic_lowering_rules[gpu_core.LANExWARP_SEMANTICS].update({
+    lax.neg_p: _unary_warp_lowering_rule(lambda x: -x),
+    lax.not_p: _unary_warp_lowering_rule(lambda x: ~x)
+})
+
 mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS].update({
     lax.neg_p: _lower_fun(lambda x: jnp.subtract(0, x), multiple_results=False),
     lax.not_p: _lower_fun(
@@ -2163,6 +2176,8 @@ def _axis_index_warp_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
 
 
 @register_lowering_rule(primitives.debug_print_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(primitives.debug_print_p, mgpu.LoweringSemantics.Lane,
+                        gpu_core.PrimitiveSemantics.Warp)
 def _debug_print_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -2171,6 +2186,9 @@ def _debug_print_lowering_rule(
 ):
   del has_placeholders  # Unused.
   primitives.check_debug_print_format(fmt, *args)
+  scope = mgpu.ThreadSubset.WARPGROUP
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    scope = mgpu.ThreadSubset.WARP
   if not any(aval.shape for aval in ctx.avals_in):
     mgpu.debug_print(
         fmt,
@@ -2178,6 +2196,7 @@ def _debug_print_lowering_rule(
             _ensure_ir_value(arg, aval.dtype)
             for arg, aval in zip(args, ctx.avals_in)
         ),
+        scope=scope
     )
   elif len(ctx.avals_in) == 1:
     [arg] = args
@@ -2461,6 +2480,8 @@ def _lower_jaxpr_to_for_loop(
 
 @register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Lane,
+                        gpu_core.PrimitiveSemantics.Warp)
 def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,

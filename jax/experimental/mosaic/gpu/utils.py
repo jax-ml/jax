@@ -144,7 +144,11 @@ def _debug_scalar_ty_format(arg):
     return "%f", arg
   raise NotImplementedError(f"Can't print the type {arg.type}")
 
-def debug_print(fmt, *args, uniform=True):
+def debug_print(fmt, *args, uniform=True, scope=None):
+  if not uniform and scope is not None:
+    raise ValueError("Cannot specify scope to a non-uniform debug_print.")
+  if scope is None:
+    scope = ThreadSubset.WARPGROUP
   type_formats = []
   new_args = []
   for arg in args:
@@ -168,7 +172,7 @@ def debug_print(fmt, *args, uniform=True):
       raise NotImplementedError(arg.type)
     type_formats.append(ty_format)
   ctx = (
-      functools.partial(single_thread, scope=ThreadSubset.WARPGROUP)
+      functools.partial(single_thread, scope=scope)
       if uniform
       else contextlib.nullcontext
   )
