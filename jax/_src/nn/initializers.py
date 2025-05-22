@@ -30,6 +30,7 @@ import jax.numpy as jnp
 from jax import random
 from jax._src import core
 from jax._src import dtypes
+from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import set_module
 
@@ -48,7 +49,8 @@ class Initializer(Protocol):
   def __call__(self,
                key: Array,
                shape: core.Shape,
-               dtype: DTypeLikeInexact = jnp.float_) -> Array:
+               dtype: DTypeLikeInexact = jnp.float_,
+               out_sharding=None) -> Array:
     raise NotImplementedError
 
 @export
@@ -100,9 +102,12 @@ def constant(value: ArrayLike,
   """
   def init(key: Array,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
+           dtype: DTypeLikeInexact = dtype,
+           out_sharding=None) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
-    return jnp.full(shape, value, dtype=dtype)
+    out_sharding = canonicalize_sharding(
+        out_sharding, 'nn.initializers.constant')
+    return jnp.full(shape, value, dtype=dtype, device=out_sharding)
   return init
 
 @export
@@ -126,9 +131,11 @@ def uniform(scale: RealNumeric = 1e-2,
   """
   def init(key: Array,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
+           dtype: DTypeLikeInexact = dtype,
+           out_sharding=None) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
-    return random.uniform(key, shape, dtype) * jnp.array(scale, dtype)
+    return random.uniform(key, shape, dtype,
+                          out_sharding=out_sharding) * jnp.array(scale, dtype)
   return init
 
 @export
@@ -152,9 +159,11 @@ def normal(stddev: RealNumeric = 1e-2,
   """
   def init(key: Array,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
+           dtype: DTypeLikeInexact = dtype,
+           out_sharding=None) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
-    return random.normal(key, shape, dtype) * jnp.array(stddev, dtype)
+    return random.normal(key, shape, dtype,
+                         out_sharding=out_sharding) * jnp.array(stddev, dtype)
   return init
 
 @export
@@ -189,10 +198,12 @@ def truncated_normal(stddev: RealNumeric = 1e-2,
 
   def init(key: Array,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
+           dtype: DTypeLikeInexact = dtype,
+           out_sharding=None) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
     return random.truncated_normal(
-        key, lower, upper, shape, dtype) * jnp.array(stddev, dtype)
+        key, lower, upper, shape, dtype,
+        out_sharding=out_sharding) * jnp.array(stddev, dtype)
   return init
 
 @export
@@ -315,7 +326,8 @@ def variance_scaling(
 
   def init(key: Array,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
+           dtype: DTypeLikeInexact = dtype,
+           out_sharding=None) -> Array:
     shape = core.canonicalize_shape(shape)
     dtype = dtypes.canonicalize_dtype(dtype)
     fan_in, fan_out = _compute_fans(shape, in_axis, out_axis, batch_axis)
@@ -332,16 +344,19 @@ def variance_scaling(
       if jnp.issubdtype(dtype, jnp.floating):
         # constant is stddev of standard normal truncated to (-2, 2)
         stddev = jnp.sqrt(variance) / jnp.array(.87962566103423978, dtype)
-        return random.truncated_normal(key, -2, 2, shape, dtype) * stddev
+        return random.truncated_normal(key, -2, 2, shape, dtype,
+                                       out_sharding=out_sharding) * stddev
       else:
         # constant is stddev of complex standard normal truncated to 2
         stddev = jnp.sqrt(variance) / jnp.array(.95311164380491208, dtype)
         return _complex_truncated_normal(key, 2, shape, dtype) * stddev
     elif distribution == "normal":
-      return random.normal(key, shape, dtype) * jnp.sqrt(variance)
+      return random.normal(key, shape, dtype,
+                           out_sharding=out_sharding) * jnp.sqrt(variance)
     elif distribution == "uniform":
       if jnp.issubdtype(dtype, jnp.floating):
-        return random.uniform(key, shape, dtype, -1) * jnp.sqrt(3 * variance)
+        return random.uniform(key, shape, dtype, -1,
+                              out_sharding=out_sharding) * jnp.sqrt(3 * variance)
       else:
         return _complex_uniform(key, shape, dtype) * jnp.sqrt(variance)
     else:
@@ -601,7 +616,10 @@ def orthogonal(scale: RealNumeric = 1.0,
   """
   def init(key: Array,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
+           dtype: DTypeLikeInexact = dtype,
+           out_sharding=None) -> Array:
+    if out_sharding is not None:
+      raise NotImplementedError
     dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) < 2:
       raise ValueError("orthogonal initializer requires at least a 2D shape")
@@ -651,7 +669,10 @@ def delta_orthogonal(
   """
   def init(key: Array,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
+           dtype: DTypeLikeInexact = dtype,
+           out_sharding=None) -> Array:
+    if out_sharding is not None:
+      raise NotImplementedError
     dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) not in [3, 4, 5]:
       raise ValueError("Delta orthogonal initializer requires a 3D, 4D or 5D "

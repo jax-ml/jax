@@ -7868,6 +7868,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding,
                      NamedSharding(mesh.abstract_mesh, P('x', 'y')))
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_he_normal(self, mesh):
+    init = jax.nn.initializers.he_normal(in_axis=0, out_axis=1)
+    key = jax.random.key(0)
+    out = init(key, (8, 2), jnp.float32, out_sharding=P('x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_nn_uniform(self, mesh):
+    init = jax.nn.initializers.uniform()
+    key = jax.random.key(0)
+    out = init(key, (8, 2), jnp.float32, out_sharding=P('x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_nn_constant(self, mesh):
+    init = jax.nn.initializers.constant(-7)
+    key = jax.random.key(0)
+    out = init(key, (8, 2), jnp.float32, out_sharding=P('x'))
+    self.assertArraysEqual(out, jnp.full((8, 2), -7, dtype=jnp.float32))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
