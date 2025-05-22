@@ -16,7 +16,6 @@ limitations under the License.
 #include "jaxlib/to_ifrt_sharding.h"
 
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
