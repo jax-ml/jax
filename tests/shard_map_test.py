@@ -767,6 +767,46 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn('out_specs', e.params)
     self.assertEqual(e.params['out_specs'], (P('y', 'x'),))
 
+  def test_vmap_explicit_mesh_axis(self):
+    mesh = jtu.create_mesh(
+        (1, 2, 2), ('z', 'x', 'y'), axis_types=(AxisType.Explicit,) * 3)
+
+    @shard_map(mesh=mesh, in_specs=P('y'), out_specs=P('y'))
+    def f(x):
+      return x
+
+    x = jnp.arange(4 * 4).reshape(4, 4)
+    s = NamedSharding(mesh, P(('z', 'x'), 'y'))
+    x = jax.device_put(x, s)
+
+    f = jax.jit(jax.vmap(f))
+    out = f(x)
+    self.assertEqual(out.sharding, s)
+
+  def test_vmap_explicit_mesh_axis_error(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                           axis_types=(AxisType.Explicit,) * 2)
+
+    @shard_map(mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return x
+
+    x = jnp.arange(4 * 4).reshape(4, 4)
+    s = NamedSharding(mesh, P('x', 'y'))
+    x = jax.device_put(x, s)
+
+    f = jax.jit(jax.vmap(f))
+    with self.assertRaisesRegex(
+        ValueError, "vmapped away explicit mesh axis cannot appear"):
+      f(x)
+
+    f = jax.jit(jax.vmap(f, spmd_axis_name='y'))
+    with self.assertRaisesRegex(
+        ValueError,
+        'Only one of spmd_axis_name or arrays sharded on `Explicit` mesh axis'
+        ' type is allowed'):
+      f(x)
+
   def test_vmap_of_grad_spmd_axis_name(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 

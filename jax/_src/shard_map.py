@@ -1228,6 +1228,15 @@ eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 
 # Batching
 
+def _modify_specs_axis_data(trace, name, mesh, in_specs, in_dims):
+  new_in_specs = [sp if d is batching.not_mapped else pxla.batch_spec(sp, d, name)
+                  for sp, d in zip(in_specs, in_dims)]
+  new_size = trace.axis_data.size // prod(mesh.shape[n] for n in name)
+  new_axis_data = batching.AxisData(
+      trace.axis_data.name, new_size, trace.axis_data.spmd_name,
+      trace.axis_data.explicit_mesh_axis)
+  return new_in_specs, new_axis_data
+
 def _shard_map_batch(
     trace: batching.BatchTrace, prim: core.Primitive, fun: lu.WrappedFun,
     in_tracers: Sequence[batching.BatchTracer], mesh: Mesh,
@@ -1237,15 +1246,20 @@ def _shard_map_batch(
   if any(isinstance(d, batching.RaggedAxis) for d in in_dims):
     raise NotImplementedError
   spmd_axis_name = trace.axis_data.spmd_name
+  explicit_mesh_axis = trace.axis_data.explicit_mesh_axis
   if spmd_axis_name is not None:
     used = {n for spec in in_specs for n in _spec_to_vma(spec)}
     if not config.disable_vmap_shmap_error.value and set(spmd_axis_name) & used:
       raise ValueError("vmap spmd_axis_name cannot appear in shard_map in_specs")
-    new_in_specs = [sp if d is batching.not_mapped else pxla.batch_spec(sp, d, spmd_axis_name)
-                    for sp, d in zip(in_specs, in_dims)]
-    new_size = trace.axis_data.size // prod(mesh.shape[n] for n in spmd_axis_name)
-    new_axis_data = batching.AxisData(trace.axis_data.name, new_size,
-                                      trace.axis_data.spmd_name, None)
+    new_in_specs, new_axis_data = _modify_specs_axis_data(
+        trace, spmd_axis_name, mesh, in_specs, in_dims)
+  elif explicit_mesh_axis is not None:
+    used = {n for spec in in_specs for n in _spec_to_vma(spec)}
+    if set(explicit_mesh_axis) & used:
+      raise ValueError("vmapped away explicit mesh axis cannot appear in "
+                       "shard_map in_specs")
+    new_in_specs, new_axis_data = _modify_specs_axis_data(
+        trace, explicit_mesh_axis, mesh, in_specs, in_dims)
   else:
     new_in_specs = [sp if d is batching.not_mapped else pxla.batch_spec(sp, d, None)
                     for sp, d in zip(in_specs, in_dims)]
@@ -1254,7 +1268,8 @@ def _shard_map_batch(
 
   @as_hashable_function(closure=out_specs_thunk)
   def new_out_specs_thunk():
-    return _batch_out_specs(spmd_axis_name, out_dims(), out_specs_thunk())
+    return _batch_out_specs(spmd_axis_name, explicit_mesh_axis, out_dims(),
+                            out_specs_thunk())
 
   new_params = dict(mesh=mesh, in_specs=new_in_specs,
                     out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
@@ -1266,12 +1281,20 @@ def _shard_map_batch(
   return map(make_tracer, out_vals, out_dims())
 batching.BatchTrace.process_shard_map = _shard_map_batch
 
-def _batch_out_specs(spmd_name, dims, out_specs):
+def _batch_out_specs(spmd_name, explicit_mesh_axis, dims, out_specs):
   if spmd_name is not None:
     used = {n for spec in out_specs for n in _spec_to_vma(spec)}
     if not config.disable_vmap_shmap_error.value and set(spmd_name) & used:
       raise ValueError("vmap spmd_axis_name cannot appear in shard_map out_specs")
     return [sp if d is batching.not_mapped else pxla.batch_spec(sp, d, spmd_name)
+            for sp, d in zip(out_specs, dims)]
+  elif explicit_mesh_axis is not None:
+    used = {n for spec in out_specs for n in _spec_to_vma(spec)}
+    if set(explicit_mesh_axis) & used:
+      raise ValueError("vmapped away explicit mesh axis cannot appear in "
+                       "shard_map out_specs")
+    return [sp if d is batching.not_mapped else
+            pxla.batch_spec(sp, d, explicit_mesh_axis)
             for sp, d in zip(out_specs, dims)]
   else:
     return [sp if d is batching.not_mapped else pxla.batch_spec(sp, d, None)
