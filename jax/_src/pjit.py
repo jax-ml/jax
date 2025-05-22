@@ -2987,6 +2987,11 @@ def reshard(xs, out_shardings):
   out_flat = []
   for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat):
     ds = canonicalize_sharding(s, 'reshard')
+    if ds is None:
+      raise ValueError(
+          'Reshard should only be used with out_shardings which are non-None '
+          'and have a nonempty mesh. Got sharding {s}.'
+      )
     ds = ds.with_spec(ds.spec._normalized_spec_for_aval(x_aval.ndim))  # pytype: disable=attribute-error
     out_flat.append(reshard_p.bind(x, dst_sharding=ds))
   return tree_unflatten(treedef, out_flat)
