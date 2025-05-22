@@ -560,17 +560,42 @@ register_pytree_node(
 )
 
 
-# broadcast_prefix is not exported.
+@export
+def tree_broadcast(prefix_tree: Any, full_tree: Any,
+                   is_leaf: Callable[[Any], bool] | None = None
+                  ) -> list[Any]:
+  """Alias of :func:`jax.tree.broadcast`."""
+  broadcast_leaves = broadcast_prefix(prefix_tree, full_tree, is_leaf=is_leaf)
+  return tree_structure(full_tree).unflatten(broadcast_leaves)
+
+
+# broadcast_prefix is not exported
 def broadcast_prefix(prefix_tree: Any, full_tree: Any,
                      is_leaf: Callable[[Any], bool] | None = None
                      ) -> list[Any]:
-  # If prefix_tree is not a tree prefix of full_tree, this code can raise a
-  # ValueError; use prefix_errors to find disagreements and raise more precise
-  # error messages.
+  """Broadcasts tree prefix leaves into the full set of leaves for a given full tree.
+
+    Args:
+      prefix_tree: a pytree that is a tree prefix of full_tree.
+      full_tree: a pytree with the structure to broadcast the prefix leaves into.
+      is_leaf: an optionally specified function that will be called at each
+        flattening step. It should return a boolean, with true stopping the
+        traversal and the whole subtree being treated as a leaf, and false
+        indicating the flattening should traverse the current object.
+
+    Returns:
+      A list of leaves matching the expected count for the full tree,
+      with the leaf of each prefix tree being duplicated to match the count of
+      its corresponding subtree.
+  """
   result = []
   num_leaves = lambda t: tree_structure(t).num_leaves
   add_leaves = lambda x, subtree: result.extend([x] * num_leaves(subtree))
-  tree_map(add_leaves, prefix_tree, full_tree, is_leaf=is_leaf)
+  try:
+    tree_map(add_leaves, prefix_tree, full_tree, is_leaf=is_leaf)
+  except ValueError:
+      e, *_ = prefix_errors(prefix_tree, full_tree)
+      raise e('broadcast_prefix prefix_tree') from None
   return result
 
 
