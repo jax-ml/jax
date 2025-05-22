@@ -3394,7 +3394,10 @@ class ExamplesTest(PallasTest):
 
     np.testing.assert_allclose(kernel(x, x), x + x)
 
-  def test_semaphore_lowering(self):
+
+class SemaphoreTest(PallasTest):
+
+  def test_lowering(self):
     # This is a smoke test until we add support for lowering of semaphore ops.
     def body(i_ref1, i_ref2, o_ref, sem_ref):
       del i_ref2  # Only here to have a different number of inputs and outputs.
@@ -3417,6 +3420,51 @@ class ExamplesTest(PallasTest):
     self.assertIn(
         r"(tensor<128xf32>, tensor<128xf32>, tensor<4xi32>) ->"
         r" (tensor<128xf32>, tensor<4xi32>)",
+        text,
+    )
+
+  def test_basic(self):
+    def body(o_ref, sem_ref):
+      assert jnp.issubdtype(sem_ref.dtype, pl.semaphore)
+      pl.semaphore_signal(sem_ref)
+      o_ref[...] = jnp.ones_like(o_ref)
+      pl.semaphore_wait(sem_ref)
+    kernel = plgpu.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        grid=(2,),
+        grid_names=("x",),
+    )
+    text = jax.jit(kernel).lower().as_text()
+    np.testing.assert_array_equal(kernel(), jnp.ones((128,), jnp.float32))
+    # The semaphore array is scaled up by the grid size.
+    self.assertIn(
+        r"(tensor<128xf32>, tensor<2xi32>) -> (tensor<128xf32>, tensor<2xi32>)",
+        text,
+    )
+
+  def test_with_profiler(self):
+    # Dealing with profiler and semaphores together is tricky because they both
+    # add extra outputs to the HLO op.
+    def body(o_ref, sem_ref):
+      assert jnp.issubdtype(sem_ref.dtype, pl.semaphore)
+      with jax.named_scope("output"):
+        o_ref[...] = jnp.ones_like(o_ref)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      kernel = plgpu.kernel(
+          body,
+          out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+          scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+          grid=(2,),
+          grid_names=("x",),
+          compiler_params=plgpu.CompilerParams(profile_space=32, profile_dir=tmp_dir),
+      )
+      text = jax.jit(kernel).lower().as_text()
+      np.testing.assert_array_equal(kernel(), jnp.ones((128,), jnp.float32))
+    self.assertIn(
+        r"(tensor<128xf32>, tensor<2xi32>) ->"
+        r" (tensor<128xf32>, tensor<2xi32>, tensor<512xui32>)",
         text,
     )
 

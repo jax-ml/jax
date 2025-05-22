@@ -105,6 +105,7 @@ class Resources:
   barrier_counts: collections.Counter[AnyBarrier] = dataclasses.field(
       default_factory=collections.Counter
   )
+  gmem_semaphores: int = 0
 
   def __post_init__(self):
     object.__setattr__(
@@ -132,6 +133,7 @@ class Resources:
         smem_scratch_bytes=self.smem_scratch_bytes + other.smem_scratch_bytes,
         tmem_scratch_cols=self.tmem_scratch_cols + other.tmem_scratch_cols,
         barrier_counts=self.barrier_counts + other.barrier_counts,
+        gmem_semaphores=self.gmem_semaphores + other.gmem_semaphores,
     )
 
   def __or__(self, other: Resources) -> Resources:
@@ -143,6 +145,7 @@ class Resources:
             self.tmem_scratch_cols, other.tmem_scratch_cols
         ),
         barrier_counts=self.barrier_counts | other.barrier_counts,
+        gmem_semaphores=max(self.gmem_semaphores, other.gmem_semaphores),
     )
 
 
@@ -266,6 +269,8 @@ def _run_scoped_resource_estimator(
     elif aval.memory_space == gpu_core.REGS:
       # Don't need to allocate anything.
       pass
+    elif aval.memory_space == gpu_core.GMEM and jnp.issubdtype(aval.dtype, pallas_core.semaphore):
+      rs += Resources(gmem_semaphores=math.prod(aval.shape))
     else:
       raise NotImplementedError(
           f"Unsupported memory space: {aval.memory_space}")
@@ -312,6 +317,8 @@ class ModuleContext:
   tmem_requested_cols: int
   tmem_used_cols: int
   tmem_base_ptr: ir.Value
+  gmem_used_semaphores: int
+  gmem_semaphore_base_ptr: ir.Value | None
   runtime_barriers: MutableMapping[AnyBarrier, MutableSequence[AnyBarrierRef]]
   name_stack: source_info_util.NameStack
   traceback_caches: mlir.TracebackCaches
@@ -350,6 +357,21 @@ class ModuleContext:
     barrier = available.pop()
     yield barrier
     available.append(barrier)
+
+  @contextlib.contextmanager
+  def reserve_semaphores(
+      self, shape: tuple[int, ...]
+  ):
+    allocated_sems = math.prod(shape)
+    ref = mgpu.memref_slice(
+        self.gmem_semaphore_base_ptr,
+        mgpu.ds(self.gmem_used_semaphores, allocated_sems),
+    )
+    ref = mgpu.memref_reshape(ref, shape)
+    self.gmem_used_semaphores += allocated_sems
+    yield ref
+    # TODO: In debug mode verify the values of all semaphores are again 0
+    self.gmem_used_semaphores -= allocated_sems
 
   @contextlib.contextmanager
   def alloc_tmem(
@@ -640,42 +662,15 @@ def lower_pipelined_jaxpr_to_module(
     else:
       return gpu_core.SMEM(aval.shape, aval.dtype)
 
-  sem_placeholder = None
-  semaphore_ref_avals = []
-  scratch_avals = []
-  # Need to unzip semaphores
-  for v in jaxpr.invars[grid_mapping.slice_scratch_ops]:
-    aval = v.aval
-    if (isinstance(aval, pallas_core.AbstractMemoryRef) and
-        jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype)):
-      if aval.memory_space != gpu_core.GMEM:
-        raise ValueError(
-            "Only GMEM memory space is supported for semaphores in Mosaic GPU."
-        )
-      semaphore_ref_avals.append(aval)
-      scratch_avals.append(sem_placeholder)
-    else:
-      scratch_avals.append(aval)
-
   def pipeline_fn(*refs):
-    sem_refs = []
-    if semaphore_ref_avals:
-      refs, sem_refs = util.split_list(refs, [-len(semaphore_ref_avals)])
     primitives.run_scoped(
-        functools.partial(scoped_pipeline_fn, *refs, sem_refs=sem_refs),
-        scratch_refs=[
-            ref_for_aval(aval) if aval is not sem_placeholder else aval
-            for aval in scratch_avals
-        ],
+        functools.partial(scoped_pipeline_fn, *refs),
+        scratch_refs=[ref_for_aval(v.aval) for v in jaxpr.invars[grid_mapping.slice_scratch_ops]],
         collective_axes=thread_axis,  # scratch_refs are shared across threads
     )
     return ()  # ``wrap_init`` does not support functions returning None.
 
-  def scoped_pipeline_fn(*refs, sem_refs, scratch_refs):
-    sem_refs_it = iter(sem_refs)
-    scratch_refs = [
-        next(sem_refs_it) if r is sem_placeholder else r for r in scratch_refs
-    ]
+  def scoped_pipeline_fn(*refs, scratch_refs):
     def body_fn(indices, *refs):
       program_ids_template = util.merge_lists(
           which_parallel, indices, [None] * sum(which_parallel)
@@ -708,7 +703,7 @@ def lower_pipelined_jaxpr_to_module(
                 bm.array_shape_dtype.shape, bm.array_shape_dtype.dtype
             ).get_ref_aval()
             for bm in block_mappings
-        ] + semaphore_ref_avals,
+        ],
     )
     assert not new_consts
 
@@ -726,10 +721,6 @@ def lower_pipelined_jaxpr_to_module(
         gpu_mesh.cluster if gpu_mesh is not None else (),
         [bm.array_shape_dtype for bm in in_block_mappings],
         [bm.array_shape_dtype for bm in out_block_mappings],
-        [
-            jax.ShapeDtypeStruct(r.shape, np.dtype(np.int32))
-            for r in semaphore_ref_avals
-        ],
         new_jaxpr,
         params,
         new_consts,
@@ -744,7 +735,6 @@ def lower_jaxpr_to_module(
     cluster: Sequence[int],
     in_shapes: Sequence[jax.ShapeDtypeStruct],
     out_shapes: Sequence[jax.ShapeDtypeStruct],
-    gmem_scratch_shapes: Sequence[jax.ShapeDtypeStruct],
     jaxpr: jax_core.Jaxpr,
     params: gpu_core.CompilerParams,
     consts=(),
@@ -767,13 +757,31 @@ def lower_jaxpr_to_module(
     squashed_dims = grid[:-2]
     parallel_grid = (math.prod(grid[:-2]), *grid[-2:])
 
+  rs = _estimate_resources(
+      ResourceEstimatorContext(
+          axis_names=axis_names, lowering_semantics=lowering_semantics
+      ),
+      jaxpr,
+  )
+
   def body(launch_ctx: mgpu.LaunchContext, *buffers: ir.Value):
     *buffers_gmem, (runtime_smem, runtime_barriers, runtime_tmem) = buffers
-    if gmem_scratch_shapes:
-      in_buffers, _, out_scratch_buffers = util.split_list(
-          buffers_gmem, [len(in_shapes), len(gmem_scratch_shapes)]
+    gmem_semaphores = None
+    if rs.gmem_semaphores:
+      # Extract the semaphores local to the current block.
+      index = ir.IndexType.get()
+      block_idx = arith_dialect.index_castui(index, mgpu_utils.block_idx())
+      gmem_semaphores = mgpu.memref_slice(
+          buffers_gmem[-1],
+          mgpu.ds(
+              arith_dialect.muli(
+                  block_idx, arith_dialect.constant(index, rs.gmem_semaphores)
+              ),
+              rs.gmem_semaphores,
+          ),
       )
-      buffers_gmem = in_buffers + out_scratch_buffers
+      # The semaphore buffer is an aliased input/output, so we need to skip it twice.
+      buffers_gmem = buffers_gmem[:len(in_shapes)] + buffers_gmem[-len(out_shapes) - 1:-1]
 
     grouped_barriers = collections.defaultdict(list)
     for barrier, barrier_ref in zip(rs.barriers, runtime_barriers):
@@ -804,6 +812,8 @@ def lower_jaxpr_to_module(
         tmem_requested_cols=tmem_cols,
         tmem_used_cols=0,
         tmem_base_ptr=runtime_tmem.address if runtime_tmem else None,
+        gmem_used_semaphores=0,
+        gmem_semaphore_base_ptr=gmem_semaphores,
         runtime_barriers=grouped_barriers,
         name_stack=source_info_util.NameStack(),
         traceback_caches=mlir.TracebackCaches(),
@@ -816,13 +826,6 @@ def lower_jaxpr_to_module(
     _ = lower_jaxpr_to_mosaic_gpu(
         module_ctx, launch_ctx, jaxpr, buffers_gmem, consts
     )
-
-  rs = _estimate_resources(
-      ResourceEstimatorContext(
-          axis_names=axis_names, lowering_semantics=lowering_semantics
-      ),
-      jaxpr,
-  )
 
   scratch_buffers = [
       jax.ShapeDtypeStruct(shape=[rs.smem_scratch_bytes], dtype=np.int8),
@@ -842,14 +845,24 @@ def lower_jaxpr_to_module(
     # Each range is 2 events, each event is 4 bytes.
     prof_spec = mgpu_profiler.ProfilerSpec(params.profile_space * 2 * 4)
     prof_ctx = ProfilerContext(params.profile_dir, prof_spec)
+  mgpu_grid = tuple(map(operator.mul, parallel_grid, cluster))
+  semaphores_shape = ()
+  if rs.gmem_semaphores:
+    semaphores_shape = (
+        jax.ShapeDtypeStruct(
+            shape=(math.prod(mgpu_grid) * rs.gmem_semaphores,), dtype=np.int32
+        ),
+    )
+  # NOTE: new_out_shapes has out_shapes, then semaphores_shape and
+  # optionally the profiler buffer.
   module, new_out_shapes, _, launch_ctx = (
       mgpu_core._lower_as_gpu_kernel(
           body,
-          grid=tuple(map(operator.mul, parallel_grid, cluster)),
+          grid=mgpu_grid,
           cluster=cluster,
           block=block,
-          in_shapes=(*in_shapes, *gmem_scratch_shapes),
-          out_shape=(*out_shapes, *gmem_scratch_shapes),
+          in_shapes=(*in_shapes, *semaphores_shape),
+          out_shape=(*out_shapes, *semaphores_shape),
           smem_scratch_shape=scratch_buffers,
           lowering_semantics=lowering_semantics,
           module_name=mlir.sanitize_name(debug_info.func_name),
@@ -871,11 +884,8 @@ def lower_jaxpr_to_module(
 
   launch_ctx.scratch.finalize_size()
 
-  if gmem_scratch_shapes:
-    new_out_shapes = new_out_shapes[:-len(gmem_scratch_shapes)]
-
   return LoweringResult(
-      module, parallel_grid, block, new_out_shapes, prof_ctx, tuple(gmem_scratch_shapes)
+      module, parallel_grid, block, new_out_shapes, prof_ctx, semaphores_shape
   )
 
 
@@ -2280,6 +2290,12 @@ def _run_scoped_lowering_rule(
                 exact_cols=False,
                 collective=aval.collective,
             )
+        )
+        input_refs.append(input_ref)
+        should_discharge.append(False)
+      elif aval.memory_space == gpu_core.GMEM and jnp.issubdtype(aval.dtype, pallas_core.semaphore):
+        input_ref = alloc_stack.enter_context(
+            ctx.module_ctx.reserve_semaphores(aval.shape)
         )
         input_refs.append(input_ref)
         should_discharge.append(False)

@@ -85,12 +85,16 @@ def pallas_call_lowering(
   new_avals_out = list(map(_as_shaped_array, lowering_result.new_out_shapes))
   scratch_args = ()
   if lowering_result.gmem_scratch_shapes:
+    # The new_out_shapes contain the original outputs first, followed by the
+    # GMEM scratch shapes, and optionally the profiler buffer.
     input_output_aliases += tuple(
-        (len(new_avals_in) + i, len(new_avals_out) + i)
+        (len(ctx.avals_in) + i, len(ctx.avals_out) + i)
         for i in range(len(lowering_result.gmem_scratch_shapes))
     )
+    # The GMEM scratch is an aliased kernel input/output.
     new_avals_in.extend(map(_as_shaped_array, lowering_result.gmem_scratch_shapes))
-    new_avals_out.extend(map(_as_shaped_array, lowering_result.gmem_scratch_shapes))
+    # We guarantee zero-initialization of the GMEM scratch at the moment, which
+    # is important for semaphores.
     def zero_init_gmem_scratch():
       return [lax.zeros_like_array(s) for s in lowering_result.gmem_scratch_shapes]
     scratch_args = mlir.lower_fun(
@@ -100,12 +104,10 @@ def pallas_call_lowering(
       ctx.replace(avals_in=new_avals_in, avals_out=new_avals_out),
       *args, *scratch_args,
       module=module,
-      out_types=(*lowering_result.new_out_shapes, *lowering_result.gmem_scratch_shapes),
+      out_types=lowering_result.new_out_shapes,
       input_output_aliases=input_output_aliases,
       use_custom_barrier=False, # False until we add get_barrier_semaphore() feature
   )
-  if lowering_result.gmem_scratch_shapes:  # Drop the GMEM scratch.
-    outs = outs[:-len(lowering_result.gmem_scratch_shapes)]
   if (prof_ctx := lowering_result.profiler_context) is not None:
     *outs, prof_buffer = outs
     if (dump_path := prof_ctx.dump_path) == "sponge":
@@ -133,6 +135,8 @@ def pallas_call_lowering(
     mlir.lower_fun(do_callback, multiple_results=True)(
         ctx.replace(avals_in=(new_avals_out[-1],)), prof_buffer
     )
+  if lowering_result.gmem_scratch_shapes:  # Drop the GMEM scratch.
+    outs = outs[:-len(lowering_result.gmem_scratch_shapes)]
   return outs
 
 
