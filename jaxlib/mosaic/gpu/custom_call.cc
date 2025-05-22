@@ -188,12 +188,12 @@ absl::Status RunCUDATool(const char* tool,
   stdout_pipe[1] = -1;
   std::string stdout;
   char buf[1024];
-  while (int status = read(stdout_pipe[0], buf, sizeof buf)) {
-    if (status == -1) {
+  while (int bytes_read = read(stdout_pipe[0], buf, sizeof buf)) {
+    if (bytes_read == -1) {
       return absl::InternalError(
           absl::StrCat("Failed to read from pipe: ", strerror(errno)));
     }
-    stdout += buf;
+    stdout.append(buf, bytes_read);
   }
   int status;
   if (waitpid(child_pid, &status, 0) == -1) {
