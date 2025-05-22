@@ -7069,8 +7069,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "The spec of NamedSharding passed to with_sharding_constraint"):
       jax.lax.with_sharding_constraint(np.arange(8).reshape(4, 2), s)
 
-    s = NamedSharding(mesh, P())
-    jax.lax.with_sharding_constraint(np.arange(8), s)
+    with self.assertRaisesRegex(
+        ValueError,
+        'with_sharding_constraint cannot be used when all axes of the mesh are'
+        ' of type `Explicit`'):
+      jax.lax.with_sharding_constraint(np.arange(8), NamedSharding(mesh, P()))
 
     s = NamedSharding(Mesh(mesh.devices, mesh.axis_names,
                            axis_types=(AxisType.Explicit, AxisType.Auto)),

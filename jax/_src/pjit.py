@@ -2703,7 +2703,13 @@ def check_shardings_are_auto(shardings_flat):
       raise ValueError(
           'The spec of NamedSharding passed to with_sharding_constraint can'
           f' only refer to Auto axes of the mesh. Got spec={s.spec} and'
-          f' mesh={mesh}')
+          f' mesh={mesh}. You probably meant to use `reshard` API?')
+
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if cur_mesh._are_all_axes_explicit:
+    raise ValueError(
+        'with_sharding_constraint cannot be used when all axes of the mesh are'
+        ' of type `Explicit`. Please use the `reshard` API.')
 
 
 def with_sharding_constraint(x, shardings):
