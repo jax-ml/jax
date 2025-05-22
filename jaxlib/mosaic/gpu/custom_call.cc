@@ -199,7 +199,14 @@ absl::Status RunCUDATool(const char* tool,
   if (waitpid(child_pid, &status, 0) == -1) {
     return absl::InternalError("Failed to wait for CUDA tool invocation");
   }
-  if (status != 0) return absl::InternalError(stdout);
+  if (status != 0) {
+    std::string error_message = "CUDA tool failed";
+    if (!stdout.empty()) {
+      error_message += ": ";
+      error_message += stdout;
+    }
+    return absl::InternalError(error_message);
+  }
   return absl::OkStatus();
 }
 
