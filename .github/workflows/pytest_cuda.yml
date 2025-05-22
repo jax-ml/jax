@@ -24,11 +24,16 @@ on:
         type: string
         required: true
         default: "3.12"
-      cuda:
+      cuda-version:
         description: "Which CUDA version to test?"
         type: string
         required: true
-        default: "12.3"
+        default: "12.8"
+      use-nvidia-pip-wheels:
+        description: "Whether to download CUDA packages from PyPI?"
+        type: boolean
+        required: false
+        default: false
       enable-x64:
         description: "Should x64 mode be enabled?"
         type: string
@@ -58,8 +63,11 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     # Test the oldest and newest supported CUDA versions.
-    container:  ${{ (contains(inputs.cuda, '12.1') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.1-cudnn9.8:latest') ||
-                (contains(inputs.cuda, '12.8') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest') }}
+    # If testing the CUDA packages from PyPI, then use the ml-build image which does not have any
+    # CUDA pckages installed on the system.
+    container:  ${{ !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.1') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.1-cudnn9.8:latest') ||
+                !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.8') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest') ||
+                inputs.use-nvidia-pip-wheels && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest'}}
     name: "Pytest CUDA (${{ inputs.runner }}, CUDA ${{ inputs.cuda }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
 
     env:
@@ -100,13 +108,24 @@ jobs:
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
             echo "JAX only release. Only downloading the jax wheel from the release bucket."
 
-            # Set the env var to install the CUDA plugin and PJRT packages from PyPI. jaxlib is
-            # required dependency of jax so that gets installed automatically.
-            echo "JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI=jax_cuda_pypi">> $GITHUB_ENV
+            if [[ "${{ inputs.use-nvidia-pip-wheels }}" == false ]]; then
+              # Install only the PJRT and JAX CUDA Plugin packages from PyPI. Nvidia CUDA packages
+              # are used from the system.
+              echo "JAXCI_JAX_PYPI_EXTRAS=cuda12-local">> $GITHUB_ENV
+            else
+             # Install the PJRT, JAX CUDA Plugin, and Nvidia CUDA packages from PyPI.
+              echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> $GITHUB_ENV
+            fi
           else
             gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
             gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
             gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+
+             if [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]]; then
+              # Install the Nvidia CUDA packages from PyPI. The wheels downloaded in the previous
+              # step will be used for the PJRT and JAX CUDA Plugin packages.
+              echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> $GITHUB_ENV
+             fi
           fi
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts.outcome == 'failure'

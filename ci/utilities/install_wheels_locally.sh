@@ -22,15 +22,11 @@ WHEELS=( $(/usr/bin/find "$JAXCI_OUTPUT_DIR/" -type f \(  -name "*jax*py3*" -o -
 
 for i in "${!WHEELS[@]}"; do
   if [[ "${WHEELS[$i]}" == *jax*py3*none*any.whl ]]; then
-    if [[ "$JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI" == "tpu_pypi" ]]; then
-      # Append [tpu] to the jax wheel name to download the latest libtpu wheel
-      # from PyPI.
-      WHEELS[$i]="${WHEELS[$i]}[tpu]"
-    elif [[ "$JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI" == "jax_cuda_pypi" ]]; then
-      # Append [cuda12-local] to the jax wheel name to download the latest
-      # release of JAX's CUDA plugin and PJRT packages from PyPI. This is used
-      # when running CUDA tests for a "jax" only release.
-      WHEELS[$i]="${WHEELS[$i]}[cuda12-local]"
+    # Apppend an extra to the end of the JAX wheel path to install those
+    # packages as well from PyPI. E.g. jax[tpu] will install the libtpu package
+    # from PyPI. See ci/envs/README.md for more details.
+    if [[ -n "$JAXCI_JAX_PYPI_EXTRAS" ]]; then
+      WHEELS[$i]="${WHEELS[$i]}[$JAXCI_JAX_PYPI_EXTRAS]"
     fi
   fi
 done

@@ -117,25 +117,31 @@ jobs:
           # See exlusions for what is fully tested
           runner: ["linux-x86-g2-48-l4-4gpu", "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
           python: ["3.10",]
-          cuda: ["12.1", "12.8"]
+          cuda: [
+            {version: "12.1", use-nvidia-pip-wheels: false},
+            {version: "12.8", use-nvidia-pip-wheels: true},
+            ]
           enable-x64: [1, 0]
           exclude:
             # H100 runs only a single config, CUDA 12.8 Enable x64 1
             - runner: "linux-x86-a3-8g-h100-8gpu"
-              cuda: "12.1"
+              cuda:
+                version: "12.1"
             - runner: "linux-x86-a3-8g-h100-8gpu"
               enable-x64: "0"
             # B200 runs only a single config, CUDA 12.8 Enable x64 1
             - runner: "linux-x86-a4-224-b200-1gpu"
-              cuda: "12.1"
+              cuda:
+                version: "12.1"
             - runner: "linux-x86-a4-224-b200-1gpu"
               enable-x64: "0"
 
-    name: "Pytest CUDA (JAX artifacts version =  ${{ format('{0}', 'head') }})"
+    name: "Pytest CUDA (JAX artifacts version =  ${{ format('{0}', 'head') }}, CUDA Pip packages = ${{ matrix.cuda.use-nvidia-pip-wheels }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
-      cuda:  ${{ matrix.cuda }}
+      cuda-version:  ${{ matrix.cuda.version }}
+      use-nvidia-pip-wheels: ${{ matrix.cuda.use-nvidia-pip-wheels }}
       enable-x64:  ${{ matrix.enable-x64 }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
