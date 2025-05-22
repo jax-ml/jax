@@ -132,7 +132,7 @@ class TemporaryDirectory {
 
 absl::Status RunCUDATool(const char* tool,
                          const std::vector<const char*>& args,
-                         bool stderr_to_stdout = false) {
+                         bool stderr_to_stdout = true) {
   CHECK(!args.empty() && args.back() == nullptr);
   const char * cuda_path_ptr = getenv("CUDA_ROOT");
   if (!cuda_path_ptr) return absl::InternalError("Failed to get CUDA_ROOT");
@@ -163,8 +163,8 @@ absl::Status RunCUDATool(const char* tool,
                                        STDOUT_FILENO)) {
     return absl::InternalError("Failed to redirect stdout to pipe");
   }
-  if (posix_spawn_file_actions_adddup2(&file_actions, STDOUT_FILENO,
-                                       STDERR_FILENO)) {
+  if (stderr_to_stdout && posix_spawn_file_actions_adddup2(
+                              &file_actions, STDOUT_FILENO, STDERR_FILENO)) {
     return absl::InternalError("Failed to redirect stderr to stdout");
   }
   // execv is guaranteed by POSIX to not modify the args (other than
