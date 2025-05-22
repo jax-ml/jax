@@ -1449,8 +1449,16 @@ LogicalResult DynamicGatherOp::verify() {
   if (getIndices().getType().getShape() != getIndices().getType().getShape()) {
     return emitOpError("Expected indices and result shapes must match");
   }
-  if (!getIndices().getType().getElementType().isInteger(32)) {
-    return emitOpError("Not implemented: Only i32 indices supported");
+  const int64_t rank = getSource().getType().getRank();
+  SmallVector<bool> seen(rank, false);
+  for (int32_t d : getDimensions()) {
+    if (d < 0 || d >= rank) {
+      return emitOpError("Dimensions must be in [0, rank), but got ") << d;
+    }
+    if (seen[d]) {
+      return emitOpError("Dimensions must be unique");
+    }
+    seen[d] = true;
   }
   return success();
 }
