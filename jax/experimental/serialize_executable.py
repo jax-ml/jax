@@ -19,7 +19,6 @@ import pickle
 import io
 
 import jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from typing import Sequence
 
@@ -110,8 +109,6 @@ class _JaxPjrtUnpickler(pickle.Unpickler):
 
   def persistent_load(self, pid):
     if pid[0] == 'exec':
-      if jaxlib_extension_version < 332:
-        return self.backend.deserialize_executable(pid[1])
       return self.backend.deserialize_executable(
           pid[1], executable_devices=self.execution_devices)
     if pid[0] == 'device':

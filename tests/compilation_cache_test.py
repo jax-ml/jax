@@ -146,14 +146,10 @@ class CompilationCacheTest(CompilationCacheTestCase):
     )
     backend = xla_bridge.get_backend()
     executable_devices = xc.DeviceList(tuple(backend.local_devices()))
-    if jax._src.lib.jaxlib_extension_version < 331:
-      executable1 = backend.compile(computation1, compile_options)
-      executable2 = backend.compile(computation2, compile_options)
-    else:
-      executable1 = backend.compile_and_load(
-          computation1, executable_devices, compile_options)
-      executable2 = backend.compile_and_load(
-          computation2, executable_devices, compile_options)
+    executable1 = backend.compile_and_load(
+        computation1, executable_devices, compile_options)
+    executable2 = backend.compile_and_load(
+        computation2, executable_devices, compile_options)
     cc.put_executable_and_time(
         "key1", "computation1", executable1, backend, FAKE_COMPILE_TIME)
     cc.put_executable_and_time(
@@ -177,11 +173,8 @@ class CompilationCacheTest(CompilationCacheTestCase):
     )
     backend = xla_bridge.get_backend()
     executable_devices = xc.DeviceList(tuple(devices.flat))
-    if jax._src.lib.jaxlib_extension_version < 331:
-      executable = backend.compile(str(computation), compile_options)
-    else:
-      executable = backend.compile_and_load(
-          str(computation), executable_devices, compile_options)
+    executable = backend.compile_and_load(
+        str(computation), executable_devices, compile_options)
     key = cc.get_cache_key(computation, devices, compile_options, backend)
     cc.put_executable_and_time(
         key, "alambda", executable, backend, FAKE_COMPILE_TIME)
@@ -577,13 +570,9 @@ class CompilationCacheTest(CompilationCacheTestCase):
         .runtime_executable()
     )
     serialized_executable = backend.serialize_executable(executable)
-    if jax._src.lib.jaxlib_extension_version < 331:
-      deserialized_executable = backend.deserialize_executable(  # type: ignore
-          serialized_executable, None)
-    else:
-      deserialized_executable = backend.deserialize_executable(  # type: ignore
-          serialized_executable,
-          xc.DeviceList(tuple(jax.local_devices(backend=backend))), None)
+    deserialized_executable = backend.deserialize_executable(  # type: ignore
+        serialized_executable,
+        xc.DeviceList(tuple(jax.local_devices(backend=backend))), None)
     self.assertEqual(
         executable.fingerprint, deserialized_executable.fingerprint)
 

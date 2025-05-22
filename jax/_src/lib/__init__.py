@@ -85,23 +85,13 @@ cpu_feature_guard.check_cpu_features()
 
 import jaxlib.lapack as lapack  # noqa: F401
 import jaxlib.utils as utils  # noqa: F401
-
-if version >= (0, 6, 1):
-  import jaxlib._jax as _jax  # noqa: F401
-  from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
-  from jaxlib._jax import jax_jit as jax_jit  # noqa: F401
-  from jaxlib._jax import pmap_lib as pmap_lib  # noqa: F401
-  from jaxlib._jax import pytree as pytree  # noqa: F401
-  from jaxlib._jax import Device as Device  # noqa: F401
-  from jaxlib import _profiler as _profiler  # noqa: F401
-else:
-  import jaxlib.xla_extension as _jax  # type: ignore  # pytype: disable=import-error  # noqa: F401
-  from jaxlib.xla_extension import guard_lib as guard_lib  # type: ignore  # pytype: disable=import-error  # noqa: F401
-  from jaxlib.xla_extension import jax_jit as jax_jit  # type: ignore  # pytype: disable=import-error  # noqa: F401
-  from jaxlib.xla_extension import pmap_lib as pmap_lib  # type: ignore  # pytype: disable=import-error  # noqa: F401
-  from jaxlib.xla_extension import pytree as pytree  # type: ignore  # pytype: disable=import-error  # noqa: F401
-  from jaxlib.xla_extension import Device as Device  # type: ignore  # pytype: disable=import-error  # noqa: F401
-  from jaxlib.xla_extension import profiler as _profiler  # type: ignore  # pytype: disable=import-error  # noqa: F401
+import jaxlib._jax as _jax  # noqa: F401
+from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
+from jaxlib._jax import jax_jit as jax_jit  # noqa: F401
+from jaxlib._jax import pmap_lib as pmap_lib  # noqa: F401
+from jaxlib._jax import pytree as pytree  # noqa: F401
+from jaxlib._jax import Device as Device  # noqa: F401
+from jaxlib import _profiler as _profiler  # noqa: F401
 
 import jaxlib.xla_client as xla_client  # noqa: F401
 
@@ -112,15 +102,9 @@ import jaxlib.xla_client as xla_client  # noqa: F401
 jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
 ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
 
-if jaxlib_extension_version >= 334:
-  from jaxlib._jax import ffi as ffi  # noqa: F401
-
-if jaxlib_extension_version >= 335:
-  import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
-
-  has_cpu_sparse = True
-else:
-  has_cpu_sparse = False
+from jaxlib._jax import ffi as ffi  # noqa: F401
+import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
+has_cpu_sparse = True
 
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 

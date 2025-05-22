@@ -12,16 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.lib import jaxlib_extension_version as _jaxlib_extension_version
-
-if _jaxlib_extension_version >= 334:
-  from jax._src.buffer_callback import (
-      Buffer as Buffer,
-      ExecutionContext as ExecutionContext,
-      ExecutionStage as ExecutionStage,
-      buffer_callback as buffer_callback,
-  )
-
-from jax._src.buffer_callback import buffer_callback as buffer_callback
-
-del _jaxlib_extension_version
+from jax._src.buffer_callback import (
+    Buffer as Buffer,
+    ExecutionContext as ExecutionContext,
+    ExecutionStage as ExecutionStage,
+    buffer_callback as buffer_callback,
+)

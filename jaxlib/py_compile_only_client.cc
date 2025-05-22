@@ -91,12 +91,8 @@ class CompileOnlyPyClient : public PyClient {
         llvm::dyn_cast_or_null<CompileOnlyIfRtClient>(this->ifrt_client());
     CHECK(ifrt_client) << "CompileOnlyPyClient requires ifrt_client be a "
                           "CompileOnlyIfRtClient";
-#if JAX_IFRT_VERSION_NUMBER >= 6
     auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
         options, std::move(executable_devices));
-#else
-    auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(options);
-#endif
     TF_ASSIGN_OR_RETURN(auto executable,
                         PjRtCompile(std::move(options), module.get(),
                                     *ifrt_client->topology().description()));

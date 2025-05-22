@@ -236,16 +236,11 @@ absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
     ifrt_loaded_host_callbacks.push_back(tsl::FormRef(
         static_cast<ifrt::LoadedHostCallback*>(host_callback.data())));
   }
-#if JAX_IFRT_VERSION_NUMBER >= 6
   TF_ASSIGN_OR_RETURN(ifrt::DeviceListRef executable_devices,
                       py_executable_devices.ifrt_device_list());
   return std::make_unique<ifrt::XlaCompileOptions>(
       std::move(options), std::move(executable_devices),
       std::move(ifrt_loaded_host_callbacks));
-#else
-  return std::make_unique<ifrt::XlaCompileOptions>(
-      std::move(options), std::move(ifrt_loaded_host_callbacks));
-#endif
 }
 
 constexpr absl::string_view kColocatedPythonProgramType =
