@@ -110,58 +110,10 @@ absl::StatusOr<xla::PjRtMemorySpace*> MemorySpaceFromSharding(
   }
 }
 
-#if JAX_IFRT_VERSION_NUMBER < 8
-class IfrtArrayEntry : public PullTable::Entry {
- public:
-  struct BufferRef {
-    xla::ifrt::ArrayRef arr;
-    xla::PjRtBuffer* buffer;
-    size_t buf_size;
-  };
-  explicit IfrtArrayEntry(std::vector<BufferRef> arrs,
-                          std::shared_ptr<PremappedCopierState> state,
-                          size_t xfer_size)
-      : arrs_(std::move(arrs)), state_(state), xfer_size_(xfer_size) {}
-  bool Handle(tsl::RCReference<ConnectionState> state,
-              const SocketTransferPullRequest& req,
-              size_t base_req_id) override {
-    for (uint64_t bid : req.buffer_ids()) {
-      auto req_id = base_req_id;
-      ++base_req_id;
-      for (size_t i = 0; i * xfer_size_ < arrs_[bid].buf_size; ++i) {
-        DmaCopyChunk blob = DmaCopyChunk::Make(
-            std::move(arrs_[bid].arr), arrs_[bid].buffer, bid, i * xfer_size_,
-            std::min(xfer_size_, arrs_[bid].buf_size - i * xfer_size_));
-        bool is_largest = blob.size + blob.offset == arrs_[bid].buf_size;
-        state_->ScheduleCopy(
-            std::move(blob), [req_id, state, copier_state = state_, is_largest](
-                                 PremappedCopierState* copier_state_ptr,
-                                 void* buf, const DmaCopyChunk& chunk) {
-              state->Send(
-                  req_id, buf, chunk.offset, chunk.size, is_largest,
-                  [copier_state, buf]() { copier_state->ReturnBuffer(buf); });
-            });
-      }
-    }
-
-    num_consumed_bufs_ += req.buffer_ids().size();
-    return num_consumed_bufs_ == arrs_.size();
-  }
-
- private:
-  absl::Mutex mu_;
-  size_t num_consumed_bufs_ = 0;
-  std::vector<BufferRef> arrs_;
-  std::shared_ptr<PremappedCopierState> state_;
-  size_t xfer_size_;
-};
-#endif
-
 absl::StatusOr<tsl::RCReference<PullTable::Entry>> CreatePullEntry(
     const std::vector<xla::ifrt::ArrayRef>& arrs,
     std::shared_ptr<PremappedCopierState> state, size_t xfer_size,
     bool use_raw_buffers) {
-#if JAX_IFRT_VERSION_NUMBER >= 8
   if (use_raw_buffers) {
     std::vector<RawBufferEntry::BufferRef> refs;
     for (auto& arr : arrs) {
@@ -196,21 +148,6 @@ absl::StatusOr<tsl::RCReference<PullTable::Entry>> CreatePullEntry(
     }
   }
   return tsl::MakeRef<PjRtBufferEntry>(std::move(refs), state, xfer_size);
-#else
-  std::vector<IfrtArrayEntry::BufferRef> refs;
-  for (auto& arr : arrs) {
-    auto* pjrt_arr = llvm::dyn_cast_or_null<xla::ifrt::PjRtArray>(arr.get());
-    if (pjrt_arr == nullptr) {
-      return absl::InvalidArgumentError(
-          "Cannot remote transfer non-pjrt arrays.");
-    }
-    for (auto& pjrt_buf : pjrt_arr->pjrt_buffers()) {
-      TF_ASSIGN_OR_RETURN(size_t buf_size, pjrt_buf->GetOnDeviceSizeInBytes());
-      refs.push_back({arr, pjrt_buf.get(), buf_size});
-    }
-  }
-  return tsl::MakeRef<IfrtArrayEntry>(std::move(refs), state, xfer_size);
-#endif
 }
 
 class PyTransferServerConnection {

@@ -57,7 +57,4 @@ from jaxlib.mlir.dialects import sdy
 from jaxlib.mlir.dialects import stablehlo as hlo
 
 from jax._src import lib
-if lib.version >= (0, 6, 1):
-  from jaxlib.mlir.dialects import cf
-else:
-  cf = None  # type: ignore[no-redef]
+from jaxlib.mlir.dialects import cf

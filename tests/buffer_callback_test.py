@@ -19,7 +19,6 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax.experimental import buffer_callback
 
 jax.config.parse_flags_with_absl()
@@ -29,10 +28,6 @@ class BufferCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jaxlib_extension_version < 334:
-      self.skipTest(
-          "Requires a version of jaxlib with buffer callback support."
-      )
     if jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on TPU.")
 
@@ -102,7 +97,7 @@ class BufferCallbackTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cuda")
   def test_cuda_array_interface(self, dtype, command_buffer_compatible):
-    if command_buffer_compatible and jaxlib_extension_version < 337:
+    if command_buffer_compatible:
       self.skipTest("Requires jaxlib extension version of at least 337.")
 
     def callback(ctx, out, arg):

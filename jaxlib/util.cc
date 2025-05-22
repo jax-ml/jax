@@ -36,7 +36,6 @@ limitations under the License.
 namespace xla {
 
 void BlockUntilReadyWithCancel(xla::PjRtFuture<>& future) {
-#if JAX_IFRT_VERSION_NUMBER >= 5
   future.BlockUntilReady([](tsl::AsyncValue* value) {
     auto state = std::make_shared<absl::Notification>();
     value->AndThen([state]() { state->Notify(); });
@@ -50,7 +49,6 @@ void BlockUntilReadyWithCancel(xla::PjRtFuture<>& future) {
       }
     }
   });
-#endif
 }
 
 absl::Status AwaitBuffersReady(absl::Span<ifrt::Array* const> ifrt_arrays) {

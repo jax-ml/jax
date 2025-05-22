@@ -27,16 +27,12 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import ffi as ffi_lib
 
 export = util.set_module("jax.experimental.buffer_callback")
-
-if jaxlib_extension_version >= 334:
-  from jax._src.lib import ffi as ffi_lib
-
-  Buffer = export(ffi_lib.Buffer)
-  ExecutionStage = export(ffi_lib.ExecutionStage)
-  ExecutionContext = export(ffi_lib.ExecutionContext)
+Buffer = export(ffi_lib.Buffer)
+ExecutionStage = export(ffi_lib.ExecutionStage)
+ExecutionContext = export(ffi_lib.ExecutionContext)
 
 
 def buffer_callback(

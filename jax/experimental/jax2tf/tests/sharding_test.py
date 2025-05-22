@@ -33,7 +33,6 @@ from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax import lax
 from jax.experimental import jax2tf
@@ -111,12 +110,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
           device_assignment=device_assignment,
           use_spmd_partitioning=use_spmd_partitioning,
       )
-      if jaxlib_extension_version < 332:
-        executable = backend.compile(
-            jax_hlo, compile_options=compile_options)  # type: ignore
-      else:
-        executable = backend.compile_and_load(
-            jax_hlo, xc.DeviceList(tuple(self.devices.flat)), compile_options)  # type: ignore
+      executable = backend.compile_and_load(
+          jax_hlo, xc.DeviceList(tuple(self.devices.flat)), compile_options)  # type: ignore
       jax_optimized_hlo = executable.hlo_modules()[0].to_string()
       logging.info("[%s] got JAX optimized HLO for platform %s %s",
                    self._testMethodName, backend.platform, jax_optimized_hlo)

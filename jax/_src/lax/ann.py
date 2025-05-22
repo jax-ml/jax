@@ -83,8 +83,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lax import lax
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
-from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import hlo
@@ -233,14 +231,9 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
   if aggregate_to_topk:
     dims[reduction_dimension] = k
   elif core.is_constant_shape((reduction_input_size, k)):
-    if jaxlib_extension_version >= 331:
-      dims[reduction_dimension] = _jax.approx_top_k_reduction_output_size(
-          reduction_input_size, len(dims), k, recall_target, aggregate_to_topk,
-          reduction_input_size_override)[0]
-    else:
-      dims[reduction_dimension] = xc.ops.ApproxTopKReductionOutputSize(  # type: ignore  # pytype: disable=module-attr
-          reduction_input_size, len(dims), k, recall_target, aggregate_to_topk,
-          reduction_input_size_override)[0]
+    dims[reduction_dimension] = _jax.approx_top_k_reduction_output_size(
+        reduction_input_size, len(dims), k, recall_target, aggregate_to_topk,
+        reduction_input_size_override)[0]
   else:
     raise NotImplementedError(
          "approx_top_k with aggregate_to_topk=False not yet implemented when "

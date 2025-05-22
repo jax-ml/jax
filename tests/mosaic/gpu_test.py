@@ -27,7 +27,6 @@ import unittest
 from absl.testing import absltest, parameterized
 import jax
 from jax._src import config
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -3116,10 +3115,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       ((64,), (128, 64), [1]),
   )
   def test_broadcast_in_dim(self, input_shape, output_shape, bcast_dims):
-    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
-    if jaxlib.version < (0, 6, 1):
-      self.skipTest("Test requires jaxlib version >= 0.6.1")
-
     element_value = 42.0
     def body(ctx, result_gmem_ref, smem):
       del ctx

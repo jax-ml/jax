@@ -31,7 +31,6 @@ from jax import api_util
 from jax import lax
 from jax._src import checkify
 from jax._src import core as jax_core
-from jax._src import lib as jaxlib
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
@@ -1569,11 +1568,6 @@ def _broadcast_in_dim_lowering_rule_wg(
         ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype)),
         x,
     )
-
-  # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
-  if jaxlib.version < (0, 6, 1):
-    raise NotImplementedError()
-
   mlir_type = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
   result_ty = ir.VectorType.get(shape, mlir_type)
   return mgpu.dialect.broadcast_in_dim(result_ty, x, broadcast_dimensions)

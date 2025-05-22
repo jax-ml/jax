@@ -61,7 +61,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
@@ -1975,11 +1974,6 @@ class APITest(jtu.JaxTestCase):
       jax.device_put((x, y, z), device=(s1, s2))
 
   def test_internal_device_put_with_device(self):
-    if jaxlib_extension_version < 341:
-      raise unittest.SkipTest(
-          "Test requires jaxlib extension version >= 341 for tracking low-level"
-          " DevicePut calls")
-
     # Hitting the cache for a single-device jitted execution while using a numpy
     # array calls internal `DevicePutWithDevice`.
     f = jax.jit(lambda x: x + 1)
@@ -1990,10 +1984,6 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(counts(), {"device_put_with_device": 1})
 
   def test_internal_device_put_fully_replicated(self):
-    if jaxlib_extension_version < 341:
-      raise unittest.SkipTest(
-          "Test requires jaxlib extension version >= 341 for tracking low-level"
-          " DevicePut calls")
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 
@@ -2011,10 +2001,6 @@ class APITest(jtu.JaxTestCase):
     )
 
   def test_internal_device_put_batched(self):
-    if jaxlib_extension_version < 341:
-      raise unittest.SkipTest(
-          "Test requires jaxlib extension version >= 341 for tracking low-level"
-          " DevicePut calls")
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 
@@ -2031,10 +2017,6 @@ class APITest(jtu.JaxTestCase):
     )
 
   def test_internal_device_put_assembled(self):
-    if jaxlib_extension_version < 341:
-      raise unittest.SkipTest(
-          "Test requires jaxlib extension version >= 341 for tracking low-level"
-          " DevicePut calls")
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 

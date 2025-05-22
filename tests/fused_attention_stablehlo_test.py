@@ -503,9 +503,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cuda")
   def test_sdpa_dbias(self, batch_size: int):
-    # TODO: Delete once 0.6.0 is no longer supported.
-    if jtu.jaxlib_version() == (0, 6, 0):
-      self.skipTest("jaxlib 0.6.0 has a bug")
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
     # cuDNN only supports dbias when batch size is 1. If the batch size is

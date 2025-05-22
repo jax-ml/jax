@@ -19,7 +19,6 @@
 from absl.testing import parameterized
 import jax
 from jax._src import config
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
@@ -245,12 +244,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_broadcast_in_dim_layout(
       self, broadcast_dim, in_cast, out_cast, in_layout, out_layout
   ):
-    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
-    if jaxlib.version < (0, 6, 1):
-      self.skipTest("Test requires jaxlib version >= 0.6.1")
-
     bcast = None
-
     in_shape = (64,)
     out_shape = (64, 64)
 

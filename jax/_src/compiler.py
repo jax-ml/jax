@@ -35,7 +35,6 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -314,12 +313,6 @@ def backend_compile(
     )
 
   try:
-    if jaxlib_extension_version < 332:
-      if host_callbacks:
-        return backend.compile(
-            built_c, compile_options=options, host_callbacks=host_callbacks)  # type: ignore
-      return backend.compile(built_c, compile_options=options)  # type: ignore
-
     # we use a separate function call to ensure that XLA compilation appears
     # separately in Python profiling results
     if host_callbacks:
@@ -692,12 +685,8 @@ def _compile_and_share_module(
     serialized_executable = compilation_cache.decompress_executable(
         serialized_executable
     )
-    if jaxlib_extension_version < 332:
-      executable = backend.deserialize_executable(
-          serialized_executable, compile_options)  # type: ignore
-    else:
-      executable = backend.deserialize_executable(
-          serialized_executable, executable_devices, compile_options)  # type: ignore
+    executable = backend.deserialize_executable(
+        serialized_executable, executable_devices, compile_options)  # type: ignore
 
   _compile_and_share_module.modules_cache[cache_key] = executable
   return executable

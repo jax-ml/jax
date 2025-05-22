@@ -22,7 +22,6 @@ import jax.numpy as jnp
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax.sharding import PartitionSpec as P
 
 config.parse_flags_with_absl()
@@ -70,8 +69,7 @@ class LinalgShardingTest(jtu.JaxTestCase):
         self.skipTest(
             f"Partitioning {fun_and_shapes[0].__name__} only supported on GPU "
             "when shardy is enabled.")
-      if (fun_and_shapes[0] == lax.linalg.tridiagonal_solve and
-          jaxlib_extension_version < 340):
+      if fun_and_shapes[0] == lax.linalg.tridiagonal_solve:
         self.skipTest(
             f"Partitioning {fun_and_shapes[0].__name__} on GPU, requires a "
             "more recent jaxlib version.")

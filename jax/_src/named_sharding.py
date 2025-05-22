@@ -23,7 +23,6 @@ from typing import Any, Union
 from jax._src import config
 from jax._src.util import use_cpp_class, cache, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
@@ -317,17 +316,11 @@ class SdyArray:
 
     replicated_axes = _get_axes(self.replicated_axes, self.mesh_shape)
     unreduced_axes = _get_axes(self.unreduced_axes, self.mesh_shape)
-    if jaxlib_extension_version >= 342:
-      return sdy.TensorShardingAttr.get(
-          mesh_attr,
-          [dim_sharding.build() for dim_sharding in self.dim_shardings],
-          replicated_axes=[sdy.AxisRefAttr.get(axis) for axis in replicated_axes],
-          unreduced_axes=[sdy.AxisRefAttr.get(axis) for axis in unreduced_axes])
-    else:
-      return sdy.TensorShardingAttr.get(
-          mesh_attr,
-          [dim_sharding.build() for dim_sharding in self.dim_shardings],
-          replicated_axes=[sdy.AxisRefAttr.get(axis) for axis in replicated_axes])
+    return sdy.TensorShardingAttr.get(
+        mesh_attr,
+        [dim_sharding.build() for dim_sharding in self.dim_shardings],
+        replicated_axes=[sdy.AxisRefAttr.get(axis) for axis in replicated_axes],
+        unreduced_axes=[sdy.AxisRefAttr.get(axis) for axis in unreduced_axes])
 
   def __repr__(self):
     dim_sharding_repr = ', '.join(
