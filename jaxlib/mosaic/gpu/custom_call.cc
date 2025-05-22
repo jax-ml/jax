@@ -130,9 +130,9 @@ class TemporaryDirectory {
   std::string path;
 };
 
-absl::Status RunCUDATool(const char* tool,
-                         const std::vector<const char*>& args,
-                         bool stderr_to_stdout = true) {
+absl::StatusOr<std::string> RunCUDATool(const char* tool,
+                                        const std::vector<const char*>& args,
+                                        bool stderr_to_stdout = true) {
   CHECK(!args.empty() && args.back() == nullptr);
   const char * cuda_path_ptr = getenv("CUDA_ROOT");
   if (!cuda_path_ptr) return absl::InternalError("Failed to get CUDA_ROOT");
@@ -207,7 +207,7 @@ absl::Status RunCUDATool(const char* tool,
     }
     return absl::InternalError(error_message);
   }
-  return absl::OkStatus();
+  return stdout;
 }
 
 void EnsureLLVMNVPTXTargetIsRegistered() {
@@ -223,13 +223,14 @@ void EnsureLLVMNVPTXTargetIsRegistered() {
 absl::StatusOr<int> GetLatestPtxasPtxIsaVersion() {
   std::vector<const char*> ptxas_args = {"ptxas", "--input-as-string",
                                          ".version 99.99", nullptr};
-  auto status = RunCUDATool("ptxas", ptxas_args);
-  if (status.ok()) {
+  auto result = RunCUDATool("ptxas", ptxas_args);
+  if (result.ok()) {
     return absl::InternalError("ptxas succeeded where it was expected to fail");
   }
   // Output message is of the form:
   // ptxas application ptx input, line 1; fatal   : Unsupported .version 99.99; current version is '8.8'
-  std::vector<std::string> chunks = absl::StrSplit(status.message(), '\'');
+  std::vector<std::string> chunks =
+      absl::StrSplit(result.status().message(), '\'');
   if (chunks.size() != 3) {
     return absl::InternalError(
         "Failed to locate PTX ISA version in ptxas error message");
@@ -480,19 +481,21 @@ void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
       ptxas_args.push_back("-v");
     }
     ptxas_args.push_back(nullptr);
-    if (auto status = RunCUDATool("ptxas", ptxas_args); !status.ok()) {
-      std::cerr << "ptxas invocation failed: " << status.message() << std::endl;
+    if (auto result = RunCUDATool("ptxas", ptxas_args); !result.ok()) {
+      std::cerr << "ptxas invocation failed: " << result.status() << std::endl;
       continue;
     }
     if (!dump_sass) { continue; }  // We're done.
     // Call nvdisasm to pretty-print SASS.
-    if (auto status = RunCUDATool(
-            "nvdisasm", {"nvdisasm", "-ndf", "-c", elf_path.c_str(), nullptr});
-        !status.ok()) {
-      std::cerr << "nvdisasm invocation failed: " << status.message()
+    auto result = RunCUDATool(
+        "nvdisasm", {"nvdisasm", "-ndf", "-c", elf_path.c_str(), nullptr});
+    if (!result.ok()) {
+      std::cerr << "nvdisasm invocation failed: " << result.status()
                 << std::endl;
       continue;
     }
+    // Dump SASS.
+    std::cout << *result << std::endl;
   }
 }
 
