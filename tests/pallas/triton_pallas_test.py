@@ -33,11 +33,14 @@ class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
-    if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
-      self.skipTest("On CPU the test works only in interpret mode")
-    if (jtu.test_device_matches(["cuda"]) and
-        not jtu.is_cuda_compute_capability_at_least("9.0")):
-      self.skipTest("Only works on GPU with capability >= sm90")
+    if jtu.test_device_matches(["cpu"]):
+      if not self.INTERPRET:
+        self.skipTest("On CPU the test works only in interpret mode")
+    elif jtu.test_device_matches(["gpu"]):
+      if not jtu.is_cuda_compute_capability_at_least("9.0"):
+        self.skipTest("Only works on GPU with capability >= sm90")
+    else:
+      self.skipTest("Test only works on CPU and GPU")
 
     super().setUp()
     _trace_kernel_to_jaxpr.cache_clear()
