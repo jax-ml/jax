@@ -1619,21 +1619,19 @@ def optimize_remat_of_custom_vjp_fwd(
     prim_tree, res_tree = out_trees()
     num_res = res_tree.num_leaves
 
-    if fwd_jaxpr.effects:
+    disallowed_effects = effects.custom_derivatives_allowed_effects.filter_not_in(fwd_jaxpr.effects)
+    if disallowed_effects:
       raise NotImplementedError(
           "remat optimization for custom_vjp does not support forward "
-          f"functions with side effects, but {fwd_name} has the following "
-          f"effects: {fwd_jaxpr.effects}")
+          f"functions with these side effects: {disallowed_effects}")
 
     @pe._memoize
     def fun_jaxpr_thunk():
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
       return jaxpr, consts
 
-    out_flat = remat_opt_p.bind(*consts, *args_flat,
-                                num_consts=len(consts),
-                                num_res=num_res,
-                                fwd_jaxpr=fwd_jaxpr,
+    out_flat = remat_opt_p.bind(*consts, *args_flat, num_consts=len(consts),
+                                num_res=num_res, fwd_jaxpr=fwd_jaxpr,
                                 fun_jaxpr_thunk=fun_jaxpr_thunk)
     res, out_flat = split_list(out_flat, [num_res])
     out_tree = treedef_tuple((prim_tree, res_tree))
