@@ -460,7 +460,7 @@ class MemRefTest(TestCase):
         " values read from the 32-bit input buffer to sometimes"
         " (nondeterministically) contain garbage.")
 
-    scalar = 42
+    scalar = dtype(42)
     expected = np.full((128, 128), scalar, dtype=dtype)
 
     def kernel(ctx, inp, out, _):
