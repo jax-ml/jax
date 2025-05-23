@@ -1950,12 +1950,11 @@ class VectorLayoutInferer {
   }
 
   bool allUsersRequireNativeTiling(Value x) {
-    for (OpOperand &operand : x.getUses()) {
-      if (isa<tpu::MatmulOp>(operand.getOwner())) {
+    for (Operation *user : getNontrivialTransitiveUsers(x)) {
+      if (isa<tpu::MatmulOp>(user)) {
         continue;
       }
-      if (auto reduce =
-              dyn_cast<vector::MultiDimReductionOp>(operand.getOwner())) {
+      if (auto reduce = dyn_cast<vector::MultiDimReductionOp>(user)) {
         bool reduces_tiled_dims = false;
         for (int64_t dim : reduce.getReductionDims()) {
           if (dim >= reduce.getSourceVectorType().getRank() - 2) {
@@ -1967,7 +1966,7 @@ class VectorLayoutInferer {
           continue;
         }
       }
-      if (auto transpose = dyn_cast<tpu::TransposeOp>(operand.getOwner())) {
+      if (auto transpose = dyn_cast<tpu::TransposeOp>(user)) {
         auto perm = transpose.getPermutation();
         auto rank = perm.size();
         // Only permutations that actually swap the last two dims need it.
@@ -1977,7 +1976,7 @@ class VectorLayoutInferer {
         }
         // Fall through.
       }
-      if (auto store = dyn_cast<vector::StoreOp>(operand.getOwner())) {
+      if (auto store = dyn_cast<vector::StoreOp>(user)) {
         auto maybe_tiling = verifyMemoryTiling(
             store, getMemRefLayout(store.getBase()).getTiles(),
             store.getMemRefType().getRank(),
