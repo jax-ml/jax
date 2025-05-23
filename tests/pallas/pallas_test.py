@@ -2276,7 +2276,7 @@ class PallasCheckifyTest(PallasBaseTest):
       checkify.check(False, "second check failed")
     input_ = jnp.arange(4, dtype=jnp.int32)
     out_shape = jax.ShapeDtypeStruct(input_.shape, input_.dtype)
-    with pltpu.enable_runtime_assert(True):
+    with pl.enable_debug_checks(True):
       pallas_call = pl.pallas_call(kernel, out_shape=out_shape)
       pallas_call(input_)  # This should log "second check failed"
 
@@ -2286,11 +2286,10 @@ class PallasCheckifyTest(PallasBaseTest):
       self.skipTest("Runtime check only implemented on TPU.")
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...]
-      checkify.check(False, "failed check",
-                     debug=True)  # This check always fails.
+      pl.debug_check(False, "failed check")  # This check always fails.
     input_ = jnp.arange(4, dtype=jnp.int32)
     out_shape = jax.ShapeDtypeStruct(input_.shape, input_.dtype)
-    with pltpu.enable_runtime_assert(False):
+    with pl.enable_debug_checks(False):
       pallas_call = pl.pallas_call(kernel, out_shape=out_shape)
       result = pallas_call(input_)
     np.testing.assert_allclose(result, input_)

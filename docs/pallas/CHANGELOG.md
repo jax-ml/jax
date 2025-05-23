@@ -26,6 +26,11 @@ Remember to align the itemized text with the first line of an item within a list
     `block_shape` for each entry that needs unblocked indexing.
   * {func}`jax.experimental.pallas.pallas_call` now requires `compiler_params`
     to be a backend-specific dataclass instead of a param to value mapping.
+  * {func}`jax.experimental.pallas.debug_check` is now supported both on
+    TPU and Mosaic GPU. Previously, this functionality was only supported
+    on TPU and required using the APIs from {mod}`jax.experimental.checkify`.
+    Note that debug checks are not executed unless
+    {data}`jax.experimental.pallas.enable_debug_checks` is set.
 
 ## Released with jax 0.5.0
 
