@@ -400,6 +400,7 @@ class LaunchContext:
       self,
       gmem_ref,
       gmem_transform: tuple[MemRefTransform, ...],
+      gmem_peer_id: int | ir.Value | None,
       transformed_slice_shape: tuple[int, ...],
       swizzle: int | None,
       reduction_op: Literal[
@@ -408,6 +409,7 @@ class LaunchContext:
   ):
     tma_desc_key = (gmem_ref, transformed_slice_shape, swizzle, gmem_transform)
     if (tma_desc := self.tma_descriptors.get(tma_desc_key, None)) is None:
+      i32 = ir.IntegerType.get_signless(32)
       i64 = ir.IntegerType.get_signless(64)
       ptr_ty = ir.Type.parse("!llvm.ptr")
       def init_tma_desc(host_ptr):
@@ -432,6 +434,25 @@ class LaunchContext:
         base_ptr = llvm.getelementptr(
             ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type, llvm.GEPNoWrapFlags.none,
         )
+        if gmem_peer_id is not None:
+          if not isinstance(gmem_peer_id, ir.Value):
+            peer_id = c(gmem_peer_id, i32)
+          else:
+            try:
+              # We try to reproduce the gmem_peer_id computation on the host.
+              peer_id = _recompute_peer_id(gmem_peer_id)
+            except ReplicationError as e:
+              raise ValueError(
+                  "Failed to recompute the async_copy peer id on the host"
+              ) from e
+          self._ensure_nvshmem_decls()
+          base_ptr = llvm.call(
+              base_ptr.type,
+              [base_ptr, peer_id],
+              [],
+              [],
+              callee="nvshmem_ptr",
+          )
         rank = ref_ty.rank
         assert rank * 2 == len(sizes_and_strides)
         swizzle_arg = (
@@ -507,6 +528,7 @@ class LaunchContext:
       dst_ref,
       gmem_slice: Any = (),
       gmem_transform: MemRefTransform | tuple[MemRefTransform, ...] = (),
+      gmem_peer_id: int | ir.Value | None = None,
       barrier: utils.BarrierRef | None = None,
       swizzle: int | None = None,
       arrive: bool | None = None,
@@ -750,7 +772,8 @@ class LaunchContext:
       multicast_mask = None
 
     tma_desc = self._get_tma_desc(
-        gmem_ref, gmem_transform, tuple(slice_shape), swizzle, reduction_op,
+        gmem_ref, gmem_transform, gmem_peer_id,
+        tuple(slice_shape), swizzle, reduction_op,
     )
 
     # We constuct TMA descriptors in column-major order.
@@ -893,3 +916,33 @@ class LaunchContext:
     self._ensure_nvshmem_decls()
     i32 = ir.IntegerType.get_signless(32)
     return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+
+
+class ReplicationError(Exception):
+  pass
+
+def _recompute_peer_id(peer_id: ir.Value, fuel=8) -> ir.Value:
+  if fuel == 0:
+    raise ReplicationError(
+        "gmem_peer_id computation is too complicated to recompute on the host"
+    )
+  if isinstance(peer_id, ir.BlockArgument):
+    raise ReplicationError("Can't recompute a value that's a block argument")
+  op = peer_id.owner.opview
+  # We accept all arith ops
+  if op.OPERATION_NAME.startswith("arith."):
+    new_operands = [_recompute_peer_id(x, fuel - 1) for x in op.operands]
+    result_types = [r.type for r in op.results]
+    new_attributes = {na.name: na.attr for na in op.attributes}
+    new_op = ir.Operation.create(
+        op.OPERATION_NAME, result_types, new_operands, new_attributes
+    )
+    return new_op.results if len(new_op.results) > 1 else new_op.result
+  # nvshmem_my_pe queries the device id of the current process and works on both
+  # the host and the device.
+  if isinstance(op, llvm.CallOp) and op.callee.value == "nvshmem_my_pe":
+    i32 = ir.IntegerType.get_signless(32)
+    return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+  raise ReplicationError(
+      f"Unrecognized op can't be recomputed on the host: {op}"
+  )
