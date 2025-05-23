@@ -1425,6 +1425,10 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
             return self.tile_assignment().num_dimensions();
           },
           nb::lock_self())
+      .def("is_tile_assignment_iota",
+           [](const xla::HloSharding& self) {
+             return self.tile_assignment().iota().has_value();
+           })
       .def(
           "tile_assignment_dimensions",
           [](const xla::HloSharding& self) {
