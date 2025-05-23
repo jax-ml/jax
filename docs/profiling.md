@@ -100,17 +100,23 @@ pip install tb-nightly tbp-nightly
 ### Programmatic capture
 
 You can instrument your code to capture a profiler trace via the
-{func}`jax.profiler.start_trace` and {func}`jax.profiler.stop_trace`
-methods. Call {func}`~jax.profiler.start_trace` with the directory to write
-trace files to. This should be the same `--logdir` directory used to start
-TensorBoard. Then, you can use TensorBoard to view the traces.
+{func}`jax.profiler.start_trace` and {func}`jax.profiler.stop_trace` methods.
+Call {func}`~jax.profiler.start_trace` with the directory to write trace files
+to. This should be the same `--logdir` directory used to start TensorBoard. It
+also accepts an optional parameter `profiler_options`, which allows for
+fine-grained control over the profiler's behavior. This parameter should be an
+instance of `jax.profiler.ProfileOptions`. Then, you can use TensorBoard to view
+the traces.
 
 For example, to take a profiler trace:
 
 ```python
 import jax
 
-jax.profiler.start_trace("/tmp/tensorboard")
+options = jax.profiler.ProfileOptions()
+options.python_tracer_level = 0
+options.advanced_configuration = {"tpu_trace_mode": "TRACE_ONLY_XLA"}
+jax.profiler.start_trace("/tmp/tensorboard", profiler_options=options)
 
 # Run the operations to be profiled
 key = jax.random.key(0)
