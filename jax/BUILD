@@ -303,7 +303,6 @@ py_library_providing_imports_info(
         "_src/callback.py",
         "_src/checkify.py",
         "_src/custom_batching.py",
-        "_src/custom_dce.py",
         "_src/custom_derivatives.py",
         "_src/custom_partitioning.py",
         "_src/custom_partitioning_sharding_rule.py",
@@ -390,6 +389,7 @@ py_library_providing_imports_info(
         ":config",
         ":core",
         ":custom_api_util",
+        ":custom_dce",
         ":custom_transpose",
         ":deprecations",
         ":dtypes",
@@ -593,6 +593,24 @@ pytype_strict_library(
 pytype_strict_library(
     name = "custom_api_util",
     srcs = ["_src/custom_api_util.py"],
+)
+
+pytype_strict_library(
+    name = "custom_dce",
+    srcs = ["_src/custom_dce.py"],
+    deps = [
+        ":ad",
+        ":api_util",
+        ":batching",
+        ":core",
+        ":custom_api_util",
+        ":mlir",
+        ":partial_eval",
+        ":source_info_util",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
+    ],
 )
 
 pytype_strict_library(
