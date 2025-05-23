@@ -68,7 +68,7 @@ jobs:
     container:  ${{ !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.1') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.1-cudnn9.8:latest') ||
                 !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.8') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest') ||
                 inputs.use-nvidia-pip-wheels && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest'}}
-    name: "Pytest CUDA (${{ inputs.runner }}, CUDA ${{ inputs.cuda }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
+    name: "(${{ inputs.runner }}, CUDA ${{ inputs.cuda }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
