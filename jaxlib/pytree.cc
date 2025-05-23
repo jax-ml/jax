@@ -281,8 +281,16 @@ bool PyTreeDef::operator==(const PyTreeDef& other) const {
         a.custom != b.custom) {
       return false;
     }
-    if (a.node_data && a.node_data.not_equal(b.node_data)) {
-      return false;
+    try {
+      if (a.node_data && a.node_data.not_equal(b.node_data)) {
+        return false;
+      }
+    } catch (nb::python_error& e) {
+      nb::raise_from(e, PyExc_ValueError,
+                     "Exception raised while checking equality of metadata "
+                     "fields of pytree. Make sure that metadata fields are "
+                     "hashable and have simple equality semantics. (Note: "
+                     "arrays cannot be passed as metadata fields!)");
     }
     if (!IsSortedPyDictKeysEqual(a.sorted_dict_keys, b.sorted_dict_keys)) {
       return false;
