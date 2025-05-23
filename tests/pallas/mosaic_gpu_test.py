@@ -2496,6 +2496,52 @@ class PallasCallSm100ATest(PallasSm100ATest):
     expected = x @ y
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
+  @parameterized.parameters((0,), (1,))
+  def test_mma_barrier_indexing(
+      self, barrier_index, shape=(128, 128), swizzle=128, dtype=jnp.float16
+  ):
+    self.skip_if_wg_semantics()
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+
+    def kernel(a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref):
+      plgpu.tcgen05_mma(
+          acc_tmem,
+          a_smem,
+          b_smem,
+          barrier_ref.at[barrier_index],
+          accumulate=False,
+      )
+      plgpu.barrier_wait(barrier_ref.at[barrier_index])
+      scratch_smem[...] = acc_tmem[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(scratch_smem, out_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    scratch_shapes = [
+        plgpu.TMEM(shape, jnp.float32, packed=False),
+        plgpu.SMEM(shape, dtype, transforms=transforms),
+        plgpu.Barrier(num_arrivals=1, num_barriers=2, for_tensor_core=True),
+    ]
+    f = self.pallas_call(
+        kernel,
+        in_specs=(
+            plgpu.BlockSpec(transforms=transforms, memory_space=plgpu.SMEM),
+            plgpu.BlockSpec(transforms=transforms, memory_space=plgpu.SMEM),
+        ),
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        scratch_shapes=scratch_shapes,
+    )
+    x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
+    y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
+    result = f(x, y)
+    expected = x @ y
+    np.testing.assert_allclose(result, expected, rtol=1e-3)
+
 
 class PallasCallSm100AWGTest(
     PallasCallSm100ATest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
