@@ -2591,17 +2591,28 @@ def optimization_barrier(*arrays: mgpu.FragmentedArray):
   all_reg_constraints = ",".join(
       [*("=" + c for c in reg_constraints), *reg_constraints]
   )
-  struct_ty = ir.Type.parse(
-      f"!llvm.struct<({','.join(map(str, reg_dtypes))})>"
-  )
-  result_struct = llvm.inline_asm(
-      struct_ty, regs, ptx, all_reg_constraints,
-      asm_dialect=0, has_side_effects=True,
-  )
-  regs = [
-      llvm.extractvalue(dtype, result_struct, [i])
-      for i, dtype in enumerate(reg_dtypes)
-  ]
+
+  if len(reg_dtypes) == 1:
+    # The InlineAsm::verify() function doesn't allow a struct output when there
+    # is only one element (even though that seems to work for the case below).
+    result_elem = llvm.inline_asm(
+        reg_dtypes[0], regs, ptx, all_reg_constraints,
+        asm_dialect=0, has_side_effects=True,
+    )
+    regs = [result_elem]
+  else:
+    struct_ty = ir.Type.parse(
+        f"!llvm.struct<({','.join(map(str, reg_dtypes))})>"
+    )
+    result_struct = llvm.inline_asm(
+        struct_ty, regs, ptx, all_reg_constraints,
+        asm_dialect=0, has_side_effects=True,
+    )
+    regs = [
+        llvm.extractvalue(dtype, result_struct, [i])
+        for i, dtype in enumerate(reg_dtypes)
+    ]
+
   i32 = ir.IntegerType.get_signless(32)
   results = []
   regs_it = iter(regs)

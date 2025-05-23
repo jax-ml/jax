@@ -2451,6 +2451,21 @@ class FragmentedArrayTest(TestCase):
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, None)
     np.testing.assert_array_equal(f(x), x * 3)
 
+  def test_optimization_barrier_with_single_value(self):
+    shape = (64, 64)
+    value = 5.0
+    dtype = jnp.float32
+    def kernel(ctx, out, smem):
+      del ctx, smem
+      mlir_type = utils.dtype_to_ir_type(dtype)
+      arr = mgpu.FragmentedArray.splat(c(value, mlir_type), shape)
+      arr = mgpu.optimization_barrier(arr)
+      arr.store_untiled(out)
+
+    out_shape = jax.ShapeDtypeStruct(shape, dtype)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ())
+    np.testing.assert_array_equal(f(), jnp.full(shape, value, dtype=dtype))
+
   def test_convert_bool_to_u8(self):
     m, n = 128, 128
     def kernel(ctx, dst, _):
