@@ -3,7 +3,7 @@
 <!--internal:0-->
 
 <!--*
-freshness: { owner: 'justinfu' reviewed: '2024-11-19' }
+freshness: { owner: 'slebedev' reviewed: '2025-05-22' }
 *-->
 
 [TOC]
@@ -45,16 +45,14 @@ as a Python error after the kernel has successfully executed.
 
 #### Hard assertion
 
-Hard assertions can be inserted with `checkify.check`
-and running your program with the `--jax_pallas_enable_runtime_assert` flag.
+Hard assertions can be inserted with `pl.debug_check`
+and running your program with the `--jax_pallas_enable_debug_checks` flag.
 
 Your code will look like the following:
 
 ```python
-from jax.experimental import checkify
-
 def kernel(...):
-  checkify.check(x > y, "Check x > y failed")  # Will halt if x <= y
+  pl.debug_check(x > y, "Check x > y failed")  # Will halt if x <= y
 ```
 
 This will print a relatively lengthy dump which resembles the following:
@@ -76,11 +74,10 @@ Functionalized asserts can be performed by checkify-ing the `pl.pallas_call` op 
 from jax.experimental import checkify
 
 def kernel(...):
-  checkify.check(x > y, "Check x > y failed")  # Will throw an error if x <= y
+  pl.debug_check(x > y, "Check x > y failed")  # Will throw an error if x <= y
 
 kernel = pl.pallas_call(...)
-checkified_kernel = checkify.checkify(kernel,
-  errors=checkify.all_checks)
+checkified_kernel = checkify.checkify(kernel, errors=checkify.all_checks)
 error, result = checkified_kernel(x)
 error.throw()
 ```
@@ -203,5 +200,3 @@ In most cases the error message should hint at what is wrong.
 For specific errors:
 
 * `Mixed dtype operands in cmp` when using `jnp.mod`: Use lax.rem instead of jnp.mod
-
-

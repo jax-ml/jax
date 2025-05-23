@@ -51,8 +51,6 @@ from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
 # Those primitives got moved to Pallas core. Keeping the updated imports
 # here for backward compatibility.
 from jax._src.pallas.core import semaphore as semaphore
-from jax._src.pallas.core import runtime_assert_enabled as runtime_assert_enabled
-from jax._src.pallas.core import _ENABLE_RUNTIME_ASSERT as enable_runtime_assert  # noqa: F401
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal

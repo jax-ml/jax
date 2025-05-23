@@ -1031,14 +1031,14 @@ class PallasCallTest(PallasTest):
   def test_check(self):
     self.skip_if_wg_semantics()
 
-    self.enter_context(pallas_core._ENABLE_RUNTIME_ASSERT(True))
+    self.enter_context(pl.enable_debug_checks(True))
 
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
     )
     def kernel(x_ref, o_ref):
-      checkify.check(_sum_same_dtype(x_ref[...]) > 0, "x.sum() is negative")
+      pl.debug_check(_sum_same_dtype(x_ref[...]) > 0, "x.sum() is negative")
       o_ref[...] = x_ref[...]
 
     x = jnp.arange(256, dtype=jnp.int32)

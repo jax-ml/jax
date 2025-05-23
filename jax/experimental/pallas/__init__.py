@@ -18,7 +18,6 @@ See the Pallas documentation at
 https://docs.jax.dev/en/latest/pallas.html.
 """
 
-from jax._src.pallas.core import _ENABLE_RUNTIME_ASSERT as enable_runtime_assert  # noqa: F401
 from jax._src.pallas.core import BlockDim as BlockDim
 from jax._src.pallas.core import Blocked as Blocked
 from jax._src.pallas.core import BlockSpec as BlockSpec
@@ -33,7 +32,6 @@ from jax._src.pallas.core import lower_as_mlir as lower_as_mlir
 from jax._src.pallas.core import MemoryRef as MemoryRef
 from jax._src.pallas.core import MemorySpace as MemorySpace
 from jax._src.pallas.core import no_block_spec as no_block_spec
-from jax._src.pallas.core import runtime_assert_enabled as runtime_assert_enabled
 from jax._src.pallas.core import semaphore as semaphore
 from jax._src.pallas.core import Squeezed as Squeezed
 from jax._src.pallas.core import squeezed as squeezed
@@ -41,6 +39,9 @@ from jax._src.pallas.cost_estimate import estimate_cost as estimate_cost
 from jax._src.pallas.helpers import empty as empty
 from jax._src.pallas.helpers import empty_like as empty_like
 from jax._src.pallas.helpers import when as when
+from jax._src.pallas.helpers import debug_check as debug_check
+from jax._src.pallas.helpers import debug_checks_enabled as debug_checks_enabled
+from jax._src.pallas.helpers import enable_debug_checks as enable_debug_checks
 from jax._src.pallas.pallas_call import pallas_call as pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p as pallas_call_p
 from jax._src.pallas.primitives import atomic_add as atomic_add
