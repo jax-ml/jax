@@ -449,6 +449,11 @@ def get_tpu_version() -> int:
     raise ValueError(f"Device kind {kind} is not supported")
   return int(match.group(1))
 
+def get_device_kind() -> str:
+  if device_under_test() != "tpu":
+    raise ValueError("Device is not TPU")
+  return jax.devices()[0].device_kind
+
 def is_device_tpu_at_least(version: int) -> bool:
   if device_under_test() != "tpu":
     return False
