@@ -965,22 +965,23 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(tpu::DynamicGatherOp op) {
-    if (op.getType().getShape() != ArrayRef<int64_t>(target_shape_) &&
-        op.getType().getElementTypeBitWidth() != 32) {
-      return op.emitOpError(
-          "Not implemented: DynamicGatherOp only supports 32-bit VREG shape");
-    }
-    if (op.getDimension() != 0 && op.getDimension() != 1) {
-      return op.emitOpError(
-          "Not implemented: Only dimension 0 and 1 are supported");
-    }
     // TODO(jevinjiang): we could preserve some offsets such as replicated
     // offset but since we are forcing all operands and result to be the same
     // layout, we can set all offsets to zero for now. Also maybe we should
     // consider adding this to elementwise rule.
-    auto layout = VectorLayout(kNativeBitwidth, {0, 0}, default_tiling_,
-                               ImplicitDim::kNone);
-    setLayout(op, {layout, layout}, layout);
+    if (op.getType().getShape() == ArrayRef<int64_t>(target_shape_) &&
+        op.getType().getElementTypeBitWidth() == 32) {
+      VectorLayout layout(kNativeBitwidth, {0, 0}, default_tiling_,
+                          ImplicitDim::kNone);
+      setLayout(op, {layout, layout}, layout);
+    } else if (op.getIndices().getType().getShape() ==
+                   ArrayRef<int64_t>{4 * target_shape_[0], target_shape_[1]} &&
+               op.getType().getElementTypeBitWidth() == 8) {
+      VectorLayout layout(8, {0, 0}, nativeTiling(8), ImplicitDim::kNone);
+      setLayout(op, {layout, layout}, layout);
+    } else {
+      return op.emitOpError("Not implemented");
+    }
     return success();
   }
 
