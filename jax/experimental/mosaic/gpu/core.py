@@ -123,8 +123,14 @@ mosaic_gpu_p.multiple_results = True
 
 
 @mosaic_gpu_p.def_abstract_eval
-def _mosaic_gpu_abstract_eval(*_, module, out_types):
+def _mosaic_gpu_abstract_eval(
+    *_,
+    module,
+    out_types,
+    input_output_aliases,
+):
   del module  # Unused.
+  del input_output_aliases # Unused.
   return [jax._src.core.ShapedArray(t.shape, t.dtype) for t in out_types]
 
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
@@ -625,8 +631,9 @@ def _run_serde_pass(
 def _declare_runtime_functions():
   """Declares the runtime functions that can be used by the generated code."""
   ptr_ty = ir.Type.parse("!llvm.ptr")
+  i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
-  arg_tys = [ptr_ty, ptr_ty, i64, i64, ptr_ty, ptr_ty, i64, ptr_ty]
+  arg_tys = [ptr_ty, ptr_ty, i64, i64, ptr_ty, ptr_ty, i64, ptr_ty, i32]
   init_tma_desc_type = ir.FunctionType.get(arg_tys, [])
   func.FuncOp(
       "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
@@ -646,6 +653,7 @@ def as_gpu_kernel(
     kernel_name: str | None = None,
     ir_version: int | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
+    input_output_aliases: tuple[tuple[int, int], ...] = (),
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -687,7 +695,12 @@ def as_gpu_kernel(
       )
 
   def bind(*args) -> Any:
-    return mosaic_gpu_p.bind(*args, module=module, out_types=out_shape)
+    return mosaic_gpu_p.bind(
+        *args,
+        module=module,
+        out_types=out_shape,
+        input_output_aliases=input_output_aliases,
+    )
 
   if prof_spec is not None:
     @jax.jit
