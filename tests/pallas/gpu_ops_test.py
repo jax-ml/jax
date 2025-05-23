@@ -313,6 +313,30 @@ class FusedAttentionTest(PallasBaseTest):
     self.assertAllClose(dk, dk_ref, atol=5e-2)
     self.assertAllClose(dv, dv_ref, atol=5e-2)
 
+  def test_return_residuals_not_differentiable(self):
+    batch_size, seq_len, num_heads, head_dim = 2, 128, 2, 128
+    causal = False
+    k1, k2, k3 = random.split(random.key(0), 3)
+    q = random.normal(
+        k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
+    )
+    k = random.normal(
+        k2, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
+    )
+    v = random.normal(
+        k3, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
+    )
+    segment_ids = None
+
+    def f(q, k, v):
+      return attention.mha(q, k, v, causal=causal, segment_ids=segment_ids,
+                           interpret=self.INTERPRET,
+                           return_residuals=True)[0].sum()
+
+    with self.assertRaisesRegex(ValueError, "Kernel differentiation is not"
+                                " supported if return_residuals is True."):
+      _ = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
+
 
 class FusedAttentionInterpretTest(FusedAttentionTest):
   INTERPRET = True
