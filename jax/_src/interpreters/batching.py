@@ -21,7 +21,6 @@ from typing import Any, Union
 
 import numpy as np
 
-import jax
 from jax._src import config
 from jax._src import core
 from jax._src import source_info_util
@@ -301,11 +300,14 @@ def from_elt(trace: BatchTrace, axis_size: AxisSize, mesh_axis: MeshAxis,
 from_elt_handlers: dict[type, FromEltHandler] = {}
 
 def make_iota(axis_size: AxisSize) -> Array:
+  # Callers of this utility, via batch() or vtile(), must be in a context
+  # where lax is importable.
+  from jax import lax  # pytype: disable=import-error
   handler = make_iota_handlers.get(type(axis_size))
   if handler:
     return handler(axis_size)
   else:
-    return jax.lax.iota('int32', int(axis_size))
+    return lax.iota('int32', int(axis_size))
 make_iota_handlers: dict[type, MakeIotaHandler] = {}
 
 def register_vmappable(data_type: type, spec_type: type, axis_size_type: type,
@@ -1019,10 +1021,13 @@ def broadcast_batcher(prim, args, dims, **params):
     return (out, (0,) * len(out)) if prim.multiple_results else (out, 0)
 
 def _handle_scalar_broadcasting(nd, x, d):
+  # Callers of this utility, via broadcast_batcher() or defbroadcasting(),
+  # must be in a context where lax is importable.
+  from jax import lax  # pytype: disable=import-error
   if d is not_mapped or nd == np.ndim(x):
     return x
   else:
-    return jax.lax.expand_dims(x, tuple(range(np.ndim(x), nd)))
+    return lax.expand_dims(x, tuple(range(np.ndim(x), nd)))
 
 def defreducer(prim, ident):
   primitive_batchers[prim] = partial(reducer_batcher, prim, ident)
@@ -1078,17 +1083,20 @@ def mask_ragged_axes(operand: Array, ident, axis_spec: RaggedAxis) -> Array:
 
 def _mask_one_ragged_axis(
     operand: Array, ident, axis_spec: RaggedAxis) -> Array:
+  # Callers of this utility, via reducer_batcher() or defreducer(),
+  # must be in a context where lax is importable.
+  from jax import lax  # pytype: disable=import-error
   assert len(axis_spec.ragged_axes) == 1, "Mask just one ragged axis at a time"
   ragged_axis, segment_lengths = axis_spec.ragged_axes[0]
   value = ident(operand.dtype)
-  positions = jax.lax.broadcasted_iota('int32', operand.shape, ragged_axis)
+  positions = lax.broadcasted_iota('int32', operand.shape, ragged_axis)
   # TODO(mattjj, axch) can't get ._data, need to convert it
-  # lengths = jax.lax.convert_element_type(segment_lengths._data, 'int32')
-  lengths = jax.lax.convert_element_type(segment_lengths, 'int32')
-  limits = jax.lax.broadcast_in_dim(
+  # lengths = lax.convert_element_type(segment_lengths._data, 'int32')
+  lengths = lax.convert_element_type(segment_lengths, 'int32')
+  limits = lax.broadcast_in_dim(
       lengths, operand.shape, [axis_spec.stacked_axis])
   mask = positions < limits
-  return jax.lax.select(mask, operand, jax.lax.broadcast(value, operand.shape))
+  return lax.select(mask, operand, lax.broadcast(value, operand.shape))
 
 def move_stacked_axis(operand, bdim, dst):
   dst = canonicalize_axis(dst, operand.ndim)
@@ -1103,6 +1111,8 @@ def move_stacked_axis(operand, bdim, dst):
 ### general utilities for manipulating axes on jaxpr types (not vmappables)
 
 def broadcast(x, sz, axis, mesh_axis=None):
+  # Callers of this utility must be in a context where lax is importable.
+  from jax import lax  # pytype: disable=import-error
   shape = list(np.shape(x))
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
@@ -1114,7 +1124,7 @@ def broadcast(x, sz, axis, mesh_axis=None):
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure
   # out how to ensure jaxpr arguments always have the context mesh.
   with mesh_lib.use_abstract_mesh(sharding.mesh):
-    x = jax.lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
+    x = lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
     if config._check_vma.value:
       # TODO(yashkatariya,parkers): don't do this, fix during fixit week 2026
       spmd_names = core.get_axis_env().spmd_axis_names
