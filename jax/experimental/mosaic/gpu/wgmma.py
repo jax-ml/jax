@@ -226,11 +226,18 @@ def wgmma_m64(
     return llvm.ConstantOp(i32, ir.IntegerAttr.get(i32, x)).result
 
   use_out = scale_a = scale_b = lc(1)
-  imms = [use_out, scale_a, scale_b]
+  if out_ty == i32:
+    imms = [use_out]
+  else:
+    imms = [use_out, scale_a, scale_b]
+
   if supports_transpose and a_transpose is not None:
     imms += [lc(int(a_transpose)), lc(int(b_transpose))]
   elif supports_transpose:
     imms += [lc(int(b_transpose))]
+
+  assert len(imms) == num_imm_regs + 1  # +1 for the use_out_reg in setp.ne.b32
+
   if acc.ndim != 10 or acc.shape[0] != 1 or math.prod(acc.shape[2:]) != 2:
     raise ValueError(acc.shape)
   acc_struct_type = ir.Type.parse(
