@@ -638,8 +638,25 @@ class GSPMDSharding(jsharding.Sharding):
     return self._hlo_sharding
 
   def _to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
-    raise NotImplementedError(
-        "GSPMDSharding can't be converted to SdyArray.")
+    if self._hlo_sharding.tuple_elements():
+      raise TypeError(
+          f'Cannot convert GSPMDSharding {self._hlo_sharding} into SdyArray.')
+    elif self._hlo_sharding.is_replicated():
+      empty_mesh = mesh_lib.AbstractMesh((), ())
+      return NamedSharding(empty_mesh, PartitionSpec())._to_sdy_sharding(
+          num_dimensions)
+    elif self._hlo_sharding.is_tiled():
+      if not self._hlo_sharding.is_tile_assignment_iota():
+        raise TypeError(
+            f'Cannot convert GSPMDSharding {self._hlo_sharding} into SdyArray.')
+      axis_sizes = tuple(self._hlo_sharding.get_axis_sizes())
+      axis_names = tuple(f'_axis_{i}' for i in range(len(axis_sizes)))
+      mesh = mesh_lib.AbstractMesh(axis_sizes, axis_names)
+      return _gspmd_to_named_sharding_via_mesh(self, mesh)._to_sdy_sharding(
+          num_dimensions)
+    else:
+      raise TypeError(
+          f'Cannot convert GSPMDSharding {self._hlo_sharding} into SdyArray.')
 
   @functools.cached_property
   def is_fully_replicated(self) -> bool:
@@ -1241,10 +1258,12 @@ def create_mesh_pspec_sharding(
 
 
 def _gspmd_to_named_sharding_via_mesh(
-    out_s: GSPMDSharding, mesh: mesh_lib.Mesh) -> NamedSharding:
+    out_s: GSPMDSharding, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
+) -> NamedSharding:
   spec = parse_flatten_op_sharding(out_s._hlo_sharding, mesh)[0]
   return create_mesh_pspec_sharding(
       mesh, spec, memory_kind=out_s.memory_kind)
+
 
 def flatten_spec(spec):
   out = []

@@ -28,6 +28,7 @@ from jax._src import dispatch
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir
 from jax._src.util import safe_zip
@@ -1467,7 +1468,7 @@ class ShardingTest(jtu.JaxTestCase):
       NamedSharding(mesh, P('x', unreduced=('y', None)))
 
   def test_hlo_sharding_get_axis_sizes(self):
-    if jax._src.lib.jaxlib_extension_version < 343:
+    if jaxlib_extension_version < 343:
       self.skipTest('Requires jaxlib_extension_version >= 343')
 
     op = xc.OpSharding()
@@ -1478,6 +1479,46 @@ class ShardingTest(jtu.JaxTestCase):
     s = GSPMDSharding(jax.devices(), op)
     self.assertIn('{devices=[6,35]<=[7,10,3]T(2,1,0)}', repr(s))
     self.assertEqual(s._to_xla_hlo_sharding(2).get_axis_sizes(), [7, 2, 5, 3])
+
+  @parameterized.named_parameters(
+      ('2d_mesh_x_y', (4, 2), P('x', 'y')),
+      ('2d_mesh_x', (4, 2), P('x')),
+      ('2d_mesh_y', (4, 2), P('y')),
+      ('2d_mesh_none_y', (4, 2), P(None, 'y')),
+      ('2d_mesh_none_x', (4, 2), P(None, 'x')),
+      ('2d_mesh_xy', (4, 2), P(('x', 'y'))),
+      ('2d_mesh_none_xy', (4, 2), P(None, ('x', 'y'))),
+      ('2d_mesh_fully_replicated', (4, 2), P()),
+      ('2d_mesh_x_none', (2, 1), P(('x',), None)),
+      ('3d_mesh_none_none_z', (2, 2, 2), P(None, None, 'z')),
+      ('3d_mesh_none_y_none', (2, 2, 2), P(None, 'y', None)),
+      ('3d_mesh_x_y_none', (2, 2, 2), P('x', 'y', None)),
+      ('3d_mesh_none_yz', (2, 2, 2), P(None, ('y', 'z'))),
+      ('3d_mesh_x_none_yz', (2, 2, 2), P('x', None, ('y', 'z'))),
+      ('3d_mesh_none_x_yz', (2, 2, 2), P(None, 'x', ('y', 'z'))),
+      ('3d_mesh_xy_z', (2, 2, 2), P(('x', 'y'), 'z')),
+      ('3d_mesh_xy_none_z', (2, 2, 2), P(('x', 'y'), None, 'z')),
+      ('3d_mesh_x_y_z', (2, 2, 2), P('x', 'y', 'z')),
+      ('3d_mesh_xz_y', (2, 2, 2), P(('x', 'z'), 'y')),
+      ('3d_mesh_xz_none_y', (2, 2, 2), P(('x', 'z'), None, 'y')),
+      ('3d_mesh_y_none_xz', (2, 2, 2), P('y', None, ('x', 'z'))),
+      ('3d_mesh_none_y_xz', (2, 2, 2), P(None, 'y', ('x', 'z'))),
+      ('3d_mesh2_none_none_z', (1, 2, 4), P(None, None, 'z')),
+      ('3d_mesh2_x_none_none', (1, 2, 4), P('x', None, None)),
+      ('3d_mesh_x_none_none', (2, 1, 1), P('x', None, None)),
+  )
+  def test_gspmd_sharding_shardy_lowering(self, mesh_shape, pspec):
+    if jaxlib_extension_version < 344:
+      self.skipTest('Requires jaxlib_extension_version >= 344')
+
+    ndim = len(mesh_shape)
+    mesh = jtu.create_mesh(
+        mesh_shape, ('x', 'y') if ndim == 2 else ('x', 'y', 'z')
+    )
+    ns = jax.sharding.NamedSharding(mesh, pspec)
+    gs = GSPMDSharding(ns._device_assignment, ns._to_xla_hlo_sharding(ndim))
+    out_sdy_sharding = gs._to_sdy_sharding(ndim)
+    self.assertTrue(out_sdy_sharding, ns._to_sdy_sharding(ndim))
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
