@@ -82,6 +82,8 @@ class GridPointRecorderContext(object):
     return self._grid_points
 
 
+# TODO(jburnim): Figure out how to safely run different instance of TPU
+# interpret mode in parallel, and then remove this decorator.
 @jtu.thread_unsafe_test_class()
 class InterpretTest(jtu.JaxTestCase):
 

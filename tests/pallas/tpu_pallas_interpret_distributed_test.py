@@ -38,6 +38,8 @@ jtu.request_cpu_devices(8)
 P = jax.sharding.PartitionSpec
 
 
+# TODO(jburnim): Figure out how to safely run different instance of TPU
+# interpret mode in parallel, and then remove this decorator.
 @jtu.thread_unsafe_test_class()
 class InterpretDistributedTest(jtu.JaxTestCase):
   def setUp(self):
