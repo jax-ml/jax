@@ -17,6 +17,7 @@ import random
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.ragged_paged_attention import (
     cdiv,
@@ -39,7 +40,8 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
       num_heads,  # [num_q_heads, num_kv_heads]
       head_dim,
       page_size,
-      dtype,
+      q_dtype,
+      kv_dtype,
       num_pages,
       *,
       num_kv_pages_per_block=8,
@@ -49,6 +51,8 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
       max_num_seq=8,
       sliding_window: int | None = None,
       soft_cap: float | None = None,
+      k_scale: float | None = None,
+      v_scale: float | None = None,
   ):
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Expect TPUv4+")
@@ -70,17 +74,27 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
     q = jax.random.normal(
         k0,
         (max_num_batched_tokens, num_q_heads, head_dim),
-        dtype=dtype,
+        dtype=q_dtype,
     )
     page_cnt = 0
     page_indices_list = []
     kv_pages_list = []
     for kv_len in kv_lens:
-      kv = jax.random.normal(
-          k1,
-          (kv_len, num_kv_heads * 2, head_dim),
-          dtype=dtype,
-      )
+      if jnp.issubdtype(kv_dtype, jnp.integer):
+        # random.randint doesn't support int4, so we use jnp.int32 here and then
+        # convert to the desired dtype.
+        kv = jax.random.normal(
+            k1,
+            (kv_len, num_kv_heads * 2, head_dim),
+            dtype=jnp.int32,
+        )
+        kv = kv.astype(kv_dtype)
+      else:
+        kv = jax.random.normal(
+            k1,
+            (kv_len, num_kv_heads * 2, head_dim),
+            dtype=kv_dtype,
+        )
       kv = jnp.pad(
           kv,
           ((0, cdiv(kv_len, page_size) * page_size - kv_len), (0, 0), (0, 0)),
@@ -138,7 +152,9 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         vmem_limit_bytes=vmem_limit_bytes,
         sliding_window=sliding_window,
         soft_cap=soft_cap,
-    )[: actual_num_q_tokens]
+        k_scale=k_scale,
+        v_scale=v_scale,
+    )[:actual_num_q_tokens]
 
     expected = ref_ragged_paged_attention(
         q,
@@ -149,12 +165,17 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         num_seqs=num_seqs,
         sliding_window=sliding_window,
         soft_cap=soft_cap,
+        k_scale=k_scale,
+        v_scale=v_scale,
     )
+    dtype_bits = dtypes.bit_width(jnp.dtype(kv_dtype))
     tols = {
-        "float32": 0.15,
-        "bfloat16": 0.2,
+        32: 0.15,
+        16: 0.2,
+        8: 0.2,
+        4: 0.2,
     }
-    tol = tols[jnp.dtype(dtype).name]
+    tol = tols[dtype_bits]
     self.assertAllClose(output, expected, atol=tol, rtol=tol)
 
   @parameterized.product(
@@ -173,7 +194,38 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         head_dim,
         page_size,
         dtype,
+        dtype,
         num_pages,
+    )
+
+  # TODO: support int4 and int8
+  @parameterized.product(
+      q_dtype=[jnp.bfloat16],
+      kv_dtype=[jnp.float8_e5m2, jnp.float8_e4m3fn],
+      kv_scales=[(0.5, 0.5), (None, None)],
+  )
+  def test_ragged_paged_attention_quantized_kv_cache(
+      self, q_dtype, kv_dtype, kv_scales
+  ):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Expect TPUv5+")
+    seq_lens = [(192, 328), (128, 180), (64, 255)]
+    num_heads = (32, 8)
+    head_dim = 128
+    page_size = 16
+    num_pages = 1000
+    k_scale, v_scale = kv_scales
+
+    self._test_ragged_paged_attention(
+        seq_lens,
+        num_heads,
+        head_dim,
+        page_size,
+        q_dtype,
+        kv_dtype,
+        num_pages,
+        k_scale=k_scale,
+        v_scale=v_scale,
     )
 
   @parameterized.product(
@@ -208,6 +260,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         num_heads,
         head_dim,
         page_size,
+        dtype,
         dtype,
         num_pages,
     )
@@ -245,6 +298,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         head_dim,
         page_size,
         dtype,
+        dtype,
         num_pages,
     )
 
@@ -281,6 +335,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         head_dim,
         page_size,
         dtype,
+        dtype,
         num_pages,
     )
 
@@ -315,6 +370,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         num_heads,
         head_dim,
         page_size,
+        dtype,
         dtype,
         num_pages,
         num_kv_pages_per_block=num_kv_pages_per_block,
@@ -351,6 +407,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         head_dim,
         page_size,
         dtype,
+        dtype,
         num_pages,
         num_kv_pages_per_block=num_kv_pages_per_block,
         num_queries_per_block=num_queries_per_block,
@@ -386,6 +443,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         head_dim,
         page_size,
         dtype,
+        dtype,
         num_pages,
         num_kv_pages_per_block=num_kv_pages_per_block,
         num_queries_per_block=num_queries_per_block,
@@ -407,6 +465,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
           head_dim,
           page_size,
           dtype,
+          dtype,
           num_pages,
           sliding_window=0,
       )
@@ -417,6 +476,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
           num_heads,
           head_dim,
           page_size,
+          dtype,
           dtype,
           num_pages,
           sliding_window=-1,
@@ -436,6 +496,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
           num_heads,
           head_dim,
           page_size,
+          dtype,
           dtype,
           num_pages,
           soft_cap=0.0,
