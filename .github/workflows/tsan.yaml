@@ -132,7 +132,7 @@ jobs:
 
           python3 -m pip install uv~=0.5.30
 
-          python3 -m uv pip install -r requirements/build_requirements.txt
+          NO_CYTHON_COMPILE=true python3 -m uv pip install -r requirements/build_requirements.txt
 
           CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized
 
@@ -201,13 +201,11 @@ jobs:
           python3 -m pip install uv~=0.5.30
 
           python3 -m uv pip install -U --pre numpy --extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/
-          python3 -m uv pip install cython pythran pybind11 meson-python ninja
+          NO_CYTHON_COMPILE=true python3 -m uv pip install cython pythran pybind11 meson-python ninja
 
           python3 -m uv pip list | grep -E "(numpy|pythran|cython|pybind11)"
 
-          export CC=clang-18
-          export CXX=clang++-18
-          python3 -m pip wheel --wheel-dir dist -vvv . --no-build-isolation --no-deps -Csetup-args=-Dbuildtype=debugoptimized
+          CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -vvv . --no-build-isolation --no-deps -Csetup-args=-Dbuildtype=debugoptimized
 
           # Create simple index and copy the wheel
           mkdir -p ${GITHUB_WORKSPACE}/wheelhouse/scipy
