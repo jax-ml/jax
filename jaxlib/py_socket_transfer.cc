@@ -163,6 +163,8 @@ class PyTransferServerConnection {
     }
   }
 
+  SocketServer::Connection& conn() { return *conn_; }
+
  private:
   tsl::RCReference<SocketServer::Connection> conn_;
 };
@@ -257,6 +259,11 @@ struct CopyDests {
 
 void RegisterTransferServerTypes(nanobind::module_& m) {
   nb::class_<PyTransferServerConnection>(m, "TransferConnection")
+#if JAX_IFRT_VERSION_NUMBER > 9
+      .def(
+          "_testonly_inject_failure",
+          [](PyTransferServerConnection& self) { self.conn().InjectFailure(); })
+#endif
       .def("_pull_flat", [](PyTransferServerConnection& self, uint64_t uuid,
                             xla::nb_class_ptr<xla::PyClient> py_client,
                             std::vector<nb::object> py_avals) {
