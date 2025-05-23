@@ -61,6 +61,7 @@ jax_multiplatform_test(
     srcs = ["debug_info_test.py"],
     enable_configs = ["tpu_v3_x4"],
     deps = [
+        "//jax:custom_transpose",
         "//jax:experimental",
         "//jax:pallas",
         "//jax:pallas_gpu",
