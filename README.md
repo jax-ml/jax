@@ -60,7 +60,7 @@ perex_grads = jax.jit(jax.vmap(grad_loss, in_axes=(None, 0, 0)))  # fast per-exa
 ### Contents
 * [Transformations](#transformations)
 * [Scaling](#scaling)
-* [Current gotchas](#current-gotchas)
+* [Current gotchas](#gotchas-and-sharp-bits)
 * [Installation](#installation)
 * [Neural net libraries](#neural-network-libraries)
 * [Citing JAX](#citing-jax)
