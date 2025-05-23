@@ -138,9 +138,9 @@ fonttools==4.51.0 \
     --hash=sha256:ee1af4be1c5afe4c96ca23badd368d8dc75f611887fb0c0dac9f71ee5d6f110e \
     --hash=sha256:f7e89853d8bea103c8e3514b9f9dc86b5b4120afb4583b57eb10dfa5afbe0936
     # via matplotlib
-fsspec==2024.5.0 \
-    --hash=sha256:1d021b0b0f933e3b3029ed808eb400c08ba101ca2de4b3483fbc9ca23fcee94a \
-    --hash=sha256:e0fdbc446d67e182f49a70b82cf7889028a63588fde6b222521f10937b2b670c
+fsspec==2025.3.2 \
+    --hash=sha256:2daf8dc3d1dfa65b6aa37748d112773a7a08416f6c70d96b264c96476ecaf711 \
+    --hash=sha256:e52c77ef398680bbd6a98c0e628fbc469491282981209907bbc8aea76a04fdc6
     # via etils
 hypothesis==6.102.4 \
     --hash=sha256:013df31b04a4daede13756f497e60e451963d86f426395a79f99c5d692919bbd \
