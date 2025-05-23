@@ -677,7 +677,7 @@ def as_gpu_kernel(
   if launch_ctx.is_device_collective and not supports_cross_device_collectives():
     raise RuntimeError("Kernel is a cross-device collective but no support is available.")
 
-  expected_arg_treedef = jax.tree.structure(in_shape)
+  expected_arg_tys, expected_arg_treedef = jax.tree.flatten(in_shape)
   def _check_args(*args):
     arg_treedef = jax.tree.structure(args)
     if arg_treedef != expected_arg_treedef:
@@ -685,6 +685,20 @@ def as_gpu_kernel(
           f"Invalid argument structure: expected {expected_arg_treedef}, got"
           f" {arg_treedef}, ({args=})"
       )
+    for arg, expected_ty in zip(args, expected_arg_tys):
+      if arg.shape != expected_ty.shape:
+        raise ValueError(
+            f"Argument shape mismatch: expected {expected_ty.shape}, got"
+            f" {arg.shape}"
+        )
+      if arg.dtype != expected_ty.dtype:
+        hint = ""
+        if not arg.shape:
+          hint = f". Hint: cast the scalar to {expected_ty.dtype} explicitly."
+        raise ValueError(
+            f"Argument dtype mismatch: expected {expected_ty.dtype}, got"
+            f" {arg.dtype}{hint}"
+        )
 
   def bind(*args) -> Any:
     return mosaic_gpu_p.bind(*args, module=module, out_types=out_shape)
