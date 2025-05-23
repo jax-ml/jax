@@ -2313,7 +2313,7 @@ def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
   )
-  return tpu.iota(out_type, dimension=dimension)
+  return tpu.iota(out_type, dimensions=[dimension])
 
 
 @register_lowering_rule(lax.gather_p)

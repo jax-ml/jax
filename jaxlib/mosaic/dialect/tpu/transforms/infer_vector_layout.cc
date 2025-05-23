@@ -1058,17 +1058,16 @@ class VectorLayoutInferer {
 
   LogicalResult infer(tpu::IotaOp op) {
     auto ty = op.getResult().getType();
-    TPU_CHECK_OP(ty.getElementType().isSignlessInteger(32),
-                 "Only 32-bit integer iota supported");
+    const int bitwidth = ty.getElementTypeBitWidth();
     TPU_CHECK_OP(ty.getRank() >= 2, "iota rank below 2D unsupported");
-    LayoutOffsets offsets = {0, 0};
-    if (op.getDimension() == ty.getRank() - 1) {
-      offsets[0] = std::nullopt;
+    LayoutOffsets offsets = {std::nullopt, std::nullopt};
+    if (llvm::is_contained(op.getDimensions(), ty.getRank() - 2)) {
+      offsets[0] = 0;
     }
-    if (op.getDimension() == ty.getRank() - 2) {
-      offsets[1] = std::nullopt;
+    if (llvm::is_contained(op.getDimensions(), ty.getRank() - 1)) {
+      offsets[1] = 0;
     }
-    setOutLayout(op, VectorLayout(kNativeBitwidth, offsets, default_tiling_,
+    setOutLayout(op, VectorLayout(bitwidth, offsets, nativeTiling(bitwidth),
                                   ImplicitDim::kNone));
     return success();
   }
