@@ -115,7 +115,7 @@ def _main(argv):
         f"--num_processes={num_processes}",
         f"--multiprocess_test_worker_id={i}",
         f"--multiprocess_test_controller_address=localhost:{jax_port}",
-        "--logtostderr",
+        # "--logtostderr",
     ]
 
     if gpus_per_process > 0:
