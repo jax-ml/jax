@@ -49,6 +49,7 @@ jax_multiplatform_test(
     srcs = ["custom_api_test.py"],
     shard_count = 10,
     deps = [
+        "//jax:custom_derivatives",
         "//jax:experimental",
     ] + py_deps([
         "absl/testing",

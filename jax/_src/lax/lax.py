@@ -8188,6 +8188,7 @@ class InOutFeedEffect(effects.Effect):
 infeed_effect = InOutFeedEffect()
 outfeed_effect = InOutFeedEffect()
 
+effects.custom_derivatives_allowed_effects.add_type(InOutFeedEffect)
 
 def infeed(token, shape=None, partitions=None):
   """Consumes an infeed value of `shape` from the host. Experimental.

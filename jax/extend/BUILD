@@ -46,6 +46,7 @@ py_library_providing_imports_info(
         "//jax:ad",
         "//jax:ad_util",
         "//jax:core",
+        "//jax:custom_derivatives",
     ],
 )
 

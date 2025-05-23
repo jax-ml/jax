@@ -40,7 +40,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.interpreters.batching import not_mapped
-from jax._src.lax import lax
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
     register_pytree_node_class, tree_leaves, tree_flatten_with_path,
@@ -409,8 +408,6 @@ def lift_jvp(num_consts: int, jvp_jaxpr_fun: lu.WrappedFun) -> lu.WrappedFun:
     assert next(nz_out_tangents_, None) is None
     return [*out_primals, *out_tangents]
   return lu.wrap_init(jvp, debug_info=jvp_jaxpr_fun.debug_info)
-
-effects.custom_derivatives_allowed_effects.add_type(lax.InOutFeedEffect)
 
 custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
 
