@@ -24,10 +24,7 @@ import sys
 from typing import Any, Union
 import weakref
 
-import numpy as np
-
 import jax
-import jax.numpy as jnp
 from jax import lax
 from jax._src import callback as cb
 from jax._src import config
@@ -46,9 +43,11 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import (
-    NamedSharding, PartitionSpec as P, parse_flatten_op_sharding)
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P, parse_flatten_op_sharding
 from jax._src.state import discharge as state_discharge
+from jax._src.xla_metadata import set_xla_metadata
+import jax.numpy as jnp
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -719,3 +718,266 @@ def visualize_array_sharding(arr, **kwargs):
   def _visualize(sharding):
     return visualize_sharding(arr.shape, sharding, **kwargs)
   inspect_array_sharding(arr, callback=_visualize)
+
+
+# -----------------------------------------------------------------------------
+
+# `xla_metadata_func_p` is a primitive for attaching frontend metadata to ops
+
+xla_metadata_func_p = core.Primitive("xla_metadata_func")
+xla_metadata_func_p.multiple_results = True
+
+
+@xla_metadata_func_p.def_impl
+def _xla_metadata_func_impl(*args, fn, xla_metadata, **kwargs):
+  # The metadata is only used during lowering, ignored at runtime here.
+  results = fn(*args, **kwargs)
+  if not isinstance(results, tuple):
+    return (results,)
+  return results
+
+
+@xla_metadata_func_p.def_abstract_eval
+def _xla_metadata_func_abstract_eval(*avals, fn, xla_metadata, **kwargs):
+  # Trace `fn` with the input abstract values (`avals`) and kwargs
+  wrapped_fun = lambda *a: fn(*a, **kwargs)
+  # Use make_jaxpr to get the actual output abstract values (including sharding)
+  closed_jaxpr = jax.make_jaxpr(wrapped_fun)(*avals)
+  # Return the flat list of output avals
+  return closed_jaxpr.out_avals
+
+
+def _xla_metadata_func_lowering_rule(
+    ctx: mlir.LoweringRuleContext, *args: ir.Value, fn, xla_metadata, **kwargs
+):
+  fn_to_lower = partial(fn, **kwargs) if kwargs else fn
+
+  # 1. Get the standard lowering rule for fn_to_lower
+  fn_lowering = mlir.lower_fun(
+      fn_to_lower, multiple_results=len(ctx.avals_out) > 1
+  )
+
+  # 2. Run the lowering rule
+  results = fn_lowering(ctx, *args)
+
+  # 3. Find the root / leaf-node operation(s) and attach metadata.
+  flat_results = tree_util.tree_leaves(results)
+  if not flat_results:  # Nothing to attach metadata to
+    return results
+
+  for res_val in flat_results:
+    if isinstance(res_val, ir.Value) and res_val.owner is not None:
+      _attach_xla_metadata_to_op(xla_metadata, res_val.owner)
+
+  return results
+
+mlir.register_lowering(xla_metadata_func_p, _xla_metadata_func_lowering_rule)
+
+
+def _xla_metadata_func_jvp_rule(
+    primals, tangents, *, fn, xla_metadata, **kwargs
+):
+  fn_with_kwargs = partial(fn, **kwargs) if kwargs else fn
+  primals_out, tangents_out = jax.jvp(fn_with_kwargs, primals, tangents)
+
+  primals_out = xla_metadata_value_p.bind(primals_out,
+                                          xla_metadata=xla_metadata,
+                                          **kwargs)
+
+  # TODO(nbasile) - Add support for tangents.
+  # tangents_out = xla_metadata_value_p.bind(tangents_out,
+  #                                          xla_metadata=xla_metadata,
+  #                                          **kwargs)
+  # tangents_out = xla_metadata_func_p.bind(tangents_out,
+  #                                         fn=fn,
+  #                                         xla_metadata=xla_metadata,
+  #                                         **kwargs)[0]
+
+  if not isinstance(primals_out, tuple):
+    primals_out = (primals_out,)
+  if not isinstance(tangents_out, tuple):
+    tangents_out = (tangents_out,)
+
+  return primals_out, tangents_out
+
+ad.primitive_jvps[xla_metadata_func_p] = _xla_metadata_func_jvp_rule
+
+
+def _xla_metadata_func_batching_rule(
+    batched_args, bdims, *, fn, xla_metadata, **f_kwargs
+):
+  results = xla_metadata_func_p.bind(
+      *batched_args, fn=fn, xla_metadata=xla_metadata, **f_kwargs
+  )
+  if all(bdim is batching.not_mapped for bdim in bdims):
+    out_bdims = tree_util.tree_map(lambda x: batching.not_mapped, results)
+  else:
+    # This assumes that if any input is batched, all outputs are batched
+    # along axis 0.
+    # This is a common convention for vmap.
+    out_bdims = [0] * len(results)
+  return results, out_bdims
+
+batching.primitive_batchers[xla_metadata_func_p] = (
+    _xla_metadata_func_batching_rule
+)
+
+
+# -----------------------------------------------------------------------------
+
+# `xla_metadata_value_p` is a primitive for attaching frontend metadata to
+# a value's producing op
+
+xla_metadata_value_p = core.Primitive("xla_metadata_value")
+
+
+@xla_metadata_value_p.def_impl
+def _xla_metadata_value_impl(value, *, xla_metadata):
+  # Metadata is used at lowering time.
+  return value
+
+
+@xla_metadata_value_p.def_abstract_eval
+def _xla_metadata_value_abstract_eval(aval, *, xla_metadata):
+  # The abstract value of the output is the same as the input.
+  return aval
+
+
+def _xla_metadata_value_lowering_rule(
+    ctx: mlir.LoweringRuleContext, value_mlir: ir.Value, *, xla_metadata
+):
+  # Attach metadata to the operation that produced value_mlir.
+  if value_mlir.owner is not None:
+    _attach_xla_metadata_to_op(xla_metadata, value_mlir.owner)
+  # Pass the value through.
+  return [value_mlir]
+
+mlir.register_lowering(xla_metadata_value_p, _xla_metadata_value_lowering_rule)
+
+
+def _xla_metadata_value_jvp_rule(primals, tangents, *, xla_metadata):
+  (value_primal,) = primals
+  (value_tangent,) = tangents
+  out_primal = xla_metadata_value_p.bind(
+      value_primal, xla_metadata=xla_metadata
+  )
+  out_tangent = xla_metadata_value_p.bind(
+      value_tangent, xla_metadata=xla_metadata
+  )
+  return out_primal, out_tangent
+
+ad.primitive_jvps[xla_metadata_value_p] = _xla_metadata_value_jvp_rule
+
+
+def _xla_metadata_value_transpose_rule(
+    cotangents, primals, *, xla_metadata, **kwargs
+):
+  return (cotangents,)
+
+ad.primitive_transposes[xla_metadata_value_p] = (
+    _xla_metadata_value_transpose_rule
+)
+
+
+def _xla_metadata_value_batching_rule(batched_args, bdims, *, xla_metadata):
+  (value_batched,) = batched_args
+  (value_bdim,) = bdims
+  out_batched = xla_metadata_value_p.bind(
+      value_batched, xla_metadata=xla_metadata
+  )
+  return out_batched, value_bdim
+
+batching.primitive_batchers[xla_metadata_value_p] = (
+    _xla_metadata_value_batching_rule
+)
+
+
+# -----------------------------------------------------------------------------
+
+
+def _attach_xla_metadata_to_op(
+    xla_metadata: dict[str, Any], op: ir.Operation
+) -> None:
+  ctx_attributes = {}
+  existing_attributes = {}
+  if xla_metadata:
+    for k, v in xla_metadata.items():
+      ctx_attributes[k] = ir.StringAttr.get(str(v).lower())
+    if isinstance(op, ir.Operation):
+      # Combine with existing mhlo.frontend_attributes
+      op_attributes_dict = {attr.name: attr.attr for attr in op.attributes}
+      for k, attributes in op_attributes_dict.items():
+        if k == "mhlo.frontend_attributes":
+          v_dict = {attr.name: attr.attr for attr in attributes}
+          for fa_key, fa_val in v_dict.items():
+            existing_attributes[fa_key] = fa_val
+      op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
+          ctx_attributes | existing_attributes
+      )
+
+
+def attach_metadata(
+    target: Union[Callable[..., Any], Any] = None,
+    *,
+    xla_metadata: dict[str, Any]
+) -> Union[Callable[..., Any], Any]:
+  """Attaches XLA metadata to a target.
+
+  Supports:
+  1. Function wrapping:
+        `wrapped_fn = attach_metadata(fn, xla_metadata=...)`
+        When `wrapped_fn` is called, the operations generated by `fn` will have
+        the specified `xla_metadata` attached.
+  2. Value tagging:
+        `tagged_val = attach_metadata(value, xla_metadata=...)`
+        The operation that produced `value` will have `xla_metadata` attached.
+        `tagged_value` is `value` itself.
+  3. Function decorating: `@attach_metadata(xla_metadata=...) def fn(...): ...`
+        Wraps the function call in a `set_xla_metadata(**xla_metadata)`
+        context manager.
+
+  Args:
+    target: Optional. A callable function, a JAX array/tracer, or None.
+            If None, the function returns a decorator.
+    xla_metadata: A dictionary of metadata to attach. Keys are strings, values
+      will be converted to strings.
+
+  Returns:
+    - If `target` is a callable (direct function wrap): A new wrapped function
+      using `xla_metadata_func_p` logic.
+    - If `target` is not callable (value tagging): The value itself, after
+      metadata attachment using `xla_metadata_value_p`.
+    - If `target` is None (decorator factory usage): A decorator function.
+  """
+  if callable(target):  # Case 1: Wrap a function directly
+    fn = target
+    @util.wraps(fn)
+    def wrapped_fn(*args, **kwargs):
+      # xla_metadata_func_p.bind returns a tuple because multiple_results=True
+      results_tuple = xla_metadata_func_p.bind(
+          *args, fn=fn, xla_metadata=xla_metadata, **kwargs
+      )
+      # If the original fn was intended to return a single value,
+      # _xla_metadata_func_impl would have wrapped it in a tuple.
+      # We unpack it here for better ergonomics if it's a single-element tuple.
+      if len(results_tuple) == 1:
+        return results_tuple[0]
+      return results_tuple
+    return wrapped_fn
+  elif target is not None:  # Case 2: Tag a value
+    value = target
+    # `xla_metadata_value_p` will attach metadata to the op producing `value`.
+    if isinstance(value, tuple):
+      return tuple(xla_metadata_value_p.bind(v, xla_metadata=xla_metadata)
+                   for v in value)
+    else:
+      return xla_metadata_value_p.bind(value, xla_metadata=xla_metadata)
+  else:  # Case 3: Decorator factory usage
+    def _context_manager_decorator(fn_to_decorate: Callable[..., Any]
+                                   ) -> Callable[..., Any]:
+      @util.wraps(fn_to_decorate)
+      def _wrapped_fn_with_context(*args, **kwargs):
+        with set_xla_metadata(**xla_metadata):
+          return fn_to_decorate(*args, **kwargs)
+      return _wrapped_fn_with_context
+    return _context_manager_decorator
