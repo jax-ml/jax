@@ -154,7 +154,8 @@ class SingleRowVRegBounds : public VRegDataBounds {
     }
     const Value start = getI32VregConstant(start_offset_ / layout_.packing());
     const Value end = getI32VregConstant(stop_offset_ / layout_.packing());
-    const Value iota = builder.create<tpu::IotaOp>(loc, i32_vreg, nullptr);
+    const Value iota =
+        builder.create<tpu::IotaOp>(loc, i32_vreg, ArrayRef<int32_t>{0, 1});
     return cast<TypedValue<VectorType>>(
         builder
             .create<arith::AndIOp>(
