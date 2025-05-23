@@ -989,6 +989,22 @@ class ShardMapTest(jtu.JaxTestCase):
     for i in range(len(jax.devices())):
       self.assertIn(f'instance {i} has value', output())
 
+  def test_psum_transpose_non_zero_cts(self):
+    mesh = jtu.create_mesh((8,), 'x')
+    @shard_map(mesh=mesh, in_specs=P('x'), out_specs=(P('x'), P()))
+    def f1(x_block):
+      return x_block, jax.lax.psum(x_block, axis_name='x')
+
+    x1 = jnp.arange(16.)
+    f1(x1)  # doesn't crash
+
+    def f2(x_block):
+      y, _ = f1(x_block)
+      return y.sum()
+
+    jax.jit(jax.grad(f2))(x1)  # doesn't crash
+    jax.grad(f2)(x1)  # doesn't crash
+
   @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   @jtu.thread_unsafe_test()
   def test_debug_print_jit_partial_auto(self):
