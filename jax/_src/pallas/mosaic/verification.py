@@ -250,7 +250,7 @@ def _print_op(ctx, op):
     case "tpu.device_id":
       return ctx.device_id
     case "arith.constant":
-      if ir.IntegerType.isinstance(op.result.type):
+      if isinstance(op.result.type, ir.IntegerType):
         return str(ir.IntegerAttr(op.value).value)
       else:
         return
@@ -447,7 +447,7 @@ def _print_op(ctx, op):
     case "scf.for":
       carrys = [
           ctx.emit("int", ctx.get(arg))
-          if ir.IntegerType.isinstance(arg.type) else None
+          if isinstance(arg.type, ir.IntegerType) else None
           for arg in op.initArgs
       ]
       bounds = (op.lowerBound, op.upperBound, op.step)
@@ -504,7 +504,7 @@ def bin_op(ctx, result_ty, op, lhs, rhs):
 
 
 def _model_type(ty):
-  if ir.IntegerType.isinstance(ty):
+  if isinstance(ty, ir.IntegerType):
     if ir.IntegerType(ty).width == 1:
       return "bool"
     else:
@@ -576,7 +576,7 @@ def export_promela_model(
       ctx.set(arg, model)
     del prefetch_args  # We ignore prefetch_args
     for arg in other_args:
-      if ir.MemRefType.isinstance(arg.type):
+      if isinstance(arg.type, ir.MemRefType):
         ty = ir.MemRefType(arg.type)
         if ty.element_type == sem_ty or ty.element_type == dma_sem_ty:
           ctx.set(arg, ctx.emit_global_semaphore_ref(ty.shape))

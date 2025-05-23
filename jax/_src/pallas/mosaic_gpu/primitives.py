@@ -82,7 +82,7 @@ def _load_abstract_eval(src, *avals_flat, args_tree, layout, optimized):
 def _load_p_lowering_rule(
     ctx: lowering.LoweringRuleContext, x_ref, *leaves, args_tree, layout, optimized
 ):
-  if not isinstance(x_ref, ir.Value) or not ir.MemRefType.isinstance(x_ref.type):
+  if not isinstance(x_ref, ir.Value) or not isinstance(x_ref.type, ir.MemRefType):
     raise TypeError(f"Can only load from references (got {x_ref}).")
 
   out_aval = ctx.avals_out[0]
@@ -1512,7 +1512,7 @@ def _broadcasted_iota_lowering(
 ):
   del ctx  # Unused.
   mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
-  if ir.FloatType.isinstance(mlir_dtype):
+  if isinstance(mlir_dtype, ir.FloatType):
     i32 = ir.IntegerType.get_signless(32)
     cast = lambda x: arith_dialect.uitofp(
         mlir_dtype, arith_dialect.index_cast(i32, x)
@@ -1872,7 +1872,7 @@ def _inline_mgpu_discharge(*args, **kwargs):
 
 def _type_check_mgpu(v, ty):
   match (ty, v):
-    case (RefType(), ir.Value()) if ir.MemRefType.isinstance(v.type):
+    case (RefType(), ir.Value()) if isinstance(v.type, ir.MemRefType):
       pass
     case (GPUShapeDtypeStruct(), mgpu.FragmentedArray()):
       mlir_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)

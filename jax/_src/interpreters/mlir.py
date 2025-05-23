@@ -2629,7 +2629,7 @@ def compare_hlo(x, y, direction: str, comparison_type: str | None = None):
 def _minmax_hlo(op, cmp, x, y):
   """Min/max that compares complex values lexicographically as pairs."""
   tensor_type = ir.RankedTensorType(x.type)
-  if ir.ComplexType.isinstance(tensor_type.element_type):
+  if isinstance(tensor_type.element_type, ir.ComplexType):
     rx = hlo.real(x)
     ry = hlo.real(y)
     real_eq = compare_hlo(rx, ry, "EQ", "FLOAT")

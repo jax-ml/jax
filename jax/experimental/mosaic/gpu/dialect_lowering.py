@@ -147,7 +147,7 @@ def _fragmented_array_from_ir(
   )
   producer_layout = layouts.from_layout_attr(conversion_cast.attributes["layout"])
 
-  if ir.IntegerType.isinstance(conversion_cast.outputs[0].type.element_type):
+  if isinstance(conversion_cast.outputs[0].type.element_type, ir.IntegerType):
     is_signed = False if is_signed is None else is_signed
 
   return fa.FragmentedArray(
@@ -223,7 +223,7 @@ def _optimization_barrier_op_lowering_rule(
     _: LoweringContext,
     op: OptimizationBarrierOp,
 ) -> Sequence[ir.Value]:
-  if not all(ir.VectorType.isinstance(operand.type) for operand in op.operands):
+  if not all(isinstance(operand.type, ir.VectorType) for operand in op.operands):
     raise NotImplementedError(
         f"Optimization barrier op {op} has non-vector operands."
     )
@@ -231,7 +231,7 @@ def _optimization_barrier_op_lowering_rule(
   fragmented_arrays = []
   for operand, layout in safe_zip(op.operands, inference_utils.in_layouts(op)):
     ty = ir.VectorType(operand.type)
-    is_signed = False if ir.IntegerType.isinstance(ty.element_type) else None
+    is_signed = False if isinstance(ty.element_type, ir.IntegerType) else None
     fragmented_arrays.append(
         _fragmented_array_from_ir(operand, layout, is_signed=is_signed)
     )
@@ -250,7 +250,7 @@ def _optimization_barrier_op_lowering_rule(
 def _arith_constant_op_lowering_rule(
     _: LoweringContext, op: arith.ConstantOp
 ) -> Sequence[ir.Value]:
-  if not ir.DenseElementsAttr.isinstance(op.value):
+  if not isinstance(op.value, ir.DenseElementsAttr):
     raise NotImplementedError(f"Unsupported constant op: {op}")
 
   value = ir.DenseElementsAttr(op.value)
@@ -258,7 +258,7 @@ def _arith_constant_op_lowering_rule(
     raise NotImplementedError(f"Unsupported constant op: {op}")
 
   ty = ir.VectorType(op.result.type)
-  is_signed = False if ir.IntegerType.isinstance(ty.element_type) else None
+  is_signed = False if isinstance(ty.element_type, ir.IntegerType) else None
 
   return [
       _fragmented_array_to_ir(
@@ -348,7 +348,7 @@ def _vector_load_op_lowering_rule(
       )
 
   element_type = vector_load_op.result.type.element_type
-  is_signed = False if ir.IntegerType.isinstance(element_type) else None
+  is_signed = False if isinstance(element_type, ir.IntegerType) else None
 
   if layouts.is_strided_fragmented_layout(out_layout_attr):
     strided_layout = layouts.from_strided_fragmented_layout_attr(
@@ -430,7 +430,7 @@ def _vector_splat_op_lowering_rule(
 
   out_vec_ty = ir.VectorType(vector_splat_op.aggregate.type)
   is_signed = (
-      False if ir.IntegerType.isinstance(out_vec_ty.element_type) else None
+      False if isinstance(out_vec_ty.element_type, ir.IntegerType) else None
   )
   fragmented_array = fa.FragmentedArray.splat(
       vector_splat_op.input,
@@ -449,7 +449,7 @@ def _vector_shape_cast_op_lowering_rule(
   out_vec_ty = ir.VectorType(op.result.type)
   assert out_vec_ty.has_static_shape
   is_signed = (
-      False if ir.IntegerType.isinstance(out_vec_ty.element_type) else None
+      False if isinstance(out_vec_ty.element_type, ir.IntegerType) else None
   )
   a = _fragmented_array_from_ir(op.source, layout, is_signed)
   return [_fragmented_array_to_ir(a.reshape(out_vec_ty.shape), out_vec_ty)]
@@ -463,7 +463,7 @@ def _vector_reduction_op_lowering_rule(
   [layout] = inference_utils.in_layouts(op)
   () = inference_utils.out_layouts(op)
   element_type = ir.VectorType(op.vector.type).element_type
-  is_signed = False if ir.IntegerType.isinstance(element_type) else None
+  is_signed = False if isinstance(element_type, ir.IntegerType) else None
   a = _fragmented_array_from_ir(op.vector, layout, is_signed)
   match str(op.kind):
     case "#vector.kind<add>":
@@ -505,7 +505,7 @@ def _vector_multi_dim_reduction_op_lowering_rule(
 
   element_type = ir.VectorType(op.source.type).element_type
 
-  is_signed = False if ir.IntegerType.isinstance(element_type) else None
+  is_signed = False if isinstance(element_type, ir.IntegerType) else None
   source_fa = _fragmented_array_from_ir(op.source, in_layout, is_signed)
   acc_fa = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
   match vector.CombiningKind[
@@ -584,15 +584,15 @@ def swizzle_and_transforms_from_transforms_attr(
   for transform in transforms:
     if swizzle is not None:
       raise ValueError(f"{transforms} contain more transforms after swizzle.")
-    if mgpu.SwizzleTransformAttr.isinstance(transform):
+    if isinstance(transform, mgpu.SwizzleTransformAttr):
       # TODO(dasenov): Swizzling can change if the ref is sliced in certain
       # ways. We might want to enforce some restrictions here.
       swizzle = mgpu.SwizzleTransformAttr(transform).swizzle
-    elif mgpu.TileTransformAttr.isinstance(transform):
+    elif isinstance(transform, mgpu.TileTransformAttr):
       tiling = mgpu.TileTransformAttr(transform).tiling
       tiling_transform = launch_context.TileTransform(tuple(tiling))
       gmem_transforms.append(tiling_transform)
-    elif mgpu.TransposeTransformAttr.isinstance(transform):
+    elif isinstance(transform, mgpu.TransposeTransformAttr):
       permutation = mgpu.TransposeTransformAttr(transform).permutation
       transpose_transform = launch_context.TransposeTransform(
           tuple(permutation)
@@ -936,7 +936,7 @@ def _bitcast_op_lowering_rule(
   out = in_.bitcast(
       out_element_type,
       output_is_signed=False
-      if ir.IntegerType.isinstance(out_element_type)
+      if isinstance(out_element_type, ir.IntegerType)
       else None,
   )
   return [_fragmented_array_to_ir(out, op.result.type)]
@@ -964,7 +964,7 @@ def _mgpu_wgmma_op_lowering_rule(
   regs = acc_in.to_layout(fa.WGMMA_LAYOUT)
   acc = wgmma.WGMMAAccumulator.from_registers(regs)
 
-  if ir.VectorType.isinstance(wgmma_op.a.type):
+  if isinstance(wgmma_op.a.type, ir.VectorType):
     a_transforms = None
     b_transforms = inference_utils.in_transforms(wgmma_op)[0]
   else:
@@ -980,7 +980,7 @@ def _mgpu_wgmma_op_lowering_rule(
   )
   b_operand = reinterpret_smem_ref(wgmma_op.b, b_transforms)
 
-  if ir.VectorType.isinstance(wgmma_op.a.type):
+  if isinstance(wgmma_op.a.type, ir.VectorType):
     a_operand = _fragmented_array_from_ir(wgmma_op.a, wgmma_layout)
   else:
     a_swizzle, a_transforms = swizzle_and_transforms_from_transforms_attr(
@@ -1085,7 +1085,7 @@ def _flatten_ir_values(
   result = []
   templates = []
   for v in values:
-    if ir.VectorType.isinstance(v.type):
+    if isinstance(v.type, ir.VectorType):
       fa = _fragmented_array_from_ir(v, next(fa_layouts_it))
       result.extend(fa.registers.flat)
       templates.append((fa.registers.shape, fa.layout, ir.VectorType(v.type)))
@@ -1114,7 +1114,7 @@ def _unflatten_ir_values(
         _registers=value_registers.reshape(registers_shape),
         _layout=layout,
         _is_signed=False
-        if ir.IntegerType.isinstance(vec_type.element_type)
+        if isinstance(vec_type.element_type, ir.IntegerType)
         else None,
     )
     result.append(_fragmented_array_to_ir(value, vec_type))
@@ -1269,7 +1269,7 @@ def _infer_flat_result_types(
   result_types: list[ir.Type] = []
   out_layouts_it = iter(out_layouts)
   for r in op.results:
-    if not ir.VectorType.isinstance(r.type):
+    if not isinstance(r.type, ir.VectorType):
       result_types.append(r.type)
       continue
     vec_type = ir.VectorType(r.type)

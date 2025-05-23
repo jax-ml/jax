@@ -142,7 +142,7 @@ def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
 @partial(_add_transform_inference_rule, mgpu.WGMMAOp)
 def infer_wgmma_transforms(op: mgpu.WGMMAOp) -> OptionalTransforms:
   b_transforms = infer_transforms_for_wgmma_ref(ir.MemRefType(op.b.type))
-  if ir.MemRefType.isinstance(op.a.type):
+  if isinstance(op.a.type, ir.MemRefType):
     a_transforms = infer_transforms_for_wgmma_ref(
         cast(ir.MemRefType, op.a.type)
     )
@@ -272,8 +272,8 @@ def _get_tile_and_swizzle_transforms(
   if len(transforms) == 2:
     tile_transform, swizzle_transform = transforms
     if not (
-        mgpu.TileTransformAttr.isinstance(tile_transform)
-        and mgpu.SwizzleTransformAttr.isinstance(swizzle_transform)
+        isinstance(tile_transform, mgpu.TileTransformAttr)
+        and isinstance(swizzle_transform, mgpu.SwizzleTransformAttr)
     ):
       raise NotImplementedError(f"Unsupported transforms {transforms}.")
     return tile_transform, swizzle_transform

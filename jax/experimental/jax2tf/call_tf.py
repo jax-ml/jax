@@ -471,7 +471,7 @@ call_tf_p.def_effectful_abstract_eval(_call_tf_abstract_eval)
 def _mlir_type_to_numpy_dtype(type: ir.Type) -> np.dtype:
   """Converts an MLIR scalar type to a NumPy dtype."""
 
-  if ir.IntegerType.isinstance(type):
+  if isinstance(type, ir.IntegerType):
     type = ir.IntegerType(type)
     width = type.width
     if width == 1:
@@ -487,20 +487,20 @@ def _mlir_type_to_numpy_dtype(type: ir.Type) -> np.dtype:
     else:
       raise ValueError(f"Unsupported integer width: {width}")
 
-  elif ir.F16Type.isinstance(type):
+  elif isinstance(type, ir.F16Type):
     return np.dtype(np.float16)
-  elif ir.F32Type.isinstance(type):
+  elif isinstance(type, ir.F32Type):
     return np.dtype(np.float32)
-  elif ir.F64Type.isinstance(type):
+  elif isinstance(type, ir.F64Type):
     return np.dtype(np.float64)
-  elif ir.BF16Type.isinstance(type):
+  elif isinstance(type, ir.BF16Type):
     return np.dtype(ml_dtypes.bfloat16)
 
-  elif ir.ComplexType.isinstance(type):
+  elif isinstance(type, ir.ComplexType):
     element_type = ir.ComplexType(type).element_type
-    if ir.F32Type.isinstance(element_type):
+    if isinstance(element_type, ir.F32Type):
       return np.dtype(np.complex64)
-    elif ir.F64Type.isinstance(element_type):
+    elif isinstance(element_type, ir.F64Type):
       return np.dtype(np.complex128)
     else:
       raise ValueError(f"Unsupported complex element type: {element_type}")

@@ -118,28 +118,28 @@ def get_contiguous_strides(xs):
 
 
 def c(val: int | float, ty):
-  if ir.IntegerType.isinstance(ty) or ir.IndexType.isinstance(ty):
+  if isinstance(ty, (ir.IntegerType, ir.IndexType)):
     if not isinstance(val, (int, np.integer)):
       raise TypeError(type(val))
     attr = ir.IntegerAttr.get(ty, val)
-  elif ir.FloatType.isinstance(ty):
+  elif isinstance(ty, ir.FloatType):
     attr = ir.FloatAttr.get(ty, val)
-  elif ir.VectorType.isinstance(ty):
+  elif isinstance(ty, ir.VectorType):
     return vector.splat(ty, c(val, ir.VectorType(ty).element_type))
   else:
     raise NotImplementedError(ty)
   return arith.constant(ty, attr)
 
 def _debug_scalar_ty_format(arg):
-  if ir.IndexType.isinstance(arg.type):
+  if isinstance(arg.type, ir.IndexType):
     return "%llu", arg
-  if ir.IntegerType.isinstance(arg.type):
+  if isinstance(arg.type, ir.IntegerType):
     if ir.IntegerType(arg.type).width < 64:
       arg = arith.extui(ir.IntegerType.get_signless(64), arg)
     return "%llu", arg
-  if ir.F32Type.isinstance(arg.type):
+  if isinstance(arg.type, ir.F32Type):
     return "%f", arg
-  if ir.BF16Type.isinstance(arg.type) or ir.F16Type.isinstance(arg.type):
+  if isinstance(arg.type, (ir.BF16Type, ir.F16Type)):
     arg = arith.extf(ir.F32Type.get(), arg)
     return "%f", arg
   raise NotImplementedError(f"Can't print the type {arg.type}")
@@ -152,7 +152,7 @@ def debug_print(fmt, *args, uniform=True, scope=None):
   type_formats = []
   new_args = []
   for arg in args:
-    if ir.VectorType.isinstance(arg.type):
+    if isinstance(arg.type, ir.VectorType):
       index = ir.IndexType.get()
       vec_ty = ir.VectorType(arg.type)
       if len(vec_ty.shape) > 1:
@@ -362,15 +362,15 @@ def bitwidth_impl(ty: ir.Type):
   # 32 bits for compatibility reasons. TF32 used to be 32 bits wide in upstream
   # MLIR, but it changed in
   # https://github.com/llvm/llvm-project/commit/67a1fdb014790a38a205d28e1748634de34471dd.
-  if ir.FloatTF32Type.isinstance(ty):
+  if isinstance(ty, ir.FloatTF32Type):
     return 32
-  if ir.IntegerType.isinstance(ty):
+  if isinstance(ty, ir.IntegerType):
     return ir.IntegerType(ty).width
-  if ir.FloatType.isinstance(ty):
+  if isinstance(ty, ir.FloatType):
     return ir.FloatType(ty).width
   if dialect is not None and ty == ir.Type.parse("!mosaic_gpu.barrier"):
     return MBARRIER_BYTES * 8
-  if ir.VectorType.isinstance(ty):
+  if isinstance(ty, ir.VectorType):
     vty = ir.VectorType(ty)
     return math.prod(vty.shape) * bitwidth(vty.element_type)
   raise NotImplementedError(ty)
@@ -433,7 +433,7 @@ def _is_contiguous_shape_slice(
     ref_ty: ir.MemRefType, dim_slice: slice | None = slice(None)
 ):
   # If it's not a strided layout then we are definitely contiguous.
-  if not ir.StridedLayoutAttr.isinstance(ref_ty.layout):
+  if not isinstance(ref_ty.layout, ir.StridedLayoutAttr):
     return True
 
   strides = ir.StridedLayoutAttr(ref_ty.layout).strides[dim_slice]
@@ -713,7 +713,7 @@ def parse_indices(
       slice_shape.append(idx.length)
       is_squeezed.append(False)
     elif isinstance(idx, ir.Value):
-      if not ir.IndexType.isinstance(idx.type):
+      if not isinstance(idx.type, ir.IndexType):
         raise ValueError("Expected an index-typed index")
       base_indices.append(idx)
       slice_shape.append(1)
@@ -779,7 +779,7 @@ class BarrierRef:
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(offset, int):
       offset = c(offset, i32)
-    elif ir.IndexType.isinstance(offset.type):
+    elif isinstance(offset.type, ir.IndexType):
       offset = arith.index_castui(i32, offset)
     elif offset.type != i32:
       raise ValueError(f"Expected a dynamic index or an integer, got {offset}")
@@ -825,7 +825,7 @@ class BarrierRef:
   ):
     if isinstance(bytes, int):
       bytes = c(bytes, ir.IntegerType.get_signless(32))
-    elif ir.IndexType.isinstance(bytes.type):
+    elif isinstance(bytes.type, ir.IndexType):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
     nvvm.mbarrier_arrive_expect_tx_shared(self.get_ptr(), bytes, predicate=predicate)
@@ -1338,7 +1338,7 @@ def bitcast(x: ir.Value, new_type: ir.Type):
         f"Can't bitcast {x.type} (of bitwidth {x_bw}) to {new_type} (of"
         f" bitwidth {new_bw})"
     )
-  if ir.VectorType.isinstance(x.type) and ir.IntegerType.isinstance(new_type):
+  if isinstance(x.type, ir.VectorType) and isinstance(new_type, ir.IntegerType):
     new_type = ir.IntegerType(new_type)
     x_ty = ir.VectorType(x.type)
     assert new_type.width == bitwidth(x_ty.element_type) * math.prod(x_ty.shape)
@@ -1346,22 +1346,22 @@ def bitcast(x: ir.Value, new_type: ir.Type):
     return vector.extractelement(
         vector.bitcast(ir.VectorType.get((1,), new_type), x), position=i0
     )
-  if ir.IntegerType.isinstance(x.type) and ir.VectorType.isinstance(new_type):
+  if isinstance(x.type, ir.IntegerType) and isinstance(new_type, ir.VectorType):
     new_type = ir.VectorType(new_type)
     x_ty = ir.IntegerType(x.type)
     assert x_ty.width == bitwidth(new_type.element_type) * math.prod(new_type.shape)
     return vector.bitcast(new_type, vector.splat(ir.VectorType.get((1,), x_ty), x))
-  if ir.VectorType.isinstance(x.type) and ir.VectorType.isinstance(new_type):
+  if isinstance(x.type, ir.VectorType) and isinstance(new_type, ir.VectorType):
     x_ty = ir.VectorType(x.type)
     new_ty = ir.VectorType(new_type)
     if bitwidth(x_ty) != bitwidth(new_ty):
       raise ValueError(f"Can't bitcast {x.type} to {new_type}")
     return vector.bitcast(new_type, x)
-  if ir.IntegerType.isinstance(x.type) and ir.FloatType.isinstance(new_type):
+  if isinstance(x.type, ir.IntegerType) and isinstance(new_type, ir.FloatType):
     return arith.bitcast(new_type, x)
-  if ir.FloatType.isinstance(x.type) and ir.IntegerType.isinstance(new_type):
+  if isinstance(x.type, ir.FloatType) and isinstance(new_type, ir.IntegerType):
     return arith.bitcast(new_type, x)
-  if ir.FloatType.isinstance(x.type) and ir.FloatType.isinstance(new_type):
+  if isinstance(x.type, ir.FloatType) and isinstance(new_type, ir.FloatType):
     return arith.bitcast(new_type, x)
   raise ValueError(f"Can't bitcast {x.type} to {new_type}")
 
@@ -1387,7 +1387,7 @@ def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
   if not vectors:
     raise ValueError("Cannot concatenate an empty list of vectors")
   vty = vectors[0].type
-  if not ir.VectorType.isinstance(vty):
+  if not isinstance(vty, ir.VectorType):
     raise ValueError("Cannot concatenate non-vector values")
   if vty.rank != 1:
     raise NotImplementedError("Only 1D vectors are supported")

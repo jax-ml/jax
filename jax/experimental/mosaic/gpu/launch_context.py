@@ -483,16 +483,16 @@ class LaunchContext:
               tma_dtype = 4
             else:
               raise ValueError(f"Unsupported integer bitwidth: {bitwidth}")
-          elif ir.F16Type.isinstance(ref_ty.element_type):
+          elif isinstance(ref_ty.element_type, ir.F16Type):
             tma_dtype = 5
-          elif ir.F32Type.isinstance(ref_ty.element_type):
+          elif isinstance(ref_ty.element_type, ir.F32Type):
             tma_dtype = 6
-          elif ir.BF16Type.isinstance(ref_ty.element_type):
+          elif isinstance(ref_ty.element_type, ir.BF16Type):
             tma_dtype = 7
           # We treat 8 bit floats as 8 bit integers
-          elif ir.Float8E5M2Type.isinstance(ref_ty.element_type):
+          elif isinstance(ref_ty.element_type, ir.Float8E5M2Type):
             tma_dtype = 1
-          elif ir.Float8E4M3FNType.isinstance(ref_ty.element_type):
+          elif isinstance(ref_ty.element_type, ir.Float8E4M3FNType):
             tma_dtype = 1
           else:
             raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")
@@ -616,9 +616,8 @@ class LaunchContext:
       )
 
     if reduction_op is not None:
-      if not any(
-          t.isinstance(gmem_ref_ty.element_type)
-          for t in (ir.F32Type, ir.BF16Type, ir.F16Type)
+      if not isinstance(
+          gmem_ref_ty.element_type, (ir.F32Type, ir.BF16Type, ir.F16Type)
       ):
         raise ValueError(
             "TMA with reduction is only supported with f32, f16 and bf16"
@@ -892,7 +891,7 @@ class LaunchContext:
 
   def to_remote(self, ref: ir.Value, peer: ir.Value):
     self._ensure_nvshmem_decls()
-    if ir.MemRefType.isinstance(ref.type):
+    if isinstance(ref.type, ir.MemRefType):
       # We replace the offset in the ref type by 0, because memref_ptr always
       # folds the offset into the pointer.
       ref_ty = ir.MemRefType(ref.type)

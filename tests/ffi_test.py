@@ -109,7 +109,7 @@ class FfiTest(jtu.JaxTestCase):
     with mlir.make_ir_context(), mlir.ir.Location.unknown():
       expected = expected_builder(param)
     self.assertEqual(type(config["param"]), type(expected))
-    self.assertTrue(expected.type.isinstance(config["param"].type))
+    self.assertEqual(str(config["param"].type), str(expected.type))
 
   def test_token(self):
     def fun():

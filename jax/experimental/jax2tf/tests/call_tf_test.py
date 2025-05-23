@@ -1755,8 +1755,8 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
           # Verify that the first argument/result of the custom call op is a token
           # type. This is a calling convention defined by `has_token_input_output`.
-          self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
-          self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
+          self.assertTrue(isinstance(op.operands[0].type, hlo.TokenType))
+          self.assertTrue(isinstance(op.results[0].type, hlo.TokenType))
 
       stablehlo_module = None
       with self.assertRaisesRegex(

@@ -143,7 +143,7 @@ def mma(
   num_cta = 2 if collective else 1
 
   # Step 1. Establish the shape and element type of the operation.
-  if not ir.MemRefType.isinstance(b.type):
+  if not isinstance(b.type, ir.MemRefType):
     raise ValueError(f"B must be a memref, got: {b.type}")
   (k, n), element_type = mma_utils.tiled_memref_shape(b)
   if isinstance(a, TMEMRef):
@@ -156,7 +156,7 @@ def mma(
           f"A layout mismatch: expected {expected_layout}, got {a.layout}"
       )
   else:
-    if not ir.MemRefType.isinstance(a.type):
+    if not isinstance(a.type, ir.MemRefType):
       raise ValueError(f"A must be a memref, got {a.type}")
     (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)
   if k != k2:
@@ -186,7 +186,7 @@ def mma(
           f" of type f32, but got: {d.dtype}"
       )
   elif any(
-      t.isinstance(element_type)
+      isinstance(element_type, t)
       for t in {ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3FNType}
   ):
     if d.dtype != f16 and d.dtype != f32:
@@ -309,11 +309,11 @@ def _do_mma(
   if (a_k_stride is not None and a_k_stride % 16) or b_k_stride % 16:
     raise ValueError
 
-  if ir.F16Type.isinstance(element_type) or ir.BF16Type.isinstance(element_type):
+  if isinstance(element_type, (ir.F16Type, ir.BF16Type)):
     kind = "f16"
-  elif ir.Float8E5M2Type.isinstance(element_type):
+  elif isinstance(element_type, ir.Float8E5M2Type):
     kind = "f8f6f4"
-  elif ir.Float8E4M3FNType.isinstance(element_type):
+  elif isinstance(element_type, ir.Float8E4M3FNType):
     kind = "f8f6f4"
   else:
     raise NotImplementedError(f"Unsupported input element type: {element_type}")
@@ -392,7 +392,7 @@ def _alloc_ncols(ncols: int, exact: bool):
 
 
 def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True):
-  if ir.MemRefType.isinstance(tmem_addr.type):
+  if isinstance(tmem_addr.type, ir.MemRefType):
     ref_ty = ir.MemRefType(tmem_addr.type)
     if ref_ty.element_type != ir.IntegerType.get_signless(32):
       raise ValueError(f"tmem_addr must be an i32 memref, got: {ref_ty}")
@@ -607,7 +607,7 @@ class TMEMRef:
       layout: TMEMLayout | None = None,
   ):
     i32 = ir.IntegerType.get_signless(32)
-    if not ir.MemRefType.isinstance(tmem_addr_ref.type):
+    if not isinstance(tmem_addr_ref.type, ir.MemRefType):
       raise ValueError(f"tmem_addr_ref must be a memref or a pointer, got: {tmem_addr_ref.type}")
     addr_ref_ty = ir.MemRefType(tmem_addr_ref.type)
     smem = ir.Attribute.parse("#gpu.address_space<workgroup>")

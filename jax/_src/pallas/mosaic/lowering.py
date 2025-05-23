@@ -2034,7 +2034,7 @@ def _dot_general_lowering_rule(
   )
   val_type = out_type.element_type
   if any(
-      cls.isinstance(val_type)
+      isinstance(val_type, cls)
       for cls in [
           ir.BF16Type,
           ir.F32Type,
@@ -2044,7 +2044,7 @@ def _dot_general_lowering_rule(
       ]
   ):
     val = ir.FloatAttr.get(val_type, 0.0)
-  elif ir.IntegerType.isinstance(val_type):
+  elif isinstance(val_type, ir.IntegerType):
     val = ir.IntegerAttr.get(val_type, 0)
   else:
     raise NotImplementedError(ctx.avals_out[0].dtype)
@@ -2453,9 +2453,9 @@ def _fold_and_get_constant_value(x):
         "arith.minsi": min,
     }
     if op_name == "arith.constant":
-      if ir.IntegerType.isinstance(x.type):
+      if isinstance(x.type, ir.IntegerType):
         return ir.IntegerAttr(x.owner.attributes["value"]).value
-      elif ir.FloatType.isinstance(x.type):
+      elif isinstance(x.type, ir.FloatType):
         return ir.FloatAttr(x.owner.attributes["value"]).value
       else:
         raise ValueError(f"Unsupported constant type: {x.type}")

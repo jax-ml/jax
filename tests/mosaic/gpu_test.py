@@ -772,16 +772,16 @@ class WGMMATest(TestCase):
     out_mlir_dtype = utils.dtype_to_ir_type(jax_out_dtype)
     if (lhs_transpose or not rhs_transpose) and bytewidth(in_mlir_dtype) != 2:
       self.skipTest("Transpose only supported in 16-bit WGMMA")
-    if ir.F32Type.isinstance(in_mlir_dtype):  # We actually use tf32 instead
+    if isinstance(in_mlir_dtype, ir.F32Type):  # We actually use tf32 instead
       in_jax_dtype = jnp.float32
       exponent_bits, mantissa_bits = 8, 10  # Use tf32
     elif bytewidth(in_mlir_dtype) == 2:
       if n % 64 != 0:
         self.skipTest("16-bit WGMMA only supports n % 64 == 0")
-      if ir.F16Type.isinstance(in_mlir_dtype):
+      if isinstance(in_mlir_dtype, ir.F16Type):
         in_jax_dtype = jnp.float16
         exponent_bits, mantissa_bits = 5, 10
-      elif ir.BF16Type.isinstance(in_mlir_dtype):
+      elif isinstance(in_mlir_dtype, ir.BF16Type):
         in_jax_dtype = jnp.bfloat16
         exponent_bits, mantissa_bits = 8, 7
       else:
@@ -834,7 +834,7 @@ class WGMMATest(TestCase):
       )
       for i in range(2):
         barriers[i].wait()
-      is_signed = True if ir.IntegerType.isinstance(in_mlir_dtype) else None
+      is_signed = True if isinstance(in_mlir_dtype, ir.IntegerType) else None
       init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n, dtype=out_mlir_dtype, is_signed=is_signed)
       if lhs_transpose:
         perm = (0, 1, 3, 2) if transpose_lhs_tiles else (1, 0, 3, 2)
@@ -881,7 +881,7 @@ class WGMMATest(TestCase):
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     ref = (x32.T if lhs_transpose else x32) @ (y32.T if rhs_transpose else y32)
     atol = 2e-2 if jax_out_dtype == jnp.float16 else 5e-6
-    if ir.IntegerType.isinstance(in_mlir_dtype) and ir.IntegerType.isinstance(out_mlir_dtype):
+    if isinstance(in_mlir_dtype, ir.IntegerType) and isinstance(out_mlir_dtype, ir.IntegerType):
       atol = 0
     elif utils.bitwidth(in_mlir_dtype) == 8:
       atol = 3e-2
