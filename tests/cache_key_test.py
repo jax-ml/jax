@@ -181,7 +181,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     _cp_add.def_partition(
       infer_sharding_from_operands=_infer_sharding_from_operands,
       partition=_partition,
-      sharding_rule='i i -> i')
+      sharding_rule='..., ... -> ...')
 
     devices = np.asarray(jax.devices())
     with Mesh(devices, ('x',)) as m:
