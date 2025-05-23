@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import functools
+import operator
 from typing import Any, Callable, NamedTuple
 
 from absl.testing import absltest
@@ -515,6 +516,22 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.zeros_like, Float[5]),
 ]
 
+BINARY_OPERATORS = [
+  NumPyAPI.sig(operator.add, Float[5], Float[5]),
+  NumPyAPI.sig(operator.sub, Float[5], Float[5]),
+  NumPyAPI.sig(operator.mul, Float[5], Float[5]),
+  NumPyAPI.sig(operator.truediv, Float[5], Float[5]),
+  NumPyAPI.sig(operator.floordiv, Float[5], Float[5]),
+  NumPyAPI.sig(operator.mod, Float[5], Float[5]),
+  NumPyAPI.sig(operator.pow, Float[5], Float[5]),
+  NumPyAPI.sig(operator.matmul, Float[5], Float[5]),
+  NumPyAPI.sig(operator.and_, Int[5], Int[5]),
+  NumPyAPI.sig(operator.or_, Int[5], Int[5]),
+  NumPyAPI.sig(operator.xor, Int[5], Int[5]),
+  NumPyAPI.sig(operator.lshift, Int[5], Int[5]),
+  NumPyAPI.sig(operator.rshift, Int[5], Int[5]),
+]
+
 
 class JaxArrayTests(jtu.JaxTestCase):
   @parameterized.named_parameters(
@@ -531,6 +548,20 @@ class JaxArrayTests(jtu.JaxTestCase):
     wrapped = fun(*wrapped_args, **kwargs)
 
     self.assertAllClose(wrapped, expected, atol=0, rtol=0)
+
+  @parameterized.named_parameters(
+      {'testcase_name': api.name(), 'api': api} for api in BINARY_OPERATORS)
+  def test_binary_operator_supports_jax_array(self, api):
+    if api.skip_on_devices and jtu.test_device_matches(api.skip_on_devices):
+      self.skipTest(f'{api.name()} not supported on {api.skip_on_devices}')
+    lhs, rhs = map(jnp.asarray, api.make_args(self.rng()))
+
+    expected = api.fun(lhs, rhs)
+    result_left = api.fun(JaxArrayWrapper(lhs), rhs)
+    result_right = api.fun(lhs, JaxArrayWrapper(rhs))
+
+    self.assertAllClose(result_left, expected, atol=0, rtol=0)
+    self.assertAllClose(result_right, expected, atol=0, rtol=0)
 
   @parameterized.named_parameters(
     {'testcase_name': func.__name__, 'func': func}

@@ -573,13 +573,15 @@ def _notimplemented_flat(self):
 _accepted_binop_types = (int, float, complex, np.generic, np.ndarray, Array)
 _rejected_binop_types = (list, tuple, set, dict)
 
-def _defer_to_unrecognized_arg(opchar, binary_op, swap=False):
+def _defer_to_unrecognized_arg(
+    opchar: str,
+    binary_op: Callable[[ArrayLike, ArrayLike], Array],
+    swap: bool = False
+) -> Callable[[Array, ArrayLike], Array]:
   # Ensure that other array types have the chance to override arithmetic.
   def deferring_binary_op(self, other):
-    if hasattr(other, '__jax_array__'):
-      other = other.__jax_array__()
     args = (other, self) if swap else (self, other)
-    if isinstance(other, _accepted_binop_types):
+    if hasattr(other, "__jax_array__") or isinstance(other, _accepted_binop_types):
       return binary_op(*args)
     # Note: don't use isinstance here, because we don't want to raise for
     # subclasses, e.g. NamedTuple objects that may override operators.
@@ -589,7 +591,7 @@ def _defer_to_unrecognized_arg(opchar, binary_op, swap=False):
     return NotImplemented
   return deferring_binary_op
 
-def _unimplemented_setitem(self, i, x):
+def _unimplemented_setitem(self, i: Any, x: ArrayLike):
   msg = ("JAX arrays are immutable and do not support in-place item assignment."
          " Instead of x[idx] = y, use x = x.at[idx].set(y) or another .at[] method:"
          " https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html")
