@@ -1878,6 +1878,32 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
         },
     )
 
+  def test_copy_gmem_to_smem_from_different_warps(self):
+    # In this test, we issue a copy from from warp 0 and await it in warp 1.
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(plgpu.kernel,
+                       out_shape=jax.ShapeDtypeStruct((32, 32), jnp.float32))
+    def kernel(x_ref, y_ref):
+      def scope(smem_ref, tma_barrier):
+        @pl.core_map(warp_mesh)
+        def _():
+          warp_id = lax.axis_index("warp")
+          @pl.when(warp_id == 0)
+          def _():
+            plgpu.copy_gmem_to_smem(x_ref.at[32:64], smem_ref, tma_barrier)
+
+          @pl.when(warp_id == 1)
+          def _():
+            plgpu.barrier_wait(tma_barrier)
+            plgpu.copy_smem_to_gmem(smem_ref, y_ref)
+        plgpu.wait_smem_to_gmem(0)
+      pl.run_scoped(scope,
+                    smem_ref=plgpu.SMEM((32, 32), jnp.float32),
+                    tma_barrier=plgpu.Barrier(num_arrivals=1))
+    x = jax.random.uniform(jax.random.key(42), (64, 32), jnp.float32)
+    result = kernel(x)
+    np.testing.assert_array_equal(result, x[32:64])
+
 
 class PallasCallWGTest(
     PallasCallTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup

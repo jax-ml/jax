@@ -49,6 +49,7 @@ from jax.experimental.mosaic.gpu import tcgen05
 import jax.numpy as jnp
 
 
+WARP_SIZE = 32
 WARPGROUP_SIZE = 128
 
 
@@ -464,7 +465,7 @@ def _copy_gmem_to_smem_lowering(
     dst_transforms_treedef,
     barrier_transforms_treedef,
     collective_axes,
-    warpgroup_sync: bool = True,
+    for_warpgroup: bool = True,
 ):
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
@@ -505,15 +506,23 @@ def _copy_gmem_to_smem_lowering(
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if bytes % WARPGROUP_SIZE:
       raise NotImplementedError("Only aligned copies are supported")
-    # We arrive uniformly from each thread in the WG, so we need to divide the
-    # number of bytes by the number of threads in the WG.
-    # TODO: apaszke - Relax this. We can just select the WG leader and have it
-    # arrive with the whole transfer size, while everyone else arrives with 0.
-    # But we should continue using this scheme as it's likely to be faster.
-    bytes //= WARPGROUP_SIZE
-    if warpgroup_sync:
+    if for_warpgroup:
+      # We arrive uniformly from each thread in the WG, so we need to divide the
+      # number of bytes by the number of threads in the WG.
+      # TODO: apaszke - Relax this. We can just select the WG leader and have it
+      # arrive with the whole transfer size, while everyone else arrives with 0.
+      # But we should continue using this scheme as it's likely to be faster.
+      bytes //= WARPGROUP_SIZE
       mgpu.warpgroup_barrier()  # Make sure all reads have completed.
-    barrier.arrive_expect_tx(bytes)
+      barrier.arrive_expect_tx(bytes)
+    else:
+      # In Warp-level lowering, we arrive on each CUDA thread in a warp, but
+      # the barrier still expects a full 128 arrivals so we arrive 4 times
+      # on each CUDA thread instead.
+      bytes //= WARP_SIZE
+      barrier.arrive(arrival_count=3, can_complete=False)
+      barrier.arrive_expect_tx(bytes)
+
     ctx.launch_ctx.async_copy(
         src_ref=src,
         dst_ref=dst,
@@ -549,7 +558,7 @@ lowering.register_lowering_rule(
     copy_gmem_to_smem_p,
     mgpu.LoweringSemantics.Lane,
     primitive_semantics=gpu_core.PrimitiveSemantics.Warp,
-)(functools.partial(_copy_gmem_to_smem_lowering, warpgroup_sync=False))
+)(functools.partial(_copy_gmem_to_smem_lowering, for_warpgroup=False))
 
 
 def copy_gmem_to_smem(
@@ -713,6 +722,8 @@ jax_core.pp_eqn_rules[barrier_wait_p] = _barrier_wait_pp_eqn
 
 
 @lowering.register_lowering_rule(barrier_wait_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(barrier_wait_p, mgpu.LoweringSemantics.Lane,
+                                 gpu_core.PrimitiveSemantics.Warp)
 @lowering.register_lowering_rule(barrier_wait_p, mgpu.LoweringSemantics.Warpgroup)
 def _barrier_wait_lowering(
     ctx: lowering.LoweringRuleContext,

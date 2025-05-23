@@ -816,9 +816,16 @@ class BarrierRef:
     )
     return parity, arith.xori(parities, bitmask)
 
-  def arrive(self):
+  def arrive(self, arrival_count: int = 1, can_complete: bool = True):
     i64 = ir.IntegerType.get_signless(64)
-    nvvm.mbarrier_arrive_shared(i64, self.get_ptr())
+    if can_complete:
+      if arrival_count > 1:
+        count = c(arrival_count - 1, ir.IntegerType.get_signless(32))
+        nvvm.mbarrier_arrive_nocomplete_shared(i64, self.get_ptr(), count)
+      nvvm.mbarrier_arrive_shared(i64, self.get_ptr())
+    else:
+      count = c(arrival_count, ir.IntegerType.get_signless(32))
+      nvvm.mbarrier_arrive_nocomplete_shared(i64, self.get_ptr(), count)
 
   def arrive_expect_tx(
       self, bytes: int | ir.Value, predicate: ir.Value | None = None
