@@ -1466,6 +1466,19 @@ class ShardingTest(jtu.JaxTestCase):
         ValueError, "unreduced cannot contain None.*"):
       NamedSharding(mesh, P('x', unreduced=('y', None)))
 
+  def test_hlo_sharding_get_axis_sizes(self):
+    if jax._src.lib.jaxlib_extension_version < 343:
+      self.skipTest('Requires jaxlib_extension_version >= 343')
+
+    op = xc.OpSharding()
+    op.type = xc.OpSharding.Type.OTHER
+    op.tile_assignment_dimensions = [6, 35]
+    op.iota_reshape_dims = [7, 10, 3]
+    op.iota_transpose_perm = [2, 1, 0]
+    s = GSPMDSharding(jax.devices(), op)
+    self.assertIn('{devices=[6,35]<=[7,10,3]T(2,1,0)}', repr(s))
+    self.assertEqual(s._to_xla_hlo_sharding(2).get_axis_sizes(), [7, 2, 5, 3])
+
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
 class ShardyShardingTest(jtu.JaxTestCase):
