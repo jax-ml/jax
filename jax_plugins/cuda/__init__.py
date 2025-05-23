@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ctypes
 import functools
 import importlib
 import logging
 import os
 import pathlib
+import platform
 import traceback
 from typing import Any
 
@@ -221,10 +223,43 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                        f'{join_str.join(errors)}')
 
 
+def _preload_library(module_name: str, library_name: str) -> None:
+  """Preload a shared library that was installed as a Python package."""
+  library_pattern = {
+      "Linux": f"lib{library_name}.so.*[0-9]",
+      "Darwin": f"lib{library_name}.*[0-9].dylib",
+      "Windows": f"{library_name}*[0-9].dll",
+  }.get(platform.system(), None)
+  if not library_pattern:
+    return
+
+  try:
+    module = importlib.import_module(module_name)
+  except (ImportError, ModuleNotFoundError):
+    return
+  lib_dir = pathlib.Path(module.__file__).parent / "lib"
+  if not lib_dir.is_dir():
+    return
+
+  for path in lib_dir.glob(library_pattern):
+    if path.exists():
+      ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+      break
+
+
 def initialize():
   path = _get_library_path()
   if path is None:
     return
+
+  # cuSOLVER and cuSPARSE have dependencies on nvJitLink, but even when
+  # nvJitLink is installed as a pip package, the wrong nvJitLink library might
+  # be loaded when LD_LIBRARY_PATH is set. We can avoid this, by explicitly
+  # pre-loading the pip-installed version if it is available, then the libraries
+  # that are loaded after this point will reuse the linked symbols.
+  # See https://github.com/jax-ml/jax/issues/28929 for more context.
+  if not os.getenv("JAX_SKIP_CUDA_DEPENDENCY_PRELOAD"):
+    _preload_library("nvidia.nvjitlink", "nvJitLink")
 
   if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
     _check_cuda_versions(raise_on_first_error=True)
