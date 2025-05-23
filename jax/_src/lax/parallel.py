@@ -2056,13 +2056,25 @@ batching.fancy_primitive_batchers[psum_invariant_p] = partial(
 batching.skippable_batchers[psum_invariant_p] = partial(_names_in_param, 'axes')
 
 def _psum_invariant_transpose_rule(cts, *args, axes, axis_index_groups):
-  del args
-  return core.pvary_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups)
+  def f(ct, arg):
+    assert ad.is_undefined_primal(arg)
+    return ad.Zero(arg.aval) if type(ct) is ad.Zero else ct
+  cts = map(f, cts, args)
+  nonzero_out_cts, treedef = tree_util.tree_flatten(cts)
+  nonzero_in_cts = core.pvary_p.bind(*nonzero_out_cts, axes=axes,
+                                     axis_index_groups=axis_index_groups)
+  return tree_util.tree_unflatten(treedef, nonzero_in_cts)
 ad.deflinear2(psum_invariant_p, _psum_invariant_transpose_rule)
 
 ########################### pvary ##################################
 
-def _pvary_transpose_rule(cts, *_, axes, axis_index_groups):
-  return psum_invariant_p.bind(
-      *cts, axes=axes, axis_index_groups=axis_index_groups)
+def _pvary_transpose_rule(cts, *args, axes, axis_index_groups):
+  def f(ct, arg):
+    assert ad.is_undefined_primal(arg)
+    return ad.Zero(arg.aval) if type(ct) is ad.Zero else ct
+  cts = map(f, cts, args)
+  nonzero_out_cts, treedef = tree_util.tree_flatten(cts)
+  nonzero_in_cts = psum_invariant_p.bind(*nonzero_out_cts, axes=axes,
+                                         axis_index_groups=axis_index_groups)
+  return tree_util.tree_unflatten(treedef, nonzero_in_cts)
 ad.deflinear2(core.pvary_p, _pvary_transpose_rule)
