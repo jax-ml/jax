@@ -40,6 +40,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/Support/Alignment.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -448,13 +449,34 @@ FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
     RewriteContext &ctx, OpBuilder &builder, const Location loc,
     xla::Array<Value> vregs, const ArrayRef<int64_t> ishape,
     VectorLayout layout, const int64_t new_minor_offset) {
-  if (layout.bitwidth() != 32 || !layout.hasNativeTiling(ctx.target_shape)) {
+  if (!layout.hasNativeTiling(ctx.target_shape)) {
     // Note: For non-native tilings it is probably better to retile first, to
-    //       to make the most out of each lane rotate (they are expensive).
-    return emitError(loc, "Not implemented: Unsupported bitwidth or tiling");
+    //       to make the most out of each lane broadcast (they are expensive).
+    return emitError(loc, "Not implemented: Non-native tiling");
   }
+  const int bitwidth = layout.bitwidth();
+  if (bitwidth != 32 && bitwidth != 16 && bitwidth != 8) {
+    return emitError(loc, "Not implemented: Unsupported bitwidth: ")
+           << bitwidth;
+  }
+  const std::array<int64_t, 2> native_tiling = layout.tiling();
+  const VectorType vreg_ty = cast<VectorType>(vregs.begin()->getType());
+  const VectorType i32_vreg_ty =
+      getNativeVregType(builder.getI32Type(), ctx.target_shape);
+  const VectorType i8_vreg_ty =
+      getNativeVregType(builder.getI8Type(), ctx.target_shape);
+  const VectorType i8_compressed_vreg_ty = VectorType::get(
+      {4 * ctx.target_shape[0], ctx.target_shape[1]}, builder.getI8Type());
+  const VectorType i16_vreg_ty =
+      getNativeVregType(builder.getI16Type(), ctx.target_shape);
+  const VectorType i16_compressed_vreg_ty = VectorType::get(
+      {2 * ctx.target_shape[0], ctx.target_shape[1]}, builder.getI16Type());
   auto create_index_const = [&](const int64_t idx) {
     return builder.create<arith::ConstantIndexOp>(loc, idx);
+  };
+  auto create_i16_vreg_const = [&](const int64_t val) {
+    return getFullVector(builder, loc, i16_vreg_ty,
+                         builder.getIntegerAttr(builder.getI16Type(), val));
   };
   auto create_i32_vreg_const = [&](const int64_t val) {
     return I32Const(val, ctx.target_shape, builder, loc);
@@ -465,9 +487,11 @@ FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
     // relayout) and make this a precondition of this function, so that we have
     // "building block" functions with minimal overlap
     vregs.Each([&](const absl::Span<const int64_t> idxs, Value *vreg) {
+      *vreg = builder.create<tpu::BitcastVregOp>(loc, i32_vreg_ty, *vreg);
       *vreg = builder.create<tpu::DynamicGatherOp>(
           loc, vreg->getType(), *vreg,
           create_i32_vreg_const(*layout.offsets()[1]), 1);
+      *vreg = builder.create<tpu::BitcastVregOp>(loc, vreg_ty, *vreg);
     });
     layout =
         VectorLayout(layout.bitwidth(), {layout.offsets()[0], std::nullopt},
@@ -488,39 +512,36 @@ FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
   xla::Array<Value> new_vregs(new_layout.tileArrayShape(
       /*src_is_implicit=*/true, /*res_is_implicit=*/true, new_ishape,
       ctx.target_shape));
-  VectorType iota_vreg_ty =
-      getNativeVregType(builder.getI32Type(), ctx.target_shape);
   // Preallocate an indices vector to avoid repeated allocations:
   SmallVector<int64_t> old_idxs;
   new_vregs.Each([&](const absl::Span<const int64_t> new_idxs,
                      Value *new_vreg) {
     const int64_t uncorrected_shape_start =
-        ctx.target_shape[1] * new_idxs.back() - new_minor_offset;
+        native_tiling[1] * new_idxs.back() - new_minor_offset;
     // The start and end of the data contained by new_vreg in the implicit shape
     const int64_t shape_start = std::max<int64_t>(uncorrected_shape_start, 0);
-    const int64_t shape_end = std::min(
-        uncorrected_shape_start + ctx.target_shape[1], new_ishape.back());
+    const int64_t shape_end =
+        std::min(uncorrected_shape_start + native_tiling[1], new_ishape.back());
     old_idxs.assign(new_idxs.begin(), new_idxs.end());
     CHECK_EQ(*(old_idxs.end() - 2), 0);
     old_idxs.back() = 0;
     *new_vreg = nullptr;
-    VectorType vmask_ty =
-        getNativeVregOrVmaskType(builder.getI1Type(), 32, ctx.target_shape);
+    VectorType vmask_ty = getNativeVregOrVmaskType(builder.getI1Type(),
+                                                   bitwidth, ctx.target_shape);
     int64_t shape_offset = shape_start;
     // The data in the new vreg is composed of data from multiple of the old
     // vregs, so iterate over them until the new vreg is full
     while (shape_offset < shape_end) {
       // Find the vreg that contains the data at shape_offset
       *(old_idxs.end() - 2) =
-          (shape_offset + old_2nd_minor_offset) / ctx.target_shape[0];
+          (shape_offset + old_2nd_minor_offset) / native_tiling[0];
       const int64_t old_sublane_offset =
-          (shape_offset + old_2nd_minor_offset) % ctx.target_shape[0];
+          (shape_offset + old_2nd_minor_offset) % native_tiling[0];
       const int64_t new_lane_offset =
-          (shape_offset + new_minor_offset) % ctx.target_shape[1];
+          (shape_offset + new_minor_offset) % native_tiling[1];
       // We will blend in all the relevant data contained by the old vreg
-      const int64_t data_size =
-          std::min(ctx.target_shape[0] - old_sublane_offset,
-                   ctx.target_shape[1] - new_lane_offset);
+      const int64_t data_size = std::min(native_tiling[0] - old_sublane_offset,
+                                         native_tiling[1] - new_lane_offset);
       // [ a a a a a a a a ]    [ . . a b c . . . ]
       // [ b b b b b b b b ] => [ . . a b c . . . ]
       // [ c c c c c c c c ]    [ . . a b c . . . ]
@@ -528,14 +549,45 @@ FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
       // Every lane has all the data, so at each sublane we can just pick out
       // the element that we want using a sublane shuffle.
       Value vreg = vregs(old_idxs);
-      Value iota_vreg = builder.create<tpu::IotaOp>(
-          loc, iota_vreg_ty,
-          /*dimension =*/builder.getI32IntegerAttr(1));
-      iota_vreg = builder.create<arith::AddIOp>(
-          loc, iota_vreg,
-          create_i32_vreg_const(old_sublane_offset - new_lane_offset));
-      vreg = builder.create<tpu::DynamicGatherOp>(loc, vreg.getType(), vreg,
-                                                  iota_vreg, 0);
+      if (bitwidth == 32) {
+        Value iota_vreg = builder.create<tpu::IotaOp>(
+            loc, i32_vreg_ty,
+            /*dimension =*/builder.getI32IntegerAttr(1));
+        iota_vreg = builder.create<arith::AddIOp>(
+            loc, iota_vreg,
+            create_i32_vreg_const(old_sublane_offset - new_lane_offset));
+        vreg = builder.create<tpu::DynamicGatherOp>(loc, vreg.getType(), vreg,
+                                                    iota_vreg, 0);
+      } else {  // bitwidth == 16 || bitwidth == 8
+        // Create an i8 iota using i16 iotas and PackSubelementsOp
+        Value iota_vreg =
+            builder.create<tpu::IotaOp>(loc, i16_compressed_vreg_ty,
+                                        /*dimension =*/nullptr);
+        iota_vreg =
+            builder.create<tpu::BitcastVregOp>(loc, i16_vreg_ty, iota_vreg);
+        iota_vreg = builder.create<arith::AddIOp>(
+            loc, iota_vreg,
+            create_i16_vreg_const(old_sublane_offset - new_lane_offset));
+        if (bitwidth == 16) {
+          iota_vreg = builder.create<arith::MulIOp>(loc, iota_vreg,
+                                                    create_i16_vreg_const(2));
+          Value add_cst = getFullVector(builder, loc, i32_vreg_ty,
+                                        builder.getI32IntegerAttr(1 << 16));
+          add_cst =
+              builder.create<tpu::BitcastVregOp>(loc, i16_vreg_ty, add_cst);
+          iota_vreg = builder.create<arith::AddIOp>(loc, iota_vreg, add_cst);
+        }
+        Value i8_iota_vreg = builder.create<tpu::PackSubelementsOp>(
+            loc, i8_vreg_ty, ArrayRef{iota_vreg, iota_vreg},
+            tpu::PackFormat::kCompressed);  // Pack format doesn't matter
+        i8_iota_vreg = builder.create<tpu::BitcastVregOp>(
+            loc, i8_compressed_vreg_ty, i8_iota_vreg);
+        vreg = builder.create<tpu::BitcastVregOp>(loc, i8_compressed_vreg_ty,
+                                                  vreg);
+        vreg = builder.create<tpu::DynamicGatherOp>(
+            loc, i8_compressed_vreg_ty, vreg, i8_iota_vreg, /*dimension=*/0);
+        vreg = builder.create<tpu::BitcastVregOp>(loc, vreg_ty, vreg);
+      }
       // Now, blend the transposed data into new_vreg
       if (*new_vreg == nullptr) {
         *new_vreg = vreg;
@@ -7325,7 +7377,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
   }
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kMinor &&
       dst_implicit_dim == VectorLayout::ImplicitDim::kSecondMinor &&
-      src.bitwidth() == 32 && src.hasNativeTiling(ctx.target_shape)) {
+      src.hasNativeTiling(ctx.target_shape)) {
     const int64_t dst_minor_offset = dst_offset_hints[1].value_or(0);
     FAILUREOR_ASSIGN_OR_RETURN(
         xla::Array<Value> dst_vregs,
