@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
+#include "absl/strings/strip.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "llvm/MC/MCSubtargetInfo.h"
@@ -86,9 +87,9 @@ absl::StatusOr<int> GetLatestLlvmPtxIsaVersion() {
   int llvm_latest_version = 0;
   for (const llvm::SubtargetFeatureKV& feature :
        subtarget_info->getAllProcessorFeatures()) {
-    if (absl::StartsWith(feature.Key, "ptx")) {
+    absl::string_view version_string = feature.Key;
+    if (absl::ConsumePrefix(&version_string, "ptx")) {
       int version;
-      const char* version_string = &feature.Key[3];
       if (!absl::SimpleAtoi(version_string, &version)) {
         return absl::InternalError(
             absl::StrFormat("Failed to convert PTX ISA version to integer: %s",

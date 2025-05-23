@@ -223,14 +223,14 @@ void EnsureLLVMNVPTXTargetIsRegistered() {
 absl::StatusOr<int> GetLatestPtxasPtxIsaVersion() {
   std::vector<const char*> ptxas_args = {"ptxas", "--input-as-string",
                                          ".version 99.99", nullptr};
-  auto result = RunCUDATool("ptxas", ptxas_args);
-  if (result.ok()) {
+  auto status = RunCUDATool("ptxas", ptxas_args).status();
+  if (status.ok()) {
     return absl::InternalError("ptxas succeeded where it was expected to fail");
   }
   // Output message is of the form:
   // ptxas application ptx input, line 1; fatal   : Unsupported .version 99.99; current version is '8.8'
   std::vector<std::string> chunks =
-      absl::StrSplit(result.status().message(), '\'');
+      absl::StrSplit(status.message(), '\'');
   if (chunks.size() != 3) {
     return absl::InternalError(
         "Failed to locate PTX ISA version in ptxas error message");
@@ -256,19 +256,23 @@ absl::StatusOr<int> GetLatestPtxasPtxIsaVersion() {
                         "parsable integer, instead got: %s",
                         major_minor[1]));
   }
+  if (minor >= 10) {
+    return absl::InternalError(
+        absl::StrFormat("PTX ISA minor version %d is not less than or equal to "
+                        "9, which is assumed for version comparison",
+                        minor));
+  }
   return major * 10 + minor;
 }
 
 absl::StatusOr<std::string> GetPtxIsaVersion() {
-  int ptxas_latest_version;
-  TF_ASSIGN_OR_RETURN(ptxas_latest_version, GetLatestPtxasPtxIsaVersion());
+  TF_ASSIGN_OR_RETURN(int ptxas_latest_version, GetLatestPtxasPtxIsaVersion());
   // We'd like to target the latest PTX ISA version supported by
   // ptxas. However, it doesn't make sense to ask LLVM to target a PTX
   // ISA that it isn't aware of yet. Find the latest version supported
   // by LLVM and return the minimum of the two versions, one from
   // ptxas and the other from LLVM.
-  int llvm_latest_version;
-  TF_ASSIGN_OR_RETURN(llvm_latest_version,
+  TF_ASSIGN_OR_RETURN(int llvm_latest_version,
                       mosaic::gpu::GetLatestLlvmPtxIsaVersion());
   int final_version = std::min(ptxas_latest_version, llvm_latest_version);
   return absl::StrFormat("ptx%d", final_version);
@@ -525,10 +529,8 @@ absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
 absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     mlir::ModuleOp module) {
   tsl::profiler::TraceMe trace("Compile");
-  std::string sm;
-  TF_ASSIGN_OR_RETURN(sm, GetSmVersion());
-  std::string ptx_isa;
-  TF_ASSIGN_OR_RETURN(ptx_isa, GetPtxIsaVersion());
+  TF_ASSIGN_OR_RETURN(std::string sm, GetSmVersion());
+  TF_ASSIGN_OR_RETURN(std::string ptx_isa, GetPtxIsaVersion());
   bool is_comm_used = is_nvshmem_used(module);
   std::string nvshmem_path = "";
   if (is_comm_used) {
