@@ -322,7 +322,6 @@ py_library_providing_imports_info(
         "_src/shard_alike.py",
         "_src/shard_map.py",
         "_src/sourcemap.py",
-        "_src/tree.py",
     ] + glob(
         [
             "*.py",
@@ -416,6 +415,7 @@ py_library_providing_imports_info(
         ":source_info_util",
         ":stages",
         ":traceback_util",
+        ":tree",
         ":tree_util",
         ":typing",
         ":util",
@@ -1205,6 +1205,14 @@ pytype_strict_library(
         ":typing",
         ":util",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "tree",
+    srcs = ["_src/tree.py"],
+    deps = [
+        ":tree_util",
+    ],
 )
 
 pytype_strict_library(
