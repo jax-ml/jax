@@ -1050,6 +1050,27 @@ class TreeKeyTest(absltest.TestCase):
       unpickled = pickle.loads(pickle.dumps(key))
       self.assertEqual(key, unpickled)
 
+  def testEqualityErrorWithArrayAsStaticArg(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/28659
+    @tree_util.register_dataclass
+    @dataclasses.dataclass
+    class Tree:
+      x : jnp.ndarray = dataclasses.field(metadata={'static': True})
+
+    f = jax.jit(lambda x: x)
+
+    if jax._src.lib.jaxlib_extension_version < 346:
+      msg = "The truth value of an array with more than one element is ambiguous."
+    else:
+      msg = "Exception raised while checking equality of metadata fields of pytree."
+
+    # First call succeeds, because there is no equality check.
+    f(Tree(jnp.arange(4)))
+
+    # Second fall fails, because arrays are marked static and compared for equality.
+    with self.assertRaisesRegex(ValueError, msg):
+      f(Tree(jnp.arange(4)))
+
 
 class StaticTest(parameterized.TestCase):
 
