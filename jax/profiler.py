@@ -14,6 +14,7 @@
 
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
+from typing import Any
 
 from jax._src.profiler import (
     ProfileOptions as ProfileOptions,
@@ -28,3 +29,9 @@ from jax._src.profiler import (
     stop_trace as stop_trace,
     trace as trace,
 )
+
+# this is a temporary shim to please pytype in the meantime before the migration
+# is complete for cl/760646494
+ProfileData: Any = None
+ProfileEvent: Any = None
+ProfilePlane: Any = None
