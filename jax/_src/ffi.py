@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 import ctypes
+import dataclasses
 import functools
 import os
 from typing import Any, overload
@@ -593,6 +594,7 @@ class HashableDict:
     return isinstance(other, HashableDict) and self.val == other.val
 
 
+@dataclasses.dataclass(frozen=True)
 class FfiEffect(effects.Effect):
   def __str__(self):
     return "FFI"
