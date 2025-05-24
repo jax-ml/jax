@@ -545,7 +545,7 @@ class InterpretTest(jtu.JaxTestCase):
         compiler_params=pltpu.TPUCompilerParams(
             dimension_semantics=('parallel',),
         ),
-    )(x)
+    )(x).block_until_ready()
     self.assertTrue(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, 2.0 * x)
 
@@ -579,7 +579,7 @@ class InterpretTest(jtu.JaxTestCase):
         compiler_params=pltpu.TPUCompilerParams(
             dimension_semantics=('parallel',)
         ),
-    )(x)
+    )(x).block_until_ready()
     self.assertFalse(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, 2.0 * x)
 
