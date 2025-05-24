@@ -2109,6 +2109,7 @@ jax_py_test(
     srcs = ["sourcemap_test.py"],
     deps = [
         "//jax",
+        "//jax:sourcemap",
         "//jax:test_util",
     ] + py_deps([
         "absl/testing",
