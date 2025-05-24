@@ -321,7 +321,6 @@ py_library_providing_imports_info(
         "_src/random.py",
         "_src/shard_alike.py",
         "_src/shard_map.py",
-        "_src/sourcemap.py",
     ] + glob(
         [
             "*.py",
@@ -413,6 +412,7 @@ py_library_providing_imports_info(
         ":sharding_impls",
         ":sharding_specs",
         ":source_info_util",
+        ":sourcemap",
         ":stages",
         ":traceback_util",
         ":tree",
@@ -796,6 +796,11 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "sourcemap",
+    srcs = ["_src/sourcemap.py"],
+)
+
+pytype_strict_library(
     name = "source_mapper",
     srcs = glob(include = ["experimental/source_mapper/**/*.py"]),
     visibility = [
@@ -806,6 +811,7 @@ pytype_strict_library(
         ":core",
         ":jax",
         ":source_info_util",
+        ":sourcemap",
     ] + py_deps("absl/flags"),
 )
 
