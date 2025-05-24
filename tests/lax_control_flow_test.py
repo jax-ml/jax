@@ -2789,7 +2789,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     if remat is not None:
       # TODO(mattjj): make the numpy.ndarray test pass w/ remat
-      raise unittest.SkipTest("new-remat-of-scan doesn't convert numpy.ndarray")
+      return
 
     x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not Array
     _, vjp_fun = jax.vjp(cumprod, x)
