@@ -80,8 +80,6 @@ WHEEL_BUILD_TARGET_DICT_NEW = {
     "jax-rocm-pjrt": "//jaxlib/tools:jax_rocm_pjrt_wheel",
 }
 
-_JAX_CUDA_VERSION = "12"
-
 def add_global_arguments(parser: argparse.ArgumentParser):
   """Adds all the global arguments that applies to all the CLI subcommands."""
   parser.add_argument(
@@ -642,6 +640,13 @@ async def main():
         # https://peps.python.org/pep-0440/
         wheel_git_hash = option.split("=")[-1].lstrip('0')[:9]
 
+  if args.cuda_version:
+    cuda_major_version = args.cuda_version.split(".")[0]
+  else:
+    cuda_major_version = args.cuda_major_version
+  if "cuda" in args.wheels:
+    wheel_build_command_base.append(f"--//jax:cuda_major_version={cuda_major_version}")
+
   with open(".jax_configure.bazelrc", "w") as f:
     jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command_base.get_command_as_list(), args.use_new_wheel_build_rule)
     if not jax_configure_options:
@@ -709,10 +714,6 @@ async def main():
 
         if "cuda" in wheel:
           wheel_build_command.append("--enable-cuda=True")
-          if args.cuda_version:
-            cuda_major_version = args.cuda_version.split(".")[0]
-          else:
-            cuda_major_version = args.cuda_major_version
           wheel_build_command.append(f"--platform_version={cuda_major_version}")
 
         if "rocm" in wheel:
@@ -738,7 +739,7 @@ async def main():
       else:
         bazel_dir = jaxlib_and_plugins_bazel_dir
       if "cuda" in wheel:
-        wheel_dir = wheel.replace("cuda", f"cuda{_JAX_CUDA_VERSION}").replace(
+        wheel_dir = wheel.replace("cuda", f"cuda{cuda_major_version}").replace(
             "-", "_"
         )
       else:

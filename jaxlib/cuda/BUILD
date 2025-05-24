@@ -682,3 +682,11 @@ py_library(
         ":cuda_plugin_extension",
     ]),
 )
+
+py_library(
+    name = "nvidia_nvshmem",
+    deps = select({
+        "//jax:config_cuda_major_version_12": ["@pypi//nvidia_nvshmem_cu12"],
+        "//jax:config_cuda_major_version_13": ["@pypi//nvidia_nvshmem_cu13"],
+    })
+)
