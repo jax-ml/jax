@@ -1220,13 +1220,17 @@ def norm(x: ArrayLike, ord: int | str | None = None,
                      " compute a vector-norm, or two axes to compute a matrix-norm.")
 
 @overload
-def qr(a: ArrayLike, mode: Literal["r"]) -> Array: ...
+def qr(a: ArrayLike,
+       mode: Literal["reduced", "complete", "raw", "full"] = "reduced",
+       ) -> QRResult: ...
 @overload
-def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult: ...
+def qr(a: ArrayLike, mode: Literal["r"]) -> Array: ...
 
 @export
 @partial(jit, static_argnames=('mode',))
-def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
+def qr(a: ArrayLike,
+       mode: Literal["reduced", "complete", "raw", "full", "r"] = "reduced",
+       ) -> Array | QRResult:
   """Compute the QR decomposition of an array
 
   JAX implementation of :func:`numpy.linalg.qr`.
