@@ -116,6 +116,7 @@ jobs:
       - name: Build TSAN Numpy wheel
         if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
         run: |
+          set -eux
           cd numpy
 
           # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
@@ -131,7 +132,6 @@ jobs:
           export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
 
           python3 -m pip install uv~=0.5.30
-
           python3 -m uv pip install -r requirements/build_requirements.txt
 
           CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized
@@ -268,11 +268,15 @@ jobs:
             --bazel_options=--copt=-g \
             --clang_path=/usr/bin/clang-18
 
-
           mkdir -p dist
+          # Check whether we have numpy wheel or exit with error
+          ls ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl || exit 1
           cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
-          cp -v ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl dist/
           if [ "${{ matrix.python-version }}" == "3.14" ]; then
+            # Check whether we have scipy wheel or exit with error
+            ls ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl || exit 1
+            cp -v ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl dist/
+
             # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy and Scipy
             sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
 
