@@ -1221,9 +1221,13 @@ def norm(x: ArrayLike, ord: int | str | None = None,
                      " compute a vector-norm, or two axes to compute a matrix-norm.")
 
 @overload
+def qr(a: ArrayLike,
+       mode: Literal["reduced", "complete", "raw", "full"] = "reduced",
+       ) -> QRResult: ...
+@overload
 def qr(a: ArrayLike, mode: Literal["r"]) -> Array: ...
 @overload
-def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult: ...
+def qr(a: ArrayLike, mode: str) -> Array | QRResult: ...
 
 @export
 @partial(api.jit, static_argnames=('mode',))
