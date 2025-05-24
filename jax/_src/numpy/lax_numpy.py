@@ -5536,6 +5536,9 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     # https://github.com/jax-ml/jax/pull/6047. More correct would be to call
     # coerce_to_array on each leaf, but this may have performance implications.
     out = np.asarray(object, dtype=dtype)
+    # Ensuring that the output is a `jax.Array` allows avoiding a copy in
+    # `lax_internal._convert_element_type` when `out` is a NumPy array.
+    out = jax.device_put(out)
   elif isinstance(object, Array):
     assert object.aval is not None
     out = _array_copy(object) if copy else object
