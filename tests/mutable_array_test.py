@@ -192,13 +192,17 @@ class MutableArrayTest(jtu.JaxTestCase):
     x = f()
     self.assertArraysEqual(x, jnp.zeros(8))
 
-  def test_grad_mutable_array(self):
-    @jax.jit
+  @parameterized.parameters([False, True])
+  def test_grad_mutable_array(self, jit):
+
     def f(x):
       x_ = core.mutable_array(x)
       x_[()] = x_[()] + x_[()]
       y = core.freeze(x_)
       return y
+
+    if jit:
+      f = jax.jit(f)
 
     ans = jax.grad(f)(1.)
     expected = 2.0

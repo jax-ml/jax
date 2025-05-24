@@ -6550,7 +6550,7 @@ def _broadcast_in_dim_partial_eval(
   out_aval = core.DShapedArray(tuple(shape_), operand.dtype, operand.weak_type)
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
   eqn = pe.new_eqn_recipe(
-      [operand_tracer, *dyn_shape_tracers], [out_tracer], broadcast_in_dim_p,
+      trace, [operand_tracer, *dyn_shape_tracers], [out_tracer], broadcast_in_dim_p,
       dict(shape=shape, broadcast_dimensions=broadcast_dimensions,
            sharding=None),
       core.no_effects, source_info_util.current())
