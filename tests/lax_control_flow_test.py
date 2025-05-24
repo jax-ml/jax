@@ -3311,6 +3311,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     eqn_jaxpr = jaxpr.eqns[0].params["jaxpr"]
     self.assertIn("debug_callback", [e.primitive.name for e in eqn_jaxpr.eqns])
 
+  def test_scan_input_to_output_forwarding(self):
+    def f(c, x):
+      return c + 1, x
+    def g(x):
+      return jax.lax.scan(f, 0, x)
+    jaxpr = jax.make_jaxpr(g)(jnp.arange(3.))
+    self.assertLen(jaxpr.eqns[0].params["jaxpr"].jaxpr.outvars, 1)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
