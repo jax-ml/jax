@@ -2270,14 +2270,18 @@ def solve_sylvester(A: jnp.ndarray, B: jnp.ndarray, C: jnp.ndarray) -> jnp.ndarr
              [1.79761733e-16, 1.00000000e+00]], dtype=float64)
 
     Notes:
-      This function returns NaNs in the event that there is no solution.
+      This function returns NaNs in the event that the eigenvalues of the A and B matrices sum to zero elementwise.
+      IMPORTANT: Float32 precision may not be adequate, especially with larger matrices, to match expected results consider float64 precision.
     """
-    n, m = A.shape[-1], B.shape[-1]
+    m, n = A.shape[-1], B.shape[-1]
+
+    if A.shape != (m, m) or B.shape != (n, n) or C.shape != (m, n):
+      raise ValueError(f"Incompatible shapes for Sylvester equation:\nA: {A.shape}\nB: {B.shape}\nC: {C.shape}")
 
     RA, UA = jnp.linalg.eig(A)
     RB, UB = jnp.linalg.eig(B)
-    F = jax.scipy.linalg.solve(UA, (C + 0j) @ UB)
+    F = solve(UA, C.astype(RA.dtype) @ UB)
     W = RA[:, None] + RB[None, :]
     Y = F / W
-    X = UA[:n,:n] @ Y[:n,:m] @ inv(UB)[:m,:m]
+    X = UA[:m,:m] @ Y[:m,:n] @ inv(UB)[:n,:n]
     return jnp.real(X)

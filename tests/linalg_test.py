@@ -25,7 +25,7 @@ import scipy as osp
 from absl.testing import absltest, parameterized
 
 import jax
-from jax import jit, grad, jvp, vmap, random
+from jax import jit, grad, jvp, vmap
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
@@ -2115,6 +2115,56 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       [2, 1, 4, 5],
       [3, 2, 1, 4]], dtype=np.float32))
 
+  @jtu.sample_product(
+    shape=[(2, 3), (4, 6), (5, 7), (100, 300)],
+    dtype = float_types
+  )
+  def test_solve_sylvester(self, shape, dtype):
+
+    def args_maker():
+      rng = jtu.rand_default(self.rng())
+      m, n = shape
+
+      A = jnp.array(rng(shape=(m, m), dtype=dtype))
+      B = jnp.array(rng(shape=(n, n), dtype=dtype))
+      X_true = jnp.array(rng(shape=(m, n), dtype=dtype))
+
+      C = A @ X_true + X_true @ B
+      return [A, B, C]
+
+    self._CheckAgainstNumpy(osp.linalg.solve_sylvester, solve_sylvester, args_maker, rtol=1e-1 if dtype == np.float32 else 1e-5, atol=1e-1 if dtype == np.float32 else 1e-8)
+    self._CompileAndCheck(solve_sylvester, args_maker)
+
+  @jtu.sample_product(
+    n=[3, 6, 7, 100],
+    dtype = float_types
+  )
+  def test_no_solution_sylvester(self, n, dtype):
+    # Test no solution case to AX + XB = C
+    # For example, the simple case A=[[1]], B = [[-1]], and C = [[1]] would generate (1)X + X(-1) = (1)
+    # which equals X - X = (1) which is not possible because X - X = 0
+    rng = jtu.rand_default(self.rng())
+
+    # Define eigenvalues that sum to zero
+    eigenvalues_A = rng(shape=(n,), dtype=dtype)
+    eigenvalues_B = -eigenvalues_A
+
+    P = rng(shape=(n, n), dtype=dtype)
+
+    while jnp.linalg.matrix_rank(P) < n:  # Ensure P is invertible
+      P = rng(shape=(n, n), dtype=dtype)
+
+    # Construct A and B matrices using selected eigenvalues that positionally sum to zero
+    D_A = jnp.diag(eigenvalues_A)
+    D_B = jnp.diag(eigenvalues_B)
+    P_inv = jnp.linalg.inv(P)
+    A = P @ D_A @ P_inv
+    B = P @ D_B @ P_inv
+
+    C = rng(shape=(n, n), dtype=dtype)
+    sylv_solution = solve_sylvester(A, B, C)
+    assert jnp.isnan(sylv_solution).all()
+
 
 class LaxLinalgTest(jtu.JaxTestCase):
   """Tests for lax.linalg primitives."""
@@ -2357,60 +2407,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
                             check_dtypes=False)
     self._CompileAndCheck(jsp_fun, args_maker)
 
-
-class TestSolveSylvester(jtu.JaxTestCase):
-  # float32 is not close enough for assert
-  jax.config.update("jax_enable_x64", True)  # Ensure float64 for higher precision
-
-  @jtu.sample_product(
-    shape=[(2, 3), (4, 6), (5, 7), (100, 300)],
-  )
-  def test_solve_sylvester(self, shape):
-    n, m = shape
-
-    A = random.normal(random.key(0), shape=(n, n))
-    B = random.normal(random.key(1), shape=(m, m))
-    X_true = random.normal(random.key(2), shape=(n, m))
-
-    C = A @ X_true + X_true @ B
-    with jax.numpy_dtype_promotion('standard'):
-      X_computed = solve_sylvester(A, B, C)
-    assert jnp.allclose(X_computed, X_true)
-
-  @jtu.sample_product(
-    n=[3, 6, 7, 100],
-    dtype = float_types
-  )
-  def test_no_solution_sylvester(self, n, dtype):
-    # Test no solution case to AX + XB = C
-    # For example, the simple case A=[[1]], B = [[-1]], and C = [[1]] would generate (1)X + X(-1) = (1)
-    # which equals X - X = (1) which is not possible because X - X = 0
-    with jax.numpy_dtype_promotion('standard'):
-      key = random.key(3)
-      key, subkey = random.split(key)
-
-      # Define eigenvalues that sum to zero
-      eigenvalues_A = random.normal(subkey, shape=(n,), dtype=dtype)
-      eigenvalues_B = -eigenvalues_A
-
-      key, subkey = random.split(key)
-      P = random.normal(key, shape=(n, n), dtype=dtype)
-
-      while jnp.linalg.matrix_rank(P) < n:  # Ensure P is invertible
-        key, subkey = random.split(key)
-        P = random.normal(key, shape=(n, n), dtype=dtype)
-
-      # Construct A and B matrices using selected eigenvalues that positionally sum to zero
-      D_A = jnp.diag(eigenvalues_A)
-      D_B = jnp.diag(eigenvalues_B)
-      P_inv = jnp.linalg.inv(P)
-      A = P @ D_A @ P_inv
-      B = P @ D_B @ P_inv
-
-      key, subkey = random.split(key)
-      C = random.normal(key, shape=(n, n), dtype=dtype)
-      sylv_solution = solve_sylvester(A, B, C)
-      assert jnp.isnan(sylv_solution).all()
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
