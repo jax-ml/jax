@@ -1740,7 +1740,8 @@ def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
   mesh = eqn.params["mesh"]
   manual_axes = eqn.params["manual_axes"]
   check_vma = eqn.params["check_vma"]
-  with _extend_axis_env(mesh, manual_axes), config._check_vma(check_vma):
+  with (_extend_axis_env(mesh, manual_axes), config._check_vma(check_vma),
+        use_abstract_mesh(_as_manual_mesh(mesh, manual_axes | set(mesh.manual_axes)))):
     jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
   if not any(used_inputs) and not any(used_outputs) and not jaxpr.effects:
     return used_inputs, None
