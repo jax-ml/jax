@@ -13,6 +13,8 @@
 # limitations under the License.
 # ==============================================================================
 
+import os
+
 from absl.testing import parameterized
 import jax
 from jax._src import config
@@ -50,6 +52,8 @@ class TestCase(parameterized.TestCase):
       self.skipTest("Only works on GPU with capability >= sm90")
     if not mgpu.supports_cross_device_collectives():
       self.skipTest("NVSHMEM library unavailable.")
+    if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
+      self.skipTest("NVSHMEM doesn't work with the platform allocator.")
     if jax.process_count() == 1:
       self.skipTest("Test requires multiple processes.")
     if jax.device_count() != jax.process_count():
@@ -97,4 +101,9 @@ class ProfilerTest(TestCase):
 
 
 if __name__ == "__main__":
+  # This test doesn't work with the platform allocator, so we override it
+  # if it's ran alone. If it's part of a larger test suite and the platform
+  # allocator is used, setUp will skip the test.
+  os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.01'
+  os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'default'
   jt_multiprocess.main()
