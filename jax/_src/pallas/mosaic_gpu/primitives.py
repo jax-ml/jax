@@ -37,6 +37,7 @@ from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
 from jax._src.pallas.mosaic_gpu.core import state_types
@@ -282,6 +283,10 @@ def _copy_smem_to_gmem_lowering(
   else:
     indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
   assert copy_params.get("swizzle") is None
+  if copy_params.get("gmem_peer_id", None) is not None:
+    raise NotImplementedError(
+        "GMEM refs with peer ids are not supported in warpgroup lowering."
+    )
   assert not copy_params.get("gmem_transform")
   mgpu.dialect.async_store(
       src,
@@ -317,13 +322,25 @@ def _split_gmem_slice(gmem_slice):
 def _extract_gmem_copy_params(transforms):
   if not transforms:
     return {}
+  peer_id = None
+  indexers = []
   for transform in transforms:
-    if not isinstance(transform, indexing.NDIndexer):
+    if isinstance(transform, gpu_core.PeerMemRef):
+      if transform.device_id_type != pallas_primitives.DeviceIdType.LOGICAL:
+        raise NotImplementedError(
+            "Only logical device ids are supported for GMEM refs."
+        )
+      peer_id = lowering._ensure_ir_value(transform.device_id, jnp.int32)
+      continue
+    elif isinstance(transform, indexing.NDIndexer):
+      indexers.append(transform)
+    else:
       raise NotImplementedError(
           "Non-indexing transforms on GMEM refs are not implemented.")
-  indexer = lowering.merge_indexers(transforms)
+  indexer = lowering.merge_indexers(indexers)
   return dict(
       gmem_slice=lowering._ndindexer_indices(indexer),
+      gmem_peer_id=peer_id,
   )
 
 
@@ -542,6 +559,10 @@ def _copy_gmem_to_smem_lowering(
     indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
   assert copy_params.get("swizzle") is None
   assert not copy_params.get("gmem_transform")
+  if copy_params.get("gmem_peer_id", None) is not None:
+    raise NotImplementedError(
+        "GMEM refs with peer ids are not supported in warpgroup lowering."
+    )
   barrier_ref = barrier.as_barrier_memref()
   mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
   mgpu.dialect.async_load(

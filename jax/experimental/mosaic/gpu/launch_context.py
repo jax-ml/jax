@@ -407,7 +407,10 @@ class LaunchContext:
         "add","min","max","inc","dec","and","or","xor"
       ] | None,
   ):
-    tma_desc_key = (gmem_ref, transformed_slice_shape, swizzle, gmem_transform)
+    # Using ir.Values in cache keys is a little sketchy, but I think it should
+    # be fine. Having it in the key will keep it alive, and if comparison and
+    # hashing is by identity then it should work out.
+    tma_desc_key = (gmem_ref, transformed_slice_shape, swizzle, gmem_transform, gmem_peer_id)
     if (tma_desc := self.tma_descriptors.get(tma_desc_key, None)) is None:
       i32 = ir.IntegerType.get_signless(32)
       i64 = ir.IntegerType.get_signless(64)
