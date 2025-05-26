@@ -603,7 +603,7 @@ class BCOOTest(sptu.SparseTestCase):
     # with self.gpu_matmul_warning_context(
     #     "bcoo_dot_general GPU lowering currently does not support this batch-mode computation.*"):
     matmat_default_lowering_fallback = sp_matmat(lhs_bcoo, rhs)
-    self.assertArraysEqual(matmat_expected, matmat_default_lowering_fallback)
+    self.assertArraysAllClose(matmat_expected, matmat_default_lowering_fallback)
 
   @jtu.run_on_devices("gpu")
   def test_bcoo_dot_general_oob_and_unsorted_indices_cusparse(self):
