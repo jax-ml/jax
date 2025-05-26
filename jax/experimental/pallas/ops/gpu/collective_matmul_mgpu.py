@@ -140,9 +140,15 @@ def all_gather_lhs_matmul(
             plgpu.wgmma(acc_ref, lhs_smem, rhs_smem)
             k_slice = pl.ds(ki * block_k, block_k)
             # TODO(apaszke): No need to send on the last step
-            # TODO(apaszke): Use an async copy. This is uncoalesced.
-            send_scratch_ref[next_scratch_slot, :, k_slice] = lhs_smem[...]
+            plgpu.copy_smem_to_gmem(
+                lhs_smem, send_scratch_ref.at[next_scratch_slot, :, k_slice]
+            )
+            # We only delay release by 1 step, so we need to wait for the
+            # previous copies.
+            plgpu.wait_smem_to_gmem(1, wait_read_only=True)
           k_loop(scratch_ref.at[scratch_slot], rhs_ref)
+          # Make sure the copy is fully done.
+          plgpu.wait_smem_to_gmem(0, wait_read_only=False)
           # TODO(apaszke): Both of those semaphores perform a .sys release.
           # This is very expensive and we should only do a single .sys fence.
           pl.semaphore_signal(capacity_sem, device_id=recv_dev_id, device_id_type=pl.DeviceIdType.LOGICAL)
