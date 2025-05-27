@@ -1186,6 +1186,24 @@ def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
   return dst_indices, tuple(src_indices) == tuple(dst_indices)
 
 
+@cache(max_size=4096, trace_context_in_key=False)
+def _is_supported_cross_host_transfer(src_sharding, shape, dst_sharding,
+                                      is_committed, same_layout):
+  backend = xla_bridge.get_backend()
+  # Cross-host device transfers are currently supported only for TFRT TPU
+  # backends.
+  if backend.platform != "tpu" or "TFRT TPU" not in backend.platform_version:
+    return False
+  if not is_committed or not same_layout or xla_bridge.process_count() == 1:
+    return False
+  src_indices = src_sharding.devices_indices_map(shape).values()
+  dst_indices = dst_sharding.devices_indices_map(shape).values()
+  if tuple(src_indices) != tuple(dst_indices):
+    return False
+  return any(sd.process_index != dd.process_index for sd, dd in
+             zip(src_sharding._internal_device_list, dst_sharding._internal_device_list))
+
+
 def _array_shard_arg(xs, shardings, layouts, copy_semantics):
   util.test_event("_array_shard_arg")
   results = []
@@ -1198,8 +1216,10 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
     indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
     same_layout = (True if layout is None else
                    x.layout.device_local_layout == layout)
+    is_cross_host_transfer = _is_supported_cross_host_transfer(
+        x.sharding, x.shape, sharding, x.committed, same_layout)
 
-    if not x.is_fully_addressable:
+    if not x.is_fully_addressable and not is_cross_host_transfer:
       if same_indices and same_layout:
         results.append(x)
       else:
@@ -1207,12 +1227,14 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
             "Cannot reshard an input that is not fully addressable")
     else:
       devices = sharding._addressable_device_assignment
-      if same_indices and same_layout:
+      if same_indices and same_layout or is_cross_host_transfer:
         # Add a placeholder result that will be filled in later.
         results.append(None)
         # Accumulate arguments to `batched_copy_array_to_devices_with_sharding`.
         batch_xs.append(x)
-        batch_devs.append(list(devices))
+        batch_devs.append(
+            list(sharding._internal_device_list
+                 if is_cross_host_transfer else devices))
         batch_shardings.append(sharding)
         batch_indices.append(i)
         batch_cs.append(cs)

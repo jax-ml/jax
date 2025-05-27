@@ -417,6 +417,13 @@ def _device_put_sharding_impl(x, aval, device, copy):
         and copy == CopySemantics.ALIAS):
       return x
 
+    if isinstance(x, array.ArrayImpl):
+      # There is experimental support for cross-host device transfers on
+      # TFRT TPU.
+      if array._is_supported_cross_host_transfer(
+          x.sharding, x.shape, s, x.committed, True):
+        return _DeferredShardArg(x, s, aval, True, copy)
+
     if (not s.is_fully_addressable and
         isinstance(x, array.ArrayImpl) and not x.is_fully_addressable):
       assert isinstance(s, Sharding)
