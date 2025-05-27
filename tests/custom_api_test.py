@@ -3722,6 +3722,20 @@ class CustomTransposeTest(jtu.JaxTestCase):
     with config.use_direct_linearize(True):
       self.assertAllClose(jax.grad(f)(0.5), jnp.cos(0.5))
 
+  def test_input_none(self):
+    # ref: https://github.com/jax-ml/jax/issues/29009
+    @jax.custom_jvp
+    def f(x, y): return y
+    @f.defjvp
+    def f_jvp(p, t): return f(*p), g(p, t)
+
+    @custom_transpose(jnp.float32(0))
+    def g(r, x): return x[1]
+    @g.def_transpose
+    def gt(r, t): return None, jnp.zeros_like(r[1])
+
+    jax.grad(f, argnums=(1,))(None, jnp.float32(2))  # doesn't crash
+
 
 class CustomDceTest(jtu.JaxTestCase):
 

@@ -217,7 +217,6 @@ def custom_transpose_transpose_rule(
   # Consider passing this information to the custom transpose rule?
 
   res_arg, lin_arg = tree_unflatten(call_in_tree, args)
-  del lin_arg
   assert all(not ad.is_undefined_primal(x) for x in tree_leaves(res_arg))
 
   cts = [ad_util.zeros_like_aval(ct.aval) if type(ct) is ad_util.Zero else ct
@@ -225,10 +224,17 @@ def custom_transpose_transpose_rule(
   ct_out = tree_unflatten(out_tree, cts)
   ct_lin = transpose.call_wrapped(res_arg, ct_out)
   check_transpose_rule_trees(transpose, lin_tree, tree_structure(ct_lin))
-  ct_lin_flat, _ = tree_flatten(
-      tree_broadcast(lin_tree, ct_lin, is_leaf=lambda x: x is None),
-      is_leaf=lambda x: x is None)
-  return [None] * len(tree_leaves(res_arg)) + ct_lin_flat
+  ct_lin = tree_broadcast(lin_tree, ct_lin, is_leaf=lambda x: x is None)
+
+  # When the transpose returns None, we treat that as a Zero, except when the
+  # input is also None. In that case, the cotangent corresponding to that input
+  # should be dropped.
+  zero = object()
+  ct_lin = tree_map(lambda l, ct: zero if ct is None and l is not None else ct,
+                    lin_arg, ct_lin, is_leaf=ad.is_undefined_primal)
+
+  ct_lin_flat, _ = tree_flatten(ct_lin)
+  return [None] * res_tree.num_leaves + [None if ct is zero else ct for ct in ct_lin_flat]
 
 
 def custom_transpose_lowering(*args, call_jaxpr, **params):
