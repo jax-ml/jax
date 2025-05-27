@@ -746,7 +746,7 @@ def _allocate_semaphores(
 ):
   """Allocates semaphores on the device with id `device_id` and core with id `local_core_id`.
 
-  The number of sempahores allocated is given by the product of the entries in
+  The number of semaphores allocated is given by the product of the entries in
   `shape`.
 
   Since for each semaphore id there is really only one global `Semaphore`
