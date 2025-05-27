@@ -597,7 +597,8 @@ def memref_unfold(ref: ir.Value, dim, factors) -> ir.Value:
   )
   new_shape[dim : dim + 1] = factors
   identity = ir.AffineMapAttr.get(ir.AffineMap.get_identity(ref_ty.rank))
-  if ref_ty.layout == identity:
+  contig_strided_1d = ir.Attribute.parse("strided<[1]>")
+  if ref_ty.layout == identity or ref_ty.layout == contig_strided_1d:
     new_layout = ir.AffineMapAttr.get(
         ir.AffineMap.get_identity(ref_ty.rank + len(factors) - 1)
     )
