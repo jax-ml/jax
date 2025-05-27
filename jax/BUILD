@@ -303,7 +303,6 @@ py_library_providing_imports_info(
         "_src/callback.py",
         "_src/checkify.py",
         "_src/custom_batching.py",
-        "_src/custom_derivatives.py",
         "_src/custom_partitioning.py",
         "_src/custom_partitioning_sharding_rule.py",
         "_src/debugging.py",
@@ -388,6 +387,7 @@ py_library_providing_imports_info(
         ":core",
         ":custom_api_util",
         ":custom_dce",
+        ":custom_derivatives",
         ":custom_transpose",
         ":deprecations",
         ":dtypes",
@@ -610,6 +610,30 @@ pytype_strict_library(
         ":traceback_util",
         ":tree_util",
         ":util",
+    ],
+)
+
+pytype_strict_library(
+    name = "custom_derivatives",
+    srcs = ["_src/custom_derivatives.py"],
+    deps = [
+        ":ad",
+        ":ad_util",
+        ":api_util",
+        ":batching",
+        ":config",
+        ":core",
+        ":custom_api_util",
+        ":custom_transpose",
+        ":dtypes",
+        ":effects",
+        ":mlir",
+        ":partial_eval",
+        ":state_types",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
+        ":xla",
     ],
 )
 
