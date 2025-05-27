@@ -1448,13 +1448,15 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
   sliced_results = []
   for i in range(operand.shape[operand_dim]):
     sliced_operand = slicing.slice_in_dim(operand, start_index=i, limit_index=i+1, axis=operand_dim).flatten()
-    sliced_output = slicing.slice_in_dim(output, start_index=i, limit_index=i+1, axis=output_dim).flatten()
+    sliced_output = slicing.slice_in_dim(output, start_index=i, limit_index=i+1, axis=output_dim)
+    sliced_output_shape = sliced_output.shape
+    sliced_output = sliced_output.flatten()
     sliced_input_offsets = slicing.slice_in_dim(input_offsets, start_index=i, limit_index=i+1, axis=input_offsets_dim).flatten()
     sliced_send_sizes = slicing.slice_in_dim(send_sizes, start_index=i, limit_index=i+1, axis=send_sizes_dim).flatten()
     sliced_output_offsets = slicing.slice_in_dim(output_offsets, start_index=i, limit_index=i+1, axis=output_offsets_dim).flatten()
     sliced_recv_sizes = slicing.slice_in_dim(recv_sizes, start_index=i, limit_index=i+1, axis=recv_sizes_dim).flatten()
     sliced_result = ragged_all_to_all(sliced_operand, sliced_output, sliced_input_offsets, sliced_send_sizes, sliced_output_offsets, sliced_recv_sizes, axis_name=axis_name, axis_index_groups=axis_index_groups)
-    sliced_result = lax.expand_dims(sliced_result, dimensions=(output_dim,))
+    sliced_result = lax.expand_dims(sliced_result.reshape(sliced_output_shape), dimensions=(output_dim,))
     sliced_results.append(sliced_result)
 
   concat_result = lax.concatenate(sliced_results, dimension=output_dim)
