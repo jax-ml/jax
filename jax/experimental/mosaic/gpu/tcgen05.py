@@ -477,6 +477,16 @@ def tmem_load(tmem_addr, shape, num, pack: bool):
   return [llvm.extractvalue(i32, regs, [i]) for i in range(num_out_regs)]
 
 
+def wait_tmem_load():
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      "tcgen05.wait::ld.sync.aligned;",
+      "",
+      has_side_effects=True,
+  )
+
+
 def tmem_store(tmem_addr, shape, num, regs, unpack: bool):
   num_out_regs, regs_vector = _tmem_access_helper(shape, num)
   pack_mod = ".unpack::16b" if unpack else ""
@@ -832,7 +842,7 @@ def _transfer_32xcols(
   regs_per_instr = atom_shape[0] * atom_shape[1] // (utils.WARP_SIZE * reg_packing)
   # We artificially lower the instr_num compared to its limits, because higher
   # values can lead to register spills..
-  instr_num = min(total_num, 64 // regs_per_instr)
+  instr_num = min(total_num, 32 // regs_per_instr)
   assert 32 % atom_rows == 0
   num_row_steps = 32 // atom_rows
   for lane_step in range(num_row_steps):
