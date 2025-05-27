@@ -103,6 +103,7 @@ py_library(
         "//jax",
         "//jax:ad_util",
         "//jax:core",
+        "//jax:custom_derivatives",
         "//jax:dtypes",
         "//jax:mesh",
         "//jax:mlir",

@@ -50,6 +50,7 @@ pytype_strict_library(
         "//jax:ad_util",
         "//jax:api_util",
         "//jax:core",
+        "//jax:custom_derivatives",
         "//jax:partial_eval",
         "//jax:tree_util",
         "//jax:util",
