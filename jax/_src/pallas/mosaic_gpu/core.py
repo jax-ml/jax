@@ -87,6 +87,16 @@ class CompilerParams(pallas_core.CompilerParams):
       references. Defaults to 0, and must be strictly smaller than
       max_concurrent_steps. Generally, you'll want to set it to 1 if you don't
       await the WGMMA in the body.
+    unsafe_no_auto_barriers: If True, Pallas will never automatically insert
+      barrier instructions that ensure synchronous semantics of loads and stores.
+      At the moment, the insertion is done conservatively and might regress
+      performance. There are (at least) two conditions that must be satisfied
+      for the use of this flag to be safe. First, no memory region is ever read
+      *and* written to by the same thread (async copies are performed by
+      background threads and do not count towards this rule). Secondly, no
+      thread ever calls commit_smem(), reads from the committed SMEM and then
+      issues an async copy overwriting that region (this is a very artificial
+      and highly unlikely scenario).
     profile_space: The number of profiler events that can be collected in a
       single invocation. It is undefined behavior if a thread collects more
       events than this.
@@ -97,6 +107,7 @@ class CompilerParams(pallas_core.CompilerParams):
   dimension_semantics: Sequence[DimensionSemantics] | None = None
   max_concurrent_steps: int = 1
   delay_release: int = 0
+  unsafe_no_auto_barriers: bool = False
   profile_space: int = 0
   profile_dir: str = ""
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Lane

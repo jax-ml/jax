@@ -327,6 +327,8 @@ class ModuleContext:
   lowering_semantics: mgpu.LoweringSemantics
   primitive_semantics: gpu_core.PrimitiveSemantics
   mesh: mesh_lib.Mesh | None
+  # See the documentation of unsafe_no_auto_barriers in CompilerParams.
+  auto_barriers: bool
   warp_axis_name: str | None = None
 
   @property
@@ -822,6 +824,7 @@ def lower_jaxpr_to_module(
         lowering_semantics=lowering_semantics,
         primitive_semantics=gpu_core.PrimitiveSemantics.Warpgroup,
         mesh=jax_mesh,
+        auto_barriers=not params.unsafe_no_auto_barriers,
     )
     del runtime_smem, grouped_barriers, runtime_barriers
     _ = lower_jaxpr_to_mosaic_gpu(
@@ -1389,7 +1392,8 @@ def _swap_lowering_rule(
       ctx, x_ref, transforms, handle_transposes=not transposed_value,
       allow_peer_refs=True
   )
-  mgpu.warpgroup_barrier()  # Make sure reads have completed before we write.
+  if ctx.module_ctx.auto_barriers:
+    mgpu.warpgroup_barrier()  # Make sure reads have completed before we write.
   match transforms:
     case (
         gpu_core.UnswizzleRef(swizzle),
@@ -1443,7 +1447,8 @@ def _swap_lowering_rule(
           value.store_untiled(x_smem)
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
-  mgpu.warpgroup_barrier()  # Make sure the writes have completed.
+  if ctx.module_ctx.auto_barriers:
+    mgpu.warpgroup_barrier()  # Make sure the writes have completed.
   return old_value
 
 
@@ -2796,7 +2801,8 @@ def _core_map_lowering_rule(
     # We allow the warps to schedule async copies without synchronizing with
     # other warps, so we need to add a barrier here to make sure all reads and
     # writes have completed.
-    mgpu.warpgroup_barrier()
+    if ctx.module_ctx.auto_barriers:
+      mgpu.warpgroup_barrier()
     _ = lower_jaxpr_to_mosaic_gpu(
         module_ctx,
         ctx.launch_ctx,
@@ -2804,8 +2810,9 @@ def _core_map_lowering_rule(
         args=(),
         consts=args,
     )
-    # TODO(apaszke,justinfu): Do we really need this barrier?
-    mgpu.warpgroup_barrier()
+    if ctx.module_ctx.auto_barriers:
+      # TODO(apaszke,justinfu): Do we really need this barrier?
+      mgpu.warpgroup_barrier()
     return []
   raise ValueError(f"Unsupported mesh: {mesh}")
 
@@ -3052,7 +3059,8 @@ def _semaphore_signal_lowering_rule(
   # anything about the state of the other three warps in the warpgroup (they
   # might still be e.g. reading memory that someone will overwrite once they
   # receive a signal).
-  mgpu.utils.warpgroup_barrier()
+  if ctx.module_ctx.auto_barriers:
+    mgpu.utils.warpgroup_barrier()
   pred = ctx.module_ctx.single_wg_lane_predicate
   llvm_dialect.inline_asm(
     i32,
@@ -3098,6 +3106,8 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
     after_block = while_op.after.blocks.append(i32_ty)
     with ir.InsertionPoint.at_block_begin(after_block):
       scf_dialect.yield_(after_block.arguments)
+  # NOTE: This barrier is necessary for a correct lowering of this op and can't
+  # be removed even if auto_barriers is False.
   mgpu_utils.warpgroup_barrier()
   return ()
 
