@@ -832,6 +832,9 @@ jax_multiplatform_test(
         "gpu_h100",
     ],
     shard_count = 12,
+    tags = [
+        "noasan",  # Times out.
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_experimental_gpu_ops",
