@@ -2243,7 +2243,7 @@ def trace_to_jaxpr_dynamic(
     try:
       with core.set_current_trace(trace):
         ans = fun.call_wrapped(*in_tracers)
-
+      _check_returned_jaxtypes(fun.debug_info, ans)
       out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans)
       _check_no_returned_refs(fun.debug_info, out_tracers)
       jaxpr, consts, attrs_tracked = trace.to_jaxpr(out_tracers, fun.debug_info)
@@ -2254,6 +2254,20 @@ def trace_to_jaxpr_dynamic(
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts, attrs_tracked
+
+def _check_returned_jaxtypes(dbg, out_tracers):
+  for i, x in enumerate(out_tracers):
+    try:
+      core.typeof(x)
+    except TypeError:
+      if (dbg and len(paths := dbg.result_paths()) > i and
+          (p := paths[i].removeprefix('result'))):
+        extra = f' at output component {p}'
+      else:
+        extra = ''
+      raise TypeError(
+      f"function {dbg.func_src_info} traced for {dbg.traced_for} returned a "
+      f"value of type {type(x)}{extra}, which is not a valid JAX type") from None
 
 def _check_no_returned_refs(
     dbg: core.DebugInfo,
