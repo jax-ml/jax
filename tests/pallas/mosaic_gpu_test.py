@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import tempfile
+import traceback
 from typing import ClassVar
 
 from absl.testing import absltest
@@ -1765,6 +1766,27 @@ class PallasCallTest(PallasTest):
           result[sm_step],
           jnp.tile((132 * sm_step + jnp.arange(132))[:, None], 128),
       )
+
+  def test_lowering_error_context(self):
+    def body(x_ref, y_ref, barrier):
+      plgpu.copy_gmem_to_smem(x_ref, y_ref, barrier)
+      plgpu.barrier_wait(barrier)
+
+    x = jnp.arange(127, dtype=jnp.int4)  # Size is not a multiple of bytes
+    offending_line = "plgpu.copy_gmem_to_smem(x_ref, y_ref, barrier)"
+    try:
+      pl.pallas_call(
+          body,
+          in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          out_specs=pl.BlockSpec(memory_space=plgpu.SMEM),
+          out_shape=x,
+          scratch_shapes=[plgpu.Barrier(1)],
+      )(x)
+    except:
+      # assertRaisesRegex raises does not let us match the traceback.
+      self.assertIn(offending_line, traceback.format_exc())
+    else:
+      self.fail("Should have raised an exception")
 
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
