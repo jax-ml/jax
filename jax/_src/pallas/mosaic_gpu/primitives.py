@@ -530,7 +530,8 @@ def _copy_gmem_to_smem_lowering(
       # arrive with the whole transfer size, while everyone else arrives with 0.
       # But we should continue using this scheme as it's likely to be faster.
       bytes //= WARPGROUP_SIZE
-      mgpu.warpgroup_barrier()  # Make sure all reads have completed.
+      if ctx.module_ctx.auto_barriers:
+        mgpu.warpgroup_barrier()  # Make sure all reads have completed.
       barrier.arrive_expect_tx(bytes)
     else:
       # In Warp-level lowering, we arrive on each CUDA thread in a warp, but
