@@ -19,6 +19,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
   from jaxlib.mlir.dialects import arith as arith
   from jaxlib.mlir.dialects import builtin as builtin
+  from jaxlib.mlir.dialects import cf as cf
   from jaxlib.mlir.dialects import chlo as chlo
   from jaxlib.mlir.dialects import func as func
   from jaxlib.mlir.dialects import gpu as gpu
@@ -36,6 +37,7 @@ else:
   __getattr__, __dir__, __all__ = _lazy.attach("jaxlib.mlir.dialects", [
       "arith",
       "builtin",
+      "cf",
       "chlo",
       "func",
       "gpu",
@@ -57,4 +59,3 @@ from jaxlib.mlir.dialects import sdy
 from jaxlib.mlir.dialects import stablehlo as hlo
 
 from jax._src import lib
-from jaxlib.mlir.dialects import cf

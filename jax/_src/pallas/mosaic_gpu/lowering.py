@@ -3109,12 +3109,6 @@ def _check_lowering_rule(ctx: LoweringRuleContext, *err_args, err_tree, debug):
   if not pallas_helpers.debug_checks_enabled():
     return []
 
-  if cf_dialect is None:
-    # TODO(slebedev): Remove once the minimal jaxlib version is 0.6.1.
-    raise ValueError(
-        "cf dialect is not available. Make sure you have jaxlib 0.6.1 or later."
-    )
-
   error = jax.tree.unflatten(err_tree, err_args)
   [pred] = error._pred.values()
   [exception_tree] = error._metadata.values()
