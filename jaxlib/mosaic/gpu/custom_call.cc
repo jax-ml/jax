@@ -555,9 +555,12 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     return absl::InternalError("Pass pipeline failed");
   }
 
-  llvm::SmallVector<llvm::StringRef> runtime_lib;
-  if (const char* lib_path = getenv("MOSAIC_GPU_RUNTIME_LIB_PATH")) {
-    runtime_lib.emplace_back(lib_path);
+  llvm::SmallVector<llvm::StringRef> runtime_libs;
+  if (const char* runtime_lib_path = getenv("MOSAIC_GPU_RUNTIME_LIB_PATH")) {
+    runtime_libs.emplace_back(runtime_lib_path);
+  }
+  if (const char* nvshmem_path = getenv("MOSAIC_GPU_NVSHMEM_SO_PATH")) {
+    runtime_libs.emplace_back(nvshmem_path);
   }
   // Create a transformer to run all LLVM optimization passes at the
   // specified optimization level.
@@ -566,7 +569,7 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
   mlir::ExecutionEngineOptions options;
   options.transformer = transformer;
   options.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
-  options.sharedLibPaths = runtime_lib;
+  options.sharedLibPaths = runtime_libs;
   auto maybe_execution_engine = mlir::ExecutionEngine::create(module, options);
   if (!maybe_execution_engine) {
     return absl::InternalError("Failed to compile kernel");
