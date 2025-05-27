@@ -382,6 +382,66 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
         c, jnp.array([[0, 0, 1, 0], [0, 2, 3, 4]], dtype=jnp.int32)
     )
 
+  def test_ragged_all_to_all_vmap_multi_dim_operand(self):
+    device_type = jax.devices()[0].platform
+    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
+      raise unittest.SkipTest(
+          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
+          f' v{jtu.get_tpu_version()}'
+      )
+
+    axis_name = 'x'
+    mesh_axes = dict(x=2)
+    mesh = jtu.create_mesh(tuple(mesh_axes.values()), tuple(mesh_axes.keys()))
+    data_sharding = P(axis_name, None, None)
+    operand_data = jnp.zeros((2, 2, 3), dtype=jnp.int32)
+    output_data = jnp.zeros((2, 2, 4), dtype=jnp.int32)
+    input_offsets_data = jnp.zeros((2, 2, 2), dtype=jnp.int32)
+    send_sizes_data = jnp.zeros((2, 2, 2), dtype=jnp.int32)
+    output_offsets_data = jnp.zeros((2, 2, 2), dtype=jnp.int32)
+    recv_sizes_data = jnp.zeros((2, 2, 2), dtype=jnp.int32)
+
+    operand = jax.device_put(operand_data, jax.sharding.NamedSharding(mesh, data_sharding))
+    output = jax.device_put(output_data, jax.sharding.NamedSharding(mesh, data_sharding))
+    input_offsets = jax.device_put(input_offsets_data, jax.sharding.NamedSharding(mesh, data_sharding))
+    send_sizes = jax.device_put(send_sizes_data, jax.sharding.NamedSharding(mesh, data_sharding))
+    output_offsets = jax.device_put(output_offsets_data, jax.sharding.NamedSharding(mesh, data_sharding))
+    recv_sizes = jax.device_put(recv_sizes_data, jax.sharding.NamedSharding(mesh, data_sharding))
+
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=(
+            P(axis_name, None),
+            P(axis_name, None),
+            P(axis_name, None),
+            P(axis_name, None),
+            P(axis_name, None),
+            P(axis_name, None),
+        ),
+        out_specs=P(axis_name),
+        check_vma=False,
+    )
+    def fwd(
+        operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
+    ):
+      return lax.ragged_all_to_all(
+          operand=operand.reshape(operand.shape[1:]),
+          output=output.reshape(output.shape[1:]),
+          input_offsets=input_offsets.reshape(input_offsets.shape[1:]),
+          send_sizes=send_sizes.reshape(send_sizes.shape[1:]),
+          output_offsets=output_offsets.reshape(output_offsets.shape[1:]),
+          recv_sizes=recv_sizes.reshape(recv_sizes.shape[1:]),
+          axis_name=axis_name,
+      )
+
+    res = vmap(
+        fwd, in_axes=0, out_axes=0, axis_name='x'
+    )(
+        operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
+    )
+    self.assertEqual(res.shape, (2, 2, 4))
+
   @parameterized.named_parameters(
     dict(
         testcase_name='_batch_0_data_shard_axis_0_input_0',
@@ -510,8 +570,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
         fwd, in_axes=vmap_batch_axis, out_axes=0, axis_name=vmap_axis_name
     )(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
-    ).reshape(
-        (2, 2, 4)
     )
     expected_res = jnp.array([[[1, 4, 0, 0], [2, 3, 5, 0]],
                               [[1, 4, 0, 0], [2, 3, 5, 0]]], dtype=jnp.int32)
