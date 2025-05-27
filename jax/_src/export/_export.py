@@ -694,7 +694,7 @@ def _export_lowered(
   shardy_enabled = _jax.sdy.lowered_with_shardy(
       mlir.module_to_bytecode(mlir_module))
 
-  mlir_module_serialized = _module_to_bytecode(mlir_module, shardy_enabled)
+  mlir_module_serialized = _module_to_bytecode(mlir_module)
 
   # Figure out the result types and shapes
   if "global_out_avals" in lowering.compile_args:
@@ -808,12 +808,8 @@ def _export_lowered(
       calling_convention_version=version,
       _get_vjp=_get_exported_vjp)
 
-def _module_to_bytecode(module: ir.Module, shardy_enabled: bool) -> bytes:
-  if shardy_enabled:
-    mlir_str = _jax.sdy.sdy_round_trip_export_pipeline(
-        mlir.module_to_bytecode(module))
-  else:
-    mlir_str = mlir.module_to_bytecode(module)
+def _module_to_bytecode(module: ir.Module) -> bytes:
+  mlir_str = mlir.module_to_bytecode(module)
   # `target_version` is used to manage situations when a StableHLO producer
   # and a StableHLO consumer were built using different versions of StableHLO.
   #
