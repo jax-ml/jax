@@ -24,7 +24,7 @@ This tutorial provides a practical introduction to host offloading techniques in
 - Parameter offloading
 - Optimizer state offloading
 
-By applying offloading strategies, developers can better manage memory resources and reduce memory pressure on devices. To implement these strategies effectively, understanding JAX's core mechanisms for data placement and movement is essential. Note that offloading performance may vary significantly across device types.
+By applying offloading strategies, developers can better manage memory resources and reduce memory pressure on devices. To implement these strategies effectively, understanding JAX's core mechanisms for data placement and movement is essential.
 
 ## Building Blocks for Offloading
 
@@ -444,9 +444,11 @@ This implementation demonstrates how offloading model parameters together with a
 
 This hybrid approach demonstrates that parameter and activation offloading work synergistically to achieve significant memory reductions while maintaining computational correctness.  
 
-### Limitation of Parameter Offloading
+### Limitations of Parameter Offloading
 
 {func}`jax.lax.scan` is crucial for effective parameter management. Using an explicit for loop would cause parameters to continuously occupy device memory, resulting in the same memory usage as without parameter offloading. While {func}`jax.lax.scan` allows specifying the scan axis, parameter offloading currently works only when scanning over axis 0. Scanning over other axes generates a `transpose` operation during compilation before returning parameters to the device, which is expensive and not supported on all platforms.
+
+The offloading performance can vary for different device types. It may degrade performance due to memory transfers between host and device, so it's important to consider this trade-off when designing your optimization strategy.
 
 # Optimizer State Offloading
 
