@@ -85,7 +85,7 @@ class PgleTest(jtu.JaxTestCase):
     pgle_profiler = profiler.PGLEProfiler(1, 90)
     with config.enable_pgle(False):
       with profiler.PGLEProfiler.trace(pgle_profiler):
-        compiled(x, y)
+        jax.block_until_ready(compiled(x, y))
 
     fdo_profile = pgle_profiler.consume_fdo_profile()
     self.assertIsNotNone(fdo_profile)
