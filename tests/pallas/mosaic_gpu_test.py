@@ -408,7 +408,7 @@ class PallasCallTest(PallasTest):
                 dtype,
                 transforms=transforms,
             ),
-            plgpu.Barrier(num_arrivals=1),
+            plgpu.Barrier(),
         ],
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
     )
@@ -540,7 +540,7 @@ class PallasCallTest(PallasTest):
         in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
         scratch_shapes=[
             plgpu.SMEM((256,), jnp.float32),
-            plgpu.Barrier(num_arrivals=1),
+            plgpu.Barrier(),
         ],
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
@@ -586,7 +586,7 @@ class PallasCallTest(PallasTest):
         in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
         scratch_shapes=[
             plgpu.SMEM(shape, jnp.float32),
-            plgpu.Barrier(num_arrivals=1),
+            plgpu.Barrier(),
         ],
         grid=(1,),
     )
@@ -617,7 +617,7 @@ class PallasCallTest(PallasTest):
         in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
         scratch_shapes=[
             plgpu.SMEM(x.shape, jnp.float32),
-            plgpu.Barrier(num_arrivals=1),
+            plgpu.Barrier(),
         ],
     )
     def extract_x0(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
@@ -672,7 +672,7 @@ class PallasCallTest(PallasTest):
         in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
         scratch_shapes=[
             plgpu.SMEM((128,), jnp.float32),
-            plgpu.Barrier(num_arrivals=1, num_barriers=4),
+            plgpu.Barrier(num_barriers=4),
         ],
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
@@ -713,7 +713,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([128, 128], jnp.float32),
         in_specs=(in_spec,),
         out_specs=out_spec,
-        scratch_shapes=[plgpu.Barrier(num_arrivals=1)],
+        scratch_shapes=[plgpu.Barrier()],
     )
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x)
@@ -736,7 +736,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([128, 128], jnp.float32),
         in_specs=(in_spec,),
         out_specs=out_spec,
-        scratch_shapes=[plgpu.Barrier(num_arrivals=1)],
+        scratch_shapes=[plgpu.Barrier()],
     )
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x * 2)
@@ -756,7 +756,7 @@ class PallasCallTest(PallasTest):
         kernel,
         out_shape=jax.ShapeDtypeStruct([128, 128], jnp.float32),
         in_specs=(in_spec,),
-        scratch_shapes=[plgpu.Barrier(num_arrivals=1)],
+        scratch_shapes=[plgpu.Barrier()],
     )
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x * 2)
@@ -783,7 +783,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([2, 128, 128], jnp.float32),
         in_specs=(in_spec,),
         out_specs=out_spec,
-        scratch_shapes=[plgpu.Barrier(num_arrivals=1)],
+        scratch_shapes=[plgpu.Barrier()],
     )
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), np.stack([x, x], axis=0))
@@ -827,7 +827,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([2, 64, 2, 128], jnp.float32),
         in_specs=(in_spec,),
         out_specs=out_spec,
-        scratch_shapes=[plgpu.Barrier(num_arrivals=1)],
+        scratch_shapes=[plgpu.Barrier()],
     )
     x = jnp.arange(2 * 64 * 128, dtype=jnp.float32).reshape(2, 64, 128)
     xt = x.transpose((1, 0, 2))
@@ -847,7 +847,7 @@ class PallasCallTest(PallasTest):
           plgpu.barrier_wait(barrier_ref)
           o_ref[...] = scratch_ref[...] + 1
         pl.run_scoped(inner_body, plgpu.SMEM((256,), jnp.float32))
-      pl.run_scoped(body, plgpu.Barrier(num_arrivals=1))
+      pl.run_scoped(body, plgpu.Barrier())
 
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
@@ -1016,7 +1016,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
         scratch_shapes=[
             plgpu.SMEM(shape, jnp.int32, transforms=tuple(transforms)),
-            plgpu.Barrier(num_arrivals=1),
+            plgpu.Barrier(),
         ]
     )
     def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
@@ -1089,7 +1089,7 @@ class PallasCallTest(PallasTest):
         plgpu.barrier_wait(barrier_ref)
 
       def branch():
-        pl.run_scoped(scoped_kernel, plgpu.Barrier(num_arrivals=1))
+        pl.run_scoped(scoped_kernel, plgpu.Barrier())
 
       jax.lax.cond(x_ref_gmem[0] % 2 == 0, branch, branch)
 
@@ -1698,7 +1698,7 @@ class PallasCallTest(PallasTest):
               plgpu.SMEM(shape, large_ty, transforms=(tiling, large_swizzle)),
               plgpu.SMEM(shape, small_ty, transforms=(tiling, small_swizzle))
           ),
-          plgpu.Barrier(1, num_barriers=1),
+          plgpu.Barrier(num_barriers=1),
       )
 
     def scoped_kernel(x_gmem, o_gmem, aliased_ref, barrier):
@@ -1780,7 +1780,7 @@ class PallasCallTest(PallasTest):
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.SMEM),
           out_shape=x,
-          scratch_shapes=[plgpu.Barrier(1)],
+          scratch_shapes=[plgpu.Barrier()],
       )(x)
     except:
       # assertRaisesRegex raises does not let us match the traceback.
@@ -1921,7 +1921,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
         plgpu.wait_smem_to_gmem(0)
       pl.run_scoped(scope,
                     smem_ref=plgpu.SMEM((32, 32), jnp.float32),
-                    tma_barrier=plgpu.Barrier(num_arrivals=1))
+                    tma_barrier=plgpu.Barrier())
     x = jax.random.uniform(jax.random.key(42), (64, 32), jnp.float32)
     result = kernel(x)
     np.testing.assert_array_equal(result, x[32:64])
@@ -2345,7 +2345,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
             plgpu.TMEM((128, 128), jnp.float32),
             plgpu.TMEM((128, 128), jnp.float32),
             plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
-            plgpu.Barrier(num_arrivals=1),
+            plgpu.Barrier(),
         ],
         num_threads=1,
         thread_name="x",
@@ -2416,7 +2416,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
     scratch_shapes = [
         plgpu.TMEM(shape, jnp.float32, packed=False),
         plgpu.SMEM(shape, dtype, transforms=transforms),
-        plgpu.Barrier(num_arrivals=1, for_tensor_core=True),
+        plgpu.Barrier(for_tensor_core=True),
     ]
     if lhs_tmem:
       scratch_shapes.append(plgpu.TMEM(shape, dtype, packed=True))
@@ -2478,8 +2478,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
         b_smem=plgpu.SMEM(_rhs_shape, dtype, transforms=transforms),
         acc_tmem=plgpu.TMEM(_acc_shape, jnp.float32, collective=True),
         scratch_smem=plgpu.SMEM(_acc_shape, dtype, transforms=transforms),
-        tma_barrier=plgpu.Barrier(num_arrivals=1),
-        mma_barrier=plgpu.Barrier(num_arrivals=1, for_tensor_core=True),
+        tma_barrier=plgpu.Barrier(),
+        mma_barrier=plgpu.Barrier(for_tensor_core=True),
         cluster_barrier=plgpu.ClusterBarrier(collective_axes=("x",)),
       )
       def _scoped(a_smem, b_smem,
@@ -2546,7 +2546,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
     scratch_shapes = [
         plgpu.TMEM(shape, jnp.float32, packed=False),
         plgpu.SMEM(shape, dtype, transforms=transforms),
-        plgpu.Barrier(num_arrivals=1, num_barriers=2, for_tensor_core=True),
+        plgpu.Barrier(num_barriers=2, for_tensor_core=True),
     ]
     f = self.pallas_call(
         kernel,
@@ -2612,7 +2612,7 @@ class PipelineTest(PallasTest):
           functools.partial(scoped_kernel, x_gmem, o_gmem),
           plgpu.SMEM((max_concurrent_steps, 32, 16), jnp.float32),
           plgpu.SMEM((max_concurrent_steps, 32, 16), jnp.float32),
-          plgpu.Barrier(1, num_barriers=max_concurrent_steps),
+          plgpu.Barrier(num_barriers=max_concurrent_steps),
       )
 
     def scoped_kernel(x_gmem, o_gmem, x_smem, o_smem, barrier):
