@@ -40,6 +40,15 @@ py_library(
 )
 
 py_library(
+    name = "matmul_blackwell",
+    srcs = ["matmul_blackwell.py"],
+    deps = [
+        "//jax",
+        "//jax:mosaic_gpu",
+    ],
+)
+
+py_library(
     name = "flash_attention",
     srcs = ["flash_attention.py"],
     deps = [

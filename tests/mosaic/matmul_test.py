@@ -19,7 +19,11 @@ import os
 from absl.testing import absltest, parameterized
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.interpreters import mlir
+from jax._src.lib.mlir import ir
+from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 import jax.numpy as jnp
+import numpy as np
 
 import hypothesis as hp
 import hypothesis.strategies as hps
@@ -31,6 +35,7 @@ except ImportError:
   matmul = None
 else:
   from jax.experimental.mosaic.gpu.examples import matmul
+  from jax.experimental.mosaic.gpu.examples import matmul_blackwell
 
 
 config.parse_flags_with_absl()
@@ -53,9 +58,13 @@ class MatmulTestCase(jtu.JaxTestCase):
     super().setUp()
     if matmul is None:
       self.skipTest("Mosaic GPU not available.")
-    if (not jtu.test_device_matches(["cuda"]) or
-        not jtu.is_cuda_compute_capability_equal("9.0")):
-      self.skipTest("Only works on GPU with capability sm90a")
+    if not jtu.test_device_matches(["cuda"]):
+      self.skipTest("Test needs a GPU device")
+    self.context = mlir.make_ir_context()
+    mgpu_dialect.register_dialect(self.context)
+    self.enter_context(config.traceback_filtering("off"))
+    self.enter_context(self.context)
+    self.enter_context(ir.Location.unknown())
 
   @parameterized.named_parameters(
       (f"_shard{i}", i) for i in range(5)
@@ -63,7 +72,10 @@ class MatmulTestCase(jtu.JaxTestCase):
   @seed_hypothesis
   @hp.settings(max_examples=100)  # Add verbosity=hp.Verbosity.verbose to debug
   @hp.given(hps.data())
-  def test_matmul(self, data):
+  def test_matmul_sm90(self, data):
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Only works on GPU with capability sm90a")
+
     in_dtype = data.draw(
         hps.sampled_from([jnp.float16, jnp.bfloat16, jnp.float32]),
         label="in_dtype",
@@ -121,6 +133,66 @@ class MatmulTestCase(jtu.JaxTestCase):
       if "Mosaic GPU kernel exceeds available shared memory" in str(e):
         hp.assume(False)
       raise e
+
+  @parameterized.named_parameters(
+      # TODO(apaszke): Increase shard count once we have more B200s in CI.
+      (f"_shard{i}", i) for i in range(1)
+  )
+  @seed_hypothesis
+  @hp.settings(max_examples=100)  # Add verbosity=hp.Verbosity.verbose to debug
+  @hp.given(hps.data())
+  def test_matmul_sm100(self, data):
+    if not jtu.is_cuda_compute_capability_equal("10.0"):
+      self.skipTest("Only works on GPU with capability sm100a")
+
+    dtype = data.draw(
+        hps.sampled_from([jnp.float16, jnp.bfloat16]),
+        label="dtype",
+    )
+    m, n, k = (
+        data.draw(hps.sampled_from([128, 256, 512, 2048, 8192]), label=d) for d in "mnk"
+    )
+    max_concurrent_steps = data.draw(
+        hps.integers(2, 5), label="max_concurrent_steps"
+    )
+    collective = data.draw(hps.booleans(), label="collective")
+    num_ctas = 2 if collective else 1
+    hp.assume(not (m == 128 and collective))  # Too small for collective MMA.
+    tile_m = data.draw(
+        hps.sampled_from([t for t in [128] if t * num_ctas <= m]), label="tile_m"
+    )
+    tile_n = data.draw(
+        hps.sampled_from([t for t in [64, 128, 256] if t * num_ctas <= n]), label="tile_n"
+    )
+    grid_m = m // (num_ctas * tile_m)
+    grid_tile_m = data.draw(hps.sampled_from([1, 2, 4, 8, 16]), label="grid_tile_m")
+    hp.assume(grid_m % grid_tile_m == 0)
+
+    try:
+      kernel = matmul_blackwell.build_kernel(
+          m,
+          k,
+          n,
+          dtype=dtype,
+          tile_m=tile_m,
+          tile_n=tile_n,
+          grid_tile_m=grid_tile_m,
+          max_concurrent_steps=max_concurrent_steps,
+          collective=collective,
+      )
+    except ValueError as e:
+      if "Mosaic GPU kernel exceeds available shared memory" in str(e):
+        hp.assume(False)
+      raise
+
+    ka, kb = jax.random.split(jax.random.key(0), 2)
+    a = jax.random.normal(key=ka, shape=(m, k), dtype=dtype)
+    b = jax.random.normal(key=kb, shape=(n, k), dtype=dtype)
+    out = kernel(a, b)
+    out_ref = jnp.dot(a, b.T)
+    np.testing.assert_allclose(
+        out, out_ref, atol=1e-3, rtol=1e-3 if k < 512 else 1e-2
+    )
 
 
 if __name__ == "__main__":

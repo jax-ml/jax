@@ -126,6 +126,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
+        "//jax/experimental/mosaic/gpu/examples:matmul_blackwell",
     ] + py_deps([
         "absl/testing",
         "numpy",
