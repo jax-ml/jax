@@ -230,7 +230,7 @@ def emit_pipeline(
         ],
         [len(in_specs)],
     )
-    arrival_count = sum(map(_in_smem, in_specs))
+    num_arrivals = sum(map(_in_smem, in_specs))
     return pl.run_scoped(
         functools.partial(
             scoped_pipeline,
@@ -240,10 +240,10 @@ def emit_pipeline(
         in_smem_refs=in_smem_refs,
         out_smem_refs=out_smem_refs,
         barrier_ref=None
-        if arrival_count == 0
+        if num_arrivals == 0
         else gpu_core.Barrier(
             # TODO(slebedev): Change this to arrive only once.
-            arrival_count,
+            num_arrivals=num_arrivals,
             num_barriers=max_concurrent_steps,
         ),
     )

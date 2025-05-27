@@ -850,7 +850,7 @@ class ClusterBarrierType(dtypes.ExtendedDType):
     return self.name
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class Barrier:
   """Describes a barrier Ref.
 
@@ -862,9 +862,9 @@ class Barrier:
       the tensor core. This should be set to True when waiting on Blackwell
       (TC Gen 5) asynchoronous matmul instructions.
   """
-  num_arrivals: int
+  num_arrivals: int = 1
   num_barriers: int = 1
-  for_tensor_core: bool = dataclasses.field(default=False, kw_only=True)
+  for_tensor_core: bool = False
 
   def get_ref_aval(self) -> AbstractMemoryRef:
     aval = jax_core.ShapedArray(
@@ -879,7 +879,7 @@ class Barrier:
           f"Num arrivals must be at least 1, but got {self.num_arrivals}"
       )
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class ClusterBarrier:
   collective_axes: tuple[str | tuple[str, ...], ...]
   num_barriers: int = 1

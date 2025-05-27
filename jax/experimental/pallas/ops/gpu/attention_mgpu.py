@@ -278,9 +278,9 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
         lambda *args: kernel(q_ref, k_ref, v_ref, out_ref, lse_ref, args),
         scratch,
         (
-            plgpu.Barrier(1, num_barriers=max_concurrent_steps),
-            plgpu.Barrier(1, num_barriers=max_concurrent_steps),
-            plgpu.Barrier(1, num_barriers=compute_wgs),
+            plgpu.Barrier(num_barriers=max_concurrent_steps),
+            plgpu.Barrier(num_barriers=max_concurrent_steps),
+            plgpu.Barrier(num_barriers=compute_wgs),
         ),
         (plgpu.Barrier(num_arrivals=compute_wgs, num_barriers=max_concurrent_steps),) * 2,
         plgpu.Barrier(num_arrivals=compute_wgs),
@@ -587,7 +587,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       out_shape=q,
       scratch_shapes=[
           (q_scratch, do_scratch, lse_scratch, delta_scratch),  # type: ignore
-          (plgpu.Barrier(1, num_barriers=compute_wgs),) * 4  # type: ignore
+          (plgpu.Barrier(num_barriers=compute_wgs),) * 4  # type: ignore
       ],
       compiler_params=plgpu.CompilerParams(approx_math=True),
       grid=(batch_size, num_q_tiles, num_q_heads),
@@ -608,7 +608,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
     out_shape=[out_shape_kv, out_shape_kv],
     scratch_shapes=[
         (k_scratch, v_scratch),  # type: ignore
-        (plgpu.Barrier(1, num_barriers=compute_wgs),) * 2  # type: ignore
+        (plgpu.Barrier(num_barriers=compute_wgs),) * 2  # type: ignore
   ],
     compiler_params=plgpu.CompilerParams(approx_math=True),
     grid=(batch_size, num_kv_tiles, num_q_heads),
@@ -776,7 +776,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
             out_shape=out_shape,
       scratch_shapes=(
           tuple(smem_scratch),  # type: ignore
-          plgpu.Barrier(1, num_barriers=compute_wgs),  # type: ignore
+          plgpu.Barrier(num_barriers=compute_wgs),  # type: ignore
           plgpu.Barrier(num_arrivals=compute_wgs),),  # type: ignore
       compiler_params=plgpu.CompilerParams(
           approx_math=True, lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
