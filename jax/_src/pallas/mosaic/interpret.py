@@ -86,18 +86,23 @@ class TPUInterpretParams:
       replaced with arrays all of `jnp.inf`. Additionaly any floating point
       operands to any operation will be replaced with (arrays of) `jnp.inf`.
       Default: False.
-    uninitialized_memory: If "nan", allocated buffers are initialized to
-      contain all NaNs (or to their maximum possible value for integers). If
-      "zero", allocated buffers are initialized to all zeros.
+    uninitialized_memory: If "nan", allocated buffers are initialized to contain
+      all NaNs (or to their maximum possible value for integers). If "zero",
+      allocated buffers are initialized to all zeros.
       Default: "nan".
     random_seed: Seed for random number generator used during interpretation.
       Currently random numbers are used to randomize the grid coordinates along
       dimensions with 'parallel' semantics.
       Default: None.
     grid_point_recorder: Callback that is invoked by the interpreter for each
-      grid point in the order in which the grid points are traversed. This is
-      intended for inspecting the randomization of coordinates along grid
-      dimensions with 'parallel' semantics.
+      grid point in the order in which the grid points are traversed. The
+      callback is invoked with two arguments:
+        - A tuple of grid coordinates.
+        - The local core ID of the core that is processing the grid point.
+      This callback is intended for inspecting
+        - the randomization of coordinates along grid dimensions with 'parallel'
+          semantics and
+        - the mapping of grid points to local (i.e. per-device) cores.
       Default: None.
     num_cores_per_device: The number of cores per device.
       Default: 1.
@@ -107,7 +112,9 @@ class TPUInterpretParams:
   skip_floating_point_ops: bool = False
   uninitialized_memory: Literal["nan", "zero"] = "nan"
   random_seed: int | None = None
-  grid_point_recorder: Callable[[tuple[jnp.int32, ...]], None] | None = None
+  grid_point_recorder: (
+      Callable[[tuple[np.int32, ...], np.int32], None] | None
+  ) = None
   num_cores_per_device: int = 1
 
 
@@ -1752,11 +1759,45 @@ def _get_mosaic_params(compiler_params: dict[str, pallas_core.CompilerParams]) -
 def _get_parallel_dim_semantics(
     compiler_params: dict[str, Any], num_dimensions_in_grid: int,
 ) -> tuple[bool, ...]:
-  """Returns a tuple of booleans indicating whether the corresponding dimension in the grid is parallel."""
+  """Returns a tuple indicating which grid dimensions have parallel semantics.
+
+  Args:
+    compiler_params: Representation of a `mosaic_core.TPUCompilerParams` object
+      as a dictionary.
+    num_dimensions_in_grid: The number of dimensions in the grid.
+
+  Returns:
+    A tuple of booleans where the entry at index `i` is `True` precisely if the
+    `i`-th dimension in the grid has parallel semantics.
+
+  Raises:
+    ValueError: If the dimensions with parallel semantics do not form a prefix
+      of the grid.
+  """
   mosaic_params = _get_mosaic_params(compiler_params)
   if mosaic_params.dimension_semantics is None:
     return (False,) * num_dimensions_in_grid
-  return tuple(ds == 'parallel' for ds in mosaic_params.dimension_semantics)
+  result = tuple(ds == 'parallel' for ds in mosaic_params.dimension_semantics)
+  for ds0, ds1 in zip(result[:-1], result[1:]):
+    if ds1 and not ds0:
+      raise ValueError(
+          'Dimensions with parallel semantics must form a prefix of the grid.'
+      )
+  return result
+
+
+def _get_parallel_subgrid_size(
+    parallel_semantics_per_dim: tuple[bool, ...], grid: tuple[int, ...]
+) -> int:
+  """Returns the size of the subgrid along the parallel dimensions."""
+  return functools.reduce(
+      lambda x, y: x * y,
+      (
+          dim_size if parallel_dim else 1
+          for dim_size, parallel_dim in zip(grid, parallel_semantics_per_dim)
+      ),
+      1,
+  )
 
 _GridPointCoordinatesPerDim = tuple[Array, ...]
 
@@ -1835,24 +1876,6 @@ def _get_grid_point(
   for li, coords in zip(loop_indices, grid_point_coordinates):
     grid_point.append(li if jnp.size(coords) == 0 else coords[li])
   return jnp.array(grid_point, dtype=np.int32)
-
-
-def _get_next_local_core_id(
-    local_core_id: int,
-    parallel_semantics_per_dim: tuple[bool, ...],
-    grid_point: Array,
-    next_grid_point: Array,
-    interpret_params: TPUInterpretParams,
-) -> int:
-  delta = next_grid_point - grid_point
-  assert delta.shape == (len(parallel_semantics_per_dim),)
-  parallel_semantics_per_dim = jnp.array(parallel_semantics_per_dim)
-  deltas_along_parallel_dims = jnp.where(parallel_semantics_per_dim, delta, 0)
-  return jax.lax.cond(
-      jnp.any(deltas_along_parallel_dims),
-      lambda: (local_core_id + 1) % interpret_params.num_cores_per_device,
-      lambda: local_core_id,
-  )
 
 def _uninitialized_value(shape, dtype, interpret_params):
   if interpret_params.uninitialized_memory == 'nan':
@@ -2078,11 +2101,26 @@ def interpret_pallas_call(
     # Base case is always one iteration when grid is ()
     num_iterations = 1
 
-  parallel_semantics_per_dim = _get_parallel_dim_semantics(
-      compiler_params, len(grid)
-  )
   randomized_grid_coordinates = _get_randomized_grid_coordinates(
       grid, compiler_params, interpret_params.random_seed  # type: ignore[arg-type]
+  )
+
+  parallel_dim_semantics = _get_parallel_dim_semantics(
+      compiler_params, len(grid)
+  )
+  parallel_subgrid_size = _get_parallel_subgrid_size(
+      parallel_dim_semantics, grid  # type: ignore[arg-type]
+  )
+  num_points_in_parallel_subgrid_per_core = (
+      parallel_subgrid_size + interpret_params.num_cores_per_device - 1
+  ) // interpret_params.num_cores_per_device  # We round up here.
+  num_iterations_per_point_in_parallel_subgrid = (
+      # This is evenly divisible.
+      num_iterations // parallel_subgrid_size  # type: ignore[operator]
+  )
+  num_iterations_per_core = (
+      num_points_in_parallel_subgrid_per_core
+      * num_iterations_per_point_in_parallel_subgrid
   )
 
   def _get_local_grid_env(loop_idx):
@@ -2153,19 +2191,19 @@ def interpret_pallas_call(
         cur_start_indices,
     ) = carry
     if interpret_params.grid_point_recorder is not None:
-      callback.io_callback(interpret_params.grid_point_recorder, (), grid_point)
+      callback.io_callback(
+          interpret_params.grid_point_recorder,
+          (),
+          grid_point,
+          cur_local_core_id,
+      )
+
+    next_local_core_id = (iteration_idx + 1) // num_iterations_per_core
 
     with pallas_core.grid_env(_get_local_grid_env(loop_idx)):
       next_loop_idx = _get_next_indices(grid, loop_idx)
       next_grid_point = _get_grid_point(
           next_loop_idx, randomized_grid_coordinates
-      )
-      next_local_core_id = _get_next_local_core_id(
-          cur_local_core_id,
-          parallel_semantics_per_dim,
-          grid_point,
-          next_grid_point,
-          interpret_params,
       )
       next_start_indices = [
           _compute_start_indices(
@@ -2178,8 +2216,8 @@ def interpret_pallas_call(
           )
           for bm in grid_mapping.block_mappings
       ]
-      # Copy slices of the input to the kernel buffers.
 
+      # Copy slices of the input to the kernel buffers.
       def _store_slice_to_kernel_input(index, input_var):
         # Copy from the HBM buffer for the pallas_call input to the kernel
         # input buffer.
