@@ -41,7 +41,8 @@ def bytecount(shape, dtype):
 
 
 def build_kernel(
-    m, n, k,
+    m, k, n,
+    dtype: jnp.dtype,
     tile_m: int = 128,
     tile_n: int = 128,
     grid_tile_m: int = 1,
@@ -51,12 +52,15 @@ def build_kernel(
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
   index = ir.IndexType.get()
+  if jnp.dtype(dtype).itemsize != 2:
+    raise NotImplementedError(f"Only tested with 16-bit dtypes, but got {dtype}")
+  if tile_m != 128:
+    raise NotImplementedError(f"Only tile_m=128 supported, but got {tile_m}")
 
   swizzle = 128
-  swizzle_elems = tile_k = swizzle // 2
+  swizzle_elems = tile_k = 8 * swizzle // jnp.finfo(dtype).bits
   tiling = (8, swizzle_elems)
 
-  in_dtype = jnp.float16
   k_loop_iter = k // tile_k
   max_concurrent_steps = min(max_concurrent_steps, k_loop_iter)
 
@@ -74,7 +78,7 @@ def build_kernel(
     raise ValueError(f"{n=} must be divisible by {tile_n=}")
   if k % tile_k != 0:
     raise ValueError(f"{k=} must be divisible by {tile_k=}")
-  if (m // tile_m) % grid_tile_m:
+  if (m // block_tile_m) % grid_tile_m:
     raise ValueError(f"{m=} // {tile_m=} must be divisible by {grid_tile_m=}")
 
   def kernel(ctx, a, b, d, smem):
@@ -83,8 +87,12 @@ def build_kernel(
 
     warp_idx = mgpu.warp_idx(sync=True)
     is_warp_leader = nvvm.elect_sync(i1)
-    is_leader_of = lambda i: arith.andi(arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader)
-    is_leader_block = arith.cmpi(arith.CmpIPredicate.eq, ctx.cluster_idx(gpu.Dimension.x), c(0, index))
+    is_leader_of = lambda i: arith.andi(
+        arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader
+    )
+    is_leader_block = arith.cmpi(
+        arith.CmpIPredicate.eq, ctx.cluster_idx(gpu.Dimension.x), c(0, index)
+    )
 
     m_idx = arith.addi(
         gpu.block_id(gpu.Dimension.x),
@@ -96,7 +104,6 @@ def build_kernel(
     m_start = arith.muli(arith.divui(block_m_start, c(tile_m, index)), c(tile_m, index))
     n_start = arith.muli(n_idx, c(tile_n,index))
 
-
     with mgpu.when(is_leader_of(TMA_WARP)):
       @mgpu.fori(c(k_loop_iter, index), None)
       def _tma_body(ki, _):
@@ -107,7 +114,7 @@ def build_kernel(
         full_barrier = ab_full_barriers[slot]
         with mgpu.when(is_leader_block):
           full_barrier.arrive_expect_tx(
-              bytecount((tile_m, tile_k), in_dtype) + bytecount((tile_n, tile_k), in_dtype)
+              bytecount((tile_m, tile_k), dtype) + bytecount((tile_n, tile_k), dtype)
           )
         k_start = arith.muli(ki, c(tile_k, index))
         common_args = dict(
@@ -162,7 +169,8 @@ def build_kernel(
     gpu.barrier()
     mma_done_barrier.wait(for_tensor_core=True)
 
-    acc.load().astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
+    final_acc = acc.load().astype(mlir.dtype_to_ir_type(jnp.dtype(dtype)))
+    final_acc.store_tiled(d_smem, swizzle=128)
     mgpu.commit_shared()
     ctx.async_copy(
         src_ref=d_smem,
@@ -176,14 +184,14 @@ def build_kernel(
   compute_buffers = (
     jax.ShapeDtypeStruct(
         mgpu.tile_shape((max_concurrent_steps, block_tile_m, tile_k), tiling),
-        jnp.float16),
+        dtype),
     jax.ShapeDtypeStruct(
-         mgpu.tile_shape((max_concurrent_steps, block_tile_n, tile_k), tiling),
-         jnp.float16),
+        mgpu.tile_shape((max_concurrent_steps, block_tile_n, tile_k), tiling),
+        dtype),
   )
   epilogue_buffer = jax.ShapeDtypeStruct(
       mgpu.tile_shape((block_tile_m, tile_n), (128, swizzle_elems)),
-      jnp.float16)
+      dtype)
   smem_buffers = mgpu.Union([compute_buffers, epilogue_buffer])
   smem = (
       smem_buffers,
@@ -196,10 +204,10 @@ def build_kernel(
       (grid_tile_m, n // tile_n, m // (block_tile_m * grid_tile_m)),
       (128, 1, 1),
       (
-          jax.ShapeDtypeStruct((m, k), jnp.float16),
-          jax.ShapeDtypeStruct((n, k), jnp.float16),
+          jax.ShapeDtypeStruct((m, k), dtype),
+          jax.ShapeDtypeStruct((n, k), dtype),
       ),
-      jax.ShapeDtypeStruct((m, n), jnp.float16),
+      jax.ShapeDtypeStruct((m, n), dtype),
       smem,
       cluster=(2 if collective else 1, 1, 1),
   )
@@ -236,7 +244,7 @@ def main(unused_argv):
       continue
     try:
       with mlir.make_ir_context(), ir.Location.unknown():
-        f = build_kernel(m, n, k, **kwargs)
+        f = build_kernel(m, k, n, jnp.float16, **kwargs)
         _, runtime = profiler.measure(f)(a, b)
     except ValueError as e:
       if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
@@ -251,7 +259,7 @@ def main(unused_argv):
     raise ValueError("No valid configuration found")
 
   with mlir.make_ir_context(), ir.Location.unknown():
-    d, runtime = profiler.measure(build_kernel(m, n, k, **best_kwargs))(a, b)
+    d, runtime = profiler.measure(build_kernel(m, k, n, jnp.float16, **best_kwargs))(a, b)
   d_ref, ref_runtime = profiler.measure(jax.jit(lambda a, b: a @ b.T))(a, b)
 
   tflops = float(2 * k * m * n) / (runtime / 1e3) / 1e12
