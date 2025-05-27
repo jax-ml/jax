@@ -106,8 +106,6 @@ absl::StatusOr<XlaComputation> PyMlirModuleToXlaComputation(
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       ParseMlirModuleString(mlir_module, context));
   XlaComputation computation;
-  // SDY dialect may be part of the module which XLA doesn't know about.
-  TF_RETURN_IF_ERROR(ExportShardyForHloRoundTrip(*module));
   TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
                                           return_tuple,
                                           /*use_shardy=*/false));
