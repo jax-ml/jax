@@ -94,92 +94,97 @@ def build_kernel(
         arith.CmpIPredicate.eq, ctx.cluster_idx(gpu.Dimension.x), c(0, index)
     )
 
+    # This function executes the kernel for a single output tile.
+    def compute_output(block_m_start, n_start):
+      """Compute and store a single output tile."""
+      # All blocks in the cluster share the same m_start -- align it!
+      m_start = arith.muli(arith.divui(block_m_start, c(tile_m, index)), c(tile_m, index))
+      with mgpu.when(is_leader_of(TMA_WARP)):
+        @mgpu.fori(c(k_loop_iter, index), None)
+        def _tma_body(ki, _):
+          slot = arith.remui(ki, c(max_concurrent_steps, index))
+          # TODO(apaszke): Use a predicate instead of a conditional.
+          with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, ki, c(max_concurrent_steps, index))):
+            ab_empty_barriers[slot].wait()
+          full_barrier = ab_full_barriers[slot]
+          with mgpu.when(is_leader_block):
+            full_barrier.arrive_expect_tx(
+                bytecount((tile_m, tile_k), dtype) + bytecount((tile_n, tile_k), dtype)
+            )
+          k_start = arith.muli(ki, c(tile_k, index))
+          common_args = dict(
+              swizzle=swizzle,
+              barrier=full_barrier,
+              arrive=False,
+              predicate=None,
+              collective=gpu.Dimension.x,
+              partitioned=0,  # Non-contracting dim is always 0.
+          )
+          ctx.async_copy(
+              src_ref=a,
+              dst_ref=mgpu.memref_slice(a_smem, slot),
+              gmem_slice=(ds(m_start, tile_m), ds(k_start, tile_k)),
+              gmem_transform=mgpu.TileTransform(tiling),
+              **common_args,
+          )
+          ctx.async_copy(
+              src_ref=b,
+              dst_ref=mgpu.memref_slice(b_smem, slot),
+              gmem_slice=(ds(n_start, tile_n), ds(k_start, tile_k)),
+              gmem_transform=mgpu.TileTransform(tiling),
+              **common_args,
+          )
+
+      with mgpu.when(arith.andi(is_leader_of(MMA_WARP), is_leader_block)):
+        @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
+        def _mma_body(ki, accumulate):
+          slot = arith.remui(ki, c(max_concurrent_steps, index))
+          ab_full_barriers[slot].wait()
+          tcgen05.mma(
+              acc,
+              mgpu.memref_slice(a_smem, slot),
+              mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (1, 0, 3, 2)),
+              a_swizzle=swizzle,
+              b_swizzle=swizzle,
+              accumulate=accumulate,
+              collective=collective,
+          )
+          accumulate = arith.constant(i1, 1)
+          is_last_iter = arith.cmpi(
+              arith.CmpIPredicate.eq, ki, c(k_loop_iter - 1, index)
+          )
+          barrier_ptr = arith.select(
+              is_last_iter,
+              mma_done_barrier.get_ptr(),
+              ab_empty_barriers[slot].get_ptr(),
+          )
+          tcgen05.commit_arrive(barrier_ptr, collective=collective, ctx=ctx)
+          return accumulate
+
+      gpu.barrier()
+      mma_done_barrier.wait(for_tensor_core=True)
+
+      final_acc = acc.load().astype(mlir.dtype_to_ir_type(jnp.dtype(dtype)))
+      final_acc.store_tiled(d_smem, swizzle=128)
+      mgpu.commit_shared()
+      ctx.async_copy(
+          src_ref=d_smem,
+          dst_ref=d,
+          gmem_slice=(ds(block_m_start, block_tile_m), ds(n_start, tile_n)),
+          gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
+          swizzle=swizzle,
+      )
+      ctx.await_async_copy(0)
+
     m_idx = arith.addi(
         gpu.block_id(gpu.Dimension.x),
         arith.muli(gpu.block_id(gpu.Dimension.z), c(grid_tile_m, index)),
     )
     n_idx = gpu.block_id(gpu.Dimension.y)
     block_m_start = arith.muli(m_idx, c(block_tile_m, index))
-    # All blocks in the cluster share the same m_start -- align it!
-    m_start = arith.muli(arith.divui(block_m_start, c(tile_m, index)), c(tile_m, index))
     n_start = arith.muli(n_idx, c(tile_n,index))
-
-    with mgpu.when(is_leader_of(TMA_WARP)):
-      @mgpu.fori(c(k_loop_iter, index), None)
-      def _tma_body(ki, _):
-        slot = arith.remui(ki, c(max_concurrent_steps, index))
-        # TODO(apaszke): Use a predicate instead of a conditional.
-        with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, ki, c(max_concurrent_steps, index))):
-          ab_empty_barriers[slot].wait()
-        full_barrier = ab_full_barriers[slot]
-        with mgpu.when(is_leader_block):
-          full_barrier.arrive_expect_tx(
-              bytecount((tile_m, tile_k), dtype) + bytecount((tile_n, tile_k), dtype)
-          )
-        k_start = arith.muli(ki, c(tile_k, index))
-        common_args = dict(
-            swizzle=swizzle,
-            barrier=full_barrier,
-            arrive=False,
-            predicate=None,
-            collective=gpu.Dimension.x,
-            partitioned=0,  # Non-contracting dim is always 0.
-        )
-        ctx.async_copy(
-            src_ref=a,
-            dst_ref=mgpu.memref_slice(a_smem, slot),
-            gmem_slice=(ds(m_start, tile_m), ds(k_start, tile_k)),
-            gmem_transform=mgpu.TileTransform(tiling),
-            **common_args,
-        )
-        ctx.async_copy(
-            src_ref=b,
-            dst_ref=mgpu.memref_slice(b_smem, slot),
-            gmem_slice=(ds(n_start, tile_n), ds(k_start, tile_k)),
-            gmem_transform=mgpu.TileTransform(tiling),
-            **common_args,
-        )
-
-    with mgpu.when(arith.andi(is_leader_of(MMA_WARP), is_leader_block)):
-      @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
-      def _mma_body(ki, accumulate):
-        slot = arith.remui(ki, c(max_concurrent_steps, index))
-        ab_full_barriers[slot].wait()
-        tcgen05.mma(
-            acc,
-            mgpu.memref_slice(a_smem, slot),
-            mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (1, 0, 3, 2)),
-            a_swizzle=swizzle,
-            b_swizzle=swizzle,
-            accumulate=accumulate,
-            collective=collective,
-        )
-        accumulate = arith.constant(i1, 1)
-        is_last_iter = arith.cmpi(
-            arith.CmpIPredicate.eq, ki, c(k_loop_iter - 1, index)
-        )
-        barrier_ptr = arith.select(
-            is_last_iter,
-            mma_done_barrier.get_ptr(),
-            ab_empty_barriers[slot].get_ptr(),
-        )
-        tcgen05.commit_arrive(barrier_ptr, collective=collective, ctx=ctx)
-        return accumulate
-
-    gpu.barrier()
-    mma_done_barrier.wait(for_tensor_core=True)
-
-    final_acc = acc.load().astype(mlir.dtype_to_ir_type(jnp.dtype(dtype)))
-    final_acc.store_tiled(d_smem, swizzle=128)
-    mgpu.commit_shared()
-    ctx.async_copy(
-        src_ref=d_smem,
-        dst_ref=d,
-        gmem_slice=(ds(block_m_start, block_tile_m), ds(n_start, tile_n)),
-        gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
-        swizzle=swizzle,
-    )
-    ctx.await_async_copy(0)
+    # This is not a persistent kernel, so we only process one tile.
+    compute_output(block_m_start, n_start)
 
   compute_buffers = (
     jax.ShapeDtypeStruct(
