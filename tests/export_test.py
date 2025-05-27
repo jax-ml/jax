@@ -23,7 +23,7 @@ import math
 import re
 import unittest
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 import jax
 from jax import lax
 from jax import numpy as jnp
@@ -2008,7 +2008,7 @@ class JaxExportTest(jtu.JaxTestCase):
     r = jax.jit(exp.call, out_shardings=NamedSharding(old_mesh_0, P("old_b")))(a, b)
     self.assertAllClose(a + b, r)
 
-  def test_lower_wth_different_meshes_axis_names(self):
+  def test_lower_with_different_meshes_axis_names(self):
     mesh1 = jtu.create_mesh((4, 2), ("a", "b"))
     mesh2 = jtu.create_mesh((4, 2), ("x", "y"))
     @jax.jit
@@ -2032,6 +2032,47 @@ class JaxExportTest(jtu.JaxTestCase):
         get_exported(f)(args)
     else:
        get_exported(f)(args)
+
+  @parameterized.named_parameters(
+      ("lower_shardy_on_load_shardy_off", True, "Please enable Shardy"),
+      ("lower_shardy_off_load_shardy_on", False, ""),
+  )
+  def test_lower_load_with_different_partitioners(self, use_shardy_on_save,
+                                                  error_msg):
+    old_shardy = config.use_shardy_partitioner.value
+    try:
+      jax.config.update("jax_use_shardy_partitioner", use_shardy_on_save)
+      mesh = jtu.create_mesh((8,), ("a",))
+      @jax.jit
+      def f(x, y):
+        z = x + y
+        return jax.lax.with_sharding_constraint(
+            z, NamedSharding(mesh, P("a")))
+
+      args = (
+          jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh, P(None, "a"))),
+          jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh, P("a"))))
+
+      exp = get_exported(f)(*args)
+
+      jax.config.update("jax_use_shardy_partitioner", not use_shardy_on_save)
+
+      a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+      a = jax.device_put(a, NamedSharding(mesh, P(None, "a")))
+      b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+      b = jax.device_put(b, NamedSharding(mesh, P("a")))
+
+      if use_shardy_on_save:
+        with self.assertRaisesRegex(ValueError, error_msg):
+          jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
+      else:
+        jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
+    finally:
+      jax.config.update("jax_use_shardy_partitioner", old_shardy)
 
 
 
