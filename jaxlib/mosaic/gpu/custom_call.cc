@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "llvm/ADT/SmallVector.h"
@@ -109,6 +110,106 @@ namespace ffi = xla::ffi;
 using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
 
+class TemporaryDirectory {
+ private:
+  TemporaryDirectory(std::string path) : path(std::move(path)) {}
+  // TODO(apaszke): Unlink in destructor.
+
+ public:
+  static absl::StatusOr<TemporaryDirectory> Create() {
+    std::string pattern = "/tmp/mosaic-gpu-XXXXXX";
+    if (mkdtemp(pattern.data()) == NULL) {
+      return absl::InternalError("Failed to create temporary directory");
+    }
+    return TemporaryDirectory(std::move(pattern));
+  }
+
+  std::string_view GetPath() { return path; }
+
+ private:
+  std::string path;
+};
+
+absl::StatusOr<std::string> RunCUDATool(const char* tool,
+                                        const std::vector<const char*>& args,
+                                        bool stderr_to_stdout = true) {
+  CHECK(!args.empty() && args.back() == nullptr);
+  const char* cuda_path_ptr = getenv("CUDA_ROOT");
+  if (!cuda_path_ptr) return absl::InternalError("Failed to get CUDA_ROOT");
+  std::string tool_path(cuda_path_ptr);
+  tool_path += "/bin/";
+  tool_path += tool;
+  int stdout_pipe[2] = {-1, -1};
+  pid_t child_pid;
+  posix_spawn_file_actions_t file_actions;
+  if (posix_spawn_file_actions_init(&file_actions)) {
+    return absl::InternalError("Failed to initialize spawn file actions");
+  }
+  absl::Cleanup file_actions_destroyer = [&file_actions] {
+    posix_spawn_file_actions_destroy(&file_actions);
+  };
+  if (pipe(stdout_pipe) == -1) {
+    return absl::InternalError("Failed to set up pipe");
+  }
+  absl::Cleanup pipe_closer = [&stdout_pipe] {
+    if (stdout_pipe[0] != -1) close(stdout_pipe[0]);
+    if (stdout_pipe[1] != -1) close(stdout_pipe[1]);
+  };
+  // close read end in child
+  if (posix_spawn_file_actions_addclose(&file_actions, stdout_pipe[0])) {
+    return absl::InternalError("Failed to close read end of the pipe in child");
+  }
+  if (posix_spawn_file_actions_adddup2(&file_actions, stdout_pipe[1],
+                                       STDOUT_FILENO)) {
+    return absl::InternalError("Failed to redirect stdout to pipe");
+  }
+  if (stderr_to_stdout && posix_spawn_file_actions_adddup2(
+                              &file_actions, STDOUT_FILENO, STDERR_FILENO)) {
+    return absl::InternalError("Failed to redirect stderr to stdout");
+  }
+  // execv is guaranteed by POSIX to not modify the args (other than
+  // replacing the whole process image), so the const_cast is valid.
+  if (int status =
+          posix_spawn(&child_pid, tool_path.c_str(), &file_actions, nullptr,
+                      const_cast<char* const*>(args.data()), environ)) {
+    return absl::InternalError(
+        absl::StrCat("Process spawn failed: ", strerror(status)));
+  }
+  // Proactively close write end in parent. If we don't do this, read
+  // will block since the pipe will have an open write end in the
+  // parent process.
+  if (close(stdout_pipe[1]) == -1) {
+    return absl::InternalError(
+        absl::StrCat("Failed to close write end of pipe in parent process: ",
+                     strerror(errno)));
+  }
+  // Mark the write end as successfully closed, so it doesn't get
+  // closed a second time by the deferred pipe_closer.
+  stdout_pipe[1] = -1;
+  std::string stdout;
+  char buf[1024];
+  while (int bytes_read = read(stdout_pipe[0], buf, sizeof buf)) {
+    if (bytes_read == -1) {
+      return absl::InternalError(
+          absl::StrCat("Failed to read from pipe: ", strerror(errno)));
+    }
+    stdout.append(buf, bytes_read);
+  }
+  int status;
+  if (waitpid(child_pid, &status, 0) == -1) {
+    return absl::InternalError("Failed to wait for CUDA tool invocation");
+  }
+  if (status != 0) {
+    std::string error_message = "CUDA tool failed";
+    if (!stdout.empty()) {
+      error_message += ": ";
+      error_message += stdout;
+    }
+    return absl::InternalError(error_message);
+  }
+  return stdout;
+}
+
 void EnsureLLVMNVPTXTargetIsRegistered() {
   static absl::once_flag register_nvptx_target_flag;
   absl::call_once(register_nvptx_target_flag, []() {
@@ -119,7 +220,65 @@ void EnsureLLVMNVPTXTargetIsRegistered() {
   });
 }
 
-absl::StatusOr<std::pair<std::string, std::string>> GetSmAndPtxIsaVersion() {
+absl::StatusOr<int> GetLatestPtxasPtxIsaVersion() {
+  std::vector<const char*> ptxas_args = {"ptxas", "--input-as-string",
+                                         ".version 99.99", nullptr};
+  auto status = RunCUDATool("ptxas", ptxas_args).status();
+  if (status.ok()) {
+    return absl::InternalError("ptxas succeeded where it was expected to fail");
+  }
+  // Output message is of the form:
+  // ptxas application ptx input, line 1; fatal   :
+  // Unsupported .version 99.99; current version is '8.8'
+  std::vector<std::string> chunks = absl::StrSplit(status.message(), '\'');
+  if (chunks.size() != 3) {
+    return absl::InternalError(
+        "Failed to locate PTX ISA version in ptxas error message");
+  }
+  std::vector<std::string> major_minor = absl::StrSplit(chunks[1], '.');
+  if (major_minor.size() != 2) {
+    return absl::InternalError(
+        absl::StrFormat("Expected PTX ISA version to be formatted as "
+                        "MAJOR.MINOR, instead got: %s",
+                        chunks[1]));
+  }
+  int major;
+  if (!absl::SimpleAtoi(major_minor[0], &major)) {
+    return absl::InternalError(
+        absl::StrFormat("Failed to parse PTX ISA major version, expected a "
+                        "parsable integer, instead got: %s",
+                        major_minor[0]));
+  }
+  int minor;
+  if (!absl::SimpleAtoi(major_minor[1], &minor)) {
+    return absl::InternalError(
+        absl::StrFormat("Failed to parse PTX ISA minor version, expected a "
+                        "parsable integer, instead got: %s",
+                        major_minor[1]));
+  }
+  if (minor >= 10) {
+    return absl::InternalError(
+        absl::StrFormat("PTX ISA minor version %d is not less than or equal to "
+                        "9, which is assumed for version comparison",
+                        minor));
+  }
+  return major * 10 + minor;
+}
+
+absl::StatusOr<std::string> GetPtxIsaVersion() {
+  TF_ASSIGN_OR_RETURN(int ptxas_latest_version, GetLatestPtxasPtxIsaVersion());
+  // We'd like to target the latest PTX ISA version supported by
+  // ptxas. However, it doesn't make sense to ask LLVM to target a PTX
+  // ISA that it isn't aware of yet. Find the latest version supported
+  // by LLVM and return the minimum of the two versions, one from
+  // ptxas and the other from LLVM.
+  TF_ASSIGN_OR_RETURN(int llvm_latest_version,
+                      mosaic::gpu::GetLatestLlvmPtxIsaVersion());
+  int final_version = std::min(ptxas_latest_version, llvm_latest_version);
+  return absl::StrFormat("ptx%d", final_version);
+}
+
+absl::StatusOr<std::string> GetSmVersion() {
   // Assumes driver has been initialized and a context exists. XLA already has
   // some utilities to query this, but we try to stay runtime-agnostic, so we
   // build our own here.
@@ -138,9 +297,8 @@ absl::StatusOr<std::pair<std::string, std::string>> GetSmAndPtxIsaVersion() {
     return absl::InternalError("Failed to get minor compute capability");
   }
   EnsureLLVMNVPTXTargetIsRegistered();
-  return mosaic::gpu::GetSmAndPtxIsaVersion(major, minor);
+  return mosaic::gpu::GetSmVersion(major, minor);
 }
-
 
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target,
@@ -272,61 +430,6 @@ void InitContext(mlir::MLIRContext* context) {
   context->loadAllAvailableDialects();
 }
 
-absl::Status RunCUDATool(const char* tool,
-                         const std::vector<const char*>& args,
-                         bool stderr_to_stdout = false) {
-  CHECK(!args.empty() && args.back() == nullptr);
-  const char * cuda_path_ptr = getenv("CUDA_ROOT");
-  if (!cuda_path_ptr) return absl::InternalError("Failed to get CUDA_ROOT");
-  std::string tool_path(cuda_path_ptr);
-  tool_path += "/bin/";
-  tool_path += tool;
-  pid_t child_pid;
-  posix_spawn_file_actions_t file_actions;
-  if (posix_spawn_file_actions_init(&file_actions)) {
-    return absl::InternalError("Failed to initialize spawn file actions");
-  }
-  if (posix_spawn_file_actions_adddup2(&file_actions, STDOUT_FILENO,
-                                       STDERR_FILENO)) {
-    return absl::InternalError("Failed to set up spawn file actions");
-  }
-  // execv is guaranteed by POSIX to not modify the args (other than
-  // replacing the whole process image), so the const_cast is valid.
-  if (posix_spawn(&child_pid, tool_path.c_str(), &file_actions, nullptr,
-                  const_cast<char* const*>(args.data()), environ)) {
-    return absl::InternalError("Process spawn failed");
-  }
-  int status;
-  if (waitpid(child_pid, &status, 0) == -1) {
-    return absl::InternalError("Failed to wait for CUDA tool invocation");
-  }
-  if (status != 0) return absl::InternalError("CUDA tool failed");
-  if (posix_spawn_file_actions_destroy(&file_actions) != 0) {
-    return absl::InternalError("Failed to clean up after posix_spawn");
-  }
-  return absl::OkStatus();
-}
-
-class TemporaryDirectory {
- private:
-  TemporaryDirectory(std::string path) : path(std::move(path)) {}
-  // TODO(apaszke): Unlink in destructor.
-
- public:
-  static absl::StatusOr<TemporaryDirectory> Create() {
-    std::string pattern = "/tmp/mosaic-gpu-XXXXXX";
-    if (mkdtemp(pattern.data()) == NULL) {
-      return absl::InternalError("Failed to create temporary directory");
-    }
-    return TemporaryDirectory(std::move(pattern));
-  }
-
-  std::string_view GetPath() { return path; }
-
- private:
-  std::string path;
-};
-
 void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
                            const std::string& ptx_isa, const std::string& nvshmem_path) {
   bool dump_ptx = getenv("MOSAIC_GPU_DUMP_PTX") != nullptr;
@@ -382,19 +485,23 @@ void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
       ptxas_args.push_back("-v");
     }
     ptxas_args.push_back(nullptr);
-    if (auto status = RunCUDATool("ptxas", ptxas_args); !status.ok()) {
-      std::cerr << "ptxas invocation failed: " << status.message() << std::endl;
+    if (auto result = RunCUDATool("ptxas", ptxas_args); !result.ok()) {
+      std::cerr << "ptxas invocation failed: " << result.status() << std::endl;
       continue;
+    } else if (dump_ptxas) {
+      std::cout << *result << std::endl;
     }
     if (!dump_sass) { continue; }  // We're done.
     // Call nvdisasm to pretty-print SASS.
-    if (auto status = RunCUDATool(
-            "nvdisasm", {"nvdisasm", "-ndf", "-c", elf_path.c_str(), nullptr});
-        !status.ok()) {
-      std::cerr << "nvdisasm invocation failed: " << status.message()
+    auto result = RunCUDATool(
+        "nvdisasm", {"nvdisasm", "-ndf", "-c", elf_path.c_str(), nullptr});
+    if (!result.ok()) {
+      std::cerr << "nvdisasm invocation failed: " << result.status()
                 << std::endl;
       continue;
     }
+    // Dump SASS.
+    std::cout << *result << std::endl;
   }
 }
 
@@ -424,12 +531,8 @@ absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
 absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     mlir::ModuleOp module) {
   tsl::profiler::TraceMe trace("Compile");
-  auto sm_and_ptx_isa = GetSmAndPtxIsaVersion();
-  if (!sm_and_ptx_isa.ok()) {
-    return sm_and_ptx_isa.status();
-  }
-  const std::string sm = sm_and_ptx_isa.value().first;
-  const std::string ptx_isa = sm_and_ptx_isa.value().second;
+  TF_ASSIGN_OR_RETURN(std::string sm, GetSmVersion());
+  TF_ASSIGN_OR_RETURN(std::string ptx_isa, GetPtxIsaVersion());
   bool is_comm_used = is_nvshmem_used(module);
   std::string nvshmem_path = "";
   if (is_comm_used) {
