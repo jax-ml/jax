@@ -2793,6 +2793,10 @@ def _core_map_lowering_rule(
           "Can only close over scalars and Refs when using core_map with "
           f"WarpMesh. Found array of shape {aval_in}."
         )
+    # We allow the warps to schedule async copies without synchronizing with
+    # other warps, so we need to add a barrier here to make sure all reads and
+    # writes have completed.
+    mgpu.warpgroup_barrier()
     _ = lower_jaxpr_to_mosaic_gpu(
         module_ctx,
         ctx.launch_ctx,
@@ -2800,6 +2804,7 @@ def _core_map_lowering_rule(
         args=(),
         consts=args,
     )
+    # TODO(apaszke,justinfu): Do we really need this barrier?
     mgpu.warpgroup_barrier()
     return []
   raise ValueError(f"Unsupported mesh: {mesh}")
