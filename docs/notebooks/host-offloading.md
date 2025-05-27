@@ -24,11 +24,11 @@ This tutorial provides a practical introduction to host offloading techniques in
 - Parameter offloading
 - Optimizer state offloading
 
-By applying offloading strategies, you can better manage memory resources and reduce memory pressure on your devices. To implement these strategies effectively, you'll need to understand JAX's core mechanisms for data placement and movement. However, offloading may degrade performance due to memory transfers between host and device, so it's important to consider this trade-off when designing your optimization strategy.
+By applying offloading strategies, developers can better manage memory resources and reduce memory pressure on devices. To implement these strategies effectively, understanding JAX's core mechanisms for data placement and movement is essential. Note that offloading performance may vary significantly across device types.
 
 ## Building Blocks for Offloading
 
-JAX provides several key components for controlling where and how data are stored and moved between the host and the device memory. In the following sections, you'll explore:
+JAX provides several key components for controlling where and how data are stored and moved between the host and the device memory. The following sections explore:
 
 - How to specify data distribution with sharding
 - How to control memory placement between host and device
@@ -131,7 +131,7 @@ colab:
 id: cmM6tJTS84XQ
 outputId: 40c353a1-fb55-44bc-bac9-dffc09852f49
 ---
-# Instead of the lambda function, you can define add_func to explicitly
+# Instead of the lambda function, add_func can be defined explicitly
 # move data to device before computation
 def add_func(x):  # Move data to device and add one
   x = jax.device_put(x, s_dev)
@@ -167,14 +167,14 @@ Before diving into activation offloading, let's first take a look at the baselin
 This code implements a simple neural network with 10 layers, each consisting of two linear transformations. The code demonstrates basic memory usage patterns and provides a foundation for comparing offloading optimization techniques.
 
 Key components:
-- Simple two-layer linear transformation
+- Each layer consists of two sequential linear operations:
   1. First multiplication: `x @ w1`
   2. Second multiplication: `y @ w2`
 - 10-layer network using JAX's scan operation
 - Memory usage analysis
 - Gradient computation with JIT compilation
 
-To analyze memory usage in JAX, you can use the :func:`jax.stages.Compiled.memory_analysis` method on a compiled function. This provides detailed statistics about memory consumption during computation. The key metrics include temporary memory size, argument size, output size, and alias size. To calculate the total memory usage, sum the temporary, argument, and output sizes, then subtract the alias size to avoid double-counting the same memory multiple times. This gives you an summarized view of how the device memory is utilized across different aspects of your computation.
+TTo analyze memory usage in JAX, the :func:`jax.stages.Compiled.memory_analysis` method can be used on a compiled function. This provides detailed statistics about memory consumption during computation. The key metrics include temporary memory size, argument size, output size, and alias size. To calculate the total memory usage, sum the temporary, argument, and output sizes, then subtract the alias size to avoid double-counting the same memory multiple times. This provides a summarized view of how the device memory is utilized across different aspects of the computation.
 
 ```{code-cell} ipython3
 ---
@@ -188,7 +188,7 @@ input = jnp.ones((256, 256), dtype=jnp.float32) * 0.001  # Input matrix: 256 x 2
 w1 = jnp.ones((10, 256, 1024), dtype=jnp.float32) * 0.001 # 10 layers of 256 x 1024 matrices
 w2 = jnp.ones((10, 1024, 256), dtype=jnp.float32) * 0.001 # 10 layers of 1024 x 256 matrices
 
-def layer(x, w):
+def two_layers(x, w):
   # Simple two-layer linear transformation
   w1, w2 = w
   y = x @ w1
@@ -198,7 +198,7 @@ def scanned(w, x):
   # Applies the layer function 10 times using JAX's scan operation
   # Input: w (tuple of weight matrices), x (input matrix)
   # Output: sum of the final layer's output
-  result = jax.lax.scan(layer, x, w)[0]
+  result = jax.lax.scan(two_layers, x, w)[0]
   return jnp.sum(result)
 
 # Compile and compute gradients of the scanned function
@@ -226,18 +226,18 @@ print("Sample of results: ", result[0][0, 0, :5])
 
 The detailed coverage of activation offloading can be found in the {ref}`gradient-checkpointing` tutorial. Activation offloading helps manage memory by moving intermediate activations to host memory after the forward pass, and bringing them back to device memory during the backward pass when needed for gradient computation.
 
-To implement activation offloading effectively, you need to understand checkpoint names and policies. Here's how they work in a simple example:
+To implement activation offloading effectively, it is important to understand checkpoint names and policies. Here's how they work in a simple example:
 
 ### Checkpoint Names
 
-The {func}`checkpoint_name` function allows you to label activations for memory management during computation. Here's a simple example that a checkpoint name `x` is specified.
+The {func}`checkpoint_name` function allows labeling activations for memory management during computation. Here's a simple example that a checkpoint name `x` is specified.
 
 ```{code-cell} ipython3
 :id: sLO9ceS6p6Lj
 
 from jax.ad_checkpoint import checkpoint_name
 
-def layer(x, w):
+def layer_name(x, w):
   w1, w2 = w
   x = checkpoint_name(x, "x")
   y = x @ w1
@@ -274,10 +274,10 @@ policy = cp.save_and_offload_only_these_names(
 
 +++ {"id": "iuDRCXu7ky4r"}
 
-Since {func}`jax.lax.scan` is commonly used in JAX for handling sequential operations (like RNNs or transformers), you need to know how to apply your offloading strategy in this context. Scan operations can be integrated with JAX's rematerialization to process sequential data.
+{func}`jax.lax.scan` is commonly used in JAX for handling sequential operations (like RNNs or transformers). It can be integrated with JAX's rematerialization to process sequential data.
 
 Key components:
-* {func}`jax.remat` creates a rematerialized version of the layer function using {func}`jax.remat` and applies our checkpoint policy to the layer function
+* {func}`jax.remat` creates a rematerialized version of the layer function using {func}`jax.remat` and applies the checkpoint policy to the layer function
 * `prevent_cse=False` enables XLA's common subexpression elimination for better performance
 * {func}`jax.lax.scan` iterates the rematerialized layer along an axis
 
@@ -289,7 +289,7 @@ id: xCrxjTx_p6Lk
 outputId: 13d46584-9b25-4622-b3c3-f50c1dac02c2
 ---
 def scanned(w, x):
-  remat_layer = jax.remat(layer,
+  remat_layer = jax.remat(layer_name,
                           policy=policy,     # Use our offloading policy
                           prevent_cse=False) # Allow CSE optimizations
   result = jax.lax.scan(remat_layer, x, w)[0]
@@ -450,13 +450,13 @@ This hybrid approach demonstrates that parameter and activation offloading work 
 
 # Optimizer State Offloading
 
-Optimizer state offloading is a memory management technique that stores optimizer states in host memory instead of device memory. This approach is particularly useful when optimizer states are large, as it reduces device memory usage. However, the data transfers between host and device memory during training may introduce performance overhead that should be considered when implementing this strategy.
+Optimizer state offloading is a memory management technique that stores optimizer states in host memory instead of device memory. This approach is particularly useful when optimizer states are large, as it reduces device memory usage.
 
-You can start with a basic JAX implementation using the Adam optimizer, where all tensors are stored on the device. This will serve as your reference implementation before introducing optimizer state offloading.
+A basic JAX implementation using the Adam optimizer can serve as a starting point, where all tensors are stored on the device. This will serve as a reference implementation before introducing optimizer state offloading.
 
 ### Basic Implementation
 
-In this section, you will implement a simple model with the Adam optimizer. This implementation will help you understand the baseline behavior before exploring optimizer state offloading. It is particularly useful for understanding memory patterns in large-scale neural network training.
+This section, let's implement a simple model with the Adam optimizer. This implementation helps establish the baseline behavior before exploring optimizer state offloading. It is particularly useful for understanding memory patterns in large-scale neural network training.
 
 In the code example below, a neural network training loop is included to use JAX and Optax's Adam optimizer. The network consists of four linear layers with GELU activation functions, processing large matrices of size 7168x7168. The training process involves:
 - Forward pass: The input flows through four layers, each applying a linear transformation followed by GELU activation
@@ -491,12 +491,12 @@ opt_state = optimizer.init(params)
 def gelu(x):
   return 0.5 * x * (1 + jnp.tanh(jnp.sqrt(2 / jnp.pi) * (x + 0.044715 * x**3)))
 
-def layer(x, w):
+def single_layer(x, w):
   return x @ w
 
 def forward(params, x):
   for i in range(1, 5):
-    x = gelu(layer(x, params[f'w{i}']))
+    x = gelu(single_layer(x, params[f'w{i}']))
   return x
 
 def compute_loss(params, inputs):
@@ -530,7 +530,7 @@ if compiled_stats is not None:
 
 +++ {"id": "oW4Qm6E5VOyV"}
 
-You can implement optimizer state offloading as follows.
+Optimizer state offloading can be implemented as follows.
 
 ### Setting Up Sharding and Memory Kinds
 
@@ -538,11 +538,11 @@ You can implement optimizer state offloading as follows.
 
 ### Model and Training Step Implementation
 
-Next, define your model architecture, loss function, and training step. The key addition here is moving the optimizer state to device memory via {func}`device_put` at the beginning of each training step, as it's needed for the parameter update on the device.
+Next, define the model architecture, loss function, and training step. The key addition here is moving the optimizer state to device memory via {func}`device_put` at the beginning of each training step, as it's needed for the parameter update on the device.
 
 ### Running and Comparing Results
 
-After setting up the sharding, you move the optimizer state to host memory and run the step function with {func}`jax.jit`. 
+After setting up the sharding, the optimizer state is moved to host memory and the step function is run with {func}`jax.jit`.
 
 The JIT compilation of the step function uses several important parameters:
 - `donate_argnums=(0,)`: Indicates that the first argument (parameters) can be modified in-place, allowing JAX to reuse its memory
@@ -603,7 +603,7 @@ if compiled_stats is not None:
 
 +++ {"id": "vKo8qYnQVOyW"}
 
-In this implementation, you have seen how to:
+This implementation demonstrates how to:
 1. Set up sharding specifications for `device` and `pinned_host`
 2. Move optimizer states between host and device memory via {func}`jax.device_put`
 3. Use `in_sharding` and `out_shardings` to ensure proper memory placement
