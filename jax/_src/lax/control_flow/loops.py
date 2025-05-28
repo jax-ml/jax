@@ -920,7 +920,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
   source = source_info_util.current().replace(name_stack=name_stack)
   assert len(out_tracers) == len(jaxpr_unknown.out_avals)
-  eqn = pe.new_eqn_recipe(trace, [*intensive_res, *unknown_inputs, *extensive_res],
+  eqn = pe.new_eqn_recipe([*intensive_res, *unknown_inputs, *extensive_res],
                           out_tracers, scan_p,
                           dict(reverse=reverse, length=length, unroll=unroll,
                                jaxpr=jaxpr_unknown, linear=linear_unknown,
