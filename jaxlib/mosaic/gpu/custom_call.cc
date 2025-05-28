@@ -232,8 +232,9 @@ absl::StatusOr<int> GetLatestPtxasPtxIsaVersion() {
   // Unsupported .version 99.99; current version is '8.8'
   std::vector<std::string> chunks = absl::StrSplit(status.message(), '\'');
   if (chunks.size() != 3) {
-    return absl::InternalError(
-        "Failed to locate PTX ISA version in ptxas error message");
+    return absl::InternalError(absl::StrCat(
+        "Failed to locate PTX ISA version in ptxas error message: ",
+        status.message()));
   }
   std::vector<std::string> major_minor = absl::StrSplit(chunks[1], '.');
   if (major_minor.size() != 2) {
