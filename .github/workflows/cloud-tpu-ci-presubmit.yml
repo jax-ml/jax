@@ -25,9 +25,7 @@ on:
 
 # This should also be set to read-only in the project settings, but it's nice to
 # document and enforce the permissions here.
-permissions:
-  contents: read
-
+permissions: {}
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   # Don't cancel in-progress jobs for main/release branches.

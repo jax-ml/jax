@@ -1,5 +1,4 @@
 name: Multi-process run using K8s
-
 on:
   push:
     branches:
@@ -16,19 +15,14 @@ on:
       - 'jax/_src/distributed.py'
       - 'jax/_src/clusters/**'
 
-permissions:
-  contents: read
-
+permissions: {}
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
-
 defaults:
   run:
     shell: bash -ex -o pipefail {0}
-
 jobs:
-
   distributed-initialize:
     runs-on: ubuntu-22.04
     strategy:
@@ -40,6 +34,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
           path: jax
+          persist-credentials: false
           
       - name: Start Minikube cluster
         uses: medyagh/setup-minikube@cea33675329b799adccc9526aa5daccc26cd5052 # ratchet:medyagh/setup-minikube@v0.0.19
@@ -105,7 +100,7 @@ jobs:
           done
 
       - name: Examine individual pod outputs
-        if: "!cancelled()"
+        if: ${{ !cancelled() }}
         run: |
           set +x
           kubectl get pods --no-headers | awk '{print $1}' | while read -s pod; do

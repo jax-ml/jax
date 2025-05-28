@@ -33,7 +33,7 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
-
+permissions: {}
 jobs:
   run-pytest-cpu:
     uses: ./.github/workflows/pytest_cpu.yml
