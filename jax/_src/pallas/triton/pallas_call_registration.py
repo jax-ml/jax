@@ -72,9 +72,9 @@ def pallas_call_lowering(
   [lowering_platform] = ctx.platforms or ctx.module_context.platforms
 
   if "triton" in compiler_params:
-    params = cast(triton_core.TritonCompilerParams, compiler_params["triton"])
+    params = cast(triton_core.CompilerParams, compiler_params["triton"])
   else:
-    params = triton_core.TritonCompilerParams()
+    params = triton_core.CompilerParams()
   num_warps = 4 if params.num_warps is None else params.num_warps
   num_stages = params.num_stages
   if num_stages is None:

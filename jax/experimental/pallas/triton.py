@@ -14,7 +14,23 @@
 
 """Triton-specific Pallas APIs."""
 
-from jax._src.pallas.triton.core import TritonCompilerParams as TritonCompilerParams
+from jax._src.pallas.triton.core import CompilerParams as CompilerParams
 from jax._src.pallas.triton.primitives import approx_tanh as approx_tanh
 from jax._src.pallas.triton.primitives import debug_barrier as debug_barrier
 from jax._src.pallas.triton.primitives import elementwise_inline_asm as elementwise_inline_asm
+
+import typing as _typing  # pylint: disable=g-import-not-at-top
+if _typing.TYPE_CHECKING:
+  TritonCompilerParams = CompilerParams
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  _deprecations = {
+      # Deprecated on May 27th 2025.
+      "TritonCompilerParams": (
+          "TritonCompilerParams is deprecated, use CompilerParams instead.",
+          CompilerParams,
+      ),
+  }
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing

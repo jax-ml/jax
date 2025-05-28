@@ -21,7 +21,7 @@ from typing import ClassVar
 from jax._src.pallas import core as pallas_core
 
 @dataclasses.dataclass(frozen=True)
-class TritonCompilerParams(pallas_core.CompilerParams):
+class CompilerParams(pallas_core.CompilerParams):
   """Compiler parameters for Triton.
 
   Attributes:

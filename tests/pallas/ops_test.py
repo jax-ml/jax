@@ -1646,7 +1646,7 @@ class OpsTest(PallasBaseTest):
 
   @unittest.skipIf(
       sys.platform == "win32",
-      "plgpu_triton.TritonCompilerParams unavailable on Windows",
+      "plgpu_triton.CompilerParams unavailable on Windows",
   )
   def test_debug_print(self):
     self.skip_if_mosaic_gpu()
@@ -1661,7 +1661,7 @@ class OpsTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
-        compiler_params=plgpu_triton.TritonCompilerParams(
+        compiler_params=plgpu_triton.CompilerParams(
             num_warps=1, num_stages=1
         ),
     )
@@ -1677,7 +1677,7 @@ class OpsTest(PallasBaseTest):
 
   @unittest.skipIf(
       sys.platform == "win32",
-      "plgpu_triton.TritonCompilerParams unavailable on Windows",
+      "plgpu_triton.CompilerParams unavailable on Windows",
   )
   def test_debug_print_with_values(self):
     if jtu.test_device_matches(["tpu"]):
@@ -1690,7 +1690,7 @@ class OpsTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
-        compiler_params=plgpu_triton.TritonCompilerParams(
+        compiler_params=plgpu_triton.CompilerParams(
             num_warps=1, num_stages=1
         ),
     )

@@ -9,7 +9,7 @@ Classes
 .. autosummary::
    :toctree: _autosummary
 
-   TritonCompilerParams
+   CompilerParams
 
 Functions
 ---------

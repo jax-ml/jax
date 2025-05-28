@@ -13,6 +13,14 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Deprecations
+
+  * {class}`jax.experimental.pallas.triton.TritonCompilerParams` has been
+    renamed to {class}`jax.experimental.pallas.triton.CompilerParams`. The
+    old name is deprecated and will be removed in a future release.
+
+## Released with jax 0.6.1
+
 * Removals
 
   * Removed previously deprecated {mod}`jax.experimental.pallas.gpu`. To use
