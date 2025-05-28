@@ -65,9 +65,9 @@ jobs:
     # Test the oldest and newest supported CUDA versions.
     # If testing the CUDA packages from PyPI, then use the ml-build image which does not have any
     # CUDA pckages installed on the system.
-    container:  ${{ !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.1') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.1-cudnn9.8:latest') ||
-                !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.8') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest') ||
-                inputs.use-nvidia-pip-wheels && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest'}}
+    container:  ${{ !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.1') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.1-cudnn9.8:latest') ||
+                !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.8') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.8-cudnn9.8:latest') ||
+                inputs.use-nvidia-pip-wheels && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'}}
     name: "${{ (contains(inputs.runner, 'h100') && 'h100') ||
         (contains(inputs.runner, 'b200') && 'b200') ||
         (contains(inputs.runner, 'l4') && 'l4') }}, CUDA ${{ inputs.cuda-version }}, py ${{ inputs.python }}, x64=${{ inputs.enable-x64 }}"

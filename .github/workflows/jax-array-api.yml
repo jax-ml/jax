@@ -15,7 +15,7 @@ permissions: {}
 jobs:
   build:
     runs-on: linux-x86-n2-16
-    container: us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest
+    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     strategy:
       matrix:
         python-version: [3.11]

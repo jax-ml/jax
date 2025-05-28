@@ -154,7 +154,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           python: ["3.10", "3.13", "3.13-nogil"]
-    container:  "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+    container:  "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 
     # Verifies that JAX's release wheels can be installed
     name: "Verify release wheels install (Python ${{ matrix.python }})"

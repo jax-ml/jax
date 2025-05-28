@@ -41,7 +41,7 @@ jobs:
         # Explicitly set the shell to bash
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') ||
                    (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') }}
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
