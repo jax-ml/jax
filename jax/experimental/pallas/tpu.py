@@ -67,6 +67,7 @@ verification = types.SimpleNamespace(
 del types, assume, pretend, skip, define_model  # Clean up.
 
 ANY = TPUMemorySpace.ANY
+HBM = TPUMemorySpace.HBM
 CMEM = TPUMemorySpace.CMEM
 SMEM = TPUMemorySpace.SMEM
 VMEM = TPUMemorySpace.VMEM
