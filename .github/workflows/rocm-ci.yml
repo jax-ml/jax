@@ -12,6 +12,7 @@ on:
       - rocm-main
       - 'rocm-jaxlib-v*'
 
+permissions: {}
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
@@ -47,6 +48,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           path: ${{ env.WORKSPACE_DIR }}
+          persist-credentials: false
       - name: Build JAX
         run: |
           pushd $WORKSPACE_DIR

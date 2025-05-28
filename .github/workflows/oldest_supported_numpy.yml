@@ -10,12 +10,7 @@ on:
   push:
     branches:
       - main
-
-# This should also be set to read-only in the project settings, but it's nice to
-# document and enforce the permissions here.
-permissions:
-  contents: read
-
+permissions: {}
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   # Don't cancel in-progress jobs for main/release branches.
@@ -23,7 +18,7 @@ concurrency:
 
 jobs:
   test-oldest-supported-numpy:
-    if: "github.event.repository.fork == false && !startsWith(github.head_ref, 'release/')"
+    if: ${{ github.event.repository.fork == false && !startsWith(github.head_ref, 'release/') }}
     defaults:
       run:
         shell: bash
@@ -40,6 +35,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Install Python dependencies
         run: |
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
@@ -52,8 +49,6 @@ jobs:
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
-        with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Pytest CPU tests
         timeout-minutes: 30
         run: ./ci/run_pytest_cpu.sh

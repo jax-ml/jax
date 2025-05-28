@@ -3,7 +3,6 @@ name: CI - Free-threading and Thread Sanitizer (nightly)
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 on:
   schedule:
     - cron: "0 5 * * *" # Daily at 05:00 UTC == 00:00 EST == 21:00 PST
@@ -14,7 +13,7 @@ on:
     paths:
       - '**/workflows/tsan.yaml'
       - '**/workflows/tsan-suppressions*.txt'
-
+permissions: {}
 jobs:
   tsan:
     runs-on: linux-x86-n2-64
@@ -50,17 +49,20 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: jax
+          persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: numpy/numpy
           path: numpy
           submodules: true
+          persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         if: ${{ matrix.python-version == '3.14' }}
         with:
           repository: scipy/scipy
           path: scipy
           submodules: true
+          persist-credentials: false
 
       - name: Get year & week number
         id: get-date
@@ -81,6 +83,8 @@ jobs:
           repository: python/cpython
           path: cpython
           ref: ${{ matrix.github_branch }}
+          persist-credentials: false
+
 
       - name: Build TSAN CPython ${{ matrix.python-version }}
         if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
