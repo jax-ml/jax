@@ -15,10 +15,13 @@
 import datetime
 import os
 import re
+import logging
 import warnings
 from jax import version
 from jax._src import config
 from jax._src import hardware_utils
+
+logger = logging.getLogger(__name__)
 
 running_in_cloud_tpu_vm: bool = False
 
@@ -74,6 +77,9 @@ def cloud_tpu_init() -> None:
   # Exit early if we're not running on a Cloud TPU VM or libtpu isn't installed.
   libtpu_path = get_tpu_library_path()
   num_tpu_chips, tpu_id = hardware_utils.num_available_tpu_chips_and_device_id()
+  if num_tpu_chips == 0:
+    logger.info('Using LibTPU with a device other than TPU. Skipping TPU metadata query.')
+    os.environ['TPU_SKIP_MDS_QUERY'] = '1'
   if (
       tpu_id is not None
       and tpu_id >= hardware_utils.TpuVersion.v5e
