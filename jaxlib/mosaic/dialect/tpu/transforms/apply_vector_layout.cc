@@ -1161,10 +1161,10 @@ LogicalResult tpu_sitofp_rule(RewriteContext &ctx, Operation &op,
         FAILUREOR_ASSIGN_OR_RETURN(
             xla::Array<Value> vregs,
             ext_op_rule_impl(ctx, builder, sitofp_op, layout_in, layout_out));
-        sitofp_op.replaceAllUsesWith(assemble(builder, sitofp_op.getType(),
-                                              layout_out, std::move(vregs),
-                                              ctx.target_shape)
-                                         .getResult());
+        sitofp_op.replaceAllUsesWith(
+            assemble(builder, cast<VectorType>(sitofp_op.getType()), layout_out,
+                     std::move(vregs), ctx.target_shape)
+                .getResult());
         sitofp_op.erase();
         return success();
       }

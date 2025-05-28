@@ -513,8 +513,8 @@ def TPU_FPToSIOp : TPU_Op<"fptosi", [Pure, ElementwiseMappable]> {
 // Internal operation. All arith.sitofp operations that change the bitwidth
 // must be canonicalized to this operation.
 def TPU_SIToFPOp : TPU_Op<"sitofp", [Pure, ElementwiseMappable]> {
-  let arguments = (ins AnyVectorOfAnyRank:$in, TPU_RoundingModeEnum:$rounding_mode);
-  let results = (outs AnyVectorOfAnyRank:$output);
+  let arguments = (ins AnyType:$in, TPU_RoundingModeEnum:$rounding_mode);
+  let results = (outs AnyType:$output);
   let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($output) }];
 }
 

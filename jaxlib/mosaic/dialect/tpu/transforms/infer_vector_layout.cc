@@ -155,8 +155,10 @@ class VectorLayoutInferer {
           return failure();
         }
       } else if (auto op = dyn_cast<tpu::SIToFPOp>(any_op);
-                 op && op.getIn().getType().getElementTypeBitWidth() <
-                           op.getType().getElementTypeBitWidth()) {
+                 op &&
+                 cast<VectorType>(op.getIn().getType())
+                         .getElementTypeBitWidth() <
+                     cast<VectorType>(op.getType()).getElementTypeBitWidth()) {
         if (inferExt(&any_op).failed()) {
           return failure();
         }
