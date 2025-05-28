@@ -258,8 +258,7 @@ def _run_scoped_resource_estimator(
         packing = 4 // aval.dtype.itemsize
       else:
         packing = 1
-      layout = tcgen05._infer_tmem_layout(
-          aval.shape, collective=aval.collective, packing=packing)
+      layout = tcgen05._infer_tmem_layout(aval.shape, packing=packing)
       cols_used = layout.cols_in_shape(aval.shape)
       cols_used = tcgen05._alloc_ncols(cols_used, exact=False)
       rs += Resources(tmem_scratch_cols=cols_used)
@@ -391,8 +390,7 @@ class ModuleContext:
     else:
       packing = 1
     if layout is None:
-      layout = tcgen05._infer_tmem_layout(
-          struct.shape, collective, packing=packing)
+      layout = tcgen05._infer_tmem_layout(struct.shape, packing=packing)
     unpadded_cols_used = layout.cols_in_shape(struct.shape)
     cols_used = tcgen05._alloc_ncols(unpadded_cols_used, exact_cols)
 

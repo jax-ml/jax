@@ -161,8 +161,15 @@ class MatmulTestCase(jtu.JaxTestCase):
     tile_m = data.draw(
         hps.sampled_from([t for t in [128] if t * num_ctas <= m]), label="tile_m"
     )
+    tmem_cols = 512
     tile_n = data.draw(
-        hps.sampled_from([t for t in [64, 128, 256] if t * num_ctas <= n]), label="tile_n"
+        hps.sampled_from([
+            t
+            for t in [64, 128, 256]
+            # We're double buffering TMEM in the kernel, hence the 2x.
+            if t * num_ctas <= n and 2 * t * num_ctas <= tmem_cols
+        ]),
+        label="tile_n",
     )
     grid_m = m // (num_ctas * tile_m)
     grid_tile_m = data.draw(hps.sampled_from([1, 2, 4, 8, 16]), label="grid_tile_m")
@@ -196,4 +203,4 @@ class MatmulTestCase(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main(testLoader=jtu.JaxTestLoader())
+  absltest.main(argv=["python"], testLoader=jtu.JaxTestLoader())

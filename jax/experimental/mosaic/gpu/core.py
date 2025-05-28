@@ -351,7 +351,7 @@ def _construct_smem_reftree(
         )
         if layout is None:
           layout = tcgen05._infer_tmem_layout(
-              shape, collective, 1 if packing is None else packing
+              shape, 1 if packing is None else packing
           )
         num_cols = layout.cols_in_shape(shape)
         tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))

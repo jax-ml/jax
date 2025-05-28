@@ -173,9 +173,14 @@ def mma(
     raise ValueError(
         f"Accumulator shape mismatch: expected {(m, n * num_cta)}, got {d.shape}"
     )
-  if d.layout != (expected_layout := _infer_tmem_layout(d.shape, collective, packing=1)):
+  expected_d_layout = (
+      TMEM_COLLECTIVE_N512_LAYOUT
+      if collective and n * num_cta == 512
+      else TMEM_DEFAULT_LAYOUT
+  )
+  if d.layout != expected_d_layout:
     raise ValueError(
-        f"Accumulator layout mismatch: expected {expected_layout}, got {d.layout}"
+        f"Accumulator layout mismatch: expected {expected_d_layout}, got {d.layout}"
     )
   f32 = ir.F32Type.get()
   f16 = ir.F16Type.get()
@@ -570,9 +575,7 @@ class TMEMLayout:
     return num_tiles // tiles_in_row * cols_in_tile
 
 
-def _infer_tmem_layout(
-    shape: tuple[int, int], collective: bool, packing: int = 1
-) -> TMEMLayout:
+def _infer_tmem_layout(shape: tuple[int, int], packing: int = 1) -> TMEMLayout:
   if shape[0] > TMEM_ROWS:
     raise ValueError(
         "Can only infer TMEM layout for shapes with at most 128 rows, got:"
@@ -593,13 +596,13 @@ def _infer_tmem_layout(
         "Can only infer TMEM layout for shapes with column count that's a"
         f" multiple of 8, got: {shape[1]}"
     )
-  if collective and shape[1] == 512:
-    return TMEMLayout(
-        elements_in_tile=(shape[0], 128), column_tile_stride=2, packing=packing
-    )
-  else:
-    return TMEMLayout(elements_in_tile=(shape[0], 8), packing=packing)
+  return TMEMLayout(elements_in_tile=(shape[0], 8), packing=packing)
 
+
+TMEM_DEFAULT_LAYOUT = TMEMLayout(elements_in_tile=(TMEM_ROWS, 8), packing=1)
+TMEM_COLLECTIVE_N512_LAYOUT = TMEMLayout(
+    elements_in_tile=(TMEM_ROWS, 128), column_tile_stride=2, packing=1
+)
 
 @dataclasses.dataclass(frozen=True)
 class TMEMRef:
@@ -669,6 +672,8 @@ class TMEMRef:
     col_idx = base_idx[1]
     if not isinstance(col_idx, ir.Value):
       col_idx = arith.constant(i32, col_idx)
+    if col_idx.type == ir.IndexType.get():
+      col_idx = arith.index_cast(i32, col_idx)
     if packing != 1:
       col_idx = arith.divui(col_idx, arith.constant(i32, packing))
     return TMEMRef(

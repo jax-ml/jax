@@ -107,9 +107,8 @@ def build_kernel(
       call_counter should be 0 the first time this function is called and
       incremented by 1 before each subsequent call.
       """
-      isnt_first_call = arith.cmpi(
-          arith.CmpIPredicate.ne, call_counter, c(0, index)
-      )
+      acc_slot = arith.remui(call_counter, c(2, index))
+      acc_slice = acc.slice(slice(None), mgpu.ds(arith.muli(acc_slot, c(tile_n, index)), tile_n))
       # All blocks in the cluster share the same m_start -- align it!
       m_start = arith.muli(arith.divui(block_m_start, c(tile_m, index)), c(tile_m, index))
       with mgpu.when(is_leader_of(TMA_WARP)):
@@ -118,6 +117,9 @@ def build_kernel(
           slot = arith.remui(ki, c(max_concurrent_steps, index))
           isnt_warmup = arith.cmpi(
               arith.CmpIPredicate.uge, ki, c(max_concurrent_steps, index)
+          )
+          isnt_first_call = arith.cmpi(
+              arith.CmpIPredicate.ne, call_counter, c(0, index)
           )
           with mgpu.when(arith.ori(isnt_first_call, isnt_warmup)):
             ab_empty_barriers[slot].wait()
@@ -151,15 +153,16 @@ def build_kernel(
           )
 
       # We wait in all blocks in the cluster to avoid double arrival errors.
-      with mgpu.when(arith.andi(is_leader_of(MMA_WARP), isnt_first_call)):
-        tmem_done_barrier.wait(for_tensor_core=True)
+      reuses_tmem = arith.cmpi(arith.CmpIPredicate.uge, call_counter, c(2, index))
+      with mgpu.when(arith.andi(is_leader_of(MMA_WARP), reuses_tmem)):
+        tmem_done_barrier[acc_slot].wait(for_tensor_core=True)
       with mgpu.when(arith.andi(is_leader_of(MMA_WARP), is_leader_block)):
         @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
         def _mma_body(ki, accumulate):
           slot = arith.remui(ki, c(max_concurrent_steps, index))
           ab_full_barriers[slot].wait()
           tcgen05.mma(
-              acc,
+              acc_slice,
               mgpu.memref_slice(a_smem, slot),
               mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (1, 0, 3, 2)),
               a_swizzle=swizzle,
@@ -173,21 +176,17 @@ def build_kernel(
               arith.CmpIPredicate.eq, ki, c(k_loop_iter - 1, index)
           )
           with mgpu.when(is_last_iter):
-            tcgen05.commit_arrive(mma_done_barrier, collective=collective, ctx=ctx)
+            tcgen05.commit_arrive(mma_done_barrier[acc_slot], collective=collective, ctx=ctx)
           return accumulate
 
       with mgpu.when(is_store_warpgroup):
-        mma_done_barrier.wait(for_tensor_core=True)
-        final_acc = acc.load().astype(mlir.dtype_to_ir_type(jnp.dtype(dtype)))
+        mma_done_barrier[acc_slot].wait(for_tensor_core=True)
+        final_acc = acc_slice.load().astype(mlir.dtype_to_ir_type(jnp.dtype(dtype)))
         assert tile_n % epilogue_tile_n == 0
         for ni in range(tile_n // epilogue_tile_n):
           n_slice = ds(ni * epilogue_tile_n, epilogue_tile_n)
           final_acc[:, n_slice].store_tiled(d_smem, swizzle=128)
           # We store the first tile before arriving to reduce register pressure.
-          if ni == 0:
-            # Make sure we've loaded all of TMEM before we arrive.
-            tcgen05.wait_tmem_load()
-            tmem_done_barrier.arrive(for_tensor_core=True)
           mgpu.commit_shared()
           store_n_start = arith.addi(n_start, c(ni * epilogue_tile_n, index))
           ctx.async_copy(
@@ -200,7 +199,8 @@ def build_kernel(
               gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
               swizzle=128,
           )
-          ctx.await_async_copy(0)
+          ctx.await_async_copy(0, await_read_only=True)
+        tmem_done_barrier[acc_slot].arrive(for_tensor_core=True)
 
     # We statically assign the tiles to SMs.
     logical_grid_size = math.prod(logical_grid)
@@ -246,9 +246,9 @@ def build_kernel(
   smem = (
       smem_buffers,
       [mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps)] * 2,
-      mgpu.Barrier(arrival_count=1),
-      mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,), num_barriers=1),
-      mgpu.TMEM((128, tile_n), jnp.float32, collective=collective),
+      mgpu.Barrier(arrival_count=1, num_barriers=2),
+      mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,), num_barriers=2),
+      mgpu.TMEM((128, 2 * tile_n), jnp.float32, collective=collective),
   )
   num_sms = 148
   return mgpu.as_gpu_kernel(
@@ -273,7 +273,7 @@ def main(unused_argv):
   b = jr.normal(key=kb, shape=(n, k), dtype=jnp.float16)
 
   tile_m = (128,)
-  tile_n = (128, 256, 512)
+  tile_n = (128, 256)
   max_concurrent_steps = (2, 4, 5, 6)
   grid_tile_m = (1, 2, 4, 8, 16)
   collective = (False, True)
@@ -290,7 +290,7 @@ def main(unused_argv):
       tile_n *= 2
     if m < tile_m or n < tile_n:
       continue
-    if tile_n > 512:
+    if 2 * tile_n > 512:
       continue
     if (m // tile_m) % kwargs["grid_tile_m"]:
       continue
