@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-import jax
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import api_util
@@ -53,7 +52,8 @@ def jax_setattr(obj: Any, attr: str, val: PyTree) -> None:
     return t.process_setattr(obj, attr, val)
 
 def jax_appendattr(obj: Any, attr: str, val: Array) -> None:
-  return jax_extendattr(obj, attr, jax.numpy.expand_dims(val, 0))
+  import jax.numpy as jnp  # pytype: disable=import-error
+  return jax_extendattr(obj, attr, jnp.expand_dims(val, 0))
 
 def jax_extendattr(obj: Any, attr: str, val: Array) -> None:
   with core.take_current_trace() as t:
@@ -68,12 +68,13 @@ def _setattr_impl(_, obj, attr, val):
 core.EvalTrace.process_setattr = _setattr_impl
 
 def _extendattr_impl(_, obj, attr, val):
+  import jax.numpy as jnp  # pytype: disable=import-error
   cur = getattr(obj, attr, dne_sentinel)
   if cur is dne_sentinel:
     new = val
   else:
     _check_append_type_agreement(obj, attr, core.typeof(cur), core.typeof(val))
-    new = jax.numpy.concatenate([cur, val])
+    new = jnp.concatenate([cur, val])
   setattr(obj, attr, new)
 core.EvalTrace.process_extendattr = _extendattr_impl
 
@@ -122,6 +123,7 @@ def _setattr_staging(trace, obj, attr, val):
 pe.DynamicJaxprTrace.process_setattr = _setattr_staging
 
 def _extendattr_staging(trace, obj, attr, val):
+  import jax.numpy as jnp  # pytype: disable=import-error
   frame = trace.frame
 
   if (obj, attr, ReadWrite) in frame.attrs_tracked:
@@ -138,7 +140,7 @@ def _extendattr_staging(trace, obj, attr, val):
   else:
     assert init_val is not dne_sentinel
     with core.set_current_trace(trace):
-      tracer = jax.numpy.concatenate([init_val, val])
+      tracer = jnp.concatenate([init_val, val])
   setattr(obj, attr, tracer)
 pe.DynamicJaxprTrace.process_extendattr = _extendattr_staging
 

@@ -297,7 +297,6 @@ py_library_providing_imports_info(
         "_src/ad_checkpoint.py",
         "_src/api.py",
         "_src/array.py",
-        "_src/attrs.py",
         "_src/blocked_sampler.py",
         "_src/buffer_callback.py",
         "_src/callback.py",
@@ -377,6 +376,7 @@ py_library_providing_imports_info(
         ":ad",
         ":ad_util",
         ":api_util",
+        ":attrs",
         ":basearray",
         ":batching",
         ":cloud_tpu_init",
@@ -463,6 +463,22 @@ pytype_strict_library(
         ":tree_util",
         ":util",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "attrs",
+    srcs = ["_src/attrs.py"],
+    deps = [
+        ":ad",
+        ":ad_util",
+        ":api_util",
+        ":core",
+        ":dtypes",
+        ":partial_eval",
+        ":source_info_util",
+        ":tree_util",
+        ":util",
+    ],
 )
 
 pytype_strict_library(
