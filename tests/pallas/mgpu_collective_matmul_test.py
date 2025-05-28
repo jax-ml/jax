@@ -68,6 +68,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       block_n=(64, 128, 192),
       block_k=(64, 128),
       max_concurrent_steps=(2, 4),
+      dtype=(jnp.float16, jnp.bfloat16),
   )
   def test_all_gather_lhs_matmul(
       self,
@@ -78,9 +79,9 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       block_n,
       block_k,
       max_concurrent_steps,
+      dtype,
   ):
     num_devices = jax.device_count()
-    dtype = jnp.float16
     lhs_smem_size = block_m * block_k * max_concurrent_steps * 2
     rhs_smem_size = block_k * block_n * max_concurrent_steps * 2
     # H100 SMEM limit is 228kB.
@@ -118,6 +119,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
             block_n=block_n,
             block_k=block_k,
             max_concurrent_steps=max_concurrent_steps,
+            dtype=dtype,
         )
     )
     ref_out = run(lambda x, y: lax.all_gather(x, "x", axis=0, tiled=True) @ y)
