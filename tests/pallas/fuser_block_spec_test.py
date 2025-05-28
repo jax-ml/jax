@@ -653,9 +653,12 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 3, 0), scalar_prefetch_values, ()), x
     )
 
-  def test_broadcast_array(self):
+  @parameterized.parameters(
+      (False, False), (False, True), (True, False), (True, True)
+  )
+  def test_broadcast_array(self, bcast0, bcast1):
 
-    x = jnp.ones((512, 512))
+    x = jnp.ones((1 if bcast0 else 512, 1 if bcast1 else 512))
 
     def f():
       return jax.lax.broadcast_in_dim(x, (2, 2, 512, 512), (2, 3))
@@ -664,9 +667,8 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     self.assertLen(new_values, 1)
     self.assertEmpty(scalar_prefetch_values)
 
-    block_spec = pl.BlockSpec(
-        (None, 1, 128, 128), lambda i, j, k, l: (i, j, k, l)
-    )
+    block_shape = (None, 1, 128, 128)
+    block_spec = pl.BlockSpec(block_shape, lambda i, j, k, l: (i, j, k, l))
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
@@ -674,26 +676,61 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
-    x_block_spec = value_block_specs[0]
-    self.assertEqual(x_block_spec.index_map(0, 0, 1, 2), (1, 2))
-    self.assertEqual(x_block_spec.index_map(1, 2, 3, 3), (3, 3))
+    x_index_map = value_block_specs[0].index_map
+    self.assertEqual(
+        x_index_map(0, 0, 1, 2), (0 if bcast0 else 1, 0 if bcast1 else 2)
+    )
+    self.assertEqual(
+        x_index_map(1, 2, 3, 3), (0 if bcast0 else 3, 0 if bcast1 else 3)
+    )
 
-    x = jnp.full((128, 128), fill_value=1.2345, dtype=jnp.float32)
-    np.testing.assert_array_equal(
-        kernel_fn((0, 0, 0, 0), scalar_prefetch_values, (x,)), x
-    )
-    np.testing.assert_array_equal(
-        kernel_fn((1, 1, 0, 0), scalar_prefetch_values, (x,)), x
-    )
-    np.testing.assert_array_equal(
-        kernel_fn((0, 0, 0, 1), scalar_prefetch_values, (x,)), x
-    )
-    np.testing.assert_array_equal(
-        kernel_fn((0, 0, 1, 0), scalar_prefetch_values, (x,)), x
-    )
-    np.testing.assert_array_equal(
-        kernel_fn((0, 0, 3, 0), scalar_prefetch_values, (x,)), x
-    )
+    block_shape = (1 if bcast0 else 128, 1 if bcast1 else 128)
+    self.assertEqual(block_shape, value_block_specs[0].block_shape)
+    x = jnp.full(block_shape, fill_value=1.2345, dtype=jnp.float32)
+    y = jax.lax.broadcast_in_dim(x, (1, 128, 128), (1, 2))
+    np.testing.assert_array_equal(kernel_fn((0, 0, 0, 0), (), (x,)), y)
+    np.testing.assert_array_equal(kernel_fn((1, 1, 0, 0), (), (x,)), y)
+    np.testing.assert_array_equal(kernel_fn((0, 0, 0, 1), (), (x,)), y)
+    np.testing.assert_array_equal(kernel_fn((0, 0, 1, 0), (), (x,)), y)
+    np.testing.assert_array_equal(kernel_fn((0, 0, 3, 0), (), (x,)), y)
+
+  @parameterized.parameters(0, 1, 2, 3)
+  def test_broadcast_1d_array(self, bcast_dim):
+    full_shape = (2, 2, 512, 512)
+    x = jnp.ones((full_shape[bcast_dim],))
+
+    def f():
+      return jax.lax.broadcast_in_dim(x, full_shape, (bcast_dim,))
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(new_values, 1)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_shape = (None, 1, 128, 128)
+    block_spec = pl.BlockSpec(block_shape, lambda i, j, k, l: (i, j, k, l))
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid=(2, 2, 4, 4),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
+    self.assertLen(value_block_specs, 1)
+    x_index_map = value_block_specs[0].index_map
+    self.assertEqual(x_index_map(0, 0, 1, 2), ((0, 0, 1, 2)[bcast_dim],))
+    self.assertEqual(x_index_map(1, 2, 3, 3), ((1, 2, 3, 3)[bcast_dim],))
+
+    if block_shape[bcast_dim] is None:
+      x = jnp.ones(())
+      y = jax.lax.broadcast_in_dim(x, (1, 128, 128), ())
+    else:
+      x = jnp.arange(block_shape[bcast_dim] or 1, dtype=jnp.float32)
+      y = jax.lax.broadcast_in_dim(x, (1, 128, 128), (bcast_dim - 1,))
+
+    np.testing.assert_array_equal(kernel_fn((0, 0, 0, 0), (), (x,)), y)
+    np.testing.assert_array_equal(kernel_fn((1, 1, 0, 0), (), (x,)), y)
+    np.testing.assert_array_equal(kernel_fn((0, 0, 0, 1), (), (x,)), y)
+    np.testing.assert_array_equal(kernel_fn((0, 0, 1, 0), (), (x,)), y)
+    np.testing.assert_array_equal(kernel_fn((0, 0, 3, 0), (), (x,)), y)
 
   def test_element_indexing(self):
 
