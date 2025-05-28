@@ -45,6 +45,7 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+// Leave this comment here. Internal Google business.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/TargetSelect.h"
@@ -130,12 +131,17 @@ class TemporaryDirectory {
   std::string path;
 };
 
+const char *GetCUDARoot() {
+  return getenv("CUDA_ROOT");
+}
+
 absl::StatusOr<std::string> RunCUDATool(const char* tool,
                                         const std::vector<const char*>& args,
                                         bool stderr_to_stdout = true) {
   CHECK(!args.empty() && args.back() == nullptr);
-  const char* cuda_path_ptr = getenv("CUDA_ROOT");
-  if (!cuda_path_ptr) return absl::InternalError("Failed to get CUDA_ROOT");
+  const char* cuda_path_ptr = GetCUDARoot();
+  if (!cuda_path_ptr)
+    return absl::InternalError("Failed to get the CUDA toolkit path");
   std::string tool_path(cuda_path_ptr);
   tool_path += "/bin/";
   tool_path += tool;
@@ -338,6 +344,10 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     return true;
   });
   bool emit_line_info = getenv("MOSAIC_GPU_LINE_INFO") != nullptr;
+  const char *cuda_root = GetCUDARoot();
+  if (!cuda_root) {
+    return mlir::failure();
+  }
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
@@ -374,11 +384,12 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
       // TODO(slebedev): Switch to the ensure-debug-info-scope-on-llvm-func
       // pass in MLIR once Triton upstreams its changes.
       emit_line_info ? "enable-line-info," : "",
-      R"(
-        gpu-module-to-binary{format=)" +
-          mlir::gpu::stringifyCompilationTarget(target).str() +
-          (!nvshmem_path.empty() ? R"( l=)" + nvshmem_path : "") +
-          (emit_line_info ? "  opts=-lineinfo" : "") + R"(},
+      "gpu-module-to-binary{format=",
+      mlir::gpu::stringifyCompilationTarget(target).str(),
+      (!nvshmem_path.empty() ? " l=" + nvshmem_path : ""),
+      (emit_line_info ? "  opts=-lineinfo" : ""),
+      " toolkit=", cuda_root,
+      R"(},
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
