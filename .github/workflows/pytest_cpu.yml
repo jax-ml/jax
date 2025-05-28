@@ -56,7 +56,9 @@ jobs:
                    (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
                    (contains(inputs.runner, 'windows-x86') && null) }}
 
-    name: "Pytest CPU (${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
+    name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
+        (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
+        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }}, x64=${{ inputs.enable-x64 }}"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"

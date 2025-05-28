@@ -111,7 +111,10 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
 
-    name: Build ${{ inputs.artifact }} (${{ inputs.runner }}, Python ${{ inputs.python }}, clone main XLA=${{ inputs.clone_main_xla }})
+    name: "${{ inputs.artifact }},
+            ${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
+            (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
+            (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }}, clone main XLA=${{ inputs.clone_main_xla }}"
 
     # Map the job outputs to step outputs
     outputs:
