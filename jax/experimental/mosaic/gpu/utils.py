@@ -817,8 +817,19 @@ class BarrierRef:
     )
     return parity, arith.xori(parities, bitmask)
 
-  def arrive(self, arrival_count: int = 1, can_complete: bool = True):
+  def arrive(
+      self,
+      arrival_count: int = 1,
+      can_complete: bool = True,
+      for_tensor_core: bool = False,
+  ):
     i64 = ir.IntegerType.get_signless(64)
+    if for_tensor_core:
+      llvm.inline_asm(
+          ir.Type.parse("!llvm.void"),
+          [], "tcgen05.fence::before_thread_sync;", "",
+          has_side_effects=True,
+      )
     if can_complete:
       if arrival_count > 1:
         count = c(arrival_count - 1, ir.IntegerType.get_signless(32))
