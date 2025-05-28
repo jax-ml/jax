@@ -1376,26 +1376,26 @@ class FragmentedArray:
     )
 
   def __getitem__(self, idx):
-    if self.layout !=  WGMMA_LAYOUT:
-      raise NotImplementedError("Only WGMMA layouts support slicing")
+    if not isinstance(self.layout, TiledLayout):
+      raise NotImplementedError("Only arrays with tiled layouts can be sliced")
     base_idx, slice_shape, is_squeezed = utils.parse_indices(idx, self.shape)
+    if any(isinstance(idx, ir.Value) for idx in base_idx):
+      raise ValueError("Only static slicing allowed")
     if any(is_squeezed):
       raise NotImplementedError("Only slicing implemented")
-    if (
-        base_idx[0] % 64
-        or slice_shape[0] % 64
-        or base_idx[1] % 8
-        or slice_shape[1] % 8
+    base_tile_shape = self.layout.base_tile_shape
+    if len(base_tile_shape) != len(self.shape):
+      raise NotImplementedError("Tiling has different rank than array")
+    if any(
+        b % t or l % t
+        for b, l, t in zip(base_idx, slice_shape, base_tile_shape, strict=True)
     ):
       raise NotImplementedError("Only tile aligned slicing supported")
-    base_idx[0] //= 64
-    slice_shape[0] //= 64
-    base_idx[1] //= 8
-    slice_shape[1] //= 8
-    new_regs = self.registers[
-        base_idx[0] : base_idx[0] + slice_shape[0],
-        base_idx[1] : base_idx[1] + slice_shape[1],
-    ]
+    register_slices = tuple(
+        slice(b // t, (b + l) // t)
+        for b, l, t in zip(base_idx, slice_shape, base_tile_shape, strict=True)
+    )
+    new_regs = self.registers[register_slices]
     return FragmentedArray(
         _registers=new_regs, _layout=self.layout, _is_signed=self.is_signed
     )
@@ -1882,6 +1882,21 @@ class FragmentedArray:
         lambda t, p, f: arith.select(p, t, f), self, on_false,
     )
 
+  @classmethod
+  def build(
+      cls,
+      shape: tuple[int, ...],
+      layout: FragmentedLayout,
+      fn: Callable[..., ir.Value],  # ir.Value varargs, one for each dim
+      *,
+      is_signed: bool | None = None,
+  ):
+    undef = llvm.mlir_undef(ir.IntegerType.get_signless(32))
+    dummy = cls.splat(undef, shape, layout, is_signed=False)
+    return dummy.foreach(
+        lambda _, idx: fn(*idx), create_array=True, is_signed=is_signed
+    )
+
   def foreach(
       self,
       fn: Callable[[ir.Value, tuple[ir.Value, ...]], ir.Value | None],
@@ -1892,8 +1907,19 @@ class FragmentedArray:
     """Call a function for each value and index."""
     index = ir.IndexType.get()
     new_regs = None
-    if create_array:
-      new_regs = np.full_like(self.registers, llvm.mlir_undef(self.registers.flat[0].type))
+    orig_fn = fn
+    def fn(*args):
+      nonlocal new_regs
+      result = orig_fn(*args)
+      old_reg_type = self.registers.flat[0].type
+      # Lazily create new_regs once we know the desired output type.
+      if create_array and new_regs is None:
+        if ir.VectorType.isinstance(old_reg_type):
+          new_reg_type = ir.VectorType.get(old_reg_type.shape, result.type)
+        else:
+          new_reg_type = result.type
+        new_regs = np.full_like(self.registers, llvm.mlir_undef(new_reg_type))
+      return result
     for mlir_idx, reg_idx in zip(self.layout.thread_idxs(self.shape), np.ndindex(self.registers.shape), strict=True):
       reg = self.registers[reg_idx]
       assert len(mlir_idx) == len(self.shape), (mlir_idx, self.shape)
