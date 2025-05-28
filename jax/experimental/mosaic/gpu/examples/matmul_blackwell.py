@@ -86,7 +86,7 @@ def build_kernel(
   logical_grid = (grid_tile_m, n // tile_n, m // (block_tile_m * grid_tile_m))
 
   def kernel(ctx, a, b, d, smem):
-    ((a_smem, b_smem), d_smem), barriers, mma_done_barrier, acc = smem
+    ((a_smem, b_smem), d_smem), barriers, mma_done_barrier, tmem_done_barrier, acc = smem
     (ab_full_barriers, ab_empty_barriers) = barriers
 
     warp_idx = mgpu.warp_idx(sync=True)
@@ -97,6 +97,9 @@ def build_kernel(
     is_leader_block = arith.cmpi(
         arith.CmpIPredicate.eq, ctx.cluster_idx(gpu.Dimension.x), c(0, index)
     )
+    is_store_warpgroup = arith.cmpi(
+        arith.CmpIPredicate.eq, mgpu.warpgroup_idx(sync=True), c(1, i32)
+    )
 
     def compute_output(block_m_start, n_start, call_counter):
       """Compute and store a single output tile.
@@ -104,6 +107,9 @@ def build_kernel(
       call_counter should be 0 the first time this function is called and
       incremented by 1 before each subsequent call.
       """
+      isnt_first_call = arith.cmpi(
+          arith.CmpIPredicate.ne, call_counter, c(0, index)
+      )
       # All blocks in the cluster share the same m_start -- align it!
       m_start = arith.muli(arith.divui(block_m_start, c(tile_m, index)), c(tile_m, index))
       with mgpu.when(is_leader_of(TMA_WARP)):
@@ -112,9 +118,6 @@ def build_kernel(
           slot = arith.remui(ki, c(max_concurrent_steps, index))
           isnt_warmup = arith.cmpi(
               arith.CmpIPredicate.uge, ki, c(max_concurrent_steps, index)
-          )
-          isnt_first_call = arith.cmpi(
-              arith.CmpIPredicate.ne, call_counter, c(0, index)
           )
           with mgpu.when(arith.ori(isnt_first_call, isnt_warmup)):
             ab_empty_barriers[slot].wait()
@@ -147,6 +150,9 @@ def build_kernel(
               **common_args,
           )
 
+      # We wait in all blocks in the cluster to avoid double arrival errors.
+      with mgpu.when(arith.andi(is_leader_of(MMA_WARP), isnt_first_call)):
+        tmem_done_barrier.wait(for_tensor_core=True)
       with mgpu.when(arith.andi(is_leader_of(MMA_WARP), is_leader_block)):
         @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
         def _mma_body(ki, accumulate):
@@ -170,20 +176,20 @@ def build_kernel(
             tcgen05.commit_arrive(mma_done_barrier, collective=collective, ctx=ctx)
           return accumulate
 
-      gpu.barrier()
-      mma_done_barrier.wait(for_tensor_core=True)
-
-      final_acc = acc.load().astype(mlir.dtype_to_ir_type(jnp.dtype(dtype)))
-      final_acc.store_tiled(d_smem, swizzle=128)
-      mgpu.commit_shared()
-      ctx.async_copy(
-          src_ref=d_smem,
-          dst_ref=d,
-          gmem_slice=(ds(block_m_start, block_tile_m), ds(n_start, tile_n)),
-          gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
-          swizzle=swizzle,
-      )
-      ctx.await_async_copy(0)
+      with mgpu.when(is_store_warpgroup):
+        mma_done_barrier.wait(for_tensor_core=True)
+        final_acc = acc.load().astype(mlir.dtype_to_ir_type(jnp.dtype(dtype)))
+        final_acc.store_tiled(d_smem, swizzle=128)
+        mgpu.commit_shared()
+        tmem_done_barrier.arrive()
+        ctx.async_copy(
+            src_ref=d_smem,
+            dst_ref=d,
+            gmem_slice=(ds(block_m_start, block_tile_m), ds(n_start, tile_n)),
+            gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
+            swizzle=128,
+        )
+        ctx.await_async_copy(0)
 
     # We statically assign the tiles to SMs.
     logical_grid_size = math.prod(logical_grid)
@@ -224,18 +230,19 @@ def build_kernel(
   epilogue_buffer = jax.ShapeDtypeStruct(
       mgpu.tile_shape((block_tile_m, tile_n), (128, swizzle_elems)),
       dtype)
-  smem_buffers = mgpu.Union([compute_buffers, epilogue_buffer])
+  smem_buffers = [compute_buffers, epilogue_buffer]
   smem = (
       smem_buffers,
       [mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps)] * 2,
       mgpu.Barrier(arrival_count=1),
+      mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,), num_barriers=1),
       mgpu.TMEM((128, tile_n), jnp.float32, collective=collective),
   )
   num_sms = 148
   return mgpu.as_gpu_kernel(
       kernel,
       (num_sms, 1, 1),  # This is a persistent kernel.
-      (128, 1, 1),
+      (2 * 128, 1, 1),
       (
           jax.ShapeDtypeStruct((m, k), dtype),
           jax.ShapeDtypeStruct((n, k), dtype),
