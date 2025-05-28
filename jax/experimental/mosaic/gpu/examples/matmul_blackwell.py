@@ -15,6 +15,7 @@
 """Matmul kernel for Blackwell."""
 
 import itertools
+import math
 
 import jax
 from jax._src.interpreters import mlir
@@ -81,6 +82,9 @@ def build_kernel(
   if (m // block_tile_m) % grid_tile_m:
     raise ValueError(f"{m=} // {tile_m=} must be divisible by {grid_tile_m=}")
 
+  # We intend this to be iterated in column-major order.
+  logical_grid = (grid_tile_m, n // tile_n, m // (block_tile_m * grid_tile_m))
+
   def kernel(ctx, a, b, d, smem):
     ((a_smem, b_smem), d_smem), barriers, mma_done_barrier, acc = smem
     (ab_full_barriers, ab_empty_barriers) = barriers
@@ -94,17 +98,25 @@ def build_kernel(
         arith.CmpIPredicate.eq, ctx.cluster_idx(gpu.Dimension.x), c(0, index)
     )
 
-    # This function executes the kernel for a single output tile.
-    def compute_output(block_m_start, n_start):
-      """Compute and store a single output tile."""
+    def compute_output(block_m_start, n_start, call_counter):
+      """Compute and store a single output tile.
+
+      call_counter should be 0 the first time this function is called and
+      incremented by 1 before each subsequent call.
+      """
       # All blocks in the cluster share the same m_start -- align it!
       m_start = arith.muli(arith.divui(block_m_start, c(tile_m, index)), c(tile_m, index))
       with mgpu.when(is_leader_of(TMA_WARP)):
         @mgpu.fori(c(k_loop_iter, index), None)
         def _tma_body(ki, _):
           slot = arith.remui(ki, c(max_concurrent_steps, index))
-          # TODO(apaszke): Use a predicate instead of a conditional.
-          with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, ki, c(max_concurrent_steps, index))):
+          isnt_warmup = arith.cmpi(
+              arith.CmpIPredicate.uge, ki, c(max_concurrent_steps, index)
+          )
+          isnt_first_call = arith.cmpi(
+              arith.CmpIPredicate.ne, call_counter, c(0, index)
+          )
+          with mgpu.when(arith.ori(isnt_first_call, isnt_warmup)):
             ab_empty_barriers[slot].wait()
           full_barrier = ab_full_barriers[slot]
           with mgpu.when(is_leader_block):
@@ -150,15 +162,12 @@ def build_kernel(
               collective=collective,
           )
           accumulate = arith.constant(i1, 1)
+          tcgen05.commit_arrive(ab_empty_barriers[slot], collective=collective, ctx=ctx)
           is_last_iter = arith.cmpi(
               arith.CmpIPredicate.eq, ki, c(k_loop_iter - 1, index)
           )
-          barrier_ptr = arith.select(
-              is_last_iter,
-              mma_done_barrier.get_ptr(),
-              ab_empty_barriers[slot].get_ptr(),
-          )
-          tcgen05.commit_arrive(barrier_ptr, collective=collective, ctx=ctx)
+          with mgpu.when(is_last_iter):
+            tcgen05.commit_arrive(mma_done_barrier, collective=collective, ctx=ctx)
           return accumulate
 
       gpu.barrier()
@@ -176,15 +185,33 @@ def build_kernel(
       )
       ctx.await_async_copy(0)
 
-    m_idx = arith.addi(
-        gpu.block_id(gpu.Dimension.x),
-        arith.muli(gpu.block_id(gpu.Dimension.z), c(grid_tile_m, index)),
+    # We statically assign the tiles to SMs.
+    logical_grid_size = math.prod(logical_grid)
+    sm_id = gpu.block_id(gpu.Dimension.x)
+    extra_step = arith.cmpi(
+        arith.CmpIPredicate.slt, sm_id, c(logical_grid_size % num_sms, index)
+    )  # Some SMs do an extra step when grid size isn't divisible by SM count.
+    mn_steps = arith.addi(
+        mgpu.c(logical_grid_size // num_sms, index),
+        arith.index_castui(index, extra_step),
     )
-    n_idx = gpu.block_id(gpu.Dimension.y)
-    block_m_start = arith.muli(m_idx, c(block_tile_m, index))
-    n_start = arith.muli(n_idx, c(tile_n,index))
-    # This is not a persistent kernel, so we only process one tile.
-    compute_output(block_m_start, n_start)
+
+    @mgpu.fori(mn_steps, None)
+    def _mn_loop(local_mn_step, _):
+      global_mn_step = arith.addi(
+          sm_id, arith.muli(local_mn_step, mgpu.c(num_sms, index))
+      )
+      logical_idxs = []
+      for dim_size in logical_grid:
+        logical_idxs.append(arith.remui(global_mn_step, mgpu.c(dim_size, index)))
+        global_mn_step = arith.divui(global_mn_step, mgpu.c(dim_size, index))
+      lx, ly, lz = logical_idxs
+      m_idx = arith.addi(lx, arith.muli(lz, c(grid_tile_m, index)))
+      n_idx = ly
+
+      block_m_start = arith.muli(m_idx, c(block_tile_m, index))
+      n_start = arith.muli(n_idx, c(tile_n,index))
+      compute_output(block_m_start, n_start, local_mn_step)
 
   compute_buffers = (
     jax.ShapeDtypeStruct(
@@ -204,9 +231,10 @@ def build_kernel(
       mgpu.Barrier(arrival_count=1),
       mgpu.TMEM((128, tile_n), jnp.float32, collective=collective),
   )
+  num_sms = 148
   return mgpu.as_gpu_kernel(
       kernel,
-      (grid_tile_m, n // tile_n, m // (block_tile_m * grid_tile_m)),
+      (num_sms, 1, 1),  # This is a persistent kernel.
       (128, 1, 1),
       (
           jax.ShapeDtypeStruct((m, k), dtype),
