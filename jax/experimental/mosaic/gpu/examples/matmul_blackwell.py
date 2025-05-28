@@ -179,17 +179,28 @@ def build_kernel(
       with mgpu.when(is_store_warpgroup):
         mma_done_barrier.wait(for_tensor_core=True)
         final_acc = acc.load().astype(mlir.dtype_to_ir_type(jnp.dtype(dtype)))
-        final_acc.store_tiled(d_smem, swizzle=128)
-        mgpu.commit_shared()
-        tmem_done_barrier.arrive()
-        ctx.async_copy(
-            src_ref=d_smem,
-            dst_ref=d,
-            gmem_slice=(ds(block_m_start, block_tile_m), ds(n_start, tile_n)),
-            gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
-            swizzle=128,
-        )
-        ctx.await_async_copy(0)
+        assert tile_n % epilogue_tile_n == 0
+        for ni in range(tile_n // epilogue_tile_n):
+          n_slice = ds(ni * epilogue_tile_n, epilogue_tile_n)
+          final_acc[:, n_slice].store_tiled(d_smem, swizzle=128)
+          # We store the first tile before arriving to reduce register pressure.
+          if ni == 0:
+            # Make sure we've loaded all of TMEM before we arrive.
+            tcgen05.wait_tmem_load()
+            tmem_done_barrier.arrive(for_tensor_core=True)
+          mgpu.commit_shared()
+          store_n_start = arith.addi(n_start, c(ni * epilogue_tile_n, index))
+          ctx.async_copy(
+              src_ref=d_smem,
+              dst_ref=d,
+              gmem_slice=(
+                  ds(block_m_start, block_tile_m),
+                  ds(store_n_start, epilogue_tile_n),
+              ),
+              gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
+              swizzle=128,
+          )
+          ctx.await_async_copy(0)
 
     # We statically assign the tiles to SMs.
     logical_grid_size = math.prod(logical_grid)
@@ -227,8 +238,9 @@ def build_kernel(
         mgpu.tile_shape((max_concurrent_steps, block_tile_n, tile_k), tiling),
         dtype),
   )
+  epilogue_tile_n = 64
   epilogue_buffer = jax.ShapeDtypeStruct(
-      mgpu.tile_shape((block_tile_m, tile_n), (128, swizzle_elems)),
+      mgpu.tile_shape((block_tile_m, epilogue_tile_n), (128, swizzle_elems)),
       dtype)
   smem_buffers = [compute_buffers, epilogue_buffer]
   smem = (

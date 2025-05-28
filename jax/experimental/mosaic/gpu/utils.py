@@ -993,11 +993,17 @@ class CollectiveBarrierRef:
   def __getitem__(self, offset):
     return CollectiveBarrierRef(self.barrier[offset], self.cluster_mask)
 
-  def arrive(self):
+  def arrive(self, for_tensor_core: bool = False):
     """Arrives on a barrier in all blocks that share at least one of the coordinates along the collective dimensions.
 
     Note that unlike in arrive, each warpgroup arrives once.
     """
+    if for_tensor_core:
+      llvm.inline_asm(
+          ir.Type.parse("!llvm.void"),
+          [], "tcgen05.fence::before_thread_sync;", "",
+          has_side_effects=True,
+      )
     if self.barrier.num_barriers != 1:
       raise ValueError("Can only arrive on a single barrier")
     if self.cluster_mask is None:
