@@ -548,7 +548,6 @@ After setting up the sharding, the optimizer state is moved to host memory and t
 
 The JIT compilation of the step function uses several important parameters:
 - `donate_argnums=(0,)`: Indicates that the first argument (parameters) can be modified in-place, allowing JAX to reuse its memory
-- `in_shardings`: Specifies how input tensors should be sharded across the mesh (devices and hosts)
 - `out_shardings`: Specifies how output tensors should be sharded across the mesh (devices and hosts)
 
 ```{code-cell} ipython3
@@ -585,7 +584,6 @@ opt_state = jax.device_put(opt_state, s_host)
 step = jax.jit(
   step,
   donate_argnums=(0,),
-  in_shardings=(s_dev, s_host, s_dev),
   out_shardings=(s_dev, s_host)
 )
 
@@ -608,7 +606,7 @@ if compiled_stats is not None:
 This implementation demonstrates how to:
 1. Set up sharding specifications for `device` and `pinned_host`
 2. Move optimizer states between host and device memory via {func}`jax.device_put`
-3. Use `in_sharding` and `out_shardings` to ensure proper memory placement
+3. Use `out_shardings` to ensure proper memory placement
 4. Show the memory usage
 
 This implementation demonstrates how offloading optimizer state to host memory can reduce device memory usage through a trade-off between argument size and temporary memory.
