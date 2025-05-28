@@ -5058,6 +5058,29 @@ class APITest(jtu.JaxTestCase):
     with jax.ensure_compile_time_eval():
       jnp.linalg.solve(jnp.eye(3), jnp.ones(3))  # doesn't crash
 
+  def test_returned_non_jaxtype(self):
+
+    class TestEnum(enum.Enum):
+      A = enum.auto()
+
+    @jax.tree_util.register_dataclass
+    @dataclasses.dataclass
+    class TestClass3:
+      test_enum_field: TestEnum = dataclasses.field(metadata=dict(static=True))
+      test_data_field: int
+
+    def test_jax_function(test_class: TestClass3) -> TestEnum:
+      return test_class.test_enum_field
+
+    jitted_test_function = jax.jit(test_jax_function)
+    with self.assertRaisesRegex(TypeError, "returned a value of type"):
+        jitted_test_function(
+            TestClass3(
+                test_data_field=1,
+                test_enum_field=TestEnum.A,
+            )
+        )
+
 
 class RematTest(jtu.JaxTestCase):
 
