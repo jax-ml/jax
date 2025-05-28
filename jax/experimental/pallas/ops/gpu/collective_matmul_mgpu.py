@@ -42,6 +42,7 @@ def all_gather_lhs_matmul(
     block_n: int,
     block_k: int,
     max_concurrent_steps: int,
+    dtype: jnp.dtype = jnp.float16,
 ) -> jax.Array:
   if (num_devices := jax.device_count()) != jax.process_count():
     raise ValueError("The kernel only supports one device per process")
@@ -49,6 +50,8 @@ def all_gather_lhs_matmul(
     raise ValueError("The kernel can only work over all devices in a Mesh.")
   if max_concurrent_steps < 2:
     raise ValueError("max_concurrent_steps must be >= 2")
+  if jnp.dtype(dtype) not in map(jnp.dtype, [jnp.float16, jnp.bfloat16]):
+    raise NotImplementedError(f"Only f16 and bf16 are supported, got dtype: {dtype}")
 
   num_sms = 132  # There are 132 SMs on a H100 SXM GPU.
 
@@ -121,7 +124,7 @@ def all_gather_lhs_matmul(
         @functools.partial(
             pl.run_scoped,
             acc_ref=plgpu.ACC((block_m, block_n)),
-            out_smem=plgpu.SMEM((block_m, block_n), jnp.float16, transforms=transforms),
+            out_smem=plgpu.SMEM((block_m, block_n), dtype, transforms=transforms),
         )
         def _(acc_ref, out_smem):
           pl.semaphore_wait(capacity_sem)
@@ -173,8 +176,8 @@ def all_gather_lhs_matmul(
 
   result, _ = plgpu.kernel(
       kernel_body,
-      out_shape=[jax.ShapeDtypeStruct((axis_size * m_shard, n_shard), jnp.float16),
-                  jax.ShapeDtypeStruct((num_sms, 2, block_m, k), jnp.float16)],
+      out_shape=[jax.ShapeDtypeStruct((axis_size * m_shard, n_shard), dtype),
+                  jax.ShapeDtypeStruct((num_sms, 2, block_m, k), dtype)],
       scratch_shapes=[
           plgpu.SemaphoreType.REGULAR, plgpu.SemaphoreType.REGULAR,
       ],
