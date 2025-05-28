@@ -1364,14 +1364,15 @@ def _broadcast_in_dim_usage_rule(ctx, used_out: set[Usage], **params):
 def _broadcast_in_dim_eval_rule(
     eval_ctx: KernelEvalContext, x, broadcast_dimensions, **params
 ):
-  if not eval_ctx.avals_in[0].shape:  # pytype: disable=attribute-error
-    # Scalar -> Array broadcast
-    block_spec = eval_ctx.out_block_specs[0]
-    shape = tuple(
-        _block_size(s) for s in block_spec.block_shape if s is not None
-    )
-    return jax.lax.broadcast_in_dim(x, broadcast_dimensions=(), shape=shape)
-  return x
+  del params  # Unused.
+  shape = tuple(map(_block_size, eval_ctx.out_block_specs[0].block_shape))
+  dims = tuple(
+      d - sum(s is None for s in shape[:d])
+      for d in broadcast_dimensions
+      if shape[d] is not None
+  )
+  shape = tuple(s for s in shape if s is not None)
+  return jax.lax.broadcast_in_dim(x, broadcast_dimensions=dims, shape=shape)
 
 
 @register_pull_block_spec_rule(lax.broadcast_in_dim_p)
@@ -1385,15 +1386,20 @@ def _broadcast_in_dim_pull_rule(
 ):
   del shape, sharding
 
-  if not ctx.avals_in[0].shape:  # pytype: disable=attribute-error
+  shape = ctx.avals_in[0].shape  # pytype: disable=attribute-error
+  if not shape:
     return [pallas_core.no_block_spec]
 
   def new_index_map(*args):
     idx = block_spec.index_map(*args)
-    return tuple(idx[i] for i in broadcast_dimensions)
+    return tuple(
+        0 if (d == 1) else idx[i]
+        for i, d in zip(broadcast_dimensions, shape, strict=True)
+    )
 
   new_block_shape = tuple(
-      block_spec.block_shape[i] for i in broadcast_dimensions
+      b if ((b := block_spec.block_shape[i]) is None) or (d != 1) else 1
+      for i, d in zip(broadcast_dimensions, shape, strict=True)
   )
   return [pallas_core.BlockSpec(new_block_shape, new_index_map)]
 
