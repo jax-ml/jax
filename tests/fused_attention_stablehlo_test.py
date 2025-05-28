@@ -104,13 +104,13 @@ def sdpa_train(query: Array,
                kv_seqlen: Array | None = None,
                q_offsets: Array | None = None,
                kv_offsets: Array | None = None,
-               modifier_args: Tuple[Array] = (),
+               score_mod_args: Tuple[Array] = (),
                scale: float = 0.5,
                mask_type: MaskType = MaskType.NO_MASK,
                is_bnth: bool = False,
                dropout_rate: float = 0.1,
                sliding_window_length: int | None = None,
-               attn_score_modifier = None) -> Array:
+               score_mod = None) -> Array:
   if mask_type == MaskType.PADDING:
     if is_bnth:
       B, _, S, _ = query.shape
@@ -122,9 +122,9 @@ def sdpa_train(query: Array,
               dropout_rate=dropout_rate,
               qkv_layout="BNTH" if is_bnth else "BTNH",
               sliding_window_length=sliding_window_length,
-              attn_score_modifier=attn_score_modifier),
+              score_mod=score_mod),
       query, key, value, bias, mask, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      None, modifier_args)
+      None, score_mod_args)
   query_grad, key_grad, value_grad, bias_grad = sdpa_vjp(grad)[:4]
   if bias is not None and len(bias.shape) == 3:
     # has dbias
@@ -136,12 +136,12 @@ def sdpa_ref(query: Array,
       value: Array,
       bias: Array | None = None,
       mask: Array | None = None,
-      modifier_args: Tuple[Array] = (),
+      score_mod_args: Tuple[Array] = (),
       scale: float = 0.5,
       mask_type: MaskType = MaskType.NO_MASK,
       dropout_rate: float = 0.1,
       sliding_window_length: int | None = None,
-      attn_score_modifier = None) -> Array:
+      score_mod = None) -> Array:
 
   def get_causal_mask(logits):
     large_negative_number = get_large_negative_number(logits.dtype)
@@ -204,9 +204,8 @@ def sdpa_ref(query: Array,
     if bias.shape != logits.shape:
       bias = jnp.broadcast_to(bias, logits.shape)
     logits = logits + bias.astype(logits.dtype)
-  if attn_score_modifier is not None:
-    logits = attn_score_modifier(logits.astype(query.dtype), *modifier_args).astype(jnp.float32)
-    #logits = attn_score_modifier(logits, *modifier_args).astype(jnp.float32)
+  if score_mod is not None:
+    logits = score_mod(logits, *score_mod_args).astype(jnp.float32)
   probs = jax.nn.softmax(logits, axis=-1).astype(query.dtype)
   if dropout_rate > 0.:
     keep_prob = 1.0 - dropout_rate
@@ -231,14 +230,14 @@ def sdpa_train_ref(query: Array,
             mask_type: MaskType = MaskType.NO_MASK,
             dropout_rate: float = 0.1,
             sliding_window_length: int | None = None,
-            attn_score_modifier = None,
-            modifier_args = ()) -> Array:
+            score_mod = None,
+            score_mod_args = ()) -> Array:
   out_ref, sdpa_vjp_ref = jax.vjp(
     partial(
       sdpa_ref, scale=scale, mask_type=mask_type, dropout_rate=dropout_rate,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=attn_score_modifier),
-    query, key, value, bias, mask, modifier_args)
+      score_mod=score_mod),
+    query, key, value, bias, mask, score_mod_args)
   query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref = sdpa_vjp_ref(grad)[:4]
   if bias is not None and len(bias.shape) == 3:
     return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref)
@@ -773,60 +772,29 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     soft_cap_scalar = jax.random.normal(
         k5, (4, 4, 1024, 1024), dtype=jnp.float32)
 
-    def soft_cap(attn_score, soft_cap_scalar, soft_cap_scalar1):
-      return soft_cap_scalar1 * jax.lax.tanh(attn_score / soft_cap_scalar)
+    def soft_cap(attn_score, soft_cap_scalar):
+      return soft_cap_scalar * jax.lax.tanh(attn_score / soft_cap_scalar)
 
     jitted_sdpa = jax.jit(
       partial(
         sdpa_train, scale=1.0, mask_type=MaskType.NO_MASK,
-        dropout_rate=0, attn_score_modifier=soft_cap),
+        dropout_rate=0, score_mod=soft_cap),
     )
 
     jitted_sdpa_ref = jax.jit(
       partial(
         sdpa_train_ref, scale=1.0, mask_type=MaskType.NO_MASK,
-        dropout_rate=0, attn_score_modifier=soft_cap),
+        dropout_rate=0, score_mod=soft_cap),
     )
 
     out, (query_grad, key_grad, value_grad) = \
-      jitted_sdpa(query, key, value, grad, modifier_args=(soft_cap_scalar, soft_cap_scalar))
+      jitted_sdpa(query, key, value, grad, score_mod_args=(soft_cap_scalar))
     out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
-      jitted_sdpa_ref(query, key, value, grad, modifier_args=(soft_cap_scalar, soft_cap_scalar))
+      jitted_sdpa_ref(query, key, value, grad, score_mod_args=(soft_cap_scalar))
     self.assertArraysAllClose(out_ref, out, rtol=1e-2, atol=1e-2)
     self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
     self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=1e-2)
     self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
-
-  def test_sdpa_flex_attention(self):
-    k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
-    query = jax.random.normal(
-        k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
-    key = jax.random.normal(
-        k2, (4, 1024, 4, 64), dtype=jnp.bfloat16)
-    value = jax.random.normal(
-        k3, (4, 1024, 4, 64), dtype=jnp.bfloat16)
-
-    soft_cap_scalar = jax.random.normal(
-        k4, (4, 4, 1024, 1024), dtype=jnp.bfloat16)
-
-    def soft_cap(attn_score, soft_cap_scalar, soft_cap_scalar1):
-      return soft_cap_scalar1 * jax.lax.tanh(attn_score / soft_cap_scalar)
-
-    jitted_sdpa_inference = jax.jit(
-      partial(
-        dot_product_attention, scale=1.0, mask_type=MaskType.NO_MASK,
-        dropout_rate=0, attn_score_modifier=soft_cap),
-    )
-
-    jitted_sdpa_inference_ref = jax.jit(
-      partial(
-        sdpa_ref, scale=1.0, mask_type=MaskType.NO_MASK, dropout_rate=0,
-        attn_score_modifier=soft_cap),
-    )
-
-    out = jitted_sdpa_inference(query, key, value, modifier_args=(soft_cap_scalar, soft_cap_scalar))
-    out_ref = jitted_sdpa_inference_ref(query, key, value, modifier_args=(soft_cap_scalar, soft_cap_scalar))
-    self.assertArraysAllClose(out_ref, out, rtol=1e-2, atol=1e-2)
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_residual(self):
