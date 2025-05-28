@@ -513,6 +513,9 @@ def _launch(
 
     if tmem_allocs:
       gpu.barrier()  # Make sure everyone is done before we release TMEM.
+      if any(alloc.collective for alloc in tmem_allocs):
+        nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
+        nvvm.cluster_wait(aligned=ir.UnitAttr.get())
       with utils.when(is_init_warp):
         for alloc in tmem_allocs:
           alloc.dealloc()
