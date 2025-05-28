@@ -715,10 +715,12 @@ LogicalResult canonicalize_sitofp(const CanonicalizeContext &ctx,
     }
   }
   if (is_vector) {
-    x = builder.create<arith::SIToFPOp>(
-        VectorType::get(src_vty.getShape(), builder.getF32Type()), x);
+    x = builder.create<tpu::SIToFPOp>(
+        VectorType::get(src_vty.getShape(), builder.getF32Type()), x,
+        tpu::RoundingMode::kToNearestEven);
   } else {
-    x = builder.create<arith::SIToFPOp>(builder.getF32Type(), x);
+    x = builder.create<tpu::SIToFPOp>(builder.getF32Type(), x,
+                                      tpu::RoundingMode::kToNearestEven);
   }
   if (dst_bitwidth < 32) {
     x = builder.create<arith::TruncFOp>(op.getType(), x);
