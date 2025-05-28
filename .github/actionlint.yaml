@@ -1,0 +1,20 @@
+# Configuration related to self-hosted runner.
+self-hosted-runner:
+  labels:
+    - "linux-x86-n2-32" # Linux X86 runner using the 32 vcpu n2-standard-32 machine.
+    - "linux-x86-n2-64" # Linux X86 runner using the 64 vcpu n2-standard-64 machine.
+    - "linux-x86-g2-16-l4-1gpu" # Linux X86 GPU runner using g2-standard-16 machine with 1 NVIDIA L4 GPU attached.
+    - "linux-x86-g2-48-l4-4gpu" # Linux X86 GPU runner using g2-standard-48 machine with 4 NVIDIA L4 GPUs attached.
+    - "linux-x86-ct5lp-224-8tpu" # Linux X86 TPU runner using ct5lp-hightpu-8t machine with 2x4 topology.
+    - "linux-arm64-c4a-16" # Linux ARM64 CPU Runner using the 16 vcpu c4a-standard-16 machine.
+    - "linux-arm64-c4a-64" # Linux ARM64 CPU Runner using the 64 vcpu c4a-standard-64 machine.
+    - "windows-x86-n2-16" # Windows X86 runner using n2-standard-16 machine.
+    - "windows-x86-n2-64" # Windows X86 runner using n2-standard-64 machine.
+    - "linux-x86-a4-224-b200-1gpu" # Linux X86 GPU runner using 1 B200 GPU and 1/8 the resources of a a4-highgpu-8g machine
+    - "linux-x86-a3-8g-h100-8gpu" # Linux X86 GPU runner using a3-highgpu-8g machine with 8 NVIDIA H100 GPUs attached.
+    - "linux-x86-ct6e-180-8tpu" # Linux X86 TPU runner using ct6e-hightpu-8t machine with 2x4 topology.
+    - "linux-x86-ct6e-180-4tpu" # Linux X86 TPU runner using ct6e-hightpu-4t machine with 2x2 topology.
+    - "linux-x86-ct4p-240-4tpu" # Linux X86 TPU runner using ct4p-hightpu-4t machine with 2x2x1 topology.
+    - "linux-x86-n2-128" # Linux X86 runner using the 128 vcpu n2-standard-128 machine.
+    - "linux-x86-n2-16" # Linux X86 runner using the 16 vcpu n2-standard-16 machine.
+    - "linux-x86_64-cirrascale-64-8gpu-amd-mi250" # AMD runner

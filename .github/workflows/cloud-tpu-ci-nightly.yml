@@ -57,6 +57,8 @@ jobs:
       # mandates using a specific commit for non-Google actions. We use
       # https://github.com/sethvargo/ratchet to pin specific versions.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          persist-credentials: false
       # Checkout XLA at head, if we're building jaxlib at head.
       - name: Checkout XLA at head
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -64,6 +66,7 @@ jobs:
         with:
           repository: openxla/xla
           path: xla
+          persist-credentials: false
       # We need to mark the GitHub workspace as safe as otherwise git commands will fail.
       - name: Mark GitHub workspace as safe
         run: |

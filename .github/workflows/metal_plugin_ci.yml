@@ -14,7 +14,7 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
-
+permissions: {}
 jobs:
   jax-metal-plugin-test:
 
@@ -30,6 +30,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           path: jax
+          persist-credentials: false
       - name: Setup build and test enviroment
         run: |
           rm -rf ${GITHUB_WORKSPACE}/jax-metal-venv
