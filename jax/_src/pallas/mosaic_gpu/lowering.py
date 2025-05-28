@@ -176,11 +176,18 @@ def _estimate_resources(
   rs = Resources(smem_scratch_bytes=0)
   for eqn in jaxpr.eqns:
     # TODO(slebedev): Add support for other primitives, notably control flow.
-    rule = _resource_estimators.get(eqn.primitive)
-    if rule is None:
-      # Assume that unsupported primitives are neutral wrt resource usage.
+    if rule := _resource_estimators.get(eqn.primitive):
+      rs |= rule(ctx, *(invar.aval for invar in eqn.invars), **eqn.params)
       continue
-    rs |= rule(ctx, *(invar.aval for invar in eqn.invars), **eqn.params)
+    # Assume that unsupported primitives are neutral wrt resource usage,
+    # unless they have a jaxpr in their params.
+    if any(
+        isinstance(v, (jax_core.Jaxpr, jax_core.ClosedJaxpr))
+        for v in eqn.params.values()
+    ):
+      raise NotImplementedError(
+          f"Resource estimation does not support {eqn.primitive}"
+      )
 
   return rs
 
@@ -188,7 +195,7 @@ def _estimate_resources(
 @_register_resource_estimator(lax.cond_p)
 def _cond_resource_estimator(
     ctx: ResourceEstimatorContext, *args, branches
-) -> int:
+) -> Resources:
   del args  # Unused.
   return functools.reduce(
       lambda a, b: a | b,
@@ -199,7 +206,7 @@ def _cond_resource_estimator(
 @_register_resource_estimator(lax.scan_p)
 def _scan_resource_estimator(
     ctx: ResourceEstimatorContext, *args, jaxpr: jax_core.ClosedJaxpr, **params
-) -> int:
+) -> Resources:
   del args, params  # Unused.
   return _estimate_resources(ctx, jaxpr)
 
@@ -211,17 +218,52 @@ def _while_resource_estimator(
     cond_jaxpr: jax_core.ClosedJaxpr,
     body_jaxpr: jax_core.ClosedJaxpr,
     **params,
-) -> int:
+) -> Resources:
   del args, params  # Unused.
   return _estimate_resources(ctx, cond_jaxpr) | _estimate_resources(
       ctx, body_jaxpr
   )
 
 
+@_register_resource_estimator(pjit.pjit_p)
+def _pjit_resource_estimator(
+    ctx: ResourceEstimatorContext,
+    *args,
+    jaxpr: jax_core.ClosedJaxpr,
+    **params,
+) -> Resources:
+  del args, params  # Unused.
+  return _estimate_resources(ctx, jaxpr)
+
+
+@_register_resource_estimator(pallas_core.core_map_p)
+def _core_map_resource_estimator(
+    ctx: ResourceEstimatorContext,
+    *args,
+    jaxpr: jax_core.ClosedJaxpr,
+    **params,
+) -> Resources:
+  del args, params  # Unused.
+  return _estimate_resources(ctx, jaxpr)
+
+
+@_register_resource_estimator(discharge.run_state_p)
+def _run_state_resource_estimator(
+    ctx: ResourceEstimatorContext, *args, jaxpr: jax_core.Jaxpr, **params
+) -> Resources:
+  del args, params  # Unused.
+  return _estimate_resources(ctx, jaxpr)
+
+
 @_register_resource_estimator(primitives.run_scoped_p)
 def _run_scoped_resource_estimator(
-    ctx: ResourceEstimatorContext, *consts, jaxpr: jax_core.Jaxpr, collective_axes
-) -> int:
+    ctx: ResourceEstimatorContext,
+    *consts,
+    jaxpr: jax_core.Jaxpr,
+    collective_axes,
+) -> Resources:
+  del collective_axes  # Unused.
+
   # NOTE: This rule assumes that the allocation happens collectively, although
   # it can't be checked here due to limited context. We check this in the actual
   # lowering rule.
@@ -280,7 +322,7 @@ def _run_scoped_resource_estimator(
 @_register_resource_estimator(lax.reduce_sum_p)
 def _reduce_sum_resource_estimator(
     ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, *, axes
-) -> int:
+) -> Resources:
   del ctx, axes  # Unused.
   # We don't need shmem for some reductons, but it depends on the layout, so we
   # conservatively request some scratch space.
