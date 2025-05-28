@@ -3544,7 +3544,9 @@ class SerializationTest(absltest.TestCase):
 
 if hp is not None:
   @hps.composite
-  def tiled_layouts(draw, initial_tile, vector_transfer: bool = False):
+  def tiled_layouts(
+      draw, initial_tile, vector_transfer: bool = False
+  ) -> fa.TiledLayout:
     assert all(t.bit_count() == 1 for t in initial_tile)
     assert math.prod(initial_tile) >= 128
     tiles = [initial_tile]
@@ -3605,20 +3607,28 @@ if hp is not None:
         vector_dim=vector_dim,
     )
 
+  @hps.composite
+  def shape_and_tiled_layout(
+      draw, vector_transfer: bool = False
+  ) -> tuple[tuple[int, ...], fa.TiledLayout]:
+    rank = draw(hps.integers(2, 3))
+    initial_tile = tuple(
+        draw(hps.sampled_from([1, 2, 4, 8, 16, 32, 64, 128]))
+        for _ in range(rank)
+    )
+    hp.assume(128 <= math.prod(initial_tile) < 128 * 32)
+    shape = tuple(t * draw(hps.integers(1, 5)) for t in initial_tile)
+    hp.assume(math.prod(shape) <= 128 * 128)
+    layout = draw(tiled_layouts(initial_tile, vector_transfer=vector_transfer))
+    return shape, layout
+
   class HypothesisTest(TestCase):
 
     def test_reduce(self):
       @hps.composite
       def strategy(draw):
-        rank = draw(hps.integers(2, 3))
-        initial_tile = tuple(
-            draw(hps.sampled_from([1, 2, 4, 8, 16, 32, 64, 128]))
-            for _ in range(rank)
-        )
-        hp.assume(128 <= math.prod(initial_tile) < 128 * 32)
-        shape = tuple(t * draw(hps.integers(1, 5)) for t in initial_tile)
-        hp.assume(math.prod(shape) <= 128 * 128)
-        layout = draw(tiled_layouts(initial_tile, vector_transfer=True))
+        shape, layout = draw(shape_and_tiled_layout(vector_transfer=True))
+        rank = len(shape)
         reduced_dims = draw(hps.sets(hps.integers(0, rank - 1), min_size=1))
         return shape, layout, tuple(reduced_dims)
 
@@ -3643,6 +3653,51 @@ if hp is not None:
           hp.assume(False)
           return
         np.testing.assert_array_equal(result, x.max(reduced_dims))
+      run()
+
+    def test_slice(self):
+      i32 = ir.IntegerType.get_signless(32)
+      index = ir.IndexType.get()
+
+      @hps.composite
+      def strategy(draw):
+        shape, layout = draw(shape_and_tiled_layout(vector_transfer=True))
+        tiling = layout.base_tile_shape
+        tiled_shape = mgpu.tile_shape(shape, tiling)[:len(shape)]
+        def draw_slice(size, tile):
+          start = draw(hps.integers(0, size - 1))
+          length = draw(hps.integers(1, size - start))
+          return slice(start * tile, (start + length) * tile)
+        slices = tuple(map(draw_slice, tiled_shape, tiling))
+        return shape, layout, slices
+
+      basic_slices = (slice(128, 256), slice(16, 16 + 32))
+      @hp.given(strategy())
+      @hp.example(((256, 256), fa.WGMMA_LAYOUT, basic_slices))
+      @hp.example(((256, 256), tcgen05.LAYOUT, basic_slices))
+      @hp.example(((256, 256), tcgen05.TMEM_NATIVE_LAYOUT, basic_slices))
+      def run(args):
+        shape, layout, slices = args
+        def kernel(ctx, dst, _):
+          def linear_index(*idxs):
+            total = arith.constant(index, 0)
+            stride = 1
+            for i, size in zip(idxs[::-1], shape[::-1]):
+              total = arith.addi(total, arith.muli(i, c(stride, index)))
+              stride *= size
+            return arith.index_cast(i32, total)
+          x = mgpu.FragmentedArray.build(
+              shape, layout, linear_index, is_signed=True
+          )
+          x[slices].store_untiled(dst, optimized=False)
+
+        slice_shape = tuple(len(range(size)[s]) for s, size in zip(slices, shape))
+        out_shape = jax.ShapeDtypeStruct(shape=slice_shape, dtype=jnp.int32)
+        result = mgpu.as_gpu_kernel(
+            kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+        )()
+        iota = np.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+        np.testing.assert_array_equal(result, iota[slices])
       run()
 
 
