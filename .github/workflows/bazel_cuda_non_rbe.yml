@@ -60,7 +60,10 @@ jobs:
       # Enable writing to the Bazel remote cache bucket.
       JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: "1"
 
-    name: "Bazel single accelerator and multi-accelerator CUDA tests (jaxlib version=${{ inputs.jaxlib-version }}, ${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
+    name: "jaxlib=${{ inputs.jaxlib-version }},
+          ${{ (contains(inputs.runner, 'h100') && 'h100') ||
+          (contains(inputs.runner, 'b200') && 'b200') ||
+          (contains(inputs.runner, 'l4') && 'l4') }}, py ${{ inputs.python }}, x64=${{ inputs.enable-x64 }}"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
