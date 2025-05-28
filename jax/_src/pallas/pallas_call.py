@@ -1499,7 +1499,7 @@ def pallas_call(
     interpret: Any = False,
     name: str | None = None,
     compiler_params: (
-        Mapping[Backend, CompilerParams] | CompilerParams | None
+        Mapping[Backend, "CompilerParams"] | "CompilerParams" | None
     ) = None,
     cost_estimate: CostEstimate | None = None,
     backend: Backend | None = None,
@@ -1550,7 +1550,7 @@ def pallas_call(
     compiler_params: Optional compiler parameters. The value should either be a
       backend-specific dataclass
       (:class:`jax.experimental.pallas.tpu.TPUCompilerParams`,
-      :class:`jax.experimental.pallas.triton.TritonCompilerParams`,
+      :class:`jax.experimental.pallas.triton.CompilerParams`,
       :class:`jax.experimental.pallas.mosaic_gpu.CompilerParams`) or a dict
       mapping backend name to the corresponding platform-specific dataclass.
     backend: Optional string literal one of  ``"mosaic_tpu"``, ``"triton"`` or
@@ -1600,13 +1600,13 @@ def _normalize_compiler_params(
 ) -> Mapping[Backend, CompilerParams]:
   if compiler_params is None:
     return {}
-  if isinstance(compiler_params, pallas_core.CompilerParams):
+  if isinstance(compiler_params, CompilerParams):
     compiler_params = {compiler_params.BACKEND: compiler_params}
   assert isinstance(compiler_params, Mapping)
   for backend, params in compiler_params.items():
     if backend not in ["mosaic_tpu", "mosaic_gpu", "triton"]:
       raise ValueError(f"Unknown backend in compiler_params: {backend}")
-    if not isinstance(params, pallas_core.CompilerParams):
+    if not isinstance(params, CompilerParams):
       raise ValueError(
           f"Unexpected compiler_params for backend {backend}: {params}"
       )
