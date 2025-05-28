@@ -107,7 +107,7 @@ class LayoutTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, s)
 
     def f(x):
-      return x.T
+      return x.transpose()
 
     lowered = jax.jit(f, in_shardings=None, out_shardings=None).lower(sds)
     compiled = lowered.compile()
@@ -239,7 +239,7 @@ class LayoutTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, s)
 
     def f(x):
-      return (x * 2).T
+      return (x * 2).transpose()
 
     with self.assertRaisesRegex(
         ValueError,
