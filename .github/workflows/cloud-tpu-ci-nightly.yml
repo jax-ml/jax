@@ -47,7 +47,7 @@ jobs:
       LIBTPU_OLDEST_VERSION_DATE: 20250228
       PYTHON: python${{ matrix.python-version }}
     runs-on: ${{ matrix.tpu.runner }}
-    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
     timeout-minutes: 180
     defaults:
       run:

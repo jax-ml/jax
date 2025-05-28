@@ -27,7 +27,7 @@ jobs:
   run_tests:
     if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
     runs-on: linux-x86-a4-224-b200-1gpu
-    container: 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest'
+    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.8-cudnn9.8:latest'
     name: "Bazel single B200 CUDA tests"
 # End Presubmit Naming Check github-cuda-presubmits
     steps:
@@ -72,7 +72,7 @@ jobs:
   run_multiaccelerator_tests:
     if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
     runs-on: linux-x86-a3-8g-h100-8gpu
-    container: 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest'
+    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.8-cudnn9.8:latest'
     name: "Bazel multiple H100 CUDA tests"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2

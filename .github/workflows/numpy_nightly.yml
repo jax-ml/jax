@@ -33,7 +33,7 @@ jobs:
     strategy:
       matrix:
             python: ["3.13",]
-    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
     name: "CI - jaxlib head with NumPy nightly"
 
     env:

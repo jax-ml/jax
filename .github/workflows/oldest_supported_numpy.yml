@@ -23,7 +23,7 @@ jobs:
       run:
         shell: bash
     runs-on: "linux-x86-n2-64"
-    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "CI - Oldest Supported NumPy (Python 3.10, x64=0)"
 # End Presubmit Naming Check github-oldest-supported-numpy-presubmit
