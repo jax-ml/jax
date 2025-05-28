@@ -14,7 +14,6 @@ limitations under the License.
 ==============================================================================*/
 #include "jaxlib/py_socket_transfer.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -28,7 +27,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "absl/synchronization/mutex.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/array.h"  // IWYU pragma: keep
