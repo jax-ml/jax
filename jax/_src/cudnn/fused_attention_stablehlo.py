@@ -396,18 +396,18 @@ def is_cuda_compute_capability_equal(capability):
 
 def _dot_product_attention_fwd(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    modifier_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, attn_score_modifier, cudnn_version, return_residual):
+    score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, score_mod, cudnn_version, return_residual):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, layout, cudnn_version, bias is not None, False,
       get_max_seg_per_batch(q_offsets) > 1)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      *modifier_args, scale=scale, seed=seed, dropout_rate=dropout_rate,
+      *score_mod_args, scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=attn_score_modifier, is_training=False or return_residual)
+      score_mod=score_mod, is_training=False or return_residual)
   if return_residual:
     return tuple(outputs)
   else:
@@ -415,20 +415,20 @@ def _dot_product_attention_fwd(
 
 def _dot_product_attention_fwd_rule(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    modifier_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, attn_score_modifier, cudnn_version, return_residual):
+    score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, score_mod, cudnn_version, return_residual):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, layout, cudnn_version, bias is not None, True,
       get_max_seg_per_batch(q_offsets) > 1)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      *modifier_args, scale=scale, seed=seed, dropout_rate=dropout_rate,
+      *score_mod_args, scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=attn_score_modifier, is_training=True)
+      score_mod=score_mod, is_training=True)
   res = (query, key, value, bias, q_seqlen, kv_seqlen, q_offsets,
-         kv_offsets, modifier_args, outputs[1], outputs[0])
+         kv_offsets, score_mod_args, outputs[1], outputs[0])
   if return_residual:
     return tuple(outputs), res
   else:
@@ -436,18 +436,18 @@ def _dot_product_attention_fwd_rule(
 
 def _dot_product_attention_bwd_rule(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, attn_score_modifier, is_training, res, grad_output):
+    sliding_window_length, score_mod, is_training, res, grad_output):
   (query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-   modifier_args, activation, fwd_output) = res
+   score_mod_args, activation, fwd_output) = res
   if return_residual:
     grad_output = grad_output[0]
   grads = _dot_product_attention_bwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      activation, fwd_output, grad_output, *modifier_args, scale=scale, seed=seed,
+      activation, fwd_output, grad_output, *score_mod_args, scale=scale, seed=seed,
       dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=attn_score_modifier
+      score_mod=score_mod
   )
   grads = (*grads,) + (None,) * (9 - len(grads))
   return grads
@@ -512,36 +512,36 @@ def _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key):
 
 def _dot_product_attention_fwd_impl(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    modifier_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, attn_score_modifier, is_training):
+    score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, score_mod, is_training):
   # args: {Q, K, V, mask*, bias*}
   jaxpr = None
-  if attn_score_modifier is not None:
+  if score_mod is not None:
     if layout == AttentionLayout.BNTH.value:
       B, N, T, _ = query.shape
       _, _, S, _ = key.shape
     else:
       B, T, N, _ = query.shape
       _, S, _, _ = key.shape
-    attn_score = jax.core.ShapedArray((B, N, T, S), query.dtype)
-    fwd_jaxpr = jax.make_jaxpr(attn_score_modifier)(attn_score, *modifier_args)
-    jaxpr = (attn_score_modifier.__name__, fwd_jaxpr)
+    attn_score = jax.core.ShapedArray((B, N, T, S), jnp.float32)
+    fwd_jaxpr = jax.make_jaxpr(score_mod)(attn_score, *score_mod_args)
+    jaxpr = (score_mod.__name__, fwd_jaxpr)
   q_seqlen, kv_seqlen, q_offsets, kv_offsets = \
       _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key)
   outputs = _dot_product_attention_fwd_p.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      *modifier_args, scale=scale, seed=seed, dropout_rate=dropout_rate,
+      *score_mod_args, scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=jaxpr, is_training=is_training)
+      score_mod=jaxpr, is_training=is_training)
   return outputs
 
 def _dot_product_attention_bwd_impl(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    activation, fwd_output, grad_output, modifier_args, scale, seed, dropout_rate,
-    variadic_args, mask_type, layout, sliding_window_length, attn_score_modifier):
+    activation, fwd_output, grad_output, score_mod_args, scale, seed, dropout_rate,
+    variadic_args, mask_type, layout, sliding_window_length, score_mod):
   jaxpr = None
-  if attn_score_modifier is not None:
+  if score_mod is not None:
     if layout == AttentionLayout.BNTH.value:
       B, N, T, _ = query.shape
       _, _, S, _ = key.shape
@@ -549,30 +549,30 @@ def _dot_product_attention_bwd_impl(
       B, T, N, _ = query.shape
       _, S, _, _ = key.shape
 
-    attn_score = jax.core.ShapedArray((B, N, T, S), query.dtype)
-    grad = jax.core.ShapedArray((B, N, T, S), query.dtype)
+    attn_score = jax.core.ShapedArray((B, N, T, S), jnp.float32)
+    grad = jax.core.ShapedArray((B, N, T, S), jnp.float32)
 
     def wrapped_func(grad, *args):
-      _, grad_attn_score_modifier = jax.vjp(attn_score_modifier, *args)
-      return grad_attn_score_modifier(grad)[0]
+      _, grad_score_mod = jax.vjp(score_mod, *args)
+      return grad_score_mod(grad)[0]
 
-    bwd_jaxpr = jax.make_jaxpr(wrapped_func)(grad, attn_score, *modifier_args)
-    jaxpr = (attn_score_modifier.__name__, bwd_jaxpr)
+    bwd_jaxpr = jax.make_jaxpr(wrapped_func)(grad, attn_score, *score_mod_args)
+    jaxpr = (score_mod.__name__, bwd_jaxpr)
   q_seqlen, kv_seqlen, q_offsets, kv_offsets = \
       _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key)
   grads = _dot_product_attention_bwd_p.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      activation, fwd_output, grad_output, *modifier_args, scale=scale, seed=seed,
+      activation, fwd_output, grad_output, *score_mod_args, scale=scale, seed=seed,
       dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=jaxpr)
+      score_mod=jaxpr)
   return grads
 
 def _dot_product_attention_fwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    *modifier_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, attn_score_modifier, is_training):
+    *score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, score_mod, is_training):
   query_dtype = dtypes.canonicalize_dtype(query.dtype)
   if layout == AttentionLayout.BNTH.value:
     B, N, T, _ = query.shape
@@ -597,8 +597,8 @@ def _dot_product_attention_fwd_abstract(
 
 def _dot_product_attention_bwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    activation, fwd_output, grad_output, *modifier_args, scale, seed, dropout_rate,
-    variadic_args, mask_type, layout, sliding_window_length, attn_score_modifier):
+    activation, fwd_output, grad_output, *score_mod_args, scale, seed, dropout_rate,
+    variadic_args, mask_type, layout, sliding_window_length, score_mod):
   query_dtype = dtypes.canonicalize_dtype(query.dtype)
   key_dtype = dtypes.canonicalize_dtype(key.dtype)
   value_dtype = dtypes.canonicalize_dtype(value.dtype)
@@ -634,18 +634,18 @@ def _dot_product_attention_bwd_abstract(
       ),  # grad value
     )
 
-def convert_jaxpr_to_computation(ctx, name, jaxpr, modifier_args, is_bwd=False):
+def convert_jaxpr_to_computation(ctx, name, jaxpr, score_mod_args, is_bwd=False):
   output_aval = jaxpr.out_avals[0]
   attn_score = mlir.ir_constant(np.zeros(output_aval.shape, dtype=output_aval.dtype))
   aval_out = ctx.avals_out
   ctx.avals_out = jaxpr.out_avals
   if is_bwd:
     impl = mlir.core_call_lowering(
-      ctx, attn_score, attn_score, *modifier_args, name=name + "_bwd", call_jaxpr=jaxpr
+      ctx, attn_score, attn_score, *score_mod_args, name=name + "_bwd", call_jaxpr=jaxpr
     )
   else:
     impl = mlir.core_call_lowering(
-      ctx, attn_score, *modifier_args, name=name, call_jaxpr=jaxpr
+      ctx, attn_score, *score_mod_args, name=name, call_jaxpr=jaxpr
     )
   ctx.avals_out = aval_out
   call_op = impl[0].owner
@@ -654,8 +654,8 @@ def convert_jaxpr_to_computation(ctx, name, jaxpr, modifier_args, is_bwd=False):
 
 def _dot_product_attention_fwd_cuda_lowering(
     ctx, query, key, value, bias, q_seqlen, kv_seqlen, q_offsets,
-    kv_offsets, *modifier_args, scale, seed, dropout_rate, variadic_args, mask_type,
-    layout, sliding_window_length, attn_score_modifier, is_training):
+    kv_offsets, *score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type,
+    layout, sliding_window_length, score_mod, is_training):
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
   key_type = ir.RankedTensorType(key.type)
@@ -683,7 +683,7 @@ def _dot_product_attention_fwd_cuda_lowering(
       B, N, T, S, query_type.element_type, scale, seed, dropout_rate,
       mask_type, layout, sliding_window_length, max_seg_per_batch,
       is_bwd=False)
-  # {Q, K, V, bias*, q_seqlen*, kv_seqlen*, q_offsets*, kv_offsets*, modifier_args*}
+  # {Q, K, V, bias*, q_seqlen*, kv_seqlen*, q_offsets*, kv_offsets*, score_mod_args*}
   # {output, activation*, workspace}
   has_dropout = dropout_rate > 0
   operands = [query, key, value]
@@ -696,10 +696,10 @@ def _dot_product_attention_fwd_cuda_lowering(
     operands.append(q_offsets)
     operands.append(kv_offsets)
 
-  if attn_score_modifier is not None:
-    operands += modifier_args
-    name, call_jaxpr = attn_score_modifier
-    called_fn = convert_jaxpr_to_computation(ctx, name, call_jaxpr, modifier_args)
+  if score_mod is not None:
+    operands += score_mod_args
+    name, call_jaxpr = score_mod
+    called_fn = convert_jaxpr_to_computation(ctx, name, call_jaxpr, score_mod_args)
     called_computations = [called_fn]
   else:
     called_computations = []
@@ -738,8 +738,8 @@ def _dot_product_attention_fwd_cuda_lowering(
 
 def _dot_product_attention_bwd_cuda_lowering(
     ctx, query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    activation, fwd_output, grad_output, *modifier_args, scale, seed, dropout_rate,
-    variadic_args, mask_type, layout, sliding_window_length, attn_score_modifier):
+    activation, fwd_output, grad_output, *score_mod_args, scale, seed, dropout_rate,
+    variadic_args, mask_type, layout, sliding_window_length, score_mod):
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
   key_type = ir.RankedTensorType(key.type)
@@ -771,7 +771,7 @@ def _dot_product_attention_bwd_cuda_lowering(
       mask_type, layout, sliding_window_length, max_seg_per_batch,
       is_bwd=True)
   # {Q, K, V, activation, dO, bias*, O, q_seqlen*, kv_seqlen*,
-  #  q_offsets*, kv_offsets*, modifier_args*}
+  #  q_offsets*, kv_offsets*, score_mod_args*}
   # {dQ, dK, dV, dbias*, workspace}
   has_dropout = dropout_rate > 0
   # create operands
@@ -787,10 +787,10 @@ def _dot_product_attention_bwd_cuda_lowering(
     operands.append(q_offsets)
     operands.append(kv_offsets)
 
-  if attn_score_modifier is not None:
-    operands += modifier_args
-    name, bwd_jaxpr = attn_score_modifier
-    bwd_called_fn = convert_jaxpr_to_computation(ctx, name, bwd_jaxpr, modifier_args, True)
+  if score_mod is not None:
+    operands += score_mod_args
+    name, bwd_jaxpr = score_mod
+    bwd_called_fn = convert_jaxpr_to_computation(ctx, name, bwd_jaxpr, score_mod_args, True)
     called_computations = [bwd_called_fn]
   else:
     called_computations = []
@@ -843,10 +843,10 @@ def _check_valid_batch_dims(bdims):
 
 def _dot_product_attention_fwd_batcher(
     batched_args, batch_dims, *, scale, seed, dropout_rate, variadic_args,
-    mask_type, layout, sliding_window_length, attn_score_modifier, is_training):
+    mask_type, layout, sliding_window_length, score_mod, is_training):
   _check_valid_batch_dims(batch_dims)
   query, key, value, bias, q_seqlen, kv_seqlen, \
-    q_offsets, kv_offsets, modifier_args = batched_args
+    q_offsets, kv_offsets, score_mod_args = batched_args
   query_bdim = batch_dims[0]
   if is_training:
     out_bdims = query_bdim, query_bdim
@@ -874,10 +874,10 @@ def _dot_product_attention_fwd_batcher(
 
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      *modifier_args, scale=scale, seed=seed, dropout_rate=dropout_rate,
+      *score_mod_args, scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=attn_score_modifier, is_training=is_training)
+      score_mod=score_mod, is_training=is_training)
 
   # reshape to original shape
   output = outputs[0]
@@ -891,10 +891,10 @@ def _dot_product_attention_fwd_batcher(
 
 def _dot_product_attention_bwd_batcher(
      batched_args, batch_dims, *, scale, seed, dropout_rate, variadic_args,
-     mask_type, layout, sliding_window_length, attn_score_modifier):
+     mask_type, layout, sliding_window_length, score_mod):
   _check_valid_batch_dims(batch_dims)
   query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets, \
-    modifier_args, activation, fwd_output, grad_output = batched_args
+    score_mod_args, activation, fwd_output, grad_output = batched_args
   query_bdim = batch_dims[0]
   out_bdims = query_bdim, query_bdim, query_bdim
 
@@ -931,11 +931,11 @@ def _dot_product_attention_bwd_batcher(
 
   grads = _dot_product_attention_bwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      activation, fwd_output, grad_output, *modifier_args, scale=scale, seed=seed,
+      activation, fwd_output, grad_output, *score_mod_args, scale=scale, seed=seed,
       dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=attn_score_modifier,
+      score_mod=score_mod,
   )
 
   # reshape to original shape
@@ -1012,20 +1012,20 @@ _dot_product_attention_fwd_lower = custom_partitioning(
 
 def _dot_product_attention_fwd_lower_wrapper(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    *modifier_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, attn_score_modifier, is_training):
+    *score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, score_mod, is_training):
   return _dot_product_attention_fwd_lower(query, key, value, bias, q_seqlen, kv_seqlen,
-    q_offsets, kv_offsets, modifier_args, scale, seed, dropout_rate, variadic_args,
-    mask_type, layout, sliding_window_length, attn_score_modifier, is_training)
+    q_offsets, kv_offsets, score_mod_args, scale, seed, dropout_rate, variadic_args,
+    mask_type, layout, sliding_window_length, score_mod, is_training)
 
 def _dot_product_attention_fwd_infer_sharding_from_operands(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
-    attn_score_modifier, is_training, mesh, arg_shapes, result_shape):
+    score_mod, is_training, mesh, arg_shapes, result_shape):
   return _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training, layout)
 
 def _dot_product_attention_fwd_partition(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
-    attn_score_modifier, is_training, mesh, arg_shapes, result_shape):
+    score_mod, is_training, mesh, arg_shapes, result_shape):
   # args sharding
   arg_shardings = tuple(arg_i.sharding for arg_i in arg_shapes)
   out_shardings = _infer_fwd_output_sharding(
@@ -1039,7 +1039,7 @@ def _dot_product_attention_fwd_partition(
       mask_type=mask_type,
       layout=layout,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=attn_score_modifier,
+      score_mod=score_mod,
       is_training=is_training,
   )
   return mesh, impl, out_shardings, arg_shardings
@@ -1071,21 +1071,21 @@ _dot_product_attention_bwd_lower = custom_partitioning(
 
 def _dot_product_attention_bwd_lower_wrapper(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    activation, fwd_output, grad_output, *modifier_args, scale, seed, dropout_rate,
-    variadic_args, mask_type, layout, sliding_window_length, attn_score_modifier):
+    activation, fwd_output, grad_output, *score_mod_args, scale, seed, dropout_rate,
+    variadic_args, mask_type, layout, sliding_window_length, score_mod):
   return _dot_product_attention_bwd_lower(query, key, value, bias, q_seqlen,
     kv_seqlen, q_offsets, kv_offsets, activation, fwd_output, grad_output,
-    modifier_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, attn_score_modifier)
+    score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, score_mod)
 
 def _dot_product_attention_bwd_infer_sharding_from_operands(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, attn_score_modifier, mesh, arg_shapes, result_shape):
+    sliding_window_length, score_mod, mesh, arg_shapes, result_shape):
   return _infer_bwd_output_sharding(mesh, arg_shapes, layout, variadic_args)
 
 def _dot_product_attention_bwd_partition(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, attn_score_modifier, mesh, arg_shapes, result_shape):
+    sliding_window_length, score_mod, mesh, arg_shapes, result_shape):
   out_shardings = _infer_bwd_output_sharding(mesh, arg_shapes, layout, variadic_args)
   # args sharding
   arg_shardings = tuple(arg_i.sharding for arg_i in arg_shapes)
@@ -1099,7 +1099,7 @@ def _dot_product_attention_bwd_partition(
       mask_type=mask_type,
       layout=layout,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=attn_score_modifier,
+      score_mod=score_mod,
     )
     grads = impl(*args)
     _, has_dbias = variadic_args
@@ -1205,7 +1205,7 @@ def _dot_product_attention(query: Array,
                            kv_seqlen: Array,
                            q_offsets: Array,
                            kv_offsets: Array,
-                           modifier_args: Tuple[Array] | None,
+                           score_mod_args: Tuple[Array] | None,
                            scale: float,
                            seed: int,
                            dropout_rate: float,
@@ -1213,15 +1213,15 @@ def _dot_product_attention(query: Array,
                            mask_type: bool,
                            layout: int,
                            sliding_window_length: int | None,
-                           attn_score_modifier,
+                           score_mod,
                            cudnn_version: int,
                            return_residual: bool):
   output = _dot_product_attention_fwd(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      modifier_args, scale=scale, seed=seed, dropout_rate=dropout_rate,
+      score_mod_args, scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
-      attn_score_modifier=attn_score_modifier, cudnn_version=cudnn_version,
+      score_mod=score_mod, cudnn_version=cudnn_version,
       return_residual=return_residual)
   return output
 
@@ -1815,7 +1815,7 @@ def dot_product_attention(
     q_offsets: Array | None = None,
     kv_offsets: Array | None = None,
     fp8_params: FP8Params | None = None,
-    modifier_args: Tuple[Array] = (),
+    score_mod_args: Tuple[Array] = (),
     *,
     scale: float = 1.0,
     mask_type: MaskType = MaskType.NO_MASK,
@@ -1823,7 +1823,7 @@ def dot_product_attention(
     dropout_rate: float = 0.,
     qkv_layout: str = "BTNH",
     sliding_window_length: int | None = None,
-    attn_score_modifier: Callable[[Array], Array] | None = None,
+    score_mod: Callable[[Array], Array] | None = None,
     use_fp8: bool = False,
     return_residual: bool = False
 ):
@@ -1933,11 +1933,11 @@ def dot_product_attention(
       mask = mask.reshape((1,) * (4 - len(mask.shape)) + mask.shape)  # type: ignore[union-attr]
 
     # check if the number of arg matches
-    if attn_score_modifier is not None:
-      num_args_required = len(inspect.signature(attn_score_modifier).parameters) -1
-      if num_args_required != len(modifier_args):
+    if score_mod is not None:
+      num_args_required = len(inspect.signature(score_mod).parameters) -1
+      if num_args_required != len(score_mod_args):
         raise ValueError(
-          f"attn_score_modifier requires {num_args_required} arguments, got {len(modifier_args)}.")
+          f"score_mod requires {num_args_required} arguments, got {len(score_mod_args)}.")
 
     # combine bias and mask
     if bias is None:
@@ -1966,6 +1966,6 @@ def dot_product_attention(
       kv_offsets = jnp.zeros(0, dtype=query.dtype)
     output = _dot_product_attention(
         query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-        modifier_args, scale, seed, dropout_rate, variadic_args, mask_type, layout.value,
-        sliding_window_length, attn_score_modifier, cudnn_version, return_residual)
+        score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type, layout.value,
+        sliding_window_length, score_mod, cudnn_version, return_residual)
     return output
