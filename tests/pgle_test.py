@@ -167,8 +167,9 @@ class PgleTest(jtu.JaxTestCase):
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
-        # One for before and one for after optimization.
-        self.assertLen(fdo_profiles_before_pgle, 2)
+        # One for before optimizatiom, one after SPMD partitioning, and one
+        # after optimization.
+        self.assertLen(fdo_profiles_before_pgle, 3)
         # The FDO profile file should be empty.
         self.assertEqual(
             os.path.getsize(os.path.join(dump_dir, fdo_profiles_before_pgle[0])), 0)
@@ -178,8 +179,9 @@ class PgleTest(jtu.JaxTestCase):
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_after_pgle = self.get_fdo_profiles(dump_dir)
-        # One for before and one for after optimization.
-        self.assertLen(fdo_profiles_after_pgle, 4)
+        # One more before optimizatiom, one more after SPMD partitioning, and
+        # one more after optimization.
+        self.assertLen(fdo_profiles_after_pgle, 6)
 
         for fdo_profile in fdo_profiles_after_pgle:
           if fdo_profile not in fdo_profiles_before_pgle:
