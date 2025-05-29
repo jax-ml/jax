@@ -242,172 +242,17 @@ def _get_block_shape(spec: pl.BlockSpec) -> tuple[int, ...]:
   block_shape_nones = tuple(_get_dim_size(x) for x in spec.block_shape)
   return tuple(x for x in block_shape_nones if x is not None)
 
-@tree_util.register_pytree_node_class
-@dataclasses.dataclass(frozen=True)
-class BufferedRef:
-  """A helper class to automate VMEM double buffering in pallas pipelines.
 
-  Attributes:
-    spec: pallas blockspec.
-    dtype: dtype for buffers.
-    buffer_type: enum indicating whether this is an input, output, or in/out
-      accumulator buffered reference.
-    window_ref: a double-buffer to hold a working buffer and a dirty buffer used
-      to copy into and out of.  In the case of a BufferedRef targeting a VMEM
-      reference, this simply points to the existing ref.
-    accum_ref: accumulating buffer used by accumulator BufferedRefs.
-    current_slot: current slot index to the working buffer.
-    next_slot: slot that will point to the working buffer in the next iteration.
-    sem_recvs: Double buffered semaphores for input DMAs.
-    sem_sends: Double buffered semaphores for output DMAs.
-    block_shape: passthrough property for the BlockSpec's block_shape.
-    compute_index: passthrough property for the BlockSpec's compute_index.
-    memory_space: passthrough property for the BlockSpec's memory_space.
-    current_ref: points to the current working slice of the double-buffer.
-    is_input: whether this BufferedRef acts as a pipeline input.
-    is_output: whether this BufferedRef acts as a pipeline output.
-    is_accumulator: whether this BufferedRef is an accumulator.
-    is_input_output: whether this BufferedRef is an input/output without
-      automatic accumulation.
-    swap: Tracks whether the BufferedRef slots need to be swapped before next
-      copy.
-  """
-  spec: pl.BlockSpec       # static metadata
-  dtype: Any               # static metadata
-  buffer_type: BufferType  # static metadata
-  window_ref: ArrayRef | None
-  accum_ref: ArrayRef | None
-  current_slot: ArrayRef | None
-  # TODO(ramiroleal): Unused by class. Remove argument from
-  # BufferedRef instantiations.
-  next_slot: ArrayRef | None
-  sem_recvs: SemaphoreTuple | None
-  sem_sends: SemaphoreTuple | None
-  # TODO(ramiroleal): Improve prefetch/postyeet interface to avoid
-  # using this ref.
-  swap: ArrayRef | None
-
-  def tree_flatten(self):
-    return (
-        (
-            self.window_ref,
-            self.accum_ref,
-            self.current_slot,
-            self.next_slot,
-            self.sem_recvs,
-            self.sem_sends,
-            self.swap,
-        ),
-        (self.spec, self.dtype, self.buffer_type),
-    )
-
-  @classmethod
-  def tree_unflatten(cls, meta, data):
-    return cls(*meta, *data)
-
-  @staticmethod
-  def buffer_types() -> type[BufferType]:
-    return BufferType
-
-  @classmethod
-  def create(cls, spec: pl.BlockSpec, dtype, buffer_type, needs_swap_ref=True
-            ) -> BufferedRef:
-    """Create a BufferedRef.
-
-    Args:
-      spec: pallas blockspec.
-      dtype: dtype for buffers.
-      buffer_type: enum indicating whether this is an input, output, or in/out
-        accumulator buffered reference.
-      needs_swap_ref: whether a swap slots tracker needs to be allocated.
-
-    Returns:
-      Initialized BufferedRef
-    """
-    block_shape = _get_block_shape(spec)
-    if buffer_type is BufferType.ACCUMULATOR:
-      accum_ref = VMEM(block_shape, dtype)
-    else:
-      accum_ref = None
-    if spec.memory_space == VMEM:
-      # We don't need to do any double-buffering in the case that our pipeline
-      # reference is already in VMEM, we just need allocate the accumulation
-      # buffer and we will refer to the original reference slices directly.
-      return cls(
-          spec=spec,
-          dtype=dtype,
-          buffer_type=buffer_type,
-          window_ref=None,  # to be bound to existing ref by the pipeline routine
-          accum_ref=accum_ref,
-          current_slot=None,
-          next_slot=None,
-          sem_recvs=None,
-          sem_sends=None,
-          swap=None,
-      )
-    else:
-      memory_space = SMEM if spec.memory_space == SMEM else VMEM
-      return cls(
-          spec=spec,
-          dtype=dtype,
-          buffer_type=buffer_type,
-          window_ref=memory_space((2,) + block_shape, dtype),
-          accum_ref=accum_ref,
-          current_slot=SMEM((1,), jnp.int32),
-          next_slot=None,
-          sem_recvs=(
-              None
-              if buffer_type is BufferType.OUTPUT
-              else SemaphoreType.DMA((2,))
-          ),
-          sem_sends=(
-              None
-              if buffer_type is BufferType.INPUT
-              else SemaphoreType.DMA((2,))
-          ),
-          swap=SMEM((1,), jnp.bool) if needs_swap_ref else None,
-      )
-
-  @classmethod
-  def input(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.INPUT, needs_swap_ref)
-
-  @classmethod
-  def output(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.OUTPUT, needs_swap_ref)
-
-  @classmethod
-  def accumulator(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.ACCUMULATOR, needs_swap_ref)
-
-  @classmethod
-  def input_output(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.INPUT_OUTPUT, needs_swap_ref)
+class BufferedRefBase:
+  """Abstract interface for BufferedRefs."""
 
   @property
-  def block_shape(self):
-    return self.spec.block_shape
+  def spec(self) -> pl.BlockSpec:
+    raise NotImplementedError()
 
   @property
-  def compute_index(self):
-    return self.spec.index_map
-
-  @property
-  def memory_space(self):
-    return self.spec.memory_space
-
-  @property
-  def current_ref(self):
-    buffer_slice = tuple(
-        slice(None)
-        for x in self.block_shape
-        if not (x is None or isinstance(x, pl.Squeezed))
-    )
-    assert not (self.window_ref is None or isinstance(self.window_ref, REF))
-    if self.memory_space == VMEM:
-      return self.window_ref.at[buffer_slice]
-    else:
-      return self.window_ref.at[(self.current_slot_index, *buffer_slice)]
+  def buffer_type(self) -> BufferType:
+    raise NotImplementedError()
 
   @property
   def is_input(self):
@@ -434,62 +279,24 @@ class BufferedRef:
     return self.buffer_type == BufferType.INPUT_OUTPUT
 
   @property
-  def current_slot_index(self):
-    """Index in double buffer corresponding to the current slot."""
-    return self.current_slot[0]
-
-  @property
-  def next_slot_index(self):
-    """Index in double buffer corresponding to the next slot."""
-    return lax.rem(self.current_slot_index + 1, 2)
-
-  def bind_existing_ref(self, window_ref, indices):
-    """For handling VMEM references, the pipeline aliases the existing ref."""
-    if self.memory_space == VMEM:
-      return dataclasses.replace(
-          self, window_ref=window_ref.at[self.compute_slice(indices)]
-      )
-    return self
-
-  def compute_slice(self, grid_indices):
-    """Compute DMA slice from grid indices."""
-    indices = self.compute_index(*grid_indices)
-    assert len(self.block_shape) == len(indices)
-    indexer = []
-    for bd, idx in zip(self.block_shape, indices, strict=True):
-      match bd:
-        case None | pl.Squeezed():
-          # Dimension is squeezed out so we don't do anything.
-          indexer.append(idx)
-        case pl.Element():
-          raise ValueError(
-              "Element block dimensions are not supported."
-          )
-        case pl.BoundedSlice():
-          raise ValueError(
-              "BoundedSlice block dimensions are not supported."
-          )
-        case pl.Blocked(block_size):
-          indexer.append(_make_block_ds(idx, block_size))
-        case int():
-          indexer.append(_make_block_ds(idx, bd))
-        case _:
-          raise ValueError(f"Unsupported block dimension type: {type(bd)}")
-    return tuple(indexer)
+  def is_manual(self):
+    return self.buffer_type == BufferType.MANUAL
 
   def init_slots(self):
     """Initialize slot indices."""
-    if self.memory_space == VMEM: return
-    self.current_slot[0] = 0
-    if self.swap is not None:
-      self.swap[0] = False
+    raise NotImplementedError()
 
   def swap_slots(self):
     """Switch to the next slot."""
-    if self.memory_space == VMEM: return
-    self.current_slot[0] = self.next_slot_index
-    if self.swap is not None:
-      self.swap[0] = False
+    raise NotImplementedError()
+
+  @property
+  def block_shape(self) -> Sequence[pl.BlockDim | int | None] | None:
+    return self.spec.block_shape
+
+  @property
+  def compute_index(self):
+    return self.spec.index_map
 
   def get_dma_slice(self, src_shape, src_dtype, grid_indices):
     # We need to handle blocks that might go OOB in the src array. An in bounds
@@ -549,6 +356,246 @@ class BufferedRef:
             block_indices, self.block_shape, src_shape, tiling, strict=True
         )
     )
+
+  def bind_existing_ref(self, window_ref, indices):
+    """For handling VMEM references, the pipeline aliases the existing ref."""
+    del window_ref, indices
+    return self
+
+  def with_spec(self, spec: pl.BlockSpec) -> 'BufferedRefBase':
+    """Returns a new BufferedRefBase with the given block spec."""
+    raise NotImplementedError()
+
+
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class BufferedRef(BufferedRefBase):
+  """A helper class to automate VMEM double buffering in pallas pipelines.
+
+  Attributes:
+    spec: pallas blockspec.
+    dtype: dtype for buffers.
+    buffer_type: enum indicating whether this is an input, output, or in/out
+      accumulator buffered reference.
+    window_ref: a double-buffer to hold a working buffer and a dirty buffer used
+      to copy into and out of.  In the case of a BufferedRef targeting a VMEM
+      reference, this simply points to the existing ref.
+    accum_ref: accumulating buffer used by accumulator BufferedRefs.
+    current_slot: current slot index to the working buffer.
+    sem_recvs: Double buffered semaphores for input DMAs.
+    sem_sends: Double buffered semaphores for output DMAs.
+    block_shape: passthrough property for the BlockSpec's block_shape.
+    compute_index: passthrough property for the BlockSpec's compute_index.
+    memory_space: passthrough property for the BlockSpec's memory_space.
+    current_ref: points to the current working slice of the double-buffer.
+    is_input: whether this BufferedRef acts as a pipeline input.
+    is_output: whether this BufferedRef acts as a pipeline output.
+    is_accumulator: whether this BufferedRef is an accumulator.
+    is_input_output: whether this BufferedRef is an input/output without
+      automatic accumulation.
+    swap: Tracks whether the BufferedRef slots need to be swapped before next
+      copy.
+  """
+  _spec: pl.BlockSpec       # static metadata
+  dtype: Any               # static metadata
+  _buffer_type: BufferType  # static metadata
+  window_ref: ArrayRef | None
+  accum_ref: ArrayRef | None
+  current_slot: ArrayRef | None
+  sem_recvs: SemaphoreTuple | None
+  sem_sends: SemaphoreTuple | None
+  # TODO(ramiroleal): Improve prefetch/postyeet interface to avoid
+  # using this ref.
+  swap: ArrayRef | None
+
+  @property
+  def spec(self):
+    return self._spec
+
+  @property
+  def buffer_type(self):
+    return self._buffer_type
+
+  def tree_flatten(self):
+    return (
+        (
+            self.window_ref,
+            self.accum_ref,
+            self.current_slot,
+            self.sem_recvs,
+            self.sem_sends,
+            self.swap,
+        ),
+        (self._spec, self.dtype, self._buffer_type),
+    )
+
+  @classmethod
+  def tree_unflatten(cls, meta, data):
+    return cls(*meta, *data)
+
+  @staticmethod
+  def buffer_types() -> type[BufferType]:
+    return BufferType
+
+  @classmethod
+  def create(cls, spec: pl.BlockSpec, dtype, buffer_type, needs_swap_ref=True
+            ) -> BufferedRef:
+    """Create a BufferedRef.
+
+    Args:
+      spec: pallas blockspec.
+      dtype: dtype for buffers.
+      buffer_type: enum indicating whether this is an input, output, or in/out
+        accumulator buffered reference.
+      needs_swap_ref: whether a swap slots tracker needs to be allocated.
+
+    Returns:
+      Initialized BufferedRef
+    """
+    block_shape = _get_block_shape(spec)
+    if buffer_type is BufferType.ACCUMULATOR:
+      accum_ref = VMEM(block_shape, dtype)
+    else:
+      accum_ref = None
+    if spec.memory_space == VMEM:
+      # We don't need to do any double-buffering in the case that our pipeline
+      # reference is already in VMEM, we just need allocate the accumulation
+      # buffer and we will refer to the original reference slices directly.
+      return cls(
+          _spec=spec,
+          dtype=dtype,
+          _buffer_type=buffer_type,
+          window_ref=None,  # to be bound to existing ref by the pipeline routine
+          accum_ref=accum_ref,
+          current_slot=None,
+          sem_recvs=None,
+          sem_sends=None,
+          swap=None,
+      )
+    else:
+      memory_space = SMEM if spec.memory_space == SMEM else VMEM
+      return cls(
+          _spec=spec,
+          dtype=dtype,
+          _buffer_type=buffer_type,
+          window_ref=memory_space((2,) + block_shape, dtype),
+          accum_ref=accum_ref,
+          current_slot=SMEM((1,), jnp.int32),
+          sem_recvs=(
+              None
+              if buffer_type is BufferType.OUTPUT
+              else SemaphoreType.DMA((2,))
+          ),
+          sem_sends=(
+              None
+              if buffer_type is BufferType.INPUT
+              else SemaphoreType.DMA((2,))
+          ),
+          swap=SMEM((1,), jnp.bool) if needs_swap_ref else None,
+      )
+
+  @classmethod
+  def input(cls, spec, dtype, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.INPUT, needs_swap_ref)
+
+  @classmethod
+  def output(cls, spec, dtype, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.OUTPUT, needs_swap_ref)
+
+  @classmethod
+  def accumulator(cls, spec, dtype, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.ACCUMULATOR, needs_swap_ref)
+
+  @classmethod
+  def input_output(cls, spec, dtype, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.INPUT_OUTPUT, needs_swap_ref)
+
+  @property
+  def block_shape(self):
+    return self.spec.block_shape
+
+  @property
+  def compute_index(self):
+    return self.spec.index_map
+
+  @property
+  def memory_space(self):
+    return self.spec.memory_space
+
+  def with_spec(self, spec: pl.BlockSpec) -> 'BufferedRef':
+    """Returns a new BufferedRef with the given block spec."""
+    return dataclasses.replace(self, _spec=spec)
+
+  @property
+  def current_ref(self):
+    buffer_slice = tuple(
+        slice(None)
+        for x in self.block_shape
+        if not (x is None or isinstance(x, pl.Squeezed))
+    )
+    assert not (self.window_ref is None or isinstance(self.window_ref, REF))
+    if self.memory_space == VMEM:
+      return self.window_ref.at[buffer_slice]
+    else:
+      return self.window_ref.at[(self.current_slot_index, *buffer_slice)]
+
+  @property
+  def current_slot_index(self):
+    """Index in double buffer corresponding to the current slot."""
+    return self.current_slot[0]
+
+  @property
+  def next_slot_index(self):
+    """Index in double buffer corresponding to the next slot."""
+    return lax.rem(self.current_slot_index + 1, 2)
+
+  def bind_existing_ref(self, window_ref, indices):
+    """For handling VMEM references, the pipeline aliases the existing ref."""
+    if self.memory_space == VMEM:
+      return dataclasses.replace(
+          self, window_ref=window_ref.at[self.compute_slice(indices)]
+      )
+    return self
+
+  def compute_slice(self, grid_indices):
+    """Compute DMA slice from grid indices."""
+    indices = self.compute_index(*grid_indices)
+    assert len(self.block_shape) == len(indices)
+    indexer = []
+    for bd, idx in zip(self.block_shape, indices, strict=True):
+      match bd:
+        case None | pl.Squeezed():
+          # Dimension is squeezed out so we don't do anything.
+          indexer.append(idx)
+        case pl.Element():
+          raise ValueError(
+              "Element block dimensions are not supported."
+          )
+        case pl.BoundedSlice():
+          raise ValueError(
+              "BoundedSlice block dimensions are not supported."
+          )
+        case pl.Blocked(block_size):
+          indexer.append(_make_block_ds(idx, block_size))
+        case int():
+          indexer.append(_make_block_ds(idx, bd))
+        case _:
+          raise ValueError(f"Unsupported block dimension type: {type(bd)}")
+    return tuple(indexer)
+
+  def init_slots(self):
+    """Initialize slot indices."""
+    if self.memory_space == VMEM: return
+    self.current_slot[0] = 0
+    if self.swap is not None:
+      self.swap[0] = False
+
+  def swap_slots(self):
+    """Switch to the next slot."""
+    if self.memory_space == VMEM: return
+    self.current_slot[0] = self.next_slot_index
+    if self.swap is not None:
+      self.swap[0] = False
 
   def copy_in(self, src_ref, grid_indices):
     """Starts copy of HBM dma slice into the current slot."""
@@ -674,7 +721,8 @@ class BufferedRef:
 # Helper to tree map over BufferedRefs as leaves.
 map_brefs = functools.partial(
     jax.tree.map,
-    is_leaf=lambda x: isinstance(x, BufferedRef))
+    is_leaf=lambda x: isinstance(x, BufferedRefBase)
+)
 
 
 def _filter_indices(
@@ -922,7 +970,7 @@ class Scheduler:
         buffered_ref.wait_out(dst_ref, self.indices)
 
   def swap_slots(self, buffered_ref, hbm_ref, schedule=None):
-    if buffered_ref.swap is not None:
+    if isinstance(buffered_ref, BufferedRef) and buffered_ref.swap is not None:
       swap = buffered_ref.swap[0]
     else:
       # If we are not using an SMEM `swap` tensor to keep track of
