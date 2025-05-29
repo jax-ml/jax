@@ -107,12 +107,13 @@ def all_gather_lhs_matmul(
 
       # For some reason ptxas spills if we unroll the loop over k
       copy_block = 32
-      def k_copy_loop(ki, _):
+      @pl.loop(0, k // copy_block)
+      def _k_copy_loop(ki):
         k_slice = pl.ds(ki * copy_block, copy_block)
         scratch_ref[0, :, k_slice] = lhs_ref[m_tile_slice, k_slice]
-      jax.lax.fori_loop(0, k // copy_block, k_copy_loop, None)
 
-      def device_loop(device_offset, _):
+      @pl.loop(0, num_devices)
+      def _device_loop(device_offset):
         # Loop invariant: scratch_ref.at[scratch_slot] is ready to be used
         # We're double buffering the scratch space. At each step, we read from
         # scratch_ref.at[scratch_slot] and write to scratch_ref.at[next_scratch_slot]
@@ -168,7 +169,7 @@ def all_gather_lhs_matmul(
           )
           # Wait for the next scratch to arrive --- see the loop invariant.
           pl.semaphore_wait(received_sem)
-      jax.lax.fori_loop(0, num_devices, device_loop, None)
+
     grid_size = m_shard // block_m
     m_steps = grid_size // num_sms + jnp.int32(sm_id < grid_size % num_sms)
     # TODO(apaszke): Use the ND-loop helper.
