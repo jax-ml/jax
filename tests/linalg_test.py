@@ -72,15 +72,15 @@ def _random_invertible(rng, shape, dtype):
     """
     Generate a random invertible matrix was specified shape and dtype
     """
-    invertible = False
-    while not invertible:
+    while True:
       a = rng(shape, dtype)
       try:
         np.linalg.inv(a)
         invertible = True
       except np.linalg.LinAlgError:
         pass
-    return [a]
+      else:
+        return a
 
 
 def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
@@ -1174,14 +1174,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
 
     def args_maker():
-      invertible = False
-      while not invertible:
-        a = rng(shape, dtype)
-        try:
-          np.linalg.inv(a)
-          invertible = True
-        except np.linalg.LinAlgError:
-          pass
+      a = _random_invertible(rng=rng, shape=shape, dtype=dtype)
       return [a]
 
     self._CheckAgainstNumpy(np.linalg.inv, jnp.linalg.inv, args_maker,
@@ -2131,11 +2124,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     shape=[(2, 3), (4, 6), (5, 7), (100, 300)],
-    dtype = float_types
+    dtype = float_types + complex_types
   )
   def test_solve_sylvester(self, shape, dtype):
 
-    tol = {np.float32: 1e-1, np.float64: 1e-5}
+    tol = {np.float32: 1e-1, np.float64: 1e-5, np.complex64: 1e-1, np.complex128: 1e-5}
 
     def args_maker():
       rng = jtu.rand_default(self.rng())
@@ -2146,6 +2139,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       X_true = rng(shape=(m, n), dtype=dtype)
 
       C = A @ X_true + X_true @ B
+      print(C.dtype)
       return [A, B, C]
 
     self._CheckAgainstNumpy(osp.linalg.solve_sylvester, jsp.linalg.solve_sylvester, args_maker, tol=tol)
@@ -2153,18 +2147,21 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     n=[3, 6, 7, 100],
-    dtype = float_types
+    dtype = float_types + complex_types
   )
   def test_no_solution_sylvester(self, n, dtype):
-    # Test no solution case to AX + XB = C
-    # For example, the simple case A=[[1]], B = [[-1]], and C = [[1]] would generate (1)X + X(-1) = (1)
-    # which equals X - X = (1) which is not possible because X - X = 0
+    """
+    Test no solution case to AX + XB = C
+    When the sum of the eigenvalues of A and B are zero there is no solution.
+    We simulate this case below by randomly selecting the eigenvalues of A and then assign the
+    eigenvalues of B as negative eigenvalues of A.
+    """
     rng = jtu.rand_default(self.rng())
 
     # Define eigenvalues that sum to zero
     eigenvalues_A = rng(shape=(n,), dtype=dtype)
     eigenvalues_B = -eigenvalues_A
-    P = _random_invertible(rng=rng, shape=(n, n), dtype=dtype)[0]
+    P = _random_invertible(rng=rng, shape=(n, n), dtype=dtype)
 
     # Construct A and B matrices using selected eigenvalues that positionally sum to zero
     D_A = np.diag(eigenvalues_A)
@@ -2175,7 +2172,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     C = rng(shape=(n, n), dtype=dtype)
     sylv_solution = jsp.linalg.solve_sylvester(A, B, C)
-    assert jnp.isnan(sylv_solution).all()
+    self.assertArraysEqual(sylv_solution, np.full((n, n), np.nan, dtype))
 
 
 class LaxLinalgTest(jtu.JaxTestCase):
