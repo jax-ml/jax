@@ -72,6 +72,12 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "sharding",
+    srcs = ["sharding.py"],
+    deps = ["//jax:sharding_impls"],
+)
+
+pytype_strict_library(
     name = "source_info_util",
     srcs = ["source_info_util.py"],
     deps = ["//jax:source_info_util"],
