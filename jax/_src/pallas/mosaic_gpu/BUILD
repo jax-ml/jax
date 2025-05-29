@@ -59,6 +59,7 @@ pytype_strict_library(
     deps = [
         ":core",
         "//jax",
+        "//jax:api",
         "//jax:core",
         "//jax:mesh",
         "//jax:mlir",

@@ -1788,7 +1788,7 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
         p.flat_args, mesh, list(in_specs))
     jitted_f = jax.jit(
         _pmapped,
-        donate_argnums=(i for i, val in enumerate(p.donated_invars) if val))
+        donate_argnums=[i for i, val in enumerate(p.donated_invars) if val])
     return jitted_f, flat_global_args, p.out_tree, mesh, out_specs
 
   def wrapped(*args, **kwargs):

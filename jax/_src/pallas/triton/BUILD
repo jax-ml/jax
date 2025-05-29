@@ -60,6 +60,7 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax:ad_util",
+        "//jax:api",
         "//jax:api_util",
         "//jax:config",
         "//jax:core",

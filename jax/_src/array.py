@@ -343,8 +343,8 @@ class ArrayImpl(basearray.Array):
       return format(self._value, format_spec)
 
   def __getitem__(self, idx):
-    from jax._src.lax import lax
-    from jax._src.numpy import indexing
+    from jax._src.lax import lax  # pytype: disable=import-error
+    from jax._src.numpy import indexing  # pytype: disable=import-error
     self._check_if_deleted()
 
     if isinstance(self.sharding, PmapSharding):
@@ -444,7 +444,7 @@ class ArrayImpl(basearray.Array):
                  max_version: tuple[int, int] | None = None,
                  dl_device: tuple[DLDeviceType, int] | None = None,
                  copy: bool | None = None):
-    from jax._src.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import to_dlpack  # pytype: disable=import-error  # pylint: disable=g-import-not-at-top
 
     device_set = self.sharding.device_set
     if len(device_set) > 1:
@@ -464,7 +464,7 @@ class ArrayImpl(basearray.Array):
     if len(self._arrays) != 1:
       raise BufferError("__dlpack__ only supported for unsharded arrays.")
 
-    from jax._src.dlpack import DLDeviceType  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import DLDeviceType  # pytype: disable=import-error  # pylint: disable=g-import-not-at-top
 
     if self.platform() == "cpu":
       return DLDeviceType.kDLCPU, 0

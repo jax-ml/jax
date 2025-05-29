@@ -70,7 +70,7 @@ from jax._src.sharding_impls import (
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     flatten_spec, _internal_use_concrete_mesh)
 from jax._src.layout import Layout, DeviceLocalLayout, AutoLayout
-from jax._src.state import discharge as state_discharge, RefEffect, AbstractRef
+from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure, tree_leaves,
@@ -1413,7 +1413,7 @@ def _create_pjit_jaxpr(
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
-    from jax.experimental.key_reuse._core import check_key_reuse_jaxpr
+    from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
     check_key_reuse_jaxpr(jaxpr)
 
   if any(isinstance(c, core.Tracer) for c in consts):
@@ -2645,38 +2645,6 @@ def _pjit_pp_rule(eqn: core.JaxprEqn,
   return core._pp_eqn(eqn, context, settings, params=["name"] + sorted(params))
 
 core.pp_eqn_rules[pjit_p] = _pjit_pp_rule
-
-
-def _pjit_state_discharge_rule(
-    in_avals, out_avals, *args, jaxpr, in_shardings, out_shardings,
-    in_layouts, out_layouts, **params):
-  if not all(isinstance(s, UnspecifiedValue) for s in (*in_shardings, *out_shardings)):
-    raise NotImplementedError
-
-  if not (all(l is None for l in in_layouts) and
-          all(l is None for l in out_layouts)):
-    raise NotImplementedError
-
-  jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
-  num_outs = len(jaxpr.outvars)
-  discharged_jaxpr, discharged_consts = state_discharge.discharge_state(jaxpr, consts)
-  discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
-  new_in_shardings = (UnspecifiedValue(),) * len(discharged_jaxpr.invars)
-  new_out_shardings = (UnspecifiedValue(),) * len(discharged_jaxpr.outvars)
-  new_in_layouts = (None,) * len(discharged_jaxpr.invars)
-  new_out_layouts = (None,) * len(discharged_jaxpr.outvars)
-  out_and_ref_vals = pjit_p.bind(
-      *args, jaxpr=discharged_closed_jaxpr, in_shardings=new_in_shardings,
-      out_shardings=new_out_shardings, in_layouts=new_in_layouts,
-      out_layouts=new_out_layouts, **params)
-  out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
-  ref_vals_iter = iter(ref_vals)
-  new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
-                     else None for aval in in_avals)
-  sentinel = object()
-  assert next(ref_vals_iter, sentinel) is sentinel
-  return new_invals, out_vals
-state_discharge.register_discharge_rule(pjit_p)(_pjit_state_discharge_rule)
 
 
 # -------------------- with_sharding_constraint --------------------

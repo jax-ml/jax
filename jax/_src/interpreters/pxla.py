@@ -29,9 +29,8 @@ import warnings
 
 import numpy as np
 
-import jax
-
 from jax._src import api
+from jax._src import array
 from jax._src import compiler
 from jax._src import config
 from jax._src import core
@@ -41,11 +40,13 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import op_shardings
 from jax._src import sharding_specs
+from jax._src import pjit
 from jax._src import profiler
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import stages
 from jax._src import tree_util
+from jax._src import typing
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
@@ -154,7 +155,7 @@ def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
   # from each call in the same order as `args`. Since `batches` is grouped by
   # types, we cannot simply flatten the results and we have to use the original
   # indices to put each array back to its original position.
-  results: list[jax.Array | None] = [None] * len(args)
+  results: list[typing.Array | None] = [None] * len(args)
   for t, (indices, a, s, l, cs) in batches.items():
     outs = shard_arg_handlers[t](a, s, l, cs)
     for i, out in safe_zip(indices, outs):
@@ -230,11 +231,9 @@ shard_arg_handlers[core.MutableArray] = _shard_mutable_array
 
 def batched_device_put(aval: core.ShapedArray,
                        sharding: JSharding, xs: Sequence[Any],
-                       devices: Sequence[jax.Device], committed: bool = True):
+                       devices: Sequence[xc.Device], committed: bool = True):
   util.test_event("batched_device_put_start")
   try:
-    from jax._src import array
-
     bufs = [x for x, d in safe_zip(xs, devices)
             if (isinstance(x, array.ArrayImpl) and
                 dispatch.is_single_device_sharding(x.sharding) and
@@ -385,7 +384,6 @@ def _emap_impl(fun: lu.WrappedFun, *args,
                donated_invars: Sequence[bool],
                is_explicit_global_axis_size: bool,
                ):
-  from jax._src import array
   # TODO(sharadmv,mattjj): implement these cases
   if any(d for d in donated_invars):
     raise NotImplementedError("Buffer donation not supported in eager pmap.")
@@ -410,12 +408,12 @@ def _emap_impl(fun: lu.WrappedFun, *args,
   donate_argnums = (1,) if platform in {"cuda", "rocm", "tpu"} else ()
   new_outvals = []
   for out_axis_src, out_axis, outval in zip(out_axes_src, out_axes, outvals):
-    with jax.disable_jit(False):
+    with api.disable_jit(False):
       donate_argnums_ = donate_argnums
       if isinstance(outval, array.ArrayImpl):
         # We don't want to donate if it's already sharded.
         donate_argnums_ = ()
-      out = jax.pmap(
+      out = api.pmap(
           lambda _, x: x,
           in_axes=(0, out_axis_src.get(axis_name)),
           out_axes=out_axis,
@@ -448,7 +446,7 @@ def _multi_pmap(f: Callable, info: EmapInfo, names: list[core.AxisName],
   for i, name in reversed(list(enumerate(names))):
     in_axes = tuple(arg_axis[i] for arg_axis in all_axes)
     if any(in_axis is not None for in_axis in in_axes):
-      f = jax.pmap(
+      f = api.pmap(
           f,
           in_axes=in_axes,
           axis_name=name,
@@ -476,11 +474,12 @@ class MapTrace(core.Trace):
       return MapTracer(self, val, {})
 
   def process_primitive(self, primitive, tracers, params):
-    if primitive is jax._src.lax.parallel.axis_index_p:
-      return self.process_axis_index(**params)
-    if primitive is jax._src.lax.parallel.psum_p:
+    from jax._src.lax import parallel  # pytype: disable=import-error
+    if primitive is parallel.axis_index_p:
+      return self.process_axis_index(**params)  # pytype: disable=missing-parameter
+    if primitive is parallel.psum_p:
       f = HashableFunction(
-          lambda *xs: jax._src.lax.parallel.psum(
+          lambda *xs: parallel.psum(
             xs, axis_name=params['axes'], axis_index_groups=params['axis_index_groups']),
           (primitive, tuple(params.items())))
     else:
@@ -492,7 +491,7 @@ class MapTrace(core.Trace):
     names = core.get_axis_env().axis_names()
     all_axes = tuple(_map_schedule(map(s.get, names)) for s in shard_axes)  # pytype: disable=wrong-arg-types  # always-use-return-annotations
     f_mapped, out_shard_axes = _multi_pmap(f, self.emap_info, names, all_axes)
-    with core.eval_context(), jax.disable_jit(False):
+    with core.eval_context(), api.disable_jit(False):
       outvals = f_mapped(*vals)
     if primitive.multiple_results:
       return [MapTracer(self, val, out_shard_axes) for val in outvals]
@@ -546,11 +545,12 @@ class MapTrace(core.Trace):
       return fun.call_wrapped(*tracers)
 
   def process_axis_index(self, axis_name):
+    from jax._src.lax import lax, parallel  # pytype: disable=import-error
     bind = HashableFunction(
-        lambda _: jax.lax.axis_index(axis_name),
-        (jax.lax.axis_index, axis_name))
+        lambda _: parallel.axis_index(axis_name),
+        (parallel.axis_index, axis_name))
     fake_primitive = FakePrimitive(multiple_results=False, bind=bind)
-    range = jax.lax.iota(np.int32, core.get_axis_env().axis_size(axis_name))
+    range = lax.iota(np.int32, core.get_axis_env().axis_size(axis_name))
     dummy_tracer = MapTracer(self, range, {axis_name: 0})
     return self.process_primitive(fake_primitive, (dummy_tracer,), {})
 
@@ -695,14 +695,15 @@ def find_replicas(
 
 @lu.transformation2
 def _change_argument_ranks(f, in_axes, out_axes_thunk, *args):
+  from jax._src.lax import lax  # pytype: disable=import-error
   args = tuple(
-      arg if in_axis is None else jax.lax.squeeze(arg, dimensions=(in_axis,))
+      arg if in_axis is None else lax.squeeze(arg, dimensions=(in_axis,))
       for in_axis, arg in zip(in_axes, args)
   )
   results = f(*args)
   out_axes = out_axes_thunk()
   return tuple(
-      x if axis is None else jax.lax.expand_dims(x, dimensions=(axis,))
+      x if axis is None else lax.expand_dims(x, dimensions=(axis,))
       for x, axis in zip(results, out_axes)
   )
 
@@ -1276,7 +1277,7 @@ class ExecuteReplicated:
           assert isinstance(token.sharding, sharding_impls.SingleDeviceSharding)
           token_devices.append(token.sharding._device_assignment[0])
         s = NamedSharding(Mesh(token_devices, 'x'), P('x'))
-        global_token_array = jax.make_array_from_single_device_arrays(
+        global_token_array = array.make_array_from_single_device_arrays(
             (0,), s, token_buf
         )
         dispatch.runtime_tokens.set_token_result(
@@ -1754,7 +1755,7 @@ class MutationData(NamedTuple):
 def _discharge_refs(
     jaxpr: core.ClosedJaxpr
 ) -> tuple[core.ClosedJaxpr, Sequence[int | None], MutationData]:
-  from jax._src.state.discharge import discharge_state
+  from jax._src.state.discharge import discharge_state  # pytype: disable=import-error
   jaxpr, in_mut = _move_mutable_consts(jaxpr)
   new_jaxpr = core.ClosedJaxpr(*discharge_state(jaxpr.jaxpr, jaxpr.consts))
   count = it.count(len(jaxpr.out_avals))  # new outputs are appended to the end
@@ -1781,7 +1782,7 @@ def _move_mutable_consts(
 
 @weakref_lru_cache
 def _discharge_internal_refs(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
-  from jax._src.state.discharge import discharge_state
+  from jax._src.state.discharge import discharge_state  # pytype: disable=import-error
   jaxpr_, consts = discharge_state(jaxpr.jaxpr, jaxpr.consts)
   jaxpr_._debug_info = jaxpr.jaxpr._debug_info
   return core.ClosedJaxpr(jaxpr_, consts)
@@ -2015,8 +2016,6 @@ def get_out_memory_kinds_via_propagation(closed_jaxpr: core.ClosedJaxpr,
 @weakref_lru_cache
 def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
                                     ) -> tuple[None | DeviceLocalLayout]:
-  from jax._src import pjit
-
   env = {}  # type: ignore
   jaxpr = closed_jaxpr.jaxpr
 
@@ -3229,7 +3228,6 @@ def check_array_xla_sharding_layout_match(
     in_xla_layouts: Sequence[DeviceLocalLayout],
     jaxpr_debug_info: core.DebugInfo,
     kept_var_idx: set[int]) -> None:
-  from jax._src.array import ArrayImpl
   # jaxpr_debug_info.arg_names are before DCE, so need to DCE them.
   arg_names = (
       [a for i, a in enumerate(jaxpr_debug_info.arg_names)
@@ -3239,7 +3237,7 @@ def check_array_xla_sharding_layout_match(
   num_errors = 5
   for arg, xs, xl, name in safe_zip(
       args_after_dce, in_xla_shardings, in_xla_layouts, arg_names):
-    if not isinstance(arg, ArrayImpl):
+    if not isinstance(arg, array.ArrayImpl):
       continue
     if isinstance(xs, (UnspecifiedValue, AUTO)):
       continue

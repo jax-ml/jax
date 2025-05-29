@@ -25,6 +25,8 @@ from jax._src import ad_util
 from jax._src import api_util
 from jax._src import core
 from jax._src import linear_util as lu
+from jax._src import pjit
+from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src.interpreters import ad
@@ -1145,3 +1147,35 @@ def run_state_reference(f: Callable[..., None]):
     _, out_flat = split_list(out_const_flat, [len(consts)])
     return in_tree.unflatten(out_flat)
   return wrapped
+
+
+@register_discharge_rule(pjit.pjit_p)
+def _pjit_state_discharge_rule(
+    in_avals, out_avals, *args, jaxpr, in_shardings, out_shardings,
+    in_layouts, out_layouts, **params):
+  if not all(isinstance(s, sharding_impls.UnspecifiedValue) for s in (*in_shardings, *out_shardings)):
+    raise NotImplementedError
+
+  if not (all(l is None for l in in_layouts) and
+          all(l is None for l in out_layouts)):
+    raise NotImplementedError
+
+  jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
+  num_outs = len(jaxpr.outvars)
+  discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
+  discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
+  new_in_shardings = (sharding_impls.UnspecifiedValue(),) * len(discharged_jaxpr.invars)
+  new_out_shardings = (sharding_impls.UnspecifiedValue(),) * len(discharged_jaxpr.outvars)
+  new_in_layouts = (None,) * len(discharged_jaxpr.invars)
+  new_out_layouts = (None,) * len(discharged_jaxpr.outvars)
+  out_and_ref_vals = pjit.pjit_p.bind(
+      *args, jaxpr=discharged_closed_jaxpr, in_shardings=new_in_shardings,
+      out_shardings=new_out_shardings, in_layouts=new_in_layouts,
+      out_layouts=new_out_layouts, **params)
+  out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
+  ref_vals_iter = iter(ref_vals)
+  new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
+                     else None for aval in in_avals)
+  sentinel = object()
+  assert next(ref_vals_iter, sentinel) is sentinel
+  return new_invals, out_vals
