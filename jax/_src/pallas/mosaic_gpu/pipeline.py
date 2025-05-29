@@ -764,12 +764,10 @@ def emit_pipeline_warp_specialized(
                     memory_loop_body, (indices,))
       # Await all the arrivals to not leave barriers in a bad state.
       # We only need to account for the prologue steps.
-      def _epi_step(step, _):
+      @pl.loop(0, prologue_steps, unroll=not has_dynamic_grid)
+      def _epi_step(step):
         for barrier in consumed_barrier_refs:
           gpu_primitives.barrier_wait(barrier.at[step])
-      jax.lax.fori_loop(
-          0, prologue_steps, _epi_step, None, unroll=not has_dynamic_grid
-      )
 
     wg_idx = lax.axis_index(wg_axis)
     lax.cond(

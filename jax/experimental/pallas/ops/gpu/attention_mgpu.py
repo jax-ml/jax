@@ -245,7 +245,8 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
         plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[i], k_barriers.at[i])
         plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[i], v_barriers.at[i])
 
-      def kv_loop(kv_step, _):
+      @pl.loop(0, block_max_kv_steps - max_concurrent_steps)
+      def _kv_loop(kv_step):
         tma_step = kv_step + max_concurrent_steps
         tma_slot = lax.rem(kv_step, jnp.array(max_concurrent_steps, kv_step.dtype))
         s = (batch, pl.ds(tma_step * block_kv, block_kv), kv_head)
@@ -253,7 +254,6 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
         plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[tma_slot], k_barriers.at[tma_slot])
         plgpu.barrier_wait(v_consumed_barriers.at[tma_slot])
         plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[tma_slot], v_barriers.at[tma_slot])
-      lax.fori_loop(0, block_max_kv_steps - max_concurrent_steps, kv_loop, None)
 
   def entry(q_ref, k_ref, v_ref, out_ref, lse_ref):
     compute_wgs = 2
