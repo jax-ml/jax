@@ -2251,7 +2251,7 @@ def _binom(n, k):
 
 
 @jit
-def solve_sylvester(A: jnp.ndarray, B: jnp.ndarray, C: jnp.ndarray) -> jnp.ndarray:
+def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike) -> Array:
     """
     Solves the Sylvester equation:
     .. math::
@@ -2278,6 +2278,8 @@ def solve_sylvester(A: jnp.ndarray, B: jnp.ndarray, C: jnp.ndarray) -> jnp.ndarr
       This function returns NaNs in the event that the eigenvalues of the A and B matrices sum to zero elementwise.
       IMPORTANT: Float32 precision may not be adequate, especially with larger matrices, to match expected results consider float64 precision.
     """
+    A, B, C = promote_dtypes_inexact(jnp.asarray(A), jnp.asarray(B), jnp.asarray(C))
+
     m, n = A.shape[-1], B.shape[-1]
 
     if A.shape != (m, m) or B.shape != (n, n) or C.shape != (m, n):
@@ -2285,7 +2287,7 @@ def solve_sylvester(A: jnp.ndarray, B: jnp.ndarray, C: jnp.ndarray) -> jnp.ndarr
 
     RA, UA = jnp.linalg.eig(A)
     RB, UB = jnp.linalg.eig(B)
-    F = solve(UA, C.astype(RA.dtype) @ UB)
+    F = solve(UA, C.astype("complex64") @ UB)
     W = RA[:, None] + RB[None, :]
     Y = F / W
     X = UA[:m,:m] @ Y[:m,:n] @ inv(UB)[:n,:n]
