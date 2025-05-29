@@ -27,6 +27,7 @@ from typing import Any, Callable, Generic, TypeVar
 import weakref
 
 import jax
+from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
 from jaxlib.mlir import ir
@@ -127,6 +128,15 @@ def _mosaic_gpu_abstract_eval(*_, module, out_types):
   del module  # Unused.
   return [jax._src.core.ShapedArray(t.shape, t.dtype) for t in out_types]
 
+
+def _has_communication(module, **_):
+  empty_str_attr = ir.StringAttr.get("")
+  for op in module.body:
+    if "nvshmem" in getattr(op, "sym_name", empty_str_attr).value:
+      return True
+  return False
+
+
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
 KNOWN_KERNELS = {}
 
@@ -139,6 +149,27 @@ def _mosaic_gpu_lowering_rule(
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     use_custom_barrier: bool = False,
 ):
+  axis_context = ctx.module_context.axis_context
+  if _has_communication(module):
+    # Those checks are trying to ensure that the logical device ids are
+    # consistent with the NVSHMEM PE ids that Mosaic will be using for
+    # communication. Any divergence here would require us to implement a logical
+    # to physical translation, which is currently not implemented.
+    if isinstance(axis_context, sharding_impls.SPMDAxisContext):
+      mesh = axis_context.mesh
+      if not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size)):
+        raise NotImplementedError(
+            "Mosaic GPU only supports meshes with device ordering that follows"
+            " row-major device ids."
+        )
+    elif isinstance(axis_context, sharding_impls.ShardingContext):
+      if axis_context.num_devices != 1:
+        raise NotImplementedError(
+            "Mosaic GPU only supports single-device meshes in ShardingContext."
+        )
+    else:
+      raise NotImplementedError(f"Unsupported sharding context: {axis_context}")
+
   assert len(args) == len(ctx.avals_in)
   assert len(out_types) == len(ctx.avals_out)
   module = _run_serde_pass(
