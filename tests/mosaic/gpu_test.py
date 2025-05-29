@@ -3543,6 +3543,26 @@ class SerializationTest(absltest.TestCase):
       pipeline.run(module.operation)
 
 
+class ApiTest(TestCase):
+
+  def test_inout(self):
+    def kernel(ctx, src, inout, dst, smem):
+      val = memref.load(inout, [])
+      gpu.barrier()
+      new_val = arith.constant(ir.IntegerType.get_signless(32), 42)
+      memref.store(new_val, inout, [])
+      x = mgpu.FragmentedArray.load_strided(src, is_signed=True)
+      (x + val).store_untiled(dst)
+    x = jnp.arange(128, dtype=jnp.int32)
+    y = jnp.asarray(2.0, dtype=jnp.int32)
+    kernel = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, (), inout_shape=y,
+    )
+    xo, yo = kernel(x, y)
+    np.testing.assert_array_equal(xo, x + 2.0)
+    np.testing.assert_array_equal(yo, jnp.asarray(42, dtype=jnp.int32))
+
+
 if hp is not None:
   @hps.composite
   def tiled_layouts(

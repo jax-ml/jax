@@ -907,6 +907,7 @@ def lower_jaxpr_to_module(
           block=block,
           in_shapes=(*in_shapes, *semaphores_shape),
           out_shape=(*out_shapes, *semaphores_shape),
+          inout_shape=(),
           smem_scratch_shape=scratch_buffers,
           lowering_semantics=lowering_semantics,
           module_name=mlir.sanitize_name(debug_info.func_name),
