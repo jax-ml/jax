@@ -58,10 +58,12 @@ namespace mlir::tpu {
 //     enabled by XLA for memrefs.
 //   bitwidth: The bitwidth of the element type of the operand.
 //   is_kernel_argument: Whether the operand is a kernel argument.
+//   is_1d: Whether the operand is 1D.
 int getTilingFactor(const int src_sublane, const int hardware_generation,
                     const int64_t target_sublane_count,
                     const TpuTilingFlags &tpu_tiling_flags,
-                    const int8_t bitwidth, const bool is_kernel_argument) {
+                    const int8_t bitwidth, const bool is_kernel_argument,
+                    const bool is_1d) {
   CHECK(llvm::isPowerOf2_32(bitwidth));
   CHECK_LE(2, bitwidth);
   CHECK_LE(bitwidth, 32);
@@ -76,6 +78,10 @@ int getTilingFactor(const int src_sublane, const int hardware_generation,
   const int max_normal_tiling = tiling_sublane;
 
   int large_tiling = [&] {
+    if (is_1d) {
+      // 1D tiling is always compact.
+      return tiling_sublane;
+    }
     if (bitwidth == 2) {
       return target_sublane_count * 16;
     }
@@ -151,9 +157,9 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
       auto src_sublane =
           llvm::divideCeil(memref_ty.getShape().back(), lane_count);
       const int64_t leading_tile =
-          getTilingFactor(src_sublane, hardware_generation,
-                          sublane_count, tpu_tiling_flags, bitwidth,
-                          is_kernel_argument) *
+          getTilingFactor(src_sublane, hardware_generation, sublane_count,
+                          tpu_tiling_flags, bitwidth, is_kernel_argument,
+                          /*is_1d=*/true) *
           lane_count;
       SmallVector<xla::Tile> tiles{xla::Tile({leading_tile})};
       if (bitwidth != 32) {
@@ -173,8 +179,8 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
     const int64_t src_sublane = shape[shape.size() - 2];
     if (leading_tile_rows == 0) {
       leading_tile_rows = getTilingFactor(
-          src_sublane, hardware_generation, sublane_count,
-          tpu_tiling_flags, bitwidth, is_kernel_argument);
+          src_sublane, hardware_generation, sublane_count, tpu_tiling_flags,
+          bitwidth, is_kernel_argument, /*is_1d=*/false);
     }
     SmallVector<xla::Tile> tiles{xla::Tile({leading_tile_rows, lane_count})};
     if (bitwidth != 32) {
