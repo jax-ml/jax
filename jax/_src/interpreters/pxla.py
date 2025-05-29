@@ -56,7 +56,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
-from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
+from jax._src.layout import DeviceLocalLayout, AutoLayout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -208,7 +208,7 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
       x = np.zeros(x.shape, dtype=np.dtype(bool))
     aval = core.shaped_abstractify(x)
     if layout is not None:
-      results.append(api.device_put(x, Layout(layout, sharding)))
+      results.append(api.device_put(x, Format(layout, sharding)))
     else:
       if sharding.is_fully_replicated:
         shards = [x] * len(devices)

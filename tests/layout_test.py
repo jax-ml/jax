@@ -23,7 +23,7 @@ from jax.sharding import NamedSharding, PartitionSpec as P, SingleDeviceSharding
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
-from jax.experimental.layout import (with_layout_constraint, Layout,
+from jax.experimental.layout import (with_layout_constraint, Format,
                                      DeviceLocalLayout as DLL)
 from jax.experimental.compute_on import compute_on
 
@@ -51,8 +51,8 @@ class LayoutTest(jtu.JaxTestCase):
     sds1 = jax.ShapeDtypeStruct(np_inp1.shape, np_inp1.dtype, sharding=s1)
     sds2 = jax.ShapeDtypeStruct(np_inp2.shape, np_inp2.dtype, sharding=s2)
 
-    lowered_apply = jax.jit(apply, in_shardings=Layout(DLL.AUTO),
-                            out_shardings=Layout(DLL.AUTO)).lower(sds1, sds2)
+    lowered_apply = jax.jit(apply, in_shardings=Format(DLL.AUTO),
+                            out_shardings=Format(DLL.AUTO)).lower(sds1, sds2)
     compiled_apply = lowered_apply.compile()
 
     arg_layouts, kw_layouts = compiled_apply.input_layouts
@@ -122,8 +122,8 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp.T)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'y', 'x')))
 
-    compiled_auto = jax.jit(f, in_shardings=Layout(DLL.AUTO),
-                            out_shardings=Layout(DLL.AUTO)).lower(sds).compile()
+    compiled_auto = jax.jit(f, in_shardings=Format(DLL.AUTO),
+                            out_shardings=Format(DLL.AUTO)).lower(sds).compile()
     self.assertTupleEqual(
         compiled_auto.input_layouts[0][0].device_local_layout.major_to_minor[::-1],
         (2, 1, 0))
@@ -146,8 +146,8 @@ class LayoutTest(jtu.JaxTestCase):
     def f(x):
       return x.T
 
-    compiled = jax.jit(f, in_shardings=Layout(),
-                       out_shardings=Layout(DLL.AUTO)).lower(arr).compile()
+    compiled = jax.jit(f, in_shardings=Format(),
+                       out_shardings=Format(DLL.AUTO)).lower(arr).compile()
     self.assertTupleEqual(
         compiled.input_layouts[0][0].device_local_layout.major_to_minor[::-1],
         (1, 0))
@@ -166,8 +166,8 @@ class LayoutTest(jtu.JaxTestCase):
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     s = NamedSharding(mesh, P('x', 'y'))
 
-    compiled = jax.jit(lambda x: x.T, in_shardings=Layout(DLL.AUTO, s),
-                       out_shardings=Layout(DLL.AUTO, s)).lower(np_inp).compile()
+    compiled = jax.jit(lambda x: x.T, in_shardings=Format(DLL.AUTO, s),
+                       out_shardings=Format(DLL.AUTO, s)).lower(np_inp).compile()
     out = compiled(np_inp)
     self.assertTupleEqual(
         compiled.input_layouts[0][0].device_local_layout.major_to_minor[::-1],
@@ -185,8 +185,8 @@ class LayoutTest(jtu.JaxTestCase):
 
     shape = (8, 2)
     inps = [np.arange(math.prod(shape)).reshape(shape)] * 6
-    compiled = jax.jit(f, in_shardings=Layout(DLL.AUTO),
-                       out_shardings=Layout(DLL.AUTO)).lower(*inps).compile()
+    compiled = jax.jit(f, in_shardings=Format(DLL.AUTO),
+                       out_shardings=Format(DLL.AUTO)).lower(*inps).compile()
     arg_layouts, _ = compiled.input_layouts
     out1, out2 = compiled(*inps)
 
@@ -216,8 +216,8 @@ class LayoutTest(jtu.JaxTestCase):
     def f(x, y):
       return x * 2
 
-    jf = jax.jit(f, in_shardings=Layout(DLL.AUTO, s),
-                 out_shardings=Layout(DLL.AUTO, s))
+    jf = jax.jit(f, in_shardings=Format(DLL.AUTO, s),
+                 out_shardings=Format(DLL.AUTO, s))
     compiled = jf.lower(np_inp, np_inp).compile()
     arg_layouts, _ = compiled.input_layouts
     arrs = [jax.device_put(i, l) for i, l in zip(arrs, arg_layouts)]
@@ -244,10 +244,10 @@ class LayoutTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         'Layout passed to jit does not match the layout on the respective arg'):
-      jax.jit(f, in_shardings=Layout(DLL.AUTO)).lower(arr)
+      jax.jit(f, in_shardings=Format(DLL.AUTO)).lower(arr)
 
-    compiled = jax.jit(f, in_shardings=Layout(DLL.AUTO),
-                       out_shardings=Layout(DLL.AUTO)).lower(sds).compile()
+    compiled = jax.jit(f, in_shardings=Format(DLL.AUTO),
+                       out_shardings=Format(DLL.AUTO)).lower(sds).compile()
 
     with self.assertRaisesRegex(
         ValueError,
@@ -273,7 +273,7 @@ class LayoutTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, s)
 
     compiled = jax.jit(
-        lambda x: x * 2, out_shardings=Layout(DLL.AUTO)).lower(arr).compile()
+        lambda x: x * 2, out_shardings=Format(DLL.AUTO)).lower(arr).compile()
     col = compiled.output_layouts
 
     out = jax.device_put(np_inp, col)
@@ -286,17 +286,17 @@ class LayoutTest(jtu.JaxTestCase):
   def test_device_put_non_concrete_layout_error(self):
     np_inp = np.arange(16).reshape(8, 2)
 
-    l1 = Layout(DLL.AUTO, SingleDeviceSharding(jax.devices()[0]))
+    l1 = Format(DLL.AUTO, SingleDeviceSharding(jax.devices()[0]))
     with self.assertRaisesRegex(
         ValueError, 'sharding and device_local_layout.*should be concrete'):
       jax.device_put(np_inp, l1)
 
-    l2 = Layout(DLL.AUTO)
+    l2 = Format(DLL.AUTO)
     with self.assertRaisesRegex(
         ValueError, 'sharding and device_local_layout.*should be concrete'):
       jax.device_put(np_inp, l2)
 
-    l3 = Layout(None, SingleDeviceSharding(jax.devices()[0]))
+    l3 = Format(None, SingleDeviceSharding(jax.devices()[0]))
     out = jax.device_put(np_inp, l3)
     self.assertArraysEqual(out, np_inp)
     self.assertTrue(out._committed)
@@ -306,7 +306,7 @@ class LayoutTest(jtu.JaxTestCase):
     compiled = jax.jit(lambda x: x).lower(x).compile()
     with self.assertRaisesRegex(
         ValueError, 'Sharding has to be concrete when layout.*'):
-      Layout(compiled.output_layouts[0], None)
+      Format(compiled.output_layouts[0], None)
 
   def test_layout_on_sds(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
@@ -314,7 +314,7 @@ class LayoutTest(jtu.JaxTestCase):
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, s)
 
-    out_layout = jax.jit(jnp.sin, out_shardings=Layout(DLL.AUTO)).lower(
+    out_layout = jax.jit(jnp.sin, out_shardings=Format(DLL.AUTO)).lower(
         arr).compile().output_layouts
 
     sds = jax.ShapeDtypeStruct(arr.shape, arr.dtype, sharding=out_layout)
@@ -325,7 +325,7 @@ class LayoutTest(jtu.JaxTestCase):
         TypeError,
         'DeviceLocalLayout.AUTO` cannot be used in place of a device-local'
         ' layout in a `ShapeDtypeStruct`'):
-      jax.ShapeDtypeStruct(arr.shape, arr.dtype, sharding=Layout(DLL.AUTO))
+      jax.ShapeDtypeStruct(arr.shape, arr.dtype, sharding=Format(DLL.AUTO))
 
   def test_make_array_from_callback(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
@@ -344,13 +344,13 @@ class LayoutTest(jtu.JaxTestCase):
         TypeError,
         '`DeviceLocalLayout.AUTO` cannot be used in place of a device-local'
         ' layout'):
-      jax.make_array_from_callback(np_inp.shape, Layout(DLL.AUTO, s),
+      jax.make_array_from_callback(np_inp.shape, Format(DLL.AUTO, s),
                                    lambda idx: np_inp[idx])
 
     with self.assertRaisesRegex(
         TypeError, 'sharding should be an instance of `jax.sharding`'):
       jax.make_array_from_callback(
-          np_inp.shape, Layout(None, None), lambda idx: np_inp[idx])
+          np_inp.shape, Format(None, None), lambda idx: np_inp[idx])
 
   def test_wsc_concrete_layout(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -367,7 +367,7 @@ class LayoutTest(jtu.JaxTestCase):
       y = x.T
       # Constrain `y` to the original layout of `arr` because without it,
       # the layout of `y` would be the transpose of `arr`.
-      return jax.lax.with_sharding_constraint(y, Layout(custom_dll, s))
+      return jax.lax.with_sharding_constraint(y, Format(custom_dll, s))
 
     out = f(arr)
     self.assertEqual(out.layout.device_local_layout.major_to_minor,
@@ -390,7 +390,7 @@ class LayoutTest(jtu.JaxTestCase):
       y = x.T
       # Constrain `y` to the original layout of `arr` because without it,
       # the layout of `y` would be the transpose of `arr`.
-      return jax.lax.with_sharding_constraint(y, Layout(custom_dll, s))
+      return jax.lax.with_sharding_constraint(y, Format(custom_dll, s))
 
     out = f(arr)
     self.assertEqual(out.layout.device_local_layout.major_to_minor,
@@ -404,7 +404,7 @@ class LayoutTest(jtu.JaxTestCase):
     dll = DLL(major_to_minor=(1, 0))
     s = SingleDeviceSharding(jax.devices()[0])
 
-    out = jax.device_put(np_inp, Layout(dll, s))
+    out = jax.device_put(np_inp, Format(dll, s))
     self.assertEqual(out.layout.device_local_layout.major_to_minor,
                      dll.major_to_minor)
     self.assertArraysEqual(out, np_inp)
@@ -417,7 +417,7 @@ class LayoutTest(jtu.JaxTestCase):
     jnp_inp = jnp.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(np_inp, s)
 
-    custom_layout = Layout(DLL(major_to_minor=(0, 1)), s)
+    custom_layout = Format(DLL(major_to_minor=(0, 1)), s)
     out1 = jax.device_put(arr, custom_layout)
 
     with jax.sharding.use_mesh(mesh):
@@ -441,7 +441,7 @@ class LayoutTest(jtu.JaxTestCase):
       return x.T
 
     custom_dll = DLL(major_to_minor=(0, 1))
-    f = jax.jit(f, out_shardings=Layout(custom_dll, s))
+    f = jax.jit(f, out_shardings=Format(custom_dll, s))
 
     out = f(arr)
     self.assertArraysEqual(out, np_inp.T)
@@ -450,7 +450,7 @@ class LayoutTest(jtu.JaxTestCase):
 
   def test_compatible_aval_error(self):
     custom_dll = DLL(major_to_minor=(0, 1, 2))
-    l = Layout(custom_dll, SingleDeviceSharding(jax.devices()[0]))
+    l = Format(custom_dll, SingleDeviceSharding(jax.devices()[0]))
     inp = np.arange(8)
 
     @partial(jax.jit, in_shardings=l)
@@ -464,7 +464,7 @@ class LayoutTest(jtu.JaxTestCase):
 
   def test_incompatible_aval_error_device_put(self):
     custom_dll = DLL(major_to_minor=(0, 1, 2))
-    l = Layout(custom_dll, SingleDeviceSharding(jax.devices()[0]))
+    l = Format(custom_dll, SingleDeviceSharding(jax.devices()[0]))
     inp = np.arange(8)
 
     with self.assertRaisesRegex(
@@ -482,8 +482,8 @@ class LayoutTest(jtu.JaxTestCase):
     custom_dll = DLL(major_to_minor=(0, 1))
 
     @partial(jax.jit,
-             in_shardings=Layout(custom_dll, s),
-             out_shardings=Layout(DLL.AUTO))
+             in_shardings=Format(custom_dll, s),
+             out_shardings=Format(DLL.AUTO))
     def f(x):
       return x.T
 
@@ -494,7 +494,7 @@ class LayoutTest(jtu.JaxTestCase):
 
     custom_dll2 = DLL(major_to_minor=(1, 0))
 
-    @partial(jax.jit, in_shardings=Layout(custom_dll2, s))
+    @partial(jax.jit, in_shardings=Format(custom_dll2, s))
     def g(x):
       return x.T
 
@@ -508,7 +508,7 @@ class LayoutTest(jtu.JaxTestCase):
     sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
 
     f = jax.jit(lambda x: x + 1,
-                in_shardings=Layout(major_last_layout, sharding))
+                in_shardings=Format(major_last_layout, sharding))
 
     arr = jnp.arange(8 * 128).reshape(8, 128)
     out = f(arr)
@@ -533,9 +533,9 @@ class LayoutTest(jtu.JaxTestCase):
     np_inp = np.arange(math.prod(shape)).reshape(shape)
 
     custom_dll = DLL(major_to_minor=(0, 1))
-    arr = jax.device_put(np_inp, Layout(custom_dll, s))
+    arr = jax.device_put(np_inp, Format(custom_dll, s))
 
-    @partial(jax.jit, in_shardings=Layout(custom_dll, s), donate_argnums=0)
+    @partial(jax.jit, in_shardings=Format(custom_dll, s), donate_argnums=0)
     def f(x):
       return x
 
@@ -550,7 +550,7 @@ class LayoutTest(jtu.JaxTestCase):
 
     arr = jax.device_put(np_inp, s)
 
-    @partial(jax.jit, out_shardings=Layout(DLL.AUTO), donate_argnums=0)
+    @partial(jax.jit, out_shardings=Format(DLL.AUTO), donate_argnums=0)
     def f(x):
       return x * x
 
@@ -564,7 +564,7 @@ class LayoutTest(jtu.JaxTestCase):
     np_inp = np.arange(math.prod(shape)).reshape(shape)
 
     custom_dll = DLL(major_to_minor=(0, 1))
-    l = Layout(custom_dll, s)
+    l = Format(custom_dll, s)
     arr = jax.device_put(np_inp, l)
 
     @partial(jax.jit, in_shardings=l, out_shardings=l, donate_argnums=0)
@@ -582,7 +582,7 @@ class LayoutTest(jtu.JaxTestCase):
     np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
 
     custom_dll1 = DLL(major_to_minor=(1, 0), _tiling=((8,128), (2,1)))
-    l1 = Layout(custom_dll1, s)
+    l1 = Format(custom_dll1, s)
     arr = jax.device_put(np_inp, s)
 
     @partial(jax.jit, out_shardings=l1, donate_argnums=0)
@@ -594,7 +594,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertFalse(arr.is_deleted())
 
   def test_donation_error_on_auto(self):
-    @partial(jax.jit, donate_argnums=0, in_shardings=Layout(DLL.AUTO))
+    @partial(jax.jit, donate_argnums=0, in_shardings=Format(DLL.AUTO))
     def f(x):
       return x * 2
 
@@ -602,7 +602,7 @@ class LayoutTest(jtu.JaxTestCase):
         ValueError, ".*Did you mean to set the.*output layout.*AUTO.*"):
       f(jnp.arange(8))
 
-    @partial(jax.jit, donate_argnums=0, out_shardings=Layout(DLL.AUTO))
+    @partial(jax.jit, donate_argnums=0, out_shardings=Format(DLL.AUTO))
     def g(x):
       return x * 2
 
@@ -619,9 +619,9 @@ class LayoutTest(jtu.JaxTestCase):
 
     dll = DLL(major_to_minor=(0, 1), _tiling=((8,),))
     s = SingleDeviceSharding(jax.devices()[0])
-    sparse_layout = Layout(dll, s)
+    sparse_layout = Format(dll, s)
     sparecore_arr = jax.device_put(inp, sparse_layout)
-    dense_layout = Layout(DLL(major_to_minor=(0, 1)), s)
+    dense_layout = Format(DLL(major_to_minor=(0, 1)), s)
 
     @compute_on('tpu_sparsecore')
     @jax.jit
@@ -645,7 +645,7 @@ class LayoutTest(jtu.JaxTestCase):
 
     dll = DLL(major_to_minor=(0, 1), _tiling=((8,),))
     s = SingleDeviceSharding(jax.devices()[0])
-    sparse_layout = Layout(dll, s)
+    sparse_layout = Format(dll, s)
     sparecore_arr = jax.device_put(inp, sparse_layout)
 
     @compute_on('tpu_sparsecore')
@@ -675,11 +675,11 @@ class LayoutTest(jtu.JaxTestCase):
     s = SingleDeviceSharding(jax.devices()[0])
 
     sparse_dll = DLL(major_to_minor=(0, 1), _tiling=((8,),))
-    sparse_layout = Layout(sparse_dll, s)
+    sparse_layout = Format(sparse_dll, s)
     sparecore_arr = jax.device_put(inp, sparse_layout)
 
     host_dll = DLL(major_to_minor=(0, 1), _tiling=((1,),))
-    host_layout = Layout(host_dll, s)
+    host_layout = Format(host_dll, s)
     host_arr = jax.device_put(inp, host_layout)
 
     @compute_on('tpu_sparsecore')
@@ -710,7 +710,7 @@ class LayoutTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, s)
 
     arr_m2m = arr.layout.device_local_layout.major_to_minor
-    custom_layout = Layout(DLL(major_to_minor=arr_m2m[::-1]), s)
+    custom_layout = Format(DLL(major_to_minor=arr_m2m[::-1]), s)
     arr2 = jax.device_put(np_inp, custom_layout)
 
     @jax.jit
@@ -731,7 +731,7 @@ class LayoutTest(jtu.JaxTestCase):
     shape = (16, 16)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(np_inp, s)
-    out_layout = Layout(arr.layout.device_local_layout, s)
+    out_layout = Format(arr.layout.device_local_layout, s)
 
     @partial(jax.jit, out_shardings=out_layout, donate_argnums=0)
     def f(x):

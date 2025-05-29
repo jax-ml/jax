@@ -55,7 +55,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding, parse_flatten_op_sharding)
 from jax._src.pjit import (pjit, mesh_cast, auto_axes, explicit_axes,
                            use_auto_axes, use_explicit_axes, reshard)
-from jax._src.layout import Layout, DeviceLocalLayout as DLL
+from jax._src.layout import Format, DeviceLocalLayout as DLL
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
@@ -4997,8 +4997,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     sh = NamedSharding(mesh, P())
     s4 = jax.ShapeDtypeStruct((2, 2), jnp.int32,
-                              sharding=Layout(DLL((0, 1)), sh))
-    new_layout = Layout(DLL((1, 0)), NamedSharding(mesh, P('x')))
+                              sharding=Format(DLL((0, 1)), sh))
+    new_layout = Format(DLL((1, 0)), NamedSharding(mesh, P('x')))
     s4_u = s4.update(sharding=new_layout)
     self.assertEqual(s4_u.sharding, new_layout.sharding)
     self.assertEqual(s4_u.layout, new_layout)

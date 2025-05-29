@@ -27,7 +27,7 @@ from jax._src import array
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.layout import DeviceLocalLayout as DLL
-from jax._src.layout import Layout
+from jax._src.layout import Format
 from jax.experimental.array_serialization import serialization
 from jax.experimental.array_serialization import tensorstore_impl as ts_impl
 import jax.numpy as jnp
@@ -593,7 +593,7 @@ class CheckpointTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
-    out_layout = jax.jit(lambda x: x.T, out_shardings=Layout(DLL.AUTO)).lower(
+    out_layout = jax.jit(lambda x: x.T, out_shardings=Format(DLL.AUTO)).lower(
         arr).compile().output_layouts
     self.assertEqual(arr.layout.device_local_layout.major_to_minor,
                      out_layout.device_local_layout.major_to_minor[::-1])

@@ -25,7 +25,7 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.layout import DeviceLocalLayout as DLL, Layout
+from jax._src.layout import DeviceLocalLayout as DLL, Format
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -1574,8 +1574,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     y = jnp.reshape(y, (16, 64))
     custom_dll = DLL(major_to_minor=(0, 1), _tiling=((8, 128),))
     custom_dll_linear = DLL(major_to_minor=(0, 1), _tiling=((1,),))
-    x = jax.device_put(x, Layout(custom_dll, sharding))
-    y = jax.device_put(y, Layout(custom_dll_linear, p_sharding))
+    x = jax.device_put(x, Format(custom_dll, sharding))
+    y = jax.device_put(y, Format(custom_dll_linear, p_sharding))
 
     x1 = jnp.arange(0, 1024, dtype=jnp.float32)
     x1 = jnp.reshape(x1, (16, 64))
@@ -1585,8 +1585,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     jit_fn = jax.jit(
         test_fn,
         out_shardings=(
-            Layout(custom_dll, sharding),
-            Layout(custom_dll_linear, p_sharding),
+            Format(custom_dll, sharding),
+            Format(custom_dll_linear, p_sharding),
         ),
     )
     x_out, y_out = jit_fn(x, y)
@@ -1613,8 +1613,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     y = jnp.reshape(y, (32, 64))
     custom_dll = DLL(major_to_minor=(0, 1), _tiling=((8, 128),))
     custom_dll_linear = DLL(major_to_minor=(0, 1), _tiling=((1,),))
-    x = jax.device_put(x, Layout(custom_dll, sharding))
-    y = jax.device_put(y, Layout(custom_dll_linear, p_sharding))
+    x = jax.device_put(x, Format(custom_dll, sharding))
+    y = jax.device_put(y, Format(custom_dll_linear, p_sharding))
 
     x1 = jnp.arange(0, 2048, dtype=jnp.float32)
     x1 = jnp.reshape(x1, (32, 64))
@@ -1624,8 +1624,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     jit_fn = jax.jit(
         test_fn,
         out_shardings=(
-            Layout(custom_dll, sharding),
-            Layout(custom_dll_linear, p_sharding),
+            Format(custom_dll, sharding),
+            Format(custom_dll_linear, p_sharding),
         ),
     )
     x_out, y_out = jit_fn(x, y)
