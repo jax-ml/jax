@@ -1543,6 +1543,8 @@ def _slice_lowering_rule(
 
 
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane,
+                        gpu_core.PrimitiveSemantics.Warp)
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Warpgroup)
 def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
   if len(cases) != 2:
@@ -1551,6 +1553,10 @@ def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
         f" {len(cases)}"
     )
   pred_aval, *cases_avals = ctx.avals_in
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    if not all(aval.shape == () for aval in ctx.avals_in):
+      raise NotImplementedError(
+          "Can only select on scalars in warp-level lowering.")
   [out_aval] = ctx.avals_out
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     pred = _ensure_fa(pred, pred_aval.dtype)
