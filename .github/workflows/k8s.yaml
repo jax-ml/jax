@@ -4,6 +4,8 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/k8s.yaml'
+      - 'ci/k8s/**'
       - 'jax/distributed.py'
       - 'jax/_src/distributed.py'
       - 'jax/_src/clusters/**'
@@ -11,6 +13,8 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/k8s.yaml'
+      - 'ci/k8s/**'
       - 'jax/distributed.py'
       - 'jax/_src/distributed.py'
       - 'jax/_src/clusters/**'
@@ -61,7 +65,7 @@ jobs:
         run: kubectl apply -f jax/examples/k8s/svc-acct.yaml
 
       - name: Submit test job
-        run: kubectl apply -f jax/.github/workflows/k8s/${{ matrix.controller }}.yaml
+        run: kubectl apply -f jax/ci/k8s/${{ matrix.controller }}.yaml
 
       - name: Check job status
         shell: bash -e -o pipefail {0}
