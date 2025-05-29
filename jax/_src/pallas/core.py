@@ -272,6 +272,7 @@ class MemorySpace(enum.Enum):
   ANY = "any"  # Unrestricted memory space (usually HBM)
   ERROR = "error"  # Memory space for checkify errors.
   INDEX = "index"  # Memory space for scalar prefetch arguments.
+  KEY = "key"  # Memory space for PRNG keys.
 
   def __str__(self) -> str:
     return self.value

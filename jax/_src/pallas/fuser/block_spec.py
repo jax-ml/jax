@@ -29,6 +29,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import pjit
+from jax._src import prng
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
@@ -215,7 +216,7 @@ def _wrap_block_spec_scalar_prefetch(
     block_spec: pallas_core.BlockSpec,
     num_grid_args: int,
 ) -> pallas_core.BlockSpec:
-  if block_spec is pallas_core.no_block_spec:
+  if block_spec is pallas_core.no_block_spec or block_spec.index_map is None:
     return block_spec
 
   def new_index_map(*args_and_scalar_prefetch):
@@ -272,11 +273,12 @@ def pull_block_spec(
     )
     assert all(used_invars)
     assert all(used_consts)
+    read_usage_env = compute_usage(jaxpr, jaxpr_out_usages)
     in_block_specs, env, read_usage_env = _pull_block_spec(
         jaxpr,
         tuple(flat_block_specs),
-        jaxpr_out_usages,
         scalar_prefetch_handler=scalar_prefetch_handler,
+        read_usage_env=read_usage_env,
         grid=grid,
     )
     kernel_fn = make_kernel_function(
@@ -307,8 +309,8 @@ def pull_block_spec(
 def _pull_block_spec(
     jaxpr: core.Jaxpr,
     out_block_specs: tuple[pallas_core.BlockSpec, ...],
-    out_usages,
     *,
+    read_usage_env: Callable[[core.Var], set[Usage]],
     scalar_prefetch_handler: Any | None = None,
     grid: tuple[int | jax.Array, ...],
 ) -> tuple[
@@ -316,7 +318,6 @@ def _pull_block_spec(
     tuple[dict[core.Var, pallas_core.BlockSpec], dict[int, Any]],
     Any,
 ]:
-  read_usage_env = compute_usage(jaxpr, out_usages)
   jaxpr_invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
   env: dict[core.Var, pallas_core.BlockSpec] = {}
   scalar_prefetch_fn_env = {}
@@ -456,6 +457,8 @@ def make_kernel_function(
       return aval
     if bs is pallas_core.no_block_spec or bs is None:
       return _no_aval
+    if bs.block_shape is None:
+      return aval
     return aval.update(shape=_remove_nones(bs.block_shape))  # pytype: disable=attribute-error
 
   in_block_avals = [
@@ -830,7 +833,10 @@ register_binop_rule(lax.le_p)
 register_binop_rule(lax.eq_p)
 register_binop_rule(lax.gt_p)
 register_binop_rule(lax.ge_p)
+register_binop_rule(lax.or_p)
+register_binop_rule(lax.xor_p)
 register_binop_rule(lax.and_p)
+register_binop_rule(lax.shift_right_logical_p)
 register_binop_rule(ad_util.add_any_p)
 
 
@@ -1473,6 +1479,68 @@ def _convert_element_type_pull_rule(
   return [block_spec]
 
 
+@register_eval_rule(lax.bitcast_convert_type_p)
+def _bitcast_convert_type_eval_rule(eval_ctx: KernelEvalContext, x, new_dtype):
+  return jax.lax.bitcast_convert_type(x, new_dtype)
+
+
+@register_pull_block_spec_rule(lax.bitcast_convert_type_p)
+def _bitcast_convert_type_pull_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    new_dtype: jnp.dtype,
+):
+  old_dtype = ctx.avals_in[0].dtype  # pytype: disable=attribute-error
+  if old_dtype.itemsize != new_dtype.itemsize:
+    raise NotImplementedError(
+        'bitcast_convert_type with different bitwidths not supported yet:'
+        f' {old_dtype=}, {new_dtype=}'
+    )
+  return [block_spec]
+
+
+@register_eval_rule(prng.random_bits_p)
+def _random_bits_eval_rule(eval_ctx: KernelEvalContext, key, bit_width, shape):
+  del shape
+  block_spec = eval_ctx.out_block_specs[0]
+  indices = eval_ctx.get_out_block_indices()[0]
+  block_shape = block_spec.block_shape
+  # This is the important part here: we fold in block indices into the key so
+  # each block gets different random numbers.
+  for idx in indices:
+    key = jax.random.fold_in(key, idx)
+  return prng.random_bits(key, bit_width=bit_width, shape=block_shape)
+
+
+@register_pull_block_spec_rule(prng.random_bits_p)
+def _random_bits_pull_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    **_,
+):
+  del ctx, block_spec
+  key_block_spec = pallas_core.BlockSpec(
+      block_shape=None, memory_space=pallas_core.MemorySpace.KEY
+  )
+  return [key_block_spec]
+
+@register_eval_rule(prng.random_wrap_p)
+def _random_wrap_eval_rule(eval_ctx: KernelEvalContext, arr, *, impl):
+  del eval_ctx
+  return jax.random.wrap_key_data(arr, impl=impl)
+
+@register_pull_block_spec_rule(prng.random_wrap_p)
+def _random_wrap_pull_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    impl
+):
+  del ctx, block_spec, impl
+  return [pallas_core.BlockSpec(block_shape=None)]
+
+
 @register_eval_rule(lax.iota_p)
 def _iota_eval_rule(
     eval_ctx: KernelEvalContext, *, dimension, shape, dtype, sharding
@@ -1599,12 +1667,13 @@ def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
     raise NotImplementedError('pjit with consts not supported yet')
   out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
   in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
-  read_usage_env = compute_usage(jaxpr, ctx.out_usages)
+  def read_usage_env(_: core.Var):
+    return {Usage.REGULAR}
   _, env, _ = _pull_block_spec(
       jaxpr,
       ctx.out_block_specs,
-      ctx.out_usages,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
+      read_usage_env=read_usage_env,
       grid=ctx.grid,
   )
   kernel_fn = make_kernel_function(
@@ -1628,11 +1697,13 @@ def _jit_pull_block_spec_rule(
   jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
   if consts:
     raise NotImplementedError('pjit with consts not supported yet')
+  def read_usage_env(_: core.Var):
+    return {Usage.REGULAR}
   in_block_specs, _, _ = _pull_block_spec(
       jaxpr,
       out_block_specs,
-      ctx.out_usages,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
+      read_usage_env=read_usage_env,
       grid=ctx.grid,
   )
   return in_block_specs
@@ -1657,13 +1728,14 @@ def _custom_jvp_call_eval_rule(
     raise NotImplementedError('custom_jvp_call with consts not supported yet')
   out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
   in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
-  read_usage_env = compute_usage(jaxpr, ctx.out_usages)
+  def read_usage_env(_: core.Var):
+    return {Usage.REGULAR}
   _, env, _ = _pull_block_spec(
       jaxpr,
       ctx.out_block_specs,
-      ctx.out_usages,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       grid=ctx.grid,
+      read_usage_env=read_usage_env,
   )
   kernel_fn = make_kernel_function(
       jaxpr,
@@ -1686,12 +1758,14 @@ def _custom_jvp_call_pull_block_spec_rule(
   jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
   if consts:
     raise NotImplementedError('custom_jvp_call with consts not supported yet')
+  def read_usage_env(_: core.Var):
+    return {Usage.REGULAR}
   in_block_specs, _, _ = _pull_block_spec(
       jaxpr,
       out_block_specs,
-      ctx.out_usages,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       grid=ctx.grid,
+      read_usage_env=read_usage_env,
   )
   return in_block_specs
 
