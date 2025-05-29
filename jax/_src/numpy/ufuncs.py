@@ -2782,8 +2782,7 @@ def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     Array(True, dtype=bool)
   """
   x1, x2 = promote_args_inexact("logaddexp2", x1, x2)
-  ln2 = float(np.log(2))
-  return logaddexp(x1 * ln2, x2 * ln2) / ln2
+  return lax_other.logaddexp2(x1, x2)
 
 
 @export
