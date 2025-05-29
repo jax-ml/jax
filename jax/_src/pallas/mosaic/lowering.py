@@ -222,7 +222,11 @@ def _memory_space_to_tpu_memory_space(memory_space: MemorySpace | None
     case pallas_core.MemorySpace.ANY:
       # Map the general ANY memory space to TPU ANY memory space
       return TPUMemorySpace.ANY
-    case pallas_core.MemorySpace.ERROR | pallas_core.MemorySpace.INDEX:
+    case (
+        pallas_core.MemorySpace.ERROR
+        | pallas_core.MemorySpace.INDEX
+        | pallas_core.MemorySpace.KEY
+    ):
       return TPUMemorySpace.SMEM
     case TPUMemorySpace():
       # Leave the memory space unchanged
@@ -365,7 +369,7 @@ def _get_arg_type(
 ):
   memory_space = None
   if isinstance(aval, pallas_core.AbstractMemoryRef):
-    memory_space = aval.memory_space
+    memory_space = _memory_space_to_tpu_memory_space(aval.memory_space)
     # We assume unannotated memory refs are in VMEM
     if memory_space is None:
       memory_space = TPUMemorySpace.VMEM
@@ -595,10 +599,10 @@ def _check_block_mappings(
     rank = len(bm.block_shape)
     # TODO(necula): add tests for SMEM blocks with trivial windowing
     # We support scalars too
-    if (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SMEM and
-        bm.has_trivial_window()):
+    memory_space = _memory_space_to_tpu_memory_space(bm.block_aval.memory_space)
+    if memory_space == tpu_core.TPUMemorySpace.SMEM and bm.has_trivial_window():
       continue
-    if bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SEMAPHORE:
+    if memory_space == tpu_core.TPUMemorySpace.SEMAPHORE:
       continue
 
     def err_details():
@@ -614,8 +618,10 @@ def _check_block_mappings(
           "The Pallas TPU lowering currently supports only blocks of "
           "rank >= 1. " + err_details())
 
-    if (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.ANY and
-        not bm.has_trivial_window()):
+    if (
+        memory_space == tpu_core.TPUMemorySpace.ANY
+        and not bm.has_trivial_window()
+    ):
       raise ValueError(
           "The Pallas TPU lowering currently supports in memory space ANY "
           "only blocks having the same block shape as the array shape "
@@ -3723,10 +3729,16 @@ def random_bits_lowering(ctx, keys, *, bit_width, shape):
 
 @register_lowering_rule(prng.random_fold_in_p)
 def random_fold_in_lowering(ctx, keys, msgs):
-  keys_aval, _ = ctx.avals_in
+  keys_aval, msgs_aval = ctx.avals_in
   impl = keys_aval.dtype._impl
   fold_in_lowering = lower_fun(impl.fold_in, multiple_results=False)
-  return fold_in_lowering(ctx, keys, msgs)
+  if pl_random.is_pallas_impl(impl):
+    return fold_in_lowering(ctx, keys, msgs)
+  else:
+    ctx = dataclasses.replace(ctx,
+                        avals_in=[jax_core.physical_aval(keys_aval), msgs_aval],
+                        avals_out=map(jax_core.physical_aval, ctx.avals_out))
+    return fold_in_lowering(ctx, keys, msgs)
 
 
 @register_lowering_rule(prng.random_unwrap_p)
