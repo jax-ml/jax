@@ -2841,6 +2841,31 @@ class PipelineTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
+  def test_emit_with_carry(self):
+    num_steps = 4
+
+    def kernel(o_gmem):
+      plgpu.emit_pipeline(
+          kernel_body,
+          out_specs=[pl.BlockSpec((64, 64), lambda i: (0, i))],
+          grid=(num_steps,),
+          max_concurrent_steps=2,
+          init_carry=0,
+      )(o_gmem)
+
+    def kernel_body(_, o_smem, carry):
+      o_smem[...] = lax.broadcast(carry, o_smem.shape)
+      return carry + 1
+
+    kernel_fn = self.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((64, num_steps * 64), jnp.int32),
+    )
+    np.testing.assert_array_equal(
+        kernel_fn(), jnp.tile(jnp.repeat(jnp.arange(num_steps), 64), (64, 1))
+    )
+
 
 class PipelineWGTest(
     PipelineTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup

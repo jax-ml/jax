@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
-from typing import Protocol, TypeVar
 from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import itertools as it
 import math
-from typing import Any
+from typing import Any, Protocol, TypeVar
 
 import jax
 from jax import api_util
@@ -176,28 +175,44 @@ jax.tree_util.register_dataclass(
 
 
 def emit_pipeline(
-    body: Callable[..., None],
+    body: Callable[..., T],
     *,
     grid: pallas_core.TupleGrid,
     in_specs: Sequence[pallas_core.BlockSpec] = (),
     out_specs: Sequence[pallas_core.BlockSpec] = (),
     max_concurrent_steps: int = 1,
     delay_release: int = 0,
+    init_carry: T | None = None,
 ):
-  """Creates a function to emit a manual pipeline within a Pallas kernel.
+  r"""Creates a function to emit a manual pipeline within a Pallas kernel.
 
   Args:
-    body: The pipeline body, called with the indices for the current step, the
-      input refs, followed by the output refs.
-    grid: The grid to use for the pipeline.
-    in_specs: The block specs for the inputs.
-    out_specs: The block specs for the outputs.
-    max_concurrent_steps: The maximum number of sequential stages that are
-      active concurrently. Defaults to 1.
-    delay_release: The number of steps to wait before reusing the input/output
-      references. Defaults to 0, and must be strictly smaller than
-      ``max_concurrent_steps``. Generally, you'll want to set it to 1 if you
-      don't await the WGMMA in the body.
+    body: The pipeline body function, which is called with
+
+      - ``indices``: Tuple of current loop indices.
+      - ``*input_refs``: SMEM refs for inputs.
+      - ``*output_refs``: SMEM refs for outputs.
+
+      If ``init_carry`` is provided, ``body`` receives an additional argument
+      ``carry`` -- the carry from the previous iteration. It must then return
+      the next carry value.
+    grid: The grid dimensions for the pipeline.
+    in_specs: A sequence of :class:`~jax.experimental.pallas.BlockSpec`\s
+      for inputs.
+    out_specs: A sequence of :class:`~jax.experimental.pallas.BlockSpec`\s
+      for outputs.
+    max_concurrent_steps: Maximum concurrently active pipeline stages.
+    delay_release: Number of steps to delay before reusing input/output
+      references. Must be ``< max_concurrent_steps``. Useful for hiding WGMMA
+      latency (typically set to 1).
+    init_carry: Optional initial carry. If provided, ``body`` handles
+      carry-over state between iterations, and the pipeline returns the
+      final carry.
+
+  Returns:
+    A function that, when called with GMEM input and output refs, executes the
+    pipeline and returns the final carry value (if ``init_carry`` was used),
+    otherwise it returns None.
   """
   if max_concurrent_steps <= delay_release:
     raise ValueError(
@@ -278,7 +293,7 @@ def emit_pipeline(
 
     def loop_body(step, carry):
       slot = lax.rem(step, max_concurrent_steps)
-      indices, fetch_indices, last_store_slices = carry
+      indices, fetch_indices, last_store_slices, prev_body_carry = carry
 
       if barrier_ref is not None:
         # Wait for the current GMEM->SMEM copy to complete, if any.
@@ -289,12 +304,13 @@ def emit_pipeline(
             max_concurrent_steps - (1 + delay_release), wait_read_only=True
         )
 
-      body(
+      next_body_carry = body(
           indices,
           *(
               bref.get_ref_for_slot(slot)
               for bref in it.chain(in_brefs, out_brefs)
           ),
+          *(prev_body_carry,) if init_carry is not None else (),
       )
 
       if copies_out_in_loop:
@@ -346,6 +362,7 @@ def emit_pipeline(
           _inc_grid_by_1(indices, grid),
           _inc_grid_by_1(fetch_indices, grid),
           new_store_slices,
+          next_body_carry if init_carry is not None else None,
       )
 
     # Invariant: ``indices`` and ``fetch_indices`` are always
@@ -360,8 +377,11 @@ def emit_pipeline(
         else (_Slice(-1, -1),) * len(bref.spec.block_shape)
         for bref in out_brefs
     ]
-    last_indices, _, _ = lax.fori_loop(
-        0, num_steps, loop_body, (indices, fetch_indices, last_store_slices)
+    last_indices, _, _, final_carry = lax.fori_loop(
+        0,
+        num_steps,
+        loop_body,
+        (indices, fetch_indices, last_store_slices, init_carry),
     )
 
     # Outputs invariant to the sequential axis are never written from inside the
@@ -378,6 +398,7 @@ def emit_pipeline(
 
     # Finalize the pipeline.
     gpu_primitives.wait_smem_to_gmem(0)
+    return final_carry if init_carry is not None else None
 
   return pipeline
 
