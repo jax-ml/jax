@@ -3212,15 +3212,16 @@ def _debug_callback_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
   return []
 
 
-@register_lowering_rule(primitives.program_id_p)
+@register_lowering_rule(
+    primitives.program_id_p, kernel_types=[*tpu_core.KernelType]
+)
 def _program_id_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
-
   if ctx.lowering_context.user_grid_indices is None:
     raise ValueError(
         f"program id: {axis} was passed, but user did not provide a grid."
     )
   length = len(ctx.lowering_context.user_grid_indices)
-  if not (0 <= axis < length):
+  if axis not in range(length):
     raise ValueError(
         f"user passed in program id with axis: {axis}, but grid only has"
         f" length: {length}"
@@ -3228,7 +3229,9 @@ def _program_id_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
   return ctx.lowering_context.user_grid_indices[axis]
 
 
-@register_lowering_rule(primitives.num_programs_p)
+@register_lowering_rule(
+    primitives.num_programs_p, kernel_types=[*tpu_core.KernelType]
+)
 def _num_programs_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
   mapped_axes = set(ctx.lowering_context.mapped_dims)
   seen_user_axes = 0
