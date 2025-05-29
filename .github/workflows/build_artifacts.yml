@@ -12,7 +12,6 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: choice
-        required: true
         default: "linux-x86-n2-16"
         options:
         - "linux-x86-n2-16"
@@ -21,7 +20,6 @@ on:
       artifact:
         description: "Which JAX artifact to build?"
         type: choice
-        required: true
         default: "jaxlib"
         options:
         - "jax"
@@ -31,7 +29,6 @@ on:
       python:
         description: "Which python version should the artifact be built for?"
         type: choice
-        required: false
         default: "3.12"
         options:
         - "3.10"
@@ -41,7 +38,6 @@ on:
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: choice
-        required: false
         default: "0"
         options:
         - "1"
@@ -49,7 +45,6 @@ on:
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: choice
-        required: false
         default: 'no'
         options:
         - 'yes'
@@ -59,31 +54,25 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        required: true
         default: "linux-x86-n2-16"
       artifact:
         description: "Which JAX artifact to build?"
         type: string
-        required: true
         default: "jaxlib"
       python:
         description: "Which python version should the artifact be built for?"
         type: string
-        required: false
         default: "3.12"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: string
-        required: false
         default: "0"
       upload_artifacts_to_gcs:
         description: "Should the artifacts be uploaded to a GCS bucket?"
-        required: true
         default: true
         type: boolean
       gcs_upload_uri:
         description: "GCS location prefix to where the artifacts should be uploaded"
-        required: true
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
     outputs:
