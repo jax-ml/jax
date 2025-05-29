@@ -32,7 +32,7 @@ from jax._src import distributed
 from jax._src import sharding
 from jax._src import typing
 from jax._src import util
-from jax._src.layout import Layout
+from jax._src.layout import Format
 from jax._src.lib import _jax
 from jax.experimental.array_serialization import tensorstore_impl as ts_impl
 # ruff: noqa: F401
@@ -352,7 +352,7 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
         transaction=transaction,
     )
 
-  def deserialize(self, shardings: Sequence[sharding.Sharding | Layout],
+  def deserialize(self, shardings: Sequence[sharding.Sharding | Format],
                   tensorstore_specs: Sequence[dict[str, Any]],
                   global_shapes: Sequence[array.Shape] | None = None,
                   dtypes: Sequence[typing.DTypeLike] | None = None,

@@ -46,7 +46,7 @@ from jax._src import tree_util
 from jax._src import typing
 from jax._src import util
 from jax._src.sharding_impls import UnspecifiedValue, AUTO
-from jax._src.layout import Layout
+from jax._src.layout import Format, DeviceLocalLayout
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
@@ -105,7 +105,7 @@ class Executable:
 
   def output_layouts(self):
     raise NotImplementedError(
-        "compiled executable carries no input layout information")
+        "compiled executable carries no output layout information")
 
   def as_text(self) -> str:
     """A human-readable text representation of this executable.
@@ -438,39 +438,58 @@ class Compiled(Stage):
     """
     return self._executable.runtime_executable()
 
-  @property
-  def input_shardings(self):  # PyTree[sharding.Sharding]
+  def _input_shardings_flat(self):
     shardings_flat = self._executable._in_shardings
     # Some input shardings got DCE'd
     if self.in_tree.num_leaves > len(shardings_flat):
       iter_shardings_flat = iter(shardings_flat)
       shardings_flat = [next(iter_shardings_flat) if i in self._executable._kept_var_idx
                         else None for i in range(self.in_tree.num_leaves)]
+    return shardings_flat
+
+  @property
+  def input_shardings(self):  # -> PyTree[sharding.Sharding]
+    shardings_flat = self._input_shardings_flat()
     return tree_util.tree_unflatten(self.in_tree, shardings_flat)  # pytype: disable=attribute-error
 
   @property
-  def output_shardings(self):  # PyTree[sharding.Sharding]
+  def output_shardings(self):  # -> PyTree[sharding.Sharding]
     shardings_flat = self._executable._out_shardings
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
-  @property
-  def input_layouts(self):
-    dll_flat = self._executable._xla_in_layouts
-    layouts_flat = [Layout(l, s)
-                    for l, s in zip(dll_flat, self._executable._in_shardings)]
+  def _input_layouts_flat(self):
+    layouts_flat = self._executable._xla_in_layouts
     # Some input layouts got DCE'd
     if self.in_tree.num_leaves > len(layouts_flat):
       iter_layouts_flat = iter(layouts_flat)
       layouts_flat = [next(iter_layouts_flat) if i in self._executable._kept_var_idx
-                      else Layout() for i in range(self.in_tree.num_leaves)]
-    return tree_util.tree_unflatten(self.in_tree, layouts_flat)  # pytype: disable=attribute-error
+                      else None for i in range(self.in_tree.num_leaves)]
+    return layouts_flat
 
   @property
+  def input_formats(self):
+    layouts_flat = self._input_layouts_flat()
+    shardings_flat = self._input_shardings_flat()
+    formats_flat = [Format(l, s) for l, s in zip(layouts_flat, shardings_flat)]
+    return tree_util.tree_unflatten(self.in_tree, formats_flat)  # pytype: disable=attribute-error
+
+  @property
+  def output_formats(self):
+    layouts_flat = self._executable._xla_out_layouts
+    shardings_flat = self._executable._out_shardings
+    assert all(isinstance(l, DeviceLocalLayout) for l in layouts_flat)
+    formats_flat = [Format(l, s) for l, s in zip(layouts_flat, shardings_flat)]
+    return tree_util.tree_unflatten(self.out_tree, formats_flat)  # pytype: disable=attribute-error
+
+  # TODO(frostig, yashkatariya): remove
+  @property
+  def input_layouts(self):
+    return self.input_formats
+
+  # TODO(frostig, yashkatariya): remove
+  @property
   def output_layouts(self):
-    dll_flat = self._executable._xla_out_layouts
-    layouts_flat = [Layout(l, s)
-                    for l, s in zip(dll_flat, self._executable._out_shardings)]
-    return tree_util.tree_unflatten(self.out_tree, layouts_flat)  # pytype: disable=attribute-error
+    return self.output_formats
 
   @staticmethod
   def call(*args, **kwargs):

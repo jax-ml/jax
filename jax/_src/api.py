@@ -74,7 +74,7 @@ from jax._src.sharding import Sharding
 from jax._src.mesh import get_concrete_mesh
 from jax._src.sharding_impls import (
     PmapSharding, TransferToMemoryKind, PartitionSpec as P, NamedSharding)
-from jax._src.layout import Layout, AutoLayout
+from jax._src.layout import Format, AutoLayout
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src.util import unzip2, safe_map, safe_zip, wraps, split_list
@@ -2501,10 +2501,10 @@ def _check_string_compatible_sharding(s):
 @lru_cache(maxsize=2048)
 def _check_sharding(aval, s):
   if (s is not None and
-      not isinstance(s, (xc.Device, Sharding, Layout, TransferToMemoryKind))):
+      not isinstance(s, (xc.Device, Sharding, Format, TransferToMemoryKind))):
     raise ValueError(
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
-        " `jax.Device`, `Layout` or a pytree of these values. Received"
+        " `jax.Device`, `Format` or a pytree of these values. Received"
         f" invalid value: {s}")
 
   if isinstance(aval, core.ShapedArray) and dtypes.is_string_dtype(aval.dtype):
@@ -2530,8 +2530,8 @@ def pspec_to_sharding(val):
 
 def device_put(
     x,
-    device: None | xc.Device | Sharding | P | Layout | Any | TransferToMemoryKind = None,
-    *, src: None | xc.Device | Sharding | P | Layout | Any | TransferToMemoryKind = None,
+    device: None | xc.Device | Sharding | P | Format | Any | TransferToMemoryKind = None,
+    *, src: None | xc.Device | Sharding | P | Format | Any | TransferToMemoryKind = None,
     donate: bool | Any = False, may_alias: bool | None | Any = None):
   """Transfers ``x`` to ``device``.
 
@@ -2827,18 +2827,18 @@ class ShapeDtypeStruct:
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
     self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-    if sharding is not None and not isinstance(sharding, (Sharding, Layout, P)):
+    if sharding is not None and not isinstance(sharding, (Sharding, Format, P)):
       raise ValueError(
           "sharding should be an instance of `jax.sharding.Sharding`, "
           "`jax.sharding.PartitionSpec` or"
-          f" `jax.experimental.layout.Layout`. Got {sharding} of type"
+          f" `jax.experimental.layout.Format`. Got {sharding} of type"
           f" {type(sharding)}.")
-    if (isinstance(sharding, Layout) and
+    if (isinstance(sharding, Format) and
         isinstance(sharding.device_local_layout, AutoLayout)):
       raise TypeError(
           "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")
-    if isinstance(sharding, Layout):
+    if isinstance(sharding, Format):
       self.sharding = sharding.sharding
     elif isinstance(sharding, P):
       # TODO(yashkatariya): Should this be abstract mesh?
@@ -2851,15 +2851,18 @@ class ShapeDtypeStruct:
       self.sharding = NamedSharding(cur_mesh, sharding)
     else:
       self.sharding = sharding
-    self._dll = sharding.device_local_layout if isinstance(sharding, Layout) else None
+    self._dll = (sharding.device_local_layout if isinstance(sharding, Format)
+                 else None)
     self.weak_type = weak_type
 
   size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
 
   @property
-  def layout(self):
-    return Layout(self._dll, self.sharding)
+  def format(self):
+    return Format(self._dll, self.sharding)
+
+  layout = format
 
   def __len__(self):
     try:
@@ -2869,7 +2872,7 @@ class ShapeDtypeStruct:
 
   def __repr__(self):
     sh = f", sharding={self.sharding}" if self.sharding is not None else ""
-    l = f", layout={self.layout}" if self._dll is not None else ""
+    l = f", format={self._dll}" if self._dll is not None else ""
     wt = f", weak_type={self.weak_type}" if self.weak_type else ""
     return (f"{type(self).__name__}(shape={self.shape}, "
             f"dtype={self.dtype.name}{sh}{l}{wt})")
@@ -2880,11 +2883,13 @@ class ShapeDtypeStruct:
     if not isinstance(other, ShapeDtypeStruct):
       return False
     else:
-      return ((self.shape, self.dtype, self.sharding, self.layout, self.weak_type) ==
-              (other.shape, other.dtype, other.sharding, other.layout, other.weak_type))
+      return ((self.shape, self.dtype, self.sharding, self._dll, self.weak_type) ==
+              (other.shape, other.dtype, other.sharding, other._dll, other.weak_type))
 
   def __hash__(self):
-    return hash((self.shape, self.dtype, self.sharding, self.layout,
+    # TODO(frostig): avoid the conversion from dict by addressing
+    # https://github.com/jax-ml/jax/issues/8182
+    return hash((self.shape, self.dtype, self.sharding, self._dll,
                  self.weak_type))
 
   def __setattr__(self, name, value):

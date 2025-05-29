@@ -43,7 +43,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.api_util import InternalFloatingPointError
-from jax._src.layout import DeviceLocalLayout, Layout
+from jax._src.layout import DeviceLocalLayout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
@@ -479,8 +479,8 @@ def _device_put_sharding_impl(x, aval, device, copy):
 
 
 def _device_put_impl(
-    x, *, device: Device | Sharding | Layout | None,
-    src: Device | Sharding | Layout | None, copy: CopySemantics):
+    x, *, device: Device | Sharding | Format | None,
+    src: Device | Sharding | Format | None, copy: CopySemantics):
   if (isinstance(device, TransferToMemoryKind) or
       isinstance(src, TransferToMemoryKind)):
     raise ValueError(
@@ -494,7 +494,7 @@ def _device_put_impl(
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
-  if isinstance(device, Layout):
+  if isinstance(device, Format):
     l = device
     dll = l.device_local_layout
     x_dll = x.layout.device_local_layout if hasattr(x, 'layout') else None
@@ -519,8 +519,8 @@ def _device_put_impl(
 
 def _batched_device_put_impl(
     *xs,
-    devices: Sequence[Device | Sharding | Layout | None],
-    srcs: Sequence[Device | Sharding | Layout | None],
+    devices: Sequence[Device | Sharding | Format | None],
+    srcs: Sequence[Device | Sharding | Format | None],
     copy_semantics: Sequence[CopySemantics]):
   ys = []
   dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
@@ -536,7 +536,7 @@ def _batched_device_put_impl(
   if dsa_xs:
     # Batch shard_arg calls. Helps improve efficiency for backends that support
     # efficient batch transfer.
-    # device_put handles `Layout` via a different path, so just pass `None` as
+    # device_put handles `Format` via a different path, so just pass `None` as
     # the layout here.
     shard_arg_results = pxla.shard_args(dsa_shardings, [None] * len(dsa_xs),
                                         dsa_copy_semantics, dsa_xs)

@@ -94,7 +94,7 @@ LayoutOptions = Union[DeviceLocalLayout, None, AutoLayout]  # pytype: disable=in
 ShardingOptions = Union[Sharding, None, AutoSharding]
 
 
-class Layout:
+class Format:
   __slots__ = ['device_local_layout', 'sharding']
 
   def __init__(self, device_local_layout: LayoutOptions = None,
@@ -139,7 +139,9 @@ class Layout:
     return hash((self.device_local_layout, self.sharding))
 
   def __eq__(self, other):
-    if not isinstance(other, Layout):
+    if not isinstance(other, Format):
       return False
     return (self.device_local_layout == other.device_local_layout and
             self.sharding == other.sharding)
+
+Layout = Format  # TODO(frostig, yashkatariya): remove this alias

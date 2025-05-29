@@ -25,7 +25,7 @@ import logging
 import jax
 from jax import numpy as jnp
 from jax._src import array
-from jax._src.layout import Layout
+from jax._src.layout import Format
 from jax._src import typing
 import numpy as np
 import tensorstore as ts
@@ -424,7 +424,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 
 async def async_deserialize(
-    user_in_sharding: jax.sharding.Sharding | Layout,
+    user_in_sharding: jax.sharding.Sharding | Format,
     tensorstore_spec: ts.Spec | dict[str, Any],
     global_shape: Sequence[int] | None = None,
     dtype=None,
@@ -435,13 +435,13 @@ async def async_deserialize(
 ):
   """Main performant deserialization routine for arrays using tensorstore."""
   in_sharding = (user_in_sharding.sharding
-                 if isinstance(user_in_sharding, Layout) else user_in_sharding)
+                 if isinstance(user_in_sharding, Format) else user_in_sharding)
   if not isinstance(in_sharding, jax.sharding.Sharding):
     raise ValueError(
         'sharding passed to deserialization should be specified, concrete and'
         f' an instance of `jax.sharding.Sharding`. Got {in_sharding}')
   dll = (user_in_sharding.device_local_layout
-         if isinstance(user_in_sharding, Layout) else None)
+         if isinstance(user_in_sharding, Format) else None)
   t = await ts.open(
       tensorstore_spec,
       open=True,
@@ -476,7 +476,7 @@ async def async_deserialize(
     if out.dtype == jnp.int4:
       out = jnp.asarray(out)  # type: ignore
     result = jax.device_put(
-        out, Layout(dll, jax.sharding.SingleDeviceSharding(device)))
+        out, Format(dll, jax.sharding.SingleDeviceSharding(device)))
     if byte_limiter is not None:
       # NB: `out` actually might not be ready for garbage collection by the
       # time we call release_bytes . Thus peak memory usage still might grow
@@ -495,7 +495,7 @@ async def async_deserialize(
 
 
 # TODO(rdyro): Remove this function.
-def _run_deserialization(shardings: Sequence[jax.sharding.Sharding | Layout],
+def _run_deserialization(shardings: Sequence[jax.sharding.Sharding | Format],
                         tensorstore_specs: Sequence[dict[str, Any]],
                         global_shapes: Sequence[array.Shape] | None = None,
                         dtypes: Sequence[typing.DTypeLike] | None = None,

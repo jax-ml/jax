@@ -69,7 +69,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     flatten_spec, _internal_use_concrete_mesh)
-from jax._src.layout import Layout, DeviceLocalLayout, AutoLayout
+from jax._src.layout import Format, DeviceLocalLayout, AutoLayout
 from jax._src.state import discharge as state_discharge, RefEffect, AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
@@ -374,13 +374,13 @@ def _split_layout_and_sharding(entries):
   layouts, shardings = [], []
 
   for e in entries_flat:
-    if isinstance(e, Layout):
+    if isinstance(e, Format):
       layouts.append(e.device_local_layout)
       shardings.append(e.sharding)
     elif isinstance(e, (DeviceLocalLayout, AutoLayout)):
       raise ValueError(
           '`jax.jit` does not accept device-local layouts directly. Create '
-          'a `Layout` instance wrapping this device-local layout and pass '
+          'a `Format` instance wrapping this device-local layout and pass '
           f'that to `jit` instead. Got {e}')
     else:
       layouts.append(None)
@@ -1645,7 +1645,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
     else:
       # arg_layout can be None because some backends don't implement the
       # required layout methods. Hence `arr.layout` can return
-      # `Layout(None, sharding)`
+      # `Format(None, sharding)`
       if (committed
           and not is_pmap_sharding
           and arg_layout is not None
@@ -2813,7 +2813,7 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
     if (hasattr(x, 'layout') and x.layout.device_local_layout == layout and
         x.sharding.is_equivalent_to(sharding, x.ndim)):
       return x
-    return api.jit(_identity_fn, out_shardings=Layout(layout, sharding))(x)
+    return api.jit(_identity_fn, out_shardings=Format(layout, sharding))(x)
 
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
@@ -3160,7 +3160,7 @@ def _layout_constraint_impl(x, *, layout):
         f' jax.Arrays. Got {type(x)}')
   if x.layout.device_local_layout == layout:  # type: ignore
     return x
-  return api.jit(_identity_fn, out_shardings=Layout(layout, x.sharding))(x)
+  return api.jit(_identity_fn, out_shardings=Format(layout, x.sharding))(x)
 layout_constraint_p.def_impl(_layout_constraint_impl)
 
 def _layout_constraint_hlo_lowering(ctx, x_node, *, layout):
