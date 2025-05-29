@@ -16,7 +16,6 @@ from __future__ import annotations
 from collections import namedtuple
 from collections.abc import Callable, Sequence, Hashable
 import contextlib
-from dataclasses import dataclass
 from functools import partial
 import itertools as it
 import operator as op
@@ -43,7 +42,7 @@ from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            mapped_aval, unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
                            InputType, OutputType, get_referent, JaxprEqnContext)
 from jax._src.source_info_util import SourceInfo
-from jax._src.state.types import AbstractRef, ReadEffect, RefEffect
+from jax._src.state.types import AbstractRef, ReadEffect
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_flatten,
                                 tree_structure, register_static)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
@@ -148,10 +147,6 @@ class PartialVal(tuple):
     else:
       return self[0]
 
-@dataclass(frozen=True)
-class EffectHandle:
-  parents : list[Tracer]
-  recipe : JaxprEqnRecipe
 
 class JaxprTrace(Trace['JaxprTracer']):
 
@@ -161,8 +156,6 @@ class JaxprTrace(Trace['JaxprTracer']):
     self.tag = tag
     self.parent_trace = parent_trace
     self.requires_low = False
-    self.effect_handles : list[EffectHandle] = []
-    self.counter = it.count()
 
   def to_jaxpr_tracer(self, x):
     if isinstance(x, JaxprTracer) and x._trace.tag is self.tag:
@@ -246,19 +239,14 @@ class JaxprTrace(Trace['JaxprTracer']):
     if primitive.multiple_results:
       out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
                      for aval in out_aval]
-      eqn = new_eqn_recipe(self, tracers, out_tracers, primitive, params, effects,
+      eqn = new_eqn_recipe(tracers, out_tracers, primitive, params, effects,
                            source)
-      if any(isinstance(e, RefEffect) for e in effects):
-        self.effect_handles.append(EffectHandle(tracers, eqn))
       for t in out_tracers: t.recipe = eqn
       return out_tracers
     else:
       out_tracer = JaxprTracer(self, PartialVal.unknown(out_aval), None)
-      eqn = new_eqn_recipe(self, tracers, [out_tracer], primitive,
-                           params, effects, source)
-      if any(isinstance(e, RefEffect) for e in effects):
-        self.effect_handles.append(EffectHandle(tracers, eqn))
-      out_tracer.recipe = eqn
+      out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive,
+                                         params, effects, source)
       return out_tracer
 
   def process_call(self, primitive, f: lu.WrappedFun, tracers, params):
@@ -333,7 +321,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                      for a in out_type]
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
-    eqn = new_eqn_recipe(self, (*res_tracers, *env_tracers, *unknown_arg_tracers),
+    eqn = new_eqn_recipe((*res_tracers, *env_tracers, *unknown_arg_tracers),
                          out_tracers, primitive, staged_params, jaxpr.effects,
                          source)
     for t in out_tracers: t.recipe = eqn
@@ -402,7 +390,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                    for a in out_avals]
     effs = core.filter_named_axis_effects(jaxpr.effects, {params['axis_name']})
     src_info = source_info_util.current()
-    eqn = new_eqn_recipe(self, (*const_tracers, *env_tracers, *unknown_arg_tracers),
+    eqn = new_eqn_recipe((*const_tracers, *env_tracers, *unknown_arg_tracers),
                          out_tracers, primitive, staged_params, effs, src_info)
     for t in out_tracers: t.recipe = eqn
 
@@ -437,7 +425,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                      for aval in params['out_types']]
       in_tracers = map(self.instantiate_const, tracers)
       new_params = dict(params, call=call)
-      eqn = new_eqn_recipe(self, in_tracers, out_tracers, prim, new_params,
+      eqn = new_eqn_recipe(in_tracers, out_tracers, prim, new_params,
           core.no_effects, source_info_util.current())
       for t in out_tracers: t.recipe = eqn
       return out_tracers
@@ -482,7 +470,7 @@ class JaxprTrace(Trace['JaxprTracer']):
         out_trees=out_trees,
         symbolic_zeros=symbolic_zeros
     )
-    eqn = new_eqn_recipe(self, (*res_tracers, *env_tracers, *tracers),
+    eqn = new_eqn_recipe((*res_tracers, *env_tracers, *tracers),
                          out_tracers, prim, params, jaxpr.effects, source)
     for t in out_tracers: t.recipe = eqn
     return out_tracers
@@ -669,7 +657,7 @@ def _trace_to_subjaxpr_nounits(f: Callable, trace: JaxprTrace,
   out_tracers = [trace.instantiate_const(t) if inst else t
                  for inst, t in zip(instantiate, out_tracers)]
   out_tracers_ = [t for t in out_tracers if not t.is_known()]
-  jaxpr, out_consts, env = tracers_to_jaxpr(in_tracers, out_tracers_, trace.effect_handles, debug_info)
+  jaxpr, out_consts, env = tracers_to_jaxpr(in_tracers, out_tracers_, debug_info)
   return out_tracers, jaxpr, out_consts, env
 
 # The below variant implements an optimization where residuals which are also
@@ -751,8 +739,7 @@ class JaxprEqnRecipe(NamedTuple):
   source_info: source_info_util.SourceInfo
   ctx: JaxprEqnContext
 
-def new_eqn_recipe(trace: JaxprTrace,
-                   in_tracers: Sequence[JaxprTracer],
+def new_eqn_recipe(in_tracers: Sequence[JaxprTracer],
                    out_tracers: Sequence[JaxprTracer],
                    primitive: Primitive,
                    params: dict[str, Any],
@@ -775,7 +762,7 @@ def new_eqn_recipe(trace: JaxprTrace,
       config.threefry_partitionable.value,
       xla_metadata_lib.current_xla_metadata(),
   )
-  return JaxprEqnRecipe(next(trace.counter), tuple(in_tracers), map(ref, out_tracers),
+  return JaxprEqnRecipe(object(), tuple(in_tracers), map(ref, out_tracers),
                         out_avals, primitive, params, effects, source_info,
                         ctx)
 
@@ -793,7 +780,6 @@ def recipe_to_eqn(getvar: Callable[[JaxprTracer], Atom],
 def tracers_to_jaxpr(
   in_tracers: Sequence[JaxprTracer],
   out_tracers: Sequence[JaxprTracer],
-  effect_handles: Sequence[Any],
   debug_info: core.DebugInfo,
   ) -> tuple[Jaxpr, tuple[Any, ...], tuple[Any, ...]]:
   """Constructs Jaxpr given tracers for inputs and outputs.
@@ -835,15 +821,7 @@ def tracers_to_jaxpr(
 
   processed_eqn_ids = set()
   eqns: list[core.JaxprEqn] = []
-
-  reachable = toposort
-  tracers = reachable((*in_tracers, *out_tracers, *effect_handles))
-  def sort_key(t):
-    r = t.recipe
-    return r.eqn_id if isinstance(r, JaxprEqnRecipe) else -1
-  tracers = sorted(tracers, key=sort_key)
-
-  for t in tracers:
+  for t in toposort((*in_tracers, *out_tracers)):
     r = t.recipe
     if isinstance(r, JaxprEqnRecipe):
       # TODO broadcast_in_dim can create a new tracer, not present in parents
