@@ -17,18 +17,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import partial
 import itertools as it
+from typing import Any
 import unittest
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 import jax
 import jax.numpy as jnp
 
 from jax._src import config
 from jax._src import core
-from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
+from jax._src import ad_util
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 
@@ -36,6 +37,8 @@ config.parse_flags_with_absl()
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+
+PyTreeDef = Any
 
 
 # TODO(mattjj,dougalm): move HiPrimitive, Box, etc out of tests and into library
@@ -65,124 +68,6 @@ class HiPrimitive(core.Primitive):
   def transpose(self, *args, **params):
     assert False  # TODO
 
-
-class BoxTy(core.AbstractValue):
-  mutable = True
-
-  def __init__(self, leaf_avals, treedef):
-    self._leaf_avals = leaf_avals  # hijax avals
-    self._treedef = treedef
-
-  # aval interface: hashability and str_short
-  def __hash__(self):
-    return hash((self._leaf_avals, self._treedef))
-
-  def __eq__(self, other):
-    return (isinstance(other, BoxTy) and self._leaf_avals == other._leaf_avals
-            and self._treedef == other._treedef)
-
-  def str_short(self, short_dtypes=False):
-    return 'BoxTy'
-
-  # hijax interface: lower val, raise val, and low type
-  def lo_ty(self):
-    return [lo_aval for hi_aval in self._leaf_avals for lo_aval in hi_aval.lo_ty()]
-
-  def lower_val(self, box):
-    leaf_vals, treedef = jax.tree.flatten(box._val)
-    assert treedef == self._treedef
-    return [lo_val for hi_aval, hi_val in zip(self._leaf_avals, leaf_vals)
-            for lo_val in hi_aval.lower_val(hi_val)]
-
-  def raise_val(self, *lo_vals):
-    lo_vals_ = iter(lo_vals)
-    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))
-               for hi_ty in self._leaf_avals]
-    assert next(lo_vals_, None) is None
-    return Box(jax.tree.unflatten(self._treedef, hi_vals))  # will be mutated
-
-  # mutable interface: get/set
-  def get(self, box):
-    leaf_vals, treedef = jax.tree.flatten(box._val)
-    assert treedef == self._treedef
-    return [lo_val for hi_ty, hi_val in zip(self._leaf_avals, leaf_vals)
-            for lo_val in hi_ty.lower_val(hi_val)]
-
-  def set(self, box, *lo_vals):
-    lo_vals_ = iter(lo_vals)
-    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))
-               for hi_ty in self._leaf_avals]
-    assert next(lo_vals_, None) is None
-    box._val = jax.tree.unflatten(self._treedef, hi_vals)
-
-  # TODO placeholder thing
-  def to_tangent_aval(self):
-    return core.ShapedArray((), dtypes.float0)  # TODO revise placeholder
-
-class Box:  # noqa: F811
-  def __init__(self, val):
-    self._val = val
-
-  @property
-  def ty(self):
-    leaves, treedef = jax.tree.flatten(self._val)
-    leaf_avals = tuple(map(core.typeof, leaves))
-    return BoxTy(leaf_avals, treedef)
-core.pytype_aval_mappings[Box] = lambda b: b.ty
-
-
-class BoxSet(HiPrimitive):
-  multiple_results = True
-
-  def is_high(self, *, treedef) -> bool: return True
-
-  def staging(self, trace, box, *leaves, treedef):
-    super().staging(trace, box, *leaves, treedef=treedef)
-    avals = tuple(t.aval for t in leaves)
-    trace.frame.final_typechange_env[trace.getvar(box)] = BoxTy(avals, treedef)
-
-  def abstract_eval(self, box_ty, *leaf_avals, treedef):
-    return [], set()  # TODO better typechecking...
-
-  def to_lojax(_, box, *leaves, treedef):
-    box._val = jax.tree.unflatten(treedef, leaves)
-    return []
-
-  def jvp(_, primals, tangents, *, treedef):
-    assert False  # TODO
-
-  def transpose(_, *args, treedef):
-    assert False  # TODO
-box_set_p = BoxSet('box_set')
-
-def box_set(box, val):
-  leaves, treedef = jax.tree.flatten(val)
-  box_set_p.bind(box, *leaves, treedef=treedef)
-
-
-class BoxGet(HiPrimitive):
-  multiple_results = True
-
-  def is_high(self) -> bool: return True
-
-  def abstract_eval(self, box_ty):
-    return box_ty._leaf_avals, set()
-
-  def to_lojax(_, box):
-    return jax.tree.leaves(box._val)
-
-  def jvp(_, primals, tangents):
-    assert False  # TODO
-
-  def transpose(_, *args):
-    assert False  # TODO
-box_get_p = BoxGet('box_get')
-
-def box_get(box):
-  leaf_vals = box_get_p.bind(box)
-  return jax.tree.unflatten(core.typeof(box)._treedef, leaf_vals)
-
-
 class HijaxTest(jtu.JaxTestCase):
 
   def test_custom_types_and_primitive(self):
@@ -194,8 +79,6 @@ class HijaxTest(jtu.JaxTestCase):
 
     @dataclass(frozen=True)
     class MyTy(core.AbstractValue):
-      mutable = False
-
       def to_tangent_aval(self):
         return MyTy()
       def str_short(self, short_dtypes=False):
@@ -324,6 +207,392 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertIsInstance(a_grad, MyArray)
     self.assertAllClose(a_grad.arr, 2.0, check_dtypes=False)
 
+
+def new_box():
+  (), treedef = jax.tree.flatten(None)
+  return new_box_p.bind(treedef=treedef)
+
+def box_get(box):
+  tys = box.type_state()
+  leaf_vals = box_get_p.bind(box, avals=tys.leaf_avals)
+  return jax.tree.unflatten(tys.treedef, leaf_vals)
+
+def box_set(box, val):
+  leaves, treedef = jax.tree.flatten(val)
+  box_set_p.bind(box, *leaves, treedef=treedef)
+
+@dataclass(frozen=True)
+class BoxTypeState:
+  leaf_avals: tuple[core.AbstractValue, ...]
+  treedef: PyTreeDef
+
+  def to_tangent_aval(self):
+    return BoxTypeState(tuple(a.to_tangent_aval() for a in self.leaf_avals),
+                        self.treedef)
+
+  def normalize(self):
+    return BoxTypeState(tuple(a.normalize() for a in self.leaf_avals),
+                        self.treedef)
+
+class BoxTy(core.AbstractValue):
+  mutable = True
+
+  # forwarded to value
+  get = core.aval_method(box_get)
+  set = core.aval_method(box_set)
+
+  # aval interface: hashability and str_short
+  def __hash__(self): return hash(BoxTy)
+  def __eq__(self, other): return isinstance(other, BoxTy)
+
+  def str_short(self, short_dtypes=False):
+    return 'BoxTy'
+
+  # mutable interface
+  def lo_ty_(self, box_state):
+    return [lo_ty for t in box_state.leaf_avals for lo_ty in t.lo_ty()]
+
+  def new_from_loval(self, box_state: BoxTypeState, *lo_vals):
+    lo_vals_ = iter(lo_vals)
+    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))
+               for hi_ty in box_state.leaf_avals]
+    assert next(lo_vals_, None) is None
+    return Box(jax.tree.unflatten(box_state.treedef, hi_vals))  # will be mutated
+
+  def read_loval(self, box_state: BoxTypeState, box):
+    leaf_vals, treedef = jax.tree.flatten(box_get(box))
+    assert treedef == box_state.treedef
+    return [lo_val for hi_ty, hi_val in zip(box_state.leaf_avals, leaf_vals)
+            for lo_val in hi_ty.lower_val(hi_val)]
+
+  def update_from_loval(self, box_state: BoxTypeState, box, *lo_vals):
+    lo_vals_ = iter(lo_vals)
+    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))
+               for hi_ty in box_state.leaf_avals]
+    assert next(lo_vals_, None) is None
+    box_set(box, jax.tree.unflatten(box_state.treedef, hi_vals))
+
+  def to_tangent_aval(self):
+    return BoxTy()
+
+class Box:  # noqa: F811
+  def __init__(self, val):
+    self._val = val
+
+  def get(self):
+    return box_get(self)
+
+  def set(self, val):
+    box_set(self, val)
+
+  @property
+  def ty(self):
+    return BoxTy()
+
+  def type_state(self):
+    leaves, treedef = jax.tree.flatten(self._val)
+    leaf_avals = tuple(map(core.typeof, leaves))
+    return BoxTypeState(leaf_avals, treedef)
+core.pytype_aval_mappings[Box] = lambda b: b.ty
+
+
+class NewBox(HiPrimitive):
+  def is_high(self, *, treedef) -> bool: return True
+
+  def staging(self, trace, *, treedef):
+    tracer = super().staging(trace, treedef=treedef)
+    var = trace.frame.tracer_to_var[id(tracer)]
+    leaves, treedef = jax.tree.flatten(None)
+    trace.frame.current_typechange_env[var] = BoxTypeState(leaves, treedef)
+    return tracer
+
+  def abstract_eval(self, *, treedef):
+    return BoxTy(), set()
+
+  def to_lojax(_, *, treedef):
+    return Box(None)
+
+  def jvp(_, primals, tangents, *, treedef):
+    assert False  # TODO
+
+  def transpose(_, *args, treedef):
+    assert False  # TODO
+new_box_p = NewBox('new_box')
+
+
+class BoxSet(HiPrimitive):
+  multiple_results = True
+
+  def is_high(self, *, treedef) -> bool: return True
+
+  def staging(self, trace, box_tracer, *leaves, treedef):
+    super().staging(trace, box_tracer, *leaves, treedef=treedef)
+    var = trace.getvar(box_tracer)
+    avals = tuple(t.aval for t in leaves)
+    trace.frame.current_typechange_env[var] = BoxTypeState(avals, treedef)
+    return []
+
+  def abstract_eval(self, box_ty, *leaf_avals, treedef):
+    return [], set()  # TODO better typechecking...
+
+  def to_lojax(_, box, *leaves, treedef):
+    box._val = jax.tree.unflatten(treedef, leaves)
+    return []
+
+  def jvp(_, primals, tangents, *, treedef):
+    box, *vals = primals
+    box_dot, *val_dots = tangents
+    if type(box_dot) is ad_util.Zero:
+      raise Exception("you're an idiot")
+    box_set_p.bind(box, *vals, treedef=treedef)
+    box_set_p.bind(box_dot, *val_dots, treedef=treedef)
+    return [], []
+
+  def transpose(_, *args, treedef):
+    assert False  # TODO
+box_set_p = BoxSet('box_set')
+
+
+class BoxGet(HiPrimitive):
+  multiple_results = True
+
+  def abstract_eval(self, box_ty, *, avals):
+    return avals, set()
+
+  def to_lojax(_, box, *, avals):
+    return jax.tree.leaves(box._val)
+
+  def jvp(_, primals, tangents, *, avals):
+    (box,), (box_dot,) = primals, tangents
+    return (box_get_p.bind(box, avals=avals),
+            box_get_p.bind(box_dot, avals=[a.to_tangent_aval() for a in avals]))
+
+  def transpose(_, *args):
+    assert False  # TODO
+box_get_p = BoxGet('box_get')
+
+
+
+class BoxTest(jtu.JaxTestCase):
+
+  def test_jit_arg(self):
+    @jax.jit
+    def f(box, x):
+      assert tracing_ok
+      box.set(box.get() + x)
+
+    tracing_ok = True
+    box1 = Box(1.0)
+    f(box1, 1.)
+    self.assertAllClose(box1.get(), 2.0)
+
+    tracing_ok = False
+    box2 = Box(2.0)
+    f(box2, 2.)
+    self.assertAllClose(box2.get(), 4.0)
+
+  def test_jit_arg2(self):
+    # set without get
+
+    @jax.jit
+    def f(box, x):
+      box_set(box, x)
+
+    box = Box(0.0)
+    f(box, 1.)
+    self.assertAllClose(box_get(box), 1.0, check_dtypes=False)
+
+  def test_jit_arg_in_pytree(self):
+    @jax.jit
+    def f(dct, x):
+      assert tracing_ok
+      box = dct['box']
+      box.set(box.get() + x)
+
+    tracing_ok = True
+    box1 = Box(1.0)
+    f({'box': box1, 'a': 1.0}, 1.)
+    self.assertAllClose(box1.get(), 2.0)
+
+    tracing_ok = False
+    box2 = Box(2.0)
+    f({'box': box2, 'a': 2.0}, 2.)
+    self.assertAllClose(box2.get(), 4.0)
+
+    tracing_ok = True
+    box3 = Box(3)  # int, dtype changed
+    f({'box': box3, 'a': 2.0}, 2.)
+    self.assertAllClose(box3.get(), 5.0)
+
+  def test_jit_closure(self):
+    box = Box(1.0)
+
+    @jax.jit
+    def f(x):
+      assert tracing_ok
+      box.set(box.get() + x)
+
+    tracing_ok = True
+    f(2.0)
+    self.assertAllClose(box.get(), 3.0)
+    tracing_ok = False
+    f(5.0)
+    self.assertAllClose(box.get(), 8.0)
+
+  def test_jit_closure_nested(self):
+    box = Box(5.0)
+
+    @jax.jit
+    def f(x):
+      box.set(box.get() + x)
+
+    @jax.jit
+    def g(x):
+      f(x)
+
+    g(3.0)
+    self.assertAllClose(box.get(), 8.0)
+
+  def test_jit_closure_nested2(self):
+    @jax.jit
+    def h(x):
+      box = new_box()
+      box.set(x)
+
+      @jax.jit
+      def k(x):
+        box.set(box.get() + x)
+
+      k(1.0)
+      k(1.0)
+      return box.get()
+
+    ans = h(2.0)
+    self.assertAllClose(ans, 4.0)
+
+  @parameterized.parameters([False, True])
+  def test_jvp_closure_stop_gradient(self, jit):
+    box = Box(1.0)
+
+    def f(x):
+      y = 2 * x
+      box.set(box.get() + jax.lax.stop_gradient(y))
+      return y
+
+    if jit:
+      f = jax.jit(f)
+
+    y, y_dot = jax.jvp(f, (1.0,), (1.0,))
+    self.assertAllClose(y, 2.0)
+    self.assertAllClose(y_dot, 2.0)
+    self.assertAllClose(box.get(), 3.0)
+
+  @parameterized.parameters([False, True])
+  def test_jvp_arg(self, jit):
+    def f(box, x):
+      box.set(box.get() + x)
+      return x
+
+    if jit:
+      f = jax.jit(f)
+
+    box = Box(5.0)
+    box_dot = Box(1.0)
+    y, y_dot = jax.jvp(f, (box, 2.), (box_dot, 1.))
+    self.assertAllClose(y, 2.0)
+    self.assertAllClose(y_dot, 1.0)
+    self.assertAllClose(box.get(), 7.0)
+    self.assertAllClose(box_dot.get(), 2.0)
+
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_plumbing(self, jit):
+    box = Box(0.0)
+
+    @jax.custom_vjp
+    def foo(x):
+      return x
+    def foo_fwd(x):
+      return foo(x), None
+    def foo_bwd(_, g):
+      box.set(g)
+      return g,
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    def f(x):
+      x = 2 * x
+      x = foo(x)
+      x = 2 * x
+      return x
+
+    if jit:
+      f = jax.jit(f)
+
+    jax.grad(f)(1.0)
+    self.assertAllClose(box.get(), 2.0)
+
+  # TODO(mattjj,dougalm): make this work...
+  # @parameterized.parameters([False, True])
+  # def test_custom_vjp_plumbing_abstracted(self, jit):
+  #   box = Box(0.0)
+
+  #   @jax.custom_vjp
+  #   def foo(box, x):
+  #     return x
+  #   def foo_fwd(box, x):
+  #     return x, box
+  #   def foo_bwd(box, g):
+  #     box.set(g)
+  #     return None, g
+  #   foo.defvjp(foo_fwd, foo_bwd)
+
+  #   def f(box, x):
+  #     x = 2 * x
+  #     x = foo(box, x)
+  #     x = 2 * x
+  #     return x
+
+  #   if jit:
+  #     f = jax.jit(f)
+
+  #   jax.grad(partial(f, box))(1.0)
+  #   self.assertAllClose(box.get(), 2.0)
+
+  @parameterized.parameters([False, True])
+  def test_grad_closure_stop_gradient(self, jit):
+    box = Box(0.0)
+
+    def f(x):
+      y = x * 2
+      box.set(box.get() + jax.lax.stop_gradient(y))
+      return y
+
+    if jit:
+      f = jax.jit(f)
+
+    g = jax.grad(f)(1.0)
+    self.assertAllClose(g, 2.0)
+    self.assertAllClose(box.get(), 2.0)
+
+  @parameterized.parameters([False, True])
+  def test_scan_basic(self, jit):
+    box = Box(1.0)
+
+    def double_it_10():
+      def body(_, __):
+        box.set(box.get() * 2)
+        return None, None
+      _, _ = jax.lax.scan(body, None, None, length=10)
+
+    if jit:
+      double_it_10 = jax.jit(double_it_10)
+
+    double_it_10()
+    self.assertAllClose(box.get(), 1024., check_dtypes=False)
+
+  # TODO error-checking tests from attrs_test.py
+
+  ###
+
   def test_box_autodiff(self):
     if config.enable_x64.value: raise unittest.SkipTest("no x64")
 
@@ -336,7 +605,7 @@ class HijaxTest(jtu.JaxTestCase):
         return x_aval, set()
 
       def to_lojax(_, box, x):
-        assert False  # TODO
+        return x
 
       def jvp(_, primals, tangents):
         box, x = primals
@@ -350,14 +619,6 @@ class HijaxTest(jtu.JaxTestCase):
 
     def stash_tangents(box, x):
       return stash_tangents_p.bind(box, x)
-
-    @jax.jit
-    def f(box, x):
-      box_set(box, x)
-
-    box = Box(0.0)
-    f(box, 1.)
-    self.assertAllClose(box_get(box), 1.0, check_dtypes=False)
 
     @jax.jit
     def f(box, x):
@@ -447,6 +708,27 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertIsInstance(b_, MyArray)
     self.assertAllClose(a_.arr, 1, check_dtypes=False)
     self.assertAllClose(b_.arr, 2, check_dtypes=False)
+
+
+class ListTy(core.AbstractValue):
+  mutable = True
+
+  # forwarded to value
+  get = core.aval_method(box_get)
+  set = core.aval_method(box_set)
+
+  # aval interface: hashability and str_short
+  def __hash__(self): return hash(BoxTy)
+  def __eq__(self, other): return isinstance(other, BoxTy)
+
+  def str_short(self, short_dtypes=False):
+    return 'ListTy'
+
+  # TODO
+
+class ListTest(jtu.JaxTestCase):
+  ...
+
 
 
 if __name__ == '__main__':
