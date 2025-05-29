@@ -68,6 +68,7 @@ limitations under the License.
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/LLVMIR/Transforms/Passes.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
@@ -102,7 +103,6 @@ limitations under the License.
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "triton/Target/LLVMIR/Passes.h"
 
 namespace {
 
@@ -340,7 +340,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mosaic::gpu::registerConvertGpuToLLVMPass();
     mosaic::gpu::registerByvalInsertionPass();
     mlir::arith::registerArithExpandOpsPass();
-    mlir::registerLLVMDIScopePass();
+    mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
     return true;
   });
   bool emit_line_info = getenv("MOSAIC_GPU_LINE_INFO") != nullptr;
@@ -360,10 +360,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         convert-scf-to-cf,
         convert-nvvm-to-llvm,
         expand-strided-metadata,
-        nvvm-attach-target{)",
-      // TODO(slebedev): Always use O=3 once
-      // https://github.com/llvm/llvm-project/pull/140146 is merged.
-      emit_line_info ? "O=0" : "O=3", " chip=", sm, " fast=false features=+",
+        nvvm-attach-target{O=3 chip=)", sm, " fast=false features=+",
       ptx_isa,
       R"( ftz=false  module= triple=nvptx64-nvidia-cuda},
         lower-affine,
@@ -381,9 +378,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
         )",
-      // TODO(slebedev): Switch to the ensure-debug-info-scope-on-llvm-func
-      // pass in MLIR once Triton upstreams its changes.
-      emit_line_info ? "enable-line-info," : "",
+      emit_line_info ? "ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly}," : "",
       "gpu-module-to-binary{format=",
       mlir::gpu::stringifyCompilationTarget(target).str(),
       (!nvshmem_path.empty() ? " l=" + nvshmem_path : ""),
