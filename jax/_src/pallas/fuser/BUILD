@@ -115,6 +115,7 @@ pytype_strict_library(
         "//jax",
         "//jax:api_util",
         "//jax:core",
+        "//jax:custom_derivatives",
         "//jax:dtypes",
         "//jax:partial_eval",
         "//jax:source_info_util",
