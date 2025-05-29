@@ -1228,7 +1228,6 @@ cc_library(
         "@xla//xla/hlo/builder:xla_computation",
         "@xla//xla/hlo/ir:hlo",
         "@xla//xla/hlo/parser:hlo_parser",
-        "@xla//xla/pjrt:compile_options_proto_cc",
         "@xla//xla/pjrt:exceptions",
         "@xla//xla/pjrt:pjrt_executable",
         "@xla//xla/pjrt:status_casters",
