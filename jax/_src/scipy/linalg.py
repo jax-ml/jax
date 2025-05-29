@@ -486,6 +486,8 @@ def _schur(a: Array, output: str) -> tuple[Array, Array]:
 def schur(a: ArrayLike, output: str = 'real') -> tuple[Array, Array]:
   """Compute the Schur decomposition
 
+  Only implemented on CPU.
+
   JAX implementation of :func:`scipy.linalg.schur`.
 
   The Schur form `T` of a matrix `A` satisfies:
@@ -1831,6 +1833,9 @@ def _sqrtm(A: ArrayLike) -> Array:
 
 def sqrtm(A: ArrayLike, blocksize: int = 1) -> Array:
   """Compute the matrix square root
+
+  Only implemented on CPU. 
+  (Due to dependency on Schur Decomposition which is not yet supported on GPU.)
 
   JAX implementation of :func:`scipy.linalg.sqrtm`.
 
