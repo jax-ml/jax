@@ -26,6 +26,7 @@ import time
 from typing import Any, Callable, Generic, TypeVar
 import weakref
 
+import itertools
 import jax
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
@@ -124,9 +125,12 @@ mosaic_gpu_p.multiple_results = True
 
 
 @mosaic_gpu_p.def_abstract_eval
-def _mosaic_gpu_abstract_eval(*_, module, out_types):
+def _mosaic_gpu_abstract_eval(*_, module, out_types, inout_types):
   del module  # Unused.
-  return [jax._src.core.ShapedArray(t.shape, t.dtype) for t in out_types]
+  return [
+      jax._src.core.ShapedArray(t.shape, t.dtype)
+      for t in itertools.chain(out_types, inout_types)
+  ]
 
 
 def _has_communication(module, **_):
@@ -146,6 +150,7 @@ def _mosaic_gpu_lowering_rule(
     *args,
     module,
     out_types,
+    inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     use_custom_barrier: bool = False,
 ):
@@ -170,8 +175,19 @@ def _mosaic_gpu_lowering_rule(
     else:
       raise NotImplementedError(f"Unsupported sharding context: {axis_context}")
 
-  assert len(args) == len(ctx.avals_in)
-  assert len(out_types) == len(ctx.avals_out)
+  if inout_types:
+    if input_output_aliases:
+      raise ValueError(
+          "input_output_aliases and inout_types are mutually exclusive"
+      )
+    num_inputs = len(ctx.avals_in)
+    num_outputs = len(ctx.avals_out)
+    input_output_aliases = tuple(
+        (num_inputs - 1 - i, num_outputs - 1 - i)
+        for i in range(len(inout_types))
+    )
+  assert len(ctx.avals_in) == len(args)
+  assert len(ctx.avals_out) == len(out_types) + len(inout_types)
   module = _run_serde_pass(
       module,
       serialize=True,
@@ -562,6 +578,7 @@ def _lower_as_gpu_kernel(
     block: tuple[int, int, int],
     in_shapes: tuple[Any, ...],
     out_shape,
+    inout_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     lowering_semantics: LoweringSemantics,
     module_name: str,
@@ -576,13 +593,14 @@ def _lower_as_gpu_kernel(
     return ir.MemRefType.get(shape.shape, utils.dtype_to_ir_type(shape.dtype))
 
   in_ref_tys = [_shape_to_ref_ty(t) for t in in_shapes]
+  inout_ref_tys = [_shape_to_ref_ty(t) for t in inout_shape]
 
   unwrap_output_tuple = False
   if isinstance(out_shape, list):
     out_shape = tuple(out_shape)
   elif not isinstance(out_shape, tuple):
     out_shape = (out_shape,)
-    unwrap_output_tuple = True
+    unwrap_output_tuple = not inout_shape
   out_ref_tys = [_shape_to_ref_ty(t) for t in out_shape]
   if prof_spec is not None:
     out_shape = (*out_shape, prof_spec.jax_buffer_type(grid, block))
@@ -610,19 +628,18 @@ def _lower_as_gpu_kernel(
       nonlocal launch_ctx
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
       arg_refs = []
-      for i, ref_ty in enumerate([*in_ref_tys, *out_ref_tys]):
+      # XLA will pass in inout refs again as outputs, but we ignore them.
+      for i, ref_ty in enumerate([*in_ref_tys, *inout_ref_tys, *out_ref_tys]):
         ptr = llvm.LoadOp(ptr_ty, llvm.GEPOp(ptr_ty, buffers, [], [i], ptr_ty, llvm.GEPNoWrapFlags.none))
         arg_refs.append(utils.ptr_as_memref(ptr, ir.MemRefType(ref_ty)))
-      in_refs = arg_refs[:len(in_ref_tys)]
-      out_refs = arg_refs[len(in_ref_tys):]
-      prof_buffer = out_refs.pop() if prof_spec is not None else None
+      prof_buffer = arg_refs.pop() if prof_spec is not None else None
       with _launch(
           token, grid, cluster, block, smem_scratch_shape,
           lowering_semantics, module, prof_spec, prof_buffer
       ) as (_launch_ctx, smem_refs):
         nonlocal launch_ctx
         launch_ctx = _launch_ctx
-        body(launch_ctx, *in_refs, *out_refs, smem_refs)
+        body(launch_ctx, *arg_refs, smem_refs)
     main.func_op.attributes["llvm.emit_c_interface"] = ir.UnitAttr.get()
   sym_tab = ir.SymbolTable(module.operation)
   sym_tab.insert(main.func_op)
@@ -680,16 +697,22 @@ def as_gpu_kernel(
     kernel_name: str | None = None,
     ir_version: int | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
+    inout_shape = (),
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
   elif not isinstance(in_shape, tuple):
     in_shape = (in_shape,)
+  if isinstance(inout_shape, list):
+    inout_shape = tuple(inout_shape)
+  elif not isinstance(inout_shape, tuple):
+    inout_shape = (inout_shape,)
 
   module, out_shape, unwrap_output_tuple, launch_ctx = (
       _lower_as_gpu_kernel(
-          body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          thread_semantics, module_name, kernel_name, prof_spec
+          body, grid, cluster, block, in_shape, out_shape, inout_shape,
+          smem_scratch_shape, thread_semantics, module_name, kernel_name,
+          prof_spec
       )
   )
 
@@ -711,7 +734,7 @@ def as_gpu_kernel(
   if launch_ctx.is_device_collective and not supports_cross_device_collectives():
     raise RuntimeError("Kernel is a cross-device collective but no support is available.")
 
-  expected_arg_tys, expected_arg_treedef = jax.tree.flatten(in_shape)
+  expected_arg_tys, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
   def _check_args(*args):
     arg_treedef = jax.tree.structure(args)
     if arg_treedef != expected_arg_treedef:
@@ -735,7 +758,7 @@ def as_gpu_kernel(
         )
 
   def bind(*args) -> Any:
-    return mosaic_gpu_p.bind(*args, module=module, out_types=out_shape)
+    return mosaic_gpu_p.bind(*args, module=module, out_types=out_shape, inout_types=inout_shape)
 
   if prof_spec is not None:
     @jax.jit

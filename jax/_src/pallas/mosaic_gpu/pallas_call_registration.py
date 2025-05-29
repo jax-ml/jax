@@ -105,6 +105,7 @@ def pallas_call_lowering(
       *args, *scratch_args,
       module=module,
       out_types=lowering_result.new_out_shapes,
+      inout_types=(),
       input_output_aliases=input_output_aliases,
       use_custom_barrier=False, # False until we add get_barrier_semaphore() feature
   )
