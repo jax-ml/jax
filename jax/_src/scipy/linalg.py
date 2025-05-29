@@ -1834,8 +1834,8 @@ def _sqrtm(A: ArrayLike) -> Array:
 def sqrtm(A: ArrayLike, blocksize: int = 1) -> Array:
   """Compute the matrix square root
 
-  Only implemented on CPU. 
-  (Due to dependency on Schur Decomposition which is not yet supported on GPU.)
+  This function is implemented using :func:`scipy.linalg.sqrtm`, which is only
+  supported on CPU. 
 
   JAX implementation of :func:`scipy.linalg.sqrtm`.
 
