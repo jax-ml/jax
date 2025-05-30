@@ -2128,7 +2128,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cpu", "gpu")
   def test_solve_sylvester(self, shape, dtype):
 
-    tol = {np.float32: 1e-1, np.float64: 1e-5, np.complex64: 1e-1, np.complex128: 1e-5}
+    tol = {np.float32: 1e-5, np.complex64: 1e-5}
 
     def args_maker():
       rng = jtu.rand_default(self.rng())
