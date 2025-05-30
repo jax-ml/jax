@@ -298,7 +298,9 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
     vB, vS, vN, vH = value.shape
 
   check_eq(qB, kB, vB, "QKV batch")
-  check_eq(qH, kH, vH, "QKV dim_per_head")
+  #check_eq(qH, kH, vH, "QKV dim_per_head")
+  if qH != kH:
+    raise ValueError(f"QK must have same head dim, got {qH} vs {kH}")
   if kN != vN:
     raise ValueError(f"KV must have same number of heads, got {kN} vs {vN}")
   if kS != vS:
@@ -541,11 +543,15 @@ def _dot_product_attention_fwd_abstract(
   query_dtype = dtypes.canonicalize_dtype(query.dtype)
   if layout == AttentionLayout.BNTH.value:
     B, N, T, _ = query.shape
-    _, _, S, _ = key.shape
+    #_, _, S, _ = key.shape
+    _, _, S, H = value.shape
+    output_shape = (B, N, T, H)
   else:
     B, T, N, _ = query.shape
-    _, S, _, _ = key.shape
-  output_shape = query.shape
+    #_, S, _, _ = key.shape
+    _, S, _, H = value.shape
+    output_shape = (B, T, N, H)
+  #output_shape = query.shape
 
   max_seg_per_batch = get_max_seg_per_batch(q_offsets)
   softmax_stat_shape = (B * max_seg_per_batch, N, T)
@@ -605,22 +611,29 @@ def _dot_product_attention_fwd_cuda_lowering(
     layout, sliding_window_length, is_training):
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
-  key_type = ir.RankedTensorType(key.type)
-  key_shape = key_type.shape
+  #key_type = ir.RankedTensorType(key.type)
+  #key_shape = key_type.shape
+  value_type = ir.RankedTensorType(value.type)
+  value_shape = value_type.shape
 
   if layout == AttentionLayout.BNTH.value:
-    B, N, T, H = query_shape
-    _, _, S, _ = key_shape
+    #B, N, T, H = query_shape
+    #_, _, S, _ = key_shape
+    B, N, T, qk_H = query_shape
+    _, _, S, v_H = value_shape
     output_layout = (3, 2, 1, 0)
     output_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
   else:
-    B, T, N, H = query_shape
-    _, S, _, _ = key_shape
+    #B, T, N, H = query_shape
+    #_, S, _, _ = key_shape
+    B, T, N, qk_H = query_shape
+    _, S, _, v_H = value_shape
     output_layout = (3, 1, 2, 0)
     output_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
 
   max_seg_per_batch = get_max_seg_per_batch(ir.RankedTensorType(q_offsets.type))
-  output_shape = (B, N, T, H)
+  #output_shape = (B, N, T, H)
+  output_shape = (B, N, T, v_H)
   softmax_stat_shape = (B * max_seg_per_batch, N, T)
   workspace_shape = (0,)
   workspace_type = ir.IntegerType.get_unsigned(8)
@@ -682,26 +695,34 @@ def _dot_product_attention_bwd_cuda_lowering(
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
   key_type = ir.RankedTensorType(key.type)
-  key_shape = key_type.shape
+  #key_shape = key_type.shape
   value_type = ir.RankedTensorType(value.type)
+  value_shape = value_type.shape
 
   if layout == AttentionLayout.BNTH.value:
-    B, q_N, T, H = query_shape
-    _, k_N, S, _ = key_shape
+    #B, q_N, T, H = query_shape
+    #_, k_N, S, _ = key_shape
+    B, q_N, T, qk_H = query_shape
+    _, v_N, S, v_H = value_shape
     grad_layout = (3, 2, 1, 0)
     grad_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
   else:
-    B, T, q_N, H = query_shape
-    _, S, k_N, _ = key_shape
+    #B, T, q_N, H = query_shape
+    #_, S, k_N, _ = key_shape
+    B, T, q_N, qk_H = query_shape
+    _, S, v_N, v_H = value_shape
     grad_layout = (3, 1, 2, 0)
     grad_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
 
   workspace_shape = (0,)
   workspace_type = ir.IntegerType.get_unsigned(8)
 
-  grad_query_shape = (B, q_N, T, H)
-  grad_key_shape = (B, k_N, S, H)
-  grad_value_shape = (B, k_N, S, H)
+  #grad_query_shape = (B, q_N, T, H)
+  #grad_key_shape = (B, k_N, S, H)
+  #grad_value_shape = (B, k_N, S, H)
+  grad_query_shape = (B, q_N, T, qk_H)
+  grad_key_shape = (B, v_N, S, qk_H)
+  grad_value_shape = (B, v_N, S, v_H)
 
   has_bias, has_dbias = variadic_args
   max_seg_per_batch = get_max_seg_per_batch(ir.RankedTensorType(q_offsets.type))
