@@ -61,9 +61,6 @@ if os.environ.get("CUDA_ROOT") is None:
 else:
   CUDA_ROOT = os.environ["CUDA_ROOT"]
 
-PTXAS_PATH = os.path.join(CUDA_ROOT, "bin/ptxas")
-NVDISASM_PATH = os.path.join(CUDA_ROOT, "bin/nvdisasm")
-
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
 FWD_COMPAT_IR_VERSION = 1
 
