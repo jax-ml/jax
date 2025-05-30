@@ -207,6 +207,28 @@ class ShardMapTest(jtu.JaxTestCase):
     for i, sums in enumerate(np.split(sum_of_odd_columns, 4, 0)):
       self.assertAllClose(np.squeeze(c.addressable_data(2 * i + 1), -1), sums)
 
+  @jtu.run_on_devices("gpu")
+  def test_psend_precv(self):
+    mesh = jtu.create_mesh((8,), 'x')
+    a = jax.device_put(
+        jnp.arange(8 * 8).reshape((8, 8)),
+        jax.sharding.NamedSharding(mesh, P('x', None)))
+
+    @jax.jit
+    @partial(
+        shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
+    )
+    def fwd(a):
+      axis_size = lax.axis_size('x')
+      perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
+      token = lax.psend(a, 'x', perm=perm)
+      data = lax.precv(token, out_shape=jax.ShapeDtypeStruct(a.shape, a.dtype),
+                       axis_name='x', perm=perm)
+      return data
+
+    c = fwd(a)
+    self.assertAllClose(c[1, :], a[0, :])
+
   def test_collective_permute(self):
     mesh = jtu.create_mesh((8,), 'x')
     a = jax.device_put(
@@ -247,6 +269,54 @@ class ShardMapTest(jtu.JaxTestCase):
       return (
           lax.ppermute(a, ('x', 'y'), perm=xy_perm),
           lax.ppermute(a, ('y', 'z'), perm=yz_perm),
+      )
+
+    c, d = fwd(a)
+    for i in range(8):
+      self.assertAllClose(
+          a.addressable_data(i), c.addressable_data((i + 2) % 8)
+      )
+      self.assertAllClose(
+          a.addressable_data(i), d.addressable_data(4 * (i // 4) + (i + 1) % 4)
+      )
+
+  @jtu.run_on_devices("gpu")
+  def test_psend_precv_with_multiple_axis_names(self):
+    mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
+    a = jax.device_put(
+        jnp.arange(8 * 8).reshape((4, 16)),
+        jax.sharding.NamedSharding(mesh, P('x', ('y', 'z'))),
+    )
+
+    @jax.jit
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=(P('x', ('y', 'z')),),
+        out_specs=P('x', ('y', 'z')),
+    )
+    def fwd(a):
+      xy_axis_size = lax.axis_size(('x', 'y'))
+      yz_axis_size = lax.axis_size(('y', 'z'))
+      xy_perm = [(j, (j + 1) % xy_axis_size) for j in range(xy_axis_size)]
+      yz_perm = [(j, (j + 1) % yz_axis_size) for j in range(yz_axis_size)]
+      xy_token = lax.psend(a, ('x', 'y'), perm=xy_perm)
+      xy_data = lax.precv(
+          xy_token,
+          out_shape=jax.ShapeDtypeStruct(a.shape, a.dtype),
+          axis_name=('x', 'y'),
+          perm=xy_perm,
+      )
+      yz_token = lax.psend(a, ('y', 'z'), perm=yz_perm)
+      yz_data = lax.precv(
+          yz_token,
+          out_shape=jax.ShapeDtypeStruct(a.shape, a.dtype),
+          axis_name=('y', 'z'),
+          perm=yz_perm,
+      )
+      return (
+          xy_data,
+          yz_data,
       )
 
     c, d = fwd(a)
