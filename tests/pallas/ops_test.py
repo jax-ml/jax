@@ -1822,30 +1822,49 @@ class OpsTest(PallasBaseTest):
         np.testing.assert_allclose(out[oi], x[ii])
         np.testing.assert_allclose(out[oi + 1 :], jnp.zeros_like(out[oi + 1 :]))
 
-  @parameterized.parameters(
-      ((), (2,), ()),
-      ((1,), (2,), (0,)),
-      ((1, 1), (2, 2), (0, 1)),
-      ((), (2, 2), ()),
+  @parameterized.product(
+      shape_spec=[
+          ((), (2,), ()),
+          ((1,), (2,), (0,)),
+          ((1, 128), (8, 128), (0, 1)),  # row broadcasting
+          ((), (2, 2), ()),
+      ],
+      dtype=[jnp.int32, jnp.int16, jnp.int8, jnp.bool_],
   )
-  def test_broadcast_in_dim(self, in_shape, out_shape, dims):
+  def test_broadcast_in_dim(self, shape_spec, dtype):
     self.skip_if_mosaic_gpu()
 
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
+    in_shape, out_shape, dims = shape_spec
     if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
+      if not in_shape:
+        self.skipTest(
+            "The Pallas TPU lowering currently supports only blocks of rank"
+            " >= 1"
+        )
+      if dtype is jnp.bool_ and not jtu.if_cloud_tpu_at_least(2025, 6, 5):
+        self.skipTest("Requires libtpu built after 2025-06-05")
+      if (
+          len(in_shape) == 1
+          and len(out_shape) == 1
+          and dtype not in {jnp.int32, jnp.bool_}
+      ):
+        self.skipTest("Unsupported tiling")
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
     )
     def f(x_ref, o_ref):
       x = x_ref[...]
       o_ref[...] = jax.lax.broadcast_in_dim(x, out_shape, dims)
 
-    x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(in_shape)
+    x = (
+        jnp.arange(math.prod(in_shape), dtype=jnp.int32)
+        .reshape(in_shape)
+        .astype(dtype)
+    )
     expected = jax.lax.broadcast_in_dim(x, out_shape, dims)
-    np.testing.assert_allclose(f(x), expected)
+    np.testing.assert_array_equal(f(x), expected)
 
   @parameterized.product(
       lhs_and_rhs_shape=[
