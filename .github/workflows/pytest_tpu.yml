@@ -22,32 +22,26 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        required: true
         default: "linux-x86-ct5lp-224-8tpu"
       cores:
         description: "How many TPU cores should the test use?"
         type: string
-        required: true
         default: "8"
       tpu-type:
         description: "Which TPU type is used for testing?"
         type: string
-        required: true
         default: "v5e-8"
       python:
         description: "Which Python version should be used for testing?"
         type: string
-        required: true
         default: "3.12"
       run-full-tpu-test-suite:
         description: "Should the full TPU test suite be run?"
         type: string
-        required: false
         default: "0"
       libtpu-version-type:
         description: "Which libtpu version should be used for testing?"
         type: string
-        required: false
         # Choices are:
         # - "nightly": Use the nightly libtpu wheel.
         # - "pypi_latest": Use the latest libtpu wheel from PyPI.
@@ -55,20 +49,17 @@ on:
         default: "nightly"
       download-jax-only-from-gcs:
         description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
-        required: false
         default: '0'
         type: string
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
-        required: true
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
-        required: false
         default: 'no'
-
+permissions: {}
 jobs:
   run-tests:
     defaults:
