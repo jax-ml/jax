@@ -268,6 +268,34 @@ class MutableArrayTest(jtu.JaxTestCase):
     # test read/write
     key[...] = jax.random.fold_in(key[...], 1) # don't crash
 
+  def test_scan_grad_doesnt_hoist_mutable_stuff(self):
+    x_ref = core.mutable_array(0)
+
+    def f(x):
+      def body(c, _):
+        x_ref[...] += 1
+        return c, ()
+      x, () = jax.lax.scan(body, x, (), length=3)
+      return x
+
+    jax.grad(f)(1.0)
+    self.assertAllClose(x_ref[...], 3, check_dtypes=False)
+
+  def test_scan_grad_doesnt_hoist_mutable_stuff2(self):
+    x_ref = core.mutable_array(0)
+    const = jnp.arange(3)
+    const2 = jnp.zeros(())
+
+    def f(x):
+      def body(c, _):
+        x_ref[...] += const.sum()
+        return c + const2, ()
+      x, () = jax.lax.scan(body, x, (), length=4)
+      return x
+
+    jax.grad(f)(1.0)
+    self.assertAllClose(x_ref[...], 12, check_dtypes=False)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
