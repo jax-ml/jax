@@ -595,7 +595,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
     out_layout = jax.jit(lambda x: x.T, out_shardings=Format(DLL.AUTO)).lower(
         arr).compile().output_layouts
-    self.assertEqual(arr.layout.device_local_layout.major_to_minor,
+    self.assertEqual(arr.format.device_local_layout.major_to_minor,
                      out_layout.device_local_layout.major_to_minor[::-1])
 
     ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
@@ -611,7 +611,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
     out, = serialization.run_deserialization([out_layout], tspecs)
 
-    self.assertEqual(out.layout, out_layout)
+    self.assertEqual(out.format, out_layout)
     self.assertIsInstance(out, array.ArrayImpl)
     self.assertArraysEqual(out, np_inp)
     for s in out.addressable_shards:

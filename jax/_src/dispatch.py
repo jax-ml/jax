@@ -497,7 +497,7 @@ def _device_put_impl(
   if isinstance(device, Format):
     l = device
     dll = l.device_local_layout
-    x_dll = x.layout.device_local_layout if hasattr(x, 'layout') else None
+    x_dll = x.format.device_local_layout if hasattr(x, 'format') else None
     if dll is None and l.sharding is None:
       return _device_put_sharding_impl(x, aval, l.sharding, copy)
     if (not isinstance(l.sharding, Sharding) or
