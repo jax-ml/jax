@@ -225,14 +225,14 @@ Notebook](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 
 ### Supported platforms
 
-|            | Linux x86_64 | Linux aarch64 | Mac x86_64   | Mac aarch64  | Windows x86_64 | Windows WSL2 x86_64 |
-|------------|--------------|---------------|--------------|--------------|----------------|---------------------|
-| CPU        | yes          | yes           | yes          | yes          | yes            | yes                 |
-| NVIDIA GPU | yes          | yes           | no           | n/a          | no             | experimental        |
-| Google TPU | yes          | n/a           | n/a          | n/a          | n/a            | n/a                 |
-| AMD GPU    | yes          | no            | experimental | n/a          | no             | no                  |
-| Apple GPU  | n/a          | no            | n/a          | experimental | n/a            | n/a                 |
-| Intel GPU  | experimental | n/a           | n/a          | n/a          | no             | no                  |
+|            | Linux x86_64 | Linux aarch64 | Mac aarch64  | Windows x86_64 | Windows WSL2 x86_64 |
+|------------|--------------|---------------|--------------|----------------|---------------------|
+| CPU        | yes          | yes           | yes          | yes            | yes                 |
+| NVIDIA GPU | yes          | yes           | n/a          | no             | experimental        |
+| Google TPU | yes          | n/a           | n/a          | n/a            | n/a                 |
+| AMD GPU    | yes          | no            | n/a          | no             | no                  |
+| Apple GPU  | n/a          | no            | experimental | n/a            | n/a                 |
+| Intel GPU  | experimental | n/a           | n/a          | no             | no                  |
 
 
 ### Instructions
