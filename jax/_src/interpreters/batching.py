@@ -585,14 +585,21 @@ class BatchTrace(Trace):
     fun, out_dims1 = batch_subtrace(fun, self.tag, self.axis_data, in_dims)
     fwd, out_dims2 = batch_subtrace(fwd, self.tag, self.axis_data, fwd_in_dims)
 
-    bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, out_dims2, in_dims)
+    def bwd_in_dims():
+      _, _, input_fwds = out_trees()
+      pruned_dims = iter(out_dims2())
+      full_dims = [next(pruned_dims) if f is None else in_dims[f] for f in input_fwds]
+      return [*full_dims, *pruned_dims]
+
+    bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, bwd_in_dims, in_dims)
     out_vals = prim.bind_with_trace(self.parent_trace,
                                     (fun, fwd, bwd) + tuple(in_vals),
                                     dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
-      _, res_tree = out_trees()
-      _, out_dims = split_list(out_dims, [res_tree.num_leaves])
+      _, res_tree, input_fwds = out_trees()
+      num_res = res_tree.num_leaves - sum(f is not None for f in input_fwds)
+      _, out_dims = split_list(out_dims, [num_res])
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
 

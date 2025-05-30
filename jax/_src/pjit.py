@@ -1418,6 +1418,8 @@ def _create_pjit_jaxpr(
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
     check_key_reuse_jaxpr(jaxpr)
 
+  # TODO(mattjj,yashkatariya): if we take the 'true' path then we *must* fall
+  # off the C++ dispatch fast path for correctness. Ensure that happens.
   if any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in consts):
     closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
     final_consts = consts
@@ -2359,32 +2361,32 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
 
   known_ins = tuple(pv.is_known() for pv in in_pvals)
   unknown_ins = tuple(not k for k in known_ins)
-  known_jaxpr, unknown_jaxpr, unknown_outs, res_avals = \
-      pe.partial_eval_jaxpr_nounits(jaxpr, unknown_ins, instantiate=False)
+  known_jaxpr, unknown_jaxpr, unknown_outs, res_out_avals, in_fwd_res = \
+      pe.partial_eval_jaxpr_nounits_fwd(jaxpr, unknown_ins, instantiate=False)
   unknown_outs = tuple(unknown_outs)  # type: ignore[assignment]
   known_outs = tuple(not uk for uk in unknown_outs)
-  num_residuals = len(res_avals)
-  res_shardings = (UNSPECIFIED,) * num_residuals
-  res_layouts = (None,) * num_residuals
 
+  # out_shardings and out_layouts for residual values output by known_jaxpr
   def keep_where(l, should_keep):
     return tuple(x for x, keep in zip(l, should_keep) if keep)
 
-  known_out_shardings = keep_where(out_shardings, known_outs) + res_shardings
-  known_out_layouts = keep_where(out_layouts, known_outs) + res_layouts
+  known_out_shardings = (keep_where(out_shardings, known_outs)
+                         + (UNSPECIFIED,) * len(res_out_avals))
+  known_out_layouts = (keep_where(out_layouts, known_outs)
+                       + (None,) * len(res_out_avals))
 
   # Input-to-output forwarding: compute which outputs are just forwarded inputs.
-  num_out_primals = len(known_jaxpr.out_avals) - num_residuals
+  num_out_primals = len(known_jaxpr.out_avals) - len(res_out_avals)
   in_fwd: list[int | None] = pe._jaxpr_forwarding(known_jaxpr.jaxpr)
-  # Only forward primal outputs when corresponding out_sharding is UNSPECIFIED.
-  in_fwd_primal, in_fwd_res = split_list(in_fwd, [num_out_primals])
+  in_fwd_primal, in_fwd_res_ = split_list(in_fwd, [num_out_primals])
+  assert all(f is None for f in in_fwd_res_)
   in_fwd = [
       fwd if isinstance(os, UnspecifiedValue) and ol is None else None
       for os, ol, fwd in zip(
           keep_where(out_shardings, known_outs),
           keep_where(out_layouts, known_outs), in_fwd_primal)
-  ] + in_fwd_res
-  del in_fwd_primal, in_fwd_res
+  ] + in_fwd_res_
+  del in_fwd_primal, in_fwd_res_
   # Prune jaxpr outputs and out_shardings by removing the input-forwards.
   keep = [f is None for f in in_fwd]
   known_jaxpr = pe.prune_closed_jaxpr_outputs(known_jaxpr, keep)
@@ -2427,7 +2429,11 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
   all_known_outs = subs_list(in_fwd, known_inputs, all_known_outs)
 
   known_out_vals, residual_vals = \
-      split_list(all_known_outs, [len(all_known_outs) - num_residuals])
+      split_list(all_known_outs, [len(all_known_outs) - len(res_out_avals)])
+  residual_vals_ = iter(residual_vals)
+  residual_vals = [next(residual_vals_) if f is None
+                   else [*jaxpr.consts, *known_inputs][f] for f in in_fwd_res]
+  assert next(residual_vals_, None) is None
   residual_tracers = map(trace.new_instantiated_const, residual_vals)
 
   # The convention of partial_eval_jaxpr_nounits is to place residual binders at
@@ -2435,16 +2441,22 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
   # jaxpr equation built below and the pjit transpose rule assume a
   # residual-inputs-last convention.
   unknown_jaxpr = pe.move_binders_to_back(
-      unknown_jaxpr, [True] * num_residuals + [False] * sum(unknown_ins))
-  # Prepare unknown tracers
+      unknown_jaxpr, [True] * len(residual_vals) + [False] * sum(unknown_ins))
+
+  # Set up staged-out 'unknown' eqn
+  unknown_in_shardings = (keep_where(in_shardings, unknown_ins)
+                          + (UNSPECIFIED,) * len(residual_tracers))
+  unknown_in_layouts = (keep_where(in_layouts, unknown_ins)
+                        + (None,) * len(residual_tracers))
+  unknown_donated_invars = (keep_where(donated_invars, unknown_ins)
+                            + (False,) * len(residual_tracers))
   unknown_params = dict(
       jaxpr=unknown_jaxpr,
-      in_shardings=(keep_where(in_shardings, unknown_ins) + res_shardings),
+      in_shardings=unknown_in_shardings,
+      in_layouts=unknown_in_layouts,
       out_shardings=keep_where(out_shardings, unknown_outs),
-      in_layouts=(keep_where(in_layouts, unknown_ins) + res_layouts),
       out_layouts=keep_where(out_layouts, unknown_outs),
-      donated_invars=(keep_where(donated_invars, unknown_ins) +
-                      (False,) * num_residuals),
+      donated_invars=unknown_donated_invars,
       ctx_mesh=ctx_mesh,
       name=name,
       keep_unused=keep_unused,
@@ -2536,8 +2548,7 @@ def _pjit_transpose(cts_in, *primals_in,
   def prune_type(ty, xs, maybe_zeros):
     return tuple(x for x, mz in zip(xs, maybe_zeros) if type(mz) is not ty)
 
-  body = lu.wrap_init(ad.closed_backward_pass,
-                      debug_info=jaxpr.jaxpr._debug_info)
+  body = lu.wrap_init(ad.closed_backward_pass, debug_info=jaxpr.jaxpr._debug_info)
   body = lu.hashable_partial(body, jaxpr, False)
   primals_and_nz_cts_in, in_treedef = tree_flatten((primals_in, cts_in))
   body, cts_out_treedef_thunk = flatten_fun_nokwargs(body, in_treedef)
