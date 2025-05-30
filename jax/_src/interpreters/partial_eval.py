@@ -997,74 +997,69 @@ def partial_eval_jaxpr_nounits(
   passed to jaxpr_unknown (as leading inputs).
   """
   instantiate = tuple(instantiate) if isinstance(instantiate, list) else instantiate
-  return _partial_eval_jaxpr_nounits(jaxpr, tuple(unknowns), instantiate)
+  return _partial_eval_jaxpr_nounits(jaxpr, tuple(unknowns), instantiate, False)[:-1]
+
+def partial_eval_jaxpr_nounits_fwd(
+    jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
+    instantiate: bool | Sequence[bool],
+) -> tuple[ClosedJaxpr, ClosedJaxpr, list[bool], list[AbstractValue], list[int | None]]:
+  instantiate = tuple(instantiate) if isinstance(instantiate, list) else instantiate
+  return _partial_eval_jaxpr_nounits(jaxpr, tuple(unknowns), instantiate, True)
 
 @weakref_lru_cache
-def _partial_eval_jaxpr_nounits(jaxpr: ClosedJaxpr,
-                                in_unknowns: Sequence[bool],
-                                instantiate: bool | Sequence[bool]):
-  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr),
-                   debug_info=jaxpr.jaxpr.debug_info)
+def _partial_eval_jaxpr_nounits(
+    jaxpr: ClosedJaxpr, in_unknowns: Sequence[bool],
+    instantiate: bool | Sequence[bool], fwd: bool):
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=jaxpr.jaxpr.debug_info)
 
   cell = []
   def fun(*known_vals_in):
-    known_vals_in = iter(known_vals_in)
+    known_vals_in_ = iter(known_vals_in)
     unknown_avals = (a for a, uk in zip(jaxpr.in_avals, in_unknowns) if uk)
     in_pvals = [PartialVal.unknown(next(unknown_avals)) if uk
-                else PartialVal.known(next(known_vals_in)) for uk in in_unknowns]
-    assert next(known_vals_in, None) is next(unknown_avals, None) is None
-    jaxpr_unknown_, out_pvals, residuals = trace_to_jaxpr_nounits(
-        f, in_pvals, instantiate=instantiate)
+                else PartialVal.known(next(known_vals_in_)) for uk in in_unknowns]
+    assert next(known_vals_in_, None) is next(unknown_avals, None) is None
+    jaxpr_unknown_, (fwds, out_pvals, residuals, ()) = trace_to_subjaxpr_nounits_fwd(
+        f, TraceTag(), jaxpr.jaxpr.debug_info, instantiate).call_wrapped(in_pvals)
     jaxpr_unknown = convert_constvars_jaxpr(jaxpr_unknown_)
     out_unknowns = [not pval.is_known() for pval in out_pvals]
+    if not fwd:
+      residuals_ = iter(residuals)
+      residuals = [next(residuals_) if f is None else known_vals_in[f]
+                   for f in fwds]
+      assert next(residuals_, None) is None
+      fwds = [None] * len(fwds)
+    else:
+      fwds, residuals = _include_consts_in_fwds(jaxpr.consts, fwds, residuals)
     res_avals = [core.get_aval(r) for r in residuals]
-    cell.append((out_unknowns, jaxpr_unknown, res_avals))
+    cell.append((out_unknowns, jaxpr_unknown, res_avals, fwds))
     known_vals_out = [pval.get_known() for pval in out_pvals if pval.is_known()]
     return [*known_vals_out, *residuals]
 
   known_avals = [a for a, uk in zip(jaxpr.in_aval_qdds, in_unknowns) if not uk]
   jaxpr_known, _, consts_known, () = trace_to_jaxpr_dynamic(
       lu.wrap_init(fun, debug_info=f.debug_info), known_avals)
-  (out_unknowns, jaxpr_unknown, res_avals), = cell  # pytype: disable=bad-unpacking
+  (out_unknowns, jaxpr_unknown, res_avals, fwds), = cell  # pytype: disable=bad-unpacking
 
-  # check jaxpr_known and jaxpr_unknown in isolation
-  # TODO(mattjj): enable weak type checking here
   if config.enable_checks.value:
     core.check_jaxpr(jaxpr_known)
     core.check_jaxpr(jaxpr_unknown)
 
-  def check(first, second):
-    for f, s in zip(first, second):
-      if (not isinstance(f, core.ShapedArray) and
-          not isinstance(s, core.ShapedArray)):
-        assert f == s
-      elif f.sharding.mesh.empty or s.sharding.mesh.empty:
-        assert (f.shape, f.dtype) == (s.shape, s.dtype)
-      else:
-        assert f == s, (f, s)
-
-  # check jaxpr_known has input type corresponding to known inputs of jaxpr
-  assert ([v.aval for v in jaxpr_known.invars] ==
-          [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if not uk])
-  # check jaxpr_known has out type corresponding to known outs of jaxpr plus res
-  # Change this to `assert ... == ...` and remove the check function.
-  # See https://github.com/jax-ml/jax/issues/26474
-  check([v.aval.strip_weak_type() for v in jaxpr_known.outvars],
-        [a.strip_weak_type() for a, uk in zip(jaxpr.out_avals, out_unknowns)
-         if not uk] + [a.strip_weak_type() for a in res_avals])
-  # check jaxpr_unknown has input type corresponding to res plus unknown inputs
-  assert ([v.aval.strip_weak_type() for v in jaxpr_unknown.invars] ==
-          [a.strip_weak_type() for a in res_avals] +
-          [a.strip_weak_type() for a, uk in zip(jaxpr.in_avals, in_unknowns)
-           if uk])
-  # check jaxpr_unknown has output type corresponding to unknown outputs
-  check([v.aval.strip_weak_type() for v in jaxpr_unknown.outvars],
-        [a.strip_weak_type() for a, uk in zip(jaxpr.out_avals, out_unknowns)
-         if uk])
-
   closed_jaxpr_known = ClosedJaxpr(jaxpr_known, consts_known)
   closed_jaxpr_unknown = ClosedJaxpr(jaxpr_unknown, ())
-  return closed_jaxpr_known, closed_jaxpr_unknown, out_unknowns, res_avals
+  return closed_jaxpr_known, closed_jaxpr_unknown, out_unknowns, res_avals, fwds
+
+def _include_consts_in_fwds(consts, fwds, residuals):
+  if all(f is None for f in fwds):
+    return fwds, residuals
+  dummys = [object() for _ in range(max(f for f in fwds if f is not None) + 1)]
+  residuals_ = iter(residuals)
+  residuals = [next(residuals_) if f is None else dummys[f] for f in fwds]
+  assert next(residuals_, None) is None
+  idxs = {id(x): i for i, x in enumerate((*consts, *dummys))}
+  fwds = [idxs.get(id(r)) for r in residuals]
+  residuals = [r for r in residuals if id(r) not in idxs]
+  return fwds, residuals
 
 
 def partial_eval_jaxpr_custom(
@@ -2161,13 +2156,14 @@ class DynamicJaxprTrace(core.Trace):
   def process_custom_vjp_call(self, prim: core.Primitive,
                               fun: lu.WrappedFun,
                               fwd: lu.WrappedFun, bwd: lu.WrappedFun, tracers,
-                              out_trees: Callable[[], Sequence[PyTreeDef]],
+                              out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
                               symbolic_zeros: bool):
     source_info = source_info_util.current()
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
     tracers = map(to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     fun_jaxpr, out_avals, consts, _ = trace_to_jaxpr_dynamic(fun, in_avals)
+    num_consts = len(consts)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
     @partial(lu.wrap_init, debug_info=fwd.debug_info)
@@ -2179,6 +2175,11 @@ class DynamicJaxprTrace(core.Trace):
       if attrs: raise NotImplementedError
       return jaxpr, consts
 
+    def out_trees_():
+      out_tree, res_tree, input_fwds = out_trees()
+      input_fwds = [f if f is None else f + num_consts for f in input_fwds]
+      return out_tree, res_tree, input_fwds
+
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
     constvars = map(self.getvar, map(to_jaxpr_tracer, consts))
@@ -2186,8 +2187,8 @@ class DynamicJaxprTrace(core.Trace):
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_fun_jaxpr,
                              fwd_jaxpr_thunk=fwd_jaxpr_from_zeros,
-                             num_consts=len(consts),
-                             bwd=bwd, out_trees=out_trees,
+                             num_consts=num_consts,
+                             bwd=bwd, out_trees=out_trees_,
                              symbolic_zeros=symbolic_zeros),
                         fun_jaxpr.effects,
                         source_info)
