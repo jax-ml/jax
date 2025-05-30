@@ -311,9 +311,9 @@ py_library_providing_imports_info(
         "_src/error_check.py",
         "_src/ffi.py",
         "_src/flatten_util.py",
-        "_src/interpreters/__init__.py",  # TODO(vanderplas): remove this and depend on :api instead
+        "_src/interpreters/__init__.py",
         "_src/interpreters/pxla.py",  # TODO(vanderplas): remove this and depend on :api instead
-        "_src/pjit.py",
+        "_src/pjit.py",  # TODO(vanderplas): remove this and depend on :api instead
         "_src/prng.py",
         "_src/public_test_util.py",
         "_src/random.py",
