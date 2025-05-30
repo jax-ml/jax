@@ -590,7 +590,7 @@ def _infer_params_impl(
     in_type = in_avals = tuple(core.shaped_abstractify(x) for x in explicit_args)  # type: ignore
   else:
     in_type = in_avals  # type: ignore
-    in_type = tuple(core.TypeChange(a, x.type_state(), None) if a.mutable  # type: ignore
+    in_type = tuple(core.AvalQDD(a, core.cur_qdd(x)) if a.has_qdd  # type: ignore
                     else a for a, x in zip(in_type, explicit_args))
   assert in_avals is not None
 
@@ -1416,7 +1416,7 @@ def _create_pjit_jaxpr(
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
     check_key_reuse_jaxpr(jaxpr)
 
-  if any(isinstance(c, core.Tracer) or core.typeof(c).mutable for c in consts):
+  if any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in consts):
     closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
     final_consts = consts
   else:
@@ -1562,25 +1562,22 @@ def _is_high(jaxpr, **_) -> bool:
 pjit_p.is_high = _is_high  # type: ignore
 
 def _to_lojax(*hi_args, jaxpr, **params):
-  ienv, fenv = jaxpr.jaxpr.initial_typechange_env, jaxpr.jaxpr.final_typechange_env
-
   # convert closed-over boxes to explicit args
   jaxpr, closed_over_himutables = pe.convert_const_himutables(jaxpr)
   hi_args = [*closed_over_himutables, *hi_args]
   params = _converted_mutables_add_params(len(closed_over_himutables), **params)
 
+
   # expand pjit params that must match number of lo inputs/outputs
-  lo_nums_in = [len(v.aval.lo_ty() if not v.aval.mutable
-                    else v.aval.lo_ty_(ienv[v]))
-                for v in jaxpr.jaxpr.invars]
+  lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
   lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
-  lo_muts_out = sum(len(m.leaf_avals) for m in fenv.values())  # TODO hardcoded
+  lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds if aval.has_qdd)
   params = _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out, **params)
 
   # collect lo input values
-  lo_args = [lo_val for v, x in zip(jaxpr.jaxpr.invars, hi_args)
-             for lo_val in (v.aval.read_loval(ienv[v], x) if v.aval.mutable
-                            else v.aval.lower_val(x))]
+  lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
+             for lo_val in (aval.read_loval(x) if aval.has_qdd
+                            else aval.lower_val(x))]
 
   # lower the jaxpr and bind it using lo input values
   lo_jaxpr = pe.lower_jaxpr(jaxpr)
@@ -1590,9 +1587,11 @@ def _to_lojax(*hi_args, jaxpr, **params):
   # collect and apply mutations
   out_mut_ = iter(out_mut)
   in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
-  for var, ty in jaxpr.jaxpr.final_typechange_env.items():
-    lo_vals = it.islice(out_mut_, len(var.aval.lo_ty_(ty)))
-    var.aval.update_from_loval(ty, hi_args[in_idx[var]], *lo_vals)
+  for v in jaxpr.jaxpr.invars:
+    if v.final_qdd is not None:
+      qdd = v.final_qdd
+      lo_vals = it.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
+      v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)
   assert next(out_mut_, None) is None
 
   # collect output values into hi types
@@ -1611,6 +1610,7 @@ def _converted_mutables_add_params(
   in_layouts = (None,) * n + in_layouts
   return dict(params, donated_invars=donated_invars, in_shardings=in_shardings,
               in_layouts=in_layouts)
+
 
 def _lojax_expand_params(
     nums_in, nums_out, muts_out, *, donated_invars, in_shardings, in_layouts,
@@ -2013,13 +2013,6 @@ def pjit_staging_rule(trace, *args, **params):
         pjit_p, (*args, *consts), new_params)
   else:
     out_tracers = trace.default_process_primitive(pjit_p, args, params)
-
-  trace.frame.is_high = jaxpr.jaxpr.is_high
-  invars = [trace.frame.tracer_to_var[id(t)] for t in it.chain(args, consts)]
-  var_map = dict(zip(jaxpr.jaxpr.invars, invars))
-  final_env = {var_map[v]: ty for v, ty in
-               jaxpr.jaxpr.final_typechange_env.items()}
-  trace.frame.current_typechange_env.update(final_env)
 
   return out_tracers
 pe.custom_staging_rules[pjit_p] = pjit_staging_rule
