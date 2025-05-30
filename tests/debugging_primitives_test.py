@@ -38,6 +38,7 @@ jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(2)
 
 debug_print = debugging.debug_print
+debug_capture = debugging.debug_capture
 
 def _format_multiline(text):
   return textwrap.dedent(text).lstrip()
@@ -150,6 +151,20 @@ class DebugPrintTest(jtu.JaxTestCase):
       f(2)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
+
+  def test_can_stage_out_debug_capture(self):
+    @jax.jit
+    def f(x):
+      debug_capture(lambda: f"x: {x:.2f}")
+
+    with jtu.capture_stdout() as output:
+      f(1.2)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 1.20\n")
+
+    with self.assertRaises(TypeError):
+      # must be FunctionType
+      debug_capture(functools.partial(lambda: None))
 
   def test_can_stage_out_debug_print_with_formatting(self):
     @jax.jit
