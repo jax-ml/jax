@@ -45,6 +45,7 @@ pytype_strict_library(
         ":core",
         ":lowering",
         "//jax",
+        "//jax:config",
         "//jax:core",
         "//jax:mlir",
         "//jax:mosaic_gpu",
