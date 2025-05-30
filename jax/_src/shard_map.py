@@ -1141,7 +1141,8 @@ class ShardMapTrace(core.Trace):
     return map(partial(ShardMapTracer, self), out_vma, out_vals)
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
-                              symbolic_zeros):
+                              symbolic_zeros, in_zeros):
+    assert in_zeros is None
     if symbolic_zeros:
       msg = ("custom_vjp symbolic_zeros support with shard_map is not "
              "implemented; please open an issue at "
