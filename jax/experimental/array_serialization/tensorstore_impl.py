@@ -77,6 +77,11 @@ class _LimitInFlightBytes:
       assert self._available_bytes <= self._max_bytes
       self._cv.notify_all()
 
+def is_tensorstore_spec_leaf(leaf: Any):
+  # TODO(rdyro): think of a better way to detect which leaf is a ts config
+  return leaf is None or (isinstance(leaf, dict)
+                          and ("driver" in leaf or "kvstore" in leaf))
+
 def _prime_factors(x: int) -> list[int]:
   # find prime factors of axis sizes to help efficiently find divisor chunks
   factors = []
@@ -163,6 +168,54 @@ def _get_tensorstore_metadata_cached(
   else:
     raise ValueError(f"Unsupported driver: {driver}")
 
+_divides = lambda x, y: np.all((np.array(x) % np.array(y)) == 0)
+
+def merge_nested_ts_specs(dict1: dict[Any, Any], dict2: dict[Any, Any] | None):
+  """Merge two ts specs, dict2 takes precedence."""
+  if dict2 is None:  # nothing to do
+    return dict1
+  # TODO(rdyro): this is an opinionated merge, we should get user feedback
+  # merge kvstore explicitly
+  kvstore = dict1.get("kvstore", {}) | dict2.get("kvstore", {})
+  return dict1 | dict(dict2, kvstore=kvstore)  # merge with dict2 preferred
+
+def verify_tensorstore_spec(spec: dict[str, Any], arr: jax.Array | None,
+                            path: str | os.PathLike[str], ocdbt: bool,
+                            check_metadata: bool = True) -> None:
+  """Verify the minimum requirements for a tensorstore spec."""
+  if ocdbt:
+    if spec.get("kvstore", {}).get("driver", "") != "ocdbt":
+      raise ValueError(f"Expected ocdbt driver, got {spec=}")
+  if check_metadata:
+    if arr is None:
+      raise ValueError("Array is required for metadata verification.")
+    metadata = spec['metadata']
+    if spec.get("driver", "") == "zarr3":
+      if metadata['data_type'] != jnp.dtype(arr.dtype).name:
+        raise ValueError(f"Provided dtype ({metadata['data_type']=}) doesn't"
+                         f" match ({arr.dtype=})")
+    if 'shape' in metadata:
+      if metadata['shape'] != arr.shape:
+        raise ValueError(f"Provided shape ({metadata['shape']=}) doesn't match"
+                         f" ({arr.shape=})")
+    if hasattr(arr, 'addressable_data'):
+      local_shape = arr.addressable_data(0).shape
+    else:  # np.ndarray
+      local_shape = arr.shape
+    if spec.get("driver", "") == "zarr3":
+      chunk_shape = metadata['chunk_grid']['configuration']['chunk_shape']
+      if not _divides(local_shape, chunk_shape):
+        raise ValueError(f"Provided chunk shape {chunk_shape} does not divide"
+                         f" the local shape of the array {local_shape}")
+  # check path is still the same one we expect
+  if ocdbt:
+    found_path = spec["kvstore"]['base']['path']
+  else:
+    found_path = spec["kvstore"]['path']
+  if str(found_path) != str(path):
+    raise ValueError(f"Provided {path=} does not match the spec path:"
+                     f" {spec['kvstore']}")
+
 def _spec_has_metadata(tree):
   if not isinstance(tree, dict):
     return False
@@ -189,7 +242,7 @@ def _get_kvstore_for_s3(ckpt_path: str):
 
 def get_tensorstore_spec(
     ckpt_path: str | PathLike[str], ocdbt: bool = True,
-    process_num: int | None = None, arr: jax.Array | None = None,
+    process_idx: int | None = None, arr: jax.Array | None = None,
     driver: str = _TS_ARRAY_DRIVER) -> dict[str, Any]:
 
   # Normalize path to exclude trailing '/'. In GCS path case, normpath will
@@ -201,9 +254,9 @@ def get_tensorstore_spec(
   # in cases of multi-process writes, we need to write to a different location
   # for each process and finally created a combined symlink to the final
   # location, tensorstore can do this via ts.KvStore.experimental_copy_range_to
-  if process_num is not None:
+  if process_idx is not None:
     _parent, _name = os.path.split(ckpt_path)
-    ckpt_path = os.path.join(_parent, _PROCESS_DIR_FORMAT.format(process_num),
+    ckpt_path = os.path.join(_parent, _PROCESS_DIR_FORMAT.format(process_idx),
                              _name)
 
   is_gcs_path = ckpt_path.startswith('gs://')
@@ -277,6 +330,21 @@ async def _transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
   # implicitly converts the written data to a numpy array, and would otherwise
   # silently copy host-to-host.
   return np.array(data, copy=False)
+
+async def combine_kvstores(combined_kvstore: dict[str, Any],
+                           kvstores: list[dict[str, Any]],
+                           context: ts.Context | dict[str, Any] = _TS_CONTEXT
+                           ) -> None:
+  """Merge a list of kvstores into a single kvstore. NOT multi-process safe."""
+  combined_fut = ts.KvStore.open(combined_kvstore, context=context)
+  kvstores_futs = [ts.KvStore.open(kvstore, context=context)
+                   for kvstore in kvstores]
+  combined, kvstores = await asyncio.gather(combined_fut,
+                                            asyncio.gather(*kvstores_futs))
+  tx = ts.Transaction()
+  await asyncio.gather(*[kvstore.experimental_copy_range_to(
+      combined.with_transaction(tx)) for kvstore in kvstores])
+  await tx.commit_async()
 
 async def async_serialize(
     arr_inp,
