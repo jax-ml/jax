@@ -295,8 +295,8 @@ py_library_providing_imports_info(
     srcs = [
         "_src/__init__.py",
         "_src/ad_checkpoint.py",
-        "_src/api.py",
-        "_src/array.py",
+        "_src/api.py",  # TODO(vanderplas): remove this and depend on :api instead
+        "_src/array.py",  # TODO(vanderplas): remove this and depend on :api instead
         "_src/blocked_sampler.py",
         "_src/buffer_callback.py",
         "_src/callback.py",
@@ -305,14 +305,14 @@ py_library_providing_imports_info(
         "_src/custom_partitioning.py",
         "_src/custom_partitioning_sharding_rule.py",
         "_src/debugging.py",
-        "_src/dispatch.py",
+        "_src/dispatch.py",  # TODO(vanderplas): remove this and depend on :api instead
         "_src/dlpack.py",
         "_src/earray.py",
         "_src/error_check.py",
         "_src/ffi.py",
         "_src/flatten_util.py",
-        "_src/interpreters/__init__.py",
-        "_src/interpreters/pxla.py",
+        "_src/interpreters/__init__.py",  # TODO(vanderplas): remove this and depend on :api instead
+        "_src/interpreters/pxla.py",  # TODO(vanderplas): remove this and depend on :api instead
         "_src/pjit.py",
         "_src/prng.py",
         "_src/public_test_util.py",
@@ -375,6 +375,7 @@ py_library_providing_imports_info(
         ":abstract_arrays",
         ":ad",
         ":ad_util",
+        # ":api",   # TODO(vanderplas): add this dependency once downstream targets are fixed
         ":api_util",
         ":attrs",
         ":basearray",
@@ -448,6 +449,53 @@ pytype_strict_library(
         ":typing",
         ":util",
     ],
+)
+
+pytype_strict_library(
+    name = "api",
+    srcs = [
+        "_src/api.py",
+        "_src/array.py",
+        "_src/dispatch.py",
+        "_src/interpreters/pxla.py",
+        "_src/pjit.py",
+    ],
+    visibility = [":internal"] + jax_visibility("api"),
+    deps = [
+        ":abstract_arrays",
+        ":ad",
+        ":api_util",
+        ":attrs",
+        ":basearray",
+        ":batching",
+        ":compiler",
+        ":config",
+        ":core",
+        ":deprecations",
+        ":dtypes",
+        ":effects",
+        ":layout",
+        ":mesh",
+        ":mlir",
+        ":monitoring",
+        ":op_shardings",
+        ":partial_eval",
+        ":partition_spec",
+        ":profiler",
+        ":sharding",
+        ":sharding_impls",
+        ":sharding_specs",
+        ":source_info_util",
+        ":stages",
+        ":state_types",
+        ":traceback_util",
+        ":tree_util",
+        ":typing",
+        ":util",
+        ":xla",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
