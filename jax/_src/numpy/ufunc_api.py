@@ -184,7 +184,7 @@ class ufunc:
     return vectorize(self._func)(*args)
 
   @partial(jax.jit, static_argnames=['self', 'axis', 'dtype', 'out', 'keepdims'])
-  def reduce(self, a: ArrayLike, axis: int = 0,
+  def reduce(self, a: ArrayLike, axis: int | None = 0,
              dtype: DTypeLike | None = None,
              out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
              where: ArrayLike | None = None) -> Array:
