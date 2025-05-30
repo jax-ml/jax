@@ -18,6 +18,11 @@ Remember to align the itemized text with the first line of an item within a list
   * {class}`jax.experimental.pallas.triton.TritonCompilerParams` has been
     renamed to {class}`jax.experimental.pallas.triton.CompilerParams`. The
     old name is deprecated and will be removed in a future release.
+  * {class}`jax.experimental.pallas.tpu.TPUCompilerParams`
+    and {class}`jax.experimental.pallas.tpu.TPUMemorySpace` have been
+    renamed to {class}`jax.experimental.pallas.tpu.CompilerParams`
+    and {class}`jax.experimental.pallas.tpu.MemorySpace`. The
+    old names are deprecated and will be removed in a future release.
 
 ## Released with jax 0.6.1
 

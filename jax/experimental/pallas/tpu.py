@@ -23,8 +23,8 @@ from jax._src.pallas.mosaic.core import KernelType as KernelType
 from jax._src.pallas.mosaic.core import PARALLEL as PARALLEL
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
-from jax._src.pallas.mosaic.core import TPUMemorySpace as TPUMemorySpace
-from jax._src.pallas.mosaic.core import TPUCompilerParams as TPUCompilerParams
+from jax._src.pallas.mosaic.core import MemorySpace as MemorySpace
+from jax._src.pallas.mosaic.core import CompilerParams as CompilerParams
 from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
 from jax._src.pallas.mosaic.helpers import core_barrier as core_barrier
 from jax._src.pallas.mosaic.helpers import run_on_first_core as run_on_first_core
@@ -67,8 +67,29 @@ verification = types.SimpleNamespace(
 )
 del types, assume, pretend, skip, define_model  # Clean up.
 
-ANY = TPUMemorySpace.ANY
-CMEM = TPUMemorySpace.CMEM
-SMEM = TPUMemorySpace.SMEM
-VMEM = TPUMemorySpace.VMEM
-SEMAPHORE = TPUMemorySpace.SEMAPHORE
+ANY = MemorySpace.ANY
+CMEM = MemorySpace.CMEM
+SMEM = MemorySpace.SMEM
+VMEM = MemorySpace.VMEM
+SEMAPHORE = MemorySpace.SEMAPHORE
+
+import typing as _typing  # pylint: disable=g-import-not-at-top
+if _typing.TYPE_CHECKING:
+  TPUCompilerParams = CompilerParams
+  TPUMemorySpace = MemorySpace
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  _deprecations = {
+      # Deprecated on May 30th 2025.
+      "TPUCompilerParams": (
+          "TPUCompilerParams is deprecated, use CompilerParams instead.",
+          CompilerParams,
+      ),
+      "TPUMemorySpace": (
+          "TPUMemorySpace is deprecated, use MemorySpace instead.",
+          MemorySpace,
+      ),
+  }
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing

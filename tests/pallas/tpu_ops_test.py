@@ -524,7 +524,7 @@ class OpsTest(PallasBaseTest):
     run = pl.pallas_call(
         kernel,
         jax.ShapeDtypeStruct(tgt_shape, jnp.float32),
-        compiler_params=pltpu.TPUCompilerParams(disable_bounds_checks=True),
+        compiler_params=pltpu.CompilerParams(disable_bounds_checks=True),
     )
     output = run(x)
     np.testing.assert_array_equal(

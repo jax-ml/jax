@@ -177,7 +177,7 @@ def _fusible_matmul(
           ],
           out_specs=[z_out_block_spec],
       ),
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=dimension_semantics,
       ),
       out_shape=[z_out_type],

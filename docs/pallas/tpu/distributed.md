@@ -233,11 +233,11 @@ def right_permute_kernel(input_ref, output_ref, send_sem, recv_sem):
 out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
 grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
-    # TPUMemorySpace.ANY will (usually) place the tensor in HBM.
+    # MemorySpace.ANY will (usually) place the tensor in HBM.
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     ],
-    out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+    out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     scratch_shapes=(
         # We allocate DMA semaphores in scratch memory.
         [pltpu.SemaphoreType.DMA] * 2
@@ -356,10 +356,10 @@ out_shape = jax.ShapeDtypeStruct((num_devices, 8, 128), jnp.float32)
 grid_spec = pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                # TPUMemorySpace.ANY will (usually) place the tensor in HBM.
-                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+                # MemorySpace.ANY will (usually) place the tensor in HBM.
+                pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
             ],
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
             scratch_shapes=(
               # DMA semaphores are allocated in scratch memory.
               # We allocated one semaphore for a local HBM-VMEM copy,
@@ -491,7 +491,7 @@ When using barrier semaphores, the `collective_id` compiler parameter must be pa
 kernel = pl.pallas_call(
       example_kernel,
       ...,
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
 )
 ```
 
@@ -703,13 +703,13 @@ grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
         # Our input lives in VMEM
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
     ],
     out_specs=[
         # Our output lives in VMEM
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
         # Our double-buffer lives in HBM
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     ],
     grid=(num_devices,),
     scratch_shapes=(
@@ -723,7 +723,7 @@ kernel = pl.pallas_call(
     all_reduce_kernel,
     out_shape=out_shape,
     grid_spec=grid_spec,
-    compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+    compiler_params=pltpu.CompilerParams(collective_id=0),
 )
 
 pallas_result = jax.jit(
@@ -1019,11 +1019,11 @@ out_shape = (
 grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
     ],
     out_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     ],
     grid=(num_devices, 2),
     scratch_shapes=(
@@ -1042,7 +1042,7 @@ def pallas_reduce_scatter(input_arr):
       reduce_scatter_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
   )(input_arr)[0]
 
 
@@ -1148,7 +1148,7 @@ pl.pallas_call(
 
 In this next example we will modify our previous reduce-scatter example to utilize a nested inner pipeline. Note that the communication and computation costs of `reduce_scatter` both scale linearly with the size of the input, so we do not necessarily expect to see the operation become compute-bound with larger block sizes. This example is purely for demonstration purposes on how to use the pipeline emitter.
 
-We will increase the block sizes of the outer kernel such that they would be undesirable to place inside of VMEM, and allocate all inputs and outputs in HBM (`memory_space=TPUMemorySpace.Any`). The only major change from our previous kernel is the body of the kernel where accumulation is done. Rather than manually copying from HBM to VMEM, accumulating, and copying back to HBM, we use `emit_pipeline` to handle the memory transfers for us. Accumulation is done in an inner kernel with a much smaller, VMEM-friendly block size.
+We will increase the block sizes of the outer kernel such that they would be undesirable to place inside of VMEM, and allocate all inputs and outputs in HBM (`memory_space=MemorySpace.ANY`). The only major change from our previous kernel is the body of the kernel where accumulation is done. Rather than manually copying from HBM to VMEM, accumulating, and copying back to HBM, we use `emit_pipeline` to handle the memory transfers for us. Accumulation is done in an inner kernel with a much smaller, VMEM-friendly block size.
 
 In our previous kernel we had the following kernel body to copy data from HBM to the VMEM accumulator, increment, and then copy the results back to HBM:
 
@@ -1242,7 +1242,7 @@ inner_grid = (
 inner_block_spec = pl.BlockSpec(
     index_map=lambda i, j: (i, j),
     block_shape=inner_block_size,
-    memory_space=pltpu.TPUMemorySpace.ANY,
+    memory_space=pltpu.MemorySpace.ANY,
 )
 
 
@@ -1424,11 +1424,11 @@ out_shape = (
 grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     ],
     out_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     ],
     grid=(num_devices, 2),
     scratch_shapes=(
@@ -1446,7 +1446,7 @@ def pallas_reduce_scatter(input_arr):
       reduce_scatter_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
   )(input_arr)[0]
 
 

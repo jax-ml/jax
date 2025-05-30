@@ -381,7 +381,7 @@ class InterpretTest(jtu.JaxTestCase):
           interpret=mosaic_interpret.TPUInterpretParams(
               random_seed=12345, grid_point_recorder=grid_point_recorder
           ),
-          compiler_params=pltpu.TPUCompilerParams(
+          compiler_params=pltpu.CompilerParams(
               dimension_semantics=('parallel', 'arbitrary')
           ),
       )(s)
@@ -437,7 +437,7 @@ class InterpretTest(jtu.JaxTestCase):
           in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
           out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
           interpret=mosaic_interpret.TPUInterpretParams(random_seed=12345),
-          compiler_params=pltpu.TPUCompilerParams(
+          compiler_params=pltpu.CompilerParams(
               dimension_semantics=('arbitrary', 'parallel')
           ),
       )(s)
@@ -463,7 +463,7 @@ class InterpretTest(jtu.JaxTestCase):
           in_specs=[],
           out_specs=pl.BlockSpec((1,), lambda _: (0,)),
           interpret=mosaic_interpret.TPUInterpretParams(),
-          compiler_params=pltpu.TPUCompilerParams(
+          compiler_params=pltpu.CompilerParams(
               dimension_semantics=('parallel',)
           ),
       )()
@@ -516,7 +516,7 @@ class InterpretTest(jtu.JaxTestCase):
         kernel,
         grid=(2,),
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
+        in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
         scratch_shapes=[
             pltpu.VMEM(x.shape, x.dtype),
         ],
@@ -524,7 +524,7 @@ class InterpretTest(jtu.JaxTestCase):
             num_cores_per_device=2,
             detect_races=True,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',),
         ),
     )(x).block_until_ready()
@@ -558,7 +558,7 @@ class InterpretTest(jtu.JaxTestCase):
             num_cores_per_device=2,
             detect_races=True,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',)
         ),
     )(x).block_until_ready()
@@ -583,7 +583,7 @@ class InterpretTest(jtu.JaxTestCase):
               num_cores_per_device=num_cores_per_device,
               grid_point_recorder=grid_point_recorder,
           ),
-          compiler_params=pltpu.TPUCompilerParams(
+          compiler_params=pltpu.CompilerParams(
               dimension_semantics=('parallel', 'arbitrary')
           ),
       )(s)
