@@ -44,6 +44,29 @@ pytype_library(
     ]),
 )
 
+pytype_library(
+    name = "pytree_serialization",
+    srcs = ["pytree_serialization.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax",
+        "//jax/experimental/array_serialization:pytree_serialization_utils",
+        "//jax/experimental/array_serialization:tensorstore_impl",
+        "//third_party/py/absl/logging",
+        "//third_party/py/numpy",
+    ],
+)
+
+pytype_library(
+    name = "pytree_serialization_utils",
+    srcs = ["pytree_serialization_utils.py"],
+    deps = [
+        "//jax",
+        "//third_party/py/absl/logging",
+        "//third_party/py/numpy",
+    ],
+)
+
 jax_multiplatform_test(
     name = "serialization_test",
     srcs = ["serialization_test.py"],
@@ -51,8 +74,8 @@ jax_multiplatform_test(
         "tpu_v3_x4",
     ],
     deps = [
-        ":serialization",
-        "//jax:experimental",
+        "//jax/experimental/array_serialization:pytree_serialization",
+        "//jax/experimental/array_serialization:serialization",
     ],
 )
 
