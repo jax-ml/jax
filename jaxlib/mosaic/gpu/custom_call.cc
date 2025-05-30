@@ -102,6 +102,11 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
+#include "xla/stream_executor/cuda/compilation_provider_options.h"
+#include "xla/stream_executor/cuda/subprocess_compilation.h"
+#include "tsl/platform/cuda_root_path.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/path.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace {
@@ -131,20 +136,52 @@ class TemporaryDirectory {
   std::string path;
 };
 
-const char *GetCUDARoot() {
-  return getenv("CUDA_ROOT");
+absl::StatusOr<std::string> GetPtxasPath() {
+  return stream_executor::FindPtxAsExecutable(
+      stream_executor::cuda::CompilationProviderOptions().cuda_data_dir());
+}
+
+absl::StatusOr<std::string> GetNvdisasmPath() {
+  return stream_executor::FindNvdisasmExecutable(
+      stream_executor::cuda::CompilationProviderOptions().cuda_data_dir());
+}
+
+absl::StatusOr<std::string> get_nvshmem_libdevice_path() {
+  for (const std::string& cuda_root : tsl::CandidateCudaRoots()) {
+    std::string libdevice_dir = tsl::io::JoinPath(cuda_root, "lib");
+    std::cout << cuda_root << "\n";
+    VLOG(2) << "Looking for libdevice at " << libdevice_dir;
+    if (tsl::Env::Default()->IsDirectory(libdevice_dir).ok()) {
+      std::string libdevice =
+          tsl::io::JoinPath(libdevice_dir, "libnvshmem_device.bc");
+      if (tsl::Env::Default()->FileExists(libdevice).ok()) {
+        VLOG(2) << "Found libdevice " << libdevice;
+        return libdevice;
+      }
+    }
+  }
+  return absl::InternalError("Failed to get the libnvshmem_device.bc path");
 }
 
 absl::StatusOr<std::string> RunCUDATool(const char* tool,
                                         const std::vector<const char*>& args,
                                         bool stderr_to_stdout = true) {
   CHECK(!args.empty() && args.back() == nullptr);
-  const char* cuda_path_ptr = GetCUDARoot();
-  if (!cuda_path_ptr)
-    return absl::InternalError("Failed to get the CUDA toolkit path");
-  std::string tool_path(cuda_path_ptr);
-  tool_path += "/bin/";
-  tool_path += tool;
+  std::string tool_path;
+  if (strcmp(tool, "nvdisasm") == 0) {
+    absl::StatusOr<std::string> nvdisasm_path = GetNvdisasmPath();
+    if (!nvdisasm_path.ok()) {
+      return absl::InternalError("Failed to get the NVDISASM path");
+    }
+    tool_path = nvdisasm_path.value();
+  }
+  if (strcmp(tool, "ptxas") == 0) {
+    absl::StatusOr<std::string> ptxas_path = GetPtxasPath();
+    if (!ptxas_path.ok()) {
+      return absl::InternalError("Failed to get the PTXAS path");
+    }
+    tool_path = ptxas_path.value();
+  }
   int stdout_pipe[2] = {-1, -1};
   pid_t child_pid;
   posix_spawn_file_actions_t file_actions;
@@ -343,10 +380,6 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
     return true;
   });
-  const char *cuda_root = GetCUDARoot();
-  if (!cuda_root) {
-    return mlir::failure();
-  }
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
@@ -379,7 +412,6 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu-module-to-binary{format=)",
       mlir::gpu::stringifyCompilationTarget(target).str(),
       (!nvshmem_path.empty() ? " l=" + nvshmem_path : ""),
-      "  opts=-lineinfo toolkit=", cuda_root,
       R"(},
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
@@ -524,13 +556,6 @@ bool is_nvshmem_used(mlir::ModuleOp module) {
   return false;
 }
 
-absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
-  const char* nvshmem_path_ptr = getenv("MOSAIC_GPU_NVSHMEM_BC_PATH");
-  if (!nvshmem_path_ptr)
-    return absl::InternalError("Failed to get MOSAIC_GPU_NVSHMEM_BC_PATH");
-  return nvshmem_path_ptr;
-}
-
 absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     mlir::ModuleOp module) {
   tsl::profiler::TraceMe trace("Compile");
@@ -539,7 +564,7 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
   bool is_comm_used = is_nvshmem_used(module);
   std::string nvshmem_path = "";
   if (is_comm_used) {
-    TF_ASSIGN_OR_RETURN(nvshmem_path, get_nvshmem_llvm_lib_path());
+    TF_ASSIGN_OR_RETURN(nvshmem_path, get_nvshmem_libdevice_path());
     if (!mosaic::gpu::NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
       return absl::InternalError(
           "Failed to load the NVSHMEM library. Make sure it is installed (e.g. "

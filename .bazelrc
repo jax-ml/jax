@@ -146,9 +146,10 @@ build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_8
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
 
-# Default hermetic CUDA and CUDNN versions.
+# Default hermetic CUDA, CUDNN and NVSHMEM versions.
 build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.8.0"
 build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
+build:cuda --repo_env=HERMETIC_NVSHMEM_VERSION="3.2.5"
 build:cuda --@local_config_cuda//cuda:include_cuda_libs=true
 
 # This config is used for building targets with CUDA libraries from stubs.
@@ -228,7 +229,7 @@ build:ci_linux_x86_64 --color=yes
 build:ci_linux_x86_64 --host_crosstool_top="@local_config_cuda//crosstool:toolchain"
 build:ci_linux_x86_64 --crosstool_top="@local_config_cuda//crosstool:toolchain"
 build:ci_linux_x86_64 --extra_toolchains="@local_config_cuda//crosstool:toolchain-linux-x86_64"
-build:ci_linux_x86_64 --repo_env=TF_SYSROOT="/dt9"
+# build:ci_linux_x86_64 --repo_env=TF_SYSROOT="/dt9"
 
 # Clang path needs to be set for remote toolchain to be configured correctly.
 build:ci_linux_x86_64 --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"

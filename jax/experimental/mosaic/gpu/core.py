@@ -53,16 +53,21 @@ from . import tcgen05
 from . import transform_inference
 from . import utils
 
-# MLIR can't find libdevice unless we point it to the CUDA path
-# TODO(apaszke): Unify with jax._src.lib.cuda_path
-CUDA_ROOT = "/usr/local/cuda"
-if os.environ.get("CUDA_ROOT") is None:
-  os.environ["CUDA_ROOT"] = CUDA_ROOT
+cuda_nvcc_root = os.path.join(os.getcwd(), "..", "cuda_nvcc")
+ptxas_path = os.path.join(cuda_nvcc_root, "bin", "ptxas")
+if os.path.exists(ptxas_path):
+  PTXAS_PATH = ptxas_path
 else:
-  CUDA_ROOT = os.environ["CUDA_ROOT"]
+  PTXAS_PATH = ""
 
-PTXAS_PATH = os.path.join(CUDA_ROOT, "bin/ptxas")
-NVDISASM_PATH = os.path.join(CUDA_ROOT, "bin/nvdisasm")
+cuda_nvdisasm_root = os.path.join(os.getcwd(), "..", "cuda_nvdisasm")
+nvidisasm_path = os.path.join(
+  cuda_nvdisasm_root, "bin", "nvdisasm"
+)
+if os.path.exists(nvidisasm_path):
+  NVDISASM_PATH = nvidisasm_path
+else:
+  NVDISASM_PATH = ""
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
 FWD_COMPAT_IR_VERSION = 1
@@ -90,29 +95,12 @@ try:
   from nvidia import nvshmem
 except ImportError:
   pass
-else:
-  if os.environ.get("MOSAIC_GPU_NVSHMEM_BC_PATH") is None:
-    os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = os.path.join(
-        nvshmem.__path__[0], "lib/libnvshmem_device.bc"
-    )
-  if os.environ.get("MOSAIC_GPU_NVSHMEM_SO_PATH") is None:
-    os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
-        nvshmem.__path__[0], "lib/libnvshmem_host.so.3"
-    )
 
 
 def supports_cross_device_collectives():
-  try:
-    nvshmem_bc_path = os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"]
-  except KeyError:
-    return False
-  if nvshmem_so_path := os.environ.get("MOSAIC_GPU_NVSHMEM_SO_PATH", ""):
-    try:
-      # This both ensures that the file exists, and it populates the dlopen
-      # cache, helping XLA find the library even if the RPATH is not right...
-      ctypes.CDLL(nvshmem_so_path)
-    except OSError:
-      return False
+  nvshmem_bc_path = os.path.join(
+    os.getcwd(), "..", "nvidia_nvshmem", "lib", "libnvshmem_device.bc"
+  )
   xla_flags = os.environ.get("XLA_FLAGS", "")
   return (
       os.path.exists(nvshmem_bc_path)

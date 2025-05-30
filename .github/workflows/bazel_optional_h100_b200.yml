@@ -1,76 +1,92 @@
 name: CI - Bazel Optional H100 and B200 CUDA tests
 on:
-  # Runs on PR if label "CI Optional GPU Presubmit" is present.
-  workflow_dispatch:
-    inputs:
-      halt-for-connection:
-        description: 'Should this workflow run wait for a remote connection?'
-        type: choice
-        required: true
-        default: 'no'
-        options:
-        - 'yes'
-        - 'no'
+  # Trigger the workflow on push or pull request,
+  # but only for the main branch
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
-    types: [ labeled, synchronize ]
-  schedule:
-    - cron: "0 */2 * * *" # Run once every 2 hours
+
 permissions:
-  contents: read
+  contents: read  # to fetch code
+  actions: write  # to cancel previous workflows
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  # Don't cancel in-progress jobs for main/release branches.
-  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+  cancel-in-progress: true
+# on:
+#   # Runs on PR if label "CI Optional GPU Presubmit" is present.
+#   workflow_dispatch:
+#     inputs:
+#       halt-for-connection:
+#         description: 'Should this workflow run wait for a remote connection?'
+#         type: choice
+#         required: true
+#         default: 'no'
+#         options:
+#         - 'yes'
+#         - 'no'
+#   pull_request:
+#     branches:
+#       - main
+#     types: [ labeled, synchronize ]
+#   schedule:
+#     - cron: "0 */2 * * *" # Run once every 2 hours
+# permissions:
+#   contents: read
+# concurrency:
+#   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+#   # Don't cancel in-progress jobs for main/release branches.
+#   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 jobs:
-  run_tests:
-    if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
-    runs-on: linux-x86-a4-224-b200-1gpu
-    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.8-cudnn9.8:latest'
-    name: "Bazel single B200 CUDA tests"
-# End Presubmit Naming Check github-cuda-presubmits
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Wait For Connection
-        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
-        with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Run Bazel single B200 CUDA Tests
-        run: |
-            nvidia-smi
-            bazel test --config=rbe_linux_x86_64_cuda \
-            --config=resultstore \
-            --config=rbe_cache \
-            --repo_env=HERMETIC_CUDA_VERSION="12.8.0" \
-            --repo_env=HERMETIC_CUDNN_VERSION="9.8.0" \
-            --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
-            --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-            --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
-            --test_output=errors \
-            --test_tag_filters=-multiaccelerator \
-            --test_env=JAX_ACCELERATOR_COUNT=1 \
-            --test_env=JAX_TESTS_PER_ACCELERATOR=8 \
-            --strategy=TestRunner=local \
-            --local_test_jobs=8 \
-            --test_env=JAX_EXCLUDE_TEST_TARGETS='PmapTest.testSizeOverflow|.*InterpretTest.*' \
-            --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
-            --test_env=JAX_SKIP_SLOW_TESTS=true \
-            --action_env=JAX_ENABLE_X64="1" \
-            --action_env=NCCL_DEBUG=WARN \
-            --flaky_test_attempts=1 \
-            --test_timeout=420 \
-            --color=yes \
-            //tests:cudnn_fusion_test_gpu \
-            //tests:scaled_matmul_stablehlo_test_gpu \
-            //tests:fused_attention_stablehlo_test_gpu \
-            //tests:nn_test_gpu \
-            //tests/pallas:gpu_tests \
-            //tests/mosaic:gpu_tests
+#   run_tests:
+#     if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
+#     runs-on: linux-x86-a4-224-b200-1gpu
+#     container: 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest'
+#     name: "Bazel single B200 CUDA tests"
+# # End Presubmit Naming Check github-cuda-presubmits
+#     steps:
+#       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+#       - name: Wait For Connection
+#         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
+#         with:
+#           halt-dispatch-input: ${{ inputs.halt-for-connection }}
+#       - name: Run Bazel single B200 CUDA Tests
+#         run: |
+#             nvidia-smi
+#             bazel test --config=rbe_linux_x86_64_cuda \
+#             --config=resultstore \
+#             --config=rbe_cache \
+#             --repo_env=HERMETIC_CUDA_VERSION="12.8.0" \
+#             --repo_env=HERMETIC_CUDNN_VERSION="9.8.0" \
+#             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
+#             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
+#             --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
+#             --test_output=errors \
+#             --test_tag_filters=-multiaccelerator \
+#             --test_env=JAX_ACCELERATOR_COUNT=1 \
+#             --test_env=JAX_TESTS_PER_ACCELERATOR=8 \
+#             --strategy=TestRunner=local \
+#             --local_test_jobs=8 \
+#             --test_env=JAX_EXCLUDE_TEST_TARGETS='PmapTest.testSizeOverflow|.*InterpretTest.*' \
+#             --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
+#             --test_env=JAX_SKIP_SLOW_TESTS=true \
+#             --action_env=JAX_ENABLE_X64="1" \
+#             --action_env=NCCL_DEBUG=WARN \
+#             --flaky_test_attempts=1 \
+#             --test_timeout=420 \
+#             --color=yes \
+#             //tests:cudnn_fusion_test_gpu \
+#             //tests:scaled_matmul_stablehlo_test_gpu \
+#             //tests:fused_attention_stablehlo_test_gpu \
+#             //tests:nn_test_gpu \
+#             //tests/pallas:gpu_tests \
+#             //tests/mosaic:gpu_tests
   run_multiaccelerator_tests:
-    if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
+    #if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
+    if: github.repository == 'jax-ml/jax'
     runs-on: linux-x86-a3-8g-h100-8gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.8-cudnn9.8:latest'
     name: "Bazel multiple H100 CUDA tests"
@@ -85,16 +101,15 @@ jobs:
       - name: Run Bazel multiple H100 CUDA Tests
         run: |
             nvidia-smi
-            bazel test --config=rbe_linux_x86_64_cuda \
-            --config=resultstore \
-            --config=rbe_cache \
-            --repo_env=HERMETIC_CUDA_VERSION="12.8.0" \
-            --repo_env=HERMETIC_CUDNN_VERSION="9.8.0" \
+            git clone https://github.com/openxla/xla.git ./xla
+            cd ./xla
+            git checkout test_753675848
+            cd ..
+            bazel test --config=ci_linux_x86_64_cuda \
+            --repo_env=TF_CUDA_VERSION=12.8.0 \
+            --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"  \
             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-            --test_output=errors \
-            --strategy=TestRunner=local \
-            --local_test_jobs=8 \
             --test_env=JAX_EXCLUDE_TEST_TARGETS='PmapTest.testSizeOverflow|.*InterpretTest.*' \
             --test_tag_filters=multiaccelerator \
             --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
@@ -103,11 +118,11 @@ jobs:
             --action_env=NCCL_DEBUG=WARN \
             --flaky_test_attempts=1 \
             --color=yes \
-            //tests/mosaic:gpu_tests \
-            //tests/pallas:gpu_tests \
-            //tests:array_interoperability_test_gpu \
-            //tests:cudnn_fusion_test_gpu \
-            //tests:fused_attention_stablehlo_test_gpu \
-            //tests:gpu_tests \
-            //tests:python_callback_test_gpu \
-            //tests:ragged_collective_test_gpu
+            --override_repository=xla=./xla \
+            --@local_config_nvshmem//:include_nvshmem_libs=True \
+            --action_env=LD_DEBUG=files,libs \
+            --action_env=NVSHMEM_DEBUG=TRACE \
+            --action_env=NVSHMEM_DEBUG_FILE=nvshmem.log \
+            --test_output=all \
+            //tests/pallas:gpu_pallas_distributed_test_gpu
+            cat /__w/.cache/bazel/bazel/_bazel_root/78563004db3df495dc7c02b4a6eb08ea/execroot/__main__/bazel-out/k8-opt/testlogs/tests/pallas/gpu_pallas_distributed_test_gpu/test.log

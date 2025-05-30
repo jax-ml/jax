@@ -13,6 +13,10 @@
 # limitations under the License.
 
 load(
+    "@xla//xla/tsl:tsl.bzl",
+    "if_nvshmem_tools",
+)
+load(
     "//jaxlib:jax.bzl",
     "py_library_providing_imports_info",
     "pytype_library",
@@ -35,6 +39,9 @@ exports_files([
 
 cc_binary(
     name = "pjrt_c_api_gpu_plugin.so",
+    data = if_nvshmem_tools([
+        "@nvidia_nvshmem//:libnvshmem_device",
+    ]),
     linkopts = [
         "-Wl,--version-script,$(location :gpu_version_script.lds)",
         "-Wl,--no-undefined",
