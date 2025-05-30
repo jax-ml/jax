@@ -547,7 +547,7 @@ class ArrayImpl(basearray.Array):
     return out
 
   @property
-  def layout(self):
+  def format(self):
     # TODO(yashkatariya): Remove the deleted check from here.
     if self.is_deleted():
       return Format(None, self.sharding)
@@ -560,6 +560,9 @@ class ArrayImpl(basearray.Array):
         return Format(None, self.sharding)
       else:
         raise
+
+  # TODO(frostig, yashkatariya): remove
+  layout = format
 
   @property
   def global_shards(self) -> Sequence[Shard]:
@@ -812,7 +815,7 @@ def make_array_from_callback(
         and sharding.is_fully_replicated
         and first_value.is_fully_replicated
         and first_value.sharding._device_assignment == tuple(devices)
-        and first_value.layout.device_local_layout == dll):
+        and first_value.format.device_local_layout == dll):
       return first_value
 
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
@@ -1197,7 +1200,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
     x._check_if_deleted()
     indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
     same_layout = (True if layout is None else
-                   x.layout.device_local_layout == layout)
+                   x.format.device_local_layout == layout)
 
     if not x.is_fully_addressable:
       if same_indices and same_layout:

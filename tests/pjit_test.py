@@ -5001,7 +5001,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     new_layout = Format(DLL((1, 0)), NamedSharding(mesh, P('x')))
     s4_u = s4.update(sharding=new_layout)
     self.assertEqual(s4_u.sharding, new_layout.sharding)
-    self.assertEqual(s4_u.layout, new_layout)
+    self.assertEqual(s4_u.format, new_layout)
 
     with self.assertRaisesRegex(ValueError, "updating ShapeDtypeStruct"):
       s4.update(sharding=NamedSharding(mesh, P('x')))

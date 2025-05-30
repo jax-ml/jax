@@ -2909,12 +2909,12 @@ class ShapeDtypeStruct:
       if self._dll is not None and isinstance(s, Sharding):
         raise ValueError(
             f"You are updating ShapeDtypeStruct with a {type(s)} when the"
-            f" original ShapeDtypeStruct had a concrete layout {self.layout}."
+            f" original ShapeDtypeStruct had a concrete layout {self.format}."
             " This might lead to bugs. If you want to do this, create a new"
             " ShapeDtypeStruct via the constructor.")
       sharding = s
     else:
-      sharding = self.layout
+      sharding = self.format
     return ShapeDtypeStruct(
         shape=kwargs.pop('shape', self.shape),
         dtype=kwargs.pop('dtype', self.dtype),

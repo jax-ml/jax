@@ -1651,8 +1651,8 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
     # below. We cannot replace default layout with None to raise nicer errors.
     # `dispatch_arg_layout` replaces default layouts with `None` to simplify
     # dispatch and lowering logic downstream.
-    if hasattr(arg, 'layout'):
-      arg_layout = arg.layout.device_local_layout
+    if hasattr(arg, 'format'):
+      arg_layout = arg.format.device_local_layout
       dispatch_arg_layout = (None if pxla.is_default_layout(arg_layout, rs, aval)
                              else arg_layout)
     else:
@@ -1670,7 +1670,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
         resolved_in_layouts.append(None)
     else:
       # arg_layout can be None because some backends don't implement the
-      # required layout methods. Hence `arr.layout` can return
+      # required layout methods. Hence `arr.format` can return
       # `Format(None, sharding)`
       if (committed
           and not is_pmap_sharding
@@ -2845,7 +2845,7 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
     # Run a jit here to raise good errors when device assignment don't match.
     return api.jit(_identity_fn, out_shardings=sharding)(x)
   else:
-    if (hasattr(x, 'layout') and x.layout.device_local_layout == layout and
+    if (hasattr(x, 'format') and x.format.device_local_layout == layout and
         x.sharding.is_equivalent_to(sharding, x.ndim)):
       return x
     return api.jit(_identity_fn, out_shardings=Format(layout, sharding))(x)
@@ -3193,7 +3193,7 @@ def _layout_constraint_impl(x, *, layout):
     raise ValueError(
         'with_layout_constraint in eager mode can only be applied to'
         f' jax.Arrays. Got {type(x)}')
-  if x.layout.device_local_layout == layout:  # type: ignore
+  if x.format.device_local_layout == layout:  # type: ignore
     return x
   return api.jit(_identity_fn, out_shardings=Format(layout, x.sharding))(x)
 layout_constraint_p.def_impl(_layout_constraint_impl)

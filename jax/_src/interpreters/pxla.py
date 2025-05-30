@@ -3255,11 +3255,11 @@ def check_array_xla_sharding_layout_match(
           'sharding'))
 
     if (not db_xs and arg._committed and
-        arg.layout.device_local_layout is not None and xl is not None and
-        arg.layout.device_local_layout != xl):
+        arg.format.device_local_layout is not None and xl is not None and
+        arg.format.device_local_layout != xl):
       errors.append(
           ("Got input layout(s) that compiled object was called with: "
-          f"{arg.layout.device_local_layout} and layout(s) the computation was "
+          f"{arg.format.device_local_layout} and layout(s) the computation was "
           f"compiled with: {xl} for arg {name} with "
           f"shape: {arg.aval.str_short()}",
           'layout'))
