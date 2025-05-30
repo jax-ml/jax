@@ -796,9 +796,14 @@ def lower_jaxpr_to_module(
     parallel_grid = grid + (1,) * (3 - len(grid))
   else:
     # If we have >3 parallel dimensions, we merge all leading dimensions
-    # into the first (Dimension.x) CUDA grid dimension.
+    # into the last (Dimension.z) CUDA grid dimension.
     squashed_dims = grid[:-2]
     parallel_grid = (math.prod(grid[:-2]), *grid[-2:])
+
+  # We reverse the order of the Pallas user provided grid to match the order
+  # of the CUDA grid (column-major).
+  parallel_grid = parallel_grid[::-1]
+  cluster = cluster[::-1]
 
   rs = _estimate_resources(
       ResourceEstimatorContext(
@@ -1105,20 +1110,20 @@ def _unravel_program_id(
 def _program_id(parallel_axis: int, squashed_dims: tuple[int, ...]) -> ir.Value:
   if squashed_dims:
     if parallel_axis < len(squashed_dims):
-      # All squashed dimensions are mapped to Dimension.x.
-      block_id = gpu_dialect.block_id(gpu_dialect.Dimension.x)
-      return _unravel_program_id(block_id, parallel_axis, squashed_dims)
+      # All squashed dimensions are mapped to Dimension.z.
+      block_id = gpu_dialect.block_id(gpu_dialect.Dimension.z)
+      return _unravel_program_id(block_id, parallel_axis, squashed_dims, row_major=False)
     else:
       # Handle unsquashed axes.
       return arith_dialect.index_cast(
           ir.IntegerType.get_signless(32),
           gpu_dialect.block_id(gpu_dialect.Dimension(
-              parallel_axis - len(squashed_dims) + 1)),
+              len(squashed_dims) - parallel_axis + 1)),
       )
   else:
     return arith_dialect.index_cast(
         ir.IntegerType.get_signless(32),
-        gpu_dialect.block_id(gpu_dialect.Dimension(parallel_axis)),
+        gpu_dialect.block_id(gpu_dialect.Dimension(2 - parallel_axis)),
     )
 
 
@@ -1143,18 +1148,6 @@ def _lower_fun(
     return out if multiple_results else out[0]
 
   return lowering_rule
-
-
-@register_lowering_rule(primitives.num_programs_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(
-    primitives.num_programs_p, mgpu.LoweringSemantics.Warpgroup)
-def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
-  del ctx  # Unused.
-  return arith_dialect.index_cast(
-      ir.IntegerType.get_signless(32),
-      gpu_dialect.block_dim(gpu_dialect.Dimension(axis)),
-  )
-
 
 def _handle_dtype_bitcast(
     ref: ir.Value, src_dtype: ir.Type, dst_dtype: ir.Type
@@ -2135,7 +2128,8 @@ def _resolve_cluster_axis(axis_names: _AxisNames | None, axis_name: str):
         f"Unknown cluster axis {axis_name}, available axes:"
         f" {[*axis_names.cluster]}"
     )
-  return gpu_dialect.Dimension(axis_names.cluster.index(axis_name))
+  # Mapping the cluster axes to the reversed CUDA cluster grid.
+  return gpu_dialect.Dimension(2 - axis_names.cluster.index(axis_name))
 
 
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Lane)
@@ -2179,7 +2173,7 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
     return arith_dialect.index_cast(
         ir.IntegerType.get_signless(32),
         gpu_dialect.cluster_block_id(
-            gpu_dialect.Dimension(axis_names.cluster.index(axis_name))
+            gpu_dialect.Dimension(2 - axis_names.cluster.index(axis_name))
         ),
     )
 
@@ -2196,26 +2190,29 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
       # We add 1 to the index because the first dimension is the
       # squashed dimension.
       # e.g. for the grid (a, b, c, d, wg)
-      # squashed = (a, b)  Mapped to Dimension.x (0)
-      # unsquashed = (c, d)  Mapped to Dimension.y (1) and Dimension.z (2)
+      # squashed = (a, b)  Mapped to Dimension.z (0)
+      # unsquashed = (c, d)  Mapped to Dimension.y (1) and Dimension.x (2)
       idx = unsquashed_names.index(axis_name) + 1
       return arith_dialect.index_cast(
           ir.IntegerType.get_signless(32),
-          _block_id(ctx, gpu_dialect.Dimension(idx)),
+          _block_id(ctx, gpu_dialect.Dimension(2 - idx)),
       )
     else:
       assert axis_name in squashed_names
-      # All squashed dimensions are mapped to Dimension.x.
+      # All squashed dimensions are mapped to Dimension.z.
       axis = squashed_names.index(axis_name)
       return _unravel_program_id(
-          _block_id(ctx, gpu_dialect.Dimension.x), axis, squashed_dims
+          _block_id(ctx, gpu_dialect.Dimension.z),
+          axis,
+          squashed_dims,
+          row_major=True,
       )
   else:
     assert axis_name in axis_names.grid
     idx = axis_names.grid.index(axis_name)
     return arith_dialect.index_cast(
         ir.IntegerType.get_signless(32),
-        _block_id(ctx, gpu_dialect.Dimension(idx)),
+        _block_id(ctx, gpu_dialect.Dimension(2 - idx)),
     )
 
 @register_lowering_rule(lax.axis_index_p,

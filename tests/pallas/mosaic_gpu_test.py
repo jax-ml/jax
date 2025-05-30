@@ -1124,15 +1124,46 @@ class PallasCallTest(PallasTest):
         grid=grid,
     )
     def kernel(o_ref):
-      mult = 1
+      stride = 1
       idx = 0
       for axis in range(len(grid)-1, -1, -1):
-        idx += pl.program_id(axis) * mult
-        mult *= pl.num_programs(axis)
+        idx += pl.program_id(axis) * stride
+        stride *= pl.num_programs(axis)
       o_ref[...] = jnp.full(o_ref.shape, idx)
 
     np.testing.assert_array_equal(
         kernel()[:, :, :, :, 0],
+        jnp.arange(math.prod(grid), dtype=jnp.int32).reshape(*grid)
+    )
+
+  @parameterized.parameters(
+      ((2, 3, 4), ("a", "b", "c"), (), ()),
+      ((2, 3, 4), ("a", "b", "c"), (2,), ("x",)),
+      ((2, 3, 4), ("a", "b", "c"), (2, 3), ("x", "y")),
+      ((2, 3, 4, 5), ("a", "b", "c", "d"), (), ()),
+      ((2, 3, 4, 5), ("a", "b", "c", "d"), (2,), ("x",)),
+  )
+  def test_axis_indices_in_grid(self, grid, grid_names, cluster, cluster_names):
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct([*grid, 128], jnp.int32),
+        grid=grid,
+        grid_names=grid_names,
+        cluster=cluster,
+        cluster_names=cluster_names,
+    )
+    def kernel(o_ref):
+      stride = 1
+      idx = 0
+      for axis_name in grid_names[::-1]:
+        idx += lax.axis_index(axis_name) * stride
+        stride *= lax.axis_size(axis_name)
+
+      out_indices = [lax.axis_index(ax) for ax in grid_names]
+      o_ref[*out_indices] = jnp.full((128,), idx)
+
+    np.testing.assert_array_equal(
+        kernel()[..., 0],
         jnp.arange(math.prod(grid), dtype=jnp.int32).reshape(*grid)
     )
 
