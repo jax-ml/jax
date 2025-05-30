@@ -3445,7 +3445,7 @@ def clip(
   if min is not None:
     arr = ufuncs.maximum(min, arr)
   if max is not None:
-    arr = ufuncs.minimum(max, arr)
+    arr = ufuncs.minimum(max, arr) # type: ignore
   return asarray(arr)
 
 
