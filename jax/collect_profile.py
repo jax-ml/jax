@@ -28,10 +28,10 @@ try:
 except ImportError:
   raise ImportError("This script requires `tensorflow` to be installed.")
 try:
-  from tensorboard_plugin_profile.convert import raw_to_tool_data as convert
+  from xprof.convert import raw_to_tool_data as convert
 except ImportError:
   raise ImportError(
-      "This script requires `tensorboard_plugin_profile` to be installed.")
+      "This script requires `xprof` to be installed.")
 # pytype: enable=import-error
 
 
