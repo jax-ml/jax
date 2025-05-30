@@ -28,14 +28,14 @@ different builds for different operating systems and accelerators.
 
 The table below shows all supported platforms and installation options. Check if your setup is supported; and if it says _"yes"_ or _"experimental"_, then click on the corresponding link to learn how to install JAX in greater detail.
 
-|                  | Linux, x86_64                         | Linux, aarch64                  | Mac, x86_64                           | Mac, aarch64                          | Windows, x86_64          | Windows WSL2, x86_64                     |
-|------------------|---------------------------------------|---------------------------------|---------------------------------------|---------------------------------------|--------------------------|------------------------------------------|
-| CPU              | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>`        | {ref}`jax≤0.4.38 only <install-cpu>`  | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>` | {ref}`yes <install-cpu>`                 |
-| NVIDIA GPU       | {ref}`yes <install-nvidia-gpu>`       | {ref}`yes <install-nvidia-gpu>` | no                                    | n/a                                   | no                       | {ref}`experimental <install-nvidia-gpu>` |
-| Google Cloud TPU | {ref}`yes <install-google-tpu>`       | n/a                             | n/a                                   | n/a                                   | n/a                      | n/a                                      |
-| AMD GPU          | {ref}`yes <install-amd-gpu>`          | no                              | {ref}`experimental <install-mac-gpu>` | n/a                                   | no                       | no                                       |
-| Apple GPU        | n/a                                   | no                              | n/a                                   | {ref}`experimental <install-mac-gpu>` | n/a                      | n/a                                      |
-| Intel GPU        | {ref}`experimental <install-intel-gpu>`| n/a                            | n/a                                   | n/a                                     | no                       | no                                       |
+|                  | Linux, x86_64                         | Linux, aarch64                  | Mac, aarch64                          | Windows, x86_64          | Windows WSL2, x86_64                     |
+|------------------|---------------------------------------|---------------------------------|---------------------------------------|--------------------------|------------------------------------------|
+| CPU              | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>`        | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>` | {ref}`yes <install-cpu>`                 |
+| NVIDIA GPU       | {ref}`yes <install-nvidia-gpu>`       | {ref}`yes <install-nvidia-gpu>` | n/a                                   | no                       | {ref}`experimental <install-nvidia-gpu>` |
+| Google Cloud TPU | {ref}`yes <install-google-tpu>`       | n/a                             | n/a                                   | n/a                      | n/a                                      |
+| AMD GPU          | {ref}`yes <install-amd-gpu>`          | no                              | n/a                                   | no                       | no                                       |
+| Apple GPU        | n/a                                   | no                              | {ref}`experimental <install-mac-gpu>` | n/a                      | n/a                                      |
+| Intel GPU        | {ref}`experimental <install-intel-gpu>`| n/a                            | n/a                                     | no                       | no                                       |
 
 
 (install-cpu)=
@@ -48,7 +48,6 @@ operating systems and architectures:
 
 - Linux, x86_64
 - Linux, aarch64
-- macOS, Intel
 - macOS, Apple ARM-based
 - Windows, x86_64 (*experimental*)
 
