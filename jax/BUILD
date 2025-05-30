@@ -84,6 +84,30 @@ config_setting(
     },
 )
 
+# Which major version of CUDA to target
+string_flag(
+    name = "cuda_major_version",
+    build_setting_default = "12",
+    values = [
+        "12",
+        "13",
+    ],
+)
+
+config_setting(
+    name = "config_cuda_major_version_12",
+    flag_values = {
+        ":cuda_major_version": "12",
+    }
+)
+
+config_setting(
+    name = "config_cuda_major_version_13",
+    flag_values = {
+        ":cuda_major_version": "13",
+    }
+)
+
 # The flag controls whether jax should be built by Bazel.
 # If ":build_jax=true", then jax will be built.
 # If ":build_jax=false", then jax is not built. It is assumed that the pre-built jax wheel
