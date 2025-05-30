@@ -2976,7 +2976,7 @@ class UnloadedMeshExecutable:
             xla_executable.local_devices(), len(in_shardings), len(out_shardings))
 
     # xla_in_layouts are all either None or DeviceLocalLayout. Even default
-    # layout are concrete layouts and they are used in `compiled.input_layouts`
+    # layout are concrete layouts and they are used in `compiled.input_formats`
     # to return concrete layouts to users.
     # `dispatch_in_layouts` replaces default layouts with `None` to simplify
     # dispatch logic downstream.
