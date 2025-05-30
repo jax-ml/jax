@@ -24,6 +24,7 @@ import warnings
 
 import jax
 from jax import lax
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
@@ -73,9 +74,12 @@ def pallas_call_lowering(
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       jax_mesh = axis_context.mesh
 
-  lowering_result = lowering.lower_pipelined_jaxpr_to_module(
-      grid_mapping, mesh, jax_mesh, jaxpr, params, cost_estimate
-  )
+  # TODO(slebedev): Remove this once the ensure-debug-info-scope-on-llvm-func
+  # pass correctly handles full tracebacks.
+  with config.include_full_tracebacks_in_locations(False):
+    lowering_result = lowering.lower_pipelined_jaxpr_to_module(
+        grid_mapping, mesh, jax_mesh, jaxpr, params, cost_estimate
+    )
   if debug:
     print(f"\nThe Mosaic GPU module for pallas_call {debug_info.func_src_info}:")
     print(lowering_result.module.operation)
