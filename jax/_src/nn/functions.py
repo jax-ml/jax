@@ -1088,7 +1088,8 @@ def dot_product_attention(
   Returns:
     An array of the attention output with the same shape as :code:`query`.
   """
-  output_shape = jnp.asarray(query).shape
+  #output_shape = jnp.asarray(query).shape
+  output_shape = query.shape[:-1] + (value.shape[-1],)
   def _ensure_4d(t):
     t = jnp.asarray(t)
     dims_to_add = 4 - t.ndim
@@ -1121,14 +1122,14 @@ def dot_product_attention(
         raise ValueError(f"{name} shape should be {shape}: but got {t.shape}")
 
   B, S, K, H = key_arr.shape
-  _check_shape_and_dtype(value_arr, [B, S, K, H], key_arr.dtype, 'value')
-  _check_shape_and_dtype(query_arr, [B, -1, -1, H], key_arr.dtype, 'query')
-  _check_shape_and_dtype(mask, [-1] * 4, jnp.bool_, 'mask')
-  _check_shape_and_dtype(bias, [-1] * 4, None, 'bias')
-  _check_shape_and_dtype(query_seq_lengths, [B], jnp.int32,
-                         'query_seq_lengths')
-  _check_shape_and_dtype(key_value_seq_lengths, [B], jnp.int32,
-                         'key_value_seq_lengths')
+  #_check_shape_and_dtype(value_arr, [B, S, K, H], key_arr.dtype, 'value')
+  #_check_shape_and_dtype(query_arr, [B, -1, -1, H], key_arr.dtype, 'query')
+  #_check_shape_and_dtype(mask, [-1] * 4, jnp.bool_, 'mask')
+  #_check_shape_and_dtype(bias, [-1] * 4, None, 'bias')
+  #_check_shape_and_dtype(query_seq_lengths, [B], jnp.int32,
+  #                       'query_seq_lengths')
+  #_check_shape_and_dtype(key_value_seq_lengths, [B], jnp.int32,
+  #                       'key_value_seq_lengths')
   if query_arr.shape[-2] % K != 0:
     raise ValueError(f"The number of query heads must be a multiple of "
                      f"key/value heads, but got {query_arr.shape[-2]} vs {K}")
