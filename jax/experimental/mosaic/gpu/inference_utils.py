@@ -71,7 +71,7 @@ def out_transforms(op: MlirOperation) -> Sequence[ir.Attribute]:
 def should_have_layout(op: MlirOperation) -> bool:
   """Returns 'true' if the operation should be assigned a layout."""
 
-  is_array = lambda v: ir.VectorType.isinstance(v.type)
+  is_array = lambda v: isinstance(v.type, ir.VectorType)
   return any(map(is_array, itertools.chain(op.operands, op.results)))  # type: ignore
 
 
@@ -117,7 +117,7 @@ def _in_attr_for_operand(
     attr_name: str,
 ) -> ir.Attribute | None:
   if attr_name == "in_layouts":
-    predicate = lambda v: ir.VectorType.isinstance(v.type)
+    predicate = lambda v: isinstance(v.type, ir.VectorType)
   elif attr_name == "in_transforms":
     predicate = is_transformable_smem_memref
   else:
@@ -140,7 +140,7 @@ def is_transformable_smem_memref(v: ir.Value) -> bool:
   barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
   smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   return (
-      ir.MemRefType.isinstance(v.type)
+      isinstance(v.type, ir.MemRefType)
       # barriers have no business being transformed
       and v.type.element_type != barrier_ty  # pylint: disable=attribute-error
       and v.type.memory_space is not None  # pylint: disable=attribute-error
@@ -150,7 +150,7 @@ def is_transformable_smem_memref(v: ir.Value) -> bool:
 
 def _value_attr(value: ir.Value, attr_type: str) -> ir.Attribute | None:
   if attr_type == "layouts":
-    predicate = lambda v: ir.VectorType.isinstance(v.type)
+    predicate = lambda v: isinstance(v.type, ir.VectorType)
   elif attr_type == "transforms":
     predicate = is_transformable_smem_memref
   else:
@@ -189,7 +189,7 @@ def value_layout(value: ir.Value) -> ir.Attribute | None:
   Raises:
     ValueError: If `result` is not a Vector.
   """
-  if not ir.VectorType.isinstance(value.type):
+  if not isinstance(value.type, ir.VectorType):
     raise ValueError(f"{value} is not a vector.")
 
   return _value_attr(value, "layouts")
@@ -201,7 +201,7 @@ def value_transforms(value: ir.Value) -> ir.Attribute | None:
   Raises:
     ValueError: If `result` is not a memref.
   """
-  if not ir.MemRefType.isinstance(value.type):
+  if not isinstance(value.type, ir.MemRefType):
     raise ValueError(f"{value} is not a memref.")
 
   return _value_attr(value, "transforms")
