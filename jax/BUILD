@@ -297,6 +297,7 @@ py_library_providing_imports_info(
         "_src/ad_checkpoint.py",
         "_src/api.py",
         "_src/array.py",
+        "_src/attach_metadata.py",
         "_src/blocked_sampler.py",
         "_src/buffer_callback.py",
         "_src/callback.py",
