@@ -711,6 +711,12 @@ class Trace(Generic[TracerType]):
            "to handle custom_vjp primitives")
     raise NotImplementedError(msg)
 
+  def process_jvp_of_custom_vjp_call(self, primitive, fwd, bwd, tracers,
+                                     out_trees, symbolic_zeros, in_zeros):
+    msg = (f"{type(self)} must override process_jvp_of_custom_vjp_call "
+           "to handle custom_vjp primitives")
+    raise NotImplementedError(msg)
+
   # TODO(dougalm): deprecate/delete
   def full_raise(self, x):
     return x
@@ -1092,8 +1098,14 @@ class EvalTrace(Trace):
     del primitive, fwd, bwd, _  # Unused.
     return fun.call_wrapped(*tracers)
 
+  def process_jvp_of_custom_vjp_call(self, primitive, fwd, bwd, tracers, **_):  # pytype: disable=signature-mismatch
+    del primitive, fwd, bwd, tracers  # Unused.
+    raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "
+                    "function.")
+
   def cur_qdd(self, x):
     return x.cur_qdd()
+
 
 class TraceTag:
   # TODO: this works for surprisingly subtle reasons. Function transformations

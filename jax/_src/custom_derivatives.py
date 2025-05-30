@@ -28,7 +28,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import traceback_util
 from jax._src.ad_util import (
-    stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
+    stop_gradient_p, SymbolicZero, Zero, zeros_like_aval, raise_custom_vjp_error_on_jvp)
 from jax._src.api_util import (
   argnums_partial, flatten_fun_nokwargs, resolve_kwargs,
   prepend_static_args, debug_info, fun_signature,
@@ -45,6 +45,7 @@ from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
     register_pytree_node_class, tree_leaves, tree_flatten_with_path,
     tree_leaves_with_path, keystr, treedef_children, PyTreeDef)
+from jax._src import util
 from jax._src.util import (cache, safe_zip, safe_map, split_list, unzip2,
                            weakref_lru_cache)
 
@@ -960,7 +961,95 @@ def _temporary_dtype_exception(a, a_) -> bool:
 def _temporary_shape_exception(a, a_) -> bool:
   return config.custom_vjp_disable_shape_check.value
 
+class JvpOfCustomVJPCallPrimitive(core.Primitive):
+  multiple_results = True
+
+  def bind_with_trace(self, trace, args, params):
+    fwd, bwd, tracers = args[0], args[1], args[2:]
+    return trace.process_jvp_of_custom_vjp_call(self, fwd, bwd, tracers, **params)
+
+  def impl(self, fwd, bwd, *args):
+    raise NotImplementedError
+
+  def get_bind_params(self, params):
+    new_params = dict(params)
+    num_consts: int = new_params.pop('num_consts')
+    new_params.pop("out_avals")
+    fwd_jaxpr: core.ClosedJaxpr = new_params.pop('fwd_jaxpr')
+    fwd = lift_fwd(0, lu.wrap_init(lambda *_: (fwd_jaxpr.jaxpr, fwd_jaxpr.consts), debug_info=fwd_jaxpr.jaxpr.debug_info))
+    const_avals, _ = split_list(fwd_jaxpr.in_avals, [num_consts])
+    bwd = _handle_consts_in_bwd(new_params.pop('bwd'), const_avals)
+    return [fwd, bwd], new_params
+
+jvp_of_custom_vjp_call_p = JvpOfCustomVJPCallPrimitive('jvp_of_custom_vjp_call')
+mlir.register_lowering(jvp_of_custom_vjp_call_p, raise_custom_vjp_error_on_jvp)
+
+def _jvp_of_custom_vjp_call_typecheck(_, *in_avals, fwd_jaxpr, out_avals, **kwargs):
+  del in_avals, kwargs
+  disallowed_effects = effects.custom_derivatives_allowed_effects.filter_not_in(
+      fwd_jaxpr.effects)
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `custom_vjp`: {disallowed_effects}')
+  return out_avals, fwd_jaxpr.effects
+core.custom_typechecks[jvp_of_custom_vjp_call_p] = _jvp_of_custom_vjp_call_typecheck
+
+def _jvp_of_custom_vjp_call_partial_eval_custom(
+    saveable: Callable[..., pe.RematCases_], unks_in: Sequence[bool],
+    inst_in: Sequence[bool], eqn: core.JaxprEqn
+) -> tuple[core.JaxprEqn, core.JaxprEqn, Sequence[bool], Sequence[bool],
+           list[core.Var]]:
+  in_zeros = eqn.params["in_zeros"]
+  fwd_jaxpr = eqn.params["fwd_jaxpr"]
+
+  @partial(lu.wrap_init, debug_info=fwd_jaxpr.jaxpr.debug_info)
+  def to_trace(*args):
+    primals, tangents = split_list(args, [len(in_zeros)])
+    res_and_primals_out = core.eval_jaxpr(fwd_jaxpr.jaxpr, fwd_jaxpr.consts, *primals)
+    _, res_tree = eqn.params["out_trees"]()
+    res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+    out_avals = [core.get_aval(x).to_tangent_aval() for x in primals_out]
+    tangents_out = ad.custom_lin_p.bind(
+        *res, *tangents, num_res=res_tree.num_leaves, bwd=eqn.params["bwd"],
+        out_avals=out_avals, in_zeros=in_zeros,
+        symbolic_zeros=eqn.params["symbolic_zeros"])
+    return (*primals_out, *tangents_out)
+
+  in_avals = eqn.params["fwd_jaxpr"].in_avals
+  in_avals = (*in_avals, *(v.to_tangent_aval() for v in in_avals))
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(to_trace, in_avals)
+  jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
+      pe.partial_eval_jaxpr_custom(jaxpr, unks_in, inst_in, False, False,
+                                    saveable=saveable)
+
+  # To avoid precision mismatches in fwd and bwd passes due to XLA excess
+  # precision, insert explicit x = reduce_precision(x, **finfo(x.dtype)) calls
+  # on producers of any residuals. See https://github.com/jax-ml/jax/pull/22244.
+  from jax._src.ad_checkpoint import _insert_reduce_precision  # pytype: disable=import-error
+  jaxpr_known = _insert_reduce_precision(jaxpr_known, num_res)
+
+  newvar = core.gensym()
+  res = [newvar(var.aval) for var in jaxpr_staged.invars[:num_res]]
+  ins_known, _ = util.partition_list(unks_in, eqn.invars)
+  out_binders_known, _ = util.partition_list(unks_out, eqn.outvars)
+  _, ins_staged = util.partition_list(inst_in, eqn.invars)
+  _, out_binders_staged = util.partition_list(inst_out, eqn.outvars)
+  params_known = {"call_jaxpr": core.ClosedJaxpr(jaxpr_known, consts)}
+  eqn_known = pe.new_jaxpr_eqn(ins_known, [*out_binders_known, *res],
+                            core.closed_call_p, params_known, jaxpr_known.effects,
+                            eqn.source_info, eqn.ctx)
+  params_staged = {"call_jaxpr": core.ClosedJaxpr(jaxpr_staged, consts)}
+  eqn_staged = pe.new_jaxpr_eqn([*res, *ins_staged], out_binders_staged,
+                            core.closed_call_p, params_staged,
+                            jaxpr_staged.effects, eqn.source_info, eqn.ctx)
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is core.Var and not inst]
+  return eqn_known, eqn_staged, unks_out, inst_out, new_inst + res
+pe.partial_eval_jaxpr_custom_rules[jvp_of_custom_vjp_call_p] = _jvp_of_custom_vjp_call_partial_eval_custom
+
+
 class CustomVJPCallPrimitive(core.Primitive):
+  jvp_primitive: JvpOfCustomVJPCallPrimitive
   multiple_results = True
 
   def bind(self, *args, **params):
@@ -1002,6 +1091,7 @@ def _handle_consts_in_bwd(f, const_avals, *args):
   return [Zero(a) for a in const_avals] + list(f(*args))
 
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
+custom_vjp_call_p.jvp_primitive = jvp_of_custom_vjp_call_p
 mlir.register_lowering(custom_vjp_call_p, _custom_jvp_vjp_call_lowering)
 
 def _custom_vjp_call_typecheck(_, *in_avals, call_jaxpr, **kwargs):
@@ -1011,7 +1101,8 @@ def _custom_vjp_call_typecheck(_, *in_avals, call_jaxpr, **kwargs):
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `custom_vjp`: {disallowed_effects}')
-  return call_jaxpr.out_avals, call_jaxpr.effects
+  out_avals = call_jaxpr.out_avals
+  return out_avals, call_jaxpr.effects
 core.custom_typechecks[custom_vjp_call_p] = _custom_vjp_call_typecheck
 
 def _custom_vjp_call_dce(
@@ -1089,8 +1180,8 @@ def _custom_vjp_call_pp_rule(eqn: core.JaxprEqn,
 
 core.pp_eqn_rules[custom_vjp_call_p] = _custom_vjp_call_pp_rule
 
-batching.primitive_batchers[ad.custom_lin_p] = ad.raise_custom_vjp_error_on_jvp
-mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp)
+batching.primitive_batchers[ad.custom_lin_p] = raise_custom_vjp_error_on_jvp
+mlir.register_lowering(ad.custom_lin_p, raise_custom_vjp_error_on_jvp)
 
 
 def custom_gradient(fun):
