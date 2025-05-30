@@ -107,7 +107,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         out_shape=out_shape,
         grid_spec=grid_spec,
         compiler_params=pltpu.TPUCompilerParams(collective_id=13),
-        interpret=mosaic_interpret.TPUInterpretParams(
+        interpret=pltpu.TPUInterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=detect_races),
     )
     # Wrap the kernel within a shard_map to call.
@@ -228,7 +228,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       all_gather_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      interpret=mosaic_interpret.TPUInterpretParams(
+      interpret=pltpu.TPUInterpretParams(
           dma_execution_mode=dma_execution_mode, detect_races=detect_races),
       compiler_params=pltpu.TPUCompilerParams(collective_id=0),
     )
@@ -388,7 +388,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       all_reduce_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      interpret=mosaic_interpret.TPUInterpretParams(
+      interpret=pltpu.TPUInterpretParams(
           dma_execution_mode=dma_execution_mode, detect_races=detect_races),
       compiler_params=pltpu.TPUCompilerParams(collective_id=0),
     )
@@ -672,7 +672,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         reduce_scatter_kernel,
         out_shape=out_shape,
         grid_spec=grid_spec,
-        interpret=mosaic_interpret.TPUInterpretParams(
+        interpret=pltpu.TPUInterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=True),
         compiler_params=pltpu.TPUCompilerParams(collective_id=7),
       )(input_arr)[0]
@@ -976,7 +976,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         reduce_scatter_kernel,
         out_shape=out_shape,
         grid_spec=grid_spec,
-        interpret=mosaic_interpret.TPUInterpretParams(
+        interpret=pltpu.TPUInterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=detect_races),
         compiler_params=pltpu.TPUCompilerParams(collective_id=19),
       )(input_arr)[0]
@@ -1064,7 +1064,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
               ],
               out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
               scratch_shapes=[pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA],
-              interpret=mosaic_interpret.TPUInterpretParams(
+              interpret=pltpu.TPUInterpretParams(
                   dma_execution_mode='eager',
                   detect_races=True,
               ),
