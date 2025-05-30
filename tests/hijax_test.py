@@ -213,7 +213,7 @@ def new_box():
   return new_box_p.bind(treedef=treedef)
 
 def box_get(box):
-  tys = box.type_state()
+  tys = core.cur_qdd(box)
   leaf_vals = box_get_p.bind(box, avals=tys.leaf_avals)
   return jax.tree.unflatten(tys.treedef, leaf_vals)
 
@@ -222,11 +222,11 @@ def box_set(box, val):
   box_set_p.bind(box, *leaves, treedef=treedef)
 
 @dataclass(frozen=True)
-class BoxTypeState:
+class BoxTypeState(core.QuasiDynamicData):
   leaf_avals: tuple[core.AbstractValue, ...]
   treedef: PyTreeDef
 
-  def to_tangent_aval(self):
+  def to_tangent_qdd(self):
     return BoxTypeState(tuple(a.to_tangent_aval() for a in self.leaf_avals),
                         self.treedef)
 
@@ -235,11 +235,12 @@ class BoxTypeState:
                         self.treedef)
 
 class BoxTy(core.AbstractValue):
-  mutable = True
+  has_qdd = True
 
   # forwarded to value
   get = core.aval_method(box_get)
   set = core.aval_method(box_set)
+  type_state = core.aval_method(core.cur_qdd)
 
   # aval interface: hashability and str_short
   def __hash__(self): return hash(BoxTy)
@@ -249,7 +250,7 @@ class BoxTy(core.AbstractValue):
     return 'BoxTy'
 
   # mutable interface
-  def lo_ty_(self, box_state):
+  def lo_ty_qdd(self, box_state):
     return [lo_ty for t in box_state.leaf_avals for lo_ty in t.lo_ty()]
 
   def new_from_loval(self, box_state: BoxTypeState, *lo_vals):
@@ -285,6 +286,9 @@ class Box:  # noqa: F811
   def set(self, val):
     box_set(self, val)
 
+  def cur_qdd(self):
+    return self.type_state()
+
   @property
   def ty(self):
     return BoxTy()
@@ -299,15 +303,10 @@ core.pytype_aval_mappings[Box] = lambda b: b.ty
 class NewBox(HiPrimitive):
   def is_high(self, *, treedef) -> bool: return True
 
-  def staging(self, trace, *, treedef):
-    tracer = super().staging(trace, treedef=treedef)
-    var = trace.frame.tracer_to_var[id(tracer)]
-    leaves, treedef = jax.tree.flatten(None)
-    trace.frame.current_typechange_env[var] = BoxTypeState(leaves, treedef)
-    return tracer
-
   def abstract_eval(self, *, treedef):
-    return BoxTy(), set()
+    leaves, treedef = jax.tree.flatten(None)
+    qdd = BoxTypeState(leaves, treedef)
+    return core.AvalQDD(BoxTy(), qdd), set()
 
   def to_lojax(_, *, treedef):
     return Box(None)
@@ -325,14 +324,8 @@ class BoxSet(HiPrimitive):
 
   def is_high(self, *, treedef) -> bool: return True
 
-  def staging(self, trace, box_tracer, *leaves, treedef):
-    super().staging(trace, box_tracer, *leaves, treedef=treedef)
-    var = trace.getvar(box_tracer)
-    avals = tuple(t.aval for t in leaves)
-    trace.frame.current_typechange_env[var] = BoxTypeState(avals, treedef)
-    return []
-
   def abstract_eval(self, box_ty, *leaf_avals, treedef):
+    box_ty.mutable_qdd.update(BoxTypeState(leaf_avals, treedef))
     return [], set()  # TODO better typechecking...
 
   def to_lojax(_, box, *leaves, treedef):
@@ -374,6 +367,36 @@ box_get_p = BoxGet('box_get')
 
 
 class BoxTest(jtu.JaxTestCase):
+
+  @parameterized.parameters([False, True])
+  def test_qdd(self, jit):
+
+    val1 = 1.0
+    val2 = jnp.arange(3)
+
+    box1 = Box(val1)
+
+    def f(box2):
+      assert core.cur_qdd(box2).leaf_avals == (core.typeof(val1),)
+      box2.set(val2)
+      assert core.cur_qdd(box2).leaf_avals == (core.typeof(val2),)
+
+      box3 = new_box()
+      box3.set(val2)
+      assert core.cur_qdd(box3).leaf_avals == (core.typeof(val2),)
+      box3.set(val1)
+      assert core.cur_qdd(box3).leaf_avals == (core.typeof(val1),)
+
+      assert core.cur_qdd(box1).leaf_avals == (core.typeof(val1),)
+      box1.set(val2)
+      assert core.cur_qdd(box1).leaf_avals == (core.typeof(val2),)
+
+      return
+
+    if jit:
+      f = jax.jit(f)
+
+    f(Box(val1))
 
   def test_jit_arg(self):
     @jax.jit
@@ -470,6 +493,24 @@ class BoxTest(jtu.JaxTestCase):
     ans = h(2.0)
     self.assertAllClose(ans, 4.0)
 
+  def test_jit_closure_nested3(self):
+    box = new_box()
+
+    @jax.jit
+    def h(x):
+      box.set(x)
+
+      @jax.jit
+      def k(x):
+        box.set(box.get() + x)
+
+      k(1.0)
+      k(1.0)
+      return box.get()
+
+    ans = h(2.0)
+    self.assertAllClose(ans, 4.0)
+
   @parameterized.parameters([False, True])
   def test_jvp_closure_stop_gradient(self, jit):
     box = Box(1.0)
@@ -528,6 +569,7 @@ class BoxTest(jtu.JaxTestCase):
       f = jax.jit(f)
 
     jax.grad(f)(1.0)
+
     self.assertAllClose(box.get(), 2.0)
 
   # TODO(mattjj,dougalm): make this work...
@@ -587,6 +629,7 @@ class BoxTest(jtu.JaxTestCase):
       double_it_10 = jax.jit(double_it_10)
 
     double_it_10()
+
     self.assertAllClose(box.get(), 1024., check_dtypes=False)
 
   # TODO error-checking tests from attrs_test.py
@@ -674,7 +717,7 @@ class BoxTest(jtu.JaxTestCase):
 
     @dataclass(frozen=True)
     class MyTy(core.AbstractValue):
-      mutable = False
+      has_qdd = False
 
       def to_tangent_aval(self):
         return MyTy()
@@ -711,7 +754,7 @@ class BoxTest(jtu.JaxTestCase):
 
 
 class ListTy(core.AbstractValue):
-  mutable = True
+  has_qdd = True
 
   # forwarded to value
   get = core.aval_method(box_get)

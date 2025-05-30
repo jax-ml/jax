@@ -501,6 +501,11 @@ class JVPTrace(Trace):
     else:
       return maybe_jvp_tracer(self, primal_out, tangent_out)
 
+  def cur_qdd(self, x):
+    p, _ = self.to_primal_tangent_pair(x)
+    with core.set_current_trace(self.parent_trace):
+      return core.cur_qdd(p)
+
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
     primals, tangents = unzip2(map(self.to_primal_tangent_pair, tracers))
@@ -628,6 +633,9 @@ class JVPTracer(Tracer):
   @property
   def aval(self):
     return get_aval(self.primal)
+
+  def cur_qdd(self):
+    return core.cur_qdd(self.primal)
 
   def full_lower(self):
     if type(self.tangent) is Zero:
@@ -1170,8 +1178,8 @@ def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
   f_jvp, out_nonzeros = f_jvp_traceable(
       jvp(f, instantiate=instantiate, transform_stack=False), nonzeros)
   tangent_avals = [aval.to_tangent_aval()
-                   for aval, nz in zip(jaxpr.in_avals_aug, nonzeros) if nz]
-  avals_in = list(it.chain(jaxpr.in_avals_aug, tangent_avals))
+                   for aval, nz in zip(jaxpr.in_aval_qdds, nonzeros) if nz]
+  avals_in = list(it.chain(jaxpr.in_aval_qdds, tangent_avals))
   jaxpr_out, avals_out, literals_out, () = pe.trace_to_jaxpr_dynamic(
       f_jvp, avals_in)
   return core.ClosedJaxpr(jaxpr_out, literals_out), out_nonzeros()
