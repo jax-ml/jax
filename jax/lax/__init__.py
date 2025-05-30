@@ -370,6 +370,8 @@ from jax._src.lax.parallel import (
   pmin_p as pmin_p,
   ppermute as ppermute,
   ppermute_p as ppermute_p,
+  psend as psend,
+  precv as precv,
   pshuffle as pshuffle,
   psum as psum,
   psum_p as psum_p,

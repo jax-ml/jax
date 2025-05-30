@@ -256,9 +256,9 @@ Run the real workflow, if you found these loggings in the running log, it means 
 
 ### Pipeline Parallelism on GPU
 
-XLA implements SPMD-based pipeline parallelism optimizations. This is a scaling technique
-where the forward and backward pass are split into multiple pipeline stages.
-Each device (or device group) processes the result of the previous
+XLA implements SPMD-based pipeline parallelism optimizations. This is a scaling
+technique where the forward and backward pass are split into multiple pipeline
+stages. Each device (or device group) processes the result of the previous
 pipeline stage (or the pipeline input) and sends its partial result to the next
 stage until the end of the pipeline is reached. This optimization works best
 when the latency of the computation is larger than communication. At compile
@@ -475,6 +475,7 @@ def main(_):
   output_buffer = entry_computation(weights, input_buffer, mesh)
   print(f"output_buffer = \n{output_buffer}")
 ```
+
 ## NCCL flags
 
 These Nvidia NCCL flag values may be useful for single-host multi-device

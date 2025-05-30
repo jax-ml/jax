@@ -225,6 +225,97 @@ class ShardMapTest(jtu.JaxTestCase):
     c = fwd(a)
     self.assertAllClose(c[1, :], a[0, :])
 
+  @jtu.run_on_devices("gpu")
+  def test_psend_precv_basic_with_no_deadlock_cycle(self):
+    mesh = jtu.create_mesh((8,), 'x')
+    a = jax.device_put(
+        jnp.arange(8 * 8).reshape((8, 8)),
+        jax.sharding.NamedSharding(mesh, P('x', None)))
+    weights = jax.random.uniform(
+        key=jax.random.key(0), shape=(8, 1), dtype=jnp.float32)
+
+    @jax.jit
+    @partial(
+        jax.shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
+    )
+    def fwd(a):
+      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+
+      # We define the "forward edge" to be the device-to-device communication
+      # originating from device 0 in increasing indices.
+      fwd_token = jax.lax.psend(
+          a,
+          axis_name="x",
+          perm=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)],
+      )
+
+      data = jax.lax.precv(
+          fwd_token,
+          out_shape=return_dtype_and_shape,
+          axis_name="x",
+          perm=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)],
+      )
+
+      # Here we use an optimization barrier to enforce an arbitrary ordering of
+      # collectives. This will make sure compute happens after recv on the forward
+      # edge, and by extension will make sure the send on the back edge happens
+      # after the recv on the forward edge. Without this optimization barrier, the
+      # send on the backward edge might slip before the forward edge recv ops are
+      # completed, and will cause a deadlock.
+      weights_, _ = (
+          jax.lax.optimization_barrier(
+              (weights, data)
+          )
+      )
+      res = jnp.dot(weights_, data)
+
+      # send the compute result back to the first device
+      bwd_token = jax.lax.psend(
+          res,
+          axis_name="x",
+          perm=[(7, 0)],
+      )
+
+      bwd_data = jax.lax.precv(
+          bwd_token,
+          out_shape=return_dtype_and_shape,
+          axis_name="x",
+          perm=[(7, 0)]
+      )
+      return bwd_data
+
+    c = fwd(a)
+    self.assertEqual(c.shape, a.shape)
+
+  @jtu.run_on_devices("gpu")
+  def test_psend_precv_reverse(self):
+    mesh = jtu.create_mesh((8,), 'x')
+    a = jax.device_put(
+        jnp.arange(8 * 8).reshape((8, 8)),
+        jax.sharding.NamedSharding(mesh, P('x', None)))
+    @jax.jit
+    @partial(
+        jax.shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
+    )
+    def fwd(a):
+      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      dummy_data = jax.lax.precv(
+          jax.lax.create_token(),
+          out_shape=return_dtype_and_shape,
+          axis_name="x",
+          perm=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)],
+      )
+
+      _ = jax.lax.psend(
+          dummy_data,
+          axis_name="x",
+          perm=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)],
+      )
+      return dummy_data
+
+    c = fwd(a)
+    self.assertAllClose(c, jnp.zeros_like(a))
+
   def test_collective_permute_with_multiple_axis_names(self):
     mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
     a = jax.device_put(
