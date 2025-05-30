@@ -566,6 +566,44 @@ LogicalResult canonicalize_extract(const CanonicalizeContext &ctx,
   return success();
 }
 
+LogicalResult canonicalize_broadcast(const CanonicalizeContext &ctx,
+                                     Operation &raw_op) {
+  auto op = dyn_cast<vector::BroadcastOp>(raw_op);
+  auto src_ty = op.getSource().getType();
+  auto src_vty = dyn_cast<VectorType>(src_ty);
+  if ((src_vty && src_vty.getElementType().isSignlessInteger(1)) ||
+      op.getSource().getType().isSignlessInteger(1)) {
+    // Canonicalize i1 broadcast.
+    // i1 represents vmsk in Mosaic and TPU doesn't support vmsk replication
+    // directly.
+    // Instead, convert i1 to i32 vector, broadcast i32, and then convert it
+    // back to i1.
+    ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
+    Value i32_src;
+    if (src_vty) {
+      i32_src = builder.create<arith::ExtUIOp>(
+          VectorType::get(src_vty.getShape(), builder.getI32Type()),
+          op.getSource());
+    } else {
+      i32_src =
+          builder.create<arith::ExtUIOp>(builder.getI32Type(), op.getSource());
+    }
+    auto i32_res_vty =
+        VectorType::get(op.getType().getShape(), builder.getI32Type());
+    auto bcast = builder.create<vector::BroadcastOp>(i32_res_vty, i32_src);
+    auto ones = builder.create<arith::ConstantOp>(
+        i32_res_vty,
+        SplatElementsAttr::get(i32_res_vty,
+                               builder.getOneAttr(builder.getI32Type())));
+    auto cmp =
+        builder.create<arith::CmpIOp>(arith::CmpIPredicate::eq, bcast, ones);
+    op.replaceAllUsesWith(cmp.getResult());
+    op.erase();
+    return success();
+  }
+  return success();
+}
+
 LogicalResult canonicalize_select(const CanonicalizeContext &ctx,
                                   Operation &raw_op) {
   auto op = dyn_cast<arith::SelectOp>(raw_op);
@@ -920,6 +958,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
        canonicalize_multi_dim_reduction},
       {vector::TransposeOp::getOperationName(), canonicalize_vector_transpose},
       {vector::ShapeCastOp::getOperationName(), canonicalize_reshape},
+      {vector::BroadcastOp::getOperationName(), canonicalize_broadcast},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {arith::SIToFPOp::getOperationName(), canonicalize_sitofp},

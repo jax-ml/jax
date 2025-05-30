@@ -1928,20 +1928,6 @@ def _broadcast_in_dim_lowering_rule(
   if aval_in.shape == shape:
     return val
 
-  if jnp.issubdtype(aval_in.dtype, jnp.bool_):
-    # Direct broadcasts for bools are not supported in Mosaic due to booleans
-    # living in mask registers and broadcast operating on vregs. Broadcast as an
-    # integer instead and cast back to a bool.
-    # TODO(b/351019164): Implement this logic in Mosaic BroadcastOp instead.
-    def _proxy_fun(val, *, shape, broadcast_dimensions):
-      int_val = jnp.where(val, 1, 0)
-      bcast_val = jax.lax.broadcast_in_dim(int_val, shape, broadcast_dimensions)
-      return bcast_val == 1
-    proxy_lowering = lower_fun(
-        _proxy_fun, multiple_results=False)
-    return proxy_lowering(
-        ctx, val, shape=shape, broadcast_dimensions=broadcast_dimensions)
-
   if broadcast_dimensions:
     out_shape_list = [1] * len(shape)
     for i, s in zip(broadcast_dimensions, aval_in.shape):
