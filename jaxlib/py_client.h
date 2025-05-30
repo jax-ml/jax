@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
+#include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/program.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/shape.h"
@@ -50,6 +51,7 @@ namespace xla {
 
 class PyClient;
 class PyLoadedExecutable;
+class PyExecutable;
 class PyArray;
 class PyDevice;
 class PyMemorySpace;
@@ -166,6 +168,10 @@ class PyClient {
   CompileAndLoadIfrtProgram(nb_class_ptr<PyClient> client,
                             std::unique_ptr<ifrt::Program> ifrt_program,
                             std::unique_ptr<ifrt::CompileOptions> ifrt_options);
+
+  static absl::StatusOr<nb_class_ptr<PyExecutable>> Compile(
+      nb_class_ptr<PyClient> client, std::string mlir_module,
+      ifrt::DeviceListRef executable_devices, CompileOptions options);
 
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
       nb_class_ptr<PyClient> client, std::string mlir_module,

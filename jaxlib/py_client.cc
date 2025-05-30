@@ -83,6 +83,7 @@ limitations under the License.
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pprof_profile_builder.h"
 #include "xla/python/types.h"
@@ -449,6 +450,26 @@ PyClient::CompileAndLoadIfrtProgram(
   return make_nb_class<PyLoadedExecutable>(
       std::move(client), std::move(ifrt_loaded_executable),
       std::move(traceback), std::move(fingerprint));
+}
+
+/* static */ absl::StatusOr<nb_class_ptr<PyExecutable>> PyClient::Compile(
+    nb_class_ptr<PyClient> client, std::string mlir_module,
+    ifrt::DeviceListRef executable_devices, CompileOptions options) {
+  nb::gil_scoped_release gil_release;
+  mlir::MLIRContext context;
+  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                      ParseMlirModuleString(mlir_module, context));
+  TF_ASSIGN_OR_RETURN(
+      auto topology,
+      client->ifrt_client()->GetTopologyForDevices(executable_devices));
+  auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
+      options, std::move(executable_devices));
+  TF_ASSIGN_OR_RETURN(
+      auto pjrt_executable,
+      PjRtCompile(std::move(options), module.get(), *topology->description()));
+  TF_ASSIGN_OR_RETURN(auto executable_ref,
+                      ifrt::PjRtExecutable::Create(std::move(pjrt_executable)));
+  return make_nb_class<PyExecutable>(executable_ref);
 }
 
 /* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>

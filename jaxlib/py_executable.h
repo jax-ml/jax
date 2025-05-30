@@ -126,7 +126,55 @@ class PyExecuteResults {
 
 using ExecuteShardedArg = std::variant<PyArray, std::vector<PyArray>>;
 
-// Python wrapper around PjRtExecutable. We use a wrapper class:
+// Thin Python wrapper around ifrt::ExecutableRef. We use a wrapper class:
+// a) Standardize around ifrt::ExucutableRef, which is
+//    std::shared_ptr<ifrt::Executable>.
+// b) Concrete subclasses of ifrt::Executable have protected constructors.
+class PyExecutable {
+ public:
+  PyExecutable(ifrt::ExecutableRef ifrt_executable)
+      : ifrt_executable_(std::move(ifrt_executable)) {};
+  ~PyExecutable();
+
+  // NOTE(dsuo): For now, we only expose the ifrt::Executable members required
+  // by the Python bindings.
+  absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
+      const {
+    return ifrt_executable_->GetHloModules();
+  }
+  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  GetOutputMemoryKinds() const {
+    return ifrt_executable_->GetOutputMemoryKinds();
+  }
+  std::optional<std::vector<OpSharding>> GetOutputShardings() const {
+    return ifrt_executable_->GetOutputShardings();
+  }
+  absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
+  GetParameterLayouts() const {
+    return ifrt_executable_->GetParameterLayouts();
+  }
+  absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
+  GetOutputLayouts() const {
+    return ifrt_executable_->GetOutputLayouts();
+  }
+  std::optional<std::vector<OpSharding>> GetParameterShardings() const {
+    return ifrt_executable_->GetParameterShardings();
+  }
+  absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const {
+    return ifrt_executable_->GetCompiledMemoryStats();
+  }
+  absl::StatusOr<std::string> Serialize() const {
+    return ifrt_executable_->Serialize();
+  }
+  absl::StatusOr<ifrt::AttributeMap> GetCostAnalysis() const {
+    return ifrt_executable_->GetCostAnalysis();
+  }
+
+ private:
+  ifrt::ExecutableRef ifrt_executable_;
+};
+
+// Python wrapper around ifrt::LoadedExecutableRef. We use a wrapper class:
 // a) to keep the PyClient alive via a std::shared_ptr<>
 // b) to add Python-specific functionality.
 class PyLoadedExecutable {
@@ -162,8 +210,8 @@ class PyLoadedExecutable {
   }
 
   // Takes args indexed by argid then deviceid, transposes them, and passes to
-  // PjRtExecutable::Execute. The result is similarly transposed back into the
-  // argid,deviceid format.
+  // ifrt::LoadedExecutable::Execute. The result is similarly transposed back
+  // into the argid,deviceid format.
   // args is [num_args x num_devices].
   absl::StatusOr<PyExecuteResults> ExecuteSharded(
       std::vector<ExecuteShardedArg> args, bool with_tokens);
