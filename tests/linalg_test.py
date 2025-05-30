@@ -75,7 +75,6 @@ def _random_invertible(rng, shape, dtype):
       a = rng(shape, dtype)
       try:
         np.linalg.inv(a)
-        invertible = True
       except np.linalg.LinAlgError:
         pass
       else:
@@ -2127,6 +2126,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     shape=[(2, 3), (4, 6), (5, 7), (100, 300)],
     dtype = float_types + complex_types
   )
+  @jtu.run_on_devices("cpu", "gpu")
   def test_solve_sylvester(self, shape, dtype):
 
     tol = {np.float32: 1e-1, np.float64: 1e-5, np.complex64: 1e-1, np.complex128: 1e-5}
@@ -2140,7 +2140,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       X_true = rng(shape=(m, n), dtype=dtype)
 
       C = A @ X_true + X_true @ B
-      print(C.dtype)
       return [A, B, C]
 
     self._CheckAgainstNumpy(osp.linalg.solve_sylvester, jsp.linalg.solve_sylvester, args_maker, tol=tol)
@@ -2150,6 +2149,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     n=[3, 6, 7, 100],
     dtype = float_types + complex_types
   )
+  @jtu.run_on_devices("cpu", "gpu")
   def test_no_solution_sylvester(self, n, dtype):
     """
     Test no solution case to AX + XB = C
