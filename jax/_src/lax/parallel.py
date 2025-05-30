@@ -1132,10 +1132,7 @@ def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
   if is_manual:
     channel = ctx.module_context.new_channel()
     other_args = dict(
-        channel_handle=hlo.ChannelHandle.get(
-            channel, mlir.DEVICE_TO_DEVICE_TYPE
-        )
-    )
+        channel_handle=hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE))
   else:
     other_args = {}
   return full_perm, other_args

@@ -2125,7 +2125,7 @@ def _pvary_abstract_eval(*args, axes, axis_index_groups):
   if not config._check_vma.value:
     return args
   assert isinstance(axes, tuple)
-  arg_vma = [a.vma for a in args if isinstance(a, ShapedArray)]
+  arg_vma = [a.vma for a in args]
   # If there is intersection between arg_vma and axes, error
   if any(set(axes) & a for a in arg_vma):
     raise ValueError(
