@@ -2041,6 +2041,14 @@ def get_vma(vma, mesh):
   assert isinstance(vma, frozenset)
   return vma
 
+
+class SingleSideCollectiveEffect(effects.Effect):
+  __str__ = lambda _: "one-sided communication"
+
+
+single_side_collective_effect = SingleSideCollectiveEffect()
+effects.control_flow_allowed_effects.add_type(SingleSideCollectiveEffect)
+
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'sharding', 'vma']  # inherits slots from parent
   array_abstraction_level = 2
@@ -2199,8 +2207,12 @@ def standard_insert_pvary(*args):
   in_vma = [frozenset() if (aval := get_aval(a)) is abstract_token
             else aval.vma for a in args]  # pytype: disable=attribute-error
   out_vma = frozenset.union(*in_vma)
-  return [pvary(arg, tuple(n for n in out_vma if n not in src))
-          if out_vma - src else arg for arg, src in zip(args, in_vma)]
+  return [
+      pvary(arg, tuple(n for n in out_vma if n not in src))
+      if isinstance(get_aval(arg), ShapedArray) and out_vma - src
+      else arg
+      for arg, src in zip(args, in_vma)
+  ]
 
 def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
   if not config._check_vma.value:
