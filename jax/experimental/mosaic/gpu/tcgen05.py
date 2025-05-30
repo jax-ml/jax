@@ -67,45 +67,40 @@ def create_instr_descriptor(
     transpose_a: bool = False,
     transpose_b: bool = False,
 ):
-  f32 = ir.F32Type.get()
-  bf16 = ir.BF16Type.get()
   f16 = ir.F16Type.get()
-  if acc_dtype not in {f32, f16}:
-    raise NotImplementedError("Only float32 and float16 accumulators supported")
-  if utils.bitwidth(input_dtype) == 16:
-    if input_dtype not in {f16, bf16}:
-      raise NotImplementedError(
-          "The only supported 16-bit input types are float16 and bfloat16, got"
-          f" {input_dtype}"
-      )
-    desc = 0
-    desc |= (acc_dtype == f32) << 4  # D dtype, bits 4-5
-    # Bit 6 is reserved
-    desc |= (input_dtype == bf16) << 7  # A dtype, bits 7-9
-    desc |= (input_dtype == bf16) << 10  # B dtype, bits 10-12
-    return _finish_instr_descriptor(desc, m, n, transpose_a, transpose_b)
-  elif utils.bitwidth(input_dtype) == 8:
-    desc = 0
-    desc |= (acc_dtype == f32) << 4  # D dtype, bits 4-5
-    # Bit 6 is reserved
-    if input_dtype == ir.Float8E4M3FNType.get():
-      input_dtype_enum = 0
-    elif input_dtype == ir.Float8E5M2Type.get():
-      input_dtype_enum = 1
-    else:
-      raise NotImplementedError(f"Unsupported input dtype: {input_dtype}")
-    desc |= input_dtype_enum << 7  # A dtype, bits 7-9
-    desc |= input_dtype_enum << 10  # B dtype, bits 10-12
-    return _finish_instr_descriptor(desc, m, n, transpose_a, transpose_b)
+  f32 = ir.F32Type.get()
+  i32 = ir.IntegerType.get_signless(32)
+
+  desc = 0
+  if acc_dtype == f16:
+    d_type_val = 0
+  elif acc_dtype == f32:
+    d_type_val = 1
+  elif acc_dtype == i32:
+    d_type_val = 2
+  else:
+    raise NotImplementedError(f"Unsupported accumulator dtype: {acc_dtype}")
+  desc |= (d_type_val << 4)  # D type, bits 4-5
+  # Bit 6 is reserved
+  if input_dtype == f16:
+    assert acc_dtype in {f16, f32}
+    ab_type_val = 0
+  elif input_dtype == ir.BF16Type.get():
+    assert acc_dtype == f32
+    ab_type_val = 1
+  elif input_dtype == ir.Float8E4M3FNType.get():
+    assert acc_dtype in {f16, f32}
+    ab_type_val = 0
+  elif input_dtype == ir.Float8E5M2Type.get():
+    assert acc_dtype in {f16, f32}
+    ab_type_val = 1
+  elif input_dtype == ir.IntegerType.get_signless(8):  # Only s8 for now.
+    assert acc_dtype == i32
+    ab_type_val = 1
   else:
     raise NotImplementedError(f"Unsupported input dtype: {input_dtype}")
-
-
-def _finish_instr_descriptor(
-    desc: int, m: int, n: int, transpose_a: bool, transpose_b: bool,
-):
-  # We ignore sparsity in bits 0-3
-  # A, B and D types are set by the caller
+  desc |= (ab_type_val << 7)   # A dtype, bits 7-9
+  desc |= (ab_type_val << 10)  # B dtype, bits 10-12
   # We ignore negate bits 13-14
   desc |= transpose_a << 15  # Transpose A
   desc |= transpose_b << 16  # Transpose B
@@ -184,6 +179,8 @@ def mma(
     )
   f32 = ir.F32Type.get()
   f16 = ir.F16Type.get()
+  s32 = ir.IntegerType.get_signless(32)
+  i8 = ir.IntegerType.get_signless(8)
   if element_type == f32 or element_type == ir.BF16Type.get():
     if d.dtype != f32:
       raise ValueError(
@@ -198,6 +195,12 @@ def mma(
       raise ValueError(
           f"MMA with element type {element_type} only supports accumulators of"
           f" type f32 or f16, but got: {d.dtype}"
+      )
+  elif element_type == i8:
+    if d.dtype != s32:
+      raise ValueError(
+          "MMA with element type s8 only supports s32 accumulators, but got:"
+          f" {d.dtype}"
       )
   else:
     raise NotImplementedError(f"Unsupported element type: {element_type}")
@@ -320,6 +323,8 @@ def _do_mma(
     kind = "f8f6f4"
   elif ir.Float8E4M3FNType.isinstance(element_type):
     kind = "f8f6f4"
+  elif ir.IntegerType.get_signless(8).isinstance(element_type):
+    kind = "i8"
   else:
     raise NotImplementedError(f"Unsupported input element type: {element_type}")
 
@@ -683,7 +688,7 @@ class TMEMRef:
         dtype=self.dtype,
     )
 
-  def load(self, layout: fa.TiledLayout = LAYOUT):
+  def load(self, layout: fa.TiledLayout = LAYOUT, is_signed: bool | None = None):
     i32 = ir.IntegerType.get_signless(32)
     if self.shape[1] % 8:
       raise NotImplementedError
@@ -743,7 +748,9 @@ class TMEMRef:
           "TMEM loads can only produce results in the tcgen05 layouts"
           f" ({LAYOUT} and {TMEM_NATIVE_LAYOUT}), but got: {layout}"
       )
-    return fa.FragmentedArray(_registers=registers, _layout=layout, _is_signed=None)
+    return fa.FragmentedArray(
+        _registers=registers, _layout=layout, _is_signed=is_signed
+    )
 
   def store(self, value):
     if self.shape[1] % 8:

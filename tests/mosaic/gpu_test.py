@@ -1120,7 +1120,26 @@ class TCGen05Test(TestCase):
       n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       swizzle=(32, 64, 128,),
   )
-  def test_mma_basic(self, **kwargs):
+  def test_mma_basic_float(self, **kwargs):
+    if kwargs["n"] * jnp.dtype(kwargs["in_jax_dtype"]).itemsize < kwargs["swizzle"]:
+      self.skipTest("swizzle too large for input")
+    self._basic_mma_test(
+        **kwargs,
+        k_steps=2,  # Reducing to 1 can be helpful while debugging.
+        lhs_transpose_tiles=False,
+        rhs_transpose_tiles=False,
+    )
+
+  @parameterized.product(
+      lhs_transpose=(False, True),
+      rhs_transpose=(False, True),
+      in_jax_dtype=(jnp.int8,),
+      out_jax_dtype=(jnp.int32,),
+      m=(128,),  # TODO(apaszke): 64, 192, 256
+      n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
+      swizzle=(32, 64, 128,),
+  )
+  def test_mma_basic_int(self, **kwargs):
     if kwargs["n"] * jnp.dtype(kwargs["in_jax_dtype"]).itemsize < kwargs["swizzle"]:
       self.skipTest("swizzle too large for input")
     self._basic_mma_test(
@@ -1210,7 +1229,8 @@ class TCGen05Test(TestCase):
         )
         tcgen05.commit_arrive(barriers[2])
       barriers[2].wait(for_tensor_core=True)
-      acc.load().store_untiled(out, optimized=False)
+      is_signed = True if jnp.issubdtype(in_jax_dtype, jnp.integer) else None
+      acc.load(is_signed=is_signed).store_untiled(out, optimized=False)
 
     x_shape = (k, m) if lhs_transpose else (m, k)
     x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
