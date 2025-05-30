@@ -253,6 +253,27 @@ class MutableArrayTest(jtu.JaxTestCase):
     ys = f(xs)
     self.assertAllClose(ys, xs ** 2, check_dtypes=False)
 
+  def test_vmap_extensive_inputs(self):
+    def f(x_ref, val):
+      x_ref[...] += val
+      x_ref[...] += val
+
+    xs_ref = core.mutable_array(jnp.array([0, 0, 0]))
+    vals = jnp.arange(3)
+    jax.vmap(f)(xs_ref, vals)
+    self.assertAllClose(xs_ref[...], 2 * vals, check_dtypes=False)
+
+  def test_vmap_closed_over_read_only(self):
+    y_ref = core.mutable_array(1)
+
+    def f(x_ref):
+      x_ref[...] += y_ref[...]
+      x_ref[...] += y_ref[...]
+
+    xs_ref = core.mutable_array(jnp.array([0, 0, 0]))
+    jax.vmap(f)(xs_ref)
+    self.assertAllClose(xs_ref[...], jnp.array([2, 2, 2]), check_dtypes=False)
+
   def test_implicit_bitcast_regression(self):
     # https://github.com/jax-ml/jax/issues/27683
     v = core.mutable_array(jnp.array([0, 0, 0]))
@@ -416,6 +437,16 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     self.assertAllClose(x_ref[...], 1.)
     out_false = f(False)
     self.assertAllClose(x_ref[...], 2.)
+
+  def test_vmap_closed_over_ref_write(self):
+    x_ref = core.mutable_array(jnp.zeros((), 'int32'))
+
+    def f(val):
+      x_ref[...] += val
+
+    vals = jnp.arange(3, dtype='int32')
+    with self.assertRaisesRegex(Exception, "unbatched mutable array"):
+      jax.vmap(f)(vals)
 
 
 if __name__ == '__main__':

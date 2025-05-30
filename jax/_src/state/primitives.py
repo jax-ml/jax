@@ -618,6 +618,13 @@ def _swap_vmap(batched_args, batched_dims, *, tree):
   val_is_batched = val_dim is not batching.not_mapped
   idx_is_batched = any(i_dim is not batching.not_mapped
                        for i_dim in flat_idx_dims)
+
+  if not ref_is_batched:
+    raise Exception("performing a set/swap operation with vmapped value on "
+                    "an unbatched mutable array reference "
+                    f"of type {core.typeof(ref)}. Move the mutable array to be "
+                    "an argument to the vmapped function?")
+
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
   # TODO(sharadmv): handle vmap of multiple indexers
