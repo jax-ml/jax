@@ -458,7 +458,179 @@ is still work in progress. Stay tuned!
 
 ## Using `core_map`
 
-TODO
+`pl.pallas_call` is suitable for kernels where a single Pallas thread can
+perform the whole computation for an entire CUDA block. The `pl.core_map`
+function relaxes this restriction, allowing for using multiple threads within a
+single block (e.g. for warp specialization) or across multiple blocks in a block
+cluster (e.g. to utilize multicast TMA).
+
+### Replacing `pl.pallas_call` with `pl.core_map` or `plgpu.kernel`
+
+Let us begin with a simple Pallas kernel that increments an array:
+
+```python
+@functools.partial(
+  pl.pallas_call,
+  grid=(2,),
+  in_specs=[pl.BlockSpec(block_shape=(128,), index_map=lambda i: (i,))],
+  out_specs=pl.BlockSpec(block_shape=(128,), index_map=lambda i: (i,))
+  out_shape=jax.ShapeDtypeStruct((256,), jnp.float32), # Total output shape
+)
+def run_kernel(x_ref, y_ref):
+  # x_ref and y_ref are in SMEM!
+  y_ref[...] = x_ref[...] + 1
+
+x = jnp.arange(256, jnp.float32)
+y = run_kernel(x)
+np.testing.assert_array_equal(y, x + 1)
+```
+
+We can write a similar kernel using `pl.core_map`. One big difference is that
+unlike `pl.pallas_call`, no GMEM<->SMEM copies will be inserted automatically.
+If you want them, you can either insert them yourself or use the
+`plgpu.emit_pipeline` helper.
+
+```python
+@pl.run_state
+def run_kernel(x_ref, y_ref):
+  # Here, we're not in the kernel yet! pl.run_state simply changes the JAX
+  # immutable arrays into mutable references.
+
+  # Define the mesh: 2 CUDA blocks over 1 axis called "x"
+  mesh = plgpu.Mesh(grid=(2,), grid_names=("x",))
+
+  @pl.core_map(mesh)  # core_map executes the body
+  def kernel_body():
+    # Once we enter the pl.core_map scope, we are in the body of the kernel.
+    # Note that x_ref and y_ref are in GMEM!
+    block_slice = pl.ds(lax.axis_index("x") * 128, 128)
+    o_ref[block_slice] = x_ref[block_slice] + 1
+
+x = jnp.arange(128, jnp.float32)
+y_init = jnp.zeros_like(x)
+y = run_kernel(x, y_init)
+np.testing.assert_array_equal(y, x + 1)
+```
+
+While `pl.core_map` is a powerful API, it is also quite low-level and is pretty
+much always used in conjunction with `pl.run_state` and `pl.run_scoped` for
+scratch values. For that reason, we also provide a convenience API
+`plgpu.kernel`:
+
+```python
+mesh = plgpu.Mesh(grid=(2,), grid_names=("x",))
+
+@functools.partial(
+    plgpu.kernel,
+    out_shape=jax.ShapeDtypeStruct((256,), jnp.float32),
+    mesh=mesh
+)
+def increment_kernel_core_map(x_ref, y_ref):
+  # x_ref and y_ref are in GMEM!
+  block_slice = pl.ds(lax.axis_index("x") * 128, 128)
+  o_ref[block_slice] = x_ref[block_slice] + 1
+
+x = jnp.arange(128, jnp.float32)
+y = run_kernel(x)  # No need to preallocate outputs as in pl.core_map.
+np.testing.assert_array_equal(y, x + 1)
+```
+
+```{note}
+The `plgpu.Mesh` used with `pl.core_map` defines a topology for computation
+*within a single GPU*, specifying how work is distributed across CUDA blocks
+(the `grid`), Pallas threads within a block (`num_threads`), and potentially
+CUDA block clusters (`cluster`). This is analogous to how `jax.sharding.Mesh`
+defines a topology for distributed computation *across multiple devices* in JAX.
+Both involve SPMD programs executing across the defined topology. Furthermore,
+you can run "collectives" over the Pallas threads and cluster (e.g., using
+`plgpu.ClusterBarrier` or collective async copies), similar to how JAX
+collectives (`psum`, `all_gather`, etc.) operate across devices in a JAX `Mesh`.
+Both also use named axes, and `lax.axis_index(axis_name)` can be used to get a
+thread's or block's coordinate.
+```
+
+### Using multiple Pallas threads per CUDA block
+
+Below, you can find an example of two Pallas threads within a single block
+synchronizing through a barrier and even exchanging data through SMEM.
+
+```python
+mesh = plgpu.Mesh(num_threads=2, thread_name="pallas_thread")
+@functools.partial(
+  plgpu.kernel, out_shape=x, mesh=mesh, scratch_shapes=[plgpu.Barrier()]
+)
+def run_kernel(x_ref, y_ref, barrier_ref):
+  thread_id = jax.lax.axis_index("pallas_thread")
+
+  @pl.when(thread_id == 0)
+  def producer_thread():
+    smem_val = x_ref[...] + 1
+    plgpu.barrier_arrive(barrier_ref)  # Signal the consumer thread
+
+  @pl.when(thread_id == 1)
+  def consumer_thread():
+    plgpu.barrier_wait(barrier_ref)  # Wait for the producer thread
+    out_ref[...] = x_ref[...] + 1
+
+x = jnp.arange(128, jnp.float32)
+y = run_kernel(x)  # There's no need to preallocate the input anymore.
+np.testing.assert_array_equal(y, x + 2)
+```
+
+While this example is simple, you can find a more complicated example in the
+synchronization section that explains `plgpu.Barrier`.
+
+Multiple threads are frequently used in high-performance kernels such as the
+latest flash attention variants or ping-pong matrix multiplication. In both of
+those, there are 2 compute threads in the program that use the SM's ALU
+and TensorCore interchangeably to ensure no execution conflicts.
+
+Another common technique is to allocate one Pallas thread and devote it entirely
+to scheduling asynchronous copies for data consumed by other threads. While
+implementing this scheme from scratch can be complicated, we provide a
+convenient helper API: `plgpu.emit_pipeline_warp_specialized`.
+
+### Using CUDA block clusters
+
+The kernel below launches a single cluster of 2 CUDA blocks and uses the TMA
+multicast feature to collectively perform a copy of GMEM into SMEM of both
+blocks. All blocks participating in the collective copy must schedule the exact
+same copy for the program to be valid.
+
+```python
+mesh = plgpu.Mesh(cluster=(2,), cluster_names=("cluster",))
+
+@functools.partial(
+  plgpu.kernel,
+  out_shape=jax.ShapeDtypeStruct((2, 128), jnp.float32),
+  mesh=mesh,
+  scratch_shapes=[plgpu.SMEM((128,), jnp.float32), plgpu.Barrier()]
+)
+def run_kernel(x_ref, y_ref, smem_ref, barrier_ref):
+  # Specifying collective_axes will enable TMA multicast automatically.
+  plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref, collective_axes="cluster")
+  plgpu.barrier_wait(barrier_ref)
+  plgpu.copy_smem_to_gmem(smem_ref, o_ref.at[lax.axis_index("cluster")])
+  plgpu.wait_smem_to_gmem(0)
+
+x = jnp.arange(128, jnp.float32)
+y = run_kernel(x)
+# Each block gets the same data and writes it out.
+np.testing.assert_array_equal(y, jnp.stack([x, x], axis=0))
+```
+
+### Collective allocations in `pl.run_scoped`
+
+When using `pl.core_map` with multiple Pallas threads (i.e., `num_threads > 1`
+in `plgpu.Mesh`), allocations made via `pl.run_scoped` (for SMEM or Barriers)
+must be performed _collectively by all threads_. This is indicated by specifying
+a `collective_axis` argument to the `run_scoped`, which has two effects:
+1. it promises that all threads will call the same allocation, and
+2. all threads will receive the exact same allocation.
+
+If collective_axes is not specified or does not include the Pallas thread axis,
+each thread would get its own private copy of the scratch variable. This is
+usually undesired and not supported at the moment.
 
 ## Synchronization structures and primitives
 
