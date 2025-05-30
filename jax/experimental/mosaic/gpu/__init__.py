@@ -74,6 +74,7 @@ from .utils import (
     DynamicSlice as DynamicSlice,
     Partition as Partition,
     Partition1D as Partition1D,
+    SemaphoreRef as SemaphoreRef,
     ThreadSubset as ThreadSubset,
     bitwidth as bitwidth,
     bytewidth as bytewidth,

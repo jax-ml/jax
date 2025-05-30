@@ -23,6 +23,7 @@ from jax._src import test_multiprocess as jt_multiprocess
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import memref
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 from jax.experimental import shard
 from jax.experimental import multihost_utils
@@ -70,6 +71,28 @@ class TestCase(parameterized.TestCase):
 
 class ProfilerTest(TestCase):
 
+  def test_get_device_id(self):
+    index = ir.IndexType.get()
+    def kernel(ctx, dst, _):
+      device_id = ctx.device_id()
+      memref.store(device_id, dst, [arith.constant(index, 0)])
+    mesh = jax.make_mesh(
+        (jax.device_count(),), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
+    )
+    with jax.sharding.use_mesh(mesh):
+      out_shape = jax.ShapeDtypeStruct((1,), jnp.int32)
+      y = jax.jit(
+          jax.shard_map(
+              mgpu.as_gpu_kernel(
+                  kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+              ),
+              out_specs=P("x"),
+              check_vma=False,
+          )
+      )()
+      y_np = multihost_utils.process_allgather(y, tiled=True)
+      np.testing.assert_array_equal(y_np, np.arange(jax.device_count()))
+
   def test_remote_async_copy(self):
     i32 = ir.IntegerType.get_signless(32)
     def kernel(ctx, src, dst, scratch):
@@ -98,6 +121,38 @@ class ProfilerTest(TestCase):
       np.testing.assert_array_equal(
           y_np, np.concatenate(np.split(x_np, 2)[::-1], axis=0)
       )
+
+  def test_remote_semaphore(self):
+    i32 = ir.IntegerType.get_signless(32)
+    def kernel(ctx, sem, _):
+      my_device = ctx.device_id()
+      other_device = arith.subi(arith.constant(i32, 1), my_device)
+      my_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(sem))
+      other_dst = ctx.to_remote(sem, other_device)
+      other_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(other_dst))
+      # We signal and wait a different amount on each device to make sure we're
+      # really communicating here.
+      other_sem.signal(arith.addi(arith.constant(i32, 1), other_device))
+      @mgpu.fori(arith.addi(arith.constant(i32, 1), my_device), None)
+      def wait_loop(i, _):
+        my_sem.wait(1)
+
+    mesh = jax.make_mesh(
+        (2,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
+    )
+    with jax.sharding.use_mesh(mesh):
+      sem = shard.reshard(jnp.zeros((1,), dtype=jnp.int32), P())
+      out_sem = jax.jit(
+          jax.shard_map(
+              mgpu.as_gpu_kernel(
+                  kernel, (1, 1, 1), (128, 1, 1), (), (), (), inout_shape=sem
+              ),
+              out_specs=P("x"),
+              check_vma=False,
+          )
+      )(sem)
+      out_sems = multihost_utils.process_allgather(out_sem, tiled=True)
+      np.testing.assert_array_equal(out_sems, np.zeros_like(out_sems))
 
 
 if __name__ == "__main__":

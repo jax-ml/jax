@@ -3108,13 +3108,8 @@ def _semaphore_signal_lowering_rule(
   # receive a signal).
   if ctx.module_ctx.auto_barriers:
     mgpu.utils.warpgroup_barrier()
-  pred = ctx.module_ctx.single_wg_lane_predicate
-  llvm_dialect.inline_asm(
-    i32,
-    [sem_ptr, val, pred],
-    "@$3 atom.add.release.sys.global.u32 $0, [$1], $2;",
-    "=r,l,r,b",
-    has_side_effects=True,
+  mgpu_utils.SemaphoreRef(sem_ptr).signal(
+      val, predicate=ctx.module_ctx.single_wg_lane_predicate
   )
   return ()
 
@@ -3127,35 +3122,9 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
     raise NotImplementedError(
         f"Unhandled transforms for semaphore_wait: {transforms}"
     )
-
-  sem_ptr = mgpu.utils.memref_ptr(sem)
-  i32_ty = ir.IntegerType.get_signless(32)
-  ne_pred = arith_dialect.CmpIPredicate.ne
-  val = _ir_constant(value, i32_ty)
-
-  with mgpu.single_thread(scope=mgpu.ThreadSubset.WARPGROUP):
-    # Create the while loop for busy waiting
-    while_op = scf_dialect.WhileOp([i32_ty], [val])
-    before_block = while_op.before.blocks.append(i32_ty)
-    with ir.InsertionPoint.at_block_begin(before_block):
-      [expected_in_memory] = before_block.arguments
-      new_val = arith_dialect.subi(expected_in_memory, val)
-      in_memory = llvm_dialect.inline_asm(
-        i32_ty,
-        [sem_ptr, expected_in_memory, new_val],
-        "atom.acquire.sys.global.cas.b32 $0, [$1], $2, $3;",
-        "=r,l,r,r",
-        has_side_effects=True,
-      )
-      comparison = arith_dialect.cmpi(ne_pred, in_memory, expected_in_memory)
-      new_expected_in_memory = arith_dialect.maxui(in_memory, val)
-      scf_dialect.condition(comparison, [new_expected_in_memory])
-    after_block = while_op.after.blocks.append(i32_ty)
-    with ir.InsertionPoint.at_block_begin(after_block):
-      scf_dialect.yield_(after_block.arguments)
-  # NOTE: This barrier is necessary for a correct lowering of this op and can't
-  # be removed even if auto_barriers is False.
-  mgpu_utils.warpgroup_barrier()
+  i32 = ir.IntegerType.get_signless(32)
+  val = _ir_constant(value, i32)
+  mgpu_utils.SemaphoreRef(mgpu.utils.memref_ptr(sem)).wait(val)
   return ()
 
 

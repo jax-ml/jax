@@ -744,6 +744,9 @@ def warpgroup_barrier():
       has_side_effects=True,
   )
 
+def warp_barrier():
+  nvvm.bar_warp_sync(c(0xffffffff, ir.IntegerType.get_signless(32)))
+
 
 @dataclasses.dataclass(frozen=True)
 class BarrierRef:
@@ -1044,6 +1047,67 @@ class CollectiveBarrierRef:
 
   def wait_parity(self, *args, **kwargs):
     self.barrier.wait_parity(*args, **kwargs)
+
+
+@dataclasses.dataclass(frozen=True)
+class SemaphoreRef:
+  ptr: ir.Value
+
+  def signal(self, value: ir.Value | int, predicate: ir.Value | None = None):
+    i32 = ir.IntegerType.get_signless(32)
+    if not isinstance(value, ir.Value):
+      value = c(value, i32)
+    elif value.type != i32:
+      raise ValueError(f"Expected a i32 value, got {value.type}")
+    if predicate is None:
+      predicate = single_thread_predicate(ThreadSubset.WARPGROUP)
+    llvm.inline_asm(
+      i32,
+      [self.ptr, value, predicate],
+      "@$3 atom.add.release.sys.global.u32 $0, [$1], $2;",
+      "=r,l,r,b",
+      has_side_effects=True,
+    )
+
+  def wait(
+      self,
+      value: ir.Value | int = 1,
+      scope: ThreadSubset = ThreadSubset.WARPGROUP,
+  ):
+    i32 = ir.IntegerType.get_signless(32)
+    if not isinstance(value, ir.Value):
+      value = c(value, i32)
+    elif value.type != i32:
+      raise ValueError(f"Expected a i32 value, got {value.type}")
+
+    ne_pred = arith.CmpIPredicate.ne
+
+    with single_thread(scope=scope):
+      # Create the while loop for busy waiting
+      while_op = scf.WhileOp([i32], [value])
+      before_block = while_op.before.blocks.append(i32)
+      with ir.InsertionPoint.at_block_begin(before_block):
+        [expected_in_memory] = before_block.arguments
+        new_val = arith.subi(expected_in_memory, value)
+        in_memory = llvm.inline_asm(
+          i32,
+          [self.ptr, expected_in_memory, new_val],
+          "atom.acquire.sys.global.cas.b32 $0, [$1], $2, $3;",
+          "=r,l,r,r",
+          has_side_effects=True,
+        )
+        comparison = arith.cmpi(ne_pred, in_memory, expected_in_memory)
+        new_expected_in_memory = arith.maxui(in_memory, value)
+        scf.condition(comparison, [new_expected_in_memory])
+      after_block = while_op.after.blocks.append(i32)
+      with ir.InsertionPoint.at_block_begin(after_block):
+        scf.yield_(after_block.arguments)
+    if scope == ThreadSubset.WARPGROUP:
+      warpgroup_barrier()
+    elif scope == ThreadSubset.WARP:
+      warp_barrier()
+    else:
+      raise ValueError(f"Unsupported scope: {scope}")
 
 
 class Partition:
