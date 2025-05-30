@@ -23,15 +23,11 @@ import tempfile
 # pytype: disable=import-error
 from jax._src import profiler as jax_profiler
 try:
-  from tensorflow.python.profiler import profiler_v2 as profiler
-  from tensorflow.python.profiler import profiler_client
-except ImportError:
-  raise ImportError("This script requires `tensorflow` to be installed.")
-try:
-  from tensorboard_plugin_profile.convert import raw_to_tool_data as convert
+  from xprof.convert import _pywrap_profiler_plugin
+  from xprof.convert import raw_to_tool_data as convert
 except ImportError:
   raise ImportError(
-      "This script requires `tensorboard_plugin_profile` to be installed.")
+      "This script requires `xprof` to be installed.")
 # pytype: enable=import-error
 
 
@@ -69,13 +65,13 @@ def collect_profile(port: int, duration_in_ms: int, host: str,
                     log_dir: os.PathLike | str | None, host_tracer_level: int,
                     device_tracer_level: int, python_tracer_level: int,
                     no_perfetto_link: bool):
-  options = profiler.ProfilerOptions(
-      host_tracer_level=host_tracer_level,
-      device_tracer_level=device_tracer_level,
-      python_tracer_level=python_tracer_level,
-  )
+  options = {
+      "host_tracer_level": host_tracer_level,
+      "device_tracer_level": device_tracer_level,
+      "python_tracer_level": python_tracer_level,
+  }
   log_dir_ = pathlib.Path(log_dir if log_dir is not None else tempfile.mkdtemp())
-  profiler_client.trace(
+  _pywrap_profiler_plugin.trace(
       f"{host}:{port}",
       str(log_dir_),
       duration_in_ms,

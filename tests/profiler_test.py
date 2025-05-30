@@ -44,11 +44,11 @@ except ImportError:
   profiler_client = None
   tf_profiler = None
 
-TBP_ENABLED = False
+XPROF_ENABLED = False
 try:
-  import tensorboard_plugin_profile
-  del tensorboard_plugin_profile
-  TBP_ENABLED = True
+  import xprof
+  del xprof
+  XPROF_ENABLED = True
 except ImportError:
   pass
 
@@ -296,7 +296,7 @@ class ProfilerTest(unittest.TestCase):
     self._check_xspace_pb_exist(logdir)
 
   @unittest.skipIf(
-      not (portpicker and profiler_client and tf_profiler and TBP_ENABLED),
+      not (portpicker and profiler_client and tf_profiler and XPROF_ENABLED),
     "Test requires tensorflow.profiler, portpicker and "
     "tensorboard_profile_plugin")
   def test_remote_profiler(self):
