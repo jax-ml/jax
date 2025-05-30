@@ -66,7 +66,6 @@ from jax._src.api_util import (
   rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
   apply_flat_fun_nokwargs, check_callable, debug_info,
   flat_out_axes)
-from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
@@ -477,6 +476,8 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     shapes and types as the corresponding arguments. If ``has_aux`` is True
     then a tuple of ((value, auxiliary_data), gradient) is returned.
   """
+  from jax._src.lax import lax as lax_internal  # pytype: disable=import-error
+
   if reduce_axes:
     raise NotImplementedError("reduce_axes argument to grad is deprecated")
   del reduce_axes
@@ -889,7 +890,7 @@ def hessian(fun: Callable, argnums: int | Sequence[int] = 0,
                 argnums, has_aux=has_aux, holomorphic=holomorphic)
 
 def _std_basis(pytree):
-  import jax.numpy as jnp
+  import jax.numpy as jnp  # pytype: disable=import-error
   leaves, _ = tree_flatten(pytree)
   ndim = sum(map(np.size, leaves))
   dtype = dtypes.result_type(*leaves)
@@ -905,6 +906,7 @@ def _jacrev_unravel(output_pytree, input_pytree_leaf, arr):
     output_pytree, 0, input_pytree_leaf, arr)
 
 def _possible_downcast(x, example):
+  from jax._src.lax import lax as lax_internal  # pytype: disable=import-error
   if (dtypes.issubdtype(x.dtype, np.complexfloating) and
       not dtypes.issubdtype(_dtype(example), np.complexfloating)):
     x = x.real
@@ -1483,7 +1485,7 @@ def pmap(
         " from pmap.")
 
   if config.pmap_shmap_merge.value:
-    from jax._src.shard_map import pmap
+    from jax._src.shard_map import pmap  # pytype: disable=import-error
     return pmap(fun, axis_name, in_axes=in_axes, out_axes=out_axes,
                 static_broadcasted_argnums=static_broadcasted_argnums,
                 devices=devices, backend=backend,

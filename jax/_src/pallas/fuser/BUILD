@@ -48,6 +48,7 @@ pytype_strict_library(
         ":fuser_utils",
         "//jax",
         "//jax:ad_util",
+        "//jax:api",
         "//jax:api_util",
         "//jax:core",
         "//jax:custom_derivatives",
