@@ -47,7 +47,7 @@ module = [
     "rich.*",
     "scipy.*",
     "setuptools.*",
-    "tensorboard_plugin_profile.convert.*",
+    "xprof.convert.*",
     "tensorflow.*",
     "tensorflow.io.*",
     "tensorflowjs.*",
