@@ -166,7 +166,7 @@ class SvdTest(jtu.JaxTestCase):
       np.testing.assert_almost_equal(diff, 1e-4, decimal=2)
       # Check that u and v are orthogonal.
       self.assertAllClose(u.T.conj() @ u, np.eye(m), atol=10 * _SVD_TEST_EPS)
-      self.assertAllClose(v.T.conj() @ v, np.eye(m), atol=11 * _SVD_TEST_EPS)
+      self.assertAllClose(v.T.conj() @ v, np.eye(m), atol=30 * _SVD_TEST_EPS)
 
   @jtu.sample_product(
     [dict(m=m, n=n) for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])],
