@@ -578,7 +578,10 @@ class BatchTrace(Trace):
     return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, *, out_trees,
-                              symbolic_zeros):  # pytype: disable=signature-mismatch
+                              symbolic_zeros, in_zeros):  # pytype: disable=signature-mismatch
+    if in_zeros is not None:
+      raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "
+                      "function.")
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
     fwd_in_dims = [d for in_dim in in_dims for d in [in_dim, not_mapped]]
 
@@ -588,7 +591,8 @@ class BatchTrace(Trace):
     bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, out_dims2, in_dims)
     out_vals = prim.bind_with_trace(self.parent_trace,
                                     (fun, fwd, bwd) + tuple(in_vals),
-                                    dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
+                                    dict(out_trees=out_trees, in_zeros=in_zeros,
+                                         symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
       _, res_tree = out_trees()

@@ -728,7 +728,7 @@ class Trace(Generic[TracerType]):
     raise NotImplementedError(msg)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
-                              out_trees, symbolic_zeros):
+                              out_trees, symbolic_zeros, in_zeros):
     msg = (f"{type(self)} must override process_custom_vjp_call "
            "to handle custom_vjp primitives")
     raise NotImplementedError(msg)
@@ -1110,8 +1110,11 @@ class EvalTrace(Trace):
     del primitive, jvp, _  # Unused.
     return fun.call_wrapped(*tracers)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, **_):  # pytype: disable=signature-mismatch
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, in_zeros, **_):  # pytype: disable=signature-mismatch
     del primitive, fwd, bwd, _  # Unused.
+    if in_zeros is not None:
+      raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "
+                      "function.")
     return fun.call_wrapped(*tracers)
 
 

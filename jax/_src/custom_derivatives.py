@@ -422,7 +422,9 @@ def _custom_jvp_call_typecheck(_, *in_avals, call_jaxpr, jvp_jaxpr_fun,
   return call_jaxpr.out_avals, call_jaxpr.effects
 core.custom_typechecks[custom_jvp_call_p] = _custom_jvp_call_typecheck
 
-def _custom_jvp_vjp_call_lowering(ctx, *args, call_jaxpr, **_):
+def _custom_jvp_vjp_call_lowering(ctx, *args, call_jaxpr, **params):
+  if params.get("in_zeros", None) is not None:
+    ad.raise_custom_vjp_error_on_jvp()
   consts = mlir._ir_consts(call_jaxpr.consts)
   out, tokens = mlir.jaxpr_subcomp(ctx.module_context, call_jaxpr.jaxpr,
                                    ctx.name_stack, ctx.tokens_in, consts,
@@ -707,7 +709,8 @@ class custom_vjp(Generic[ReturnValue]):
       flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
       out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
                                         *args_flat, out_trees=out_trees,
-                                        symbolic_zeros=self.symbolic_zeros)
+                                        symbolic_zeros=self.symbolic_zeros,
+                                        in_zeros=None)
       _, (out_tree, _) = lu.merge_linear_aux(out_type, out_trees)
       return tree_unflatten(out_tree, out_flat)
 
@@ -976,14 +979,17 @@ def _handle_consts_in_bwd(f, const_avals, *args):
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
 mlir.register_lowering(custom_vjp_call_p, _custom_jvp_vjp_call_lowering)
 
-def _custom_vjp_call_typecheck(_, *in_avals, call_jaxpr, **kwargs):
+def _custom_vjp_call_typecheck(_, *in_avals, call_jaxpr, in_zeros, **kwargs):
   del in_avals, kwargs
   disallowed_effects = effects.custom_derivatives_allowed_effects.filter_not_in(
       call_jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `custom_vjp`: {disallowed_effects}')
-  return call_jaxpr.out_avals, call_jaxpr.effects
+  out_avals = call_jaxpr.out_avals
+  if in_zeros is not None:
+    out_avals = [*out_avals, *(v.to_tangent_aval() for v in out_avals)]
+  return out_avals, call_jaxpr.effects
 core.custom_typechecks[custom_vjp_call_p] = _custom_vjp_call_typecheck
 
 def _custom_vjp_call_dce(
@@ -991,6 +997,7 @@ def _custom_vjp_call_dce(
 ) -> tuple[list[bool], core.JaxprEqn | None]:
   if not any(used_outs) and not pe.has_effects(eqn):
     return [False] * len(eqn.invars), None
+  assert eqn.params["in_zeros"] is None
   call_jaxpr: core.ClosedJaxpr = eqn.params["call_jaxpr"]
   fwd_jaxpr_thunk = eqn.params["fwd_jaxpr_thunk"]
   bwd: lu.WrappedFun = eqn.params["bwd"]
@@ -1042,7 +1049,9 @@ def _custom_vjp_call_dce(
       eqn.invars, outvars, eqn.primitive, new_params, dce_call_jaxpr.effects,
       eqn.source_info, eqn.ctx)
   return list(used_ins), new_eqn
-pe.dce_rules[custom_vjp_call_p] = _custom_vjp_call_dce
+
+# TODO(dfm): FIXME!
+# pe.dce_rules[custom_vjp_call_p] = _custom_vjp_call_dce
 
 
 def _custom_vjp_call_pp_rule(eqn: core.JaxprEqn,
@@ -1051,6 +1060,8 @@ def _custom_vjp_call_pp_rule(eqn: core.JaxprEqn,
   params = dict(eqn.params)
   if not params["num_consts"]:
     params.pop("num_consts")
+  if not params["in_zeros"]:
+    params.pop("in_zeros")
   params.pop("out_trees")
   params["fwd"] = params.pop("fwd_jaxpr_thunk").debug_info.func_name
   params["bwd"] = params.pop("bwd").debug_info.func_name
