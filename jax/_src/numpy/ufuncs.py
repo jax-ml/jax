@@ -1626,8 +1626,7 @@ def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return lax.atan2(*promote_args_inexact("arctan2", x1, x2))
 
 
-@export
-@partial(jit, inline=True)
+@binary_ufunc(identity=None, reduce=reductions._reduce_min)
 def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise minimum of the input arrays.
 
@@ -1687,8 +1686,7 @@ def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.min(*promote_args("minimum", x, y))
 
 
-@export
-@partial(jit, inline=True)
+@binary_ufunc(identity=None, reduce=reductions._reduce_max)
 def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise maximum of the input arrays.
 
