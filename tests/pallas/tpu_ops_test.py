@@ -197,8 +197,18 @@ class OpsTest(PallasBaseTest):
   def test_row_broadcast(self, dtype):
     if not jtu.if_cloud_tpu_at_least(2025, 1, 10):
       self.skipTest("Requires libtpu built after 2025-01-10")
-    if not self.INTERPRET and jtu.get_tpu_version() < 5:
-      self.skipTest("Requires TPUv5+")
+    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    if not self.INTERPRET and jtu.get_tpu_version() < 4 and bitwidth < 8:
+      self.skipTest("Requires TPUv4+ for sub-byte types")
+    if (
+        not self.INTERPRET
+        and jtu.get_tpu_version() == 4
+        and bitwidth < 16
+        and not jtu.if_cloud_tpu_at_least(2025, 6, 2)
+    ):
+      self.skipTest(
+          "Requires libtpu built after 2025-06-02 for bitwidth < 16 on TPUv4"
+      )
     def kernel(x_ref, y_ref):
       y_ref[...] = jnp.broadcast_to(x_ref[pl.ds(3, 1)], y_ref.shape).astype(y_ref.dtype)
     m, n = 4, 1152
