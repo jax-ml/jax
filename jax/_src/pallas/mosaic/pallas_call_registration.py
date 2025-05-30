@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import os
 import tempfile
 from typing import cast
@@ -92,15 +93,14 @@ def _get_memory_space_from_aval(
 
 
 def _get_memory_spaces_from_avals(
-    out_avals: tuple[jax_core.AbstractValue, ...],
+    avals: Sequence[jax_core.AbstractValue],
 ) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
-  output_memory_spaces = None
+  memory_spaces = None
   if any(
-      isinstance(out_aval, pallas_core.ShapedArrayWithMemorySpace)
-      for out_aval in out_avals
+      isinstance(aval, pallas_core.ShapedArrayWithMemorySpace) for aval in avals
   ):
-    output_memory_spaces = tuple(map(_get_memory_space_from_aval, out_avals))
-  return output_memory_spaces
+    memory_spaces = tuple(map(_get_memory_space_from_aval, avals))
+  return memory_spaces
 
 
 def pallas_call_tpu_lowering_rule(
@@ -217,6 +217,18 @@ def pallas_call_tpu_lowering_rule(
   dynamic_grid_args, args = in_nodes[:num_dyn_bounds], in_nodes[num_dyn_bounds:]
   kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
   output_memory_spaces = _get_memory_spaces_from_avals(out_avals)
+  input_memory_spaces = None
+  if any(
+      isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
+      for aval in ctx.avals_in
+  ):
+    # TODO(sharadmv): Support dynamic grid bounds and extra args.
+    if num_dyn_bounds != 0 or len(extra_args) > 0:
+      raise NotImplementedError(
+          "Dynamic grid bounds and extra args are not supported when"
+          " specifying memory spaces for inputs."
+      )
+    input_memory_spaces = _get_memory_spaces_from_avals(ctx.avals_in)
   if cost_estimate is not None:
     mosaic_cost_estimate = tpu_custom_call.CostEstimate(
         flops=cost_estimate.flops,
@@ -225,6 +237,15 @@ def pallas_call_tpu_lowering_rule(
     )
   else:
     mosaic_cost_estimate = None
+  if input_memory_spaces is None and output_memory_spaces is not None:
+    input_memory_spaces_list = len(ctx.avals_in) * [
+        None,
+    ]
+    for input_output_alias in input_output_aliases:
+      input_memory_spaces_list[input_output_alias[0]] = output_memory_spaces[
+          input_output_alias[1]
+      ]
+    input_memory_spaces = tuple(input_memory_spaces_list)
   out_nodes = mosaic.lower_module_to_custom_call(
       kernel_ctx,
       *dynamic_grid_args,
@@ -245,6 +266,7 @@ def pallas_call_tpu_lowering_rule(
       has_side_effects=mosaic_params.has_side_effects,
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=mosaic_params.disable_bounds_checks,
+      input_memory_spaces=input_memory_spaces,
   )
   _maybe_cast_to_bool = lambda x, aval: x.astype(
       jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x
