@@ -1084,7 +1084,7 @@ def custom_vjp_call_rule(in_err, enabled_errors, *in_vals,
                          call_jaxpr: core.ClosedJaxpr,
                          fwd_jaxpr_thunk, num_consts,
                          bwd: lu.WrappedFun, out_trees,
-                         symbolic_zeros: bool):
+                         symbolic_zeros: bool, in_zeros: Sequence[bool] | None):
   err_vals, err_tree = jtu.tree_flatten(in_err)
   num_errs = err_tree.num_leaves
   checkified_fun = lu.wrap_init(
@@ -1111,7 +1111,7 @@ def custom_vjp_call_rule(in_err, enabled_errors, *in_vals,
   all_outs = custom_derivatives.custom_vjp_call_p.bind(
       checkified_fun, checkified_fwd_wrapped,
       bwd_, *err_vals, *in_vals, out_trees=out_trees,
-      symbolic_zeros=symbolic_zeros)
+      symbolic_zeros=symbolic_zeros, in_zeros=in_zeros)
   fst, out_metadata = lu.merge_linear_aux(fun_metadata, fwd_out_tree)
   if fst:
     err_and_out_tree, _ = out_metadata

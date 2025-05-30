@@ -553,27 +553,39 @@ class JVPTrace(Trace):
     return map(partial(maybe_jvp_tracer, self), primals_out, tangents_out)
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
-                              symbolic_zeros):
+                              symbolic_zeros, in_zeros):
+    assert in_zeros is None
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace,
                                   (fun, fwd, bwd, *primals_in),
-                                  dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
-    fwd_in = [(p, type(t) is not Zero) for p, t in zip(primals_in, tangents_in)]
-    fwd_in = [x for pair in fwd_in for x in pair]   # flatten
-    with core.set_current_trace(self.parent_trace):
-      res_and_primals_out = fwd.call_wrapped(*fwd_in)
+                                  dict(out_trees=out_trees, in_zeros=in_zeros,
+                                       symbolic_zeros=symbolic_zeros))
 
-    _, res_tree = out_trees()
-    res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-    avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
     in_zeros = [type(t) is Zero for t in tangents_in]
     nz_tangents_in = [t for z, t in zip(in_zeros, tangents_in) if not z]
-    with core.set_current_trace(self.parent_trace):
-      tangents_out = custom_lin_p.bind(
-          *res, *nz_tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
-          out_avals=avals_out, symbolic_zeros=symbolic_zeros, in_zeros=in_zeros)
+    out = prim.bind_with_trace(
+        self.parent_trace, (fun, fwd, bwd, *primals_in, *nz_tangents_in),
+        dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros, in_zeros=in_zeros))
+    primals_out, tangents_out = split_list(out, [len(out) // 2])
+    tangents_out = map(replace_rule_output_symbolic_zeros, tangents_out)
     return map(partial(maybe_jvp_tracer, self), primals_out, tangents_out)
+
+    # fwd_in = [(p, type(t) is not Zero) for p, t in zip(primals_in, tangents_in)]
+    # fwd_in = [x for pair in fwd_in for x in pair]   # flatten
+    # with core.set_current_trace(self.parent_trace):
+    #   res_and_primals_out = fwd.call_wrapped(*fwd_in)
+
+    # _, res_tree = out_trees()
+    # res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+    # avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
+    # in_zeros = [type(t) is Zero for t in tangents_in]
+    # nz_tangents_in = [t for z, t in zip(in_zeros, tangents_in) if not z]
+    # with core.set_current_trace(self.parent_trace):
+    #   tangents_out = custom_lin_p.bind(
+    #       *res, *nz_tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
+    #       out_avals=avals_out, symbolic_zeros=symbolic_zeros, in_zeros=in_zeros)
+    # return map(partial(maybe_jvp_tracer, self), primals_out, tangents_out)
 
   def process_custom_transpose(self, prim, call, tracers, **params):
     ps_in, ts_in = unzip2(map(self.to_primal_tangent_pair, tracers))
@@ -727,7 +739,9 @@ class LinearizeTrace(Trace):
   def process_custom_vjp_call(self, prim, fun, fwd,
                               bwd: lu.WrappedFun, tracers,
                               out_trees: Callable[[], Sequence[PyTreeDef]],
-                              symbolic_zeros: bool):
+                              symbolic_zeros: bool,
+                              in_zeros: Sequence[bool] | None):
+    assert in_zeros is None, "TODO(dfm)"
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace,

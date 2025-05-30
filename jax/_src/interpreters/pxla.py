@@ -535,12 +535,12 @@ class MapTrace(core.Trace):
       return fun.call_wrapped(*tracers)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
-                              out_trees, symbolic_zeros):
+                              out_trees, symbolic_zeros, in_zeros):
     if symbolic_zeros:
       msg = ("custom_vjp with symbolic_zeros=True not supported with eager pmap. "
              "Please open an issue at https://github.com/jax-ml/jax/issues !")
       raise NotImplementedError(msg)
-    del primitive, fwd, bwd, out_trees, symbolic_zeros  # always base main, drop vjp
+    del primitive, fwd, bwd, out_trees, symbolic_zeros, in_zeros  # always base main, drop vjp
     with core.set_current_trace(self):
       return fun.call_wrapped(*tracers)
 
