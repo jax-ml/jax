@@ -114,11 +114,6 @@ def ragged_dot(
     raise NotImplementedError(
         f"lhs and rhs must have the same dtype, got {lhs.dtype} and {rhs.dtype}"
     )
-
-  elem_bits = jnp.finfo(lhs.dtype).bits
-  swizzle = _find_swizzle(elem_bits * block_k, "lhs")
-  swizzle_elems = swizzle * 8 // elem_bits
-
   m, k = lhs.shape
   g, k2, n = rhs.shape
 
@@ -149,22 +144,12 @@ def ragged_dot(
       group_info = GroupInfo.create(rows_per_expert_gmem, block_m, mi)
 
       def acc_scope(acc_ref):
-        transforms = (
-            plgpu.TilingTransform((8, swizzle_elems)),
-            plgpu.SwizzleTransform(swizzle),
-        )
         plgpu.emit_pipeline(
             lambda _, lhs_smem, rhs_smem: plgpu.wgmma(acc_ref, lhs_smem, rhs_smem),
             grid=(k // block_k,),
             in_specs=[
-                plgpu.BlockSpec(
-                    (block_m, block_k),
-                    lambda k: (group_info.block, k),
-                    transforms=transforms,
-                ),
-                plgpu.BlockSpec(
-                    (block_k, block_n), lambda k: (k, ni), transforms=transforms
-                ),
+                plgpu.BlockSpec((block_m, block_k), lambda k: (group_info.block, k)),
+                plgpu.BlockSpec((block_k, block_n), lambda k: (k, ni)),
             ],
             max_concurrent_steps=max_concurrent_steps,
             delay_release=1,
@@ -173,17 +158,9 @@ def ragged_dot(
 
       acc = pl.run_scoped(acc_scope, plgpu.ACC((block_m, block_n)))
 
-      store_transforms = (
-          plgpu.TilingTransform((1, swizzle_elems)),
-          plgpu.SwizzleTransform(swizzle)
-      )
       @functools.partial(
           pl.run_scoped,
-          o_smem=plgpu.SMEM(
-              (block_m, block_n),
-              dtype=o_gmem.dtype,
-              transforms=store_transforms,
-          )
+          o_smem=plgpu.SMEM((block_m, block_n), dtype=o_gmem.dtype)
       )
       def store_scope(o_smem):  # pylint: disable=unused-variable
         o_smem[...] = acc.astype(o_smem.dtype)
@@ -251,6 +228,9 @@ def ragged_dot(
       out_shape=jax.ShapeDtypeStruct((m, n), lhs.dtype),
       grid=(num_sms,),
       grid_names=("sm",),
+      compiler_params=plgpu.CompilerParams(
+            lowering_semantics=(plgpu.LoweringSemantics.Warpgroup),
+        ),
   )
   return kernel(group_sizes, lhs, rhs)
 

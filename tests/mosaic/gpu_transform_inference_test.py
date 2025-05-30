@@ -519,6 +519,111 @@ class TransformInferenceTest(parameterized.TestCase):
     with self.assertRaises(NotImplementedError):
       mgpu.infer_transforms(self.module)
 
+  def test_infer_transforms_for_sibling_subviews_and_distant_op(self):
+    # This test uses the following op tree extracted from a ragged dot kernel:
+    #
+    #   subview_op0   (slice = 64, 64)
+    #   - subview_op1 (slice = 1, 64)
+    #   - subview_op2 (slice = 2, 64)
+    #   - subview_op3 (slice = 8, 64)
+    #   - user_op0    (in_transforms = [tile(64, 64), swizzle(32)])
+    #
+    # First the in_transforms of user_op0 have to be propagated up to
+    # subview_op0. Then they have to be propagated down and resolved. Finally
+    # all ops, including user_op0, need to have the same transforms.
+    subview_op0, subview_op1, subview_op2, subview_op3 = None, None, None, None
+    user_op0 = None
+
+    source_shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+    source_ref_ty = ir.MemRefType.get(source_shape, elt_ty, memory_space=smem)
+
+    slice1_shape = (1, 64)
+    slice2_shape = (2, 64)
+    slice3_shape = (8, 64)
+
+    slice0_ref_ty = ir.MemRefType.get(source_shape, elt_ty, memory_space=smem)
+    slice1_ref_ty = ir.MemRefType.get(slice1_shape, elt_ty, memory_space=smem)
+    slice2_ref_ty = ir.MemRefType.get(slice2_shape, elt_ty, memory_space=smem)
+    slice3_ref_ty = ir.MemRefType.get(slice3_shape, elt_ty, memory_space=smem)
+
+    def body(source_ref):
+      nonlocal subview_op0, subview_op1, subview_op2, subview_op3, user_op0
+
+      subview_op0 = memref.SubViewOp(
+          slice0_ref_ty,
+          source_ref,
+          [],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[0, 0],
+          static_sizes=source_shape,
+          static_strides=[1, 1],
+      )
+      user_op0 = builtin.UnrealizedConversionCastOp(
+          [slice0_ref_ty], [subview_op0.result]
+      )
+      transforms_0 = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((64, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(32),
+      ])
+      user_op0.attributes["in_transforms"] = ir.ArrayAttr.get([transforms_0])
+
+      subview_op1 = memref.SubViewOp(
+          slice1_ref_ty,
+          subview_op0,
+          [],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[0, 0],
+          static_sizes=slice1_shape,
+          static_strides=[1, 1],
+      )
+
+      subview_op2 = memref.SubViewOp(
+          slice2_ref_ty,
+          subview_op0,
+          [],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[15, 0],
+          static_sizes=slice2_shape,
+          static_strides=[1, 1],
+      )
+
+      subview_op3 = memref.SubViewOp(
+          slice3_ref_ty,
+          subview_op0,
+          [],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[30, 0],
+          static_sizes=slice3_shape,
+          static_strides=[1, 1],
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(source_ref_ty)(body)
+
+    mgpu.infer_transforms(self.module)
+
+    want = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((1, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(32),
+      ])
+
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op0), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op0), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op1), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op1), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op2), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op2), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op3), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op3), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(user_op0), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(user_op0), [want])
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

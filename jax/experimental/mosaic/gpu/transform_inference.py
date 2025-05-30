@@ -21,6 +21,7 @@ annotated with layouts (see `layout_inference.py` for the relevant pass).
 from collections.abc import Callable
 from functools import partial
 import itertools
+import math
 from typing import cast
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu
@@ -84,12 +85,32 @@ def _resolve_transforms(
   if other_transforms is None:
     return transforms
 
-  if transforms != other_transforms:
+  if len(transforms) != len(other_transforms):
     raise NotImplementedError(
         f"Conflicting transforms {transforms} != {other_transforms}."
     )
 
-  return transforms
+  new_transforms = []
+  for a, b in zip(transforms, other_transforms, strict=True):
+    if mgpu.TileTransformAttr.isinstance(a) and mgpu.TileTransformAttr.isinstance(b):
+      a = mgpu.TileTransformAttr(a)
+      b = mgpu.TileTransformAttr(b)
+      if (len(a.tiling) != len(b.tiling)):
+        raise ValueError(f"Conflicting tile transforms {a} != {b}.")
+      new_tiling = []
+      for tile_a, tile_b in zip(a.tiling, b.tiling):
+        new_tiling.append(math.gcd(tile_a, tile_b))
+      new_transforms.append(mgpu.TileTransformAttr.get(new_tiling))
+    elif mgpu.SwizzleTransformAttr.isinstance(a) and mgpu.SwizzleTransformAttr.isinstance(b):
+      a = mgpu.SwizzleTransformAttr(a)
+      b = mgpu.SwizzleTransformAttr(b)
+      if a.swizzle != b.swizzle:
+        raise ValueError(f"Swizzle transforms must match, got {a} and {b}.")
+      new_transforms.append(a)
+    else:
+      raise NotImplementedError(f"Unsupported transforms {a} and {b}")
+
+  return ir.ArrayAttr.get(new_transforms)
 
 
 def _transforms_from_uses(op: ir.OpView) -> ir.Attribute | None:
@@ -302,7 +323,7 @@ def _infer_memref_subview_transforms(
   #  - We only propagate transforms if they consist of a single tile transform
   #    and a single swizzle transform.
   # TODO(bchetioui): implement more complex propagation rules.
-  tile_transform, _ = _get_tile_and_swizzle_transforms(transforms)
+  tile_transform, swizzle_transform = _get_tile_and_swizzle_transforms(transforms)
 
   # Check swizzle transform propagation.
   strides, _ = ir.MemRefType.get_strides_and_offset(op.source.type)
@@ -314,17 +335,17 @@ def _infer_memref_subview_transforms(
     )
 
   # Check tile transform propagation.
-  num_tiled_axes = len(mgpu.TileTransformAttr(tile_transform).tiling)
+  old_tiling = mgpu.TileTransformAttr(tile_transform).tiling
+  num_tiled_axes = len(old_tiling)
   last_n_dims = op.source.type.shape[-num_tiled_axes:]
   last_n_sizes = list(op.static_sizes)[-num_tiled_axes:]
-  for slice_size, dim_size in safe_zip(last_n_sizes, last_n_dims):
-    if slice_size != dim_size:
-      raise NotImplementedError(
-          "Tile transforms are only propagated if the tiled axes are not "
-          "sliced."
-      )
+  new_tiling = []
 
-  return [transforms], [transforms]
+  for slice_size, dim_size, old_tile in safe_zip(last_n_sizes, last_n_dims, old_tiling):
+    new_tiling.append(math.gcd(slice_size, dim_size, old_tile))
+  new_transforms = ir.ArrayAttr.get([mgpu.TileTransformAttr.get(new_tiling), swizzle_transform])
+
+  return [new_transforms], [new_transforms]
 
 
 @partial(_add_transform_inference_rule, memref.TransposeOp)
@@ -411,14 +432,17 @@ def infer_transforms(module: ir.Module):
 
     _set_transform_attributes(op, *maybe_transforms)
 
-  # It's enough to do a single backwards propagation (starting from vector
-  # users), and then a single forward propagation (to feed into the async loads
-  # and stores).
-  for op in module.body:
-    inference_utils.traverse_op(
-        op, inference_step, inference_utils.TraversalOrder.BACKWARDS
-    )
-  for op in module.body:
-    inference_utils.traverse_op(
-        op, inference_step, inference_utils.TraversalOrder.FORWARD
-    )
+  # We alternate a few backwards propagation (starting from vector users), and
+  # forward propagation (to feed into the async loads and stores) passes in
+  # order to enable more complex inference situations.
+  #
+  # TODO(bchetioui): Replace this with a more generic inference.
+  inference_passes = [
+      inference_utils.TraversalOrder.BACKWARDS,
+      inference_utils.TraversalOrder.FORWARD,
+      inference_utils.TraversalOrder.BACKWARDS,
+      inference_utils.TraversalOrder.FORWARD,
+  ]
+  for traversal_order in inference_passes:
+    for op in module.body:
+      inference_utils.traverse_op(op, inference_step, traversal_order)
