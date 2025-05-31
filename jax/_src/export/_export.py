@@ -1101,12 +1101,6 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "Eigh",
     # qr and svd on TPU
     "Qr", "ProductOfElementaryHouseholderReflectors",
-    # triangular_solve on CPU
-    "blas_strsm", "blas_dtrsm", "blas_ctrsm", "blas_ztrsm",
-    # schur on CPU
-    "lapack_sgees", "lapack_dgees", "lapack_cgees", "lapack_zgees",
-    # tridiagonal on CPU
-    "lapack_ssytrd", "lapack_dsytrd", "lapack_chetrd", "lapack_zhetrd",
     # lu on TPU
     "LuDecomposition",
     # ApproxTopK on TPU
