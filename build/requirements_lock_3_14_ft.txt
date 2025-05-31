@@ -10,7 +10,7 @@ absl-py==2.1.0
 
 attrs==24.3.0
 
-hypothesis==6.123.9
+hypothesis==6.131.28
 
 sortedcontainers==2.4.0
 
