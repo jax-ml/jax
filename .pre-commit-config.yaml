@@ -18,7 +18,7 @@ repos:
     exclude: |
       (?x)^(
           examples/k8s/svc-acct\.yaml |
-          \.github/workflows/k8s/indexed-job\.yaml
+          ci/k8s/indexed-job\.yaml
       )$
   - id: end-of-file-fixer
     # only include python files
