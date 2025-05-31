@@ -20,6 +20,7 @@ import math
 import jax
 from jax import lax
 from jax._src import test_util as jtu  # noqa: F401
+from jax._src.lib import cuda_versions
 from jax.experimental.mosaic.gpu import profiler
 import jax.experimental.pallas as pl
 import jax.experimental.pallas.mosaic_gpu as plgpu
@@ -62,6 +63,13 @@ class TuningConfig:
     return self.block_q_dkv is not None
 
 def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = False):
+  cuda_runtime_version = cuda_versions.cuda_runtime_get_version()
+  # TODO(pobudzey): Undo when we upgrade to cuda 12.9.1.
+  if config.causal and cuda_runtime_version >= 12080 and cuda_runtime_version < 12091:
+    raise ValueError(
+        "Causal masking not supported with cuda versions between 12.8.0 and"
+        " 12.9.1 due to a ptxas miscompilation."
+    )
   if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
     raise ValueError(f"q, k, and v should all be 4D, got: {q.ndim=}, {k.ndim=}, {v.ndim=}")
   batch_size, q_seq_len, num_q_heads, head_dim = q.shape
@@ -832,7 +840,7 @@ def main(unused_argv):
     schedule_barrier_opts = (True,)
 
   problem_it = itertools.product(
-      (1,), (4096, 32768,), (64, 128, 256,), schedule_barrier_opts, (False, True))
+      (1,), (4096, 32768,), (64, 128, 256,), schedule_barrier_opts, (False,))
   for batch_size, seq_len, head_dim, use_schedule_barrier, causal in problem_it:
     if causal and use_pipeline_emitter:
       continue
