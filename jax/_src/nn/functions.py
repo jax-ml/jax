@@ -1417,3 +1417,30 @@ def scaled_dot_general(
   )
 
   return out
+  @jax.jit
+  def prelu(x: ArrayLike, num_parameters=1, init=0.25, rng=None) -> Array:
+    """
+    Applies the PReLU activation function element-wise.
+
+    Args:
+        x (jax.numpy.ndarray): Input tensor.
+        num_parameters (int): Number of learnable parameters. If 1, a single parameter is used.
+                              If the number of channels is equal, a separate parameter is used for each channel.
+        init (float): The initial value of the learnable parameter(s).
+        rng (jax.random.PRNGKey): Random number generator key for parameter initialization.
+
+    Returns:
+        jax.numpy.ndarray: Output tensor with the PReLU activation applied.
+    """
+    if rng is None:
+        rng = random.PRNGKey(0)
+
+    
+    if num_parameters == 1:
+        a = random.uniform(rng, shape=(1,), minval=0, maxval=init)
+    else:
+        a = random.uniform(rng, shape=(num_parameters,), minval=0, maxval=init)
+
+    
+    return jnp.where(x >= 0, x, a * x)
+    
