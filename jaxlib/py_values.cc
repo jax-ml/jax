@@ -712,11 +712,12 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
 }  // namespace
 
 bool IsFloat0(xla::nb_numpy_ndarray arg) {
-  static const auto* dtypes_module =
-      new nb::module_(nb::module_::import_("jax.dtypes"));
-  static const auto* float0_dtype =
-      new nb::handle(dtypes_module->attr("float0"));
-  return float0_dtype->is(arg.attr("dtype"));
+  const nb::handle& float0_dtype = SafeStaticInit<nb::handle>([] {
+    nb::module_ dtypes_module = nb::module_::import_("jax.dtypes");
+    nb::object float0_dtype = dtypes_module.attr("float0");
+    return std::make_unique<nb::handle>(float0_dtype.release());
+  });
+  return float0_dtype.is(arg.attr("dtype"));
 }
 
 std::string PyArgSignature::DebugString() const {
@@ -734,9 +735,11 @@ using ToPyArgSignatureHandler =
 
 absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
                                                      bool jax_enable_x64) {
-  static const absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>* const
-      handlers = [] {
-        auto p = new absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>();
+  const absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>& handlers =
+      SafeStaticInit<
+          absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>>([] {
+        auto p = std::make_unique<
+            absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>>();
 
         const NumpyScalarTypes& dtypes = GetNumpyScalarTypes();
 
@@ -881,7 +884,7 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         (*p)[dtypes.np_intc.ptr()] = numpy_array_handler;
 
         return p;
-      }();
+      });
 
   if (arg.type().ptr() == PyArray::type().ptr()) {
     auto array = nb::borrow<PyArray>(arg);
@@ -894,12 +897,12 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
     return PyArgSignature(primitive_type, array.shape(), array.weak_type());
   }
 
-  auto res = handlers->find(arg.type().ptr());
-  if (res == handlers->end()) {
+  auto res = handlers.find(arg.type().ptr());
+  if (res == handlers.end()) {
     // We attempt to look at the MRO classes
     for (auto base_class : arg.type().attr("__mro__")) {
-      res = handlers->find(base_class.ptr());
-      if (res != handlers->end()) {
+      res = handlers.find(base_class.ptr());
+      if (res != handlers.end()) {
         return res->second(arg, jax_enable_x64);
       }
     }
