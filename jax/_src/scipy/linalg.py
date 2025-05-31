@@ -2273,7 +2273,6 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike) -> Array:
 
     Notes:
       This function returns NaNs in the event that the eigenvalues of the A and B matrices sum to zero elementwise.
-      IMPORTANT: Float32 precision may not be adequate, especially with larger matrices, to match expected results consider float64 precision.
     """
     A, B, C = promote_args_inexact("solve_sylvester", jnp.asarray(A), jnp.asarray(B), jnp.asarray(C))
 
