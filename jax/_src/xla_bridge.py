@@ -381,7 +381,7 @@ def discover_pjrt_plugins() -> None:
   """Discovers plugins in the namespace package `jax_plugins` and import them.
 
   There are two methods used to discover plugin modules. They are intended
-  to be used together by implementors in order to cover all packaging and
+  to be used together by implementers in order to cover all packaging and
   development cases:
 
   1. Define a globally unique module under the `jax_plugins` namespace
@@ -964,7 +964,7 @@ def backend_xla_version(platform=None) -> int | None:
   """Returns the XLA version of the backend.
 
   Returns None if the backend does not use PJRT C API or does not have
-  xla_version in the plugin attributes. This methon can be used to skip features
+  xla_version in the plugin attributes. This method can be used to skip features
   that are not available before certain xla_version if the backend is a
   plugin and uses xla_version.
   """
@@ -975,7 +975,7 @@ def backend_stablehlo_version(platform=None) -> Sequence[int] | None:
   """Returns the StableHLO version of the backend.
 
   Returns None if the backend does not use PJRT C API or does not have
-  stablehlo_current_version in the plugin attributes. This methon can be used to
+  stablehlo_current_version in the plugin attributes. This method can be used to
   skip features that are not available before certain stablehlo_current_version
   if the backend is a plugin and uses stablehlo_current_version.
   """

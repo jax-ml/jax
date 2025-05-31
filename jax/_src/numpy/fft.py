@@ -712,7 +712,7 @@ def hfft(a: ArrayLike, n: int | None = None,
       are supported. Default is "backward".
 
   Returns:
-    A real-valued array containing the one-dimensional discret Fourier transform
+    A real-valued array containing the one-dimensional discrete Fourier transform
     of ``a`` by exploiting its inherent Hermitian-symmetry, having a dimension of
     ``n`` along ``axis``.
 

@@ -150,7 +150,7 @@ print(random.normal(key))
 print(random.normal(key))
 ```
 
-Re-using the same key, even with different {mod}`~jax.random` APIs, can result in correlated outputs, which is generally undesirable. 
+Reusing the same key, even with different {mod}`~jax.random` APIs, can result in correlated outputs, which is generally undesirable. 
 
 **The rule of thumb is: never reuse keys (unless you want identical outputs). Reusing the same state will cause __sadness__ and __monotony__, depriving the end user of __lifegiving chaos__.**
 

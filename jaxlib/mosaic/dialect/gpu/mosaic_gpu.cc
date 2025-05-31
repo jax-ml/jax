@@ -441,7 +441,7 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
     }
     if (i > 0 && dims[i] <= dims[i - 1]) {
       return error(
-          "The values in the `broadcast_dimensions` attribute must be stricly "
+          "The values in the `broadcast_dimensions` attribute must be strictly "
           "increasing.");
     }
   }

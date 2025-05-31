@@ -78,7 +78,7 @@ class K8sCluster(clusters.ClusterEnv):
             textwrap.fill(
               "Kubernetes environment detected, but the `kubernetes` package "
               "is not installed to enable automatic bootstrapping in this "
-              "environment. To enable automatic boostrapping, please install "
+              "environment. To enable automatic bootstrapping, please install "
               "jax with the [k8s] extra. For example:"),
             "    pip install jax[k8s]",
             "    pip install jax[k8s,<MORE-EXTRAS...>]",

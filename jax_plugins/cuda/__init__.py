@@ -182,7 +182,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                  scale_for_comparison=100)
   # TODO(phawkins): for some reason this check fails with a cusolver internal
   # error when fetching the version. This may be a path error from our stubs.
-  # Figure out what's happening here and reenable.
+  # Figure out what's happening here and re-enable.
   # _version_check("cuSOLVER", cuda_versions.cusolver_get_version,
   #                cuda_versions.cusolver_build_version,
   #                # Ignore patch versions.

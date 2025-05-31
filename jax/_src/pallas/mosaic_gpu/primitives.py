@@ -651,7 +651,7 @@ def _extract_barrier_indexer(transforms) -> indexing.NDIndexer | None:
     case []:
       return None
     case _:
-      raise ValueError("Barrier does not support arbirary transforms")
+      raise ValueError("Barrier does not support arbitrary transforms")
 
 
 barrier_arrive_p = jax_core.Primitive("barrier_arrive")
@@ -835,7 +835,7 @@ def _commit_group_lowering(ctx: lowering.LoweringRuleContext):
 
 
 def commit_smem_to_gmem_group() -> None:
-  """Commits all issued but uncommited SMEM->GMEM copies to a group."""
+  """Commits all issued but uncommitted SMEM->GMEM copies to a group."""
   commit_group_p.bind()
 
 

@@ -177,7 +177,7 @@ def sample_block(sampler_fn: SampleFnType,
 
   `tile_size` should be chosen such that it is a divisor to all block sizes
   one needs to be invariant to. The larger the `tile_size`, the more
-  efficient the sampling process wil be and therefore the best choice is
+  efficient the sampling process will be and therefore the best choice is
   typically the greatest common divisor between all possible block sizes.
 
   Args:

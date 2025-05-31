@@ -458,7 +458,7 @@ def _tmem_access_helper(shape, num):
   num_regs *= num
   if num_regs > 255:
     raise ValueError(
-        f"TMEM transation too big : {shape=} and {num=} involve"
+        f"TMEM transposition too big : {shape=} and {num=} involve"
         f" {num_regs} registers per-thread, which exceeds the limit of 255"
     )
   regs_vector = ",".join(f"${i}" for i in range(num_regs))

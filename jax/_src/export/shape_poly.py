@@ -978,7 +978,7 @@ def cmp_sequence(s1, s2, elem_cmp) -> int:
 
 
 class SymbolicScope:
-  """Indentifies a scope for symbolic expressions.
+  """Identifies a scope for symbolic expressions.
 
   All symbolic expressions that interact (e.g., appear in the argument shapes
   for one JAX function invocation, or are involved in arithmetic operations)

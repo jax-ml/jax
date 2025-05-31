@@ -243,8 +243,8 @@ def build_kernel(
 
         perform_schedule_barrier()
 
-        # This is quite suprising, but it seems like warp shuffles cannot
-        # run simutaneously with the WGMMA. For that reason we include it as
+        # This is quite surprising, but it seems like warp shuffles cannot
+        # run simultaneously with the WGMMA. For that reason we include it as
         # part of the TensorCore critical section and not the ALU section.
         with ctx.named_region("Softmax reduction"):
           l_i += p.reduce(arith.addf, axis=1)
