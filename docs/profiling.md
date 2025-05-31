@@ -8,7 +8,7 @@ We can use the JAX profiler to generate traces of a JAX program that can be
 visualized using the [Perfetto visualizer](https://ui.perfetto.dev). Currently,
 this method blocks the program until a link is clicked and the Perfetto UI loads
 the trace. If you wish to get profiling information without any interaction,
-check out the Tensorboard profiler below.
+check out the XProf profiler below.
 
 ```python
 with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
@@ -64,37 +64,37 @@ Also, by default, the program will prompt you to open a link to
 file and open a visualizer. This feature is disabled by passing in
 `--no_perfetto_link` into the command. Alternatively, you can also point
 Tensorboard to the `log_dir` to analyze the trace (see the
-"Tensorboard Profiling" section below).
+"XProf (Tensorboard Profiling)" section below).
 
 (tensorboard-profiling)=
-## TensorBoard profiling
+## XProf (TensorBoard profiling)
 
-[TensorBoard's
-profiler](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras)
-can be used to profile JAX programs. Tensorboard is a great way to acquire and
+[XProf](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras)
+can be used to profile JAX programs. XProf is a great way to acquire and
 visualize performance traces and profiles of your program, including activity on
 GPU and TPU. The end result looks something like this:
 
-![TensorBoard profiler example](_static/tensorboard_profiler.png)
+![XProf example](_static/tensorboard_profiler.png)
 
 ### Installation
 
-The TensorBoard profiler is available as a plugin to TensorBoard
+XProf is available as a plugin to TensorBoard, as well as an independently
+ran program.
 ```shell
-pip install tensorboard tensorboard-plugin-profile
+pip install xprof
 ```
 
-If you already have TensorBoard installed, you only need to install the
-`tensorboard-plugin-profile` pip package. Be careful to only install one version
-of TensorFlow or TensorBoard, otherwise you may encounter the "duplicate
-plugins" error described {ref}`below <multiple_installs>`. See
+If you have TensorBoard installed, the `xprof` pip package will also install
+add a TensorBoard Profiler plugin. Be careful to only install one version of
+TensorFlow or TensorBoard, otherwise you may encounter the "duplicate plugins"
+error described {ref}`below <multiple_installs>`. See
 <https://www.tensorflow.org/guide/profiler> for more information on installing
 TensorBoard.
 
 Profiling with the nightly version of TensorBoard requires the nightly
-tensorboard profiler plugin
+XProf.
 ```shell
-pip install tb-nightly tbp-nightly
+pip install tb-nightly xprof-nightly
 ```
 
 ### Programmatic capture
@@ -306,8 +306,8 @@ replace, so it may be necessary to uninstall everything and reinstall a single
 version:
 
 ```shell
-pip uninstall tensorflow tf-nightly tensorboard tb-nightly tensorboard-plugin-profile tbp-nightly
-pip install tensorboard tensorboard-plugin-profile
+pip uninstall tensorflow tf-nightly tensorboard tb-nightly xprof xprof-nightly tensorboard-plugin-profile tbp-nightly
+pip install tensorboard xprof
 ```
 
 ## Nsight
