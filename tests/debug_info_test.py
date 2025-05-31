@@ -131,7 +131,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     mode. The debug infos in the nested Jaxprs are first converted to
     strings using `_debug_info_to_string` and then
     compared against `expected_jaxpr_debug_infos`. During this conversion,
-    we strip occurences of this test file name and a line number
+    we strip occurrences of this test file name and a line number
     (e.g., .*/debug_info_test.py:56)
     An element of `expected_jaxpr_debug_infos` can be a string, in which case
     it is compared by equality, or a `re.Pattern` (the result of `re.compile`)

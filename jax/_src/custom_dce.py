@@ -251,9 +251,9 @@ def flatten_dce_rule(
   # For error checking purposes, we need to reformat the pytree structure
   # of the output of the DCE rule to match the original output. The catch is
   # that the DCE rule can return a None to indicated an unused subtree, so we
-  # need to rebuild those subtrees with a sentinal value at the leaves. This
+  # need to rebuild those subtrees with a sentinel value at the leaves. This
   # logic is very similar to what is used in custom_dervatives._flatten_bwd.
-  sentinal = object()
+  sentinel = object()
   dummy = tree_util.tree_unflatten(out_tree, [object()] * out_tree.num_leaves)
   keypaths, _ = util.unzip2(tree_util.tree_flatten_with_path(dummy)[0])
   out_flat = []
@@ -261,7 +261,7 @@ def flatten_dce_rule(
   def append(x, d):
     num_leaves = len(tree_util.tree_flatten(d)[0])
     if x is None and d is not None:
-      out_flat.extend([sentinal] * num_leaves)
+      out_flat.extend([sentinel] * num_leaves)
     elif x is not None:
       out_flat.extend([x] * num_leaves)
     return x
@@ -281,7 +281,7 @@ def flatten_dce_rule(
   for kp, used, aval, val in zip(keypaths, used_outs, out_avals, out_flat):
     if not used:
       continue
-    if val is sentinal:
+    if val is sentinel:
       raise ValueError(
           f"Custom DCE rule {rule_name} for function {fun_name} must produce "
           "values for all of the required outputs (as specified by the "

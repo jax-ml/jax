@@ -53,7 +53,7 @@ def shard_map(
     out_specs: a pytree with :class:`~jax.sharding.PartitionSpec` instances as leaves,
       with a tree structure that is a tree prefix of the output of ``f``. Each
       ``PartitionSpec`` represents how the corresponding output shards should be
-      concatenated. In each ``PartitionSpec``, metioning a ``mesh`` axis name at
+      concatenated. In each ``PartitionSpec``, mentioning a ``mesh`` axis name at
       a position expresses concatenation of that mesh axis's shards along the
       corresponding positional axis. Not mentioning a ``mesh`` axis name
       expresses a promise that the output values are equal along that mesh axis,

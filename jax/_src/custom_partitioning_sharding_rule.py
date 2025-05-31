@@ -138,12 +138,12 @@ class SdyShardingRule:
     # Check that factors that are used for a whole dimension aren't in
     # factor_sizes and factors that are never used for a whole dimension are
     # in factor_sizes.
-    for factor, inferrable in factors_inferrable.items():
-      if factor not in factor_sizes and not inferrable:
+    for factor, inferable in factors_inferrable.items():
+      if factor not in factor_sizes and not inferable:
         raise ValueError(
           f"Factor {factor} is only used in compound factors; must specify"
           " its size")
-      if factor in factor_sizes and inferrable:
+      if factor in factor_sizes and inferable:
         raise ValueError(
           f"Factor {factor} represents a whole dimension; do not specify its"
           " size")

@@ -659,7 +659,7 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
       raise NotImplementedError(
           f"TODO: use tf.nn.pool with dynamic shapes¨{window_dimensions=} "
           f" {window_strides=} {dilations=}")
-    # tf.nn.pool() currently does not suport tf.int32 and so we cast back and
+    # tf.nn.pool() currently does not support tf.int32 and so we cast back and
     # forth in order to be able to convert.
     if (inputs.dtype in [tf.int16, tf.int32]) and computation_name == "add":
       original_dtype = inputs.dtype

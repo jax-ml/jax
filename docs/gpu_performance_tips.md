@@ -93,7 +93,7 @@ export JAX_PGLE_AGGREGATION_PERCENTILE=85
 
 # Right now the auto PGLE profile collection doesn't work with command buffer.
 # If the command buffer is enabled, Auto PGLE will disable it during profile
-# colletion and enable it back after the recompilation. If you need to have a
+# collection and enable it back after the recompilation. If you need to have a
 # consistent command buffer logic with and with PGLE profile you can disable it
 # manually:
 export XLA_FLAGS="${XLA_FLAGS} --xla_gpu_enable_command_buffer=''"
@@ -371,7 +371,7 @@ def while_body(carry, i):
       (NUM_DEVICES, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE),
   )
 
-  # Colelctive permute on the "back edge" passes data to the first device.
+  # Collective permute on the "back edge" passes data to the first device.
   bwd_edge_data = cycle_back(bwd_edge_data)
 
   # Update output buffer. We do this after reading from it to avoid the data

@@ -405,7 +405,7 @@ def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
 }
 
 def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
-  let summary = "Multiply two matrices asyncronously using warpgroup level matrix multiply operations.";
+  let summary = "Multiply two matrices asynchronously using warpgroup level matrix multiply operations.";
   let description = [{
     Schedules WGMMA operations that perform the following matrix multiply and
     accumulate:
@@ -434,7 +434,7 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     registers need to be synchronized with a memory fence.
 
     Usually `a` is read from shared memory if it is used directly in the WGMMA
-    operation. If `a` needs to be transfromed before it is used in the WGMMA
+    operation. If `a` needs to be transformed before it is used in the WGMMA
     operation, it may be more convenient to read it directly form registers.
     This avoids the need to store the data and wait for a fence.
   }];

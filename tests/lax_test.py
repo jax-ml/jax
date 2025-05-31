@@ -4395,7 +4395,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     #
     # In addition, the 1/3 middle parts of regions q1, q2, q3, q4,
     # neg, pos are tested separately as these don't contain extremely
-    # small or extremelly large values and functions on these regions
+    # small or extremely large values and functions on these regions
     # ought not to possess any incorrectness issues.
 
     s0, s1 = size_re, size_im

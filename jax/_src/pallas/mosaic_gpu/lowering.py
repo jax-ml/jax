@@ -2377,7 +2377,7 @@ def _run_scoped_lowering_rule(
     if any(should_discharge):
       # We convert consts to args, because we only have ir.Values and
       # not JAX values during lowering. discharge_state() produces JAX
-      # valiues for the aguments but expects them to be provided for the
+      # valiues for the arguments but expects them to be provided for the
       # consts. We also don't want to wrap the values in refs.
       no_const_jaxpr = pe.convert_constvars_jaxpr(jaxpr)
       should_discharge = [False] * len(consts) + should_discharge

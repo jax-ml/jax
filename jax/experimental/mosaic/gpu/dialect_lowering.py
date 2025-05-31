@@ -957,7 +957,7 @@ def _mgpu_wgmma_op_lowering_rule(
     raise ValueError("Layout mismatch")
   wgmma_layout = fa_layouts[0]
 
-  # TODO(dasenov): Move the value -> accumulator conversion outisde of wgmma.
+  # TODO(dasenov): Move the value -> accumulator conversion outside of wgmma.
   # The associated fence could be a little expensive and is not needed if the
   # result a wgmma feeds into another wgmma (even in another loop step).
   acc_in = _fragmented_array_from_ir(wgmma_op.accumulator, wgmma_layout)

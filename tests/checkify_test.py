@@ -1228,7 +1228,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(ValueError, "checkify-of-vmap-of-while"):
       checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([5., 2., 4.]))
-    # TODO(lenamartens): reenable assertions below.
+    # TODO(lenamartens): re-enable assertions below.
     # self.assertIsNotNone(err.get())
     # self.assertStartsWith(err.get(), "division by zero")
 
@@ -1257,7 +1257,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(ValueError, "checkify-of-vmap-of-while"):
       checked_f(jnp.arange(5))
-    # TODO(lenamartens): reenable assertions below.
+    # TODO(lenamartens): re-enable assertions below.
     # self.assertIsNone(err.get())
 
   def test_assert_cond_no_data_dependence(self):

@@ -16,7 +16,7 @@
 # Set up the build environment for JAX CI jobs. This script depends on the
 # "JAXCI_" environment variables set or sourced in the build script.
 
-# Pre-emptively mark the JAX git directory as safe. This is necessary for JAX CI
+# Preemptively mark the JAX git directory as safe. This is necessary for JAX CI
 # jobs running on Linux runners in GitHub Actions. Without this, git complains
 # that the directory has dubious ownership and refuses to run any commands.
 # Avoid running on Windows runners as git runs into issues with not being able
