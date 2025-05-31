@@ -29,7 +29,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import qdwh
 from jax._src.numpy.util import (
     check_arraylike, promote_dtypes, promote_dtypes_inexact,
-    promote_dtypes_complex)
+    promote_dtypes_complex, promote_args_inexact)
 from jax._src.typing import Array, ArrayLike
 
 
@@ -2243,3 +2243,52 @@ def _binom(n, k):
   b = lax.lgamma(n - k + 1.0)
   c = lax.lgamma(k + 1.0)
   return lax.exp(a - b - c)
+
+
+@jit
+def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike) -> Array:
+    """
+    Solves the Sylvester equation:
+    .. math::
+
+      AX + XB = C
+
+    Args:
+      A: Matrix of shape m x m
+      B: Matrix of shape n x n
+      C: Matrix of shape m x n
+
+    Returns:
+      X: Matrix of shape m x n
+
+    Examples:
+      >>> A = jax.numpy.array([[1, 2], [3, 4]])
+      >>> B = jax.numpy.array([[5, 6], [7, 8]])
+      >>> C = jax.numpy.array([[6, 8], [10, 12]])
+      >>> X = jax.scipy.linalg.solve_sylvester(A, B, C)
+      >>> with jax.numpy.printoptions(precision=0):
+      ...   print(X)
+      [[ 1.e+00 -4.e-07]
+       [-3.e-07  1.e+00]]
+
+    Notes:
+      This function returns NaNs in the event that the eigenvalues of the A and B matrices sum to zero elementwise.
+    """
+    A, B, C = promote_args_inexact("solve_sylvester", jnp.asarray(A), jnp.asarray(B), jnp.asarray(C))
+
+    m, n = A.shape[-1], B.shape[-1]
+
+    if A.shape != (m, m) or B.shape != (n, n) or C.shape != (m, n):
+      raise ValueError(f"Incompatible shapes for Sylvester equation:\nA: {A.shape}\nB: {B.shape}\nC: {C.shape}")
+
+    RA, UA = jnp.linalg.eig(A)
+    RB, UB = jnp.linalg.eig(B)
+    F = solve(UA, C.astype(RA.dtype) @ UB)
+    W = RA[:, None] + RB[None, :]
+    Y = F / W
+    X = UA[:m,:m] @ Y[:m,:n] @ inv(UB)[:n,:n]
+
+    if jnp.isrealobj(A):
+      return jnp.real(X)
+    else:
+      return X
