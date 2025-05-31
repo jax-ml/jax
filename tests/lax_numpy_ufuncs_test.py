@@ -56,7 +56,7 @@ def _jnp_ufunc_props(name):
   jnp_func = getattr(jnp, name)
   assert isinstance(jnp_func, jnp.ufunc)
   np_func = getattr(np, name)
-  dtypes = [np.dtype(c) for c in "Ffi?" if f"{c}{c}->{c}" in np_func.types or f"{c}->{c}" in np_func.types]
+  dtypes = [np.dtype(c) for c in "FfIi?" if f"{c}{c}->{c}" in np_func.types or f"{c}->{c}" in np_func.types]
   return [dict(name=name, dtype=dtype) for dtype in dtypes]
 
 
@@ -242,6 +242,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+
   @jtu.sample_product(
       BINARY_UFUNCS_WITH_DTYPES,
       [{'shape': shape, 'axis': axis}
@@ -323,6 +324,64 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun_reduce, args_maker)
+
+  @jtu.sample_product(
+      BINARY_UFUNCS_WITH_DTYPES,
+      [{'shape': shape, 'axis': axis}
+       for shape in nonscalar_shapes
+       for axis in [None, *range(-len(shape), len(shape))]],
+  )
+  def test_binary_ufunc_reduce_initial(self, name, shape, axis, dtype):
+    jnp_fun = getattr(jnp, name)
+    np_fun = getattr(np, name)
+
+    if jnp_fun.identity is None and axis is None and len(shape) > 1:
+      self.skipTest("Multiple-axis reduction over non-reorderable ufunc.")
+
+    jnp_fun_reduce = lambda a, initial: jnp_fun.reduce(a, axis=axis, initial=initial)
+    np_fun_reduce = lambda a, initial: np_fun.reduce(a, axis=axis, initial=initial)
+
+    rng = jtu.rand_default(self.rng())
+    rng_initial = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype), rng_initial((), dtype)]
+
+    tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+    self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun_reduce, args_maker)
+
+  @jtu.sample_product(
+      BINARY_UFUNCS_WITH_DTYPES,
+      [{'shape': shape, 'axis': axis}
+      for shape in nonscalar_shapes
+      for axis in [None, *range(-len(shape), len(shape))]],
+  )
+  def test_binary_ufunc_reduce_where_initial(self, name, shape, axis, dtype):
+      jnp_fun = getattr(jnp, name)
+      np_fun = getattr(np, name)
+
+      # Skip if the ufunc doesn't have an identity and we're doing a multi-axis reduction
+      if jnp_fun.identity is None and axis is None and len(shape) > 1:
+          self.skipTest("Multiple-axis reduction over non-reorderable ufunc.")
+
+      jnp_fun_reduce = lambda a, where, initial: jnp_fun.reduce(
+          a, axis=axis, where=where, initial=initial)
+      np_fun_reduce = lambda a, where, initial: np_fun.reduce(
+          a, axis=axis, where=where, initial=initial)
+
+      rng = jtu.rand_default(self.rng())
+      rng_where = jtu.rand_bool(self.rng())
+      rng_initial = jtu.rand_default(self.rng())
+      args_maker = lambda: [
+          rng(shape, dtype),
+          rng_where(shape, bool),
+          rng_initial((), dtype)
+      ]
+
+      tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+      self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker, tol=tol)
+      self._CompileAndCheck(jnp_fun_reduce, args_maker)
 
   @jtu.sample_product(
       SCALAR_FUNCS,
