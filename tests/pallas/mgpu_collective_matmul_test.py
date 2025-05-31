@@ -90,7 +90,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     if n_shard != block_n:
       self.skipTest("n_shard must be equal to block_n for now.")
     if n_shard % block_n:
-      self.skipTest("n_shard must be divisble by block_n for now.")
+      self.skipTest("n_shard must be divisible by block_n for now.")
     if m_shard % block_m:
       self.skipTest("m_shard must be divisible by block_m for now.")
 

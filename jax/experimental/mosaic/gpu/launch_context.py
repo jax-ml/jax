@@ -779,7 +779,7 @@ class LaunchContext:
         tuple(slice_shape), swizzle, reduction_op,
     )
 
-    # We constuct TMA descriptors in column-major order.
+    # We construct TMA descriptors in column-major order.
     rev_dyn_base_indices = [
         arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
     ]

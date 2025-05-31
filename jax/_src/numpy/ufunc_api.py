@@ -92,7 +92,7 @@ class ufunc:
            [ 5,  6,  7,  8,  9],
            [ 6,  7,  8,  9, 10]], dtype=int32)
 
-    The :meth:`ufunc.reduce` method perfoms a reduction over the array.
+    The :meth:`ufunc.reduce` method performs a reduction over the array.
     For example, :meth:`jnp.add.reduce` is equivalent to ``jnp.sum``:
 
     >>> jnp.add.reduce(x)
@@ -112,7 +112,7 @@ class ufunc:
     Array([101,   2,   3,   4,   5], dtype=int32)
 
     And the :meth:`ufunc.reduceat` method performs a number of ``reduce``
-    operations bewteen specified indices of an array; for ``jnp.add`` the
+    operations between specified indices of an array; for ``jnp.add`` the
     operation is similar to :func:`jax.ops.segment_sum`:
 
     >>> jnp.add.reduceat(x, jnp.array([0, 2]))
@@ -574,7 +574,7 @@ class ufunc:
        [ 10  20  30  40  50  60  70  80  90 100]]
 
       For input arrays with ``N`` and ``M`` dimensions respectively, the output
-      will have dimesion ``N + M``:
+      will have dimension ``N + M``:
 
       >>> x = jnp.ones((1, 3, 5))
       >>> y = jnp.ones((2, 4))

@@ -130,7 +130,7 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
       ) from None
 
   # As new versions are adopted over time, we can maintain some legacy paths
-  # for compatability mediated through the max_version parameter.
+  # for compatibility mediated through the max_version parameter.
   # TODO(micky774): Deprecate default usage of DLPackManagedTensor when XLA
   # supports DLManagedTensorVersioned (DLPack version 1.0) and repurpose the
   # current _to_dlpack as a legacy path for (0,5) <= max_version < (1,0).

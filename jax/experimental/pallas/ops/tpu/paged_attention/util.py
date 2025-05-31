@@ -64,7 +64,7 @@ def grouped_query_attention_reference(
   if debug:
     jax.debug.print("qk: {qk}", qk=qk)
 
-  # Enfore causal mask (adding dimensions when necessary)
+  # Enforce causal mask (adding dimensions when necessary)
   mask = jnp.arange(max_seq_len)[None] < seq_lens[:, None]
   qk += jnp.where(mask, 0.0, MASK_VALUE)[:, None, None, :]
   if debug:

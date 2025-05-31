@@ -148,7 +148,7 @@ def _fftconvolve_unbatched(in1: Array, in2: Array, mode: str) -> Array:
   return lax.dynamic_slice(conv, start_indices, out_shape)
 
 
-# Note: we do not re-use the code from jax.numpy.convolve here, because the handling
+# Note: we do not reuse the code from jax.numpy.convolve here, because the handling
 # of padding differs slightly between the two implementations (particularly for
 # mode='same').
 def _convolve_nd(in1: Array, in2: Array, mode: str, *, precision: PrecisionLike) -> Array:
@@ -1030,16 +1030,16 @@ def _overlap_and_add(x: Array, step_size: int) -> Array:
   x = x.reshape((flat_batchsize, nframes, nstep_per_segment, step_size))
 
   # For obtaining shifted signals, this routine reinterprets flattened array
-  # with a shrinked axis.  With appropriate truncation/ padding, this operation
+  # with a shrunken axis.  With appropriate truncation/ padding, this operation
   # pushes the last padded elements of the previous row to the head of the
   # current row.
   # See implementation of `overlap_and_add` in Tensorflow for details.
   x = x.transpose((0, 2, 1, 3))  # x: (B, S, N, T)
   x = jnp.pad(x, ((0, 0), (0, 0), (0, nframes), (0, 0)))  # x: (B, S, N*2, T)
-  shrinked = x.shape[2] - 1
+  shrunken = x.shape[2] - 1
   x = x.reshape((flat_batchsize, -1))
-  x = x[:, :(nstep_per_segment * shrinked * step_size)]
-  x = x.reshape((flat_batchsize, nstep_per_segment, shrinked * step_size))
+  x = x[:, :(nstep_per_segment * shrunken * step_size)]
+  x = x.reshape((flat_batchsize, nstep_per_segment, shrunken * step_size))
 
   # Finally, sum shifted segments, and truncate results to the output_size.
   x = x.sum(axis=1)[:, :output_size]

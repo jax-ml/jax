@@ -352,7 +352,7 @@ class ChunkedCausalMask(_ComputableMask):
   """Lazy chunked causal mask.
 
   Attention is causal within each chunk (0, K), (K, 2K), (2K, 3K), ... tokens
-  attend to each other but not accross chunks.
+  attend to each other but not across chunks.
   Llama4 models use interleaved chunk attention along with global attention.
 
 
@@ -412,7 +412,7 @@ class LocalMask(_ComputableMask):
   """Lazy local mask, prevents model from attending to tokens outside window.
 
   Attributes:
-    window_size: Size of the two sides of the local window (None identifes no
+    window_size: Size of the two sides of the local window (None identifies no
       limit for the given side).
     offset: Offset of q start wrt kv. A positive offset shifts the bottom
       triangle upward, a negative one shifts it downward. A negative offset

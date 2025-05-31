@@ -612,7 +612,7 @@ async def main():
       wheel_build_command_base.append("--config=rocm")
       wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
     if args.rocm_path:
-      logging.debug("ROCm tookit path: %s", args.rocm_path)
+      logging.debug("ROCm toolkit path: %s", args.rocm_path)
       wheel_build_command_base.append(f"--action_env=ROCM_PATH=\"{args.rocm_path}\"")
     if args.rocm_amdgpu_targets:
       logging.debug("ROCm AMD GPU targets: %s", args.rocm_amdgpu_targets)

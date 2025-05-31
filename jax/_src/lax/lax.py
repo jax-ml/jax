@@ -935,7 +935,7 @@ def integer_pow(x: ArrayLike, y: int) -> Array:
     An array of the same shape and dtype as ``x`` containing the elementwise power.
 
   See also:
-    :func:`jax.lax.pow`: Elementwise pwoer where ``y`` is an array.
+    :func:`jax.lax.pow`: Elementwise power where ``y`` is an array.
 
   .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
   """
@@ -2102,7 +2102,7 @@ class DotAlgorithm(NamedTuple):
 
   The `StableHLO spec <https://openxla.org/stablehlo/spec#dot_general>`_ for
   the dot operation doesn't require that the precision types be the same as the
-  storage types for the inputs or outputs, but some plaforms may require that
+  storage types for the inputs or outputs, but some platforms may require that
   these types match. Furthermore, the return type of
   :func:`~jax.lax.dot_general` is always defined by the ``accumulation_type``
   parameter of the input algorithm, if specified.
@@ -7923,7 +7923,7 @@ def _sort_abstract_eval(*args, **kwargs):
 
 
 def _canonicalize_float_for_sort(x):
-  # In the sort comparator, we are going to use a comparision operator where -0
+  # In the sort comparator, we are going to use a comparison operator where -0
   # would be before 0, and -NaN and NaN appear at the beginning and end of the
   # ordering. In this scheme, -0 would be before 0, and -NaN and NaN appear at
   # the beginning and end of the ordering. This causes issues for stable
@@ -8164,7 +8164,7 @@ mlir.register_lowering(create_token_p, _create_token_lowering)
 def after_all(*operands):
   """Merges one or more XLA token values. Experimental.
 
-  Wraps the XLA AfterAll operator."""
+  Wraps the XLA after all operator."""
   operands = core.standard_insert_pvary(*operands)
   return after_all_p.bind(*operands)
 

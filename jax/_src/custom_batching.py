@@ -103,7 +103,7 @@ class custom_vmap:
     >>> jax.grad(f)(jnp.zeros(()), jnp.ones(()))
     Array(1., dtype=float32)
 
-  Note that the :py:class:`jax.custom_vjp` must be on the ouside, wrapping the
+  Note that the :py:class:`jax.custom_vjp` must be on the outside, wrapping the
   ``custom_vmap``-decorated function.
   """
 

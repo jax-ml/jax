@@ -711,7 +711,7 @@ class DialectTest(MosaicGpuTest):
 
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"`broadcast_dimensions` attribute must be stricly increasing",
+        r"`broadcast_dimensions` attribute must be strictly increasing",
     ):
       self.module.operation.verify()
 

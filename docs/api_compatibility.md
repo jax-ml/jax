@@ -96,7 +96,7 @@ guarantees of the main JAX package. If you have code that uses `jax.extend`,
 we would strongly recommend CI tests against JAX's nightly releases, so as to
 catch potential changes before they are released.
 
-For details on `jax.extend`, see the [`jax.extend` module docuementation](https://docs.jax.dev/en/latest/jax.extend.html), or the design document, {ref}`jax-extend-jep`.
+For details on `jax.extend`, see the [`jax.extend` module documentation](https://docs.jax.dev/en/latest/jax.extend.html), or the design document, {ref}`jax-extend-jep`.
 
 ## Numerics and randomness
 

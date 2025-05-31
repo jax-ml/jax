@@ -22,7 +22,7 @@ WHEELS=( $(/usr/bin/find "$JAXCI_OUTPUT_DIR/" -type f \(  -name "*jax*py3*" -o -
 
 for i in "${!WHEELS[@]}"; do
   if [[ "${WHEELS[$i]}" == *jax*py3*none*any.whl ]]; then
-    # Apppend an extra to the end of the JAX wheel path to install those
+    # Append an extra to the end of the JAX wheel path to install those
     # packages as well from PyPI. E.g. jax[tpu] will install the libtpu package
     # from PyPI. See ci/envs/README.md for more details.
     if [[ -n "$JAXCI_JAX_PYPI_EXTRAS" ]]; then

@@ -321,7 +321,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     in_avals_tree = tree_util.tree_map(ndarray_to_aval, args_specs)
     # TODO: we ought to ensure that out_avals are polymorphic if need be. We
     # could either save the in/out_avals (but we need to first implement that
-    # support in export), or we can just re-use them from the current
+    # support in export), or we can just reuse them from the current
     # exported.
     out_avals_tree = tree_util.tree_map(ndarray_to_aval, data.expected_outputs)
     # in_tree must be for (args, kwargs)

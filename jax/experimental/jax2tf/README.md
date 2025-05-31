@@ -840,7 +840,7 @@ to `export.symbolic_shape` share a scope and
 can be mixed up in arithmetic operations. The result would
 also share the same scope.
 
-You can re-use scopes:
+You can reuse scopes:
 
 ```python
 a, = export.symbolic_shape("a,", constraints=("a >= 8",))

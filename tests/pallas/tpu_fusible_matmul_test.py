@@ -416,7 +416,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
 
   @parameterized.parameters('float32', 'bfloat16')
   def test_matmul_input_concat_output(self, dtype):
-    self.skipTest('select_n doesnt support more than 3 elements')
+    self.skipTest('select_n does not support more than 3 elements')
     # TODO(sharadmv): fix this test
     k0, k1, k2, k3 = jax.random.split(jax.random.key(0), 4)
     x = jax.random.normal(k0, (128, 128), dtype)

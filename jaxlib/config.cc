@@ -34,7 +34,7 @@ namespace jax {
 
 namespace nb = nanobind;
 
-// Singleton object used to represet "value not set" in thread-local configs.
+// Singleton object used to represent "value not set" in thread-local configs.
 nb::object UnsetObject() {
   return nb::steal(PyObject_CallObject(
       reinterpret_cast<PyObject*>(&PyBaseObject_Type), nullptr));
@@ -71,7 +71,7 @@ class ThreadLocalConfigState {
   // These values are accessed in one of two ways:
   // * The owning thread reads or writes them, while holding the GIL, or, under
   //   free-threading, while the owning thread is in ATTACHED gc state.
-  // * Other threads may read or clear values while performing a garbarge
+  // * Other threads may read or clear values while performing a garbage
   //   collection.
   // No locking is needed because a GC thread cannot run concurrently with other
   // Python threads; even under free-threading Python uses a stop-the-world GC.
@@ -117,7 +117,7 @@ class GlobalConfigState {
  private:
   friend class Config;
 
-  // The set of thread-local states. This is used during garbarge collection to
+  // The set of thread-local states. This is used during garbage collection to
   // visit thread-local values.
   absl::Mutex mu_;
   absl::flat_hash_set<ThreadLocalConfigState*> thread_local_states_

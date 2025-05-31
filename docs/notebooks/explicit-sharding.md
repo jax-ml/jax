@@ -251,7 +251,7 @@ sharding is part of that type. This means that shardings need to match
 wherever types need to match. For example, the two sides of a `lax.cond` need to
 have results with matching shardings. And the carry of `lax.scan` needs to have the
 same sharding at the input and the output of the scan body. And when you
-contruct a jaxpr without concrete arguments using `make_jaxpr` you need to
+construct a jaxpr without concrete arguments using `make_jaxpr` you need to
 provide shardings too. Certain JAX transformations perform type-level
 operations. Automatic differentation constructs a tangent type for each primal
 type in the original computation (e.g. `TangentOf(float) == float`,

@@ -304,7 +304,7 @@ def _broadcast_input_output_aliases(
 
   When we have input/output aliasing, since the output will be mapped, we need
   to make sure to broadcast the input across that dimension if it is not
-  mapped. If the input is mapped, but on a different axis, we tranpose the input
+  mapped. If the input is mapped, but on a different axis, we transpose the input
   to match the output.
   """
 
@@ -370,7 +370,7 @@ def _batch_with_explicit_loop(
       axis_size=axis_size,
   )
 
-  # The output arrays are completelly overwritten, so we can just initialize
+  # The output arrays are completely overwritten, so we can just initialize
   # empty arrays.
   initial_state = [
       jnp.empty(tuple_insert(bm.array_shape_dtype.shape, 0, axis_size),
@@ -801,7 +801,7 @@ def _pallas_call_batching_rule(
         ragged_axis_dim = per_input_ragged_axis_dim[arg_pos]
 
         # the problem here seems to be that we are rnning this for all inputs, per input, because they each have an indexer - which means
-        # that the indexer for output isnt getting written - before, it always was
+        # that the indexer for output isn't getting written - before, it always was
 
         lengths_ref = indexer_args[-1]
         rest_indexer_args = indexer_args[:-1]
@@ -896,7 +896,7 @@ def _pallas_call_batching_rule(
         raise NotImplementedError("consts not supported in pallas_call")
 
     # We need to rewrite the input_output_aliases here, the initial call
-    # to broadcast is done, and we have inseted a new input (lengths), so
+    # to broadcast is done, and we have inserted a new input (lengths), so
     # there's an off-by-one here now.
     new_input_output_aliases = []
     for k, v in input_output_aliases:
@@ -987,7 +987,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
       for bm in grid_mapping.block_mappings
   ]
   # The scan carry: (i, loop_idx, *consts, *ins, *outs, *scratch)
-  # i:int32 is the interation index
+  # i:int32 is the iteration index
   # loop_idx: tuple[int32] are the program ids for each grid axis
   def cond(carry):
     i, *_ = carry
@@ -1144,7 +1144,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
   # for the new error inputs and outputs.
   error_block_specs = [pallas_core.BlockSpec(None, None)] * len(shaped_err_avals)
   error_paths, _ = unzip2(tree_util.tree_flatten_with_path(error_block_specs)[0])
-  error_origins = tuple(f"errrors[{tree_util.keystr(p)}" for p in error_paths)
+  error_origins = tuple(f"errors[{tree_util.keystr(p)}" for p in error_paths)
   error_block_mappings = map(
         partial(
             pallas_core._convert_block_spec_to_block_mapping,
@@ -1762,7 +1762,7 @@ def in_path_to_input_origin(
 
 
 # We import the TPU backend at the top level because it defines flags. Note that
-# we can only do that at the bottom of this file, beacuse it also depends on
+# we can only do that at the bottom of this file, because it also depends on
 # this module already being initialized.
 
 try:

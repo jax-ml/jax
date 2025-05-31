@@ -3292,7 +3292,7 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
       // a bunch of loads!
     } else {
       return op.emitOpError(
-          "Not implemented: dismatch in memref tiling and vector tiling in "
+          "Not implemented: mismatch in memref tiling and vector tiling in "
           "load");
     }
   }
@@ -4772,7 +4772,7 @@ LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
       // us a bunch of stores!
     } else {
       return op.emitOpError(
-          "Not implemented: dismatch in memref tiling and vector tiling in "
+          "Not implemented: mismatch in memref tiling and vector tiling in "
           "store");
     }
   }

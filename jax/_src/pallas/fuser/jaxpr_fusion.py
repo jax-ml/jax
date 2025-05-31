@@ -176,7 +176,7 @@ def _construct_output_fusions(
       unflat_fusible_outvars
   )
 
-  # 3. Calculate dependencies and check disjointness
+  # 3. Calculate dependencies and check disjointedness
   downstream_outputs_used_masks = []  # List of bool tuples, one per group
   already_used_final_outputs = set()  # Indices of final outputs already claimed
   for outvars_group in partial_flat:

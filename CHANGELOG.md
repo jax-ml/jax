@@ -30,7 +30,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * Changes
   * Additional checking for the versions of CUDA package dependencies was
-    reenabled, having been accidentally disabled in a previous release.
+    re-enabled, having been accidentally disabled in a previous release.
   * JAX nightly packages are now published to artifact registry. To install
     these packages, see the [JAX installation guide](https://docs.jax.dev/en/latest/installation.html#jax-nightly-installation).
   * `jax.sharding.PartitionSpec` no longer inherits from a tuple.
@@ -232,7 +232,7 @@ to signify this.
       developers at this point. So it is difficult for us to fix this kind of
       problem even if we wanted to.
 
-    We are open to readding support for Mac x86 if the community is willing
+    We are open to re-adding support for Mac x86 if the community is willing
     to help support that platform: in particular, we would need the JAX test
     suite to pass cleanly on Mac x86 before we could ship releases again.
 
@@ -457,7 +457,7 @@ This is a patch release of jax 0.4.36. Only "jax" was released at this version.
   * `jax_pmap_no_rank_reduction` flag is set to `True` by default.
     * array[0] on a pmap result now introduces a reshape (use array[0:1]
       instead).
-    * The per-shard shape (accessable via jax_array.addressable_shards or
+    * The per-shard shape (accessible via jax_array.addressable_shards or
       jax_array.addressable_data(0)) now has a leading (1, ...). Update code
       that directly accesses shards accordingly. The rank of the per-shard-shape
       now matches that of the global shape which is the same behavior as jit.
@@ -1513,7 +1513,7 @@ See the 0.4.33 release notes for more details.
     dict of string stat names with int values, e.g. `"bytes_in_use"`, or None if
     the platform doesn't support memory statistics. The exact stats returned may
     vary across platforms. Currently only implemented on Cloud TPU.
-  * Readded support for the Python buffer protocol (`memoryview`) on CPU
+  * Re-added support for the Python buffer protocol (`memoryview`) on CPU
     devices.
 
 ## jax 0.4.10 (May 11, 2023)

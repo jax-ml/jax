@@ -669,7 +669,7 @@ WGMMA_LAYOUT_UPCAST_4X = TiledLayout(
 #          ...
 #
 # You can see that we have taken 2x2 submatrices from the above layout and
-# transposed them. The assigment of lanes to elements is such that in both
+# transposed them. The assignment of lanes to elements is such that in both
 # layouts the same two lanes map to a single 2x2 submatrix, making the transpose
 # very cheap (one shuffle and permute suffices to change between those layouts).
 WGMMA_TRANSPOSED_LAYOUT = TiledLayout(
@@ -1743,7 +1743,7 @@ class FragmentedArray:
         out_reg = vector.splat(
             ir.VectorType.get((1,), out_reg.type.element_type), scalar_out_reg
         )
-      # Reduce accross warp lanes, if necessary (using warp shuffles).
+      # Reduce across warp lanes, if necessary (using warp shuffles).
       if any(reduced_dims[d] for d in layout.partitioned_lane_dims):
         if utils.bitwidth(out_reg.type) > 32:
           raise NotImplementedError  # Need to implement wide shfl_bfly.
@@ -1762,7 +1762,7 @@ class FragmentedArray:
               lane_stride *= 2
               reduction_size //= 2
         assert lane_stride == WARP_SIZE, lane_stride
-      # Reduce accross warps in the warpgroup, if necessary.
+      # Reduce across warps in the warpgroup, if necessary.
       if (
           not isinstance(layout.warp_dim, Replicated)
           and reduced_dims[layout.warp_dim]
