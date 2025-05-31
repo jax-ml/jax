@@ -356,16 +356,6 @@ def _different_device_order_reshard(x, target_sharding, copy: CopySemantics):
     return api.jit(_identity_fn, out_shardings=target_sharding,
                    donate_argnums=donate_argnums)(x)
 
-  if inp_sharding.device_set != target_sharding.device_set:
-    inp_ids = [d.id for d in inp_sharding._device_assignment]
-    inp_plat = inp_sharding._device_assignment[0].platform.upper()
-    target_ids = [d.id for d in target_sharding._device_assignment]
-    target_plat = target_sharding._device_assignment[0].platform.upper()
-    raise ValueError("Input and target sharding should have the same set of "
-                     f"devices. Got input's device set ids: {inp_ids} on "
-                     f"platform {inp_plat} and target sharding's device set "
-                     f"ids: {target_ids} on platform {target_plat}")
-
   if inp_sharding.is_fully_replicated:
     permute_order = None
   else:
@@ -387,6 +377,25 @@ def _reorder_shards(x, new_s, copy_semantics: CopySemantics):
   """Reorders array shards to match the order indicated by the new sharding."""
   xc_copy_semantics = pxla.to_xc_copy_semantics([copy_semantics])[0]
   return xc.reorder_shards(x, new_s, xc_copy_semantics)  # type: ignore
+
+
+@util.cache()
+def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
+  """Returns True if src->dst is a supported cross-host transfer."""
+  backend = xla_bridge.get_backend()
+  # There is experimental support for cross-host device transfers on TFRT TPU
+  # backends only.
+  if (xla_bridge.process_count() == 1 or backend.platform != "tpu" or
+      "TFRT TPU" not in backend.platform_version):
+    return False
+  if (src_sharding._to_xla_hlo_sharding(ndim) !=
+      dst_sharding._to_xla_hlo_sharding(ndim)):
+    return False
+  # This check excludes the case where the source and destination shardings
+  # have the same process index sets but there are shards that require
+  # cross-host transfers. This case is supportable but expensive to check for.
+  return (src_sharding._internal_device_list.process_indices !=
+          dst_sharding._internal_device_list.process_indices)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -419,7 +428,8 @@ def _device_put_sharding_impl(x, aval, device, copy):
       return x
 
     if (not s.is_fully_addressable and
-        isinstance(x, array.ArrayImpl) and not x.is_fully_addressable):
+        isinstance(x, array.ArrayImpl) and not x.is_fully_addressable and
+        s.device_set == x.sharding.device_set):
       assert isinstance(s, Sharding)
       return _different_device_order_reshard(x, s, copy)
 
@@ -430,7 +440,32 @@ def _device_put_sharding_impl(x, aval, device, copy):
       assert isinstance(s, Sharding)
       return _different_device_order_reshard(x, s, copy)
 
+    # There is experimental support for cross-host device transfers on TFRT TPU.
+    if (isinstance(x, array.ArrayImpl) and x._committed
+        and _is_supported_cross_host_transfer(x.ndim, x.sharding, s)):
+      return xc.batched_copy_array_to_devices_with_sharding(
+          [x], [s._internal_device_list], [s],  # pytype: disable=attribute-error
+          pxla.to_xc_copy_semantics([copy]))[0]
+
     if not s.is_fully_addressable:
+      # If both the source and target shardings are not fully addressable and
+      # one of the above conditions has not been met, then assume that the user
+      # is attempting a different device order reshard.
+      if (isinstance(x, array.ArrayImpl) and not x.is_fully_addressable
+          and s.device_set != x.sharding.device_set):
+        inp_ids = [d.id for d in x.sharding._device_assignment]
+        inp_plat = x.sharding._device_assignment[0].platform.upper()
+        target_ids = [d.id for d in s._device_assignment]
+        target_plat = s._device_assignment[0].platform.upper()
+        raise ValueError(
+            "For a cross-host reshard in multi-controller JAX, input and target"
+            " sharding should have the same set of devices. Got input's device"
+            f" set ids: {inp_ids} on platform {inp_plat} and target sharding's"
+            f" device set ids: {target_ids} on platform {target_plat}.\n\n"
+            "There is experimental support for cross-host transfers with "
+            "different device sets, when input/output shardings have the same "
+            "indices and layouts, in the TFRT TPU runtime only.")
+
       if ((isinstance(x, array.ArrayImpl) and not x._committed) or
           type(x) in array_types or type(x) in dtypes.python_scalar_dtypes):
         # If all hosts participate in the sharding, assert that the input is the
