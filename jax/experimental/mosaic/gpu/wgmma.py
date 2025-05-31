@@ -113,7 +113,7 @@ def wgmma_m64(
 ):
   out_ty = ir.VectorType(acc.flat[0].type).element_type
   if not _supported_wgmma_types(out_ty, element_type):
-    raise ValueError(f"Usupported wgmma types {(out_ty, element_type)=}")
+    raise ValueError(f"Unsupported wgmma types {(out_ty, element_type)=}")
   if n % 8:
     raise ValueError
 

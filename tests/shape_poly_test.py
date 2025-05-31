@@ -961,7 +961,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(bounds, _bounds(exp))
 
   def test_constraints_ge_override(self):
-    # Some constaints override other
+    # Some constraints override other
     a, b = shape_poly.symbolic_shape("a, b",
                                      constraints=("a >= 5", "b <= 16",
                                                   "a >= 10", "b <= 10"))
@@ -979,7 +979,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertIs(d, 5)
 
   def test_constraints_eq_1(self):
-    # Some constaints override other
+    # Some constraints override other
     a, b, c = shape_poly.symbolic_shape("a, b, c",
                                         constraints=("max(a, b) == c",))
     self.assertEqual(_bounds(core.max_dim(a, b) - c + 3), (3, 3))

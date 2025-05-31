@@ -201,7 +201,7 @@ def _serialize_specs(
   if not hasattr(np.dtypes, "StringDType"):
     raise TypeError(
         "Serializing Colocated Python requires StringDType. Please use"
-        " numpy to 2.0.0 or later, or explicityly provide an output spec"
+        " numpy to 2.0.0 or later, or explicitly provide an output spec"
         " function."
     )
 

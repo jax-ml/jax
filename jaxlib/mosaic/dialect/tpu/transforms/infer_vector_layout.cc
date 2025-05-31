@@ -469,7 +469,7 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(else_yield->getOperandTypes() == op->getResultTypes(),
                  "scf if results and else branch yield operands do not match");
     auto else_yield_in_layouts = getLayoutFromOperands(else_yield);
-    // Find a compatible layout from then and else branches for each reuslt. For
+    // Find a compatible layout from then and else branches for each result. For
     // example, if we yield offset (*, *) in then branch and offset (*, 0) in
     // else branch, the result offset should be (*, 0).
     SmallVector<Layout, 4> out_layouts;
@@ -649,7 +649,7 @@ class VectorLayoutInferer {
     auto yield_in_layouts = getLayoutFromOperands(yield_op);
 
     // Find a compatible layout from condition body and loop body for each
-    // reuslt. For example, if we yield offset (*, *) in condition body and
+    // result. For example, if we yield offset (*, *) in condition body and
     // offset (*, 0) in loop body, the result offset should be (*, 0).
     SmallVector<Layout, 4> out_layouts;
     out_layouts.reserve(op->getNumResults());

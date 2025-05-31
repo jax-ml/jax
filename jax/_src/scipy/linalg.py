@@ -2189,7 +2189,7 @@ def pascal(n: int, kind: str | None = None) -> Array:
 
   JAX implementation of :func:`scipy.linalg.pascal`.
 
-  The elements of the Pascal matrix approximate the binomial coefficents. This
+  The elements of the Pascal matrix approximate the binomial coefficients. This
   implementation is not exact as JAX does not support exact factorials.
 
   Args:

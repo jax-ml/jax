@@ -543,7 +543,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     if (jnp_fun.nin, jnp_fun.nout) != (2, 1):
       self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(jnp_fun.nin, jnp_fun.nout)=}")
     if name in ['add', 'multiply'] and dtype == bool:
-      # TODO(jakevdp): figure out how to fix thest cases.
+      # TODO(jakevdp): figure out how to fix test cases.
       self.skipTest(f"known failure for {name}.reduceat with {dtype=}")
 
     rng = jtu.rand_default(self.rng())

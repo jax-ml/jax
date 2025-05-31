@@ -272,7 +272,7 @@ def load(file: IO[bytes] | str | os.PathLike[Any], *args: Any, **kwargs: Any) ->
 def fmin(x1: ArrayLike, x2: ArrayLike) -> Array:
   """Return element-wise minimum of the input arrays.
 
-  JAX implemtentation of :func:`numpy.fmin`.
+  JAX implementation of :func:`numpy.fmin`.
 
   Args:
     x1: input array or scalar.
@@ -2251,7 +2251,7 @@ def resize(a: ArrayLike, new_shape: Shape) -> Array:
 
   Returns:
     A resized array with specified shape. The elements of ``a`` are repeated in
-    the resized array, if the resized array is larger than the original aray.
+    the resized array, if the resized array is larger than the original array.
 
   See also:
     - :func:`jax.numpy.reshape`: Returns a reshaped copy of an array.
@@ -5575,7 +5575,7 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
            device: xc.Device | Sharding | None = None) -> Array:
   """Convert an array to a specified dtype.
 
-  JAX imlementation of :func:`numpy.astype`.
+  JAX implementation of :func:`numpy.astype`.
 
   This is implemented via :func:`jax.lax.convert_element_type`, which may
   have slightly different behavior than :func:`numpy.astype` in some cases.
@@ -5957,7 +5957,7 @@ def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | None = None,
       if needed for a device transfer.
 
   Returns:
-    A JAX array of the imput buffer.
+    A JAX array of the input buffer.
 
   Note:
     While JAX arrays are always immutable, dlpack buffers cannot be marked as
@@ -8419,7 +8419,7 @@ def vander(
            [3, 1],
            [4, 1]], dtype=int32)
 
-    Generates the Vandermonde matrix in increaing order of powers, when
+    Generates the Vandermonde matrix in increasing order of powers, when
     ``increasing=True``.
 
     >>> jnp.vander(x, increasing=True)

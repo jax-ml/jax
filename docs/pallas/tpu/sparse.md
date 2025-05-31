@@ -391,7 +391,7 @@ As we will be working with a sparse mask, we will begin by implementing a functi
 
 def sparsify_mask(mask: jax.Array,
                   block_shape: tuple[int, int]):
-  """Preprocesses a mask into a sparse reprentation.
+  """Preprocesses a mask into a sparse representation.
 
   Args:
     mask: A boolean array of shape [M, N]

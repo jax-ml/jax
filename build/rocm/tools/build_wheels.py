@@ -227,7 +227,7 @@ def fix_wheel(path, jax_path):
         env["PATH"] = "%s:%s" % (py_bin, env["PATH"])
 
         # NOTE(mrodden): auditwheel 6.0 added lddtree module, but 6.3.0 changed
-        # the fuction to ldd and also changed its behavior
+        # the function to ldd and also changed its behavior
         # constrain range to 6.0 to 6.2.x
         cmd = ["pip", "install", "auditwheel>=6,<6.3"]
         subprocess.run(cmd, check=True, env=env)
@@ -325,7 +325,7 @@ def main():
     shutil.rmtree(os.path.join(args.jax_path, "jax.egg-info"))
     shutil.rmtree(os.path.join(args.jax_path, "jax", "__pycache__"))
 
-    # Make the wheels deleteable by the runner
+    # Make the wheels deletable by the runner
     whl_house = os.path.join(args.jax_path, "wheelhouse")
     logging.info("Changing permissions for %s" % whl_house)
     mode = 0o664

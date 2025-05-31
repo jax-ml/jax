@@ -606,7 +606,7 @@ def debug_info(
   """Constructd core.DebugInfo for a function given example args and kwargs.
 
   `args` and `kwargs` are example positional and keyword arguments, users with
-  `inspect.Signature` to get the names of argments. The arguments that are
+  `inspect.Signature` to get the names of arguments. The arguments that are
   considered static for tracing purposes should be included, and designated
   using `static_argnums` and `static_argnames`.
 

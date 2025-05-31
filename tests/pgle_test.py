@@ -157,7 +157,7 @@ class PgleTest(jtu.JaxTestCase):
 
       with config.pgle_profiling_runs(2), config.enable_pgle(True):
         # Run 1: Module should be compiled without FDO. Two modules are expected
-        # One is the funtion f, the other one is multi slice module
+        # One is the function f, the other one is multi slice module
         with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)

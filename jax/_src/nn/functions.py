@@ -1077,7 +1077,7 @@ def dot_product_attention(
       token's local window. If set, this specifies the (left_window_size,
       right_window_size) for each token. E.g., if local_window_size == (3, 2)
       and the sequence is [0, 1, 2, 3, 4, 5, c, 7, 8, 9], token `c` can attend
-      to [3, 4, 5, c, 7, 8]. If a single int is given, it will be intepreted as
+      to [3, 4, 5, c, 7, 8]. If a single int is given, it will be interpreted as
       a symmetric window (window_size, window_size).
     implementation: A string to control which implementation backend to use.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults

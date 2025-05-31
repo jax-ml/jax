@@ -35,7 +35,7 @@ jtu.request_cpu_devices(4)
 
 
 # TODO: AOT tests fails with the tracer leak checker.
-# Reenable once https://github.com/jax-ml/jax/issues/27315 is fixed.
+# Re-enable once https://github.com/jax-ml/jax/issues/27315 is fixed.
 # @jtu.with_config(jax_check_tracer_leaks=True)
 class ErrorCheckTests(jtu.JaxTestCase):
 

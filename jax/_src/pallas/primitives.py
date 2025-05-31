@@ -490,7 +490,7 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     scalar_dims = [not isinstance(s, Slice) and not s.shape for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
-    # fixes an inconstency with lax.dynamic_slice where if the slice goes out
+    # fixes an inconsistency with lax.dynamic_slice where if the slice goes out
     # of bounds, it will instead move the start_index backwards so the slice
     # will fit in memory.
     ref = _pad_values_to_avoid_dynamic_slice_oob_shift(ref, slice_sizes)

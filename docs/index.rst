@@ -108,7 +108,7 @@ numerical computing tools; the following is just a small sample of what is out t
 
     .. grid-item:: :material-regular:`bar_chart;2em` **Probabilistic modeling**
 
-       - `TensorFlow Probabilty`_
+       - `TensorFlow Probability`_
        - Distrax_
 
     .. grid-item:: :material-outlined:`animation;2em` **Physics & simulation**
@@ -199,4 +199,4 @@ maintains an up-to-date list.
 .. _Orbax: https://orbax.readthedocs.io/
 .. _PyMC: https://www.pymc.io/
 .. _TensorFlow Datasets: https://www.tensorflow.org/datasets
-.. _TensorFlow Probabilty: https://www.tensorflow.org/probability
+.. _TensorFlow Probability: https://www.tensorflow.org/probability

@@ -706,7 +706,7 @@ class ModuleContext:
   # Cached primitive lowerings.
   cached_primitive_lowerings: dict[Any, func_dialect.FuncOp]
 
-  # Cached traceback infromation.
+  # Cached traceback information.
   traceback_caches: TracebackCaches
 
   lowering_parameters: LoweringParameters

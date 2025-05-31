@@ -56,7 +56,7 @@ def register_ffi_target(
     name: the name of the target.
     fn: a ``PyCapsule`` object containing the function pointer, or a ``dict``
       where the keys are FFI stage names (e.g. `"execute"`) and the values are
-      ``PyCapsule`` objects continaing a pointer to the handler for that stage.
+      ``PyCapsule`` objects containing a pointer to the handler for that stage.
     platform: the target platform.
     api_version: the XLA custom call API version to use. Supported versions are:
       1 (default) for the typed FFI or 0 for the earlier "custom call" API.
@@ -369,7 +369,7 @@ def ffi_call(
 
   Like :func:`~jax.pure_callback`, the behavior of ``ffi_call`` under
   :func:`~jax.vmap` depends on the value of ``vmap_method``. See the
-  :func:`~jax.pure_callback` documenation for more details about the allowed
+  :func:`~jax.pure_callback` documentation for more details about the allowed
   values and examples of their behavior.
 
   The current default behavior is to use ``vmap_method="sequential"`` when

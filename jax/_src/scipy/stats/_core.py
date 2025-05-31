@@ -285,7 +285,7 @@ def sem(a: ArrayLike, axis: int | None = 0, ddof: int = 1, nan_policy: str = "pr
     Array([1.73,  nan, 1.53,  nan,  nan,  nan], dtype=float32)
 
     If ``nan_policy='omit```, ``sem`` omits the ``nan`` values and computes the error
-    for the remainging values along the specified axis.
+    for the remaining values along the specified axis.
 
     >>> with jnp.printoptions(precision=2, suppress=True):
     ...   jax.scipy.stats.sem(x2, nan_policy='omit')

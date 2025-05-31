@@ -255,7 +255,7 @@ class TransformedRef:
     if not unprocessed:
       return shape
     # If there are any unprocessed transforms left, we apply them to the shape
-    # we've found previuously.
+    # we've found previously.
     for t in self.transforms[-unprocessed:]:
       shape = t.transform_shape(shape)
     assert shape is not None

@@ -297,7 +297,7 @@ def sign(x: ArrayLike, /) -> Array:
       -1, & x < 0
     \end{cases}
 
-  For complex valued input, ``jnp.sign`` returns a unit vector repesenting the
+  For complex valued input, ``jnp.sign`` returns a unit vector representing the
   phase. For generalized case, the sign of ``x`` is given by:
 
   .. math::
@@ -347,8 +347,8 @@ def floor(x: ArrayLike, /) -> Array:
     the nearest integer that is less than or equal to the value itself.
 
   See also:
-    - :func:`jax.numpy.fix`: Rounds the input to the nearest interger towards zero.
-    - :func:`jax.numpy.trunc`: Rounds the input to the nearest interger towards
+    - :func:`jax.numpy.fix`: Rounds the input to the nearest integer towards zero.
+    - :func:`jax.numpy.trunc`: Rounds the input to the nearest integer towards
       zero.
     - :func:`jax.numpy.ceil`: Rounds the input up to the nearest integer.
 
@@ -386,8 +386,8 @@ def ceil(x: ArrayLike, /) -> Array:
     the nearest integer that is greater than or equal to the value itself.
 
   See also:
-    - :func:`jax.numpy.fix`: Rounds the input to the nearest interger towards zero.
-    - :func:`jax.numpy.trunc`: Rounds the input to the nearest interger towards
+    - :func:`jax.numpy.fix`: Rounds the input to the nearest integer towards zero.
+    - :func:`jax.numpy.trunc`: Rounds the input to the nearest integer towards
       zero.
     - :func:`jax.numpy.floor`: Rounds the input down to the nearest integer.
 
@@ -1621,7 +1621,7 @@ def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
     The results match the input ``theta``, except at the endpoints where :math:`+\pi`
     and :math:`-\pi` represent indistinguishable points on the unit circle. By convention,
-    :func:`arctan2` alwasy returns values between :math:`-\pi` and :math:`+\pi` inclusive.
+    :func:`arctan2` always returns values between :math:`-\pi` and :math:`+\pi` inclusive.
   """
   return lax.atan2(*promote_args_inexact("arctan2", x1, x2))
 
@@ -1710,7 +1710,7 @@ def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
       arrays.
     - :func:`jax.numpy.fmax`: Returns element-wise maximum of the input arrays,
       ignoring NaNs.
-    - :func:`jax.numpy.amax`: Retruns the maximum of array elements along a given
+    - :func:`jax.numpy.amax`: Returns the maximum of array elements along a given
       axis.
     - :func:`jax.numpy.nanmax`: Returns the maximum of the array elements along
       a given axis, ignoring NaNs.
@@ -1774,7 +1774,7 @@ def float_power(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> jnp.float_power(x, y)
     Array([ 9. ,  1. , -0.2], dtype=float32)
 
-    Inputs with broacast compatibility:
+    Inputs with broadcast compatibility:
 
     >>> x1 = jnp.array([[2, -4, 1],
     ...                 [-1, 2, 3]])

@@ -30,7 +30,7 @@ the next instruction.
 <center><img alt="A diagram of one NVIDIA SM" src="../../_static/pallas/gpu/nvidia_sm.svg" style="width:60%; min-width: 400px;"></center>
 
 Going further, recent CUDA versions also outline the concept of a _warpgroup_, which are
-4 consecutive warps. Knowing how the hardware looks like, we can see where this is comming
+4 consecutive warps. Knowing how the hardware looks like, we can see where this is coming
 from: 4 consecutive warps occupy the 4 quarters of an SM and let us issue instructions
 that utilize the whole SM.
 
@@ -49,7 +49,7 @@ warps always run in lockstep (modulo the jitter from hardware scheduling) and ne
 different paths through control flow (with the small exception of `core_map` that we will
 discuss later). One notable addition here is that we still allow you to co-schedule multiple
 of those Pallas-level threads on the same SM so that they can cooperate and communicate
-through shared memory (we relize that by putting them in the same CUDA block).
+through shared memory (we realize that by putting them in the same CUDA block).
 
 ```{note}
 From now on, whenever we say "thread", we refer to the Pallas thread, not a CUDA thread/lane.
@@ -329,7 +329,7 @@ transforms specified upon their allocation. For all currently supported generati
 the TensorCore requires the data to be laid out into row-major 2D tiles of shape
 `(8, swizzle_elems)`, where `swizzle_elems` is derived by dividing the swizzle by the
 element type bytewidth.  The currently supported swizzles are: 128, 64, and 32. Larger
-swizzles are preferrable as they improve the performance of GMEM-to-SMEM copies.
+swizzles are preferable as they improve the performance of GMEM-to-SMEM copies.
 
 ```python
 def mma_transforms(shape_dtype: jax.ShapeDtypeStruct):

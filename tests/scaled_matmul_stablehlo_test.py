@@ -280,9 +280,9 @@ class ScaledMatmulTest(jtu.JaxTestCase):
       self.skipTest(str(e))
       return
     if _dtypes.float8_e8m0fnu is None:
-      self.skipTest("Requries >= ml_dtypes 0.5.0 to support float8_e8m0fnu")
+      self.skipTest("Requires >= ml_dtypes 0.5.0 to support float8_e8m0fnu")
     if _dtypes.float4_e2m1fn is None:
-      self.skipTest("Requries >= ml_dtypes 0.5.0 to support float4_e2m1fn")
+      self.skipTest("Requires >= ml_dtypes 0.5.0 to support float4_e2m1fn")
     if cudnn_version < 90700:
       self.skipTest("Requires >= cuDNN 9.7.0")
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
@@ -473,7 +473,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
       self.skipTest(str(e))
       return
     if _dtypes.float8_e8m0fnu is None:
-      self.skipTest("Requries >= ml_dtypes 0.5.0 to support float8_e8m0fnu")
+      self.skipTest("Requires >= ml_dtypes 0.5.0 to support float8_e8m0fnu")
     if cudnn_version < 90700:
       self.skipTest("Requires >= cuDNN 9.7.0")
     if not jtu.is_cuda_compute_capability_at_least("10.0"):

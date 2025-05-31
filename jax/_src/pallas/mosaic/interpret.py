@@ -82,7 +82,7 @@ class InterpretParams:
       Default: False.
     skip_floating_point_ops: If True, operations that produce only floating
       point values will not be interpreted; instead, their results will be
-      replaced with arrays all of `jnp.inf`. Additionaly any floating point
+      replaced with arrays all of `jnp.inf`. Additionally any floating point
       operands to any operation will be replaced with (arrays of) `jnp.inf`.
       Default: False.
     uninitialized_memory: If "nan", allocated buffers are initialized to contain
@@ -937,7 +937,7 @@ def get(
         raise ValueError(
             'Out-of-bounds read of'
             f' ({device_id} {local_core_id} {memory_space} {buffer_id}):'
-            f' reading [{read_range}] but bufer has shape {buffer.shape} .'
+            f' reading [{read_range}] but buffer has shape {buffer.shape} .'
         )
 
   if shared_memory.interpret_params.detect_races:
@@ -1817,7 +1817,7 @@ def _get_randomized_grid_coordinates(
   For a dimension with 'parallel' semantics at position `d` in the grid, the
   returned tuple contains a random permutation of the sequence `[0,...,
   grid[d] - 1]` at index `d`. For each dimension with 'arbitrary' semantics,
-  the resulting tuple contains an empty array. (Inserting an empty arry for an
+  the resulting tuple contains an empty array. (Inserting an empty array for an
   'arbitrary' dimension at position `d` in the grid, instead of the sequence
   `[0,..., grid[d] - 1]`, allows `grid[d]` to be a dynamic value, i.e. a value
   not known at Jax trace time.)
@@ -2059,7 +2059,7 @@ def interpret_pallas_call(
   output_block_shapes = block_shapes[num_inputs : num_inputs + num_outputs]
   for i, bm in enumerate(grid_mapping.block_mappings_output):
     if i in oi_alias_map:
-      # Re-use the HBM buffer for the aliased pallas_call input.
+      # Reuse the HBM buffer for the aliased pallas_call input.
       output_buffer_ids.append(input_buffer_ids[oi_alias_map[i]])
       output_buffer_shapes.append(input_args[oi_alias_map[i]].shape)
       output_vals.append(input_args[oi_alias_map[i]])
@@ -2230,7 +2230,7 @@ def interpret_pallas_call(
       Args:
         carry: (iteration_idx, loop_idx, grid_point, prev_start_indices,
                 cur_start_indices).
-          - iteration_idx: the interation index.
+          - iteration_idx: the iteration index.
           - loop_idx: internal indices for looping over the grid.
           - grid_point: the current positions along all axes of the grid.
           - prev_start_indices: a rank-1 array that contains the start indices
