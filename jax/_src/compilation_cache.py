@@ -59,7 +59,8 @@ def is_cache_used(backend: xla_client.Client) -> bool:
   # False, set it to True, report metrics and return if cache is used. This
   # provides a mechanism to report the metrics once per task. Note that
   # reset_cache() will reset _cache_checked and _cache_used also.
-  global _cache_checked, _cache_used
+  global _cache_checked, _cache_used, _UNSUPPORTED_RUNTIMES
+
   with _cache_initialized_mutex:
     if _cache_checked:
       return _cache_used
@@ -76,6 +77,11 @@ def is_cache_used(backend: xla_client.Client) -> bool:
 
       if not _is_cache_enabled():
         monitoring.record_event('/jax/compilation_cache/task_disabled_cache')
+      elif backend.runtime_type in _UNSUPPORTED_RUNTIMES:
+        logging.info(
+            "Disabling jax compilation cache due to unsupported runtime `%s`",
+            backend.runtime_type,
+        )
       elif (
           backend.platform in supported_platforms
           and getattr(backend, "supports_executable_serialization", True)
