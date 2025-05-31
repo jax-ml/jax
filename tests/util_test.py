@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import operator
 
 from absl.testing import absltest
-
 import jax
 from jax import api_util
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import util
-
 from jax._src.util import weakref_lru_cache
 jax.config.parse_flags_with_absl()
 
@@ -73,6 +72,64 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual((2, 4), scaled_positional)
     self.assertEqual(dict(three=6, four=8), scaled_kwargs)
     self.assertEqual(2, out_thunk())
+
+  def test_wrapped_fun_name(self):
+    def my_function():
+      return
+
+    with self.subTest("function"):
+      wrapped = lu.wrap_init(
+          my_function,
+          debug_info=api_util.debug_info("test", my_function, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, my_function.__name__)
+
+    with self.subTest("default_partial"):
+      my_partial = partial(my_function)
+      wrapped = lu.wrap_init(
+          my_partial,
+          debug_info=api_util.debug_info("test", my_partial, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, my_function.__name__)
+
+    with self.subTest("nested_default_partial"):
+      my_partial = partial(partial(my_function))
+      wrapped = lu.wrap_init(
+          my_partial,
+          debug_info=api_util.debug_info("test", my_partial, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, my_function.__name__)
+
+    with self.subTest("named_partial"):
+      my_partial = partial(my_function)
+      my_partial.__name__ = "my_partial"
+      wrapped = lu.wrap_init(
+          my_partial,
+          debug_info=api_util.debug_info("test", my_partial, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, my_partial.__name__)
+
+    with self.subTest("lambda"):
+      l = lambda: my_function()
+      wrapped = lu.wrap_init(
+          l,
+          debug_info=api_util.debug_info("test", l, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, "<lambda>")
+
+    with self.subTest("unnamed_callable"):
+
+      class MyCallable:
+
+        def __call__(self):
+          return
+
+      my_callable = MyCallable()
+      wrapped = lu.wrap_init(
+          my_callable,
+          debug_info=api_util.debug_info("test", my_callable, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, "<unnamed wrapped function>")
 
   def test_weakref_lru_cache(self):
     @weakref_lru_cache
