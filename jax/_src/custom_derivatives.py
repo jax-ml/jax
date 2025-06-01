@@ -31,7 +31,8 @@ from jax._src.ad_util import (
     stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
 from jax._src.api_util import (
   argnums_partial, flatten_fun_nokwargs, resolve_kwargs,
-  prepend_static_args, debug_info)
+  prepend_static_args, debug_info, fun_signature,
+  infer_argnums_and_argnames)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src.interpreters import ad
@@ -133,16 +134,31 @@ class custom_jvp(Generic[ReturnValue]):
   """
   fun: Callable[..., ReturnValue]
   nondiff_argnums: Sequence[int]
+  nondiff_argnames: Sequence[str]
   jvp: Callable[..., tuple[ReturnValue, ReturnValue]] | None = None
   symbolic_zeros: bool = False
 
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Sequence[int] = (),
+               nondiff_argnames: Sequence[str] = (),
                ):
     update_wrapper(self, fun)
     self.fun = fun
-    self.nondiff_argnums = nondiff_argnums
+
+    nondiff_argnums_: set[int] = set()
+    if nondiff_argnames:
+      sig = fun_signature(self.fun)
+      assert sig is not None
+      inferred_nondiff_argnums, _ = infer_argnums_and_argnames(
+          sig, None, nondiff_argnames
+      )
+      nondiff_argnums_.update(inferred_nondiff_argnums)
+
+    if nondiff_argnums:
+      nondiff_argnums_.update(nondiff_argnums)
+
+    self.nondiff_argnums = tuple(sorted(nondiff_argnums_))
 
   __getattr__ = custom_api_util.forward_attr
 
@@ -259,10 +275,9 @@ class custom_jvp(Generic[ReturnValue]):
       ) from e
 
     if self.nondiff_argnums:
-      nondiff_argnums = set(self.nondiff_argnums)
-      args = tuple(_stop_gradient(x) if i in nondiff_argnums else x
+      args = tuple(_stop_gradient(x) if i in self.nondiff_argnums else x
                    for i, x in enumerate(args))
-      diff_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
+      diff_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun, debug_info=debug),
                                      diff_argnums, args,
                                      require_static_args_hashable=False)
@@ -536,10 +551,24 @@ class custom_vjp(Generic[ReturnValue]):
 
   def __init__(self,
                fun: Callable[..., ReturnValue],
-               nondiff_argnums: Sequence[int] = ()):
+               nondiff_argnums: Sequence[int] = (),
+               nondiff_argnames: Sequence[str] = ()):
     update_wrapper(self, fun)
     self.fun = fun
-    self.nondiff_argnums = nondiff_argnums
+
+    nondiff_argnums_: set[int] = set()
+    if nondiff_argnames:
+      sig = fun_signature(self.fun)
+      assert sig is not None
+      inferred_nondiff_argnums, _ = infer_argnums_and_argnames(
+          sig, None, nondiff_argnames
+      )
+      nondiff_argnums_.update(inferred_nondiff_argnums)
+
+    if nondiff_argnums:
+      nondiff_argnums_.update(nondiff_argnums)
+
+    self.nondiff_argnums = tuple(sorted(nondiff_argnums_))
     self.fwd: Callable[..., tuple[ReturnValue, Any]] | None = None
     self.bwd: Callable[..., tuple[Any, ...]] | None = None
     self.symbolic_zeros = False
@@ -681,8 +710,7 @@ class custom_vjp(Generic[ReturnValue]):
     else:
       if self.nondiff_argnums:
         for i in self.nondiff_argnums: _check_for_tracers(args[i])
-        nondiff_argnums = set(self.nondiff_argnums)
-        dyn_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
+        dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
         f_, dyn_args = argnums_partial(
             lu.wrap_init(self.fun, debug_info=debug_fun), dyn_argnums,
             args, require_static_args_hashable=False)
