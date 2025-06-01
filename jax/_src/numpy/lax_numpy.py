@@ -2602,31 +2602,13 @@ def isclose(a: ArrayLike, b: ArrayLike, rtol: ArrayLike = 1e-05, atol: ArrayLike
     dtype = np.array(0, dtype).real.dtype
   rtol = lax.convert_element_type(rtol, dtype)
   atol = lax.convert_element_type(atol, dtype)
-  out = lax.le(
+  both_nan = ufuncs.logical_and(ufuncs.isnan(a), ufuncs.isnan(b))
+  check_fin = ufuncs.isfinite(b)
+  in_range = lax.le(
     lax.abs(lax.sub(a, b)),
     lax.add(atol, lax.mul(rtol, lax.abs(b))))
-  # This corrects the comparisons for infinite and nan values
-  a_inf = ufuncs.isinf(a)
-  b_inf = ufuncs.isinf(b)
-  any_inf = ufuncs.logical_or(a_inf, b_inf)
-  both_inf = ufuncs.logical_and(a_inf, b_inf)
-  # Make all elements where either a or b are infinite to False
-  out = ufuncs.logical_and(out, ufuncs.logical_not(any_inf))
-  # Make all elements where both a or b are the same inf to True
-  same_value = lax.eq(a, b)
-  same_inf = ufuncs.logical_and(both_inf, same_value)
-  out = ufuncs.logical_or(out, same_inf)
-
-  # Make all elements where either a or b is NaN to False
-  a_nan = ufuncs.isnan(a)
-  b_nan = ufuncs.isnan(b)
-  any_nan = ufuncs.logical_or(a_nan, b_nan)
-  out = ufuncs.logical_and(out, ufuncs.logical_not(any_nan))
-  if equal_nan:
-    # Make all elements where both a and b is NaN to True
-    both_nan = ufuncs.logical_and(a_nan, b_nan)
-    out = ufuncs.logical_or(out, both_nan)
-  return out
+  out = ufuncs.logical_or(lax.eq(a, b), ufuncs.logical_and(check_fin, in_range))
+  return ufuncs.logical_or(out, both_nan) if equal_nan else out
 
 
 def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
