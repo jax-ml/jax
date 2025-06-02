@@ -854,6 +854,8 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   # want to broadcast the matrix!). So, outside the loop we perform a partial
   # evaluation with known 'const' inputs (but all other inputs unknown).
   const_pvals = [pe.PartialVal.known(t.pval.get_known())
+                 if not isinstance(t.aval, state.AbstractRef)
+                 else pe.PartialVal.unknown(t.aval)
                  for t in tracers[:num_consts] if t.pval.is_known()]
   other_pvals = [pe.PartialVal.unknown(aval)
                  for aval in jaxpr_known.in_avals[len(const_pvals):]]
@@ -898,7 +900,9 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   # We use `fwds_known` below when forming the output of scanning jaxpr_known.
 
   # Run the known part of the scan (if it has any outputs or effects).
-  known_inputs = (list(jaxpr_known_consts) +
+  known_mutable_consts = [t.pval.get_known() for t in tracers[:num_consts]
+                          if t.pval.is_known() and isinstance(t.aval, state.AbstractRef)]
+  known_inputs = (list(jaxpr_known_consts) + known_mutable_consts +
                   [t.pval.get_known() for t in tracers[num_consts:]
                    if t.pval.is_known()])
   if not jaxpr_known.out_avals and not jaxpr_known.effects:
@@ -907,7 +911,8 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
     linear_known = [False] * len(known_inputs)  # conservative!
     out_known = scan_p.bind(
         *known_inputs, reverse=reverse, length=length, jaxpr=jaxpr_known,
-        num_consts=len(jaxpr_known_consts), num_carry=num_carry - sum(carry_uk),
+        num_consts=len(jaxpr_known_consts) + len(known_mutable_consts),
+        num_carry=num_carry - sum(carry_uk),
         linear=tuple(linear_known), unroll=unroll,
         _split_transpose=_split_transpose)
     del linear_known
@@ -1292,10 +1297,12 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   num_const_known = len(const_uk) - sum(const_uk)
   num_carry_known = len(carry_uk) - sum(carry_uk)
   num_xs_known    = len(   xs_uk) - sum(   xs_uk)
+  const_donthoist = [isinstance(a, state.AbstractRef)
+                     for a in jaxpr_known.in_avals[:num_const_known]]
   jaxpr_known_hoist, jaxpr_known_loop, loop_dep, consts_known_lp_avals = \
       pe.partial_eval_jaxpr_nounits(
           jaxpr_known,
-          [False] * num_const_known + [True] * (num_carry_known + num_xs_known),
+          const_donthoist + [True] * (num_carry_known + num_xs_known),
           [True] * (len(unks_out) - sum(unks_out)) + [False] * num_res)
   # jaxpr_known_hoist produces intensive residuals followed by the constants for
   # jaxpr_known_loop. We adjust jaxpr_staged to accept intensive res as consts.
@@ -1328,10 +1335,13 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
                       linear=tuple(linear_known))
 
   def known(*ins_known):
-    consts_known_hoist, ins_known_lp = split_list(ins_known, [num_const_known])
+    consts_known_maybehoist, ins_known_lp = split_list(ins_known, [num_const_known])
+    consts_known_hoist, consts_known_donthoist = \
+        partition_list(const_donthoist, consts_known_maybehoist)
     out_hoist = core.jaxpr_as_fun(jaxpr_known_hoist)(*consts_known_hoist)
     intensive_res, consts_known_lp = split_list(out_hoist, [num_intensive_res])
-    out_loop = scan_p.bind(*consts_known_lp, *ins_known_lp, **params_known)
+    out_loop = scan_p.bind(*consts_known_lp, *consts_known_donthoist,
+                           *ins_known_lp, **params_known)
     return [*intensive_res, *out_loop]
   call_jaxpr_, _, call_jaxpr_consts, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(known, debug_info=jaxpr_known_hoist.jaxpr.debug_info),
