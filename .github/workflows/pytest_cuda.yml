@@ -78,7 +78,7 @@ jobs:
       - name: Checkout a commit for debug
         run: |
           git config --global --add safe.directory $(pwd)
-          git checkout a827a274baf18ece651d37b7933bee3cb2f8760e # no gpu_ops_test cuda failure at this commit
+          git checkout fdf6e1fac02824109994cdb455c1037979d062e5
       - name: Set env vars for use in artifact download URL
         run: |
           os=$(uname -s | awk '{print tolower($0)}')
