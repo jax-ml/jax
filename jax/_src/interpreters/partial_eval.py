@@ -43,7 +43,7 @@ from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            mapped_aval, unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
                            InputType, OutputType, get_referent, JaxprEqnContext)
 from jax._src.source_info_util import SourceInfo
-from jax._src.state.types import AbstractRef, ReadEffect, RefEffect
+from jax._src.state.types import AbstractRef, ReadEffect
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_flatten,
                                 tree_structure, register_static)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
@@ -240,23 +240,23 @@ class JaxprTrace(Trace['JaxprTracer']):
       return primitive.bind_with_trace(self.parent_trace, consts, params)
     tracers = map(self.instantiate_const, tracers)
     avals = [t.aval for t in tracers]
-    out_aval, effects = primitive.abstract_eval(*avals, **params)
+    out_aval, effs = primitive.abstract_eval(*avals, **params)
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
     if primitive.multiple_results:
       out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
                      for aval in out_aval]
-      eqn = new_eqn_recipe(self, tracers, out_tracers, primitive, params, effects,
+      eqn = new_eqn_recipe(self, tracers, out_tracers, primitive, params, effs,
                            source)
-      if any(isinstance(e, RefEffect) for e in effects):
+      if effects.partial_eval_kept_effects.filter_in(effs):
         self.effect_handles.append(EffectHandle(tracers, eqn))
       for t in out_tracers: t.recipe = eqn
       return out_tracers
     else:
       out_tracer = JaxprTracer(self, PartialVal.unknown(out_aval), None)
       eqn = new_eqn_recipe(self, tracers, [out_tracer], primitive,
-                           params, effects, source)
-      if any(isinstance(e, RefEffect) for e in effects):
+                           params, effs, source)
+      if effects.partial_eval_kept_effects.filter_in(effs):
         self.effect_handles.append(EffectHandle(tracers, eqn))
       out_tracer.recipe = eqn
       return out_tracer

@@ -69,6 +69,8 @@ effects.remat_allowed_effects.add_type(DebugEffect)
 effects.remat_allowed_effects.add_type(OrderedDebugEffect)
 effects.custom_derivatives_allowed_effects.add_type(DebugEffect)
 effects.custom_derivatives_allowed_effects.add_type(OrderedDebugEffect)
+effects.partial_eval_kept_effects.add_type(DebugEffect)
+effects.partial_eval_kept_effects.add_type(OrderedDebugEffect)
 
 # `debug_callback_p` is the main primitive for staging out Python callbacks.
 debug_callback_p = core.Primitive('debug_callback')
@@ -126,10 +128,10 @@ def debug_callback_jvp_rule(primals, tangents, **params):
   return debug_callback_p.bind(*primals, **params), []
 ad.primitive_jvps[debug_callback_p] = debug_callback_jvp_rule
 
-def debug_callback_transpose_rule(*flat_args, callback: Callable[..., Any],
+def debug_callback_transpose_rule(_, *flat_args, callback: Callable[..., Any],
                                   effect: DebugEffect, partitioned):
-  del flat_args, callback, effect
-  raise ValueError("Transpose doesn't support debugging callbacks.")
+  del callback, effect, partitioned
+  return [None for _ in flat_args]
 ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 
 def _debug_callback_partial_auto(axis_context, *args, **params):
