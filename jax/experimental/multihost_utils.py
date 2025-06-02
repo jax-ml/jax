@@ -40,7 +40,7 @@ import numpy as np
 
 
 def _psum(x: Any) -> Any:
-  return jax.tree.map(partial(jnp.sum, axis=0), x)
+  return jax.tree.map(partial(jnp.sum, axis=0, promote_integers=False), x)
 
 
 def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
