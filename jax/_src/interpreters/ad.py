@@ -1243,6 +1243,14 @@ def _custom_lin_transpose(cts_out, *invals, num_res,
   return [None] * num_res + nz_cts_in
 primitive_transposes[custom_lin_p] = _custom_lin_transpose
 
+def _custom_lin_pp_rule(eqn: core.JaxprEqn, context: core.JaxprPpContext,
+                        settings: core.JaxprPpSettings) -> core.pp.Doc:
+  params = dict(eqn.params)
+  params.pop("out_avals")
+  params["bwd"] = params.pop("bwd").debug_info.func_name
+  return core._pp_eqn(eqn.replace(params=params), context, settings)
+core.pp_eqn_rules[custom_lin_p] = _custom_lin_pp_rule
+
 
 class CustomJVPException(Exception):
   def __init__(self):
