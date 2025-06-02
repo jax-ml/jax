@@ -712,6 +712,13 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (1, x.shape[0]))
     self.assertArraysEqual(out, np.expand_dims(x, axis=0))
 
+  def test_broadcast_one_to_all_single_host(self):
+    x = jnp.arange(8, dtype=jnp.uint8)
+    out = multihost_utils.broadcast_one_to_all(x)
+    self.assertEqual(out.shape, x.shape)
+    self.assertEqual(out.dtype, x.dtype)
+    self.assertArraysEqual(out, x)
+
   @jtu.sample_product(
     dtype=jtu.dtypes.all,
     shape=[(), (10), (2, 3)],
