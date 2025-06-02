@@ -2035,7 +2035,7 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
       with ctx.module_ctx.scratch_view([scratch_ty]) as [scratch]:
         return x.reduce("add", axes, scratch)
-    case mgpu.WGMMA_LAYOUT:
+    case mgpu.TiledLayout():
       if axes != (x_aval.ndim - 1,):
         raise NotImplementedError
       if not jnp.issubdtype(x_aval.dtype, jnp.floating):
@@ -2049,7 +2049,7 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
 def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   [x_aval] = ctx.avals_in
   match x.layout:
-    case mgpu.WGMMA_LAYOUT:
+    case mgpu.TiledLayout():
       if axes != (x_aval.ndim - 1,):
         raise NotImplementedError
       if not jnp.issubdtype(x_aval.dtype, jnp.floating):
