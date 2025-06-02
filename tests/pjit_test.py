@@ -7893,6 +7893,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, jnp.full((8, 2), -7, dtype=jnp.float32))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
+  @config.numpy_rank_promotion('allow')
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_lax_map(self, mesh):
+    def simple_func(w, x):
+      return jnp.sum(w * x, axis=-1)
+
+    w = jax.device_put(np.arange(4, dtype=np.float32), P('x'))
+    x = jax.device_put(np.ones((4, 2, 4), dtype=np.float32),
+                       P(None, 'y', None))
+
+    jax.lax.map(lambda _x: simple_func(w, _x), x)  # doesn't crash
+
+    jax.lax.map(lambda _x: simple_func(w, _x), x, batch_size=2)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
