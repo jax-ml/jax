@@ -28,7 +28,6 @@ import numpy as np
 
 import jax
 from jax._src import core
-from jax._src import config
 from jax import dtypes
 from jax import lax
 from jax import random
@@ -3359,8 +3358,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return c + 1, None
     def g(x):
       return jax.lax.scan(f, x, length=2)[0]
-    with config.use_direct_linearize(True):
-      jaxpr = jax.make_jaxpr(jax.value_and_grad(g))(1.0)
+    jaxpr = jax.make_jaxpr(jax.value_and_grad(g))(1.0)
     eqn_jaxpr = jaxpr.eqns[0].params["jaxpr"]
     self.assertIn("debug_callback", [e.primitive.name for e in eqn_jaxpr.eqns])
 
