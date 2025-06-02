@@ -113,7 +113,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
         "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/cuda:cudnn",
     ],
