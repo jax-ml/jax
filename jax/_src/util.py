@@ -367,14 +367,16 @@ class WrapKwArgs:
 def wrap_name(name: str, transform_name: str) -> str:
   return transform_name + '(' + name + ')'
 
-def fun_name(fun: Callable) -> str:
+
+def fun_name(fun: Callable, default_name: str = "<unnamed function>") -> str:
   name = getattr(fun, "__name__", None)
   if name is not None:
     return name
   if isinstance(fun, partial):
     return fun_name(fun.func)
   else:
-    return "<unnamed function>"
+    return default_name
+
 
 def fun_qual_name(fun: Callable) -> str:
   qual_name = getattr(fun, "__qualname__", None)
