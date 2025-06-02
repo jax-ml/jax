@@ -801,6 +801,7 @@ cc_library(
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:safe_static_init",
         "@xla//xla/python:types",
         "@xla//xla/python/ifrt",
         "@xla//xla/tsl/concurrency:ref_count",
