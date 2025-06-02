@@ -22,11 +22,12 @@ import jax
 from jax import dtypes
 from jax._src import core
 from jax._src import dispatch
+from jax._src import xla_bridge
 from jax._src.custom_partitioning import custom_partitioning
+from jax._src.custom_partitioning_sharding_rule import ArrayMapping, BATCHING, SdyShardingRule
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lib import cuda_versions
-from jax._src import xla_bridge
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import jax.numpy as jnp
@@ -913,7 +914,7 @@ def _check_qkv_bias_mask_spec(
 
 
 # fwd custom partition
-def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args,is_training, layout):
+def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training, layout):
   # only sharding on batch and num_head dim is allowed
   # (*batch, q_seq, num_head, head)
   query_spec = _get_padded_spec(arg_shapes[0])
@@ -934,6 +935,27 @@ def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args,is_training, layo
       mesh, PartitionSpec(*batch_spec, num_head_spec, q_seq_spec, None))
     return [out_sharding, activation_sharding]
   return [out_sharding]
+
+
+def _fwd_sharding_rule(variadic_args, is_training):
+  query = ArrayMapping(BATCHING, "hq", "sq", "dqk")
+  key = ArrayMapping(BATCHING, "hk", "skv", "dqk")
+  value = ArrayMapping(BATCHING, "hv", "skv", "dv")
+  has_bias, _ = variadic_args
+  if has_bias:
+    bias = ArrayMapping("a", "b", "sq", "skv")
+    operand_mappings = (query, key, value, bias)
+  else:
+    operand_mappings = (query, key, value)
+
+  output = ArrayMapping(BATCHING, "hq", "sq", "dv")
+  if is_training:
+    activation = ArrayMapping(BATCHING, "hq", "sq", "c")
+    result_mappings = (output, activation)
+  else:
+    result_mappings = (output,)
+  return SdyShardingRule(operand_mappings, result_mappings)
+
 
 _dot_product_attention_fwd_lower = custom_partitioning(
     _dot_product_attention_fwd_impl, static_argnums=(8, 9, 10, 11, 12, 13, 14, 15))
@@ -983,6 +1005,23 @@ def _infer_bwd_output_sharding(mesh, arg_shapes, layout, variadic_args):
     grad_bias_sharding = NamedSharding(mesh, PartitionSpec(*bias_spec))
     out_shardings = out_shardings + [grad_bias_sharding]
   return out_shardings
+
+
+def _bwd_sharding_rule(variadic_args):
+  operand_mappings = (ArrayMapping(BATCHING, "hq", "sq", "dv"),)
+
+  d_query = ArrayMapping(BATCHING, "hq", "sq", "dqk")
+  d_key = ArrayMapping(BATCHING, "hk", "skv", "dqk")
+  d_value = ArrayMapping(BATCHING, "hv", "skv", "dv")
+
+  has_bias, has_dbias = variadic_args
+  if has_bias and has_dbias:
+    d_bias = ArrayMapping("a", "b", "sq", "skv")
+    result_mappings = (d_query, d_key, d_value, d_bias)
+  else:
+    result_mappings = (d_query, d_key, d_value)
+  return SdyShardingRule(operand_mappings, result_mappings)
+
 
 _dot_product_attention_bwd_lower = custom_partitioning(
     _dot_product_attention_bwd_impl, static_argnums=(11, 12, 13, 14, 15, 16, 17)
@@ -1080,14 +1119,16 @@ batching.primitive_batchers[
 
 _dot_product_attention_fwd_lower.def_partition(
   infer_sharding_from_operands=_dot_product_attention_fwd_infer_sharding_from_operands,
-  partition=_dot_product_attention_fwd_partition)
+  partition=_dot_product_attention_fwd_partition,
+  sharding_rule=_fwd_sharding_rule)
 
 mlir.register_lowering(_dot_product_attention_fwd_p_wrapper,
                         mlir.lower_fun(_dot_product_attention_fwd_lower, multiple_results=True))
 
 _dot_product_attention_bwd_lower.def_partition(
   infer_sharding_from_operands=_dot_product_attention_bwd_infer_sharding_from_operands,
-  partition=_dot_product_attention_bwd_partition)
+  partition=_dot_product_attention_bwd_partition,
+  sharding_rule=_bwd_sharding_rule)
 
 mlir.register_lowering(_dot_product_attention_bwd_p_wrapper,
                         mlir.lower_fun(_dot_product_attention_bwd_lower, multiple_results=True))
@@ -1368,7 +1409,6 @@ def _dot_product_attention_fp8_fwd_cuda_lowering(
     return [hlo.transpose(out.results[0], output_transpose_perm), out.results[1], out.results[2], out.results[3]]
   else:
     return [hlo.transpose(out.results[0], output_transpose_perm), out.results[1], out.results[2]]
-
 
 
 def _dot_product_attention_fp8_bwd_cuda_lowering(
