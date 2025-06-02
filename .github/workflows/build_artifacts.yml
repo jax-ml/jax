@@ -109,7 +109,13 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          persist-credentials: false
+          fetch-depth: 0
+          persist-credentials: true
+      # DO NOT SUBMIT
+      - name: Checkout a commit for debug
+        run: |
+          git config --global --add safe.directory $(pwd)
+          git checkout a827a274baf18ece651d37b7933bee3cb2f8760e # no gpu_ops_test cuda failure at this commit
       - name: Enable RBE if building on Linux x86 or Windows x86
         if: contains(inputs.runner, 'linux-x86') || contains(inputs.runner, 'windows-x86')
         run: echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV

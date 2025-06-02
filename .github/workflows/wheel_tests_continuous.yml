@@ -25,6 +25,9 @@ on:
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
   workflow_dispatch: # allows triggering the workflow run manually
+  # DO NOT SUBMIT
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
