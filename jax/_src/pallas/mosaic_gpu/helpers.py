@@ -26,11 +26,9 @@ _T = TypeVar("_T")
 
 def nd_loop(
     grid: Sequence[int],
-    body: Callable[[Sequence[jax.Array], _T], _T],
-    init_val: _T,
     *,
     collective_axes: Sequence[Hashable] | Hashable,
-) -> _T:
+) -> Callable[[Callable[[Sequence[jax.Array]], None]], None]:
   """A loop over a multi-dimensional grid partitioned along the given axes.
 
   For example, if ``collective_axes`` is ``"x"`` with :func:`lax.axis_size`
@@ -61,26 +59,29 @@ def nd_loop(
           3         (1, 0)
 
   See also:
-    - :func:`jax.lax.fori_loop`: A single-dimensional indexed loop.
+    - :func:`jax.experimental.pallas.loop`: A loop over a single dimension.
   """
   axis_index = lax.axis_index(collective_axes)
   axis_size = lax.axis_size(collective_axes)
   grid_size = math.prod(grid)
 
-  def wrapper(step, carry):
-    step = step * axis_size + axis_index
-    # The loop below is conceptually ``jnp.unravel_index``, but it uses
-    # ``lax`` APIs instead of ``jax.numpy`` to minimize the number of
-    # primitives used.
-    index = []
-    for grid_dim in reversed(grid):
-      grid_dim = lax.convert_element_type(grid_dim, step.dtype)
-      index.append(lax.rem(step, grid_dim))
-      step = lax.div(step, grid_dim)
-    index.reverse()
-    return body(tuple(index), carry)
+  def decorator(body):
+    def wrapper(step, _):
+      step = step * axis_size + axis_index
+      # The loop below is conceptually ``jnp.unravel_index``, but it uses
+      # ``lax`` APIs instead of ``jax.numpy`` to minimize the number of
+      # primitives used.
+      index = []
+      for grid_dim in reversed(grid):
+        grid_dim = lax.convert_element_type(grid_dim, step.dtype)
+        index.append(lax.rem(step, grid_dim))
+        step = lax.div(step, grid_dim)
+      index.reverse()
+      return body(tuple(index))
 
-  upper = lax.div(grid_size, axis_size) + lax.convert_element_type(
-      axis_index < grid_size % axis_size, axis_index.dtype
-  )
-  return lax.fori_loop(0, upper, wrapper, init_val)
+    upper = lax.div(grid_size, axis_size) + lax.convert_element_type(
+        axis_index < grid_size % axis_size, axis_index.dtype
+    )
+    return lax.fori_loop(0, upper, wrapper, None)
+
+  return decorator
