@@ -104,7 +104,6 @@ cc_library(
         "@local_config_rocm//rocm:miopen",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
