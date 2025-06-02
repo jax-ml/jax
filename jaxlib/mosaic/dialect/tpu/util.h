@@ -290,6 +290,12 @@ std::optional<int64_t> getIntConst(Value v);
 // Precondition: `shape` has at least 2 dimensions.
 bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size);
 
+// Recursively finds all non-trivial users of a given value, including those
+// accessed via `tpu.bitcast` or unary elementwise operations. However,
+// `tpu.bitcast` and unary element-wise operations are excluded from the
+// results.
+SmallVector<Operation *> getNontrivialTransitiveUsers(Value v);
+
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
