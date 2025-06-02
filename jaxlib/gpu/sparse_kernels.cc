@@ -32,7 +32,6 @@ limitations under the License.
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_helpers.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/service/custom_call_status.h"
 
 #define JAX_FFI_RETURN_IF_GPU_ERROR(...) \
   FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(__VA_ARGS__))
@@ -189,15 +188,6 @@ static absl::Status CsrToDense_(gpuStream_t stream, void** buffers,
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrToDenseFfi, CsrToDense_);
 
-void CsrToDense(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrToDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
-
 // CsrFromDense: Convert dense matrix to CSR matrix
 
 static absl::Status CsrFromDense_(gpuStream_t stream, void** buffers,
@@ -232,15 +222,6 @@ static absl::Status CsrFromDense_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrFromDenseFfi, CsrFromDense_);
-
-void CsrFromDense(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrFromDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CsrMatvec: Product of CSR matrix and dense vector.
 
@@ -291,15 +272,6 @@ static absl::Status CsrMatvec_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrMatvecFfi, CsrMatvec_);
-
-void CsrMatvec(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrMatvec_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CsrMatmat: Product of CSR matrix and dense matrix.
 
@@ -352,15 +324,6 @@ static absl::Status CsrMatmat_(gpuStream_t stream, void** buffers,
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrMatmatFfi, CsrMatmat_);
 
-void CsrMatmat(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrMatmat_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
-
 // CooToDense: Convert COO matrix to dense matrix
 
 static absl::Status CooToDense_(gpuStream_t stream, void** buffers,
@@ -394,15 +357,6 @@ static absl::Status CooToDense_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooToDenseFfi, CooToDense_);
-
-void CooToDense(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CooToDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CooFromDense: Convert dense matrix to COO matrix
 
@@ -438,15 +392,6 @@ static absl::Status CooFromDense_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooFromDenseFfi, CooFromDense_);
-
-void CooFromDense(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CooFromDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CooMatvec: Product of COO matrix and dense vector.
 
@@ -496,15 +441,6 @@ static absl::Status CooMatvec_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooMatvecFfi, CooMatvec_);
-
-void CooMatvec(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CooMatvec_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CooMatmat: Product of COO matrix and dense matrix.
 
@@ -564,91 +500,7 @@ static absl::Status CooMatmat_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooMatmatFfi, CooMatmat_);
-
-void CooMatmat(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CooMatmat_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 #endif  // if JAX_GPU_HAVE_SPARSE
-
-template <typename T, typename F>
-static absl::Status gtsv2(F computeGtsv2, gpuStream_t stream, void** buffers,
-                          const char* opaque, std::size_t opaque_len) {
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
-
-  auto s = UnpackDescriptor<Gtsv2Descriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const Gtsv2Descriptor& descriptor = **s;
-  int batch = descriptor.batch;
-  int m = descriptor.m;
-  int n = descriptor.n;
-  int ldb = descriptor.ldb;
-
-  T* dl = static_cast<T*>(buffers[0]);
-  T* d = static_cast<T*>(buffers[1]);
-  T* du = static_cast<T*>(buffers[2]);
-  T* B = static_cast<T*>(buffers[3]);
-  T* X = static_cast<T*>(buffers[4]);
-  void* buffer = static_cast<void*>(buffers[5]);
-
-  // The solution X is written in place to B. We need to therefore copy the
-  // contents of B into the output buffer X and pass that into the kernel as B.
-  // Once copy insertion is supported for custom call aliasing, we could alias B
-  // with X and avoid the copy, the code below is written defensively assuming B
-  // and X might alias, but today we know they will not.
-  // TODO(b/182906199): Update the comment here once copy insertion is WAI.
-  if (X != B) {
-    size_t B_bytes = ldb * n * sizeof(T) * batch;
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-        gpuMemcpyAsync(X, B, B_bytes, gpuMemcpyDeviceToDevice, stream)));
-  }
-  for (int i = 0; i < batch; ++i) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-        computeGtsv2(handle.get(), m, n, dl, d, du, X, ldb, buffer)));
-    dl += m;
-    d += m;
-    du += m;
-    X += m * n;
-  }
-  return absl::OkStatus();
-}
-
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(
-    gtsv2_f32_ffi, [](gpuStream_t stream, void** buffers, const char* opaque,
-                      std::size_t opaque_len) {
-      return gtsv2<float>(gpusparseSgtsv2, stream, buffers, opaque, opaque_len);
-    });
-
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(
-    gtsv2_f64_ffi, [](gpuStream_t stream, void** buffers, const char* opaque,
-                      std::size_t opaque_len) {
-      return gtsv2<double>(gpusparseDgtsv2, stream, buffers, opaque,
-                           opaque_len);
-    });
-
-void gtsv2_f32(gpuStream_t stream, void** buffers, const char* opaque,
-               std::size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = gtsv2<float>(gpusparseSgtsv2, stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
-
-void gtsv2_f64(gpuStream_t stream, void** buffers, const char* opaque,
-               std::size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = gtsv2<double>(gpusparseDgtsv2, stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 template <typename T, typename BufferSizeF, typename KernelF>
 ffi::Error Gtsv2Impl(BufferSizeF getBufferSize, KernelF kernel, int64_t batch,

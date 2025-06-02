@@ -15,11 +15,9 @@ limitations under the License.
 
 #include <cstddef>
 #include <stdexcept>
-#include <string>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
-#include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
@@ -27,9 +25,7 @@ limitations under the License.
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/sparse_kernels.h"
 #include "jaxlib/gpu/vendor.h"
-#include "jaxlib/kernel_helpers.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
-#include "xla/service/custom_call_status.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 
 namespace nb = nanobind;
@@ -146,45 +142,6 @@ std::pair<size_t, nb::bytes> BuildCsrToDenseDescriptor(const dtype& data_dtype,
   return {buffer_size, PackDescriptor(d)};
 }
 
-absl::Status CsrToDense_(gpuStream_t stream, void** buffers, const char* opaque,
-                         size_t opaque_len) {
-  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const SparseMatDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
-
-  gpusparseSpMatDescr_t mat_a = 0;
-  gpusparseDnMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseCreateCsr(&mat_a, d.rows, d.cols, d.nnz,
-                         /*csrRowOffsets=*/buffers[2],
-                         /*csrColInd=*/buffers[1],
-                         /*csrValues=*/buffers[0], d.index_type, d.index_type,
-                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_b, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[3], d.value_type, GPUSPARSE_ORDER_ROW)));
-
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseSparseToDense(handle.get(), mat_a, mat_b,
-                             GPUSPARSE_SPARSETODENSE_ALG_DEFAULT, buffers[4])));
-
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
-  return absl::OkStatus();
-}
-
-void CsrToDense(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrToDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
-
 // CsrFromDense: Convert dense matrix to CSR matrix
 
 // Returns the descriptor for a CsrFromDense operation.
@@ -219,46 +176,6 @@ std::pair<size_t, nb::bytes> BuildCsrFromDenseDescriptor(
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_b)));
 
   return {buffer_size, PackDescriptor(d)};
-}
-
-absl::Status CsrFromDense_(gpuStream_t stream, void** buffers,
-                           const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const SparseMatDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
-
-  gpusparseDnMatDescr_t mat_a = 0;
-  gpusparseSpMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_a, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[0], d.value_type, GPUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseCreateCsr(&mat_b, d.rows, d.cols, d.nnz,
-                         /*csrRowOffsets=*/buffers[3],
-                         /*csrColInd=*/buffers[2],
-                         /*csrValues=*/buffers[1], d.index_type, d.index_type,
-                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_analysis(
-      handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_convert(
-      handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_b)));
-  return absl::OkStatus();
-}
-
-void CsrFromDense(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrFromDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
 }
 
 // CsrMatvec: Product of CSR matrix and dense vector.
@@ -553,44 +470,9 @@ std::pair<size_t, nb::bytes> BuildCooMatmatDescriptor(
 
 #endif  // if JAX_GPU_HAVE_SPARSE
 
-nb::bytes BuildGtsv2Descriptor(int b, int m, int n, int ldb) {
-  return PackDescriptor(Gtsv2Descriptor{b, m, n, ldb});
-}
-
-template <typename F>
-size_t Gtsv2BufferSize(F f, int m, int n, int ldb) {
-  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
-  JAX_THROW_IF_ERROR(h.status());
-  auto& handle = *h;
-  size_t size;
-  JAX_THROW_IF_ERROR(
-      JAX_AS_STATUS(f(handle.get(), m, n, /*dl=*/nullptr, /*d=*/nullptr,
-                      /*du=*/nullptr, /*B=*/nullptr, ldb, &size)));
-  return size;
-}
-
-size_t Gtsv2BufferSizeF32(int m, int n, int ldb) {
-  return Gtsv2BufferSize(gpusparseSgtsv2_bufferSizeExt, m, n, ldb);
-}
-
-size_t Gtsv2BufferSizeF64(int m, int n, int ldb) {
-  return Gtsv2BufferSize(gpusparseDgtsv2_bufferSizeExt, m, n, ldb);
-}
-
 nb::dict Registrations() {
   nb::dict dict;
 #if JAX_GPU_HAVE_SPARSE
-  dict[JAX_GPU_PREFIX "sparse_csr_todense"] = EncapsulateFunction(CsrToDense);
-  dict[JAX_GPU_PREFIX "sparse_csr_fromdense"] =
-      EncapsulateFunction(CsrFromDense);
-  dict[JAX_GPU_PREFIX "sparse_csr_matvec"] = EncapsulateFunction(CsrMatvec);
-  dict[JAX_GPU_PREFIX "sparse_csr_matmat"] = EncapsulateFunction(CsrMatmat);
-  dict[JAX_GPU_PREFIX "sparse_coo_todense"] = EncapsulateFunction(CooToDense);
-  dict[JAX_GPU_PREFIX "sparse_coo_fromdense"] =
-      EncapsulateFunction(CooFromDense);
-  dict[JAX_GPU_PREFIX "sparse_coo_matvec"] = EncapsulateFunction(CooMatvec);
-  dict[JAX_GPU_PREFIX "sparse_coo_matmat"] = EncapsulateFunction(CooMatmat);
-
   dict[JAX_GPU_PREFIX "sparse_csr_todense_ffi"] =
       EncapsulateFfiHandler(CsrToDenseFfi);
   dict[JAX_GPU_PREFIX "sparse_csr_fromdense_ffi"] =
@@ -608,12 +490,6 @@ nb::dict Registrations() {
   dict[JAX_GPU_PREFIX "sparse_coo_matmat_ffi"] =
       EncapsulateFfiHandler(CooMatmatFfi);
 #endif
-  dict[JAX_GPU_PREFIX "sparse_gtsv2_f32"] = EncapsulateFunction(gtsv2_f32);
-  dict[JAX_GPU_PREFIX "sparse_gtsv2_f64"] = EncapsulateFunction(gtsv2_f64);
-  dict[JAX_GPU_PREFIX "sparse_gtsv2_f32_ffi"] =
-      EncapsulateFfiHandler(gtsv2_f32_ffi);
-  dict[JAX_GPU_PREFIX "sparse_gtsv2_f64_ffi"] =
-      EncapsulateFfiHandler(gtsv2_f64_ffi);
   dict[JAX_GPU_PREFIX "sparse_gtsv2_ffi"] = EncapsulateFfiHandler(kGtsv2);
 
   // TODO(tomhennigan): Add support for gtsv2 complex 32/64.
@@ -634,9 +510,6 @@ NB_MODULE(_sparse, m) {
   m.def("build_coo_matvec_descriptor", &BuildCooMatvecDescriptor);
   m.def("build_coo_matmat_descriptor", &BuildCooMatmatDescriptor);
 #endif
-  m.def("gtsv2_f32_buffer_size", &Gtsv2BufferSizeF32);
-  m.def("gtsv2_f64_buffer_size", &Gtsv2BufferSizeF64);
-  m.def("build_gtsv2_descriptor", &BuildGtsv2Descriptor);
 }
 
 }  // namespace
