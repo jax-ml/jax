@@ -39,8 +39,8 @@ from jax._src.lib import xla_client
 import numpy as np
 
 
-def _psum(x: Any) -> Any:
-  return jax.tree.map(partial(jnp.sum, axis=0), x)
+def _psum(xs: Any) -> Any:
+  return jax.tree.map(lambda x: jnp.sum(x, dtype=x.dtype, axis=0), xs)
 
 
 def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
