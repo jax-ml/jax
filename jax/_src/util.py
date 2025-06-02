@@ -642,12 +642,7 @@ def use_cpp_method(is_enabled: bool = True) -> Callable[[T], T]:
   return decorator
 
 
-try:
-  # numpy 1.25.0 or newer
-  NumpyComplexWarning: type[Warning] = np.exceptions.ComplexWarning
-except AttributeError:
-  # legacy numpy
-  NumpyComplexWarning = np.ComplexWarning
+NumpyComplexWarning: type[Warning] = np.exceptions.ComplexWarning
 
 
 class StrictABCMeta(abc.ABCMeta):

@@ -123,8 +123,6 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     shape=[(4,), (num_samples, 4)],
   )
   def testRotationAsQuatCanonical(self, shape, dtype):
-    if scipy_version < (1, 11, 0):
-      self.skipTest("Scipy 1.11.0 added the `canonical` arg.")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda q: jsp_Rotation.from_quat(q).as_quat(canonical=True)
@@ -152,8 +150,6 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     other_shape=[(num_samples, 4)],
   )
   def testRotationConcatenate(self, shape, other_shape, dtype):
-    if scipy_version < (1, 8, 0):
-      self.skipTest("Scipy 1.8.0 needed for concatenate.")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype), rng(other_shape, dtype),)
     jnp_fn = lambda q, o: jsp_Rotation.concatenate([jsp_Rotation.from_quat(q), jsp_Rotation.from_quat(o)]).as_rotvec()
@@ -297,8 +293,6 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     shape=[(4,), (num_samples, 4)],
   )
   def testRotationInvConjugate(self, shape, dtype):
-    if scipy_version < (1, 11, 0):
-      self.skipTest("Scipy prior to 1.11.0 used a negative conjugate.")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda q: jsp_Rotation.from_quat(q).inv().as_quat()
