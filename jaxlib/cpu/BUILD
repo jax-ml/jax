@@ -42,7 +42,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -88,7 +87,6 @@ cc_library(
         ":sparse_kernels",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_target_registry",
     ],
     alwayslink = 1,
 )

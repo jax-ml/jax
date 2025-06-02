@@ -30,7 +30,6 @@ limitations under the License.
 #include "jaxlib/gpu/handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_helpers.h"
-#include "xla/service/custom_call_status.h"
 
 namespace jax {
 
@@ -539,24 +538,6 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnDestroyRNNDescriptor(rnn_desc)));
 
   return absl::OkStatus();
-}
-
-void RNNForward(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = DnnRNNForward_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
-
-void RNNBackward(gpuStream_t stream, void** buffers, const char* opaque,
-                 size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = DnnRNNBackward_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(RNNForwardFfi, DnnRNNForward_);

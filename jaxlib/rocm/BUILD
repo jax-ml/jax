@@ -104,7 +104,6 @@ cc_library(
         "@local_config_rocm//rocm:miopen",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -229,7 +228,6 @@ cc_library(
         "@local_config_rocm//rocm:hipsparse",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -247,7 +245,6 @@ nanobind_extension(
         ":hip_vendor",
         ":hipsparse_kernels",
         "//jaxlib:absl_status_casters",
-        "//jaxlib:kernel_helpers",
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
@@ -255,14 +252,12 @@ nanobind_extension(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipsparse",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
-        "@xla//xla/service:custom_call_status",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
@@ -330,7 +325,6 @@ cc_library(
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -344,7 +338,6 @@ rocm_library(
         "//jaxlib:kernel_helpers",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 

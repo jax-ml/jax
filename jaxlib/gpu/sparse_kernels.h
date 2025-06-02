@@ -16,14 +16,12 @@ limitations under the License.
 #ifndef JAXLIB_GPU_SPARSE_KERNELS_H_
 #define JAXLIB_GPU_SPARSE_KERNELS_H_
 
-#include <cstddef>
 #include <cstdint>
 
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/service/custom_call_status.h"
 
 namespace jax {
 
@@ -72,17 +70,6 @@ struct DenseVecDescriptor {
 };
 
 #if JAX_GPU_HAVE_SPARSE
-// CsrToDense: Convert CSR matrix to dense matrix
-
-void CsrToDense(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status);
-
-// CsrFromDense: Convert dense matrix to CSR matrix
-
-void CsrFromDense(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status);
-
-// CsrMatvec: Product of CSR matrix and dense vector.
 
 struct CsrMatvecDescriptor {
   SparseMatDescriptor A;
@@ -90,31 +77,11 @@ struct CsrMatvecDescriptor {
   gpusparseOperation_t op;
 };
 
-void CsrMatvec(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status);
-
-// CsrMatmat: Product of CSR matrix and dense matrix.
-
 struct CsrMatmatDescriptor {
   SparseMatDescriptor A;
   DenseMatDescriptor B, C;
   gpusparseOperation_t op_A;
 };
-
-void CsrMatmat(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status);
-
-// CooToDense: Convert COO matrix to dense matrix
-
-void CooToDense(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status);
-
-// CooFromDense: Convert dense matrix to COO matrix
-
-void CooFromDense(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status);
-
-// CooMatvec: Product of COO matrix and dense vector.
 
 struct CooMatvecDescriptor {
   SparseMatDescriptor A;
@@ -122,30 +89,11 @@ struct CooMatvecDescriptor {
   gpusparseOperation_t op;
 };
 
-void CooMatvec(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status);
-
-// CooMatmat: Product of COO matrix and dense matrix.
-
 struct CooMatmatDescriptor {
   SparseMatDescriptor A;
   DenseMatDescriptor B, C;
   gpusparseOperation_t op_A;
 };
-
-void CooMatmat(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status);
-#endif  // JAX_GPU_HAVE_SPARSE
-
-struct Gtsv2Descriptor {
-  int batch, m, n, ldb;
-};
-
-void gtsv2_f32(gpuStream_t stream, void** buffers, const char* opaque,
-               std::size_t opaque_len, XlaCustomCallStatus* status);
-
-void gtsv2_f64(gpuStream_t stream, void** buffers, const char* opaque,
-               std::size_t opaque_len, XlaCustomCallStatus* status);
 
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CsrToDenseFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CsrFromDenseFfi);
@@ -155,8 +103,9 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(CooToDenseFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CooFromDenseFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CooMatvecFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CooMatmatFfi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(gtsv2_f32_ffi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(gtsv2_f64_ffi);
+
+#endif  // JAX_GPU_HAVE_SPARSE
+
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kGtsv2);
 
 }  // namespace JAX_GPU_NAMESPACE
