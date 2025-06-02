@@ -62,7 +62,7 @@ from jax._src.typing import (
   Array, ArrayLike, DType, DTypeLike, DeprecatedArg, DimSize, Shape, SupportsShape
 )
 from jax._src.util import (
-    NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
+    canonicalize_axis as _canonicalize_axis,
     ceil_of_ratio, safe_zip, set_module, unzip2)
 from jax.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
@@ -171,7 +171,7 @@ finfo = dtypes.finfo
 can_cast = dtypes.can_cast
 promote_types = dtypes.promote_types
 
-ComplexWarning = NumpyComplexWarning
+ComplexWarning = np.exceptions.ComplexWarning
 
 _lax_const = lax_internal._const
 
