@@ -442,8 +442,6 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     with jtu.capture_stdout() as output:
       jax.linear_transpose(f, 1.)(1.)
       jax.effects_barrier()
-    # `debug_print` should be dropped by `partial_eval` because of no
-    # output data-dependence.
     self.assertEqual(output(), "")
 
   @jtu.sample_product(ordered=[False, True])
