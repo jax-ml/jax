@@ -3964,6 +3964,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertTrue(jnp.isclose(key, key))
 
   @jtu.sample_product(
+    atol=[0.0, 1E-4, np.inf],
+    rtol=[0.0, 1E-4, np.inf],
+    equal_nan=[True, False]
+  )
+  def testIsCloseCornerCases(self, atol, rtol, equal_nan):
+    if jtu.numpy_version() < (2, 0, 0) and (np.isinf(atol) or np.isinf(rtol)):
+      self.skipTest("fails on older NumPy")
+    vals = np.array([-np.nan, -np.inf, -1.00001, -1.0, -0.00001, -0.0,
+                     0.0, 0.00001, 1.0, 1.00001, np.inf, np.nan])
+    x, y = np.meshgrid(vals, vals)
+    self.assertArraysEqual(
+      np.isclose(x, y, atol=atol, rtol=rtol, equal_nan=equal_nan),
+      jnp.isclose(x, y, atol=atol, rtol=rtol, equal_nan=equal_nan)
+    )
+
+  @jtu.sample_product(
     x=[1, [1], [1, 1 + 1E-4], [1, np.nan]],
     y=[1, [1], [1, 1 + 1E-4], [1, np.nan]],
     equal_nan=[True, False],
