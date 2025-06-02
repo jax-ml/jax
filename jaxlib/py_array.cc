@@ -94,6 +94,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
+#include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -393,16 +394,16 @@ nb::object MakeShapedArrayCached(const ShapedArrayCacheKey& key) {
   static auto* lru_list = new CacheT::LRUList(4096);
   static auto* cache = new CacheT(lru_list);
 
-  static const nb::object* shaped_array = []() -> nb::object* {
+  const nb::object& shaped_array = SafeStaticInit<nb::object>([]() {
     nb::object jax_core;
     try {
       jax_core = nb::module_::import_("jax.core");
     } catch (nb::python_error& e) {
-      return nullptr;
+      return std::make_unique<nb::object>();
     }
-    return new nb::object(jax_core.attr("ShapedArray"));
-  }();
-  if (!shaped_array) {
+    return std::make_unique<nb::object>(jax_core.attr("ShapedArray"));
+  });
+  if (!shaped_array.ptr()) {
     return nb::none();
   }
 
@@ -415,7 +416,7 @@ nb::object MakeShapedArrayCached(const ShapedArrayCacheKey& key) {
   if (!value->has_value()) {
     nb_dtype dtype =
         IfrtDtypeToDtypeWithTokenCanonicalization(key.dtype).value();
-    nb::object aval = (*shaped_array)(
+    nb::object aval = shaped_array(
         SpanToNbTuple(absl::Span<const int64_t>(
             key.dtype.kind() == ifrt::DType::kToken ? std::vector<int64_t>{0}
                                                     : key.dims)),
