@@ -19,7 +19,6 @@ limitations under the License.
 #include "jaxlib/gpu/linalg_kernels.h"
 #include "jaxlib/gpu/prng_kernels.h"
 #include "jaxlib/gpu/rnn_kernels.h"
-#include "jaxlib/gpu/solver_kernels.h"
 #include "jaxlib/gpu/solver_kernels_ffi.h"
 #include "jaxlib/gpu/sparse_kernels.h"
 #include "jaxlib/gpu/triton_kernels.h"
@@ -40,14 +39,12 @@ XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_syrk_ffi", "CUDA",
                          SyrkFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_geqrf_ffi", "CUDA",
                          GeqrfFfi);
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_csrlsvqr", Csrlsvqr, "CUDA");
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_csrlsvqr_ffi", "CUDA",
                          CsrlsvqrFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_orgqr_ffi", "CUDA",
                          OrgqrFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_syevd_ffi", "CUDA",
                          SyevdFfi);
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_sytrd", Sytrd, "CUDA");
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_sytrd_ffi", "CUDA",
                          SytrdFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_gesvd_ffi", "CUDA",

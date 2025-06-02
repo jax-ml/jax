@@ -59,8 +59,6 @@ exports_files(srcs = [
     "solver_handle_pool.h",
     "solver_interface.cc",
     "solver_interface.h",
-    "solver_kernels.cc",
-    "solver_kernels.h",
     "solver_kernels_ffi.cc",
     "solver_kernels_ffi.h",
     "sparse.cc",
