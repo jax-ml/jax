@@ -32,6 +32,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
@@ -311,6 +312,29 @@ bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size) {
     }
   }
   return product == target_size;
+}
+
+SmallVector<Operation *> getNontrivialTransitiveUsers(Value v) {
+  auto isUnaryElementwise = [](Operation *op) {
+    if (!op->hasTrait<mlir::OpTrait::Elementwise>()) {
+      return false;
+    }
+    return op->getNumOperands() == 1 && op->getNumResults() == 1;
+  };
+  SmallVector<Operation *> users;
+  SmallVector<Value> candidates;
+  candidates.push_back(v);
+  while (!candidates.empty()) {
+    Value candidate = candidates.back();
+    candidates.pop_back();
+    for (const auto &user : candidate.getUsers()) {
+      if (isa<tpu::BitcastOp>(user) || isUnaryElementwise(user))
+        candidates.push_back(user->getResult(0));
+      else
+        users.push_back(user);
+    }
+  }
+  return users;
 }
 
 }  // namespace mlir::tpu
