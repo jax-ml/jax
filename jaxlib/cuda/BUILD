@@ -156,24 +156,6 @@ cc_library(
 )
 
 cc_library(
-    name = "cusolver_kernels",
-    srcs = ["//jaxlib/gpu:solver_kernels.cc"],
-    hdrs = ["//jaxlib/gpu:solver_kernels.h"],
-    deps = [
-        ":cuda_gpu_kernel_helpers",
-        ":cuda_solver_handle_pool",
-        ":cuda_vendor",
-        "//jaxlib:kernel_helpers",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@local_config_cuda//cuda:cuda_headers",
-        "@xla//xla/service:custom_call_status",
-        "@xla//xla/tsl/cuda:cudart",
-        "@xla//xla/tsl/cuda:cusolver",
-    ],
-)
-
-cc_library(
     name = "cusolver_interface",
     srcs = ["//jaxlib/gpu:solver_interface.cc"],
     hdrs = ["//jaxlib/gpu:solver_interface.h"],
@@ -223,21 +205,14 @@ nanobind_extension(
     features = ["-use_header_modules"],
     module_name = "_solver",
     deps = [
-        ":cuda_gpu_kernel_helpers",
-        ":cuda_solver_handle_pool",
         ":cuda_vendor",
-        ":cusolver_kernels",
         ":cusolver_kernels_ffi",
         "//jaxlib:kernel_nanobind_helpers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
         "@local_config_cuda//cuda:cuda_headers",
         "@nanobind",
         "@xla//xla/tsl/cuda:cublas",
         "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/cuda:cusolver",
-        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -472,7 +447,6 @@ cc_library(
         ":cuda_prng_kernels",
         ":cuda_vendor",
         ":cudnn_rnn_kernels",
-        ":cusolver_kernels",
         ":cusolver_kernels_ffi",
         ":cusparse_kernels",
         ":triton_kernels",
