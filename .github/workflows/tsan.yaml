@@ -120,7 +120,6 @@ jobs:
       - name: Build TSAN Numpy wheel
         if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
         run: |
-          set -eux
           cd numpy
 
           # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
@@ -138,7 +137,9 @@ jobs:
           python3 -m pip install uv~=0.5.30
           python3 -m uv pip install -r requirements/build_requirements.txt
 
-          CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized
+          # Run build process in background and show a spinner to avoid crash on the runner:
+          CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized &
+          pid=$! && s='-\|/'; i=0; while kill -0 $pid; do i=$(( (i+1) %4 )); printf "\r${s:$i:1}"; sleep 1; done
 
           # Create simple index and copy the wheel
           mkdir -p ${GITHUB_WORKSPACE}/wheelhouse/numpy
@@ -209,9 +210,9 @@ jobs:
 
           python3 -m uv pip list | grep -E "(numpy|pythran|cython|pybind11)"
 
-          export CC=clang-18
-          export CXX=clang++-18
-          python3 -m pip wheel --wheel-dir dist -vvv . --no-build-isolation --no-deps -Csetup-args=-Dbuildtype=debugoptimized
+          # Run build process in background and show a spinner to avoid crash on the runner:
+          CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -vvv . --no-build-isolation --no-deps -Csetup-args=-Dbuildtype=debugoptimized &
+          pid=$! && s='-\|/'; i=0; while kill -0 $pid; do i=$(( (i+1) %4 )); printf "\r${s:$i:1}"; sleep 1; done
 
           # Create simple index and copy the wheel
           mkdir -p ${GITHUB_WORKSPACE}/wheelhouse/scipy
