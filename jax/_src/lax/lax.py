@@ -70,7 +70,7 @@ from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      ShardingContext, SPMDAxisContext,
                                      PartitionSpec as P, canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
-from jax._src.util import (NumpyComplexWarning, cache, canonicalize_axis,
+from jax._src.util import (cache, canonicalize_axis,
                            safe_map, safe_zip, split_list, weakref_lru_cache,
                            foreach)
 
@@ -1706,7 +1706,7 @@ def _convert_element_type(
       dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
-    warnings.warn(msg, NumpyComplexWarning, stacklevel=2)
+    warnings.warn(msg, np.exceptions.ComplexWarning, stacklevel=2)
 
   # Python has big integers, but convert_element_type(2 ** 100, np.float32) need
   # not be an error since the target dtype fits the value. Handle this case by

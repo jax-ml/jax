@@ -642,9 +642,6 @@ def use_cpp_method(is_enabled: bool = True) -> Callable[[T], T]:
   return decorator
 
 
-NumpyComplexWarning: type[Warning] = np.exceptions.ComplexWarning
-
-
 class StrictABCMeta(abc.ABCMeta):
   """A variant of `abc.ABCMeta` which does not allow virtual subclasses.
 
