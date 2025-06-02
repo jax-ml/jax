@@ -2509,19 +2509,23 @@ def fori_loop(lower, upper, body_fun, init_val,
 
 def _batch_and_remainder(x, batch_size: int):
   leaves, treedef = tree_flatten(x)
-
-  scan_leaves = []
-  remainder_leaves = []
-
-  for leaf in leaves:
-    num_batches, _ = divmod(leaf.shape[0], batch_size)
-    total_batch_elems = num_batches * batch_size
-    scan_leaves.append(leaf[:total_batch_elems].reshape(num_batches, batch_size, *leaf.shape[1:]))
-    remainder_leaves.append(leaf[total_batch_elems:])
-
-  scan_tree = treedef.unflatten(scan_leaves)
-  remainder_tree = treedef.unflatten(remainder_leaves)
-  return scan_tree, remainder_tree
+  if not leaves:
+    return x, None
+  num_batches, remainder = divmod(leaves[0].shape[0], batch_size)
+  total_batch_elems = num_batches * batch_size
+  if remainder:
+    scan_leaves, remainder_leaves = [], []
+    for leaf in leaves:
+      scan_leaves.append(leaf[:total_batch_elems].reshape(
+          num_batches, batch_size, *leaf.shape[1:]))
+      remainder_leaves.append(leaf[total_batch_elems:])
+    return treedef.unflatten(scan_leaves), treedef.unflatten(remainder_leaves)
+  else:
+    scan_leaves = [
+        leaf[:total_batch_elems].reshape(num_batches, batch_size, *leaf.shape[1:])
+        for leaf in leaves
+    ]
+    return treedef.unflatten(scan_leaves), None
 
 @api_boundary
 def map(f, xs, *, batch_size: int | None = None):
@@ -2576,11 +2580,14 @@ def map(f, xs, *, batch_size: int | None = None):
     scan_xs, remainder_xs = _batch_and_remainder(xs, batch_size)
     g = lambda _, x: ((), api.vmap(f)(x))
     _, scan_ys = scan(g, (), scan_xs)
-    remainder_ys = api.vmap(f)(remainder_xs)
     flatten = lambda x: x.reshape(-1, *x.shape[2:])
-    ys = tree_map(
-      lambda x, y: lax.concatenate([flatten(x), y], dimension=0), scan_ys, remainder_ys,
-    )
+    if remainder_xs is not None:
+      remainder_ys = api.vmap(f)(remainder_xs)
+      ys = tree_map(
+        lambda x, y: lax.concatenate([flatten(x), y], dimension=0), scan_ys,
+        remainder_ys)
+    else:
+      ys = tree_map(flatten, scan_ys)
   else:
     g = lambda _, x: ((), f(x))
     _, ys = scan(g, (), xs)
