@@ -77,16 +77,12 @@ pallas_call_p.multiple_results = True
 
 def _pallas_call_impl(*args, **params):
   # Call the lowering path
-  if config.disable_jit.value:
-    raise NotImplementedError(
-        "pallas_call not supported with disable_jit. Consider invoking under a"
-        " local context of `jax.disable_jit(False)`."
-    )
-
   @partial(jax.jit, inline=True)
   def _jit_run(*args):
     return pallas_call_p.bind(*args, **params)
-  return _jit_run(*args)
+
+  with config.disable_jit(False):
+    return _jit_run(*args)
 
 pallas_call_p.def_impl(_pallas_call_impl)
 
