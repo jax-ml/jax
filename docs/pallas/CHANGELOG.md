@@ -13,6 +13,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* New functionality
+
+  * Added a new decorator {func}`jax.experimental.pallas.loop` which allows
+    to write stateless loops as functions.
+
 * Deprecations
 
   * {class}`jax.experimental.pallas.triton.TritonCompilerParams` has been
