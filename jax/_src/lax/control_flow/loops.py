@@ -53,6 +53,8 @@ from jax._src.lax.control_flow.common import (
     _initial_style_jaxpr_attrs, _make_closed_jaxpr_attrs, _prune_zeros,
     _typecheck_param)
 from jax._src.lax.other import logaddexp
+from jax._src.pjit import auto_axes, PartitionSpec as P
+from jax._src.mesh import get_abstract_mesh
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.state import discharge as state_discharge
@@ -2507,24 +2509,41 @@ def fori_loop(lower, upper, body_fun, init_val,
 
 ### map and miscellaneous rules
 
+def _scan_leaf(leaf, batch_elems, num_batches, batch_size):
+  def f(l):
+    return l[:batch_elems].reshape(num_batches, batch_size, *leaf.shape[1:])
+
+  aval = core.typeof(leaf)
+  if aval.sharding.spec[0] is not None:
+    raise ValueError(
+        '0th dimension of leaf passed to `jax.lax.map` should be replicated.'
+        f' Got {aval.str_short(True, True)}')
+  if get_abstract_mesh()._are_all_axes_explicit:
+    out_s = aval.sharding.with_spec(P(None, None, *aval.sharding.spec[1:]))
+    return auto_axes(f, out_sharding=out_s)(leaf)
+  return f(leaf)
+
+def _remainder_leaf(leaf, batch_elems):
+  def f(l):
+    return l[batch_elems:]
+  if get_abstract_mesh()._are_all_axes_explicit:
+    return auto_axes(f, out_sharding=core.typeof(leaf).sharding)(leaf)
+  return f(leaf)
+
 def _batch_and_remainder(x, batch_size: int):
   leaves, treedef = tree_flatten(x)
   if not leaves:
     return x, None
   num_batches, remainder = divmod(leaves[0].shape[0], batch_size)
-  total_batch_elems = num_batches * batch_size
+  batch_elems = num_batches * batch_size
   if remainder:
-    scan_leaves, remainder_leaves = [], []
-    for leaf in leaves:
-      scan_leaves.append(leaf[:total_batch_elems].reshape(
-          num_batches, batch_size, *leaf.shape[1:]))
-      remainder_leaves.append(leaf[total_batch_elems:])
+    scan_leaves, remainder_leaves = unzip2(
+        [(_scan_leaf(leaf, batch_elems, num_batches, batch_size),
+          _remainder_leaf(leaf, batch_elems)) for leaf in leaves])
     return treedef.unflatten(scan_leaves), treedef.unflatten(remainder_leaves)
   else:
-    scan_leaves = [
-        leaf[:total_batch_elems].reshape(num_batches, batch_size, *leaf.shape[1:])
-        for leaf in leaves
-    ]
+    scan_leaves = tuple(_scan_leaf(leaf, batch_elems, num_batches, batch_size)
+                        for leaf in leaves)
     return treedef.unflatten(scan_leaves), None
 
 @api_boundary
