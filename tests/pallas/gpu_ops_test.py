@@ -231,9 +231,9 @@ class FusedAttentionTest(PallasBaseTest):
           (
               ("block_q", 128),
               ("block_k", 128),
-              ("block_q_dkv", 128),
-              ("block_kv_dkv", 128),
-              ("block_q_dq", 128),
+              ("block_q_dkv", 32),
+              ("block_kv_dkv", 32),
+              ("block_q_dq", 32),
               ("block_kv_dq", 128),
           ),
           (
@@ -248,8 +248,8 @@ class FusedAttentionTest(PallasBaseTest):
               ("block_q", 64),
               ("block_k", 128),
               ("block_q_dkv", 64),
-              ("block_kv_dkv", 128),
-              ("block_q_dq", 128),
+              ("block_kv_dkv", 32),
+              ("block_q_dq", 32),
               ("block_kv_dq", 64),
           ),
       ),
