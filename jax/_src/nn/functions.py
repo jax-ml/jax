@@ -1420,20 +1420,26 @@ def scaled_dot_general(
   @jax.jit
   def prelu(x: ArrayLike, a: ArrayLike) -> Array:
     """
-    Applies the PReLU (Parametric ReLU) activation function element-wise. Similar to ReLU, but includes a learnable parameter a that controls the slope for negative inputs, allowing the network to adaptively retain some negative information and prevent dead neurons.
+    Applies the PReLU (Parametric ReLU) activation function element-wise. Similar to ReLU, but includes a slope parameter a that controls the slope for negative inputs, allowing the network to adaptively retain some negative information and prevent dead neurons.
 
 
 
     Args:
         x (jnp.ndarray): Input tensor.
-        a (jnp.ndarray): Learnable parameter.
+
+
+        a (jnp.ndarray): Slope parameter.
                              
 
     Returns:
         Output tensor with the PReLU activation applied.
+
+If x>= 0 it returns x.
+Otherwise it returns x*a.
   """
 
     x = jnp.asarray(x)
     a = jnp.asarray(a)
+
     return jnp.where(x >= 0, x, a * x)
     
