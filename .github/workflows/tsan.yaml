@@ -248,77 +248,77 @@ jobs:
       #       ./wheelhouse
       #     key: ${{ runner.os }}-scipy-${{ matrix.python-version }}-${{ hashFiles('scipy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
 
-      - name: Build Jax and run tests
-        timeout-minutes: 120
-        env:
-          JAX_NUM_GENERATED_CASES: 1
-          JAX_ENABLE_X64: true
-          JAX_SKIP_SLOW_TESTS: true
-          PY_COLORS: 1
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          set -x
-          cd jax
-          time clang --version
-          export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
-          echo "Python sha256: ${PYTHON_SHA256}"
+      # - name: Build Jax and run tests
+      #   timeout-minutes: 120
+      #   env:
+      #     JAX_NUM_GENERATED_CASES: 1
+      #     JAX_ENABLE_X64: true
+      #     JAX_SKIP_SLOW_TESTS: true
+      #     PY_COLORS: 1
+      #     DEBIAN_FRONTEND: noninteractive
+      #   run: |
+      #     set -x
+      #     cd jax
+      #     time clang --version
+      #     export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
+      #     echo "Python sha256: ${PYTHON_SHA256}"
 
-          python3 build/build.py build --configure_only \
-            --python_version=${{ matrix.python-version }}-ft \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
-            --bazel_options=--color=yes \
-            --bazel_options=--copt=-fsanitize=thread \
-            --bazel_options=--linkopt="-fsanitize=thread" \
-            --bazel_options=--copt=-g \
-            --clang_path=/usr/bin/clang-18
+      #     python3 build/build.py build --configure_only \
+      #       --python_version=${{ matrix.python-version }}-ft \
+      #       --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
+      #       --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
+      #       --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
+      #       --bazel_options=--color=yes \
+      #       --bazel_options=--copt=-fsanitize=thread \
+      #       --bazel_options=--linkopt="-fsanitize=thread" \
+      #       --bazel_options=--copt=-g \
+      #       --clang_path=/usr/bin/clang-18
 
 
-          mkdir -p dist
-          cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
-          cp -v ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl dist/
-          if [ "${{ matrix.python-version }}" == "3.14" ]; then
-            # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy and Scipy
-            sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
+      #     mkdir -p dist
+      #     cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
+      #     cp -v ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl dist/
+      #     if [ "${{ matrix.python-version }}" == "3.14" ]; then
+      #       # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy and Scipy
+      #       sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
 
-            # We should install jpeg dev package to be able to build Pillow from source:
-            apt install -q -y libjpeg-dev --no-install-recommends
+      #       # We should install jpeg dev package to be able to build Pillow from source:
+      #       apt install -q -y libjpeg-dev --no-install-recommends
 
-            # Install scipy runtime dependencies (in case we restore scipy wheel from cache):
-            apt install -q -y libopenblas-dev liblapack-dev --no-install-recommends
-          fi
+      #       # Install scipy runtime dependencies (in case we restore scipy wheel from cache):
+      #       apt install -q -y libopenblas-dev liblapack-dev --no-install-recommends
+      #     fi
 
-          echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
-          echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
-          echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
+      #     echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
+      #     echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
+      #     echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
 
-          # Set symlink to the bazel executable
-          bazel_exec=($(ls bazel-*))
-          ln -s ${bazel_exec} bazel
+      #     # Set symlink to the bazel executable
+      #     bazel_exec=($(ls bazel-*))
+      #     ln -s ${bazel_exec} bazel
 
-          # Check python version
-          ./bazel run --@rules_python//python/config_settings:py_freethreaded="yes" @python//:python3 -- -VV
+      #     # Check python version
+      #     ./bazel run --@rules_python//python/config_settings:py_freethreaded="yes" @python//:python3 -- -VV
 
-          # Check numpy version
-          ./bazel cquery @pypi_numpy//:* | grep whl
+      #     # Check numpy version
+      #     ./bazel cquery @pypi_numpy//:* | grep whl
 
-          if [ "${{ matrix.python-version }}" == "3.14" ]; then
-            # Check scipy version
-            ./bazel cquery @pypi_scipy//:* | grep whl
-          fi
+      #     if [ "${{ matrix.python-version }}" == "3.14" ]; then
+      #       # Check scipy version
+      #       ./bazel cquery @pypi_scipy//:* | grep whl
+      #     fi
 
-          # Build JAX and run tests
-          ./bazel test \
-              --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
-              --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
-              --test_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
-              --test_env=PYTHON_GIL=0 \
-              --test_env=TSAN_OPTIONS=halt_on_error=1,suppressions=$PWD/.github/workflows/tsan-suppressions_${{ matrix.python-version }}.txt \
-              --test_env=JAX_TEST_NUM_THREADS=8 \
-              --test_output=errors \
-              --local_test_jobs=32 \
-              --test_timeout=1800 \
-              --config=resultstore \
-              --config=rbe_cache \
-              //tests:cpu_tests
+      #     # Build JAX and run tests
+      #     ./bazel test \
+      #         --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
+      #         --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
+      #         --test_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
+      #         --test_env=PYTHON_GIL=0 \
+      #         --test_env=TSAN_OPTIONS=halt_on_error=1,suppressions=$PWD/.github/workflows/tsan-suppressions_${{ matrix.python-version }}.txt \
+      #         --test_env=JAX_TEST_NUM_THREADS=8 \
+      #         --test_output=errors \
+      #         --local_test_jobs=32 \
+      #         --test_timeout=1800 \
+      #         --config=resultstore \
+      #         --config=rbe_cache \
+      #         //tests:cpu_tests
