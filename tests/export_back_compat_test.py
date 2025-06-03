@@ -778,7 +778,12 @@ class CompatTest(bctu.CompatTestBase):
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
       return lax.ppermute(x, 'a', perm=perm)
 
-    data = self.load_testdata(tpu_Sharding.data_2023_03_16)
+    data = tpu_Sharding.data_2023_03_16
+    if jax.config.jax_use_shardy_partitioner:
+      data = data["shardy"]
+    else:
+      data = data["gspmd"]
+    data = self.load_testdata(data)
     with mesh:
       self.run_one_test(func, data)
 
@@ -801,9 +806,15 @@ class CompatTest(bctu.CompatTestBase):
       return x + y
 
     if platform == "tpu":
-      data = self.load_testdata(annotate_data_placement.data_2025_04_07_tpu)
+      data = annotate_data_placement.data_2025_04_07_tpu
     else:
-      data = self.load_testdata(annotate_data_placement.data_2025_04_07_cuda)
+      data = annotate_data_placement.data_2025_04_07_cuda
+
+    if jax.config.jax_use_shardy_partitioner:
+      data = data["shardy"]
+    else:
+      data = data["gspmd"]
+    data = self.load_testdata(data)
 
     self.run_one_test(func, data)
 

@@ -108,7 +108,7 @@ absl::StatusOr<XlaComputation> PyMlirModuleToXlaComputation(
   XlaComputation computation;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
                                           return_tuple,
-                                          /*use_shardy=*/false));
+                                          /*exec_build_options=*/nullptr));
   return computation;
 }
 

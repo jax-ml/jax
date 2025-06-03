@@ -60,6 +60,7 @@ limitations under the License.
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/sharding.h"
 #include "jaxlib/traceback.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/literal.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -89,6 +90,7 @@ limitations under the License.
 #include "xla/python/types.h"
 #include "xla/python/version.h"
 #include "xla/service/platform_util.h"  // IWYU pragma: keep
+#include "xla/service/spmd/shardy/constants.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
