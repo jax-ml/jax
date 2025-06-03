@@ -3732,20 +3732,22 @@ if hp is not None:
         shape, layout = draw(shape_and_tiled_layout(vector_transfer=True))
         rank = len(shape)
         reduced_dims = draw(hps.sets(hps.integers(0, rank - 1), min_size=1))
-        return shape, layout, tuple(reduced_dims)
+        dtype = draw(hps.sampled_from([jnp.float32, jnp.bfloat16]))
+        return shape, layout, tuple(reduced_dims), dtype
 
       @hp.given(strategy())
       def run(args):
-        shape, layout, reduced_dims = args
+        shape, layout, reduced_dims, dtype = args
         out_shape = list(shape)
         for d in sorted(reduced_dims, reverse=True):
           del out_shape[d]
         def kernel(ctx, src, dst, scratch):
+          del ctx
           arr = fa.FragmentedArray.load_untiled(src, layout=layout, optimized=False)
           arr.reduce("max", reduced_dims, scratch).store_untiled(dst, optimized=False)
-        x = jax.random.normal(jax.random.key(1234), shape, jnp.float32)
-        out_type = jax.ShapeDtypeStruct(out_shape, jnp.float32)
-        scratch_type = jax.ShapeDtypeStruct((2048,), jnp.float32)
+        x = jax.random.normal(jax.random.key(1234), shape, dtype)
+        out_type = jax.ShapeDtypeStruct(out_shape, dtype)
+        scratch_type = jax.ShapeDtypeStruct((2048,), dtype)
         hp.assume(layout.vector_length <= 16)  # Otherwise we run out of scratch
         try:
           result = mgpu.as_gpu_kernel(
