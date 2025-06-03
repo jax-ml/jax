@@ -121,7 +121,7 @@ jobs:
         # if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
         run: |
           cd numpy
-
+          time clang --version
           # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
           if [ ! -d ${GITHUB_WORKSPACE}/cpython-tsan/bin/ ]; then
             echo "Extract cpython from python-tsan.tgz"
@@ -259,7 +259,7 @@ jobs:
         run: |
           set -x
           cd jax
-
+          time clang --version
           export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
           echo "Python sha256: ${PYTHON_SHA256}"
 
