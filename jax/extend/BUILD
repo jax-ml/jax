@@ -70,7 +70,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "random",
     srcs = ["random.py"],
-    deps = ["//jax"],
+    deps = [
+        "//jax",
+        "//jax:extend_src",
+    ],
 )
 
 pytype_strict_library(

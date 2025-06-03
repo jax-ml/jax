@@ -324,7 +324,6 @@ py_library_providing_imports_info(
             "*.py",
             "_src/cudnn/**/*.py",
             "_src/debugger/**/*.py",
-            "_src/extend/**/*.py",
             "_src/image/**/*.py",
             "_src/export/**/*.py",
             "_src/lax/**/*.py",
@@ -1542,6 +1541,12 @@ pytype_library(
     deps = [
         ":internal_mesh_utils",
     ],
+)
+
+pytype_strict_library(
+    name = "extend_src",
+    srcs = glob(include = ["_src/extend/**/*.py"]),
+    deps = [":jax"],
 )
 
 # TODO(phawkins): remove this target in favor of the finer-grained targets in jax/extend/...
