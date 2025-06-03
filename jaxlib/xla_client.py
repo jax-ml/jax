@@ -43,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 347
+_version = 348
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -308,6 +308,7 @@ Memory = _xla.Memory
 Array = _xla.Array
 ArrayImpl = _xla.ArrayImpl
 LoadedExecutable = _xla.LoadedExecutable
+Executable = _xla.Executable
 DeviceList = _xla.DeviceList
 OpSharding = _xla.OpSharding
 HloSharding = _xla.HloSharding
