@@ -1402,11 +1402,14 @@ class FragmentedArray:
 
   # TODO(apaszke): Support JAX dtypes here as well?
   def astype(self, new_dtype: ir.Type, *, is_signed: bool | None = None):
+    index = ir.IndexType.get()
     i4 = ir.IntegerType.get_signless(4)
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
     bf16 = ir.BF16Type.get()
+    f32 = ir.F32Type.get()
+    f8e4m3fn = ir.Float8E4M3FNType.get()
 
     cur_dtype = self.mlir_dtype
     if cur_dtype == new_dtype:
@@ -1537,6 +1540,34 @@ class FragmentedArray:
         new_registers[idx] = vector.bitcast(
             ir.VectorType.get((vector_len,), new_dtype), new_vec_32
         )
+      return FragmentedArray(
+          _registers=new_registers, _layout=self.layout, _is_signed=is_signed
+      )
+    # TODO(bchetioui): handle conversions to/from other float8 types.
+    if cur_dtype == f32 and new_dtype == f8e4m3fn:
+      if vector_len != 2:
+        raise NotImplementedError(vector_len)
+      new_registers = np.empty_like(self.registers)
+      empty_vec_32 = llvm.mlir_undef(ir.VectorType.get((1,), i32))
+      empty_result_vec = llvm.mlir_undef(ir.VectorType.get((2,), i8))
+      for idx, reg in np.ndenumerate(self.registers):
+        e0 = vector.extractelement(reg, position=c(0, index))
+        e1 = vector.extractelement(reg, position=c(1, index))
+        new_reg_32 = llvm.inline_asm(
+            i32,
+            [e1, e0],
+            "cvt.rn.satfinite.e4m3x2.f32 $0, $1, $2;",
+            "=h,f,f",
+        )
+        new_vec_32 = llvm.insertelement(empty_vec_32, new_reg_32, c(0, i32))
+        new_vec_f8 = vector.bitcast(ir.VectorType.get((4,), i8), new_vec_32)
+        res = llvm.insertelement(
+            empty_result_vec,
+            vector.extractelement(new_vec_f8, position=c(0, i32)), c(0, i32))
+        res = llvm.insertelement(
+            res,
+            vector.extractelement(new_vec_f8, position=c(1, i32)), c(1, i32))
+        new_registers[idx] = vector.bitcast(ir.VectorType.get((2,), f8e4m3fn), res)
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
