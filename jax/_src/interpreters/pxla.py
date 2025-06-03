@@ -2095,7 +2095,7 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
   if any(isinstance(e, RefEffect) for e in closed_jaxpr.effects):
     closed_jaxpr, inout_aliases, mut = _discharge_refs(closed_jaxpr)
     in_shardings = (*in_shardings, *(c.sharding for c in mut.in_mut))
-    in_layouts = (*in_layouts,) + (None,) * len(mut.in_mut)  # TODO(mattjj)
+    in_layouts = (*in_layouts, *(c.format.dll for c in mut.in_mut))
     donated_invars = (*donated_invars,) + (False,) * len(mut.in_mut)
     out_layouts_ = iter(zip(out_shardings, out_layouts))
     out_shardings, out_layouts = unzip2(
