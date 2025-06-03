@@ -1398,7 +1398,7 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   )
   if (x_bitwidth := bitwidth(result_type)) < 32:
     bits_ty = ir.IntegerType.get_signless(x_bitwidth)
-    y_vec = bitcast(y, ir.VectorType.get((32 // x_bitwidth,), x.type))
+    y_vec = bitcast(y, ir.VectorType.get((32 // x_bitwidth,), bits_ty))
     y = vector.extractelement(y_vec, position=c(0, index))
   return bitcast(y, result_type)
 
