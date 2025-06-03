@@ -50,6 +50,7 @@ namespace xla {
 
 class PyClient;
 class PyLoadedExecutable;
+class PyExecutable;
 class PyArray;
 class PyDevice;
 class PyMemorySpace;
@@ -166,6 +167,10 @@ class PyClient {
   CompileAndLoadIfrtProgram(nb_class_ptr<PyClient> client,
                             std::unique_ptr<ifrt::Program> ifrt_program,
                             std::unique_ptr<ifrt::CompileOptions> ifrt_options);
+
+  static absl::StatusOr<nb_class_ptr<PyExecutable>> Compile(
+      nb_class_ptr<PyClient> client, std::string mlir_module,
+      ifrt::DeviceListRef executable_devices, CompileOptions options);
 
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
       nb_class_ptr<PyClient> client, std::string mlir_module,

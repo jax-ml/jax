@@ -894,24 +894,24 @@ NB_MODULE(_jax, m) {
                  absl::StrCat("Unknown attribute ", name).c_str());
            });
 
-  nb::class_<ifrt::Executable>(m, "Executable")
-      .def("hlo_modules", ValueOrThrowWrapper(&ifrt::Executable::GetHloModules))
+  nb::class_<PyExecutable>(m, "Executable")
+      .def("hlo_modules", ValueOrThrowWrapper(&PyExecutable::GetHloModules))
       .def("get_output_memory_kinds",
-           xla::ValueOrThrowWrapper(&ifrt::Executable::GetOutputMemoryKinds))
-      .def("get_output_shardings", &ifrt::Executable::GetOutputShardings)
+           xla::ValueOrThrowWrapper(&PyExecutable::GetOutputMemoryKinds))
+      .def("get_output_shardings", &PyExecutable::GetOutputShardings)
       .def("get_parameter_layouts",
-           ValueOrThrowWrapper(&ifrt::Executable::GetParameterLayouts))
+           ValueOrThrowWrapper(&PyExecutable::GetParameterLayouts))
       .def("get_output_layouts",
-           xla::ValueOrThrowWrapper(&ifrt::Executable::GetOutputLayouts))
-      .def("get_parameter_shardings", &ifrt::Executable::GetParameterShardings)
+           xla::ValueOrThrowWrapper(&PyExecutable::GetOutputLayouts))
+      .def("get_parameter_shardings", &PyExecutable::GetParameterShardings)
       .def("get_compiled_memory_stats",
-           xla::ValueOrThrowWrapper(&ifrt::Executable::GetCompiledMemoryStats))
+           xla::ValueOrThrowWrapper(&PyExecutable::GetCompiledMemoryStats))
       .def("serialize",
-           [](const ifrt::Executable& exec) -> nb::bytes {
+           [](const PyExecutable& exec) -> nb::bytes {
              std::string serialized = ValueOrThrow(exec.Serialize());
              return nb::bytes(serialized.data(), serialized.size());
            })
-      .def("cost_analysis", [](const ifrt::Executable& exec) {
+      .def("cost_analysis", [](const PyExecutable& exec) {
         auto attrs = ValueOrThrow(exec.GetCostAnalysis());
         return ifrt::ToPjRtAttributeMap(std::move(attrs));
       });
