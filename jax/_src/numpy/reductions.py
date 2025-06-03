@@ -23,9 +23,9 @@ from typing import overload, Any, Literal, Protocol, Union
 
 import numpy as np
 
-import jax
 from jax import lax
 from jax._src import api
+from jax._src import config
 from jax._src import core
 from jax._src import deprecations
 from jax._src import dtypes
@@ -793,7 +793,7 @@ def _axis_size(a: ArrayLike, axis: int | Sequence[int]):
   size = 1
   a_shape = np.shape(a)
   for a in axis_seq:
-    size *= maybe_named_axis(a, lambda i: a_shape[i], jax.lax.axis_size)
+    size *= maybe_named_axis(a, lambda i: a_shape[i], lax.axis_size)
   return size
 
 
@@ -1136,7 +1136,7 @@ def _var(a: Array, axis: Axis = None, dtype: DTypeLike | None = None,
   normalizer = lax.sub(normalizer, lax.convert_element_type(correction, computation_dtype))
   result = sum(centered, axis, dtype=computation_dtype, keepdims=keepdims, where=where)
   result = lax.div(result, normalizer).astype(dtype)
-  with jax.debug_nans(False):
+  with config.debug_nans(False):
     result = _where(normalizer > 0, result, np.nan)
   return result
 
@@ -2513,7 +2513,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     index[axis] = high
     high_value = a[tuple(index)]
   else:
-    with jax.debug_nans(False):
+    with config.debug_nans(False):
       a = _where(any(lax_internal._isnan(a), axis=axis, keepdims=True), np.nan, a)
     a = lax.sort(a, dimension=axis)
     n = lax.convert_element_type(a_shape[axis], lax_internal._dtype(q))
