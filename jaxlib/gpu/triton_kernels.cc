@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "jaxlib/gpu/ffi_wrapper.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/triton_utils.h"
@@ -700,18 +701,24 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
   return std::move(kernel_call.configs_[0].kernel_call);
 }
 
+absl::Status TritonKernelCall_(gpuStream_t stream, void** buffers,
+                               const char* opaque, size_t opaque_len) {
+  JAX_ASSIGN_OR_RETURN(
+      KernelCall * kernel_call,
+      GetKernelCall(absl::string_view(opaque, opaque_len), stream, buffers));
+  return kernel_call->Launch(stream, buffers);
+}
+
+// TODO(danfm): Remove this legacy kernel 6 months after the 0.6.2 JAX release.
 void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
                       size_t opaque_len, XlaCustomCallStatus* status) {
-  absl::Status result = [=] {
-    JAX_ASSIGN_OR_RETURN(
-        KernelCall * kernel_call,
-        GetKernelCall(absl::string_view(opaque, opaque_len), stream, buffers));
-    return kernel_call->Launch(stream, buffers);
-  }();
+  absl::Status result = TritonKernelCall_(stream, buffers, opaque, opaque_len);
   if (!result.ok()) {
     absl::string_view msg = result.message();
     XlaCustomCallStatusSetFailure(status, msg.data(), msg.length());
   }
 }
+
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(TritonKernelCallFfi, TritonKernelCall_);
 
 }  // namespace jax::JAX_GPU_NAMESPACE

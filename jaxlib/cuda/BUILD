@@ -458,6 +458,7 @@ cc_library(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
+        ":ffi_wrapper",
         ":triton_utils",
         "//jaxlib/gpu:triton_cc_proto",
         "@com_google_absl//absl/base:core_headers",
@@ -471,6 +472,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/stream_executor/cuda:cuda_asm_compiler",
         "@xla//xla/tsl/cuda:cudart",

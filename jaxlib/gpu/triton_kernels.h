@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/vendor.h"
+#include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_status.h"
 
 namespace jax::JAX_GPU_NAMESPACE {
@@ -107,8 +108,7 @@ class AutotunedKernelCall {
 
   AutotunedKernelCall(
       std::string name, std::vector<Config> configs,
-      std::vector<std::tuple<size_t,
-      size_t, size_t>> input_output_aliases);
+      std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases);
 
   static absl::StatusOr<KernelCall> Autotune(AutotunedKernelCall kernel_call,
                                              gpuStream_t stream,
@@ -124,6 +124,8 @@ class AutotunedKernelCall {
   // (input buffer idx, output buffer idx, size)
   std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases_;
 };
+
+XLA_FFI_DECLARE_HANDLER_SYMBOL(TritonKernelCallFfi);
 
 }  // namespace jax::JAX_GPU_NAMESPACE
 
