@@ -124,7 +124,7 @@ class InterpretTest(jtu.JaxTestCase):
               (x.shape[0] // 2, y.shape[1] // 2),
               lambda i, j: (i, j),
           ),
-          interpret=mosaic_interpret.TPUInterpretParams(),
+          interpret=pltpu.InterpretParams(),
       )(x, y)
 
     k1, k2 = jax.random.split(jax.random.key(0))
@@ -155,7 +155,7 @@ class InterpretTest(jtu.JaxTestCase):
           dynamic_slice_kernel,
           grid_spec=grid_spec,
           out_shape=jax.ShapeDtypeStruct(shape=sizes, dtype=x.dtype),
-          interpret=mosaic_interpret.TPUInterpretParams(),
+          interpret=pltpu.InterpretParams(),
       )
       block_idx = jnp.array([starts[0] // sizes[0], starts[1] // sizes[1]])
       return kernel(block_idx, x)
@@ -189,7 +189,7 @@ class InterpretTest(jtu.JaxTestCase):
           ],
           out_specs=pl.BlockSpec(x.shape, lambda i: (0, 0)),
           input_output_aliases={1: 0},
-          interpret=mosaic_interpret.TPUInterpretParams(),
+          interpret=pltpu.InterpretParams(),
       )(s, x)
 
     s = jnp.array([1], dtype=jnp.int32)
@@ -224,7 +224,7 @@ class InterpretTest(jtu.JaxTestCase):
         ),
         scratch_shapes=(pltpu.SMEM((1,), jnp.int32),),
         input_output_aliases={0: 0},
-        interpret=mosaic_interpret.TPUInterpretParams(),
+        interpret=pltpu.InterpretParams(),
     )(x)
 
     expected = np.zeros((4, 4))
@@ -264,7 +264,7 @@ class InterpretTest(jtu.JaxTestCase):
             pltpu.VMEM(x.shape, x.dtype),
             pltpu.SemaphoreType.DMA,
         ],
-        interpret=mosaic_interpret.TPUInterpretParams(
+        interpret=pltpu.InterpretParams(
             detect_races=True, dma_execution_mode=dma_execution_mode
         ),
     )(x).block_until_ready()
@@ -279,7 +279,7 @@ class InterpretTest(jtu.JaxTestCase):
             pltpu.VMEM(x.shape, x.dtype),
             pltpu.SemaphoreType.DMA,
         ],
-        interpret=mosaic_interpret.TPUInterpretParams(
+        interpret=pltpu.InterpretParams(
             detect_races=True, dma_execution_mode=dma_execution_mode
         ),
     )(x).block_until_ready()
@@ -293,7 +293,7 @@ class InterpretTest(jtu.JaxTestCase):
       return pl.pallas_call(
           matmul_kernel,
           out_shape=jax.ShapeDtypeStruct((x.shape[0], y.shape[1]), x.dtype),
-          interpret=mosaic_interpret.TPUInterpretParams(
+          interpret=pltpu.InterpretParams(
               skip_floating_point_ops=True
           ),
       )(x, y)
@@ -325,7 +325,7 @@ class InterpretTest(jtu.JaxTestCase):
             pltpu.VMEM((8, 128), jnp.bfloat16),
             pltpu.VMEM((8, 128), jnp.int16),
         ],
-        interpret=mosaic_interpret.TPUInterpretParams(
+        interpret=pltpu.InterpretParams(
             uninitialized_memory=uninitialized_memory
         ),
     )()
@@ -355,7 +355,7 @@ class InterpretTest(jtu.JaxTestCase):
               pl.BlockSpec(memory_space=pltpu.SMEM),
           ],
           out_specs=pl.BlockSpec((8, 256), lambda i, j: (i, 0)),
-          interpret=mosaic_interpret.TPUInterpretParams(),
+          interpret=pltpu.InterpretParams(),
       )(x, s)
 
     with CountStoreCallbacksContext() as store_callbacks_counter:
@@ -378,10 +378,10 @@ class InterpretTest(jtu.JaxTestCase):
           grid=(4, 4),
           in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
           out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
-          interpret=mosaic_interpret.TPUInterpretParams(
+          interpret=pltpu.InterpretParams(
               random_seed=12345, grid_point_recorder=grid_point_recorder
           ),
-          compiler_params=pltpu.TPUCompilerParams(
+          compiler_params=pltpu.CompilerParams(
               dimension_semantics=('parallel', 'arbitrary')
           ),
       )(s)
@@ -436,8 +436,8 @@ class InterpretTest(jtu.JaxTestCase):
           grid=(4, 4),
           in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
           out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
-          interpret=mosaic_interpret.TPUInterpretParams(random_seed=12345),
-          compiler_params=pltpu.TPUCompilerParams(
+          interpret=pltpu.InterpretParams(random_seed=12345),
+          compiler_params=pltpu.CompilerParams(
               dimension_semantics=('arbitrary', 'parallel')
           ),
       )(s)
@@ -462,8 +462,8 @@ class InterpretTest(jtu.JaxTestCase):
           grid=(dim_size,),
           in_specs=[],
           out_specs=pl.BlockSpec((1,), lambda _: (0,)),
-          interpret=mosaic_interpret.TPUInterpretParams(),
-          compiler_params=pltpu.TPUCompilerParams(
+          interpret=pltpu.InterpretParams(),
+          compiler_params=pltpu.CompilerParams(
               dimension_semantics=('parallel',)
           ),
       )()
@@ -479,7 +479,7 @@ class InterpretTest(jtu.JaxTestCase):
       y = jnp.zeros_like(x)
       def inner(refs):
         x_ref, y_ref = refs
-        @pl.core_map(mesh, interpret=mosaic_interpret.TPUInterpretParams())
+        @pl.core_map(mesh, interpret=pltpu.InterpretParams())
         def _():
           num_cores = jax.lax.psum(1, "x")
           slc_size = 16 // num_cores
@@ -516,15 +516,15 @@ class InterpretTest(jtu.JaxTestCase):
         kernel,
         grid=(2,),
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
+        in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
         scratch_shapes=[
             pltpu.VMEM(x.shape, x.dtype),
         ],
-        interpret=mosaic_interpret.TPUInterpretParams(
+        interpret=pltpu.InterpretParams(
             num_cores_per_device=2,
             detect_races=True,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',),
         ),
     )(x).block_until_ready()
@@ -554,11 +554,11 @@ class InterpretTest(jtu.JaxTestCase):
         scratch_shapes=[
             pltpu.VMEM((8, 128), x.dtype),
         ],
-        interpret=mosaic_interpret.TPUInterpretParams(
+        interpret=pltpu.InterpretParams(
             num_cores_per_device=2,
             detect_races=True,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',)
         ),
     )(x).block_until_ready()
@@ -578,12 +578,12 @@ class InterpretTest(jtu.JaxTestCase):
           grid=(4, 4),
           in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
           out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
-          interpret=mosaic_interpret.TPUInterpretParams(
+          interpret=pltpu.InterpretParams(
               random_seed=12345,
               num_cores_per_device=num_cores_per_device,
               grid_point_recorder=grid_point_recorder,
           ),
-          compiler_params=pltpu.TPUCompilerParams(
+          compiler_params=pltpu.CompilerParams(
               dimension_semantics=('parallel', 'arbitrary')
           ),
       )(s)

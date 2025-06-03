@@ -92,7 +92,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
-        # TPUMemorySpace.ANY will (usually) place the tensor in HBM.
+        # MemorySpace.ANY will (usually) place the tensor in HBM.
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.ANY),
         ],
@@ -106,8 +106,8 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         right_permute_kernel,
         out_shape=out_shape,
         grid_spec=grid_spec,
-        compiler_params=pltpu.TPUCompilerParams(collective_id=13),
-        interpret=mosaic_interpret.TPUInterpretParams(
+        compiler_params=pltpu.CompilerParams(collective_id=13),
+        interpret=pltpu.InterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=detect_races),
     )
     # Wrap the kernel within a shard_map to call.
@@ -206,7 +206,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
       num_scalar_prefetch=0,
       in_specs=[
-        # TPUMemorySpace.ANY will (usually) place the tensor in HBM.
+        # MemorySpace.ANY will (usually) place the tensor in HBM.
         pl.BlockSpec(memory_space=pltpu.ANY),
       ],
       out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
@@ -228,9 +228,9 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       all_gather_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      interpret=mosaic_interpret.TPUInterpretParams(
+      interpret=pltpu.InterpretParams(
           dma_execution_mode=dma_execution_mode, detect_races=detect_races),
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
     )
 
     # Wrap the kernel within a shard_map to call.
@@ -388,9 +388,9 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       all_reduce_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      interpret=mosaic_interpret.TPUInterpretParams(
+      interpret=pltpu.InterpretParams(
           dma_execution_mode=dma_execution_mode, detect_races=detect_races),
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
     )
 
     pallas_result = jax.jit(
@@ -672,9 +672,9 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         reduce_scatter_kernel,
         out_shape=out_shape,
         grid_spec=grid_spec,
-        interpret=mosaic_interpret.TPUInterpretParams(
+        interpret=pltpu.InterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=True),
-        compiler_params=pltpu.TPUCompilerParams(collective_id=7),
+        compiler_params=pltpu.CompilerParams(collective_id=7),
       )(input_arr)[0]
 
     pallas_result = jax.jit(
@@ -976,9 +976,9 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         reduce_scatter_kernel,
         out_shape=out_shape,
         grid_spec=grid_spec,
-        interpret=mosaic_interpret.TPUInterpretParams(
+        interpret=pltpu.InterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=detect_races),
-        compiler_params=pltpu.TPUCompilerParams(collective_id=19),
+        compiler_params=pltpu.CompilerParams(collective_id=19),
       )(input_arr)[0]
 
     pallas_result = jax.jit(
@@ -1064,7 +1064,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
               ],
               out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
               scratch_shapes=[pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA],
-              interpret=mosaic_interpret.TPUInterpretParams(
+              interpret=pltpu.InterpretParams(
                   dma_execution_mode='eager',
                   detect_races=True,
               ),

@@ -116,6 +116,32 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
     )()
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
+  def test_permuted_mesh(self):
+    def kernel(y_ref, sem):
+      other_dev_id = 1 - lax.axis_index('x')
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id,
+                          device_id_type=pl.DeviceIdType.LOGICAL)
+      pl.semaphore_wait(sem)
+
+    kernel_call = pl.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+    )
+    mesh = jax.sharding.Mesh(jax.devices()[::-1], ['x'])  # Reverse the devices.
+    f = jax.jit(
+        shard_map.shard_map(
+            kernel_call, mesh, in_specs=(), out_specs=P(None), check_rep=False,
+        )
+    )
+    msg = (
+        'Mosaic GPU only supports meshes with device ordering that follows'
+        ' row-major device ids.'
+    )
+    with self.assertRaisesRegex(NotImplementedError, msg):
+      f()
+
 
 if __name__ == '__main__':
   # This test doesn't work with the platform allocator, so we override it

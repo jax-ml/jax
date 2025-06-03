@@ -14,11 +14,19 @@
 
 # pylint: disable=g-importing-member
 import asyncio
+from dataclasses import dataclass
 from functools import partial
+import json
+import logging
 import math
 import os
 import pathlib
-import tracemalloc as tm
+import pickle
+import tempfile
+import threading
+import time
+import tracemalloc  as tm
+from typing import Any
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -26,10 +34,19 @@ import jax
 from jax._src import array
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.export._export import (
+    deserialization_registry as node_deserialization_registry)
+from jax._src.export._export import (
+    serialization_registry as node_serialization_registry)
 from jax._src.layout import DeviceLocalLayout as DLL
-from jax._src.layout import Layout
+from jax._src.layout import Format
+from jax.experimental.array_serialization import pytree_serialization
 from jax.experimental.array_serialization import serialization
 from jax.experimental.array_serialization import tensorstore_impl as ts_impl
+
+from jax.experimental.array_serialization.pytree_serialization_utils import (
+    register_pytree_node_serialization)
+
 import jax.numpy as jnp
 
 from jax.sharding import NamedSharding
@@ -41,6 +58,16 @@ import tensorstore as ts
 
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
+
+
+_default_sharding = None
+
+
+def tree_load(*args, **kw):
+  return pytree_serialization.load(*args, shardings=_default_sharding, **kw)
+
+tree_save = pytree_serialization.save
+tree_load_pytreedef = pytree_serialization.load_pytreedef
 
 
 def _get_replicated_sharding(devices):
@@ -98,7 +125,8 @@ class CheckpointTest(jtu.JaxTestCase):
     inp = array.make_array_from_callback(
         inp_shape, sharding,
         lambda idx: src[idx])
-    ckpt_dir = pathlib.Path(self.create_tempdir('memprof').full_path)
+    ckpt_dir = pathlib.Path(self.create_tempdir(
+        'memprof-deserialize').full_path)
     tspec = serialization.get_tensorstore_spec(str(ckpt_dir))
 
     manager = serialization.GlobalAsyncCheckpointManager()
@@ -134,6 +162,7 @@ class CheckpointTest(jtu.JaxTestCase):
     self.assertGreater(peak, 30_000_000)
     tm.stop()
 
+  @jtu.thread_unsafe_test()
   def test_memory_consumption_for_save(self):
     global_mesh = jtu.create_mesh((1, 1), ('x', 'y'))
     inp_shape = (16 * 1024, 16 * 1024)
@@ -144,7 +173,8 @@ class CheckpointTest(jtu.JaxTestCase):
     inp = array.make_array_from_callback(
         inp_shape, sharding, lambda idx: src[idx]
     )
-    ckpt_dir = pathlib.Path(self.create_tempdir('memprofsave').full_path)
+    ckpt_dir = pathlib.Path(self.create_tempdir(
+        'memprofsave-serialize').full_path)
     tspec = ts_impl.get_tensorstore_spec(str(ckpt_dir), ocdbt=False,
                                          driver='zarr3')
     tspec['metadata'] = {
@@ -593,10 +623,10 @@ class CheckpointTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
-    out_layout = jax.jit(lambda x: x.T, out_shardings=Layout(DLL.AUTO)).lower(
-        arr).compile().output_layouts
-    self.assertEqual(arr.layout.device_local_layout.major_to_minor,
-                     out_layout.device_local_layout.major_to_minor[::-1])
+    out_format = jax.jit(lambda x: x.T, out_shardings=Format(DLL.AUTO)).lower(
+        arr).compile().output_formats
+    self.assertEqual(arr.format.device_local_layout.major_to_minor,
+                     out_format.device_local_layout.major_to_minor[::-1])
 
     ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
     ckpt_path = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/first').full_path)
@@ -609,9 +639,9 @@ class CheckpointTest(jtu.JaxTestCase):
             self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
-    out, = serialization.run_deserialization([out_layout], tspecs)
+    out, = serialization.run_deserialization([out_format], tspecs)
 
-    self.assertEqual(out.layout, out_layout)
+    self.assertEqual(out.format, out_format)
     self.assertIsInstance(out, array.ArrayImpl)
     self.assertArraysEqual(out, np_inp)
     for s in out.addressable_shards:
@@ -662,6 +692,389 @@ class TransferShardTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(np_out, np_inp)
 
+
+def _remove_from_serialization_registry(t: Any):
+  if t in node_serialization_registry:
+    serialized_name = node_serialization_registry[t][0]
+    del node_serialization_registry[t]
+    del node_deserialization_registry[serialized_name]
+
+
+class UserAPITestCase(jtu.JaxTestCase):
+  name: str | None
+  path: pathlib.Path | None
+
+  def setUp(self):
+    super().setUp()
+    tmpdir = tempfile.TemporaryDirectory()
+    self.enter_context(tmpdir)
+    self.name = tmpdir.name
+    self.path = pathlib.Path(self.name)
+
+  def tearDown(self):
+    self.path = None
+    self.name = None
+    super().tearDown()
+
+  def generate_random_fp32(self, shape, dtype=jnp.float32):
+    seed = round(time.time() * 1e6) % (2 ** 31)
+    key = jax.random.key(seed)
+    return jax.random.normal(key, shape=shape).astype(dtype)
+
+  def generate_clean_tree(self, dtype=jnp.float32):
+    r1 = self.generate_random_fp32((), dtype=dtype)
+    r2 = self.generate_random_fp32((4,), dtype=dtype)
+    r3 = self.generate_random_fp32((2, 3), dtype=dtype)
+    return (r1, {'a': r2, 'rs': [r1, r2, r3], 'c': {'d': {'e': (r2,)}}})
+
+  def _is_equal(self, el1, el2):
+    if not isinstance(el1, type(el2)) or not isinstance(el2, type(el1)):
+      return False
+    if isinstance(el1, (np.ndarray, jax.Array)):
+      return (el1.dtype == el2.dtype and el1.shape == el2.shape
+              and jnp.allclose(el1, el2))
+    else:
+      return el1 == el2
+
+  def assertPyTreeEqual(self, p1, p2, is_leaf=None):
+    leaves1, struct1 = jax.tree.flatten(p1, is_leaf=is_leaf)
+    leaves2, struct2 = jax.tree.flatten(p2, is_leaf=is_leaf)
+    self.assertEqual(struct1, struct2)
+    self.assertTrue(all(self._is_equal(el1, el2)
+                        for (el1, el2) in zip(leaves1, leaves2)))
+
+_DTYPES_LIST = [
+    jnp.uint8,
+    jnp.uint16,
+    jnp.uint32,
+    jnp.int8,
+    jnp.int16,
+    jnp.int32,
+    jnp.float8_e4m3fn,
+    jnp.float8_e4m3fnuz,
+    jnp.float8_e5m2,
+    jnp.float8_e5m2fnuz,
+    jnp.float8_e4m3b11fnuz,
+    jnp.bfloat16,
+    jnp.float16,
+    jnp.float32,
+    jnp.complex64,
+]
+
+_X64_DTYPES_LIST = [
+    jnp.uint64,
+    jnp.int64,
+    jnp.float64,
+    jnp.complex128,
+]
+
+if jax.config.x64_enabled:
+  _DTYPES_LIST.extend(_X64_DTYPES_LIST)
+
+
+@jax.tree_util.register_pytree_node_class
+class CustomNode:
+  def __init__(self, a):
+    self.a = a
+
+  def tree_flatten(self):
+    return (self.a,), None
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    del aux_data
+    return cls(*children)
+
+
+@partial(jax.tree_util.register_dataclass, data_fields=['a', 'd'],
+                   meta_fields=['c'])
+@dataclass
+class CustomDataclass:
+  a: int
+  c: str
+  d: int
+
+
+@jax.tree_util.register_static
+class CustomStatic:
+  def __init__(self, a):
+    self.a = a
+
+# we're testing custom type registration which modifies the global registry
+# so need to ensure we're not running multiple custom types tests in parallel
+custom_types_threading_lock = threading.Lock()
+
+
+class UserPytreeAPITest(UserAPITestCase):
+  def setUp(self):
+    super().setUp()
+    global _default_sharding
+    _default_sharding = SingleDeviceSharding(jax.devices()[0])
+    self.tempdirs = []
+
+  def tearDown(self):
+    for tempdir in self.tempdirs:
+      tempdir.cleanup()
+    super().tearDown()
+
+  def create_tempdir(self):
+    tempdir = tempfile.TemporaryDirectory()
+    self.tempdirs.append(tempdir)
+    return pathlib.Path(tempdir.name).resolve()
+
+  @parameterized.product(tree=[{'a': 1}, [1, 2, 3], (1, 2, 3), 1, 2, 3])
+  def test_save_then_load(self, tree):  # pylint: disable=redefined-outer-name
+    path = self.create_tempdir()
+    tree = jax.tree.map(jnp.array, tree)
+    tree_save(tree, path)
+    tree2 = tree_load(path)
+    self.assertPyTreeEqual(tree, tree2)
+
+  @parameterized.product(dtype=_DTYPES_LIST)
+  def test_saving_dtype(self, dtype):
+    if dtype in _X64_DTYPES_LIST and jtu.test_device_matches(['tpu']):
+      self.skipTest('Don\'t test x64 dtypes on TPUs')
+    path = self.create_tempdir()
+    test_tree = self.generate_clean_tree(dtype=dtype)
+    tree_save(test_tree, path)
+    new_tree = tree_load(path)
+    self.assertPyTreeEqual(test_tree, new_tree)
+
+  def test_do_not_overwrite_noncheckpoint_directories(self):
+    path = self.create_tempdir()
+    path.mkdir(exist_ok=True)
+    (path / 'hello.txt').write_text('Hello World')
+    with self.assertRaisesRegex(RuntimeError, 'Refusing to work on a directory'
+                                ' that is not a previous checkpoint.'):
+      tree_save({'a': jnp.ones(1)}, path)
+
+  def test_checkpoint_exists(self):
+    path = self.create_tempdir()
+    tree_save({'a': jnp.ones(1)}, path)
+    with self.assertRaises(ValueError):
+      tree_save({'a': jnp.ones(1)}, path, overwrite=False)
+
+  @parameterized.product(test_load_fail=[True, False])
+  def test_custom_types(self, test_load_fail):
+    path = self.create_tempdir()
+    with custom_types_threading_lock:
+      magic_value = jnp.ones(()) * 37
+      n = CustomNode(magic_value)
+      d = CustomDataclass(magic_value, 'hello', magic_value + 1)
+      s = CustomStatic(magic_value - 1)
+      tree_to_save = [n, (d, s)]
+
+      register_pytree_node_serialization(CustomNode,
+                                        serialized_name='CustomNode',
+                                        serialize_auxdata=pickle.dumps,
+                                        deserialize_auxdata=pickle.loads)
+      register_pytree_node_serialization(CustomStatic,
+                                        serialized_name='CustomStatic',
+                                        serialize_auxdata=pickle.dumps,
+                                        deserialize_auxdata=pickle.loads)
+      register_pytree_node_serialization(CustomDataclass,
+                                        serialized_name='CustomDataclass',
+                                        serialize_auxdata=pickle.dumps,
+                                        deserialize_auxdata=pickle.loads)
+      tree_save(tree_to_save, path)
+      if test_load_fail:
+        _ = [_remove_from_serialization_registry(cls)
+            for cls in [CustomStatic, CustomNode, CustomDataclass]]
+        with self.assertRaises(ValueError):
+          _ = tree_load(path)
+      else:
+        tree2 = tree_load(path)
+        self.assertEqual(tree2[0].a, magic_value)
+        self.assertEqual(tree2[1][0].a, magic_value)
+        self.assertEqual(tree2[1][0].c, 'hello')
+        self.assertEqual(tree2[1][0].d, magic_value + 1)
+        self.assertEqual(tree2[1][1].a, magic_value - 1)
+        _ = [_remove_from_serialization_registry(cls)
+            for cls in [CustomStatic, CustomNode, CustomDataclass]]
+
+  def test_flax_frozen_dict(self):
+    path = self.create_tempdir()
+    try:
+      # pylint: disable=g-import-not-at-top
+      # pylint: disable=g-importing-member
+      from flax.core.frozen_dict import FrozenDict
+      # pylint: enable=g-importing-member
+      # pylint: enable=g-import-not-at-top
+    except ImportError:
+      logging.warning('Skipping Flax FrozenDict tests as flax is not installed')
+      return
+
+    try:
+      register_pytree_node_serialization(FrozenDict,
+                                         serialized_name='FrozenDict',
+                                         serialize_auxdata=pickle.dumps,
+                                         deserialize_auxdata=pickle.loads)
+      tree_save(FrozenDict(a=1, b=self.generate_clean_tree()), path)
+      tree_load(path)
+    finally:
+      _remove_from_serialization_registry(FrozenDict)
+
+  def test_register_as_decorator(self):
+    @partial(register_pytree_node_serialization,
+                       serialized_name='CustomDNode',
+                       serialize_auxdata=json.dumps,
+                       deserialize_auxdata=json.loads)
+    @partial(jax.tree_util.register_dataclass, data_fields=['a', 'b'],
+                      meta_fields=[])
+    @dataclass
+    class CustomDNode:
+      a: int
+      b: int
+
+    # test whether the object can be created (is visible in this scope)
+    _ = CustomDNode(1, 2)
+
+  def test_custom_node_registration(self):
+    path = self.create_tempdir()
+
+    @jax.tree_util.register_static
+    @dataclass
+    class P:
+      a: int = 2
+
+    @partial(jax.tree_util.register_dataclass, data_fields=['a', 'b'],
+                       meta_fields=['op'])
+    @dataclass
+    class D:
+      a: Any
+      b: Any
+      op: str
+
+    def serialize_D(data):
+      return json.dumps(jax.tree.map(lambda x: np.array(x).tolist(), data)
+                        ).encode('utf-8')
+
+    def deserialize_D(data):
+      return jnp.array(json.loads(data))
+
+    data = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
+            7 * jnp.ones(()), P()]
+
+    serialize_fn = lambda p: json.dumps(int(p.a)).encode('utf-8')
+    deserialize_fn = lambda data: P(json.loads(data))
+
+    with self.assertRaises(ValueError):
+      tree_save(data, path)
+
+    register_pytree_node_serialization(P,
+                                       serialized_name='P',
+                                       serialize_auxdata=serialize_fn,
+                                       deserialize_auxdata=deserialize_fn)
+    magic_value = -171
+    data[-1].a = jnp.array(magic_value)
+    tree_save(data, path)
+    ret = tree_load(path)
+    self.assertLen(ret, len(data))
+    self.assertEqual(ret[-1].a, magic_value)
+
+    magic_val = 17 * jnp.ones(2)
+    data.append(D(jnp.ones(1), jax.numpy.zeros(2), magic_val))
+    with self.assertRaises(ValueError):
+      tree_save(data, path)
+
+    register_pytree_node_serialization(D,
+                                       serialized_name='D',
+                                       serialize_auxdata=serialize_D,
+                                       deserialize_auxdata=deserialize_D)
+    tree_save(data, path)
+    ret = tree_load(path)
+    self.assertLen(ret, len(data))
+    self.assertLess(jnp.linalg.norm(ret[-1].op - magic_val), 1e-5)
+
+    jax.tree.flatten(data)
+
+  def test_masked_reading(self):
+    path = self.create_tempdir()
+    data = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
+            7 * jnp.ones(())]
+    tree_save(data, path)
+    for mask in [False, True]:
+      ret = tree_load(path, mask=mask)
+      expected = jax.tree.map(lambda x: None if not mask else x, data)
+      self.assertPyTreeEqual(ret, expected, is_leaf=lambda x: x is None)
+
+    mask = [True, False, False]
+    expected = data[:1] + jax.tree.map(lambda x: None, data[1:])
+    ret = tree_load(path, mask=mask)
+    self.assertPyTreeEqual(ret, expected, is_leaf=lambda x: x is None)
+
+    mask = [True, True, False]
+    expected = data[:2] + jax.tree.map(lambda x: None, data[2:])
+    ret = tree_load(path, mask=mask)
+    self.assertPyTreeEqual(ret, expected, is_leaf=lambda x: x is None)
+
+    mask = [True, {'world': [True, (False, True)]}, False]
+    data[1]['world'][1] = (None, data[1]['world'][1][1])
+    ret = tree_load(path, mask=mask)
+    self.assertPyTreeEqual(ret, expected, is_leaf=lambda x: x is None)
+
+  # TODO(rdyro): Remove when serialization supports non-arrays
+  @parameterized.product(obj=[b'hello', 'hello', 1, 1.0, 1j])
+  def test_serialization_works_for_arrays_only(self, obj):
+    path = self.create_tempdir()
+    data = [{'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]}, obj]
+    msg = ('For serialization, all leaves must be either None or'
+           ' jax.Array-like objects.')
+    with self.assertRaisesRegex(ValueError, msg):
+      tree_save(data, path)
+
+  def test_load_pytreedef(self):
+    path = self.create_tempdir()
+    data = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
+            7 * jnp.ones(())]
+    tree_save(data, path)
+    pytreedef = tree_load_pytreedef(path)
+    expected_pytreedef = jax.tree.map(
+        lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype), data)
+    self.assertPyTreeEqual(pytreedef, expected_pytreedef)
+
+  @parameterized.product(data=[
+      None, [None], [None, np.ones(())],
+      [None, {'world': [None, (np.ones(1), np.ones(2))]}, np.ones(())],
+      [None, {'world': [np.zeros(3), (None, np.ones(2))]}, None]])
+  def test_save_and_load_null_leaves(self, data):
+    path = self.create_tempdir()
+    # TPUs might not have X64 enabled, so we need to convert to float32
+    data = jax.tree.map(lambda x: jnp.array(x, dtype=jnp.float32), data)
+    tree_save(data, path)
+    pytreedef = tree_load_pytreedef(path)
+    is_leaf = lambda x: x is None
+    expected_pytreedef = jax.tree.map(lambda x: jax.ShapeDtypeStruct(
+        x.shape, x.dtype) if x is not None else x, data, is_leaf=is_leaf)
+    self.assertPyTreeEqual(pytreedef, expected_pytreedef)
+    load_data = tree_load(path)
+    load_leaves, load_struct = jax.tree.flatten(load_data, is_leaf=is_leaf)
+    expected_leaves, expected_struct = jax.tree.flatten(data, is_leaf=is_leaf)
+    self.assertEqual(load_struct, expected_struct)
+    self.assertLen(load_leaves, len(expected_leaves))
+    for (l1, l2) in zip(load_leaves, expected_leaves):
+      if l1 is None:
+        self.assertIsNone(l2)
+      else:
+        self.assertArraysEqual(l1, l2)
+
+  @parameterized.product(manually_broadcast_ts_specs=[True, False])
+  def test_custom_ts_specs(self, manually_broadcast_ts_specs):
+    if ts_impl._TS_ARRAY_DRIVER == 'zarr':
+      self.skipTest('Skipping since this test assumes zarr is NOT the default')
+    path = self.create_tempdir()
+    data = [jnp.ones(()), (jnp.zeros(()), jnp.ones(())), None]
+    ts_spec = {'driver': 'zarr', 'metadata': {'shape': ()}}
+    if manually_broadcast_ts_specs:
+      ts_specs = [ts_spec, (ts_spec, None), None]  # None ts_spec allowed
+    else:
+      ts_specs = ts_spec
+    tree_save(data, path, ts_specs=ts_specs)
+    load_data = tree_load(path, ts_specs=ts_specs)
+    self.assertPyTreeEqual(data, load_data)
+    with self.assertRaisesRegex(ValueError,
+                                'NOT_FOUND: Error opening "zarr3" driver:'):
+      _ = tree_load(path)  # default attempts to open with zarr3 and fails
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

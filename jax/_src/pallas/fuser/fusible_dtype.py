@@ -17,11 +17,13 @@
 import abc
 import dataclasses
 import functools
+import itertools as it
 from typing import Any, Sequence, TypeVar
 
 import jax
 from jax._src import api_util
 from jax._src import core
+from jax._src import custom_derivatives
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import source_info_util
@@ -310,6 +312,41 @@ def _cond_physicalize_rule(ctx: Context, *args, branches, **kwargs):
 
 
 _physicalize_rules[conditionals.cond_p] = _cond_physicalize_rule
+
+
+@lu.transformation2
+def _physicalize_transform(f, *args):
+  vals, zeros = args[::2], args[1::2]
+  assert len(vals) == len(zeros)
+  wrapper = lambda *inner_vals: f(
+      *it.chain.from_iterable(zip(inner_vals, zeros))
+  )
+  return physicalize(wrapper)(*vals)
+
+
+@lu.transformation2
+def _physicalize_transform_bwd(f, const_avals, *args):
+  return [custom_derivatives.Zero(a) for a in const_avals] + list(
+      physicalize(f)(*args)
+  )
+
+
+def _custom_vjp_call_physicalize_rule(
+    ctx: Context, *args, call_jaxpr, num_consts, fwd_jaxpr_thunk, bwd, **kwargs
+):
+  _assert_no_fusion_types(ctx.avals_out)
+  new_jaxpr = physicalize_closed_jaxpr(call_jaxpr)
+  fun = lu.wrap_init(core.jaxpr_as_fun(new_jaxpr),
+                     debug_info=call_jaxpr.jaxpr.debug_info)
+  fwd = custom_derivatives.lift_fwd(num_consts, fwd_jaxpr_thunk)
+  fwd_physicalized = _physicalize_transform(fwd)
+  const_avals, _ = util.split_list(new_jaxpr.in_avals, [num_consts])
+  bwd_physicalized = _physicalize_transform_bwd(bwd, const_avals)
+  return custom_derivatives.custom_vjp_call_p.bind(
+      fun, fwd_physicalized, bwd_physicalized, *args, **kwargs
+  )
+
+_physicalize_rules[custom_derivatives.custom_vjp_call_p] = _custom_vjp_call_physicalize_rule
 
 
 def _run_state_rule(ctx: Context, *args, jaxpr, which_linear, is_initialized):

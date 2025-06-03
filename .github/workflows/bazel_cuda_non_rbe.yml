@@ -17,33 +17,28 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        required: true
         default: "linux-x86-n2-16"
       python:
         description: "Which python version to test?"
         type: string
-        required: true
         default: "3.12"
       enable-x64:
         description: "Should x64 mode be enabled?"
         type: string
-        required: true
         default: "0"
       jaxlib-version:
         description: "Which jaxlib version to test? (head/pypi_latest)"
         type: string
-        required: true
         default: "head"
       gcs_download_uri:
         description: "GCS location URI from where the artifacts should be downloaded"
-        required: true
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
-        required: false
         default: 'no'
+permissions: {}
 jobs:
   run-tests:
     defaults:

@@ -55,7 +55,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding, parse_flatten_op_sharding)
 from jax._src.pjit import (pjit, mesh_cast, auto_axes, explicit_axes,
                            use_auto_axes, use_explicit_axes, reshard)
-from jax._src.layout import Layout, DeviceLocalLayout as DLL
+from jax._src.layout import Format, DeviceLocalLayout as DLL
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
@@ -4997,11 +4997,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     sh = NamedSharding(mesh, P())
     s4 = jax.ShapeDtypeStruct((2, 2), jnp.int32,
-                              sharding=Layout(DLL((0, 1)), sh))
-    new_layout = Layout(DLL((1, 0)), NamedSharding(mesh, P('x')))
+                              sharding=Format(DLL((0, 1)), sh))
+    new_layout = Format(DLL((1, 0)), NamedSharding(mesh, P('x')))
     s4_u = s4.update(sharding=new_layout)
     self.assertEqual(s4_u.sharding, new_layout.sharding)
-    self.assertEqual(s4_u.layout, new_layout)
+    self.assertEqual(s4_u.format, new_layout)
 
     with self.assertRaisesRegex(ValueError, "updating ShapeDtypeStruct"):
       s4.update(sharding=NamedSharding(mesh, P('x')))
@@ -7892,6 +7892,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = init(key, (8, 2), jnp.float32, out_sharding=P('x'))
     self.assertArraysEqual(out, jnp.full((8, 2), -7, dtype=jnp.float32))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+  @config.numpy_rank_promotion('allow')
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_lax_map(self, mesh):
+    def simple_func(w, x):
+      return jnp.sum(w * x, axis=-1)
+
+    w = jax.device_put(np.arange(4, dtype=np.float32), P('x'))
+    x = jax.device_put(np.ones((4, 2, 4), dtype=np.float32),
+                       P(None, 'y', None))
+
+    jax.lax.map(lambda _x: simple_func(w, _x), x)  # doesn't crash
+
+    jax.lax.map(lambda _x: simple_func(w, _x), x, batch_size=2)  # doesn't crash
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

@@ -13,6 +13,8 @@
 # limitations under the License.
 """Pallas helper functions."""
 
+from collections.abc import Callable
+
 import jax
 from jax._src import checkify
 from jax._src import config
@@ -67,6 +69,20 @@ def when(condition):
     else:
       jax.lax.cond(condition, f, lambda: None)
   return _wrapped
+
+
+def loop(
+    lower: jax.typing.ArrayLike,
+    upper: jax.typing.ArrayLike,
+    *,
+    unroll: int | bool | None = None,
+) -> Callable[[Callable[[jax.Array], None]], None]:
+  def decorator(body):
+    jax.lax.fori_loop(
+        lower, upper, lambda idx, _: body(idx), init_val=None, unroll=unroll
+    )
+
+  return decorator
 
 
 _ENABLE_DEBUG_CHECKS = config.bool_state(

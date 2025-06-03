@@ -2259,6 +2259,36 @@ class ShardMapTest(jtu.JaxTestCase):
     params = jnp.copy(arr_sharded)
     update_fn(params, arr_sharded)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_close_over_explicit_sharded_input_error(self, mesh):
+    def simple_func(w, x):
+      return jnp.sum(w * x, axis=-1)
+
+    w = jnp.ones((2, 4), dtype=np.float32)
+    x = jnp.ones((4, 4), dtype=np.float32)
+
+    shard_map(simple_func, in_specs=(P(), P('x')), out_specs=P('x'))(w, x)
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        'Closing over inputs to shard_map where the input is sharded on'
+        ' `Explicit` axes is not implemented'):
+      shard_map(lambda xi: simple_func(w, xi),
+                in_specs=P('x'), out_specs=P('x'))(x)
+
+  def test_close_over_input_explict_ctx_mesh(self):
+    mesh = jtu.create_mesh((2,), 'x', axis_types=(AxisType.Explicit,))
+    w = jnp.ones((2, 4), dtype=np.float32)
+    x = jnp.ones((4, 4), dtype=np.float32)
+
+    def simple_func(w, x):
+      return jnp.sum(w * x, axis=-1)
+
+    shard_map(simple_func, mesh=mesh, in_specs=(P(), P('x')),
+              out_specs=P('x'))(w, x)
+    shard_map(lambda xi: simple_func(w, xi), mesh=mesh,
+              in_specs=P('x'), out_specs=P('x'))(x)
+
   def test_shmap_close_over_unused_params_vmap(self):
     mesh = jtu.create_mesh((2,), ("data",))
 

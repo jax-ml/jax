@@ -19,6 +19,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features:
   * Added {func}`jax.tree.broadcast` which implements a pytree prefix broadcasting helper.
 
+* Changes
+  * The minimum NumPy version is 1.26 and the minimum SciPy version is 1.12.
+
 ## JAX 0.6.1 (May 21, 2025)
 
 * New features:

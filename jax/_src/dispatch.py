@@ -26,7 +26,6 @@ import threading
 import time
 from typing import Any
 
-import jax
 from jax._src import api
 from jax._src import array
 from jax._src import basearray
@@ -34,8 +33,11 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import lib
+from jax._src import pjit
 from jax._src import traceback_util
 from jax._src import util
+
+from jax._src import xla_bridge
 from jax._src.abstract_arrays import array_types
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -43,7 +45,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.api_util import InternalFloatingPointError
-from jax._src.layout import DeviceLocalLayout, Layout
+from jax._src.layout import DeviceLocalLayout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
@@ -133,7 +135,7 @@ class RuntimeTokenSet(threading.local):
       # TODO(yueshengys): This might still be buggy in a multi-process SPMD
       # scenario. Revise the logic later. A distributed shutdown barrier inside
       # the XLA program may be needed.
-      return jax.device_put(
+      return api.device_put(
           tok, NamedSharding(Mesh(devices, 'x'), PartitionSpec('x')))
 
     # We only use replicated sharding for the first time when the token for the
@@ -244,8 +246,7 @@ def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr) -> bool:
 @util.weakref_lru_cache
 def get_intermediate_shardings(
     jaxpr: core.Jaxpr) -> Sequence[tuple[Sharding, SourceInfo]]:
-  from jax._src import pjit
-  from jax._src import shard_map
+  from jax._src import shard_map  # pytype: disable=import-error
 
   out = []
   for eqn in jaxpr.eqns:
@@ -409,7 +410,7 @@ class _DeferredShardArg:
 
 
 def _device_put_sharding_impl(x, aval, device, copy):
-  from jax.experimental import multihost_utils
+  from jax.experimental import multihost_utils  # pytype: disable=import-error
 
   if isinstance(device, Sharding):
     s = device
@@ -440,7 +441,7 @@ def _device_put_sharding_impl(x, aval, device, copy):
         # sharding do not transfer data) or (2) the sharding contains a
         # different subset of devices on each host. For (1), the input should be
         # the same on all hosts, but for (2) it need not be.
-        if jax.process_count() == len(s._internal_device_list.process_indices):  # pytype: disable=attribute-error
+        if xla_bridge.process_count() == len(s._internal_device_list.process_indices):  # pytype: disable=attribute-error
           multihost_utils.assert_equal(
               x, fail_message=(
                   f"{type(x)} passed to device_put is not the same on each"
@@ -479,8 +480,8 @@ def _device_put_sharding_impl(x, aval, device, copy):
 
 
 def _device_put_impl(
-    x, *, device: Device | Sharding | Layout | None,
-    src: Device | Sharding | Layout | None, copy: CopySemantics):
+    x, *, device: Device | Sharding | Format | None,
+    src: Device | Sharding | Format | None, copy: CopySemantics):
   if (isinstance(device, TransferToMemoryKind) or
       isinstance(src, TransferToMemoryKind)):
     raise ValueError(
@@ -494,10 +495,10 @@ def _device_put_impl(
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
-  if isinstance(device, Layout):
+  if isinstance(device, Format):
     l = device
     dll = l.device_local_layout
-    x_dll = x.layout.device_local_layout if hasattr(x, 'layout') else None
+    x_dll = x.format.device_local_layout if hasattr(x, 'format') else None
     if dll is None and l.sharding is None:
       return _device_put_sharding_impl(x, aval, l.sharding, copy)
     if (not isinstance(l.sharding, Sharding) or
@@ -519,8 +520,8 @@ def _device_put_impl(
 
 def _batched_device_put_impl(
     *xs,
-    devices: Sequence[Device | Sharding | Layout | None],
-    srcs: Sequence[Device | Sharding | Layout | None],
+    devices: Sequence[Device | Sharding | Format | None],
+    srcs: Sequence[Device | Sharding | Format | None],
     copy_semantics: Sequence[CopySemantics]):
   ys = []
   dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
@@ -536,7 +537,7 @@ def _batched_device_put_impl(
   if dsa_xs:
     # Batch shard_arg calls. Helps improve efficiency for backends that support
     # efficient batch transfer.
-    # device_put handles `Layout` via a different path, so just pass `None` as
+    # device_put handles `Format` via a different path, so just pass `None` as
     # the layout here.
     shard_arg_results = pxla.shard_args(dsa_shardings, [None] * len(dsa_xs),
                                         dsa_copy_semantics, dsa_xs)

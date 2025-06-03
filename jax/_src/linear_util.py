@@ -75,8 +75,8 @@ import weakref
 from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
-from jax._src.tree_util import keystr, KeyPath, generate_key_paths
-from jax._src.util import curry, cache_clearing_funs, HashableFunction
+from jax._src.tree_util import KeyPath, generate_key_paths, keystr
+from jax._src.util import HashableFunction, cache_clearing_funs, curry, fun_name
 
 
 traceback_util.register_exclusion(__file__)
@@ -186,7 +186,7 @@ class WrappedFun:
 
   @property
   def __name__(self):
-    return getattr(self.f, '__name__', '<unnamed wrapped function>')
+    return fun_name(self.f, "<unnamed wrapped function>")
 
   def wrap(self, gen, gen_static_args,
            out_store: Store | EqualStore | None) -> WrappedFun:
@@ -265,12 +265,6 @@ def transformation_with_aux2(
   out_store = Store() if not use_eq_store else EqualStore()
   out_thunk = lambda: out_store.val
   return fun.wrap(gen, gen_static_args, out_store), out_thunk
-
-def fun_name(f):
-  try:
-    return f.__name__
-  except:
-    return str(f)
 
 
 class DebugInfo(NamedTuple):

@@ -67,6 +67,7 @@ limitations under the License.
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
+#include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -289,9 +290,10 @@ class PmapFunction {
                                   size_t nargs, PyObject* kwnames);
 
   nb::object PythonSignature() {
-    static const auto* inspect =
-        new nb::module_(nb::module_::import_("inspect"));
-    return inspect->attr("signature")(fun_);
+    const nb::module_& inspect = xla::SafeStaticInit<nb::module_>([]() {
+      return std::make_unique<nb::module_>(nb::module_::import_("inspect"));
+    });
+    return inspect.attr("signature")(fun_);
   }
 
   int cache_size() {

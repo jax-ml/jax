@@ -88,7 +88,8 @@ DebugInfo = lu.DebugInfo
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
-               '_effects', '_debug_info', '_is_high', '_final_typechange_env']
+               '_effects', '_debug_info', '_is_high',
+               '_initial_typechange_env', '_final_typechange_env']
 
   _constvars: list[Var]
   _invars: list[Var]
@@ -97,6 +98,7 @@ class Jaxpr:
   _effects: Effects
   _debug_info: DebugInfo
   _is_high: bool
+  _initial_typechange_env: dict[Var, Any]
   _final_typechange_env: dict[Var, Any]
 
   @property
@@ -128,6 +130,10 @@ class Jaxpr:
     return self._is_high
 
   @property
+  def initial_typechange_env(self) -> dict[Var, Any]:
+    return self._initial_typechange_env
+
+  @property
   def final_typechange_env(self) -> dict[Var, Any]:
     return self._final_typechange_env
 
@@ -139,6 +145,7 @@ class Jaxpr:
                # is missing.
                debug_info: DebugInfo = None,  # type: ignore[annotation-type-mismatch,assignment]
                is_high: bool = False,
+               initial_typechange_env: dict | None = None,
                final_typechange_env: dict | None = None,
                ):
     """
@@ -165,6 +172,7 @@ class Jaxpr:
     # assert (len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
     self._is_high = is_high
+    self._initial_typechange_env = initial_typechange_env or {}
     self._final_typechange_env = final_typechange_env or {}
 
   def __str__(self):
@@ -193,6 +201,8 @@ class Jaxpr:
         effects=kwargs.pop("effects", self.effects),
         debug_info=kwargs.pop("debug_info", self.debug_info),
         is_high=kwargs.pop("is_high", self.is_high),
+        initial_typechange_env=kwargs.pop("initial_typechange_env",
+                                          self.initial_typechange_env),
         final_typechange_env=kwargs.pop("final_typechange_env",
                                         self.final_typechange_env),
     )
@@ -222,6 +232,22 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
     yield from jaxprs_in_params(eqn.params)
 
 
+@dataclass(frozen=True)
+class TypeChange:
+  aval: AbstractValue
+  initial_type_state: Any
+  final_type_state: Any
+
+  def to_tangent_aval(self):
+    return TypeChange(self.aval.to_tangent_aval(),
+                      self.initial_type_state.to_tangent_aval(),
+                      self.final_type_state.to_tangent_aval())
+
+  def normalize(self):
+    return TypeChange(self.aval.normalize(),
+                      self.initial_type_state.normalize(),
+                      self.final_type_state.normalize())
+
 class ClosedJaxpr:
   __slots__ = ['__weakref__', '_jaxpr', '_consts']
 
@@ -240,6 +266,13 @@ class ClosedJaxpr:
   @property
   def in_avals(self):
     return [v.aval for v in self.jaxpr.invars]
+
+  @property
+  def in_avals_aug(self):
+    ienv = self.jaxpr.initial_typechange_env
+    fenv = self.jaxpr.final_typechange_env
+    return [TypeChange(v.aval, ienv[v], fenv[v]) if v.aval.mutable else v.aval
+            for v in self.jaxpr.invars]
 
   @property
   def out_avals(self):
@@ -542,10 +575,6 @@ class Primitive:
     # is called frequently and it's slightly faster to avoid using a context
     # manager object.
     prev_trace = trace_ctx.trace
-
-    if self.is_high(**params) and prev_trace.requires_low:
-      return self.to_lojax(*args, **params)  # type: ignore
-
     trace_ctx.set_trace(eval_trace)
     try:
       return self.bind_with_trace(prev_trace, args, params)
@@ -553,6 +582,11 @@ class Primitive:
       trace_ctx.set_trace(prev_trace)
 
   def bind_with_trace(self, trace, args, params):
+    # TODO(mattjj,dougalm): remove this block?
+    if self.is_high(**params) and trace.requires_low:
+      with set_current_trace(trace):
+        return self.to_lojax(*args, **params)  # type: ignore
+
     return trace.process_primitive(self, args, params)
 
   def def_impl(self, impl):
@@ -1849,14 +1883,20 @@ def canonicalize_value(val):
   cur_mesh = mesh_lib.get_abstract_mesh()
   if cur_mesh == aval.sharding.mesh:
     return val
-  # Atleast 1 mesh axis should be Manual and all other axes should be
-  # Manual or Auto to allow casting.
   # TODO(yashkatariy): Casting to Explicit is not yet allowed. Maybe we need
   # cast_and_slice_p for it since shape might change?
-  if (cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual and
-      aval.sharding.mesh._are_all_axes_auto):
-    from jax._src.pjit import mesh_cast  # pytype: disable=import-error
-    return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
+  # Atleast 1 mesh axis should be Manual and all other axes should be
+  # Manual or Auto to allow casting.
+  if cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual:
+    if aval.sharding.mesh._are_all_axes_auto:
+      from jax._src.pjit import mesh_cast  # pytype: disable=import-error
+      return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
+    elif aval.sharding.mesh._any_axis_explicit:
+      raise NotImplementedError(
+          "Closing over inputs to shard_map where the input is sharded on"
+          " `Explicit` axes is not implemented. As a workaround, please pass"
+          " those inputs as an argument to shard_map. Got input with shape"
+          f" {aval.str_short(True, True)}")
   return val
 
 

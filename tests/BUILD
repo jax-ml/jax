@@ -1136,6 +1136,7 @@ jax_multiplatform_test(
     enable_backends = [
         "cpu",
         "gpu",
+        "tpu",
     ],
     deps = [
         "//jax:profiler",
@@ -2157,6 +2158,7 @@ jax_py_test(
     srcs = ["custom_partitioning_sharding_rule_test.py"],
     deps = [
         "//jax",
+        "//jax:custom_partitioning_sharding_rule",
         "//jax:experimental",
         "//jax:test_util",
     ] + py_deps("absl/testing"),

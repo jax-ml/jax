@@ -1056,7 +1056,7 @@ class BoxTest(jtu.JaxTestCase):
     self.assertAllClose(box.get(), 2.0)
 
   @parameterized.parameters([False, True])
-  def test_grad_closrue_stop_gradient(self, jit):
+  def test_grad_closure_stop_gradient(self, jit):
     box = Box(0.0)
 
     def f(x):
@@ -1123,7 +1123,6 @@ class ListTest(jtu.JaxTestCase):
       lst.append(1.0)
       lst.append(2.0)
       lst.append({'c': x + 3.0})
-
 
     tracing_ok = True
     lst1 = List()

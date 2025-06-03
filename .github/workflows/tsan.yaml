@@ -120,6 +120,7 @@ jobs:
       - name: Build TSAN Numpy wheel
         # if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
         run: |
+          set -eux
           cd numpy
           time clang --version
           # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
@@ -135,7 +136,6 @@ jobs:
           export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
 
           python3 -m pip install uv~=0.5.30
-
           python3 -m uv pip install -r requirements/build_requirements.txt
 
           # Run build process in background and show a spinner to avoid crash on the runner:

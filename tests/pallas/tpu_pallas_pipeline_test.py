@@ -481,7 +481,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             + [pltpu.SemaphoreType.DMA] * 4
             + inner_allocs
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
                     collective_id=0,
                     # must set scoped vmem flag *larger* than below! e.g.:
                     # flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
@@ -724,7 +724,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             + [pltpu.SemaphoreType.DMA] * 4
             + inner_allocs,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             collective_id=0,
             # must set scoped vmem flag *larger* than below! e.g.:
             # flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
@@ -1007,7 +1007,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             + [pltpu.SemaphoreType.DMA] * 4
             + inner_allocs,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             collective_id=0,
             # must set scoped vmem flag *larger* than below!
             # e.g. flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
@@ -1268,7 +1268,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             + [pltpu.SemaphoreType.DMA] * 4
             + inner_allocs,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             collective_id=0,
             # must set scoped vmem flag *larger* than below!
             # e.g. flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
@@ -1353,7 +1353,7 @@ class PallasCallMegacoreTest(parameterized.TestCase):
             out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
             grid=(num_cores,),
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',)
         ),
     )
@@ -1389,7 +1389,7 @@ class PallasCallMegacoreTest(parameterized.TestCase):
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         grid=(num_cores,),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',)
         ),
     )
@@ -1440,7 +1440,7 @@ class PallasCallMegacoreTest(parameterized.TestCase):
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         grid=(num_cores,),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',)
         ),
     )

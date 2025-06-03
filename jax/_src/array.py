@@ -36,7 +36,7 @@ from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
-from jax._src.layout import AutoLayout, DeviceLocalLayout, Layout
+from jax._src.layout import AutoLayout, DeviceLocalLayout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
 from jax._src.sharding import Sharding
@@ -343,8 +343,8 @@ class ArrayImpl(basearray.Array):
       return format(self._value, format_spec)
 
   def __getitem__(self, idx):
-    from jax._src.lax import lax
-    from jax._src.numpy import indexing
+    from jax._src.lax import lax  # pytype: disable=import-error
+    from jax._src.numpy import indexing  # pytype: disable=import-error
     self._check_if_deleted()
 
     if isinstance(self.sharding, PmapSharding):
@@ -444,7 +444,7 @@ class ArrayImpl(basearray.Array):
                  max_version: tuple[int, int] | None = None,
                  dl_device: tuple[DLDeviceType, int] | None = None,
                  copy: bool | None = None):
-    from jax._src.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import to_dlpack  # pytype: disable=import-error  # pylint: disable=g-import-not-at-top
 
     device_set = self.sharding.device_set
     if len(device_set) > 1:
@@ -464,7 +464,7 @@ class ArrayImpl(basearray.Array):
     if len(self._arrays) != 1:
       raise BufferError("__dlpack__ only supported for unsharded arrays.")
 
-    from jax._src.dlpack import DLDeviceType  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import DLDeviceType  # pytype: disable=import-error  # pylint: disable=g-import-not-at-top
 
     if self.platform() == "cpu":
       return DLDeviceType.kDLCPU, 0
@@ -547,19 +547,22 @@ class ArrayImpl(basearray.Array):
     return out
 
   @property
-  def layout(self):
+  def format(self):
     # TODO(yashkatariya): Remove the deleted check from here.
     if self.is_deleted():
-      return Layout(None, self.sharding)
+      return Format(None, self.sharding)
     try:
-      return Layout(DeviceLocalLayout.from_pjrt_layout(self._pjrt_layout),
+      return Format(DeviceLocalLayout.from_pjrt_layout(self._pjrt_layout),
                     self.sharding)
     except _jax.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
-        return Layout(None, self.sharding)
+        return Format(None, self.sharding)
       else:
         raise
+
+  # TODO(frostig, yashkatariya): remove
+  layout = format
 
   @property
   def global_shards(self) -> Sequence[Shard]:
@@ -711,7 +714,7 @@ setattr(ArrayImpl, "__array_priority__", 100)
 # TODO(yashkatariya): Remove None from callback input type.
 
 def make_array_from_callback(
-    shape: Shape, sharding: Sharding | Layout,
+    shape: Shape, sharding: Sharding | Format,
     data_callback: Callable[[Index | None], ArrayLike],
     dtype: DTypeLike | None = None) -> ArrayImpl:
   # pyformat: disable
@@ -756,12 +759,12 @@ def make_array_from_callback(
     (4, 2)
   """
   # pyformat: enable
-  dll = sharding.device_local_layout if isinstance(sharding, Layout) else None
+  dll = sharding.device_local_layout if isinstance(sharding, Format) else None
   if isinstance(dll, AutoLayout):
     raise TypeError(
         "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
         f" layout when calling `jax.make_array_from_callback`. Got {sharding}")
-  sharding = sharding.sharding if isinstance(sharding, Layout) else sharding
+  sharding = sharding.sharding if isinstance(sharding, Format) else sharding
   if not isinstance(sharding, Sharding):
     raise TypeError(
         f"sharding should be an instance of `jax.sharding`. Got {sharding} of"
@@ -812,7 +815,7 @@ def make_array_from_callback(
         and sharding.is_fully_replicated
         and first_value.is_fully_replicated
         and first_value.sharding._device_assignment == tuple(devices)
-        and first_value.layout.device_local_layout == dll):
+        and first_value.format.device_local_layout == dll):
       return first_value
 
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
@@ -823,7 +826,7 @@ def make_array_from_callback(
     )
 
   if dll is not None:
-    devices = [Layout(dll, SingleDeviceSharding(d)) for d in devices]
+    devices = [Format(dll, SingleDeviceSharding(d)) for d in devices]
     # pxla.batched_device_put doesn't support Layout... Take the slow route
     arrays = api.device_put(per_device_values, devices)
     return ArrayImpl(aval, sharding, arrays, committed=True)
@@ -1197,7 +1200,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
     x._check_if_deleted()
     indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
     same_layout = (True if layout is None else
-                   x.layout.device_local_layout == layout)
+                   x.format.device_local_layout == layout)
 
     if not x.is_fully_addressable:
       if same_indices and same_layout:
@@ -1218,7 +1221,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         batch_cs.append(cs)
       # Resharding starts here:
       elif not same_layout:
-        results.append(api.device_put(x, Layout(layout, sharding)))
+        results.append(api.device_put(x, Format(layout, sharding)))
       elif dispatch.is_single_device_sharding(x.sharding):
         results.append(shard_device_array(x, devices, indices, sharding))
       else:

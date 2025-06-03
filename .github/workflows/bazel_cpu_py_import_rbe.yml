@@ -16,22 +16,18 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        required: true
         default: "linux-x86-n2-16"
       python:
         description: "Which python version to test?"
         type: string
-        required: true
         default: "3.12"
       enable-x64:
         description: "Should x64 mode be enabled?"
         type: string
-        required: true
         default: "0"
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
-        required: false
         default: 'no'
 
 jobs:
@@ -42,7 +38,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') ||
-                   (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') }}
+                   (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') }}
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
       JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}

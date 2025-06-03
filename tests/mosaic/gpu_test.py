@@ -508,6 +508,40 @@ class WGMMALayoutTest(TestCase):
     np.testing.assert_array_equal(iota, expected)
 
   @parameterized.product(
+      dtype=[jnp.float8_e5m2fnuz, jnp.float8_e5m2, jnp.float8_e4m3b11fnuz,
+             jnp.float8_e4m3fn, jnp.float8_e4m3fnuz],
+      swizzle=(32, 64, 128),
+      num_col_tiles=(1, 2, 3),
+  )
+  def test_load_and_store_tiled_f8(self, dtype, swizzle, num_col_tiles):
+    # We use a different test than `test_store_tiled` because converting
+    # `iota` to `f8` type requires additional specialized logic that is not
+    # yet available.
+    col_tiling = swizzle
+    m = 128
+    n = col_tiling * num_col_tiles
+    tiling = (64, col_tiling)
+    def kernel(ctx, inp, out, smem):
+      del ctx
+      smem_inp, smem_out = smem
+      copy(inp, smem_inp, swizzle=swizzle)
+      arr = mgpu.FragmentedArray.load_tiled(smem_inp, swizzle=swizzle)
+      arr.store_tiled(smem_out, swizzle=swizzle)
+      copy(smem_out, out, swizzle=swizzle)
+    expected = (
+        jax.random.randint(
+            jax.random.key(42), (m * n,), -16, 15, dtype=jnp.int8
+        )
+        .reshape(m // tiling[0], tiling[0], n // tiling[1], tiling[1])
+        .astype(dtype)
+        .transpose(0, 2, 1, 3)
+    )
+    res = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), expected, expected, (expected,) * 2
+    )(expected)
+    np.testing.assert_array_equal(res, expected)
+
+  @parameterized.product(
       dtype=[jnp.float32, jnp.float16, jnp.int8],
       swizzle=(32, 64, 128),
       num_col_tiles=(1, 2, 3),
@@ -3541,6 +3575,26 @@ class SerializationTest(absltest.TestCase):
           ctx,
       )
       pipeline.run(module.operation)
+
+
+class ApiTest(TestCase):
+
+  def test_inout(self):
+    def kernel(ctx, src, inout, dst, smem):
+      val = memref.load(inout, [])
+      gpu.barrier()
+      new_val = arith.constant(ir.IntegerType.get_signless(32), 42)
+      memref.store(new_val, inout, [])
+      x = mgpu.FragmentedArray.load_strided(src, is_signed=True)
+      (x + val).store_untiled(dst)
+    x = jnp.arange(128, dtype=jnp.int32)
+    y = jnp.asarray(2.0, dtype=jnp.int32)
+    kernel = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, (), inout_shape=y,
+    )
+    xo, yo = kernel(x, y)
+    np.testing.assert_array_equal(xo, x + 2.0)
+    np.testing.assert_array_equal(yo, jnp.asarray(42, dtype=jnp.int32))
 
 
 if hp is not None:

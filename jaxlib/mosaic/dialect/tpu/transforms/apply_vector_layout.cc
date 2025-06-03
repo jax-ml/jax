@@ -3655,8 +3655,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
               if (packing != 1) {
                 if (auto new_dst_vreg = broadcastSubelements(
                         builder, cast<TypedValue<VectorType>>(dst_vreg),
-                        subelement_offset, ctx.target_shape,
-                        ctx.hardware_generation);
+                        subelement_offset, ctx.target_shape);
                     succeeded(new_dst_vreg)) {
                   dst_vreg = *new_dst_vreg;
                 } else {

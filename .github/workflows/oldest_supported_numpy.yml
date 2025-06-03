@@ -42,7 +42,7 @@ jobs:
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
 
           # Install NumPy and SciPy with the oldest supported versions
-          $JAXCI_PYTHON -m uv pip install numpy==1.25.2 scipy==1.11.1
+          $JAXCI_PYTHON -m uv pip install numpy==1.26.4 scipy==1.12.0
 
           # Install JAX using the changes in the PR
           $JAXCI_PYTHON -m uv pip install -e .[minimum-jaxlib]

@@ -641,6 +641,9 @@ class JVPTracer(Tracer):
   def get_referent(self):
     return core.get_referent(self.primal)
 
+  def type_state(self):
+    return self.primal.type_state()
+
 def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
     primal_aval = get_aval(primal).strip_weak_type()
@@ -1166,8 +1169,9 @@ def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
                    debug_info=jaxpr.jaxpr.debug_info)
   f_jvp, out_nonzeros = f_jvp_traceable(
       jvp(f, instantiate=instantiate, transform_stack=False), nonzeros)
-  tangent_avals = [aval.to_tangent_aval() for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
-  avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
+  tangent_avals = [aval.to_tangent_aval()
+                   for aval, nz in zip(jaxpr.in_avals_aug, nonzeros) if nz]
+  avals_in = list(it.chain(jaxpr.in_avals_aug, tangent_avals))
   jaxpr_out, avals_out, literals_out, () = pe.trace_to_jaxpr_dynamic(
       f_jvp, avals_in)
   return core.ClosedJaxpr(jaxpr_out, literals_out), out_nonzeros()
@@ -1189,14 +1193,12 @@ def rearrange_binders(jaxpr: core.ClosedJaxpr, primals_in, tangents_in, primals_
   new_invars = _perm(primals_in, tangents_in, jaxpr.jaxpr.invars)
   new_outvars = _perm(primals_out, tangents_out, jaxpr.jaxpr.outvars)
   new_debug_info = jaxpr.jaxpr.debug_info
-  new_arg_names = tuple(_perm(primals_in, tangents_in,
-                              jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.jaxpr.invars))))
-  new_result_paths = tuple(_perm(primals_out, tangents_out,
-                                  jaxpr.jaxpr.debug_info.safe_result_paths(len(jaxpr.jaxpr.outvars))))
+  arg_names = jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.in_avals))
+  result_paths = jaxpr.jaxpr.debug_info.safe_result_paths(len(jaxpr.out_avals))
+  new_arg_names = tuple(_perm(primals_in, tangents_in, arg_names))
+  new_result_paths = tuple(_perm(primals_out, tangents_out, result_paths))
   new_debug_info = new_debug_info._replace(
-      arg_names=new_arg_names,
-      result_paths=new_result_paths,
-  )
+      arg_names=new_arg_names, result_paths=new_result_paths)
   constvars = jaxpr.jaxpr.constvars
   new_effects = pe._renumber_effects(
       (*constvars, *new_invars), (*constvars, *jaxpr.jaxpr.invars),
@@ -1240,6 +1242,14 @@ def _custom_lin_transpose(cts_out, *invals, num_res,
   nz_cts_in, _ = partition_list(in_zeros, cts_in)
   return [None] * num_res + nz_cts_in
 primitive_transposes[custom_lin_p] = _custom_lin_transpose
+
+def _custom_lin_pp_rule(eqn: core.JaxprEqn, context: core.JaxprPpContext,
+                        settings: core.JaxprPpSettings) -> core.pp.Doc:
+  params = dict(eqn.params)
+  params.pop("out_avals")
+  params["bwd"] = params.pop("bwd").debug_info.func_name
+  return core._pp_eqn(eqn.replace(params=params), context, settings)
+core.pp_eqn_rules[custom_lin_p] = _custom_lin_pp_rule
 
 
 class CustomJVPException(Exception):

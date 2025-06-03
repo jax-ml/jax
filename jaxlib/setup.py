@@ -61,9 +61,9 @@ setup(
     packages=['jaxlib'],
     python_requires='>=3.10',
     install_requires=[
-        'scipy>=1.11.1',
-        'numpy>=1.25',
-        'ml_dtypes>=0.2.0',
+        'scipy>=1.12',
+        'numpy>=1.26',
+        'ml_dtypes>=0.5.0',
     ],
     url='https://github.com/jax-ml/jax',
     license='Apache-2.0',

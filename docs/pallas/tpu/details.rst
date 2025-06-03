@@ -170,7 +170,7 @@ grid axes over cores. This is an opt-in procedure. To allow that,
 ..
   pallas_call(
       ...,
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=["parallel", "parallel", "arbitrary"]
       ),
     )

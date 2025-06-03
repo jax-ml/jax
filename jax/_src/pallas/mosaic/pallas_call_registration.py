@@ -80,13 +80,13 @@ def _get_memory_space_from_aval(
   match out_aval.memory_space:
     case None:
       return None
-    case tpu_core.TPUMemorySpace.ANY:
+    case tpu_core.MemorySpace.ANY:
       return None
-    case tpu_core.TPUMemorySpace.VMEM:
+    case tpu_core.MemorySpace.VMEM:
       return tpu_custom_call.MemorySpace.VMEM
-    case tpu_core.TPUMemorySpace.SMEM:
+    case tpu_core.MemorySpace.SMEM:
       return tpu_custom_call.MemorySpace.SMEM
-    case tpu_core.TPUMemorySpace.SEMAPHORE:
+    case tpu_core.MemorySpace.SEMAPHORE:
       return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
   return None
 
@@ -126,10 +126,10 @@ def pallas_call_tpu_lowering_rule(
 
   if "mosaic_tpu" in compiler_params:
     mosaic_params = cast(
-        tpu_core.TPUCompilerParams, compiler_params["mosaic_tpu"]
+        tpu_core.CompilerParams, compiler_params["mosaic_tpu"]
     )
   else:
-    mosaic_params = tpu_core.TPUCompilerParams()
+    mosaic_params = tpu_core.CompilerParams()
 
   jax_mesh = None
   axis_context = ctx.module_context.axis_context

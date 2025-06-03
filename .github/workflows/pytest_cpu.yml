@@ -17,34 +17,28 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        required: true
         default: "linux-x86-n2-16"
       python:
         description: "Which python version should the artifact be built for?"
         type: string
-        required: true
         default: "3.12"
       enable-x64:
         description: "Should x64 mode be enabled?"
         type: string
-        required: true
         default: "0"
       download-jax-only-from-gcs:
         description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
-        required: false
         default: '0'
         type: string
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
-        required: true
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
-        required: false
         default: 'no'
-
+permissions: {}
 jobs:
   run-tests:
     defaults:
@@ -53,7 +47,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') ||
-                   (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
+                   (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') ||
                    (contains(inputs.runner, 'windows-x86') && null) }}
 
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||

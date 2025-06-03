@@ -100,10 +100,10 @@ pip install tb-nightly tbp-nightly
 ### Programmatic capture
 
 You can instrument your code to capture a profiler trace via the
-{func}`jax.profiler.start_trace` and {func}`jax.profiler.stop_trace`
-methods. Call {func}`~jax.profiler.start_trace` with the directory to write
-trace files to. This should be the same `--logdir` directory used to start
-TensorBoard. Then, you can use TensorBoard to view the traces.
+{func}`jax.profiler.start_trace` and {func}`jax.profiler.stop_trace` methods.
+Call {func}`~jax.profiler.start_trace` with the directory to write trace files
+to. This should be the same `--logdir` directory used to start TensorBoard.
+Then, you can use TensorBoard to view the traces.
 
 For example, to take a profiler trace:
 
@@ -228,6 +228,95 @@ By default, the events in the trace viewer are mostly low-level internal JAX
 functions. You can add your own events and functions by using
 {class}`jax.profiler.TraceAnnotation` and {func}`jax.profiler.annotate_function` in
 your code.
+
+### Configuring profiler options
+
+The `start_trace` method accepts an optional `profiler_options` parameter, which
+allows for fine-grained control over the profiler's behavior. This parameter
+should be an instance of `jax.profiler.ProfileOptions`.
+<!-- TODO: Add API documentation for jax.profiler.ProfileOptions -->
+
+For example, to disable all python and host traces:
+
+```python
+import jax
+
+options = jax.profiler.ProfileOptions()
+options.python_tracer_level = 0
+options.host_tracer_level = 0
+jax.profiler.start_trace("/tmp/tensorboard", profiler_options=options)
+
+# Run the operations to be profiled
+key = jax.random.key(0)
+x = jax.random.normal(key, (5000, 5000))
+y = x @ x
+y.block_until_ready()
+
+jax.profiler.stop_trace()
+```
+
+#### General options
+
+1.  `host_tracer_level`: Sets the trace level for host-side activities.
+
+    Supported Values:
+
+    `0`: Disables host (CPU) tracing entirely.
+
+    `1`: Enables tracing of only user-instrumented TraceMe events (this is the
+    default).
+
+    `2`: Includes level 1 traces plus high-level program execution details like
+    expensive TensorFlow or XLA operations.
+
+    `3`: Includes level 2 traces plus more verbose, low-level program execution
+    details such as cheap TensorFlow operations.
+
+2.  `python_tracer_level`: Controls whether Python tracing is enabled.
+
+    Supported Values:
+
+    `0`: Disables Python function call tracing.
+
+    `> 0`: Enables Python tracing (this is the default).
+
+#### Advanced configuration options
+
+1.  `tpu_trace_mode`: Specifies the mode for TPU tracing.
+
+    Supported Values:
+
+    `TRACE_ONLY_HOST`: This means only host-side (CPU) activities are traced,
+    and no device (TPU/GPU) traces are collected.
+
+    `TRACE_ONLY_XLA`: This means only XLA-level operations on the device are
+    traced.
+
+    `TRACE_COMPUTE`: This traces compute operations on the device.
+
+    `TRACE_COMPUTE_AND_SYNC`: This traces both compute operations and
+    synchronization events on the device.
+
+    If "tpu_trace_mode" is not provided the trace_mode defaults to
+    TRACE_ONLY_XLA.
+
+2.  `tpu_num_sparse_cores_to_trace`: Specifies the number of sparse cores to
+    trace on the TPU.
+3.  `tpu_num_sparse_core_tiles_to_trace`: Specifies the number of tiles within
+    each sparse core to trace on the TPU.
+4.  `tpu_num_chips_to_profile_per_task`: Specifies the number of TPU chips to
+    profile per task.
+
+For example:
+
+```
+options = ProfileOptions()
+options.advanced_configuration = {"tpu_trace_mode" : "TRACE_ONLY_HOST", "tpu_num_sparse_cores_to_trace" : 2}
+
+```
+
+Returns InvalidArgumentError if any unrecognized keys or option values are
+found.
 
 ### Troubleshooting
 

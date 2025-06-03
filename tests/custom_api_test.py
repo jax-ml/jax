@@ -330,7 +330,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertRaises(UnexpectedTracerError, lambda: api.jvp(f, (3.,), (1.,)))
     self.assertRaises(UnexpectedTracerError, lambda: api.grad(f)(3.))
 
-  def test_nondiff_arg(self):
+  def test_nondiff_argnums(self):
     @partial(jax.custom_jvp, nondiff_argnums=(0,))
     def app(f, x):
       return f(x)
@@ -345,6 +345,21 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     ans = api.jvp(lambda x: app(lambda y: 2 * y, x), (1.,), (1.,))
     expected = (2., 3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_nondiff_argnames(self):
+    @partial(jax.custom_jvp, nondiff_argnames=('f',))
+    def app(f, x):
+      return f(x)
+
+    def app_jvp(f, primals, tangents):
+      (x,), (t,) = primals, tangents
+      return app(f, x), 3 * t
+
+    app.defjvp(app_jvp)
+
+    ans = app(lambda x: 2 * x, 1)
+    expected = 2
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_nondiff_arg_jit_tracer(self):
@@ -1655,7 +1670,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = 2. * jnp.cos(jnp.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_nondiff_arg(self):
+  def test_nondiff_argnums(self):
     @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def app(f, x):
       return f(x)
@@ -1671,6 +1686,44 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     ans = api.value_and_grad(lambda x: app(lambda y: 2 * y, x))(1.)
     expected = (2., jnp.cos(1.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_nondiff_argnames(self):
+    @partial(jax.custom_vjp, nondiff_argnames=('f',))
+    def app(f, x):
+      return f(x)
+    def app_fwd(f, x):
+      return app(f, x), jnp.cos(x)
+    def app_rev(f, cos_x, g):
+      return (cos_x * g,)
+    app.defvjp(app_fwd, app_rev)
+
+    ans = app(lambda x: 2 * x, 1)
+    expected = 2
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.value_and_grad(lambda x: app(lambda y: 2 * y, x))(1.)
+    expected = (2., jnp.cos(1.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_nondiff_argnums_argnames(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0,), nondiff_argnames=('g',))
+    def app(f, g, x):
+      return f(x) + g(x)
+    def app_fwd(f, g, x):
+      return app(f, g, x), jnp.cos(x)
+    def app_rev(f, g, cos_x, v):
+      return (cos_x * v,)
+    app.defvjp(app_fwd, app_rev)
+
+    f = lambda x: 2 * x
+    g = lambda x: 2 * x
+    ans = app(f, g, 1)
+    expected = 4
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.value_and_grad(lambda x: app(f, g, x))(1.)
+    expected = (4., jnp.cos(1.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_closed_over_jit_tracer(self):
@@ -3140,6 +3193,35 @@ class CustomVJPTest(jtu.JaxTestCase):
               bwd=f_bwd
               call_jaxpr={ lambda ; c:f32[1]. let d:f32[1] = add c 1.0:f32[] in (d,) }
               fwd=f_fwd
+              symbolic_zeros=False
+            ] a
+          in (b,) }
+        """).strip()
+    self.assertEqual(actual, expected)
+
+  def test_custom_lin_pretty_print(self):
+    @jax.custom_vjp
+    def f(x):
+      return x + 1
+
+    def f_fwd(x):
+      return f(x), ()
+
+    def f_bwd(_, g):
+      return g
+    f.defvjp(f_fwd, f_bwd)
+
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(lambda x: jax.jvp(f, (x,), (x,)))(x)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [False, True])
+    actual = jaxpr.pretty_print(use_color=False)
+    expected = textwrap.dedent(
+        """
+        { lambda ; a:f32[1]. let
+            b:f32[1] = custom_lin[
+              bwd=f_bwd
+              in_zeros=[False]
+              num_res=0
               symbolic_zeros=False
             ] a
           in (b,) }

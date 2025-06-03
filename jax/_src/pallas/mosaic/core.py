@@ -66,7 +66,7 @@ DimensionSemantics = Literal["parallel", "arbitrary"] | GridDimensionSemantics
 
 
 @dataclasses.dataclass(frozen=True)
-class TPUCompilerParams(pallas_core.CompilerParams):
+class CompilerParams(pallas_core.CompilerParams):
   """Mosaic TPU compiler parameters.
 
   Attributes:
@@ -102,7 +102,7 @@ class TPUCompilerParams(pallas_core.CompilerParams):
   # Replace is a method, not a field.
   replace = dataclasses.replace
 
-class TPUMemorySpace(enum.Enum):
+class MemorySpace(enum.Enum):
   ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
   VMEM = "vmem"
   SMEM = "smem"
@@ -135,7 +135,7 @@ class SemaphoreType(enum.Enum):
       dtype = pallas_core.BarrierSemaphore()
     else:
       dtype = pallas_core.Semaphore()
-    return pallas_core.MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
+    return pallas_core.MemoryRef(shape, dtype, MemorySpace.SEMAPHORE)
 
   def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
     return self(()).get_array_aval()
@@ -166,7 +166,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
 
   def _make_scalar_ref_aval(self, aval):
     return AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
-                             TPUMemorySpace.SMEM)
+                             MemorySpace.SMEM)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -223,12 +223,12 @@ def _tensorcore_mesh_discharge_rule(
     name: str,
 ):
   assert isinstance(mesh, TensorCoreMesh)
-  if compiler_params and not isinstance(compiler_params, TPUCompilerParams):
+  if compiler_params and not isinstance(compiler_params, CompilerParams):
     raise ValueError(
-        "compiler_params must be a pltpu.TPUCompilerParams"
+        "compiler_params must be a pltpu.CompilerParams"
     )
   if not compiler_params:
-    compiler_params = TPUCompilerParams()
+    compiler_params = CompilerParams()
   if len(mesh.shape) > 1:
     raise NotImplementedError("Mesh must be 1D")
   if compiler_params.dimension_semantics is not None:

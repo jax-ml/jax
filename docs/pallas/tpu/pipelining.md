@@ -94,15 +94,15 @@ Pallas exposes all levels of the TPU memory hierarchy to users. The following ta
 
 | Pallas Enum | TPU Memory Space | Type (DRAM/SRAM) |
 | --- | --- | --- |
-| `pltpu.TPUMemorySpace.ANY` | HBM (usually) or VMEM | DRAM |
-| `pltpu.TPUMemorySpace.VMEM` | VMEM | SRAM |
-| `pltpu.TPUMemorySpace.SMEM` | SMEM | SRAM |
-| `pltpu.TPUMemorySpace.SEMAPHORE` | Semaphore | SRAM |
+| `pltpu.MemorySpace.ANY` | HBM (usually) or VMEM | DRAM |
+| `pltpu.MemorySpace.VMEM` | VMEM | SRAM |
+| `pltpu.MemorySpace.SMEM` | SMEM | SRAM |
+| `pltpu.MemorySpace.SEMAPHORE` | Semaphore | SRAM |
 
-- `TPUMemorySpace.VMEM` denotes vector SRAM. It is the default memory space if nothing is specified.
-- `TPUMemorySpace.SMEM` denotes scalar SRAM. Only scalar loads and stores can be performed to/from SMEM.
-- `TPUMemorySpace.ANY` is a hint to the compiler that the memory space is unconstrained. In most cases, XLA will place this buffer in HBM. A buffer assigned to the `ANY` memory space cannot be dereferenced normally using array indexing syntax (e.g. `x[...]`). Instead, we must first copy the values into a VMEM or SMEM buffer using `pltpu.sync_copy` or `pltpu.async_copy`.
-- `TPUMemorySpace.SEMAPHORE` is used to allocate semaphores for constructing barriers or tracking asynchronous operations. It is also possible to return semaphores from the kernel for building asynchronous kernels - this is an experimental feature; see {ref}`pallas_async` for more details.
+- `MemorySpace.VMEM` denotes vector SRAM. It is the default memory space if nothing is specified.
+- `MemorySpace.SMEM` denotes scalar SRAM. Only scalar loads and stores can be performed to/from SMEM.
+- `MemorySpace.ANY` is a hint to the compiler that the memory space is unconstrained. In most cases, XLA will place this buffer in HBM. A buffer assigned to the `ANY` memory space cannot be dereferenced normally using array indexing syntax (e.g. `x[...]`). Instead, we must first copy the values into a VMEM or SMEM buffer using `pltpu.sync_copy` or `pltpu.async_copy`.
+- `MemorySpace.SEMAPHORE` is used to allocate semaphores for constructing barriers or tracking asynchronous operations. It is also possible to return semaphores from the kernel for building asynchronous kernels - this is an experimental feature; see {ref}`pallas_async` for more details.
 
 Pipelining on TPUs is typically done between HBM (DRAM) to VMEM (Vector SRAM). The default behavior for `pallas_call` on TPU is that arguments to `pallas_call` are assumed to live in HBM, and inputs to the user kernel body are stored in VMEM.
 
@@ -128,9 +128,9 @@ def hbm_vmem_kernel(x_hbm_ref, out_vmem_ref, scratch_vmem_ref):
 
 x = jax.random.uniform(jax.random.key(0), (8, 128), jnp.float32)
 out = pl.pallas_call(hbm_vmem_kernel,
-  in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
+  in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
   out_shape=jax.ShapeDtypeStruct((1, 128), jnp.float32),
-  scratch_shapes=(pltpu.TPUMemorySpace.VMEM(shape=(1, 128), dtype=jnp.float32),)
+  scratch_shapes=(pltpu.MemorySpace.VMEM(shape=(1, 128), dtype=jnp.float32),)
 )(x)
 
 np.testing.assert_allclose(out, x[0:1] + 1)
@@ -190,7 +190,7 @@ def add_matrices_pipelined_megacore(x: jax.Array, y: jax.Array) -> jax.Array:
       in_specs=[block_spec, block_spec],
       out_specs=block_spec,
       grid=(2,),
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel",))
   )(x, y)
 

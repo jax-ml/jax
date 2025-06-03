@@ -186,7 +186,7 @@ iota(8)
 ```
 
 TPUs distinguish between vector and scalar memory spaces and in this case the
-output must be placed in scalar memory (`TPUMemorySpace.SMEM`) since `i` is
+output must be placed in scalar memory (`MemorySpace.SMEM`) since `i` is
 a scalar. For more details read {ref}`tpu_and_its_memory_spaces`.
 To call the above kernel on TPU, run:
 
@@ -196,7 +196,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 def iota(size: int):
   return pl.pallas_call(iota_kernel,
-                        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+                        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
                         out_shape=jax.ShapeDtypeStruct((size,), jnp.int32),
                         grid=(size,))()
 iota(8)

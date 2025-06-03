@@ -940,11 +940,17 @@ jax_platforms = optional_string_state(
         'otherwise.'
         ))
 
-jax_pjrt_client_create_options = optional_string_state(
+def _validate_jax_pjrt_client_create_options(new_val):
+  if new_val is not None and not isinstance(new_val, (str, dict)):
+      raise ValueError('new string config value must be None or of type dict'
+                       f' | str, got {new_val} of type {type(new_val)}.')
+
+jax_pjrt_client_create_options = string_or_object_state(
     name='jax_pjrt_client_create_options',
     default=None,
     help=('A set of key-value pairs in the format of "k1:v1;k2:v2" strings '
-          'provided to a device platform pjrt client as extra arguments.'))
+          'provided to a device platform pjrt client as extra arguments.'),
+    validator=_validate_jax_pjrt_client_create_options)
 
 enable_checks = bool_state(
     name='jax_enable_checks',

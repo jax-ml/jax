@@ -20,17 +20,14 @@ from absl.testing import absltest
 
 import numpy as np
 import scipy.stats as osp_stats
-import scipy.version
 
 import jax
 import jax.numpy as jnp
-from jax._src import dtypes, test_util as jtu
+from jax._src import test_util as jtu
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 
 jax.config.parse_flags_with_absl()
-
-scipy_version = jtu.parse_version(scipy.version.version)
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 one_and_two_dim_shapes = [(4,), (3, 4), (3, 1), (1, 4)]
@@ -216,9 +213,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     scipy_fun = osp_stats.bernoulli.ppf
     lax_fun = lsp_stats.bernoulli.ppf
-
-    if scipy_version < (1, 9, 2):
-      self.skipTest("Scipy 1.9.2 needed for fix https://github.com/scipy/scipy/pull/17166.")
 
     def args_maker():
       q, p = map(rng, shapes, dtypes)
@@ -1664,9 +1658,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       message="All axis-slices of one or more sample arguments are too small",
   )
   def testMode(self, shape, dtype, axis, contains_nans, keepdims):
-    if scipy_version < (1, 9, 0) and keepdims != True:
-      self.skipTest("scipy < 1.9.0 only support keepdims == True")
-
     if contains_nans:
       rng = jtu.rand_some_nan(self.rng())
     else:
@@ -1675,25 +1666,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     def scipy_mode_wrapper(a, axis=0, nan_policy='propagate', keepdims=None):
       """Wrapper to manage the shape discrepancies between scipy and jax"""
-      if scipy_version < (1, 11, 0) and a.size == 0:
-        if keepdims:
-          if axis == None:
-            output_shape = tuple(1 for _ in a.shape)
-          else:
-            output_shape = tuple(1 if i == axis else s for i, s in enumerate(a.shape))
-        else:
-          if axis == None:
-            output_shape = ()
-          else:
-            output_shape = np.delete(np.array(a.shape, dtype=np.int64), axis)
-        t = dtypes.canonicalize_dtype(jax.numpy.float_)
-        return (np.full(output_shape, np.nan, dtype=t),
-                np.zeros(output_shape, dtype=t))
-
-      if scipy_version < (1, 9, 0):
-        result = osp_stats.mode(a, axis=axis, nan_policy=nan_policy)
-      else:
-        result = osp_stats.mode(a, axis=axis, nan_policy=nan_policy, keepdims=keepdims)
+      result = osp_stats.mode(a, axis=axis, nan_policy=nan_policy, keepdims=keepdims)
 
       if a.size != 0 and axis == None and keepdims == True:
         output_shape = tuple(1 for _ in a.shape)
@@ -1748,11 +1721,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
-    kwds = {} if scipy_version < (1, 11) else {'keepdims': keepdims}
     scipy_fun = partial(osp_stats.sem, axis=axis, ddof=ddof, nan_policy=nan_policy,
-                        **kwds)
+                        keepdims=keepdims)
     lax_fun = partial(lsp_stats.sem, axis=axis, ddof=ddof, nan_policy=nan_policy,
-                      **kwds)
+                      keepdims=keepdims)
     tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
     tol = jtu.tolerance(dtype, tol_spec)
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
