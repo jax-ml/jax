@@ -111,18 +111,18 @@ class PartitionSpec:
     return len(self._partitions)
 
   def __eq__(self, other):
-    if not isinstance(other, (PartitionSpec, tuple)):
-      return False
-    other_p = tuple(_canonicalize_partition(o) for o in other)
     if isinstance(other, PartitionSpec):
-      return (self._partitions == other_p and
+      return (self._partitions == other._partitions and
               self._unreduced == other._unreduced)
-    else:
+    elif isinstance(other, tuple):
       if self._unreduced:
         raise TypeError(
             f"other {other} cannot be of instance `tuple` when self {self} has"
             " unreduced in `__eq__` of PartitionSpec.")
+      other_p = tuple(_canonicalize_partition(o) for o in other)
       return self._partitions == other_p
+    else:
+      return False
 
   def __hash__(self):
     return hash((self._partitions, self._unreduced))
