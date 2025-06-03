@@ -985,16 +985,12 @@ def _shrink_mask_info(
   # Pad each row in the non-zero indices to match the width of the longest
   # row. This avoids having jagged rows.
   max_non_zero_cols = max(len(x) for x in grouped_non_zero_cols)
-  padded_non_zero_cols = []
   padding = -1
-  for row in grouped_non_zero_cols:
-    padded_non_zero_cols.append(
-        np.pad(
+  padded_non_zero_cols = [np.pad(
             row,
             pad_width=(0, max_non_zero_cols - row.shape[0]),
             constant_values=padding,
-        )
-    )
+        ) for row in grouped_non_zero_cols]
 
   padded_non_zero_cols = np.stack(padded_non_zero_cols, axis=0)
 
@@ -1050,16 +1046,12 @@ def _shrink_mask_info_dkv(
   # Pad each col in the non-zero indices to match the height of the longest
   # col. This avoids having jagged cols.
   max_non_zero_rows = max(len(x) for x in grouped_non_zero_rows)
-  padded_non_zero_rows = []
   padding = -1
-  for col in grouped_non_zero_rows:
-    padded_non_zero_rows.append(
-        np.pad(
+  padded_non_zero_rows = [np.pad(
             col,
             pad_width=(max_non_zero_rows - col.shape[0], 0),
             constant_values=padding,
-        )
-    )
+        ) for col in grouped_non_zero_rows]
 
   padded_non_zero_rows = np.stack(padded_non_zero_rows, axis=1)
 

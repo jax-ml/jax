@@ -45,8 +45,7 @@ def _get_fftn_test_axes(shape):
   ndims = len(shape)
   for naxes in range(1, ndims + 1):
     axes.extend(itertools.combinations(range(ndims), naxes))
-  for index in range(1, ndims + 1):
-    axes.append((-index,))
+  axes.extend((-index,) for index in range(1, ndims + 1))
   return axes
 
 def _get_fftn_test_s(shape, axes):

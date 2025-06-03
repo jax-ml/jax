@@ -920,9 +920,7 @@ class OpsTest(PallasBaseTest):
       num_arrays = 2
       axis = -1
     def kernel(out):
-      result = []
-      for i in range(num_arrays):
-        result.append(jnp.full((1, 128), i, jnp.float32))
+      result = [jnp.full((1, 128), i, jnp.float32) for i in range(num_arrays)]
       out[:] = jnp.stack(result, axis=axis).reshape(num_arrays, 128)
 
     def run(interpret=False):

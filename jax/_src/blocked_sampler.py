@@ -116,9 +116,7 @@ def blocked_fold_in(
               block_index, block_size_in_tiles, total_size_in_tiles, prefix))
       return subtile_key
     else:
-      keys = []
-      for i in range(block_size_in_tiles[axis]):
-        keys.append(_keygen_loop(axis+1, prefix+(i,)))
+      keys = [_keygen_loop(axis+1, prefix+(i,)) for i in range(block_size_in_tiles[axis])]
       return keys
   return _keygen_loop(0, tuple())
 
@@ -165,8 +163,6 @@ def sample_block(
       return sampler_fn(_nested_index(keys, prefix), *args,
                         shape=tile_size, **kwargs)
     else:
-      samples = []
-      for i in range(size_in_tiles[axis]):
-        samples.append(_sample_loop(axis+1, prefix+(i,)))
+      samples = [_sample_loop(axis+1, prefix+(i,)) for i in range(size_in_tiles[axis])]
       return jnp.concatenate(samples, axis=axis)
   return _sample_loop(0, tuple())

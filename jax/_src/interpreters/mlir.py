@@ -1763,9 +1763,7 @@ def lower_jaxpr_to_fun(
     out_vals, tokens_out = jaxpr_subcomp(
         ctx, jaxpr.jaxpr, callee_name_stack, tokens_in,
         consts, *args, dim_var_values=dim_var_values)
-    outs: list[IrValues] = []
-    for eff in effects:
-      outs.append(tokens_out.get(eff))
+    outs: list[IrValues] = [tokens_out.get(eff) for eff in effects]
     outs.extend(out_vals)
 
     flat_outputs = flatten_ir_values(outs)
@@ -2428,8 +2426,7 @@ def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> No
       for k, attributes in op_attributes_dict.items():
         if k == "mhlo.frontend_attributes":
           v_dict = {attr.name: attr.attr for attr in attributes}
-          for fa_key, fa_val in v_dict.items():
-            existing_attributes[fa_key] = fa_val
+          existing_attributes.update(dict(v_dict.items()))
       op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
           ctx_attributes | existing_attributes
       )

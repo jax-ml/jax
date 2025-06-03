@@ -963,9 +963,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   # Do not apply XlaSharding for REPLICATED, on inputs and outputs.
   # This is an agreed convention, and also improves usability under TF eager.
   # See b/255511660.
-  kept_in_shardings = []
-  for i in exported.module_kept_var_idx:
-    kept_in_shardings.append(exported.in_shardings_hlo[i])
+  kept_in_shardings = [exported.in_shardings_hlo[i] for i in exported.module_kept_var_idx]
   args_flat_tf = tuple(
     map(partial(_shard_value,
                 skip_replicated_sharding=tf.executing_eagerly()),

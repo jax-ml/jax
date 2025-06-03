@@ -2551,8 +2551,7 @@ def _input_type_to_tracers(
       return a.update(shape=tuple(shape))
     return a
 
-  for a in in_avals:
-    in_tracers.append(new_arg(_substitute_tracers_in_aval(a)))
+  in_tracers.extend(new_arg(_substitute_tracers_in_aval(a)) for a in in_avals)
   return in_tracers
 
 def _substitute_vars_in_type(

@@ -5593,9 +5593,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 @unittest.skipIf(metal_plugin == None, "Tests require jax-metal plugin.")
 class ReportedIssuesTests(jtu.JaxTestCase):
   def dispatchOn(self, args, func, device=jax.devices('cpu')[0]):
-    deviceArgs = []
-    for arg in args:
-       deviceArgs.append(jax.device_put(arg, device))
+    deviceArgs = [jax.device_put(arg, device) for arg in args]
     return func(*deviceArgs)
 
   @staticmethod

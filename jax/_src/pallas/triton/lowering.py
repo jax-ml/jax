@@ -393,9 +393,7 @@ def lower_jaxpr_to_triton_ir(
     env[var] = val
 
   if block_infos is not None:
-    for invar, block_info in zip(jaxpr.invars, block_infos):
-      if block_info is not None:
-        block_info_env[invar] = block_info
+    block_info_env.update({invar: block_info for invar, block_info in zip(jaxpr.invars, block_infos) if block_info is not None})
 
   foreach(write_env, jaxpr.invars, args)
 

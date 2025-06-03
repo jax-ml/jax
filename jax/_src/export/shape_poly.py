@@ -1032,8 +1032,7 @@ class SymbolicScope:
     extras = []
     if self._explicit_constraints:
       extras.append(" with constraints:")
-      for constr in self._explicit_constraints:
-        extras.append(f"  {constr.debug_str}")
+      extras.extend(f"  {constr.debug_str}" for constr in self._explicit_constraints)
     loc = source_info_util._summarize_frame(self._location_frame) if self._location_frame else "unknown"
     return f"{id(self)} created at {loc}" + "\n".join(extras)
   __repr__ = __str__

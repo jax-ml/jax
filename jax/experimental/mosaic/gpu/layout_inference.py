@@ -791,15 +791,9 @@ def infer_layout(module: ir.Module):
     if inference_utils.should_have_layout(
         op
     ) and not inference_utils.has_any_layout_set(op):
-      in_layouts = []
-      for operand in op.operands:
-        if (layout := to_default_layout(operand.type)) is not None:
-          in_layouts.append(layout)
+      in_layouts = [layout for operand in op.operands if (layout := to_default_layout(operand.type)) is not None]
 
-      out_layouts = []
-      for result in op.results:
-        if (layout := to_default_layout(result.type)) is not None:
-          out_layouts.append(layout)
+      out_layouts = [layout for result in op.results if (layout := to_default_layout(result.type)) is not None]
 
       _set_layout_attributes(op, in_layouts, out_layouts)
 

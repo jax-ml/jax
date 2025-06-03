@@ -191,7 +191,7 @@ def test_converters():
   _exit_if_empty(harnesses_to_test, "harness")
 
   results = {}
-  for name, harness_fn in harnesses_to_test.items():
+  for harness_fn in harnesses_to_test.values():
     harness = harness_fn()  # This will create the variables.
     np_assert_allclose = functools.partial(
         np.testing.assert_allclose, rtol=harness.rtol)

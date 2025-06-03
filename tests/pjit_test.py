@@ -259,9 +259,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     mesh = jtu.create_mesh((2, 1), ('a', 'testMeshHashRace'))
     self.assertFalse(hasattr(mesh, '_hash'))
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
-      fs = []
-      for _ in range(5):
-        fs.append(pool.submit(lambda: hash(mesh)))
+      fs = [pool.submit(lambda: hash(mesh)) for _ in range(5)]
       for f in concurrent.futures.as_completed(fs):
         f.result()
     self.assertTrue(hasattr(mesh, '_hash'))

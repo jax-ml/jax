@@ -535,11 +535,8 @@ def make_kernel_function(
     def write_env(var, val):
       env[var] = val
 
-    for const, constvar in zip(consts, jaxpr.constvars):
-      env[constvar] = const
-    for invar, arg, usage in zip(jaxpr.invars, flat_args, invar_usages):
-      if Usage.REGULAR in usage:
-        env[invar] = arg
+    env.update({constvar: const for const, constvar in zip(consts, jaxpr.constvars)})
+    env.update({invar: arg for invar, arg, usage in zip(jaxpr.invars, flat_args, invar_usages) if Usage.REGULAR in usage})
     for i, eqn in enumerate(jaxpr.eqns):
       outvar_usages = [
           read_usage_env(v) if not isinstance(v, core.Literal) else set()
@@ -1798,10 +1795,8 @@ def _push_block_spec_jaxpr(
         f'Expected {num_inputs} block specs, got {len(flat_block_specs)}'
     )
 
-  env: dict[core.Var, pallas_core.BlockSpec | pallas_core.NoBlockSpec] = {}
 
-  for invar, bs in zip(jaxpr.invars, flat_block_specs, strict=True):
-    env[invar] = bs
+  env: dict[core.Var, pallas_core.BlockSpec | pallas_core.NoBlockSpec] = dict(zip(jaxpr.invars, flat_block_specs, strict=True))
   for constvar in jaxpr.constvars:
     env[constvar] = pallas_core.no_block_spec
 

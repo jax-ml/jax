@@ -710,15 +710,12 @@ class TMEMRef:
           num_strided_col_groups = utils.ceil_div(num_column_tiles, column_tile_stride)
           tiles = []
           for col_tile_base in range(num_strided_col_groups):
-            for col_tile in range(col_tile_base, num_column_tiles, column_tile_stride):
-              tiles.append(
-                  _load_32xcols(
+            tiles.extend(_load_32xcols(
                       arith.addi(self.address, arith.constant(i32, col_tile * 128)),
                       cols=128,
                       dtype=self.dtype,
                       tmem_packing=1,
-                  )
-              )
+                  ) for col_tile in range(col_tile_base, num_column_tiles, column_tile_stride))
           registers = np.concatenate(tiles, axis=1).T.reshape(regs_shape)
         case _:
           raise NotImplementedError(
