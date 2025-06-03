@@ -83,6 +83,8 @@ XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusparse_gtsv2_ffi", "CUDA",
 
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("triton_kernel_call", TritonKernelCall,
                                          "CUDA");
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "triton_kernel_call", "CUDA",
+                         TritonKernelCallFfi);
 
 }  // namespace
 }  // namespace JAX_GPU_NAMESPACE

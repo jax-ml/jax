@@ -138,6 +138,8 @@ NB_MODULE(_triton, m) {
 
   m.def("get_custom_call",
         [] { return EncapsulateFunction(&TritonKernelCall); });
+  m.def("get_ffi_handler",
+        [] { return EncapsulateFfiHandler(TritonKernelCallFfi); });
 
   m.def("get_compute_capability",
         ValueOrThrowWrapper([](int device) -> absl::StatusOr<int> {
@@ -163,14 +165,13 @@ NB_MODULE(_triton, m) {
       }));
 
   m.def("get_serialized_metadata",
-        ValueOrThrowWrapper(
-            [](nb::bytes opaque) -> absl::StatusOr<nb::bytes> {
-              JAX_ASSIGN_OR_RETURN(
-                  std::string metadata,
-                  GetTritonKernelCallSerializedMetadata(
-                      absl::string_view(opaque.c_str(), opaque.size())));
-              return nb::bytes(metadata.c_str(), metadata.size());
-            }));
+        ValueOrThrowWrapper([](nb::bytes opaque) -> absl::StatusOr<nb::bytes> {
+          JAX_ASSIGN_OR_RETURN(
+              std::string metadata,
+              GetTritonKernelCallSerializedMetadata(
+                  absl::string_view(opaque.c_str(), opaque.size())));
+          return nb::bytes(metadata.c_str(), metadata.size());
+        }));
 }
 
 }  // namespace jax::JAX_GPU_NAMESPACE
