@@ -46,6 +46,7 @@ jobs:
             zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
             libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
             libffi-dev liblzma-dev file zip
+          time clang-18 --version
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: jax
@@ -122,7 +123,7 @@ jobs:
         run: |
           set -eux
           cd numpy
-          time clang --version
+          time clang-18 --version
           # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
           if [ ! -d ${GITHUB_WORKSPACE}/cpython-tsan/bin/ ]; then
             echo "Extract cpython from python-tsan.tgz"
