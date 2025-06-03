@@ -23,7 +23,7 @@ import numpy as np
 
 from jax._src import api
 from jax._src import config
-from jax import lax
+from jax._src.lax import lax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.util import set_module, safe_map as map, safe_zip as zip
 

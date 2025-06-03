@@ -21,10 +21,9 @@ from typing import cast, NamedTuple
 
 import numpy as np
 
-import jax
-from jax import jit
 from jax import lax
 
+from jax._src.api import jit
 from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
@@ -59,8 +58,10 @@ def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool,
     else:
       return (arr1[:, None] == arr2[None, :]).any(-1)
   elif method == 'binary_search':
+    from jax._src.numpy.lax_numpy import searchsorted
+
     arr2 = lax.sort(arr2)
-    ind = jax.numpy.searchsorted(arr2, arr1)
+    ind = searchsorted(arr2, arr1)
     if invert:
       return arr1 != arr2[ind]
     else:

@@ -15,9 +15,11 @@
 import contextlib
 from typing import Literal, Sequence
 
-import jax
+import numpy as np
+
 from jax._src import config
-from jax._src.typing import ArrayLike
+from jax._src import dtypes
+from jax._src.typing import Array, ArrayLike
 
 Category = Literal["nan", "divide", "oob"]
 
@@ -40,7 +42,7 @@ def _is_category_disabled(
 
 
 def _set_error_if_with_category(
-    pred: jax.Array,
+    pred: Array,
     /,
     msg: str,
     category: Category | None = None,
@@ -65,7 +67,7 @@ def _set_error_if_with_category(
   error_check_lib.set_error_if(pred, msg)
 
 
-def _set_error_if_nan(pred: jax.Array, /):
+def _set_error_if_nan(pred: Array, /):
   """Set the internal error state if any element of `pred` is `NaN`.
 
   This function is disabled if the `jax_error_checking_behavior_nan` flag is
@@ -74,17 +76,17 @@ def _set_error_if_nan(pred: jax.Array, /):
   if config.error_checking_behavior_nan.value == "ignore":
     return
 
-  # TODO(mattjj): fix the circular import issue.
-  import jax.numpy as jnp
-  if not jnp.issubdtype(pred.dtype, jnp.floating):  # only check floats
+  if not dtypes.issubdtype(pred.dtype, np.floating):  # only check floats
     return
 
   # TODO(mattjj): fix the circular import issue.
   from jax._src import error_check as error_check_lib
+  import jax.numpy as jnp
+
   error_check_lib.set_error_if(jnp.isnan(pred), "NaN encountered")
 
 
-def _set_error_if_divide_by_zero(pred: jax.Array, /):
+def _set_error_if_divide_by_zero(pred: Array, /):
   """Set the internal error state if any element of `pred` is zero.
 
   This function is intended for checking if the denominator of a division is

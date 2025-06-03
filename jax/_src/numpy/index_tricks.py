@@ -17,7 +17,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Union
 
-import jax
+import numpy as np
+
+from jax._src import config
 from jax._src import core
 from jax._src.numpy.util import promote_dtypes
 from jax._src.numpy.lax_numpy import (
@@ -25,8 +27,6 @@ from jax._src.numpy.lax_numpy import (
 )
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import set_module
-
-import numpy as np
 
 
 export = set_module('jax.numpy')
@@ -83,7 +83,7 @@ class _Mgrid:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="mgrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="mgrid") for k in key)
-    with jax.numpy_dtype_promotion('standard'):
+    with config.numpy_dtype_promotion('standard'):
       output = promote_dtypes(*output)
     output_arr = meshgrid(*output, indexing='ij', sparse=False)
     if len(output_arr) == 0:
@@ -128,7 +128,7 @@ class _Ogrid:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="ogrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="ogrid") for k in key)
-    with jax.numpy_dtype_promotion('standard'):
+    with config.numpy_dtype_promotion('standard'):
       output = promote_dtypes(*output)
     return meshgrid(*output, indexing='ij', sparse=True)
 

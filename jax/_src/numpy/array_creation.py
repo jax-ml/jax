@@ -19,18 +19,16 @@ from typing import Any, Literal, overload
 
 import numpy as np
 
-import jax
-from jax import lax
-from jax._src.api import jit
+from jax._src.api import device_put, jit
 from jax._src import core
 from jax._src import dtypes
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
+from jax._src.sharding import Sharding
 from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike
 from jax._src.util import canonicalize_axis, set_module
-from jax.sharding import Sharding
 
 
 export = set_module('jax.numpy')
@@ -205,6 +203,8 @@ def full(shape: Any, fill_value: ArrayLike,
     Array([[0, 1, 2],
            [0, 1, 2]], dtype=int32)
   """
+  from jax._src.numpy.lax_numpy import asarray  # pytype: disable=import-error
+
   dtypes.check_user_dtype_supported(dtype, "full")
   util.check_arraylike("full", fill_value)
 
@@ -212,8 +212,8 @@ def full(shape: Any, fill_value: ArrayLike,
     shape = canonicalize_shape(shape)
     return lax.full(shape, fill_value, dtype, sharding=util.normalize_device_to_sharding(device))
   else:
-    return jax.device_put(
-        util._broadcast_to(jax.numpy.asarray(fill_value, dtype=dtype), shape), device)
+    return device_put(
+        util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
 @export
@@ -394,6 +394,8 @@ def full_like(a: ArrayLike | DuckTypedArray,
     Array([[1, 1, 1],
            [2, 2, 2]], dtype=int32)
   """
+  from jax._src.numpy.lax_numpy import asarray  # pytype: disable=import-error
+
   if hasattr(a, 'dtype') and hasattr(a, 'shape'):  # support duck typing
     util.check_arraylike("full_like", 0, fill_value)
   else:
@@ -408,8 +410,8 @@ def full_like(a: ArrayLike | DuckTypedArray,
   else:
     shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
     dtype = dtypes.result_type(a) if dtype is None else dtype
-    return jax.device_put(
-        util._broadcast_to(jax.numpy.asarray(fill_value, dtype=dtype), shape), device)
+    return device_put(
+        util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 @overload
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
@@ -510,6 +512,8 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               axis: int = 0,
               *, device: xc.Device | Sharding | None = None) -> Array | tuple[Array, Array]:
   """Implementation of linspace differentiable in start and stop args."""
+  from jax._src.numpy.lax_numpy import asarray  # pytype: disable=import-error
+
   dtypes.check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError(f"Number of samples, {num}, must be non-negative.")
@@ -529,13 +533,13 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   bounds_shape.insert(axis, 1)
   div = (num - 1) if endpoint else num
   if num > 1:
-    delta: Array = lax.convert_element_type(stop - start, computation_dtype) / jax.numpy.array(div, dtype=computation_dtype)
+    delta: Array = lax.convert_element_type(stop - start, computation_dtype) / asarray(div, dtype=computation_dtype)
     iota_shape = [1,] * len(bounds_shape)
     iota_shape[axis] = div
     # This approach recovers the endpoints with float32 arithmetic,
     # but can lead to rounding errors for integer outputs.
     real_dtype = dtypes.finfo(computation_dtype).dtype
-    step = lax.iota(real_dtype, div).reshape(iota_shape) / jax.numpy.array(div, real_dtype)
+    step = lax.iota(real_dtype, div).reshape(iota_shape) / asarray(div, real_dtype)
     step = step.astype(computation_dtype)
     out = (broadcast_start.reshape(bounds_shape) * (1 - step) +
       broadcast_stop.reshape(bounds_shape) * step)
@@ -545,7 +549,7 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
                             canonicalize_axis(axis, out.ndim))
 
   elif num == 1:
-    delta = jax.numpy.asarray(np.nan if endpoint else stop - start, dtype=computation_dtype)
+    delta = asarray(np.nan if endpoint else stop - start, dtype=computation_dtype)
     out = broadcast_start.reshape(bounds_shape)
   else:  # num == 0 degenerate case, match numpy behavior
     empty_shape = list(lax.broadcast_shapes(np.shape(start), np.shape(stop)))
@@ -557,7 +561,7 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
     out = lax.floor(out)
 
   sharding = util.canonicalize_device_to_sharding(device)
-  result = lax_internal._convert_element_type(out, dtype, sharding=sharding)
+  result = lax._convert_element_type(out, dtype, sharding=sharding)
   return (result, delta) if retstep else result
 
 
