@@ -451,7 +451,7 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Requires TPUv4+")
     kwargs = {}
     if jtu.get_tpu_version() == 6:
-      kwargs.update(dict(rtol=1e-2))
+      kwargs.update({"rtol": 1e-2})
     def kernel(x, y, out):
       out[:] = jax.lax.div(x[:], y[:])
 

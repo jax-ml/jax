@@ -133,7 +133,7 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(M_out, M)
 
   @jtu.sample_product(
-    [dict(shape=shape, bshape=bshape)
+    [{"shape": shape, "bshape": bshape}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for bshape in [shape[-1:] + s for s in [(), (1,), (3,)]]
     ],
@@ -506,7 +506,7 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(M_out, M)
 
   @jtu.sample_product(
-    [dict(shape=shape, bshape=bshape)
+    [{"shape": shape, "bshape": bshape}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for bshape in [shape[-1:] + s for s in [(), (1,), (3,)]]
     ],
@@ -1053,7 +1053,7 @@ class SparseObjectTest(sptu.SparseTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(shape=shape, bshape=bshape)
+      [{"shape": shape, "bshape": bshape}
        for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
        for bshape in [shape[-1:] + s for s in [(), (3,), (4,)]]
       ],
@@ -1114,7 +1114,7 @@ class SparseObjectTest(sptu.SparseTestCase):
     self.assertArraysEqual(M.astype(float), Msp.astype(float).todense())
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch)
+    [{"shape": shape, "n_batch": n_batch}
       for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for n_batch in range(len(shape) - 1)
     ],
@@ -1153,7 +1153,7 @@ class SparseRandomTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -1233,7 +1233,7 @@ class SparseUtilTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(n_batch=n_batch, n_dense=n_dense, expected_nse=expected_nse)
+          {"n_batch": n_batch, "n_dense": n_dense, "expected_nse": expected_nse}
           for n_batch, n_dense, expected_nse in [
               (0, 0, 4),
               (1, 0, 2),
@@ -1254,7 +1254,7 @@ class SparseUtilTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(n_batch=n_batch, n_dense=n_dense)
+          {"n_batch": n_batch, "n_dense": n_dense}
           for n_batch in range(3)
           for n_dense in range(3 - n_batch)
       ],
@@ -1268,7 +1268,7 @@ class SparseUtilTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(n_batch=n_batch, n_dense=n_dense, expected_nse=expected_nse)
+          {"n_batch": n_batch, "n_dense": n_dense, "expected_nse": expected_nse}
           for n_batch, n_dense, expected_nse in [
               (0, 0, 14),
               (1, 0, np.array([6, 8])),

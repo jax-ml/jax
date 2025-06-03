@@ -64,19 +64,19 @@ class LaxVmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, rtol=rtol, atol=atol)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape,
-          batch_group_count=batch_group_count,
-          feature_group_count=feature_group_count)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape,
+          "batch_group_count": batch_group_count,
+          "feature_group_count": feature_group_count}
      for batch_group_count, feature_group_count in [(1, 1), (2, 1), (1, 2)]
      for b, i, j in itertools.product([1, 2], repeat=3)
      for lhs_shape in [(b * batch_group_count, i * feature_group_count, 6, 7)]
      for rhs_shape in [(j * batch_group_count * feature_group_count, i, 1, 2)]],
-    [dict(lhs_bdim=lhs_bdim, rhs_bdim=rhs_bdim)
+    [{"lhs_bdim": lhs_bdim, "rhs_bdim": rhs_bdim}
         for lhs_bdim in itertools.chain([cast(Union[int, None], None)], range(5))
         for rhs_bdim in itertools.chain([cast(Union[int, None], None)], range(5))
         if (lhs_bdim, rhs_bdim) != (None, None)
     ],
-    [dict(dimension_numbers=dim_nums, perms=perms)
+    [{"dimension_numbers": dim_nums, "perms": perms}
      for dim_nums, perms in [
        (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
        (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
@@ -113,11 +113,11 @@ class LaxVmapTest(jtu.JaxTestCase):
                         atol=tol)
 
   @jtu.sample_product(
-    [dict(from_dtype=f, to_dtype=t)
+    [{"from_dtype": f, "to_dtype": t}
       for f, t in itertools.product([np.float32, np.int32, "float32", "int32"],
                                     repeat=2)
     ],
-    [dict(shape=shape, bdims=bdims)
+    [{"shape": shape, "bdims": bdims}
      for shape in [(2, 3)] for bdims in lax_test_util.all_bdims(shape)]
   )
   def testConvertElementType(self, shape, from_dtype, to_dtype, bdims):
@@ -126,7 +126,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 10, bdims, (shape,), (from_dtype,), rng)
 
   @jtu.sample_product(
-    [dict(shape=shape, bdims=bdims)
+    [{"shape": shape, "bdims": bdims}
      for shape in [(2, 4)] for bdims in lax_test_util.all_bdims(shape)],
     dtype=lax_test_util.float_dtypes,
     nexp=[1, 3, 5],
@@ -138,11 +138,11 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 10, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(from_dtype=f, to_dtype=t)
+    [{"from_dtype": f, "to_dtype": t}
       for f, t in itertools.product([np.float32, np.int32, "float32", "int32"],
                                     repeat=2)
     ],
-    [dict(shape=shape, bdims=bdims)
+    [{"shape": shape, "bdims": bdims}
      for shape in [(2, 3)] for bdims in lax_test_util.all_bdims(shape)]
   )
   def testBitcastElementType(self, shape, from_dtype, to_dtype, bdims,):
@@ -151,8 +151,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 10, bdims, (shape,), (from_dtype,), rng)
 
   @jtu.sample_product(
-    [dict(min_shape=min_shape, operand_shape=operand_shape, max_shape=max_shape,
-          bdims=bdims)
+    [{"min_shape": min_shape, "operand_shape": operand_shape, "max_shape": max_shape,
+          "bdims": bdims}
       for min_shape, operand_shape, max_shape in [
           [(), (2, 3), ()],
           [(2, 3), (2, 3), ()],
@@ -169,7 +169,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(lax.clamp, 10, bdims, shapes, [dtype] * 3, rng)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, bdims=bdims)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "bdims": bdims}
       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
       for bdims in lax_test_util.all_bdims(lhs_shape, rhs_shape)],
     dtype=lax_test_util.default_dtypes,
@@ -181,8 +181,8 @@ class LaxVmapTest(jtu.JaxTestCase):
                         rng, rtol={np.float16: 5e-2, np.float64: 5e-14})
 
   @jtu.sample_product(
-    [dict(bdims=bdims, lhs_shape=lhs_shape, rhs_shape=rhs_shape,
-          lhs_contracting=lhs_contracting, rhs_contracting=rhs_contracting)
+    [{"bdims": bdims, "lhs_shape": lhs_shape, "rhs_shape": rhs_shape,
+          "lhs_contracting": lhs_contracting, "rhs_contracting": rhs_contracting}
       for lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
           [(5,), (5,), [0], [0]],
           [(5, 7), (5,), [0], [0]],
@@ -207,8 +207,8 @@ class LaxVmapTest(jtu.JaxTestCase):
                         rng)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape,
-          dimension_numbers=dimension_numbers, bdims=bdims)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape,
+          "dimension_numbers": dimension_numbers, "bdims": bdims}
       for lhs_shape, rhs_shape, dimension_numbers in [
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
           ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1]))),
@@ -230,7 +230,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       self.assertFalse(eqn.primitive in ["transpose", "broadcast"])
 
   @jtu.sample_product(
-    [dict(shape=shape, bdims=bdims)
+    [{"shape": shape, "bdims": bdims}
      for shape in [(), (2, 3)] for bdims in lax_test_util.all_bdims(shape)],
     dtype=lax_test_util.default_dtypes,
     broadcast_sizes=[(), (2,), (1, 2)],
@@ -241,8 +241,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(inshape=inshape, outshape=outshape,
-          broadcast_dimensions=broadcast_dimensions, bdims=bdims)
+    [{"inshape": inshape, "outshape": outshape,
+          "broadcast_dimensions": broadcast_dimensions, "bdims": bdims}
       for inshape, outshape, broadcast_dimensions in [
           ([2], [2, 2], [0]),
           ([2], [2, 2], [1]),
@@ -259,7 +259,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (inshape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, dimensions=dimensions, bdims=bdims)
+    [{"arg_shape": arg_shape, "dimensions": dimensions, "bdims": bdims}
       for arg_shape, dimensions in [
           [(1,), (0,)],
           [(1,), (-1,)],
@@ -279,8 +279,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 10, bdims, (arg_shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, out_shape=out_shape, dimensions=dimensions,
-          bdims=bdims)
+    [{"arg_shape": arg_shape, "out_shape": out_shape, "dimensions": dimensions,
+          "bdims": bdims}
       for arg_shape, dimensions, out_shape in [
           [(3, 4), None, (12,)],
           [(2, 1, 4), None, (8,)],
@@ -298,7 +298,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 10, bdims, (arg_shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(shape=shape, bdims=bdims)
+    [{"shape": shape, "bdims": bdims}
      for shape in [(2, 3)] for bdims in lax_test_util.all_bdims(shape, ())],
     dtype=lax_test_util.default_dtypes,
     pads=[[(1, 2, 1), (0, 1, 0)]],
@@ -309,7 +309,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(fun, 5, bdims, (shape, ()), (dtype, dtype), rng)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, pred_shape=pred_shape, bdims=bdims)
+    [{"arg_shape": arg_shape, "pred_shape": pred_shape, "bdims": bdims}
       for arg_shape in [(), (3,), (2, 3)]
       for pred_shape in ([(), arg_shape] if arg_shape else [()])
       for bdims in lax_test_util.all_bdims(pred_shape, arg_shape, arg_shape)],
@@ -322,8 +322,8 @@ class LaxVmapTest(jtu.JaxTestCase):
                         (arg_dtype, arg_dtype, arg_dtype), rng)
 
   @jtu.sample_product(
-    [dict(shape=shape, starts=start_indices, limits=limit_indices,
-          strides=strides, bdims=bdims)
+    [{"shape": shape, "starts": start_indices, "limits": limit_indices,
+          "strides": strides, "bdims": bdims}
       for shape, start_indices, limit_indices, strides in [
         [(3,), (1,), (2,), None],
         [(7,), (4,), (7,), None],
@@ -345,7 +345,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(base_shape=base_shape, axis=axis, bdims=bdims)
+    [{"base_shape": base_shape, "axis": axis, "bdims": bdims}
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
       for axis in range(len(base_shape))
       for bdims in lax_test_util.all_bdims(base_shape)
@@ -363,7 +363,7 @@ class LaxVmapTest(jtu.JaxTestCase):
                         multiple_results=True)
 
   @jtu.sample_product(
-    [dict(shape=shape, perm=perm, bdims=bdims)
+    [{"shape": shape, "perm": perm, "bdims": bdims}
       for shape, perm in [
         [(3, 4), (1, 0)],
         [(3, 4), (0, 1)],
@@ -380,7 +380,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(init_val=init_val, op=op, dtype=dtype)
+    [{"init_val": init_val, "op": op, "dtype": dtype}
       for init_val, op, dtypes in [
           (0, lax.add, lax_test_util.default_dtypes),
           (1, lax.mul, lax_test_util.default_dtypes),
@@ -396,7 +396,7 @@ class LaxVmapTest(jtu.JaxTestCase):
           (dtypes.iinfo(np.uint64).max, lax.min, [np.uint64]),
       ]
       for dtype in dtypes],
-    [dict(shape=shape, dims=dims, bdims=bdims)
+    [{"shape": shape, "dims": dims, "bdims": bdims}
       for shape, dims in [
           [(3, 4, 5), (0,)], [(3, 4, 5), (1, 2)],
           [(3, 4, 5), (0, 2)], [(3, 4, 5), (0, 1, 2)]
@@ -410,7 +410,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(shape=shape, dims=dims, bdims=bdims)
+    [{"shape": shape, "dims": dims, "bdims": bdims}
       for shape, dims in [
           [(3, 4, 5), (0,)], [(3, 4, 5), (1, 2)],
           [(3, 4, 5), (0, 2)], [(3, 4, 5), (0, 1, 2)]
@@ -430,7 +430,7 @@ class LaxVmapTest(jtu.JaxTestCase):
                         multiple_results=True)
 
   @jtu.sample_product(
-    [dict(shape=shape, bdims=bdims, dim=dim)
+    [{"shape": shape, "bdims": bdims, "dim": dim}
       for shape in [(3, 4, 5)]
       for bdims in lax_test_util.all_bdims(shape)
       for dim in range(len(shape))],
@@ -443,15 +443,15 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(init_val=init_val, op=op, dtype=dtype)
+    [{"init_val": init_val, "op": op, "dtype": dtype}
      for init_val, op, dtypes in [
         (0, lax.add, [np.float32]),
         (-np.inf, lax.max, [np.float32]),
         (np.inf, lax.min, [np.float32]),
      ]
      for dtype in dtypes],
-    [dict(shape=shape, dims=dims, strides=strides, padding=padding,
-          base_dilation=base_dilation, window_dilation=window_dilation)
+    [{"shape": shape, "dims": dims, "strides": strides, "padding": padding,
+          "base_dilation": base_dilation, "window_dilation": window_dilation}
       for shape, dims, strides, padding, base_dilation, window_dilation in (
         itertools.chain(
           itertools.product(
@@ -482,13 +482,13 @@ class LaxVmapTest(jtu.JaxTestCase):
       self._CheckBatching(fun, 3, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(op=op, dtype=dtype)
+    [{"op": op, "dtype": dtype}
       for op, types in [
           (lax.cumsum, [np.float32, np.float64]),
           (lax.cumprod, [np.float32, np.float64]),
       ]
       for dtype in types],
-    [dict(shape=shape, bdims=bdims, axis=axis)
+    [{"shape": shape, "bdims": bdims, "axis": axis}
       for shape in [[10], [3, 4, 5]]
       for axis in range(len(shape))
       for bdims in lax_test_util.all_bdims(shape)],
@@ -502,7 +502,7 @@ class LaxVmapTest(jtu.JaxTestCase):
                         (shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(shape=shape, dims=dims, strides=strides, bdims=bdims)
+    [{"shape": shape, "dims": dims, "strides": strides, "bdims": bdims}
      for shape, dims, strides in itertools.chain(
         itertools.product(
             [(4, 6)],
@@ -553,7 +553,7 @@ class LaxVmapTest(jtu.JaxTestCase):
                           (dtype, dtype), rng)
 
   @jtu.sample_product(
-    [dict(shape=shape, fft_ndims=fft_ndims, bdims=bdims)
+    [{"shape": shape, "fft_ndims": fft_ndims, "bdims": bdims}
     for shape in [(5,), (3, 4, 5), (2, 3, 4, 5)]
     for bdims in lax_test_util.all_bdims(shape)
     for fft_ndims in range(0, min(3, len(shape)) + 1)],
@@ -568,8 +568,8 @@ class LaxVmapTest(jtu.JaxTestCase):
                         rtol=1e-5)
 
   @jtu.sample_product(
-    [dict(shape=shape, idxs=idxs, dnums=dnums, slice_sizes=slice_sizes,
-          bdims=bdims)
+    [{"shape": shape, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
+          "bdims": bdims}
       for shape, idxs, dnums, slice_sizes in [
           ((5,), np.array([[0], [2]]), lax.GatherDimensionNumbers(
             offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
@@ -607,8 +607,8 @@ class LaxVmapTest(jtu.JaxTestCase):
                         jtu.rand_default(self.rng()))
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, idxs=idxs, update_shape=update_shape,
-          dnums=dnums, bdims=bdims)
+    [{"arg_shape": arg_shape, "idxs": idxs, "update_shape": update_shape,
+          "dnums": dnums, "bdims": bdims}
       for arg_shape, idxs, update_shape, dnums in [
           ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
@@ -640,8 +640,8 @@ class LaxVmapTest(jtu.JaxTestCase):
                         rtol={np.float16: 5e-3, dtypes.bfloat16: 7e-2})
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, idxs=idxs, update_shape=update_shape,
-          dnums=dnums, bdims=bdims)
+    [{"arg_shape": arg_shape, "idxs": idxs, "update_shape": update_shape,
+          "dnums": dnums, "bdims": bdims}
       for arg_shape, idxs, update_shape, dnums in [
           ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
@@ -691,7 +691,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       lax.broadcast_shapes(err_shape2)  # pytype: disable=wrong-arg-types
 
   @jtu.sample_product(
-    [dict(shape=shape, bdims=bdims)
+    [{"shape": shape, "bdims": bdims}
       for shape in [(4,), (3, 5, 3)]
       for bdims in lax_test_util.all_bdims(shape)],
     k=[1, 3],
@@ -710,7 +710,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op2, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
-    [dict(shape=shape, bdims=bdims)
+    [{"shape": shape, "bdims": bdims}
       for shape in [(8,), (3, 4, 5)]
       for bdims in lax_test_util.all_bdims(shape)],
     dtype=lax_test_util.default_dtypes,
@@ -729,7 +729,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     self.assertArraysEqual(out[1], y)
 
   @jtu.sample_product(
-    [dict(shape=shape, bdims=bdims, dimension=dimension, arity=arity)
+    [{"shape": shape, "bdims": bdims, "dimension": dimension, "arity": arity}
       for shape in [(2, 3)]
       for dimension in [0, 1]
       for arity in range(3)

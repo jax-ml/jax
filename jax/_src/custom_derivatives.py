@@ -1806,7 +1806,7 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     _, invars = split_list(eqn.invars, [eqn.params["num_consts"]])
     invars = [v for used, v in zip(used_ins, invars) if used]
     new_eqn = pe.new_jaxpr_eqn(
-        invars, outvars, core.closed_call_p, dict(call_jaxpr=closed_jaxpr),
+        invars, outvars, core.closed_call_p, {'call_jaxpr': closed_jaxpr},
         closed_jaxpr.effects, eqn.source_info, eqn.ctx)
     used_ins = [False] * eqn.params["num_consts"] + used_ins
     return used_ins, new_eqn

@@ -1016,7 +1016,7 @@ def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
         sharding._to_xla_hlo_sharding(ndim), mesh)[0]
 
   out_mesh = out_mesh.update_axis_types(
-      {a: AxisType.Manual for a in axis_ctx.manual_axes})
+      dict.fromkeys(axis_ctx.manual_axes, AxisType.Manual))
   out = sharding_impls.NamedSharding(out_mesh, spec,
                                      memory_kind=sharding.memory_kind)
   manual_axes = out.mesh.manual_axes
@@ -2959,15 +2959,15 @@ def custom_call(
     api_version = 1
   else:
     raise ValueError("custom_call backend_config unexpected type: " + str(backend_config))
-  attributes = dict(
-      call_target_name=ir.StringAttr.get(call_target_name),
-      has_side_effect=ir.BoolAttr.get(has_side_effect),
-      backend_config=backend_config_attr,
-      api_version=i32_attr(api_version),
-      called_computations=ir.ArrayAttr.get(
+  attributes = {
+      "call_target_name": ir.StringAttr.get(call_target_name),
+      "has_side_effect": ir.BoolAttr.get(has_side_effect),
+      "backend_config": backend_config_attr,
+      "api_version": i32_attr(api_version),
+      "called_computations": ir.ArrayAttr.get(
           [ir.FlatSymbolRefAttr.get(name) for name in called_computations]
       ),
-  )
+  }
   if operand_output_aliases is not None:
     attributes["output_operand_aliases"] = ir.ArrayAttr.get([
       hlo.OutputOperandAlias.get(

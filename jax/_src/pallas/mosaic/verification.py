@@ -370,7 +370,7 @@ def _print_op(ctx, op):
     case "arith.andi":
       return bin_op(ctx, _model_type(op.result.type), "&", *op.operands)
     case "arith.select":
-      cond, if_true, if_false = map(lambda o: ctx.get(o, None), op.operands)
+      cond, if_true, if_false = (ctx.get(o, None) for o in op.operands)
       if cond is None or if_true is None or if_false is None:
         return NotImplemented
       result_ty = _model_type(op.result.type)

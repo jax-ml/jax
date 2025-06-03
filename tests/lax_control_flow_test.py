@@ -1033,7 +1033,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
             r" differ:.*true_fun output at path \['a'\] is a pytree leaf but"
             r" false_fun output at path \['a'\] is a <class 'tuple'>",
             re.DOTALL)):
-      lax.cond(True, lambda top: dict(a=2.), lambda fop: dict(a=(3., 3.)), 1.)
+      lax.cond(True, lambda top: {'a': 2.}, lambda fop: {'a': (3., 3.)}, 1.)
 
     with self.assertRaisesRegex(
         TypeError,
@@ -1072,7 +1072,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
             r" their"
             " Python types differ.",
             re.DOTALL)):
-      lax.switch(1, [lambda _: dict(a=2.), lambda _: dict(a=(3., 3.))], 1.)
+      lax.switch(1, [lambda _: {'a': 2.}, lambda _: {'a': (3., 3.)}], 1.)
 
     with self.assertRaisesRegex(
         TypeError,
@@ -1082,8 +1082,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
             r" corresponding output of branch1 has type float32\[\], so the"
             " shapes do not match",
             re.DOTALL)):
-      lax.switch(1, [lambda _: dict(a=jnp.array([1.], jnp.float32)),
-                     lambda _: dict(a=jnp.float32(1.))],
+      lax.switch(1, [lambda _: {'a': jnp.array([1.], jnp.float32)},
+                     lambda _: {'a': jnp.float32(1.)}],
                  1.)
 
   def testCondOneBranchConstant(self):
@@ -2383,7 +2383,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jax.linearize(func, 1.)  # doesn't crash
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_{loop=}", loop=loop)
+      {'testcase_name': f"_{loop=}", 'loop': loop}
       for loop in ["while", "fori_inside_cond", "fori_inside_scan"])
   def testWhileGradError(self, loop: str = "fori_inside_scan"):
     # Raise error for vjp for loops

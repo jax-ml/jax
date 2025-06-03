@@ -266,7 +266,7 @@ def _tpu_custom_call_lowering(
   # This is because we do not want to pollute the backend_config with this
   # information.
   if kernel_name is not None:
-    extra_attributes = dict(kernel_name=ir.StringAttr.get(kernel_name))
+    extra_attributes = {"kernel_name": ir.StringAttr.get(kernel_name)}
   has_side_effects = has_side_effects if has_side_effects is not None else False
   call = mlir.custom_call(
       "tpu_custom_call",

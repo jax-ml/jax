@@ -633,19 +633,19 @@ def _infer_params_impl(
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
           len(donated_invars) == num_attrs_in + len(consts) + len(args_flat))
 
-  params = dict(
-      jaxpr=jaxpr,
-      in_shardings=in_shardings_flat,
-      out_shardings=out_shardings_flat,
-      in_layouts=in_layouts_flat,
-      out_layouts=out_layouts_flat,
-      donated_invars=donated_invars,
-      ctx_mesh=ctx_mesh,
-      name=fun_qual_name(flat_fun),
-      keep_unused=ji.keep_unused,
-      inline=ji.inline,
-      compiler_options_kvs=ji.compiler_options_kvs,
-  )
+  params = {
+      'jaxpr': jaxpr,
+      'in_shardings': in_shardings_flat,
+      'out_shardings': out_shardings_flat,
+      'in_layouts': in_layouts_flat,
+      'out_layouts': out_layouts_flat,
+      'donated_invars': donated_invars,
+      'ctx_mesh': ctx_mesh,
+      'name': fun_qual_name(flat_fun),
+      'keep_unused': ji.keep_unused,
+      'inline': ji.inline,
+      'compiler_options_kvs': ji.compiler_options_kvs,
+  }
   return PjitParams(consts, params, in_avals, in_tree, out_tree(),
                     donated_invars, dbg.arg_names, len(consts),
                     attrs_tracked, box_data), args_flat
@@ -2406,15 +2406,15 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
   known_out_layouts = keep_where(known_out_layouts, keep)
   del keep
 
-  known_params = dict(
-      jaxpr=known_jaxpr, in_shardings=keep_where(in_shardings, known_ins),
-      out_shardings=known_out_shardings,
-      in_layouts=keep_where(in_layouts, known_ins),
-      out_layouts=known_out_layouts,
-      donated_invars=keep_where(donated_invars, known_ins),
-      ctx_mesh=ctx_mesh,
-      name=name, keep_unused=keep_unused, inline=inline,
-      compiler_options_kvs=compiler_options_kvs)
+  known_params = {
+      'jaxpr': known_jaxpr, 'in_shardings': keep_where(in_shardings, known_ins),
+      'out_shardings': known_out_shardings,
+      'in_layouts': keep_where(in_layouts, known_ins),
+      'out_layouts': known_out_layouts,
+      'donated_invars': keep_where(donated_invars, known_ins),
+      'ctx_mesh': ctx_mesh,
+      'name': name, 'keep_unused': keep_unused, 'inline': inline,
+      'compiler_options_kvs': compiler_options_kvs}
   assert len(known_params['out_shardings']) == len(known_params['jaxpr'].out_avals)
   assert len(known_params['out_layouts']) == len(known_params['jaxpr'].out_avals)
 
@@ -2437,19 +2437,19 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
   unknown_jaxpr = pe.move_binders_to_back(
       unknown_jaxpr, [True] * num_residuals + [False] * sum(unknown_ins))
   # Prepare unknown tracers
-  unknown_params = dict(
-      jaxpr=unknown_jaxpr,
-      in_shardings=(keep_where(in_shardings, unknown_ins) + res_shardings),
-      out_shardings=keep_where(out_shardings, unknown_outs),
-      in_layouts=(keep_where(in_layouts, unknown_ins) + res_layouts),
-      out_layouts=keep_where(out_layouts, unknown_outs),
-      donated_invars=(keep_where(donated_invars, unknown_ins) +
+  unknown_params = {
+      'jaxpr': unknown_jaxpr,
+      'in_shardings': (keep_where(in_shardings, unknown_ins) + res_shardings),
+      'out_shardings': keep_where(out_shardings, unknown_outs),
+      'in_layouts': (keep_where(in_layouts, unknown_ins) + res_layouts),
+      'out_layouts': keep_where(out_layouts, unknown_outs),
+      'donated_invars': (keep_where(donated_invars, unknown_ins) +
                       (False,) * num_residuals),
-      ctx_mesh=ctx_mesh,
-      name=name,
-      keep_unused=keep_unused,
-      inline=inline,
-      compiler_options_kvs=compiler_options_kvs)
+      'ctx_mesh': ctx_mesh,
+      'name': name,
+      'keep_unused': keep_unused,
+      'inline': inline,
+      'compiler_options_kvs': compiler_options_kvs}
   unknown_tracers_in = [t for t in in_tracers if not t.pval.is_known()]
   unknown_out_avals = unknown_jaxpr.out_avals
   unknown_tracers_out = [
@@ -3076,7 +3076,7 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
           'Going from `Manual` AxisType to `Auto` or `Explicit` AxisType is not'
           ' allowed. Please file a bug at https://github.com/jax-ml/jax/issues'
           ' with your use case')
-  return mesh_to_use.update_axis_types({a: axis_type for a in axes})
+  return mesh_to_use.update_axis_types(dict.fromkeys(axes, axis_type))
 
 def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
               out_sharding=None):
@@ -3228,7 +3228,7 @@ def _get_states(attrs_tracked):
   return vals
 
 def static():
-  return dataclasses.field(metadata=dict(static=True))
+  return dataclasses.field(metadata={'static': True})
 
 @tree_util.register_dataclass
 @dataclasses.dataclass

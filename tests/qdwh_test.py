@@ -118,7 +118,7 @@ class QdwhTest(jtu.JaxTestCase):
     self._testQdwh(a)
 
   @jtu.sample_product(
-      [dict(m=m, n=n) for m, n in [(6, 6), (8, 4)]],
+      [{'m': m, 'n': n} for m, n in [(6, 6), (8, 4)]],
       padding=(None, (3, 2)),
       dtype=float_types + complex_types,
   )
@@ -141,7 +141,7 @@ class QdwhTest(jtu.JaxTestCase):
       self._CompileAndCheck(lsp_linalg_fn, args_maker)
 
   @jtu.sample_product(
-      [dict(m=m, n=n, r=r) for m, n, r in [(10, 10, 8), (8, 8, 7), (12, 8, 5)]],
+      [{'m': m, 'n': n, 'r': r} for m, n, r in [(10, 10, 8), (8, 8, 7), (12, 8, 5)]],
       log_cond=np.linspace(0, 1, 4),
       dtype=float_types + complex_types,
   )
@@ -181,7 +181,7 @@ class QdwhTest(jtu.JaxTestCase):
       )
 
   @jtu.sample_product(
-      [dict(m=m, n=n, r=r, c=c) for m, n, r, c in [(4, 3, 1, 1), (5, 2, 0, 0)]],
+      [{'m': m, 'n': n, 'r': r, 'c': c} for m, n, r, c in [(4, 3, 1, 1), (5, 2, 0, 0)]],
       dtype=float_types + complex_types,
   )
   def testQdwhWithTinyElement(self, m, n, r, c, dtype):

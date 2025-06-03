@@ -181,7 +181,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
 
   @jtu.parameterized_filterable(
       kwargs=[
-          dict(scratch=scratch, vmap=vmap, dyn_grid=dyn_grid)
+          {"scratch": scratch, "vmap": vmap, "dyn_grid": dyn_grid}
           for scratch in [True, False]
           for vmap in [False, True]
           for dyn_grid in [False, True]
@@ -1741,7 +1741,7 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
 class PallasCallTest(PallasBaseTest):
 
   @parameterized.parameters([
-      dict(shape=shape, dty=dty)
+      {"shape": shape, "dty": dty}
       for shape, dty in itertools.product(
           [(4, 2, 9), (1, 1025), (1024, 1024)], [jnp.float32, jnp.int32]
       )
@@ -1813,13 +1813,13 @@ class PallasCallTest(PallasBaseTest):
     )
 
   @parameterized.parameters([
-      dict(
-          m=m,
-          replicated=replicated,
-          reduced_dims=reduced_dims,
-          dty=dty,
-          reduce_func=reduce_func,
-      )
+      {
+          "m": m,
+          "replicated": replicated,
+          "reduced_dims": reduced_dims,
+          "dty": dty,
+          "reduce_func": reduce_func,
+      }
       for m, replicated, reduced_dims, dty, reduce_func in itertools.product(
           [128, 256],
           [(True, True), (False, True), (True, False)],

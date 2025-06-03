@@ -1689,18 +1689,18 @@ def _cpp_pmap(
     for arg in p.flat_args:
       dispatch.check_arg(arg)
 
-    params = dict(
-        backend=backend,
-        axis_name=axis_name,
-        axis_size=p.local_axis_size,
-        global_axis_size=p.global_axis_size,
-        devices=p.devices,
-        in_axes=p.in_axes_flat,
-        out_axes_thunk=p.out_axes_thunk,
-        name=p.flat_fun.__name__,
-        donated_invars=p.donated_invars,
-        is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-    )
+    params = {
+        "backend": backend,
+        "axis_name": axis_name,
+        "axis_size": p.local_axis_size,
+        "global_axis_size": p.global_axis_size,
+        "devices": p.devices,
+        "in_axes": p.in_axes_flat,
+        "out_axes_thunk": p.out_axes_thunk,
+        "name": p.flat_fun.__name__,
+        "donated_invars": p.donated_invars,
+        "is_explicit_global_axis_size": p.is_explicit_global_axis_size,
+    }
 
     execute: Callable | None = None
     with core.take_current_trace() as trace:

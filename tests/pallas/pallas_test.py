@@ -323,38 +323,38 @@ class PallasCallTest(PallasBaseTest):
 
   @jtu.parameterized_filterable(
       kwargs=[
-          dict(shape=(), block_shape=()),
-          dict(shape=(2,), block_shape=(2,)),
-          dict(shape=(128,), block_shape=(128,)),
-          dict(shape=(128,), block_shape=(64,), dtype=np.int16),
-          dict(shape=(128,), block_shape=(128,), dtype=np.int16),
-          dict(shape=(1024,), block_shape=(128,), dtype=np.int16),
-          dict(shape=(1024,), block_shape=(256,), dtype=np.int16),
-          dict(shape=(128,), block_shape=(64,)),
-          dict(shape=(2, 2), block_shape=(2, 2)),
-          dict(shape=(3, 3), block_shape=(3, 3)),
-          dict(shape=(4, 2), block_shape=(2, 2)),
-          dict(shape=(6, 2, 2), block_shape=(2, 2, 2)),
-          dict(shape=(6, 2, 2), block_shape=(3, 2, 2)),
-          dict(shape=(16, 128), block_shape=(8, 128)),
-          dict(shape=(6, 16, 128), block_shape=(2, 8, 128)),
-          dict(shape=(6, 16, 128), block_shape=(3, 8, 128)),
-          dict(shape=(16, 64), block_shape=(8, 64)),
-          dict(shape=(16, 128), block_shape=(4, 128)),
-          dict(shape=(16, 128), block_shape=(2, 128)),
-          dict(shape=(16, 128), block_shape=(8, 64)),
+          {"shape": (), "block_shape": ()},
+          {"shape": (2,), "block_shape": (2,)},
+          {"shape": (128,), "block_shape": (128,)},
+          {"shape": (128,), "block_shape": (64,), "dtype": np.int16},
+          {"shape": (128,), "block_shape": (128,), "dtype": np.int16},
+          {"shape": (1024,), "block_shape": (128,), "dtype": np.int16},
+          {"shape": (1024,), "block_shape": (256,), "dtype": np.int16},
+          {"shape": (128,), "block_shape": (64,)},
+          {"shape": (2, 2), "block_shape": (2, 2)},
+          {"shape": (3, 3), "block_shape": (3, 3)},
+          {"shape": (4, 2), "block_shape": (2, 2)},
+          {"shape": (6, 2, 2), "block_shape": (2, 2, 2)},
+          {"shape": (6, 2, 2), "block_shape": (3, 2, 2)},
+          {"shape": (16, 128), "block_shape": (8, 128)},
+          {"shape": (6, 16, 128), "block_shape": (2, 8, 128)},
+          {"shape": (6, 16, 128), "block_shape": (3, 8, 128)},
+          {"shape": (16, 64), "block_shape": (8, 64)},
+          {"shape": (16, 128), "block_shape": (4, 128)},
+          {"shape": (16, 128), "block_shape": (2, 128)},
+          {"shape": (16, 128), "block_shape": (8, 64)},
           # Blocks larger than the number of lands and sublanes.
-          dict(shape=(9, 128), block_shape=(9, 64)),
-          dict(shape=(9, 128), block_shape=(9, 128)),
-          dict(shape=(18, 128), block_shape=(9, 128)),
-          dict(shape=(8, 129), block_shape=(8, 129)),
-          dict(shape=(9, 129), block_shape=(8, 129)),
-          dict(shape=(9, 129), block_shape=(9, 129)),
+          {"shape": (9, 128), "block_shape": (9, 64)},
+          {"shape": (9, 128), "block_shape": (9, 128)},
+          {"shape": (18, 128), "block_shape": (9, 128)},
+          {"shape": (8, 129), "block_shape": (8, 129)},
+          {"shape": (9, 129), "block_shape": (8, 129)},
+          {"shape": (9, 129), "block_shape": (9, 129)},
           # Tiling of small arrays
-          dict(shape=(1, 128), block_shape=(4, 128)),
-          dict(shape=(2, 128), block_shape=(4, 128)),
-          dict(shape=(3, 128), block_shape=(4, 128)),
-          dict(shape=(5, 128), block_shape=(8, 128)),
+          {"shape": (1, 128), "block_shape": (4, 128)},
+          {"shape": (2, 128), "block_shape": (4, 128)},
+          {"shape": (3, 128), "block_shape": (4, 128)},
+          {"shape": (5, 128), "block_shape": (8, 128)},
       ]
   )
   def test_block_spec_valid_block_shapes(self, *,
@@ -582,8 +582,8 @@ class PallasCallTest(PallasBaseTest):
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
   @parameterized.named_parameters(*(
-      dict(testcase_name=f"{batch_size}_{size}_{block_size}_{dtype}",
-           batch_size=batch_size, size=size, block_size=block_size, dtype=dtype)
+      {"testcase_name": f"{batch_size}_{size}_{block_size}_{dtype}",
+           "batch_size": batch_size, "size": size, "block_size": block_size, "dtype": dtype}
       for batch_size in [1, 2, 4, 23]
       for size in [1, 2, 129, 255, 256]
       for block_size in [1, 2, 32, 64, 128, 256]
@@ -778,7 +778,7 @@ class PallasCallTest(PallasBaseTest):
 
     key0, key1 = random.split(random.key(0))
     # FIXME(cjfj): TPU fails with `uint8` values >= 128.
-    kwargs = dict(minval=jnp.iinfo(dtype).min, maxval=128, dtype=dtype)
+    kwargs = {"minval": jnp.iinfo(dtype).min, "maxval": 128, "dtype": dtype}
     # TODO(cjfj): Investigate why this fails on GPU with `k == 16`.
     x = random.randint(key0, (32, 128), **kwargs)
     y = random.randint(key1, (128, 64), **kwargs)
@@ -1101,7 +1101,7 @@ class ApiErrorTest(PallasBaseTest):
                    "There are 1 mismatches, including:"
                    ".* at \\[1\\], `in_specs` is a pytree leaf but "
                    "`inputs` is a.*", re.DOTALL)):
-      f(a, dict(a=a))
+      f(a, {"a": a})
 
   def test_pallas_call_index_map_wrong_number_of_arguments(self):
     a = np.arange(256, dtype=np.int32)
@@ -1133,14 +1133,14 @@ class ApiErrorTest(PallasBaseTest):
       return 0, 0
     f = self.pallas_call(lambda x_ref, o_ref: None,
                          out_shape=a,
-                         in_specs=[dict(one=pl.BlockSpec((4,), my_index_map),
-                                        two=pl.BlockSpec((8,), my_index_map))])
+                         in_specs=[{"one": pl.BlockSpec((4,), my_index_map),
+                                        "two": pl.BlockSpec((8,), my_index_map)}])
     with self.assertRaisesRegex(
         ValueError,
         "Index map function my_index_map at .*pallas_test.py.* "
         "for args\\[0\\]\\['one'\\] must return 1 values to match .*"
         "Currently returning 2 values."):
-      f(dict(one=a, two=a))
+      f({"one": a, "two": a})
 
   def test_pallas_call_index_map_wrong_return_type(self):
     a = np.arange(256, dtype=np.int32)

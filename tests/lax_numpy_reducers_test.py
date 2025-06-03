@@ -190,8 +190,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
-      [dict(shape=shape, axis=axis, dtype=dtype)
+      [{"name": rec.name, "rng_factory": rec.rng_factory, "inexact": rec.inexact}],
+      [{"shape": shape, "axis": axis, "dtype": dtype}
         for shape in rec.shapes
         for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
@@ -244,9 +244,9 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
-            tolerance=rec.tolerance)],
-      [dict(shape=shape, axis=axis, dtype=dtype)
+      [{"name": rec.name, "rng_factory": rec.rng_factory, "inexact": rec.inexact,
+            "tolerance": rec.tolerance}],
+      [{"shape": shape, "axis": axis, "dtype": dtype}
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
         if jtu.is_valid_shape(shape, dtype)
@@ -293,8 +293,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
-      [dict(shape=shape, axis=axis, dtype=dtype)
+      [{"name": rec.name, "rng_factory": rec.rng_factory, "inexact": rec.inexact}],
+      [{"shape": shape, "axis": axis, "dtype": dtype}
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
         if jtu.is_valid_shape(shape, dtype)
@@ -331,8 +331,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
-      [dict(shape=shape, axis=axis, dtype=dtype)
+      [{"name": rec.name, "rng_factory": rec.rng_factory, "inexact": rec.inexact}],
+      [{"shape": shape, "axis": axis, "dtype": dtype}
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
         if jtu.is_valid_shape(shape, dtype)
@@ -371,8 +371,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
-      [dict(shape=shape, axis=axis)
+      [{"name": rec.name, "rng_factory": rec.rng_factory, "inexact": rec.inexact}],
+      [{"shape": shape, "axis": axis}
         for shape in rec.shapes if np.prod(shape) == 0
         for axis in range(-len(shape), len(shape)) if shape[axis] >= 1
       ],
@@ -408,9 +408,9 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
-            tol=rec.tolerance)],
-      [dict(shape=shape, axis=axis, dtype=dtype, whereshape=whereshape)
+      [{"name": rec.name, "rng_factory": rec.rng_factory, "inexact": rec.inexact,
+            "tol": rec.tolerance}],
+      [{"shape": shape, "axis": axis, "dtype": dtype, "whereshape": whereshape}
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
         if jtu.is_valid_shape(shape, dtype)
@@ -473,9 +473,9 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
-            tol=rec.tolerance)],
-      [dict(shape=shape, axis=axis, dtype=dtype, whereshape=whereshape)
+      [{"name": rec.name, "rng_factory": rec.rng_factory, "inexact": rec.inexact,
+            "tol": rec.tolerance}],
+      [{"shape": shape, "axis": axis, "dtype": dtype, "whereshape": whereshape}
         for shape in rec.shapes for dtype in rec.dtypes
         for whereshape in _compatible_shapes(shape)
         for axis in list(range(-len(shape), len(shape))) + [None]
@@ -523,7 +523,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       jnp.sum(jnp.arange(3), (0, 0))
 
   @jtu.sample_product(
-    [dict(shape=shape, dtype=dtype, axis=axis, weights_shape=weights_shape)
+    [{"shape": shape, "dtype": dtype, "axis": axis, "weights_shape": weights_shape}
       for shape, dtype in _shape_and_dtypes(nonempty_shapes, number_dtypes)
       for axis in list(range(-len(shape), len(shape))) + [None] + [tuple(range(len(shape)))]
       # `weights_shape` is either `None`, same as the averaged axis, or same as
@@ -536,7 +536,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   )
   def testAverage(self, shape, dtype, axis, weights_shape, returned, keepdims):
     rng = jtu.rand_default(self.rng())
-    kwds = dict(returned=returned, keepdims=keepdims)
+    kwds = {"returned": returned, "keepdims": keepdims}
     if weights_shape is None:
       np_fun = lambda x: np.average(x, axis, **kwds)
       jnp_fun = lambda x: jnp.average(x, axis, **kwds)
@@ -654,8 +654,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertEqual(jnp.isnan(z).sum(), 0)
 
   @jtu.sample_product(
-    [dict(shape=shape, dtype=dtype, y_dtype=y_dtype, rowvar=rowvar,
-          y_shape=y_shape)
+    [{"shape": shape, "dtype": dtype, "y_dtype": y_dtype, "rowvar": rowvar,
+          "y_shape": y_shape}
       for shape in [(5,), (10, 5), (5, 10)]
       for dtype in all_dtypes
       for y_dtype in [None, dtype]
@@ -679,7 +679,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                           rng(y_shape, y_dtype) if y_dtype else None,
                           wrng(wshape, int) if fweights else None,
                           wrng(wshape, wdtype) if aweights else None]
-    kwargs = dict(rowvar=rowvar, ddof=ddof, bias=bias)
+    kwargs = {"rowvar": rowvar, "ddof": ddof, "bias": bias}
     np_fun = lambda m, y, f, a: np.cov(m, y, fweights=f, aweights=a, **kwargs)
     jnp_fun = lambda m, y, f, a: jnp.cov(m, y, fweights=f, aweights=a, **kwargs)
     tol = {jnp.bfloat16: 5E-2, np.float16: 1E-2, np.float32: 1e-5,
@@ -691,7 +691,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                           rtol=tol)
 
   @jtu.sample_product(
-    [dict(op=op, q_rng=q_rng)
+    [{"op": op, "q_rng": q_rng}
       for (op, q_rng) in (
         ("percentile", partial(jtu.rand_uniform, low=0., high=100.)),
         ("quantile", partial(jtu.rand_uniform, low=0., high=1.)),
@@ -699,7 +699,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
         ("nanquantile", partial(jtu.rand_uniform, low=0., high=1.)),
       )
     ],
-    [dict(a_shape=a_shape, axis=axis)
+    [{"a_shape": a_shape, "axis": axis}
       for a_shape, axis in (
         ((7,), None),
         ((6, 7,), None),
@@ -763,7 +763,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertEqual(jnp.percentile(x, 50), 3.5)
 
   @jtu.sample_product(
-    [dict(a_shape=a_shape, axis=axis)
+    [{"a_shape": a_shape, "axis": axis}
       for a_shape, axis in (
         ((7,), None),
         ((6, 7,), None),
@@ -819,12 +819,12 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertAllClose(expected, actual, atol=0)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{"shape": shape, "axis": axis}
       for shape in all_shapes
       for axis in list(
         range(-len(shape), len(shape))
       ) + ([None] if len(shape) == 1 else [])],
-    [dict(dtype=dtype, out_dtype=out_dtype)
+    [{"dtype": dtype, "out_dtype": out_dtype}
      for dtype in (all_dtypes+[None])
      for out_dtype in (
        complex_dtypes if np.issubdtype(dtype, np.complexfloating)
@@ -845,7 +845,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       if out_dtype in unsigned_dtypes:
         x = 10 * jnp.abs(x)
       return [x]
-    kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
+    kwargs = {"axis": axis, "dtype": out_dtype, "include_initial": include_initial}
 
     if jtu.numpy_version() >= (2, 1, 0):
       np_op = np.cumulative_sum
@@ -887,12 +887,12 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     np.testing.assert_array_equal(np.array([[True], [True], [False]]), out)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{"shape": shape, "axis": axis}
       for shape in all_shapes
       for axis in list(
         range(-len(shape), len(shape))
       ) + ([None] if len(shape) == 1 else [])],
-    [dict(dtype=dtype, out_dtype=out_dtype)
+    [{"dtype": dtype, "out_dtype": out_dtype}
      for dtype in (all_dtypes+[None])
      for out_dtype in (
        complex_dtypes if np.issubdtype(dtype, np.complexfloating)
@@ -915,7 +915,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       if out_dtype in unsigned_dtypes:
         x = 10 * jnp.abs(x)
       return [x]
-    kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
+    kwargs = {"axis": axis, "dtype": out_dtype, "include_initial": include_initial}
 
     if jtu.numpy_version() >= (2, 1, 0):
       np_op = np.cumulative_prod

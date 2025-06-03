@@ -111,7 +111,7 @@ A Python function can be functionally pure even if it actually uses stateful obj
 :outputId: 78d55886-54de-483c-e7c4-bafd1d2c7219
 
 def pure_uses_internal_state(x):
-  state = dict(even=0, odd=0)
+  state = {"even": 0, "odd": 0}
   for i in range(10):
     state['even' if i % 2 == 0 else 'odd'] += x
   return state['even'] + state['odd']

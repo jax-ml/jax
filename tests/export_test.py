@@ -82,13 +82,13 @@ class ForTestingOrderedEffect5NoEq(effects.Effect):
   pass
 
 
-_testing_effects = dict(
-  ForTestingOrderedEffect1=ForTestingOrderedEffect1(),
-  ForTestingOrderedEffect2=ForTestingOrderedEffect2(),
-  ForTestingUnorderedEffect1=ForTestingUnorderedEffect1(),
-  ForTestingOrderedEffect4NoNullary=ForTestingOrderedEffect4NoNullary(42),
-  ForTestingOrderedEffect5NoEq=ForTestingOrderedEffect5NoEq(),
-)
+_testing_effects = {
+  "ForTestingOrderedEffect1": ForTestingOrderedEffect1(),
+  "ForTestingOrderedEffect2": ForTestingOrderedEffect2(),
+  "ForTestingUnorderedEffect1": ForTestingUnorderedEffect1(),
+  "ForTestingOrderedEffect4NoNullary": ForTestingOrderedEffect4NoNullary(42),
+  "ForTestingOrderedEffect5NoEq": ForTestingOrderedEffect5NoEq(),
+}
 # Register the effects
 for effect in _testing_effects.values():
   effect_class = effect.__class__
@@ -115,7 +115,7 @@ mlir.register_lowering(testing_primitive_with_effect_p,
                        lowering_testing_primitive_with_effect)
 
 ## Setup for multi-platform lowering
-_testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
+_testing_multi_platform_to_add = {"cpu": 2., "tpu": 3., "cuda": 4., "rocm": 5.}
 
 def _testing_multi_platform_func(x, *,
                                  effect_class_name: str | None = None):
@@ -187,14 +187,14 @@ class JaxExportTest(jtu.JaxTestCase):
     a = np.arange(4, dtype=np.float32)
     b = np.arange(6, dtype=np.float32)
     def f(a_b_pair, *, a, b):
-      return (dict(res=a_b_pair, a=a, b=b), jnp.sin(a), jnp.cos(b))
+      return ({"res": a_b_pair, "a": a, "b": b}, jnp.sin(a), jnp.cos(b))
 
     exp = get_exported(jax.jit(f), platforms=("cpu",))((a, b), a=a, b=b)
     a_aval = core.ShapedArray(a.shape, a.dtype)
     b_aval = core.ShapedArray(b.shape, b.dtype)
     self.assertEqual(exp.platforms, ("cpu",))
     args = ((a, b),)
-    kwargs = dict(a=a, b=b)
+    kwargs = {"a": a, "b": b}
     self.assertEqual(exp.in_tree, jax.tree.flatten((args, kwargs))[1])
     self.assertEqual(exp.in_avals, (a_aval, b_aval, a_aval, b_aval))
     self.assertEqual(exp.out_tree, jax.tree.flatten(f(*args, **kwargs))[1])
@@ -304,7 +304,7 @@ class JaxExportTest(jtu.JaxTestCase):
     a = np.arange(4, dtype=np.float32)
     b = np.arange(6, dtype=np.float32)
     def f(a_b_pair, a, b):
-      return (dict(res=a_b_pair, a=a, b=b), jnp.sin(a), jnp.cos(b))
+      return ({"res": a_b_pair, "a": a, "b": b}, jnp.sin(a), jnp.cos(b))
 
     exp_f = get_exported(jax.jit(f))((a, b), a=a, b=b)
     self.assertAllClose(f((a, b), a=a, b=b),
@@ -430,7 +430,7 @@ class JaxExportTest(jtu.JaxTestCase):
                      tree_util.tree_structure(res))
 
   @jtu.parameterized_filterable(
-    kwargs=[dict(impl=p)
+    kwargs=[{"impl": p}
             for p in ("rbg", "unsafe_rbg", "threefry2x32")])
   def test_prng_keys(self, *, impl):
 
@@ -484,7 +484,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     testcase_name=lambda kw: kw["platform"],
-    kwargs=[dict(platform=p)
+    kwargs=[{"platform": p}
             for p in ("cpu", "cuda", "rocm", "tpu")])
   def test_error_wrong_platform(self, platform):
     a = np.arange(4, dtype=np.float32)
@@ -506,7 +506,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     testcase_name=lambda kw: kw["dialect"],
-    kwargs=[dict(dialect=dialect)
+    kwargs=[{"dialect": dialect}
             for dialect in ("stablehlo",)]
   )
   def test_error_disallowed_custom_call(self, dialect):
@@ -515,7 +515,7 @@ class JaxExportTest(jtu.JaxTestCase):
     test_primitive = core.Primitive("_test_primitive_disallowed_custom_call")
     test_primitive.def_abstract_eval(lambda in_aval: in_aval)
     def test_primitive_lowering(ctx, arg):
-      op = dict(stablehlo=hlo.CustomCallOp)[dialect]
+      op = {"stablehlo": hlo.CustomCallOp}[dialect]
       return op([arg.type], [arg], "disallowed_call_target").results
     mlir.register_lowering(test_primitive, test_primitive_lowering)
     self.addCleanup(lambda: mlir.register_lowering(test_primitive, None))
@@ -554,22 +554,22 @@ class JaxExportTest(jtu.JaxTestCase):
     res = f(a)  # Works with JIT
     self.assertAllClose(res, a + a)
     self.assertEqual(context,
-                     dict(for_export=False,
-                          export_ignore_forward_compatibility=False))
+                     {"for_export": False,
+                          "export_ignore_forward_compatibility": False})
     context.clear()
     f.lower(a)  # Works with most AOT
     # The above was cached
     self.assertEqual(context, {})
     _ = export.export(f)(a)
     self.assertEqual(context,
-                     dict(for_export=True,
-                          export_ignore_forward_compatibility=False))
+                     {"for_export": True,
+                          "export_ignore_forward_compatibility": False})
     context.clear()
     with config.export_ignore_forward_compatibility(True):
       _ = export.export(f)(a)
       self.assertEqual(context,
-                       dict(for_export=True,
-                            export_ignore_forward_compatibility=True))
+                       {"for_export": True,
+                            "export_ignore_forward_compatibility": True})
 
   def test_grad(self):
     f = lambda x: jnp.sum(jnp.sin(x))
@@ -593,7 +593,7 @@ class JaxExportTest(jtu.JaxTestCase):
                         jax.grad(jax.grad(jax.grad(f1)))(x))
 
   @jtu.parameterized_filterable(
-    kwargs=[dict(poly_shape=True), dict(poly_shape=False)])
+    kwargs=[{"poly_shape": True}, {"poly_shape": False}])
   def test_grad_int(self, poly_shape):
     def f(xi, xf):
       return (2 * xi.T, xf.T * xf.T)
@@ -640,7 +640,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   def test_pytree_vjp(self):
     def f(a_b_pair, *, a, b):
-      return (dict(res=a_b_pair, a=2. * a, b=3. * b),
+      return ({"res": a_b_pair, "a": 2. * a, "b": 3. * b},
               jnp.sin(4. * a))
 
     a = np.arange(4, dtype=np.float32)
@@ -761,7 +761,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(v=v)
+      {"v": v}
       for v in range(export.minimum_supported_calling_convention_version - 1,
                      export.maximum_supported_calling_convention_version + 2)])
   def test_poly_basic_versions(self, v: int):
@@ -788,28 +788,28 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     testcase_name=lambda kw:f"poly_spec={kw['poly_spec']}_arg_shape={kw['arg_shape']}",  # type: ignore
     kwargs=[
-      dict(poly_spec="3,4,12", arg_shape=(3, 4, 12)),
-      dict(poly_spec="3,4,12", arg_shape=(3, 4, 13),
+      {"poly_spec": "3,4,12", "arg_shape": (3, 4, 12)},
+      {"poly_spec": "3,4,12", "arg_shape": (3, 4, 13),
            # The shape check module does not test constant dimensions
-           expect_error=re.escape(
-               r"Shape mismatch for args[0].shape[2] (expected same constant)")),
-      dict(poly_spec="3,4,6*a", arg_shape=(3, 4, 12)),
-      dict(poly_spec="3,a,a+8", arg_shape=(3, 4, 12)),
-      dict(poly_spec="3,4,a+1", arg_shape=(3, 4, 1),
-           expect_error=re.escape(
+           "expect_error": re.escape(
+               r"Shape mismatch for args[0].shape[2] (expected same constant)")},
+      {"poly_spec": "3,4,6*a", "arg_shape": (3, 4, 12)},
+      {"poly_spec": "3,a,a+8", "arg_shape": (3, 4, 12)},
+      {"poly_spec": "3,4,a+1", "arg_shape": (3, 4, 1),
+           "expect_error": re.escape(
                "Expected value >= 1 for dimension variable 'a'. "
                "Using the following polymorphic shapes specifications: args[0].shape = (3, 4, a + 1). "
                "Obtained dimension variables: 'a' = 0"
-          )),
-      dict(poly_spec="3,4,6*a", arg_shape=(3, 4, 13),
-           expect_error=re.escape(
+          )},
+      {"poly_spec": "3,4,6*a", "arg_shape": (3, 4, 13),
+           "expect_error": re.escape(
               "Division had remainder 1 when computing the value of 'a'"
-          )),
-      dict(poly_spec="3,a,a+8", arg_shape=(3, 4, 13),
-           expect_error=re.escape(
+          )},
+      {"poly_spec": "3,a,a+8", "arg_shape": (3, 4, 13),
+           "expect_error": re.escape(
              "Found inconsistency between dimension size "
              "args[0].shape[2] (= 13) and the specification 'a + 8' (= 12)"
-          )),
+          )},
   ])
   def test_poly_shape_checks(
       self, poly_spec="3,a,a+8",
@@ -845,70 +845,70 @@ class JaxExportTest(jtu.JaxTestCase):
     # The inner function is exported for f32.
     kwargs=[
       # Both inner and outer are static shapes
-      dict(inner_poly_spec="3,4,12", outer_poly_spec="3,4,12"),
+      {"inner_poly_spec": "3,4,12", "outer_poly_spec": "3,4,12"},
       # Inner has poly shapes but outer has static shapes. When we call inner
       # we do the shape constraint checking
-      dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,12"),
-      dict(inner_poly_spec="3,4,3*a", outer_poly_spec="3,4,12"),
-      dict(inner_poly_spec="3,a,a", outer_poly_spec="3,4,12",
-           expect_error_outer_exp=re.escape(
+      {"inner_poly_spec": "3,a,a+b", "outer_poly_spec": "3,4,12"},
+      {"inner_poly_spec": "3,4,3*a", "outer_poly_spec": "3,4,12"},
+      {"inner_poly_spec": "3,a,a", "outer_poly_spec": "3,4,12",
+           "expect_error_outer_exp": re.escape(
              "Found inconsistency between dimension size "
-             "args[0].shape[2] (= 12) and the specification 'a' (= 4)")),
-      dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,12",
-           expect_error_outer_exp=re.escape(
-             "Division had remainder 2 when computing the value of 'a'")),
-      dict(inner_poly_spec="3,4,12+a", outer_poly_spec="3,4,12",
-           expect_error_outer_exp=re.escape(
+             "args[0].shape[2] (= 12) and the specification 'a' (= 4)")},
+      {"inner_poly_spec": "3,4,5*a", "outer_poly_spec": "3,4,12",
+           "expect_error_outer_exp": re.escape(
+             "Division had remainder 2 when computing the value of 'a'")},
+      {"inner_poly_spec": "3,4,12+a", "outer_poly_spec": "3,4,12",
+           "expect_error_outer_exp": re.escape(
               "Expected value >= 1 for dimension variable 'a'. "
               "Using the following polymorphic shapes specifications: args[0].shape = (3, 4, a + 12). "
               "Obtained dimension variables: 'a' = 0 from specification "
-              "'a + 12' for dimension args[0].shape[2] (= 12)")),
+              "'a + 12' for dimension args[0].shape[2] (= 12)")},
       # Both inner and outer have poly shapes.
-      dict(inner_poly_spec="3,a,b", outer_poly_spec="3,4,c"),
-      dict(inner_poly_spec="3,4,3*a", outer_poly_spec="3,4,6*c"),
-      dict(inner_poly_spec="3,a,a+8", outer_poly_spec="3,c+2,c+10"),
-      dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,c",
-           expect_error_outer_exp=re.escape(
+      {"inner_poly_spec": "3,a,b", "outer_poly_spec": "3,4,c"},
+      {"inner_poly_spec": "3,4,3*a", "outer_poly_spec": "3,4,6*c"},
+      {"inner_poly_spec": "3,a,a+8", "outer_poly_spec": "3,c+2,c+10"},
+      {"inner_poly_spec": "3,a,a+b", "outer_poly_spec": "3,4,c",
+           "expect_error_outer_exp": re.escape(
              "Expected value >= 1 for dimension variable 'b'. "
              "Using the following polymorphic shapes specifications: args[0].shape = (3, a, b + a). "
              "Obtained dimension variables: 'a' = 4 from specification "
              "'a' for dimension args[0].shape[1] (= 4), "
-             "'b' = c - 4 from specification 'b + a' for dimension args[0].shape[2] (= c),")),
-      dict(inner_poly_spec="3,a,a", outer_poly_spec="3,4,c",
-           expect_error_outer_exp=re.escape(
+             "'b' = c - 4 from specification 'b + a' for dimension args[0].shape[2] (= c),")},
+      {"inner_poly_spec": "3,a,a", "outer_poly_spec": "3,4,c",
+           "expect_error_outer_exp": re.escape(
              "Found inconsistency between dimension size "
-             "args[0].shape[2] (= c) and the specification 'a' (= 4)")),
-      dict(inner_poly_spec="3,a,a", arg_shape=(3, 4),
-           outer_poly_spec="3,c",
-           expect_error_outer_exp=r"Rank mismatch for args\[0\]"),
-      dict(inner_poly_spec="3,a,a+b", arg_dtype=np.int32,
-           outer_poly_spec="3,c,d",
-           expect_error_outer_exp=r"Dtype mismatch for args\[0\]"),
-      dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,c",
-           expect_error_outer_exp=re.escape(
-              "Division had remainder mod(c, 5) when computing the value of 'a'")),
-      dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c,c",
-           expect_error_outer_exp=re.escape(
+             "args[0].shape[2] (= c) and the specification 'a' (= 4)")},
+      {"inner_poly_spec": "3,a,a", "arg_shape": (3, 4),
+           "outer_poly_spec": "3,c",
+           "expect_error_outer_exp": r"Rank mismatch for args\[0\]"},
+      {"inner_poly_spec": "3,a,a+b", "arg_dtype": np.int32,
+           "outer_poly_spec": "3,c,d",
+           "expect_error_outer_exp": r"Dtype mismatch for args\[0\]"},
+      {"inner_poly_spec": "3,4,5*a", "outer_poly_spec": "3,4,c",
+           "expect_error_outer_exp": re.escape(
+              "Division had remainder mod(c, 5) when computing the value of 'a'")},
+      {"inner_poly_spec": "3,a,a+b", "outer_poly_spec": "3,c,c",
+           "expect_error_outer_exp": re.escape(
                "Expected value >= 1 for dimension variable 'b'. "
                "Using the following polymorphic shapes specifications: args[0].shape = (3, a, b + a). "
                "Obtained dimension variables: 'a' = c from "
                "specification 'a' for dimension args[0].shape[1] (= c), "
-               "'b' = 0 from specification 'b + a' for dimension args[0].shape[2] (= c)")),
-      dict(inner_poly_spec="3,a,a+b", outer_poly_spec="c,4,12",
-           expect_error_outer_exp=re.escape(
-               "Shape mismatch for args[0].shape[0] (expected same constant)")),
-      dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,25*c",
-           expect_error_run=re.escape(
-              "Division had remainder 12 when computing the value of 'c'")),
-      dict(inner_poly_spec="3,a,b", outer_poly_spec="3,c+4,12",
-           expect_error_run=re.escape(
+               "'b' = 0 from specification 'b + a' for dimension args[0].shape[2] (= c)")},
+      {"inner_poly_spec": "3,a,a+b", "outer_poly_spec": "c,4,12",
+           "expect_error_outer_exp": re.escape(
+               "Shape mismatch for args[0].shape[0] (expected same constant)")},
+      {"inner_poly_spec": "3,4,5*a", "outer_poly_spec": "3,4,25*c",
+           "expect_error_run": re.escape(
+              "Division had remainder 12 when computing the value of 'c'")},
+      {"inner_poly_spec": "3,a,b", "outer_poly_spec": "3,c+4,12",
+           "expect_error_run": re.escape(
                "Expected value >= 1 for dimension variable 'c'. "
                "Using the following polymorphic shapes specifications: args[0].shape = (3, c + 4, 12). "
-               "Obtained dimension variables: 'c' = 0")),
-      dict(inner_poly_spec="3,a,a", outer_poly_spec="3,a,a",
-           expect_error_run=re.escape(
+               "Obtained dimension variables: 'c' = 0")},
+      {"inner_poly_spec": "3,a,a", "outer_poly_spec": "3,a,a",
+           "expect_error_run": re.escape(
                "Found inconsistency between dimension size "
-               "args[0].shape[2] (= 12) and the specification 'a' (= 4)")),
+               "args[0].shape[2] (= 12) and the specification 'a' (= 4)")},
   ])
   def test_poly_shape_checks_nested(
       self, inner_poly_spec="3,4,5*a",
@@ -962,46 +962,46 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     testcase_name=lambda kw: kw["shape"],  # assume "shape" is unique
     kwargs=[
-      dict(shape=(8, 2, 9),  # a = 2, b = 3, c = 4
-           poly_spec="(a + 2*b, a, a + b + c)"),
-      dict(shape=(2, 2, 6),  # a = 2, b = 0, c = 4
-           poly_spec="(a + 2*b, a, a + b + c)",
-           expect_error=(
+      {"shape": (8, 2, 9),  # a = 2, b = 3, c = 4
+           "poly_spec": "(a + 2*b, a, a + b + c)"},
+      {"shape": (2, 2, 6),  # a = 2, b = 0, c = 4
+           "poly_spec": "(a + 2*b, a, a + b + c)",
+           "expect_error": (
              "Input shapes do not match the polymorphic shapes specification. "
              "Expected value >= 1 for dimension variable 'b'. "
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 0 from specification '2*b + a' for dimension args[0].shape[0] (= 2), . "
              "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
-           )),
-      dict(shape=(3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
-           poly_spec="(a + 2*b, a, a + b + c)",
-           expect_error=(
+           )},
+      {"shape": (3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
+           "poly_spec": "(a + 2*b, a, a + b + c)",
+           "expect_error": (
              "Input shapes do not match the polymorphic shapes specification. "
              "Division had remainder 1 when computing the value of 'b'. "
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), . "
              "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
-           )),
-      dict(shape=(8, 2, 6),  # a = 2, b = 3 - inconsistency
-           poly_spec="(a + 2*b, a, a + b)",
-           expect_error=(
+           )},
+      {"shape": (8, 2, 6),  # a = 2, b = 3 - inconsistency
+           "poly_spec": "(a + 2*b, a, a + b)",
+           "expect_error": (
              "Input shapes do not match the polymorphic shapes specification. "
              "Found inconsistency between dimension size args[0].shape[0] (= 8) and the specification '2*b + a' (= 10). "
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 4 from specification 'b + a' for dimension args[0].shape[2] (= 6), . "
              "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
-           )),
-      dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
-           poly_spec="(2 * a + b, a, c * c)",
-           expect_error=(
+           )},
+      {"shape": (7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
+           "poly_spec": "(2 * a + b, a, c * c)",
+           "expect_error": (
              "Cannot solve for values of dimension variables {'c'}. "
              "We can only solve linear uni-variate constraints. "
              "Using the following polymorphic shapes specifications: args[0].shape = (b + 2*a, a, c^2). "
              "Unprocessed specifications: 'c^2' for dimension size args[0].shape[2]. "
              "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
-           )),
+           )},
   ])
   def test_shape_constraints_errors(self, *,
       shape, poly_spec: str, expect_error: str | None = None):
@@ -1031,7 +1031,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(dtype=dtype)
+      {"dtype": dtype}
       for dtype in dtypes._jax_types if dtype != np.dtype("bool")
   ])
   def test_poly_numeric_dtypes(self, dtype=np.int32):
@@ -1325,7 +1325,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_poly={poly}", poly=poly)
+      {"testcase_name": f"_poly={poly}", "poly": poly}
       for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
     ])
   def test_shard_map_collective_permute(self, poly=None):
@@ -1382,8 +1382,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(in_shardings=in_shardings, out_shardings=out_shardings,
-           with_mesh_context=with_mesh_context)
+      {"in_shardings": in_shardings, "out_shardings": out_shardings,
+           "with_mesh_context": with_mesh_context}
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
       for with_mesh_context in (True, False)
@@ -1659,7 +1659,7 @@ class JaxExportTest(jtu.JaxTestCase):
       return times_2_or_3_or_4.bind(x)
     x = np.float32(42.)
     exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu"])(x)
-    expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
+    expected = x * np.float32({"cpu": 2, "gpu": 3, "tpu": 4}[jtu.device_under_test()])
     self.assertAllClose(exp.call(x), expected)
 
   def test_multi_platform_unknown_platform(self):
@@ -1744,7 +1744,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(v=v)
+      {"v": v}
       for v in range(export.minimum_supported_calling_convention_version,
                      export.maximum_supported_calling_convention_version + 1)])
   def test_ordered_effects_basic(self, *, v: int):
@@ -1822,7 +1822,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
       kwargs=[
-          dict(v=v)
+          {"v": v}
           for v in range(export.minimum_supported_calling_convention_version,
                          export.maximum_supported_calling_convention_version + 1)])
   def test_ordered_effects_poly(self, *, v: int):
@@ -1859,7 +1859,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(v=v)
+      {"v": v}
       for v in range(export.minimum_supported_calling_convention_version,
                      export.maximum_supported_calling_convention_version + 1)])
   def test_ordered_effects_multi_platform_and_poly(self, *, v: int):
@@ -1904,7 +1904,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(v=v)
+      {"v": v}
       for v in range(export.minimum_supported_calling_convention_version,
                      export.maximum_supported_calling_convention_version + 1)])
   def test_ordered_effects_with_donation(self, *, v: int):
@@ -1928,7 +1928,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(name=name, expect_error=expect_error)
+      {"name": name, "expect_error": expect_error}
       # name is the suffix for event name: ForTestingOrderedEffectxxx
       for name, expect_error in (
         ("4NoNullary", "must have a nullary constructor"),

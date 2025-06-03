@@ -58,8 +58,8 @@ class LaxVmapOpTest(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(op_name=rec.op, rng_factory=rec.rng_factory, tol=rec.tol)],
-      [dict(shapes=shapes, bdims=bdims)
+      [{'op_name': rec.op, 'rng_factory': rec.rng_factory, 'tol': rec.tol}],
+      [{'shapes': shapes, 'bdims': bdims}
         for shape_group in lax_test_util.compatible_shapes
         for shapes in itertools.combinations_with_replacement(shape_group, rec.nargs)
         for bdims in lax_test_util.all_bdims(*shapes)],

@@ -440,7 +440,7 @@ class TilingTransform(MemoryRefTransform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UntileRef(state_types.Transform):
-  tiling: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  tiling: tuple[int, ...] = dataclasses.field(metadata={"static": True})
 
   def transform_shape(self, shape):
     if shape is None:
@@ -561,7 +561,7 @@ class TransposeTransform(MemoryRefTransform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class TransposeRef(state_types.Transform):
-  permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  permutation: tuple[int, ...] = dataclasses.field(metadata={"static": True})
 
   def transform_shape(self, shape):
     if shape is None:
@@ -744,7 +744,7 @@ class SwizzleTransform(MemoryRefTransform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UnswizzleRef(state_types.Transform):
-  swizzle: int = dataclasses.field(metadata=dict(static=True))
+  swizzle: int = dataclasses.field(metadata={"static": True})
 
   def swizzle_elems(self, dtype: jnp.dtype | ir.Type) -> int:
     if not isinstance(dtype, ir.Type):

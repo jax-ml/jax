@@ -434,7 +434,7 @@ class IndexingTest(jtu.JaxTestCase):
   """Tests for Numpy indexing translation rules."""
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer)
+    [{"name": name, "shape": shape, "indexer": indexer}
      for name, index_specs in STATIC_INDEXING_TESTS
      for shape, indexer, _ in index_specs],
     dtype=all_dtypes
@@ -518,7 +518,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, a.at[0].set(1))
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer, mode=mode)
+    [{"name": name, "shape": shape, "indexer": indexer, "mode": mode}
      for mode in MODES
      for name, index_specs in (
        STATIC_INDEXING_TESTS if mode == "promise_in_bounds" else
@@ -553,7 +553,7 @@ class IndexingTest(jtu.JaxTestCase):
       return idx, lambda x: x
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer)
+    [{"name": name, "shape": shape, "indexer": indexer}
       for name, index_specs in [
         ("OneSliceIndex",
           [IndexSpec(shape=(5,), indexer=slice(1, 3)),
@@ -588,7 +588,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertRaises(IndexError, lambda: fun(*args_maker()))
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer)
+    [{"name": name, "shape": shape, "indexer": indexer}
       for name, index_specs in [
           ("OneIntIndex",
            [IndexSpec(shape=(3,), indexer=1),
@@ -624,7 +624,7 @@ class IndexingTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer)
+    [{"name": name, "shape": shape, "indexer": indexer}
       for name, index_specs in [
           ("OneIntIndex",
            [IndexSpec(shape=(3,), indexer=1),
@@ -659,7 +659,7 @@ class IndexingTest(jtu.JaxTestCase):
     check_grads(partial(fun, unpacked_indexer), (arr,), 2, tol, tol, tol)
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer)
+    [{"name": name, "shape": shape, "indexer": indexer}
       for name, index_specs in ADVANCED_INDEXING_TESTS
       for shape, indexer, _ in index_specs
     ],
@@ -688,7 +688,7 @@ class IndexingTest(jtu.JaxTestCase):
       self.assertEqual(primitives[-2:], [lax.broadcast_in_dim_p, lax.gather_p])
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer)
+    [{"name": name, "shape": shape, "indexer": indexer}
       for name, index_specs in [
           ("One1DIntArrayIndex",
            [IndexSpec(shape=(3,), indexer=np.array([0, 1])),
@@ -739,7 +739,7 @@ class IndexingTest(jtu.JaxTestCase):
     check_grads(fun, (arg,), 2, tol, tol, eps=1.)
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer)
+    [{"name": name, "shape": shape, "indexer": indexer}
       for name, index_specs in MIXED_ADVANCED_INDEXING_TESTS
       for shape, indexer, _ in index_specs
     ],
@@ -1340,12 +1340,12 @@ def _update_tol(op):
 class IndexedUpdateTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer, update_shape=update_shape)
+    [{"name": name, "shape": shape, "indexer": indexer, "update_shape": update_shape}
      for name, index_specs in STATIC_INDEXING_TESTS
      for shape, indexer, index_shape in index_specs
      for update_shape in _broadcastable_shapes(index_shape)
     ],
-    [dict(op=op, dtype=dtype, update_dtype=update_dtype)
+    [{"op": op, "dtype": dtype, "update_dtype": update_dtype}
      for op in UpdateOps
      for dtype in UpdateOps.dtypes(op)
      for update_dtype in _compatible_dtypes(op, dtype)
@@ -1363,12 +1363,12 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       self._CompileAndCheck(jax_fn, args_maker)
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer, update_shape=update_shape)
+    [{"name": name, "shape": shape, "indexer": indexer, "update_shape": update_shape}
      for name, index_specs in ADVANCED_INDEXING_TESTS_NO_REPEATS
      for shape, indexer, index_shape in index_specs
      for update_shape in _broadcastable_shapes(index_shape)
     ],
-    [dict(op=op, dtype=dtype, update_dtype=update_dtype)
+    [{"op": op, "dtype": dtype, "update_dtype": update_dtype}
      for op in UpdateOps
      for dtype in UpdateOps.dtypes(op)
      for update_dtype in _compatible_dtypes(op, dtype)
@@ -1386,12 +1386,12 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       self._CompileAndCheck(jax_fn, args_maker)
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer, update_shape=update_shape)
+    [{"name": name, "shape": shape, "indexer": indexer, "update_shape": update_shape}
      for name, index_specs in ADVANCED_INDEXING_TESTS_NO_REPEATS_SORTED
      for shape, indexer, index_shape in index_specs
      for update_shape in _broadcastable_shapes(index_shape)
     ],
-    [dict(op=op, dtype=dtype, update_dtype=update_dtype)
+    [{"op": op, "dtype": dtype, "update_dtype": update_dtype}
      for op in UpdateOps
      for dtype in UpdateOps.dtypes(op)
      for update_dtype in _compatible_dtypes(op, dtype)
@@ -1410,12 +1410,12 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
   @jtu.sample_product(
-    [dict(name=name, shape=shape, indexer=indexer, update_shape=update_shape)
+    [{"name": name, "shape": shape, "indexer": indexer, "update_shape": update_shape}
      for name, index_specs in MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS
      for shape, indexer, index_shape in index_specs
      for update_shape in _broadcastable_shapes(index_shape)
     ],
-    [dict(op=op, dtype=dtype, update_dtype=update_dtype)
+    [{"op": op, "dtype": dtype, "update_dtype": update_dtype}
      for op in UpdateOps
      for dtype in UpdateOps.dtypes(op)
      for update_dtype in _compatible_dtypes(op, dtype)
@@ -1432,8 +1432,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       self._CompileAndCheck(jax_fn, args_maker)
 
   @jtu.sample_product(
-    [dict(name=name, mode=mode, shape=shape, indexer=indexer,
-          update_shape=update_shape)
+    [{"name": name, "mode": mode, "shape": shape, "indexer": indexer,
+          "update_shape": update_shape}
      for mode in [None] + MODES
      for name, index_specs in (
        STATIC_INDEXING_TESTS if mode == "promise_in_bounds" else
@@ -1441,7 +1441,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
      for shape, indexer, index_shape in index_specs
      for update_shape in _broadcastable_shapes(index_shape)
     ],
-    [dict(op=op, dtype=dtype, update_dtype=update_dtype)
+    [{"op": op, "dtype": dtype, "update_dtype": update_dtype}
      for op in [UpdateOps.ADD, UpdateOps.SUB, UpdateOps.MUL, UpdateOps.UPDATE]
      for dtype in float_dtypes
      for update_dtype in _compatible_dtypes(op, dtype, inexact=True)
@@ -1459,15 +1459,15 @@ class IndexedUpdateTest(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=name, unique_indices=unique_indices, shape=shape,
-            indexer=indexer, update_shape=update_shape)
+      [{"name": name, "unique_indices": unique_indices, "shape": shape,
+            "indexer": indexer, "update_shape": update_shape}
       for name, index_specs in (
         ADVANCED_INDEXING_TESTS_NO_REPEATS if unique_indices
         else ADVANCED_INDEXING_TESTS)
       for shape, indexer, index_shape in index_specs
       for update_shape in _broadcastable_shapes(index_shape)
       ],
-      [dict(op=op, dtype=dtype, update_dtype=update_dtype)
+      [{"op": op, "dtype": dtype, "update_dtype": update_dtype}
       for op in (
         [UpdateOps.ADD, UpdateOps.SUB, UpdateOps.MUL, UpdateOps.UPDATE]
         if unique_indices
@@ -1557,7 +1557,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(reducer=reducer, op=op, identity=identity)],
+      [{"reducer": reducer, "op": op, "identity": identity}],
       dtype=[np.bool_],
       shape=[(8,), (7, 4), (6, 4, 2)],
       bucket_size=[None, 2],
@@ -1597,7 +1597,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(reducer=reducer, op=op, identity=identity)],
+      [{"reducer": reducer, "op": op, "identity": identity}],
       dtype=default_dtypes,
       shape=[(8,), (7, 4), (6, 4, 2)],
       bucket_size=[None, 2],
@@ -1642,7 +1642,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jnp.zeros(5).at[::2].set(1)
 
   @jtu.sample_product(
-    [dict(idx=idx, idx_type=idx_type)
+    [{"idx": idx, "idx_type": idx_type}
      for idx, idx_type in [
        ([0], "array"),
        ([0, 0], "array"),

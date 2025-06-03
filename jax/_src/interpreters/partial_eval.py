@@ -463,7 +463,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     in_avals = tuple(t.aval for t in tracers)
     f_ = trace_to_subjaxpr_nounits2(f, self.tag, f.debug_info, True)
     f_, aux = partial_eval_wrapper_nounits(f_, in_knowns, in_avals)
-    params = dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros)
+    params = {'out_trees': out_trees, 'symbolic_zeros': symbolic_zeros}
     res = prim.bind_with_trace(self.parent_trace, (f_, fwd, bwd), params)
     out_knowns, out_avals, jaxpr, env = aux()
     assert not any(out_knowns)
@@ -482,14 +482,14 @@ class JaxprTrace(Trace['JaxprTracer']):
 
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
-    params = dict(
-        call_jaxpr=closed_jaxpr,
-        fwd_jaxpr_thunk=fwd_jaxpr_thunk,
-        num_consts=len(res) + len(env),
-        bwd=bwd,
-        out_trees=out_trees,
-        symbolic_zeros=symbolic_zeros
-    )
+    params = {
+        'call_jaxpr': closed_jaxpr,
+        'fwd_jaxpr_thunk': fwd_jaxpr_thunk,
+        'num_consts': len(res) + len(env),
+        'bwd': bwd,
+        'out_trees': out_trees,
+        'symbolic_zeros': symbolic_zeros
+    }
     eqn = new_eqn_recipe(self, (*res_tracers, *env_tracers, *tracers),
                          out_tracers, prim, params, jaxpr.effects, source)
     for t in out_tracers: t.recipe = eqn
@@ -1167,9 +1167,9 @@ def _partial_eval_jaxpr_custom_cached(
         outvars_copy = list[Atom](eqn.outvars)
         offload_eqn = core.JaxprEqn(
             outvars_copy, resvars, device_put_p,
-            dict(devices=[TransferToMemoryKind(policy.dst)
-                          ] * len(outvars_copy), srcs=[None],
-                 copy_semantics=[CopySemantics.COPY]),
+            {'devices': [TransferToMemoryKind(policy.dst)
+                          ] * len(outvars_copy), 'srcs': [None],
+                 'copy_semantics': [CopySemantics.COPY]},
             set(), source_info_util.new_source_info(),
             JaxprEqnContext(None, False))
         known_eqns.append(offload_eqn)
@@ -1178,9 +1178,9 @@ def _partial_eval_jaxpr_custom_cached(
         residuals.update(resvars)
         reload_eqn = core.JaxprEqn(
             resvars, eqn.outvars, device_put_p,
-            dict(devices=[TransferToMemoryKind(policy.src)
-                          ] * len(resvars), srcs=[None],
-                 copy_semantics=[CopySemantics.COPY]),
+            {'devices': [TransferToMemoryKind(policy.src)
+                          ] * len(resvars), 'srcs': [None],
+                 'copy_semantics': [CopySemantics.COPY]},
             set(), source_info_util.new_source_info(),
             JaxprEqnContext(None, False))
         staged_eqns.append(reload_eqn)
@@ -2148,10 +2148,10 @@ class DynamicJaxprTrace(core.Trace):
     constvars = map(self.getvar, map(to_jaxpr_tracer, consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
-                        dict(call_jaxpr=closed_fun_jaxpr,
-                             jvp_jaxpr_fun=jvp_jaxpr_thunk,
-                             num_consts=len(consts),
-                             symbolic_zeros=symbolic_zeros),
+                        {'call_jaxpr': closed_fun_jaxpr,
+                             'jvp_jaxpr_fun': jvp_jaxpr_thunk,
+                             'num_consts': len(consts),
+                             'symbolic_zeros': symbolic_zeros},
                         fun_jaxpr.effects,
                         source_info)
     self.frame.add_eqn(eqn)
@@ -2183,11 +2183,11 @@ class DynamicJaxprTrace(core.Trace):
     constvars = map(self.getvar, map(to_jaxpr_tracer, consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
-                        dict(call_jaxpr=closed_fun_jaxpr,
-                             fwd_jaxpr_thunk=fwd_jaxpr_from_zeros,
-                             num_consts=len(consts),
-                             bwd=bwd, out_trees=out_trees,
-                             symbolic_zeros=symbolic_zeros),
+                        {'call_jaxpr': closed_fun_jaxpr,
+                             'fwd_jaxpr_thunk': fwd_jaxpr_from_zeros,
+                             'num_consts': len(consts),
+                             'bwd': bwd, 'out_trees': out_trees,
+                             'symbolic_zeros': symbolic_zeros},
                         fun_jaxpr.effects,
                         source_info)
     self.frame.add_eqn(eqn)
@@ -2226,10 +2226,10 @@ class DynamicJaxprTrace(core.Trace):
     constvars = map(self.getvar, map(to_jaxpr_tracer, call_consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
-                        dict(call_jaxpr=closed_call_jaxpr,
-                             transpose_jaxpr_thunk=transpose_jaxpr_thunk,
-                             out_types=out_types, res_tree=res_tree,
-                             lin_tree=lin_tree, out_tree=out_tree),
+                        {'call_jaxpr': closed_call_jaxpr,
+                             'transpose_jaxpr_thunk': transpose_jaxpr_thunk,
+                             'out_types': out_types, 'res_tree': res_tree,
+                             'lin_tree': lin_tree, 'out_tree': out_tree},
                         closed_call_jaxpr.effects,
                         source_info)
     self.frame.add_eqn(eqn)

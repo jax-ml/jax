@@ -129,14 +129,14 @@ def build_kernel(
                 bytecount((tile_m, tile_k), dtype) + bytecount((tile_n, tile_k), dtype)
             )
           k_start = arith.muli(ki, c(tile_k, index))
-          common_args = dict(
-              swizzle=swizzle,
-              barrier=full_barrier,
-              arrive=False,
-              predicate=None,
-              collective=gpu.Dimension.x,
-              partitioned=0,  # Non-contracting dim is always 0.
-          )
+          common_args = {
+              "swizzle": swizzle,
+              "barrier": full_barrier,
+              "arrive": False,
+              "predicate": None,
+              "collective": gpu.Dimension.x,
+              "partitioned": 0,  # Non-contracting dim is always 0.
+          }
           ctx.async_copy(
               src_ref=a,
               dst_ref=mgpu.memref_slice(a_smem, slot),

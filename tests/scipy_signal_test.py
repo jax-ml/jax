@@ -71,7 +71,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 
   @jtu.sample_product(
-    [dict(xshape=xshape, yshape=yshape)
+    [{'xshape': xshape, 'yshape': yshape}
      for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
      for xshape in shapeset
      for yshape in shapeset
@@ -98,7 +98,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
-    [dict(xshape=xshape, yshape=yshape)
+    [{'xshape': xshape, 'yshape': yshape}
      for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
      for xshape in shapeset
      for yshape in shapeset
@@ -153,7 +153,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   def testDetrend(self, shape, dtype, axis, type, bp):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    kwds = dict(axis=axis, type=type, bp=bp)
+    kwds = {'axis': axis, 'type': type, 'bp': bp}
 
     def osp_fun(x):
       return osp_signal.detrend(x, **kwds).astype(dtypes.to_inexact_dtype(x.dtype))
@@ -165,8 +165,8 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
-    [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
-          nfft=nfft)
+    [{'shape': shape, 'nperseg': nperseg, 'noverlap': noverlap, 'timeaxis': timeaxis,
+          'nfft': nfft}
       for shape, nperseg, noverlap, timeaxis in stft_test_shapes
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
     ],
@@ -184,9 +184,9 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     if is_complex and detrend is not None:
       self.skipTest("Complex signal is not supported in lax-backed `signal.detrend`.")
 
-    kwds = dict(fs=fs, window=window, nfft=nfft, boundary=boundary, padded=padded,
-                detrend=detrend, nperseg=nperseg, noverlap=noverlap, axis=timeaxis,
-                return_onesided=not is_complex)
+    kwds = {'fs': fs, 'window': window, 'nfft': nfft, 'boundary': boundary, 'padded': padded,
+                'detrend': detrend, 'nperseg': nperseg, 'noverlap': noverlap, 'axis': timeaxis,
+                'return_onesided': not is_complex}
 
     def osp_fun(x):
       freqs, time, Pxx = osp_signal.stft(x, **kwds)
@@ -209,8 +209,8 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   # due to the issue:
   #   https://github.com/scipy/scipy/issues/15601
   @jtu.sample_product(
-    [dict(xshape=xshape, yshape=yshape, nperseg=nperseg, noverlap=noverlap,
-          timeaxis=timeaxis, nfft=nfft)
+    [{'xshape': xshape, 'yshape': yshape, 'nperseg': nperseg, 'noverlap': noverlap,
+          'timeaxis': timeaxis, 'nfft': nfft}
       for xshape, yshape, nperseg, noverlap, timeaxis in csd_test_shapes
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
     ],
@@ -228,9 +228,9 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     if is_complex and detrend is not None:
       self.skipTest("Complex signal is not supported in lax-backed `signal.detrend`.")
 
-    kwds = dict(fs=fs, window=window, nperseg=nperseg, noverlap=noverlap,
-                nfft=nfft, detrend=detrend, return_onesided=not is_complex,
-                scaling=scaling, axis=timeaxis, average=average)
+    kwds = {'fs': fs, 'window': window, 'nperseg': nperseg, 'noverlap': noverlap,
+                'nfft': nfft, 'detrend': detrend, 'return_onesided': not is_complex,
+                'scaling': scaling, 'axis': timeaxis, 'average': average}
 
     def osp_fun(x, y):
       freqs, Pxy = osp_signal.csd(x, y, **kwds)
@@ -251,8 +251,8 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
-    [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
-          nfft=nfft)
+    [{'shape': shape, 'nperseg': nperseg, 'noverlap': noverlap, 'timeaxis': timeaxis,
+          'nfft': nfft}
       for shape, _yshape, nperseg, noverlap, timeaxis in csd_test_shapes
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
     ],
@@ -270,9 +270,9 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     if is_complex and detrend is not None:
       self.skipTest("Complex signal is not supported in lax-backed `signal.detrend`.")
 
-    kwds = dict(fs=fs, window=window, nperseg=nperseg, noverlap=noverlap,
-                nfft=nfft, detrend=detrend, return_onesided=not is_complex,
-                scaling=scaling, axis=timeaxis, average=average)
+    kwds = {'fs': fs, 'window': window, 'nperseg': nperseg, 'noverlap': noverlap,
+                'nfft': nfft, 'detrend': detrend, 'return_onesided': not is_complex,
+                'scaling': scaling, 'axis': timeaxis, 'average': average}
 
     def osp_fun(x, y):
       # When the identical parameters are given, jsp-version follows
@@ -295,8 +295,8 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
-    [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
-          nfft=nfft)
+    [{'shape': shape, 'nperseg': nperseg, 'noverlap': noverlap, 'timeaxis': timeaxis,
+          'nfft': nfft}
       for shape, nperseg, noverlap, timeaxis in welch_test_shapes
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
     ],
@@ -317,9 +317,9 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
         raise unittest.SkipTest(
             "Complex signal is not supported in lax-backed `signal.detrend`.")
 
-    kwds = dict(fs=fs, window=window, nperseg=nperseg, noverlap=noverlap, nfft=nfft,
-                detrend=detrend, return_onesided=return_onesided, scaling=scaling,
-                axis=timeaxis, average=average)
+    kwds = {'fs': fs, 'window': window, 'nperseg': nperseg, 'noverlap': noverlap, 'nfft': nfft,
+                'detrend': detrend, 'return_onesided': return_onesided, 'scaling': scaling,
+                'axis': timeaxis, 'average': average}
 
     def osp_fun(x):
       freqs, Pxx = osp_signal.welch(x, **kwds)
@@ -339,7 +339,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
-    [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis)
+    [{'shape': shape, 'nperseg': nperseg, 'noverlap': noverlap, 'timeaxis': timeaxis}
       for shape, nperseg, noverlap, timeaxis in welch_test_shapes
     ],
     use_nperseg=[False, True],
@@ -380,8 +380,8 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
-    [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
-          freqaxis=freqaxis, nfft=nfft)
+    [{'shape': shape, 'nperseg': nperseg, 'noverlap': noverlap, 'timeaxis': timeaxis,
+          'freqaxis': freqaxis, 'nfft': nfft}
       for shape, nperseg, noverlap, timeaxis, freqaxis in istft_test_shapes
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
     ],
@@ -403,9 +403,9 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       window = np.ones(nperseg, dtype=(
         dtypes.to_floating_dtype(dtype) if onesided else dtypes.to_complex_dtype(dtype)))
 
-    kwds = dict(fs=fs, window=window, nperseg=nperseg, noverlap=noverlap,
-                nfft=nfft, input_onesided=onesided, boundary=boundary,
-                time_axis=timeaxis, freq_axis=freqaxis)
+    kwds = {'fs': fs, 'window': window, 'nperseg': nperseg, 'noverlap': noverlap,
+                'nfft': nfft, 'input_onesided': onesided, 'boundary': boundary,
+                'time_axis': timeaxis, 'freq_axis': freqaxis}
 
     osp_fun = partial(osp_signal.istft, **kwds)
     osp_fun = jtu.ignore_warning(message="NOLA condition failed, STFT may not be invertible")(osp_fun)

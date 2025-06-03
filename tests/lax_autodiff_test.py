@@ -193,7 +193,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(op=rec.op, rng_factory=rec.rng_factory, order=rec.order, tol=rec.tol)],
+      [{"op": rec.op, "rng_factory": rec.rng_factory, "order": rec.order, "tol": rec.tol}],
       shapes=[
         shapes for shape_group in compatible_shapes
         for shapes in itertools.combinations_with_replacement(shape_group, rec.nargs)
@@ -223,7 +223,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(op=rec.op, tol=rec.tol)],
+      [{"op": rec.op, "tol": rec.tol}],
       special_value=rec.values,
     )
     for rec in LAX_GRAD_SPECIAL_VALUE_TESTS
@@ -262,7 +262,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(lax.clamp, (low, high, operand), 2, ["fwd", "rev"], eps=1e-2)
 
   @jtu.sample_product(
-    [dict(base_shape=base_shape, dim=dim)
+    [{"base_shape": base_shape, "dim": dim}
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
       for dim in range(len(base_shape))
     ],
@@ -278,7 +278,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(concatenate, operands, 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
-    [dict(base_shape=base_shape, axis=axis)
+    [{"base_shape": base_shape, "axis": axis}
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
       for axis in range(len(base_shape))
     ],
@@ -296,7 +296,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, strides=strides)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "strides": strides}
        for lhs_shape, rhs_shape, all_strides in itertools.chain(
            [((b, i, 3, 4), (j, i, 1, 2), [(1, 1), (1, 2), (2, 1)])
             for b, i, j in itertools.product([2, 3], repeat=3)],
@@ -316,8 +316,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                          atol=1e-2, rtol=1e-2)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, strides=strides,
-          padding=padding, lhs_dil=lhs_dil, rhs_dil=rhs_dil)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "strides": strides,
+          "padding": padding, "lhs_dil": lhs_dil, "rhs_dil": rhs_dil}
        for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in
         itertools.chain(
            [((b, i, 3, 4), (j, i, 1, 2), [(1, 1), (1, 2), (2, 1)],
@@ -345,10 +345,10 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                          atol=1e-2, rtol=1e-2)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, strides=strides,
-          padding=padding, lhs_dil=lhs_dil, rhs_dil=rhs_dil,
-          feature_group_count=feature_group_count,
-          batch_group_count=batch_group_count)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "strides": strides,
+          "padding": padding, "lhs_dil": lhs_dil, "rhs_dil": rhs_dil,
+          "feature_group_count": feature_group_count,
+          "batch_group_count": batch_group_count}
       for batch_group_count, feature_group_count in ([(1, 1), (2, 1), (1, 2)])
       for lhs_shapes, rhs_shape, all_strides, lhs_dils, rhs_dils in [
           ([(b * batch_group_count, i * feature_group_count, 6, 7),
@@ -365,7 +365,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for padding in ([((0, 0), (0, 0)), ((1, 0), (0, 1))] +
                      ([((0, -1), (0, 0))] if lhs_shape[2] != 0 else []))
     ],
-    [dict(dimension_numbers=dim_nums, perms=perms)
+    [{"dimension_numbers": dim_nums, "perms": perms}
       for dim_nums, perms in [
         (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
         (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
@@ -417,8 +417,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     assert "Precision.HIGHEST" in s
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape,
-          dimension_numbers=dimension_numbers)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape,
+          "dimension_numbers": dimension_numbers}
       for lhs_shape, rhs_shape, dimension_numbers in [
           ((3, 2), (2, 4), (([1], [0]), ([], []))),
           ((3, 5), (2, 5), (([1], [1]), ([], []))),
@@ -465,7 +465,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(broadcast, args, 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
-    [dict(inshape=inshape, outshape=outshape, dimensions=broadcast_dimensions)
+    [{"inshape": inshape, "outshape": outshape, "dimensions": broadcast_dimensions}
       for inshape, outshape, broadcast_dimensions in [
           ([2], [2, 2], [0]),
           ([2], [2, 2], [1]),
@@ -482,7 +482,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(broadcast_in_dim, (operand,), 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, out_shape=out_shape, permutation=permutation)
+    [{"arg_shape": arg_shape, "out_shape": out_shape, "permutation": permutation}
       for arg_shape, out_shape, permutation in [
           [(3, 4), (12,), None],
           [(2, 1, 4), (8,), None],
@@ -504,7 +504,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(reshape, (operand,), 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
-    [dict(shape=shape, pads=pads)
+    [{"shape": shape, "pads": pads}
       for shape, paddings in [
         [(), [()]],
         ((2, 3), [[(1, 2, 1), (0, 1, 0)], [(-1, 0, 0), (-1, 0, 2)]]),
@@ -575,7 +575,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     self.assertAllClose(jax.grad(e)(3.14), 1., check_dtypes=False)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, pred_shape=pred_shape)
+    [{"arg_shape": arg_shape, "pred_shape": pred_shape}
       for arg_shape in [(), (3,), (2, 3)]
       for pred_shape in ([(), arg_shape] if arg_shape else [()])
     ],
@@ -590,8 +590,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(select, (on_true, on_false), 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
-    [dict(shape=shape, starts=start_indices, limits=limit_indices,
-          strides=strides)
+    [{"shape": shape, "starts": start_indices, "limits": limit_indices,
+          "strides": strides}
       for shape, start_indices, limit_indices, strides in [
         [(3,), (1,), (2,), None],
         [(7,), (4,), (7,), None],
@@ -614,7 +614,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(slice, (operand,), 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
-    [dict(shape=shape, start_indices=start_indices, size_indices=size_indices)
+    [{"shape": shape, "start_indices": start_indices, "size_indices": size_indices}
       for shape, start_indices, size_indices in [
         [(3,), (1,), (1,)],
         [(5, 3), (1, 1), (3, 1)],
@@ -630,7 +630,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(dynamic_slice, (operand,), 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
-    [dict(shape=shape, start_indices=start_indices, update_shape=update_shape)
+    [{"shape": shape, "start_indices": start_indices, "update_shape": update_shape}
       for shape, start_indices, update_shape in [
         [(3,), (1,), (1,)],
         [(5, 3), (1, 1), (3, 1)],
@@ -687,7 +687,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     self.assertAllClose(result1, result2)
 
   @jtu.sample_product(
-    [dict(shape=shape, perm=perm)
+    [{"shape": shape, "perm": perm}
       for shape, perm in [
         [(3, 4), (1, 0)],
         [(3, 4), (0, 1)],
@@ -704,7 +704,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(transpose, (operand,), 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
-    [dict(init_val=init_val, op=op, dtype=dtype, rng_factory=rng_factory)
+    [{"init_val": init_val, "op": op, "dtype": dtype, "rng_factory": rng_factory}
       for init_val, op, dtypes, rng_factory in [
           (0, lax.add, float_dtypes + jtu.dtypes.complex, jtu.rand_default),
           (-np.inf, lax.max, grad_inexact_dtypes, jtu.rand_unique_int),
@@ -713,7 +713,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for dtype in dtypes
     ],
-    [dict(shape=shape, dims=dims)
+    [{"shape": shape, "dims": dims}
       for shape, dims in [
           [(), ()],
           [(3, 4, 5), ()],
@@ -742,7 +742,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       check_grads(reduce, (operand,), 2, ["fwd", "rev"], tol, tol, eps)
 
   @jtu.sample_product(
-    [dict(shape=shape, dims=dims)
+    [{"shape": shape, "dims": dims}
       for shape, dims in [
           [(3, 4, 5), ()],
           [(3, 4, 5), (0,)],
@@ -766,9 +766,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(reduce, operands, 2, ["fwd", "rev"], tol, tol)
 
   @jtu.sample_product(
-    [dict(init_val=init_val, op=op, dtype=dtype, rng_factory=rng_factory,
-          shape=shape, dims=dims, strides=strides, padding=padding,
-          base_dilation=base_dilation, window_dilation=window_dilation)
+    [{"init_val": init_val, "op": op, "dtype": dtype, "rng_factory": rng_factory,
+          "shape": shape, "dims": dims, "strides": strides, "padding": padding,
+          "base_dilation": base_dilation, "window_dilation": window_dilation}
       for init_val, op, dtypes, rng_factory in [
           (0, lax.add, grad_float_dtypes, jtu.rand_small),
           (-np.inf, lax.max, grad_float_dtypes, jtu.rand_unique_int),
@@ -829,14 +829,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                 eps)
 
   @jtu.sample_product(
-    [dict(op=op, dtype=dtype)
+    [{"op": op, "dtype": dtype}
       for op, types in [
           (lax.cumsum, [np.float32, np.float64]),
           (lax.cumprod, [np.float32, np.float64]),
       ]
       for dtype in types
     ],
-    [dict(shape=shape, axis=axis)
+    [{"shape": shape, "axis": axis}
       for shape in [[10], [3, 4, 5]]
       for axis in range(len(shape))
     ],
@@ -852,7 +852,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   # TODO(b/205052657): enable more tests when supported
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{"shape": shape, "axis": axis}
       for shape in [(5,), (5, 7), (4, 9, 3)]
       for axis in [len(shape) - 1]
     ],
@@ -867,7 +867,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   # TODO(b/205052657): enable more tests when supported
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{"shape": shape, "axis": axis}
       for shape in [(3,), (5, 3), (4, 9, 3)]
       for axis in [len(shape) - 1]
     ],
@@ -902,7 +902,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(fun, (values,), 2, ["fwd", "rev"], eps=1e-2)
 
   @jtu.sample_product(
-    [dict(shape=shape, idxs=idxs, axes=axes)
+    [{"shape": shape, "idxs": idxs, "axes": axes}
       for shape, idxs, axes in [
           [(3, 4, 5), (np.array([0, 2, 1]),), (0,)],
           [(3, 4, 5), (np.array([-1, -2]),), (0,)],
@@ -920,8 +920,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(index_take, (src,), 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
-    [dict(shape=shape, idxs_shape=idxs.shape, idxs_dtype=idxs.dtype,
-          dnums=dnums, slice_sizes=slice_sizes, max_idx=max_idx)
+    [{"shape": shape, "idxs_shape": idxs.shape, "idxs_dtype": idxs.dtype,
+          "dnums": dnums, "slice_sizes": slice_sizes, "max_idx": max_idx}
       for shape, idxs, dnums, slice_sizes, max_idx in [
           ((5,), np.array([[0], [2]]), lax.GatherDimensionNumbers(
             offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
@@ -957,8 +957,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(gather, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, idxs_shape=idxs.shape, idxs_dtype=idxs.dtype,
-          dnums=dnums, update_shape=update_shape, max_idx=max_idx)
+    [{"arg_shape": arg_shape, "idxs_shape": idxs.shape, "idxs_dtype": idxs.dtype,
+          "dnums": dnums, "update_shape": update_shape, "max_idx": max_idx}
       for arg_shape, idxs, update_shape, dnums, max_idx in [
           ((5,), np.array([[0], [2]]), (2,),
            lax.ScatterDimensionNumbers(update_window_dims=(),
@@ -995,8 +995,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(scatter_add, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, idxs=idxs, dnums=dnums,
-          update_shape=update_shape, max_idx=max_idx, multiplier=multiplier)
+    [{"arg_shape": arg_shape, "idxs": idxs, "dnums": dnums,
+          "update_shape": update_shape, "max_idx": max_idx, "multiplier": multiplier}
       for arg_shape, idxs, update_shape, dnums, max_idx, multiplier in [
           ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
@@ -1036,8 +1036,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                 1.)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, idxs=idxs, dnums=dnums,
-          update_shape=update_shape)
+    [{"arg_shape": arg_shape, "idxs": idxs, "dnums": dnums,
+          "update_shape": update_shape}
       for arg_shape, idxs, update_shape, dnums in [
           ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
@@ -1062,8 +1062,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(scatter_max, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, idxs=idxs, dnums=dnums,
-          update_shape=update_shape)
+    [{"arg_shape": arg_shape, "idxs": idxs, "dnums": dnums,
+          "update_shape": update_shape}
       for arg_shape, idxs, update_shape, dnums in [
           ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),

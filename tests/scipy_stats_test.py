@@ -1303,7 +1303,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       check_dtypes=False)
 
   @jtu.sample_product(
-    [dict(x_dtype=x_dtype, p_dtype=p_dtype)
+    [{"x_dtype": x_dtype, "p_dtype": p_dtype}
      for x_dtype, p_dtype in itertools.product(jtu.dtypes.integer, jtu.dtypes.floating)
     ],
     shape=[(2), (4,), (1, 5)],
@@ -1326,7 +1326,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
 
   @jtu.sample_product(
-    [dict(x_shape=x_shape, mean_shape=mean_shape, cov_shape=cov_shape)
+    [{"x_shape": x_shape, "mean_shape": mean_shape, "cov_shape": cov_shape}
       for x_shape, mean_shape, cov_shape in [
           # # These test cases cover default values for mean/cov, but we don't
           # # support those yet (and they seem not very valuable).
@@ -1346,7 +1346,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           [(2, 3, 4), (4,), (4, 4)],
       ]
     ],
-    [dict(x_dtype=x_dtype, mean_dtype=mean_dtype, cov_dtype=cov_dtype)
+    [{"x_dtype": x_dtype, "mean_dtype": mean_dtype, "cov_dtype": cov_dtype}
      for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
     ],
     # if (mean_shape is not None or mean_dtype == np.float32)
@@ -1376,7 +1376,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
 
   @jtu.sample_product(
-    [dict(x_shape=x_shape, mean_shape=mean_shape, cov_shape=cov_shape)
+    [{"x_shape": x_shape, "mean_shape": mean_shape, "cov_shape": cov_shape}
       for x_shape, mean_shape, cov_shape in [
           # These test cases are where scipy flattens things, which has
           # different batch semantics than some might expect, so we manually
@@ -1389,7 +1389,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           [(5, 3, 2), (1, 2,), (2, 2)],
       ]
     ],
-    [dict(x_dtype=x_dtype, mean_dtype=mean_dtype, cov_dtype=cov_dtype)
+    [{"x_dtype": x_dtype, "mean_dtype": mean_dtype, "cov_dtype": cov_dtype}
      for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
     ],
   )
@@ -1626,7 +1626,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertAllClose(evaluate_kde(kde, x), kde.evaluate(x))
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{"shape": shape, "axis": axis}
       for shape, axis in (
         ((0,), None),
         ((0,), 0),
@@ -1686,7 +1686,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{"shape": shape, "axis": axis}
       for shape in [(0,), (7,), (47, 8), (0, 2, 3), (10, 5, 21)]
       for axis in [None, *range(len(shape))
     ]],
@@ -1707,7 +1707,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis, ddof=ddof, nan_policy=nan_policy, keepdims=keepdims)
+    [{"shape": shape, "axis": axis, "ddof": ddof, "nan_policy": nan_policy, "keepdims": keepdims}
       for shape in [(5,), (5, 6), (5, 6, 7)]
       for axis in [None, *range(len(shape))]
       for ddof in [0, 1, 2, 3]

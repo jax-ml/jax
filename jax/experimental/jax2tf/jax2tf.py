@@ -528,9 +528,9 @@ class NativeSerializationImpl(SerializationImpl):
                args_specs, kwargs_specs,
                native_serialization_platforms: Sequence[str] | None,
                native_serialization_disabled_checks: Sequence[DisabledSafetyCheck]):
-    self.convert_kwargs = dict(native_serialization=True,
-                               native_serialization_platforms=native_serialization_platforms,
-                               native_serialization_disabled_checks=native_serialization_disabled_checks)
+    self.convert_kwargs = {"native_serialization": True,
+                               "native_serialization_platforms": native_serialization_platforms,
+                               "native_serialization_disabled_checks": native_serialization_disabled_checks}
     if hasattr(fun_jax, "trace"):
       # If we have a pjit or pmap already we do not wrap with another, and we
       # allow shardings.
@@ -589,7 +589,7 @@ class GraphSerializationImpl(SerializationImpl):
                args_specs, kwargs_specs,
                args_flat_tf: Sequence[TfVal],
                enable_xla: bool):
-    self.convert_kwargs = dict(native_serialization=False)
+    self.convert_kwargs = {"native_serialization": False}
     self.fun_jax = fun_jax
     self.args_specs = args_specs
     self.kwargs_specs = kwargs_specs
@@ -921,18 +921,18 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       "You should upgrade TensorFlow, e.g., to tf_nightly."
     )
 
-  call_module_attrs = dict(
-      version=version,
-      Tout=out_types,
-      Sout=out_shapes_tf,
-      function_list=[
+  call_module_attrs = {
+      "version": version,
+      "Tout": out_types,
+      "Sout": out_shapes_tf,
+      "function_list": [
           concrete_fn.function_def.signature.name
           for concrete_fn in _thread_local_state.call_tf_concrete_function_list
       ] if _thread_local_state.call_tf_concrete_function_list is not None else [],
       # We always set has_token_input_output because it requires real tokens
       # for versions less than 9 and is not used starting with version 9.
-      has_token_input_output=False
-  )
+      "has_token_input_output": False
+  }
 
   call_module_attrs["platforms"] = tuple(p.upper() for p in exported.platforms)
   if version >= 6:

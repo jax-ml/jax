@@ -794,10 +794,10 @@ def lower_jaxpr_to_module(
       block_shape += list(_get_aval_physical_dtype_shape(bm.block_aval.inner_aval))
       block_shape = dynamic_shape_replacement_fn(block_shape)
       window_shape = ir.DenseI64ArrayAttr.get(block_shape)
-      block_params = dict(
-          window_bounds=window_shape,
-          transform_indices=ir.FlatSymbolRefAttr.get(func_name),
-      )
+      block_params = {
+          'window_bounds': window_shape,
+          'transform_indices': ir.FlatSymbolRefAttr.get(func_name),
+      }
       for bd in bm.block_shape:
         if not isinstance(
             bd, (pallas_core.Element, pallas_core.Squeezed, pallas_core.Blocked)
@@ -1601,7 +1601,7 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
   load_ops = []
   for i in range(ref_block_shape[1]):
     idx = NDIndexer(indices=(0, i), shape=ref_block_shape,
-                    int_indexer_shape=tuple())
+                    int_indexer_shape=())
     starts, _, _, _, _ = _indexer_to_start_size_stride(
         idx,
         ref_block_shape,

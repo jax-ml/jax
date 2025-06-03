@@ -89,24 +89,24 @@ def uniform_kernel(block_index, key, total_size, block_size, tile_size):
 class BlockedSamplerTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
-    dict(testcase_name='8x128_vs_16x256', total_size=(32, 256),
-         block_size_a=(8, 128), block_size_b=(16, 256),
-         tile_size=(8, 128), transpose_grid=False),
-    dict(testcase_name='transpose_8x128_vs_16x256', total_size=(32, 256),
-         block_size_a=(8, 128), block_size_b=(16, 256),
-         tile_size=(8, 128), transpose_grid=True),
-    dict(testcase_name='8x128_vs_32x128', total_size=(32, 128),
-         block_size_a=(8, 128), block_size_b=(32, 128),
-         tile_size=(8, 128), transpose_grid=False),
-    dict(testcase_name='16x256_vs_32x128', total_size=(32, 256),
-         block_size_a=(16, 256), block_size_b=(32, 128),
-         tile_size=(8, 128), transpose_grid=False),
-    dict(testcase_name='128x128_vs_128x256_padding',
-         total_size=(256, 128), block_size_a=(128, 128),
-         block_size_b=(128, 256), tile_size=(128, 128), transpose_grid=False),
-    dict(testcase_name='128x128_vs_128x256_padding2',
-         total_size=(257, 129), block_size_a=(128, 128),
-         block_size_b=(128, 256), tile_size=(128, 128), transpose_grid=False),
+    {'testcase_name': '8x128_vs_16x256', 'total_size': (32, 256),
+         'block_size_a': (8, 128), 'block_size_b': (16, 256),
+         'tile_size': (8, 128), 'transpose_grid': False},
+    {'testcase_name': 'transpose_8x128_vs_16x256', 'total_size': (32, 256),
+         'block_size_a': (8, 128), 'block_size_b': (16, 256),
+         'tile_size': (8, 128), 'transpose_grid': True},
+    {'testcase_name': '8x128_vs_32x128', 'total_size': (32, 128),
+         'block_size_a': (8, 128), 'block_size_b': (32, 128),
+         'tile_size': (8, 128), 'transpose_grid': False},
+    {'testcase_name': '16x256_vs_32x128', 'total_size': (32, 256),
+         'block_size_a': (16, 256), 'block_size_b': (32, 128),
+         'tile_size': (8, 128), 'transpose_grid': False},
+    {'testcase_name': '128x128_vs_128x256_padding',
+         'total_size': (256, 128), 'block_size_a': (128, 128),
+         'block_size_b': (128, 256), 'tile_size': (128, 128), 'transpose_grid': False},
+    {'testcase_name': '128x128_vs_128x256_padding2',
+         'total_size': (257, 129), 'block_size_a': (128, 128),
+         'block_size_b': (128, 256), 'tile_size': (128, 128), 'transpose_grid': False},
   )
   def test_block_shape_invariance(self, total_size, block_size_a,
                           block_size_b, tile_size, transpose_grid):
@@ -133,9 +133,9 @@ class BlockedFoldInTest(jtu.JaxTestCase):
   # size of the tensor, but only the total number of tiles.
   # Using a 3D grid (with very large inner dimensions) triggers an overflow in a
   # previous implementation of blocked_fold_in.
-  dict(testcase_name='4096x512_vs_1024x2048',
-         total_size=(2, 64 * 1024, 64 * 1024), block_size_a=(1, 4096, 512),
-         block_size_b=(1, 1024, 2048), tile_size=(1, 1024, 512)),
+  {'testcase_name': '4096x512_vs_1024x2048',
+         'total_size': (2, 64 * 1024, 64 * 1024), 'block_size_a': (1, 4096, 512),
+         'block_size_b': (1, 1024, 2048), 'tile_size': (1, 1024, 512)},
   )
   def test_blocked_fold_in_shape_invariance(self, total_size, block_size_a,
                                             block_size_b, tile_size):

@@ -159,7 +159,7 @@ class StaxTest(jtu.JaxTestCase):
     _CheckShapeAgreement(self, init_fun, apply_fun, [input_shape, input_shape])
 
   @jtu.sample_product(
-    [dict(input_shapes=input_shapes, axis=axis)
+    [{"input_shapes": input_shapes, "axis": axis}
       for input_shapes, axis in [
           ([(2, 3), (2, 1)], 1),
           ([(2, 3), (2, 1)], -1),

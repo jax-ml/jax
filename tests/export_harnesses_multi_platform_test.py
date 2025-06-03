@@ -177,7 +177,7 @@ class PrimitiveTest(jtu.JaxTestCase):
   # The lowering rule for all_gather has special cases for bool.
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(dtype=dtype)
+      {"dtype": dtype}
       for dtype in [np.bool_, np.float32]],
   )
   def test_all_gather(self, *, dtype):

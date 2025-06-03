@@ -168,7 +168,7 @@ def _switch_internal(
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
   jaxprs = [replace_jaxpr_effects(jaxpr, joined_effects) for jaxpr in jaxprs]
-  params = dict(branches=tuple(jaxprs))
+  params = {"branches": tuple(jaxprs)}
   if branches_platforms is not None:
     params["branches_platforms"] = branches_platforms
   out = cond_p.bind(index, *consts, *ops, **params)

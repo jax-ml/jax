@@ -947,10 +947,10 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
   def all_reduce(aval, x):
     if is_spmd:
       channel = ctx.module_context.new_channel()
-      other_args = dict(
-          channel_handle=hlo.ChannelHandle.get(
+      other_args = {
+          "channel_handle": hlo.ChannelHandle.get(
               channel, mlir.DEVICE_TO_DEVICE_TYPE),
-          use_global_device_ids=ir.BoolAttr.get(True))
+          "use_global_device_ids": ir.BoolAttr.get(True)}
     else:
       other_args = {}
 
@@ -1050,8 +1050,8 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm):
   )
   if is_manual:
     channel = ctx.module_context.new_channel()
-    other_args = dict(
-        channel_handle=hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE))
+    other_args = {
+        "channel_handle": hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE)}
   else:
     other_args = {}
 
@@ -1132,7 +1132,7 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
     # of partitions - and XLA is configured with only a single replica.
     channel = ctx.module_context.new_channel()
     channel_handle = hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE)
-    other_args = dict(channel_handle=channel_handle)
+    other_args = {"channel_handle": channel_handle}
   else:
     other_args = {}
   return hlo.CollectiveBroadcastOp(
@@ -1185,7 +1185,7 @@ def _all_to_all_lowering(
     # of partitions - and XLA is configured with only a single replica.
     channel = ctx.module_context.new_channel()
     channel_handle = hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE)
-    other_args = dict(channel_handle=channel_handle)
+    other_args = {"channel_handle": channel_handle}
   else:
     other_args = {}
   if hlo.get_api_version() < 8:
@@ -1582,10 +1582,10 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     # channel ID, as otherwise it interprets the devices as replicas instead
     # of partitions - and XLA is configured with only a single replica.
     channel = ctx.module_context.new_channel()
-    other_args = dict(
-        channel_handle=hlo.ChannelHandle.get(
+    other_args = {
+        "channel_handle": hlo.ChannelHandle.get(
             channel, mlir.DEVICE_TO_DEVICE_TYPE),
-        use_global_device_ids=ir.BoolAttr.get(True))
+        "use_global_device_ids": ir.BoolAttr.get(True)}
   else:
     other_args = {}
 
@@ -1717,10 +1717,10 @@ def _reduce_scatter_lowering(
     # channel ID, as otherwise it interprets the devices as replicas instead
     # of partitions - and XLA is configured with only a single replica.
     channel = ctx.module_context.new_channel()
-    other_args = dict(
-        channel_handle=hlo.ChannelHandle.get(
+    other_args = {
+        "channel_handle": hlo.ChannelHandle.get(
             channel, mlir.DEVICE_TO_DEVICE_TYPE),
-        use_global_device_ids=ir.BoolAttr.get(True))
+        "use_global_device_ids": ir.BoolAttr.get(True)}
   else:
     other_args = {}
   op = hlo.ReduceScatterOp(

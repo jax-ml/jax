@@ -756,7 +756,7 @@ INITIALIZER_RECS = [
 class NNInitializersTest(jtu.JaxTestCase):
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(initializer=rec.initializer())],
+      [{'initializer': rec.initializer()}],
       shape=rec.shapes,
       dtype=rec.dtypes
     )
@@ -771,7 +771,7 @@ class NNInitializersTest(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(initializer_provider=rec.initializer)],
+      [{'initializer_provider': rec.initializer}],
       shape=rec.shapes,
       dtype=rec.dtypes
     )

@@ -231,7 +231,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     return f
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in all_shapes
       for axis in list(range(-len(shape), len(shape)))],
     dtype=all_dtypes,
@@ -333,7 +333,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jax.grad(f)(jnp_array)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in all_shapes
       for axis in list(range(-len(shape), len(shape)))],
     discont=[None, "pi", 2],
@@ -365,7 +365,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, atol={dtypes.bfloat16: 1e-1})
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in all_shapes
       for axis in list(range(-len(shape), len(shape))) + [None]],
     dtype=all_dtypes,
@@ -385,7 +385,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.nonzero, jnp.nonzero, args_maker, check_dtypes=False)
 
   @jtu.sample_product(
-    [dict(shape=shape, fill_value=fill_value)
+    [{'shape': shape, 'fill_value': fill_value}
       for shape in nonempty_nonscalar_array_shapes
       for fill_value in [None, -1, shape or (1,)]
      ],
@@ -451,7 +451,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, fill_value=fill_value)
+    [{'shape': shape, 'fill_value': fill_value}
       for shape in nonempty_nonscalar_array_shapes
       for fill_value in [None, -1, shape or (1,)]
      ],
@@ -475,8 +475,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(np_op=getattr(np, rec.name), jnp_op=getattr(jnp, rec.name),
-          shape=shape, dtype=dtype, axis=axis, rng_factory=rec.rng_factory)
+    [{'np_op': getattr(np, rec.name), 'jnp_op': getattr(jnp, rec.name),
+          'shape': shape, 'dtype': dtype, 'axis': axis, 'rng_factory': rec.rng_factory}
       for rec in JAX_ARGMINMAX_RECORDS
       for shape, dtype in _shape_and_dtypes(rec.shapes, rec.dtypes)
       for axis in range(-len(shape), len(shape))],
@@ -504,8 +504,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(name=rec.name, np_op=getattr(np, rec.name),
-          jnp_op=getattr(jnp, rec.name))
+    [{'name': rec.name, 'np_op': getattr(np, rec.name),
+          'jnp_op': getattr(jnp, rec.name)}
       for rec in JAX_ARGMINMAX_RECORDS],
   )
   def testArgMinMaxEmpty(self, name, np_op, jnp_op):
@@ -522,7 +522,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, axes=axes)
+    [{'lhs_shape': lhs_shape, 'rhs_shape': rhs_shape, 'axes': axes}
       for lhs_shape, rhs_shape, axes in [
           [(2,), (2,), (-1, -1, -1, None)], # scalar output
           [(2, 4), (2, 4), (-1, -1, -1, 0)], # 2D vectors
@@ -560,7 +560,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+    [{'lhs_shape': lhs_shape, 'rhs_shape': rhs_shape}
       for lhs_shape, rhs_shape in [
           ((3, 3), ()),
           ((), (3, 3)),
@@ -610,7 +610,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ])
 
   @jtu.sample_product(
-    [dict(name=name, lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+    [{'name': name, 'lhs_shape': lhs_shape, 'rhs_shape': rhs_shape}
       for name, lhs_shape, rhs_shape in [
           ("vector-vector", (3,), (3,)),
           ("matrix-vector", (3, 3), (3,)),
@@ -725,7 +725,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, axes=axes)
+    [{'lhs_shape': lhs_shape, 'rhs_shape': rhs_shape, 'axes': axes}
       for lhs_shape, rhs_shape, axes in [
           [(3,), (), 0],
           [(2, 3, 4), (5, 6, 7), 0],  # from issue #740
@@ -937,8 +937,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, lhs_dtype=lhs_dtype,
-          rhs_shape=rhs_shape, rhs_dtype=rhs_dtype)
+    [{'lhs_shape': lhs_shape, 'lhs_dtype': lhs_dtype,
+          'rhs_shape': rhs_shape, 'rhs_dtype': rhs_dtype}
       # TODO(phawkins): support integer dtypes too.
       for lhs_shape, lhs_dtype in _shape_and_dtypes(all_shapes, inexact_dtypes)
       for rhs_shape, rhs_dtype in _shape_and_dtypes(all_shapes, inexact_dtypes)
@@ -1010,7 +1010,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         atol=tol, rtol=tol, check_dtypes=False)
 
   @jtu.sample_product(
-    [dict(a_min=a_min, a_max=a_max)
+    [{'a_min': a_min, 'a_max': a_max}
       for a_min, a_max in [(-1, None), (None, 1), (-0.9, 1),
                            (-np.ones(1), None),
                            (None, np.ones(1)),
@@ -1087,7 +1087,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         jnp.hypot(x, y)
 
   @jtu.sample_product(
-    [dict(shape=shape, dtype=dtype)
+    [{'shape': shape, 'dtype': dtype}
       for shape, dtype in _shape_and_dtypes(all_shapes, number_dtypes)],
     decimals=[0, 1, -2],
   )
@@ -1137,8 +1137,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(mode=mode, shape=shape, dtype=dtype,
-          pad_width=pad_width, constant_values=constant_values)
+    [{'mode': mode, 'shape': shape, 'dtype': dtype,
+          'pad_width': pad_width, 'constant_values': constant_values}
       for mode, shapes in [
           ('constant', all_shapes),
           ('wrap', nonempty_shapes),
@@ -1193,8 +1193,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(mode=mode, shape=shape, dtype=dtype,
-          pad_width=pad_width, stat_length=stat_length)
+    [{'mode': mode, 'shape': shape, 'dtype': dtype,
+          'pad_width': pad_width, 'stat_length': stat_length}
       for mode in ['maximum', 'minimum', 'mean', 'median']
       for shape, dtype in _shape_and_dtypes(nonempty_shapes, all_dtypes)
       for pad_width in [
@@ -1239,8 +1239,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, dtype=dtype,
-          pad_width=pad_width, reflect_type=reflect_type)
+    [{'shape': shape, 'dtype': dtype,
+          'pad_width': pad_width, 'reflect_type': reflect_type}
       for shape, dtype in _shape_and_dtypes(nonempty_shapes, all_dtypes)
       for pad_width in [
           # ((before_1, after_1), ..., (before_N, after_N))
@@ -1273,7 +1273,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, dtype=dtype, pad_width=pad_width, end_values=end_values)
+    [{'shape': shape, 'dtype': dtype, 'pad_width': pad_width, 'end_values': end_values}
       for shape, dtype in _shape_and_dtypes(nonempty_shapes, default_dtypes + complex_dtypes)
       for pad_width in [
         # ((before_1, after_1), ..., (before_N, after_N))
@@ -1419,7 +1419,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertTrue(dtypes.is_weakly_typed(y))
 
   @jtu.sample_product(
-    [dict(shape=shape, dtype=dtype)
+    [{'shape': shape, 'dtype': dtype}
       for shape, dtype in _shape_and_dtypes(all_shapes, default_dtypes)],
     reps=[(), (2,), (3, 4), (2, 3, 4), (1, 0, 2)],
   )
@@ -1457,7 +1457,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(ncond=ncond, nfunc=nfunc)
+    [{'ncond': ncond, 'nfunc': nfunc}
       for ncond in [1, 2, 3]
       for nfunc in [ncond, ncond + 1]
     ],
@@ -1490,7 +1490,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(g.num_traces, 1)
 
   @jtu.sample_product(
-    [dict(shape=shape, perm=perm)
+    [{'shape': shape, 'perm': perm}
       for shape in array_shapes
       for perm in [
         None,
@@ -1612,7 +1612,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @jtu.sample_product(
-    [dict(order=order, k=k, dtype=dtype)
+    [{'order': order, 'k': k, 'dtype': dtype}
       for dtype in default_dtypes
       for order in range(5)
       for k in [np.arange(order, dtype=dtype), np.ones(1, dtype), None]],
@@ -1658,7 +1658,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.power, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in all_shapes
       for axis in [None] + list(range(len(shape)))
     ],
@@ -1680,7 +1680,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in all_shapes
       for axis in list(range(len(shape)))
     ],
@@ -1725,7 +1725,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in array_shapes
       for axis in [None] + list(range(len(shape)))
     ],
@@ -1747,7 +1747,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(base_shape=base_shape, axis=axis)
+    [{'base_shape': base_shape, 'axis': axis}
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
       for axis in (None, *range(-len(base_shape)+1, len(base_shape)))
     ],
@@ -1779,7 +1779,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in [(4, 1), (4, 3), (4, 5, 6)]
       for axis in [None] + list(range(1 - len(shape), len(shape) - 1))
     ],
@@ -1805,7 +1805,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                            np.concatenate(arrays, axis=None))
 
   @jtu.sample_product(
-    [dict(base_shape=base_shape, axis=axis)
+    [{'base_shape': base_shape, 'axis': axis}
       for base_shape in [(), (4,), (3, 4), (2, 3, 4)]
       for axis in (None, *range(-len(base_shape)+1, len(base_shape)))
     ],
@@ -1828,7 +1828,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(base_shape=base_shape, axis=axis)
+    [{'base_shape': base_shape, 'axis': axis}
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
       for axis in range(-len(base_shape)+1, len(base_shape))],
     arg_dtypes=itertools.combinations_with_replacement(default_dtypes, 2)
@@ -1854,7 +1854,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis, idx=idx)
+    [{'shape': shape, 'axis': axis, 'idx': idx}
       for shape in nonempty_nonscalar_array_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))
       for idx in (range(-math.prod(shape), math.prod(shape))
@@ -1871,7 +1871,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonempty_nonscalar_array_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))
      ],
@@ -1887,7 +1887,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonempty_nonscalar_array_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))
     ],
@@ -1905,7 +1905,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonempty_nonscalar_array_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))
     ],
@@ -1928,7 +1928,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonempty_nonscalar_array_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))
     ],
@@ -1945,7 +1945,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonempty_nonscalar_array_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))
     ],
@@ -1963,7 +1963,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonempty_nonscalar_array_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))
     ],
@@ -1999,7 +1999,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.insert, jnp.insert, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonempty_array_shapes
       for axis in range(-len(shape), len(shape))
     ],
@@ -2025,7 +2025,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axes=axes)
+    [{'shape': shape, 'axes': axes}
       for shape in nonempty_shapes
       for axes in itertools.combinations(range(len(shape)), 2)
     ],
@@ -2045,7 +2045,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, dtype=dtype, axis=axis)
+    [{'shape': shape, 'dtype': dtype, 'axis': axis}
       for shape, dtype in _shape_and_dtypes(all_shapes, default_dtypes)
       for axis in [None] + list(range(-len(shape), max(1, len(shape))))
     ],
@@ -2080,7 +2080,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertLessEqual(len(jaxpr.jaxpr.eqns), 6)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in all_shapes
       for axis in [None] + list(range(len(shape)))],
     dtype=number_dtypes,
@@ -2138,7 +2138,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jnp.unique_values, np_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonempty_array_shapes
       for axis in [None] + list(range(len(shape)))],
     dtype=number_dtypes,
@@ -2148,7 +2148,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testUniqueSize(self, shape, dtype, axis, size, fill_value):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    kwds = dict(axis=axis, return_index=True, return_inverse=True, return_counts=True)
+    kwds = {'axis': axis, 'return_index': True, 'return_inverse': True, 'return_counts': True}
 
     if fill_value == "slice":
       if axis is None:
@@ -2200,7 +2200,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         x = [complex(i, j) for i, j in itertools.product(x, repeat=2)]
       return [np.array(x, dtype=dtype)]
 
-    kwds = dict(return_index=True, return_inverse=True, return_counts=True)
+    kwds = {'return_index': True, 'return_inverse': True, 'return_counts': True}
     jnp_fun = partial(jnp.unique, **kwds)
     def np_fun(x):
       dtype = x.dtype
@@ -2342,7 +2342,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in all_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))],
     op=["cumsum", "cumprod"],
@@ -2370,7 +2370,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in all_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))],
     op=["nancumsum", "nancumprod"],
@@ -2632,7 +2632,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_compile, args_maker, check_dtypes=True, atol=tol, rtol=tol)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis1=axis1, axis2=axis2)
+    [{'shape': shape, 'axis1': axis1, 'axis2': axis2}
       for shape in [shape for shape in all_shapes if len(shape) >= 2]
       for axis1 in range(-len(shape), len(shape))
       for axis2 in [a for a in range(-len(shape), len(shape))
@@ -2671,7 +2671,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   def testInterp(self, shape, dtype, period, left, right, target_dtype):
     rng = jtu.rand_default(self.rng(), scale=10)
-    kwds = dict(period=period, left=left, right=right)
+    kwds = {'period': period, 'left': left, 'right': right}
     np_fun = partial(np.interp, **kwds)
     jnp_fun = partial(jnp.interp, **kwds)
 
@@ -2684,10 +2684,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product([
-    dict(x=0.5, left='extrapolate', expected=5),
-    dict(x=1.5, left='extrapolate', expected=15),
-    dict(x=3.5, left='extrapolate', expected=30),
-    dict(x=3.9, right='extrapolate', expected=39),
+    {'x': 0.5, 'left': 'extrapolate', 'expected': 5},
+    {'x': 1.5, 'left': 'extrapolate', 'expected': 15},
+    {'x': 3.5, 'left': 'extrapolate', 'expected': 30},
+    {'x': 3.9, 'right': 'extrapolate', 'expected': 39},
   ])
   def testInterpExtrapoate(self, x, expected, **kwargs):
     xp = jnp.array([1.0, 2.0, 3.0])
@@ -2729,7 +2729,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testInterpGradNan(self, dtype, period, left, right):
-    kwds = dict(period=period, left=left, right=right)
+    kwds = {'period': period, 'left': left, 'right': right}
     jnp_fun = partial(jnp.interp, **kwds)
     # Probe values of x and xp that are close to zero and close together.
     x = dtype(np.exp(np.linspace(-90, -20, 1000)))
@@ -2737,7 +2737,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np.testing.assert_equal(np.all(np.isfinite(g)), True)
 
   @jtu.sample_product(
-    [dict(x1_shape=x1_shape, x2_shape=x2_shape)
+    [{'x1_shape': x1_shape, 'x2_shape': x2_shape}
      for x1_shape, x2_shape in filter(_shapes_are_broadcast_compatible,
                                       itertools.combinations_with_replacement(array_shapes, 2))
     ],
@@ -2812,7 +2812,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.frexp, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis1=axis1, axis2=axis2)
+    [{'shape': shape, 'axis1': axis1, 'axis2': axis2}
       for shape in [shape for shape in all_shapes if len(shape) >= 2]
       for axis1 in range(-len(shape), len(shape))
       for axis2 in range(-len(shape), len(shape))
@@ -2967,7 +2967,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in [(), (2,), (3, 4), (1, 100)]
       for axis in range(-len(shape), len(shape) + 1)
     ],
@@ -3029,7 +3029,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(name=name, **kwds)
       for name in ['blackman', 'bartlett', 'hamming', 'hanning', 'kaiser']
-      for kwds in ([dict(beta=1), dict(beta=0.5)] if name == 'kaiser' else [{}])
+      for kwds in ([{'beta': 1}, {'beta': 0.5}] if name == 'kaiser' else [{}])
     ],
     size = [0, 1, 5, 10],
   )
@@ -3044,7 +3044,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, fill_value_shape=fill_value_shape)
+    [{'shape': shape, 'fill_value_shape': fill_value_shape}
       for shape in array_shapes + [3, np.array(7, dtype=np.int32)]
       for fill_value_shape in _compatible_shapes(shape)],
     fill_value_dtype=default_dtypes,
@@ -3059,7 +3059,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, dtype=dtype, axis=axis)
+    [{'shape': shape, 'dtype': dtype, 'axis': axis}
       for shape, dtype in _shape_and_dtypes(nonempty_nonscalar_array_shapes, default_dtypes)
       for axis in list(range(-len(shape), max(1, len(shape))))
     ],
@@ -3147,7 +3147,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(y.sharding, SingleDeviceSharding(jax.devices()[0]))
 
   @jtu.sample_product(
-    [dict(shape=shape, out_shape=out_shape, fill_value_shape=fill_value_shape)
+    [{'shape': shape, 'out_shape': out_shape, 'fill_value_shape': fill_value_shape}
       for shape in array_shapes
       for out_shape in [None] + array_shapes
       for fill_value_shape in _compatible_shapes(shape if out_shape is None else out_shape)
@@ -3285,7 +3285,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(jnp.full_like(x, 2), jnp.full(x.shape, 2, x.dtype))
 
   @jtu.sample_product(
-    [dict(func=func, args=args)
+    [{'func': func, 'args': args}
      for func, args in [("full_like", (-100,)), ("ones_like", ()), ("zeros_like", ())]
     ],
     shape=array_shapes,
@@ -3332,7 +3332,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(jax.jit(op)(x).aval.weak_type, weak_type)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis, num_sections=num_sections)
+    [{'shape': shape, 'axis': axis, 'num_sections': num_sections}
       for shape, axis, num_sections in [
           ((3,), 0, 3), ((12,), 0, 3), ((12, 4), 0, 4), ((12, 4), 1, 2),
           ((2, 3, 4), -1, 2), ((2, 3, 4), -2, 3)]
@@ -3348,7 +3348,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis, num_sections=num_sections)
+    [{'shape': shape, 'axis': axis, 'num_sections': num_sections}
       # All testcases split the specified axis unequally
       for shape, axis, num_sections in [
           ((3,), 0, 2), ((12,), 0, 5), ((12, 4), 0, 7), ((12, 4), 1, 3),
@@ -3478,7 +3478,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis, num_sections=num_sections)
+    [{'shape': shape, 'axis': axis, 'num_sections': num_sections}
       for shape, axis, num_sections in [
           ((12, 4), 0, 4), ((12,), 1, 2),
           ((2, 3, 4), 2, 2), ((4, 3, 4), 0, 2)]],
@@ -3502,7 +3502,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, out_shape=out_shape)
+    [{'arg_shape': arg_shape, 'out_shape': out_shape}
       for arg_shape, out_shape in [
           (jtu.NUMPY_SCALAR_SHAPE, (1, 1, 1)),
           ((), (1, 1, 1)),
@@ -3526,7 +3526,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, out_shape=out_shape)
+    [{'arg_shape': arg_shape, 'out_shape': out_shape}
       for arg_shape, out_shape in [
           ((7, 0), (0, 42, 101)),
           ((2, 1, 4), (-1,)),
@@ -3544,7 +3544,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, out_shape=out_shape)
+    [{'arg_shape': arg_shape, 'out_shape': out_shape}
       for arg_shape, out_shape in itertools.product(all_shapes, array_shapes)],
     dtype=default_dtypes,
   )
@@ -3557,7 +3557,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, dim=dim)
+    [{'arg_shape': arg_shape, 'dim': dim}
       for arg_shape in [(), (3,), (3, 4)]
       for dim in (list(range(-len(arg_shape)+1, len(arg_shape)))
                   + [np.array(0), np.array(-1), (0,), [np.array(0)],
@@ -3592,7 +3592,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lambda: np.expand_dims(x, [3, -1]))
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, ax1=ax1, ax2=ax2)
+    [{'arg_shape': arg_shape, 'ax1': ax1, 'ax2': ax2}
       for arg_shape, ax1, ax2 in [
           ((3, 4), 0, 1), ((3, 4), 1, 0), ((3, 4, 5), 1, 2),
           ((3, 4, 5), -1, -2), ((3, 4, 5), 0, 1)]
@@ -3608,7 +3608,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(arg_shape=arg_shape, ax=ax)
+    [{'arg_shape': arg_shape, 'ax': ax}
       for arg_shape, ax in [
           ((3, 1), None),
           ((3, 1), 1),
@@ -3637,7 +3637,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jax.jit(jnp.asarray)(*args_maker())
 
   @jtu.sample_product(
-    [dict(arg=arg, dtype=dtype, ndmin=ndmin)
+    [{'arg': arg, 'dtype': dtype, 'ndmin': ndmin}
       for arg, dtypes in [
           ([True, False, True], all_dtypes),
           (3., all_dtypes),
@@ -4048,7 +4048,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertRaises(jax.errors.ConcretizationTypeError, lambda: g(3.))
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in [(3,), (2, 3)]
       for axis in list(range(-len(shape), len(shape))) + [None] + [tuple(range(len(shape)))]  # Test negative axes and tuples
     ],
@@ -4087,7 +4087,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axes=axes)
+    [{'shape': shape, 'axes': axes}
       for shape, axes in [
           [(2, 3), (0, 1)],
           [(2, 3), (1, 0)],
@@ -4443,7 +4443,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertEqual(jnp.arange(0., 10, 1).dtype, float_)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonzerodim_shapes
       for axis in (NO_VALUE, None, *range(-len(shape), len(shape)))
     ],
@@ -4489,7 +4489,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.sort_complex, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonempty_nonscalar_array_shapes
       for axis in (-1, *range(len(shape) - 1))
     ],
@@ -4505,7 +4505,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonzerodim_shapes
       for axis in (NO_VALUE, None, *range(-len(shape), len(shape)))
     ],
@@ -4529,7 +4529,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in nonempty_nonscalar_array_shapes
       for axis in (NO_VALUE, None, *range(-len(shape), len(shape)))
     ],
@@ -4645,7 +4645,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._assertSamePartitionedArrays(jnp_values, np_values, axis, kth, shape)
 
   @jtu.sample_product(
-    [dict(shifts=shifts, axis=axis)
+    [{'shifts': shifts, 'axis': axis}
       for shifts, axis in [
         (3, None),
         (1, 1),
@@ -4711,7 +4711,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
+    [{'shape': shape, 'axis': axis}
       for shape in [(3,), (3, 4), (3, 4, 5)]
       for axis in itertools.chain(range(-len(shape), len(shape)),
                                   [cast(Union[int, None], None)])
@@ -4760,7 +4760,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(expected, actual)
 
   @jtu.sample_product(
-    [dict(x_shape=x_shape, i_shape=i_shape, axis=axis)
+    [{'x_shape': x_shape, 'i_shape': i_shape, 'axis': axis}
       for x_shape, i_shape in filter(
         _shapes_are_equal_length,
         filter(_shapes_are_broadcast_compatible,
@@ -4895,7 +4895,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                           check_dtypes=check_dtypes)
 
   @jtu.sample_product(
-    [dict(shapes=shapes, dtypes=dtypes)
+    [{'shapes': shapes, 'dtypes': dtypes}
         for shapes, dtypes in (
           ((), ()),
           (((7,),), (np.int32,)),
@@ -4975,7 +4975,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(x.dtype, np.dtype(np.float32))
 
   @jtu.sample_product(
-    [dict(n=n, shapes=shapes)
+    [{'n': n, 'shapes': shapes}
       for n in range(1, 3)
       for shapes in filter(
           _shapes_are_broadcast_compatible,
@@ -5274,8 +5274,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(dtype=dtype, end_dtype=end_dtype, begin_dtype=begin_dtype,
-          shape=shape, begin_shape=begin_shape, end_shape=end_shape)
+    [{'dtype': dtype, 'end_dtype': end_dtype, 'begin_dtype': begin_dtype,
+          'shape': shape, 'begin_shape': begin_shape, 'end_shape': end_shape}
       for dtype in number_dtypes
       for end_dtype in [None] + [dtype]
       for begin_dtype in [None] + [dtype]
@@ -5603,7 +5603,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                               check_dtypes=False, atol=atol, rtol=tol)
 
   @jtu.sample_product(
-    [dict(start_shape=start_shape, stop_shape=stop_shape, axis=axis)
+    [{'start_shape': start_shape, 'stop_shape': stop_shape, 'axis': axis}
       for start_shape in [(), (2,), (2, 2)]
       for stop_shape in [(), (2,), (2, 2)]
       for axis in range(-max(len(start_shape), len(stop_shape)),
@@ -5715,7 +5715,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           for x in jaxpr.consts))
 
   @jtu.sample_product(
-    [dict(from_shape=from_shape, to_shape=to_shape)
+    [{'from_shape': from_shape, 'to_shape': to_shape}
       for from_shape, to_shape in [
           [(1, 3), (4, 3)],
           [(3,), (2, 1, 3)],
@@ -5741,7 +5741,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.broadcast_to(x, (4, 5))
 
   @jtu.sample_product(
-    [dict(shapes=shapes, broadcasted_shape=broadcasted_shape)
+    [{'shapes': shapes, 'broadcasted_shape': broadcasted_shape}
       for shapes, broadcasted_shape in [
         [[], ()],
         [[()], ()],
@@ -5831,7 +5831,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   def testPreferredElementType(self, funcname):
     func = getattr(jnp, funcname)
-    kwargs = dict(axes=0) if funcname == 'tensordot' else {}
+    kwargs = {'axes': 0} if funcname == 'tensordot' else {}
 
     ones_i32 = np.ones(2, dtype='int32')
     ones_f32 = np.ones(2, dtype='float32')
@@ -5845,7 +5845,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jtu.assert_dot_preferred_element_type('float32', func, ones_i32, ones_f32, **kwargs)
 
   @jtu.sample_product(
-    [dict(shape=shape, varargs=varargs, axis=axis)
+    [{'shape': shape, 'varargs': varargs, 'axis': axis}
         for shape in [(10,), (10, 15), (10, 15, 20)]
         for _num_axes in range(len(shape))
         for varargs in itertools.combinations(range(1, len(shape) + 1), _num_axes)
@@ -5984,7 +5984,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertRaises(TypeError, jnp.array, np_object_list)
 
   @jtu.sample_product(
-    [dict(shapes=shapes, dtypes=dtypes)
+    [{'shapes': shapes, 'dtypes': dtypes}
       for shapes in filter(
         _shapes_are_broadcast_compatible,
         itertools.combinations_with_replacement(all_shapes, 2))
@@ -6010,7 +6010,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp.logaddexp, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
-    [dict(shapes=shapes, dtypes=dtypes)
+    [{'shapes': shapes, 'dtypes': dtypes}
       for shapes in filter(
         _shapes_are_broadcast_compatible,
         itertools.combinations_with_replacement(all_shapes, 2))
@@ -6127,7 +6127,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [
-      dict(a_shape=a_shape, i_shape=i_shape, v_shape=v_shape, axis=axis)
+      {'a_shape': a_shape, 'i_shape': i_shape, 'v_shape': v_shape, 'axis': axis}
       for a_shape in nonempty_array_shapes
       for axis in list(range(-len(a_shape), len(a_shape)))
       for i_shape in [
@@ -6136,7 +6136,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       ]
       for v_shape in [(), (1,), i_shape]
     ] + [
-      dict(a_shape=a_shape, i_shape=i_shape, v_shape=v_shape, axis=None)
+      {'a_shape': a_shape, 'i_shape': i_shape, 'v_shape': v_shape, 'axis': None}
       for a_shape in nonempty_array_shapes
       for i_shape in [(J,) for J in range(math.prod(a_shape) + 1)]
       for v_shape in [(), (1,), i_shape]
@@ -6201,7 +6201,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertEqual(jax_result, numpy_result)
 
   @jtu.sample_product(
-    [dict(yshape=yshape, xshape=xshape, dx=dx, axis=axis)
+    [{'yshape': yshape, 'xshape': xshape, 'dx': dx, 'axis': axis}
       for yshape, xshape, dx, axis in [
         ((10,), None, 1.0, -1),
         ((3, 10), None, 2.0, -1),
@@ -6314,8 +6314,8 @@ class NumpyGradTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(op=rec.op, rng_factory=rec.rng_factory, tol=rec.tol,
-            order=rec.order)],
+      [{'op': rec.op, 'rng_factory': rec.rng_factory, 'tol': rec.tol,
+            'order': rec.order}],
       shapes=itertools.combinations_with_replacement(nonempty_shapes, rec.nargs),
       dtype=rec.dtypes)
     for rec in GRAD_TEST_RECORDS))
@@ -6333,7 +6333,7 @@ class NumpyGradTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
       jtu.sample_product_testcases(
-        [dict(op=rec.op, order=rec.order)],
+        [{'op': rec.op, 'order': rec.order}],
         special_value=rec.values
       )
       for rec in GRAD_SPECIAL_VALUE_TEST_RECORDS))
@@ -6685,7 +6685,7 @@ def _dtypes_for_ufunc(name: str) -> Iterator[tuple[str, ...]]:
 class NumpyUfuncTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
-    jtu.sample_product_testcases([dict(name=name)],
+    jtu.sample_product_testcases([{'name': name}],
                                  arg_dtypes=_dtypes_for_ufunc(name))
     for name in _all_numpy_ufuncs()
   ))

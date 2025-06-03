@@ -136,12 +136,12 @@ class FftTest(jtu.JaxTestCase):
     self.assertAllClose(y, z)
 
   @jtu.sample_product(
-    [dict(inverse=inverse, real=real, dtype=dtype)
+    [{"inverse": inverse, "real": real, "dtype": dtype}
      for inverse in [False, True]
      for real in [False, True]
      for dtype in (real_dtypes if real and not inverse else all_dtypes)
     ],
-    [dict(shape=shape, axes=axes, s=s)
+    [{"shape": shape, "axes": axes, "s": s}
      for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5), (2, 3, 4, 5, 6)]
      for axes in _get_fftn_test_axes(shape)
      for s in _get_fftn_test_s(shape, axes)
@@ -215,7 +215,7 @@ class FftTest(jtu.JaxTestCase):
     self.assertArraysEqual(jnp.zeros((0,), jnp.complex64), out)
 
   @jtu.sample_product(
-    [dict(inverse=inverse, real=real, hermitian=hermitian, dtype=dtype)
+    [{"inverse": inverse, "real": real, "hermitian": hermitian, "dtype": dtype}
       for inverse in [False, True]
       for real in [False, True]
       for hermitian in [False, True]
@@ -279,7 +279,7 @@ class FftTest(jtu.JaxTestCase):
         ValueError, lambda: func(rng([2, 3], dtype=np.float64), axis=[-3]))
 
   @jtu.sample_product(
-    [dict(inverse=inverse, real=real, dtype=dtype)
+    [{"inverse": inverse, "real": real, "dtype": dtype}
      for inverse in [False, True]
      for real in [False, True]
      for dtype in (real_dtypes if real and not inverse else all_dtypes)
@@ -426,7 +426,7 @@ class FftTest(jtu.JaxTestCase):
     )
 
   @jtu.sample_product(
-    [dict(shape=shape, axes=axes)
+    [{"shape": shape, "axes": axes}
      for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
      for axes in _get_fftn_test_axes(shape)
     ],
@@ -440,7 +440,7 @@ class FftTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, axes=axes)
+    [{"shape": shape, "axes": axes}
      for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
      for axes in _get_fftn_test_axes(shape)
     ],

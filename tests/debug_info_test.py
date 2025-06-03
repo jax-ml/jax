@@ -239,7 +239,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     def my_f(x, y, z, w):
       pass
 
-    dbg = api_util.debug_info("jit", my_f, (1, 2), dict(z=3, w=4))
+    dbg = api_util.debug_info("jit", my_f, (1, 2), {"z": 3, "w": 4})
     self.assertRegex(dbg.func_src_info, r"^my_f at .*debug_info_test.py:\d+")
     self.assertEqual(dbg.func_name, "my_f")
     self.assertEqual(dbg.arg_names, ("x", "y", "w", "z"))
@@ -249,7 +249,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     def my_f(x, y, z):
       pass
 
-    dbg = api_util.debug_info("jit", my_f, (1, 2), dict(z=3))
+    dbg = api_util.debug_info("jit", my_f, (1, 2), {"z": 3})
     self.assertEqual(dbg.arg_names, ("x", "y", "z"))
 
   def test_debug_info_pytrees(self):
@@ -257,7 +257,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       pass
 
     dbg = api_util.debug_info("jit", my_f, ((1, 2),),
-                              dict(y_tree=dict(z=3, w=4)))
+                              {"y_tree": {"z": 3, "w": 4}})
     self.assertEqual(dbg.arg_names, ("x_tree[0]", "x_tree[1]",
                                      "y_tree['w']", "y_tree['z']"))
 
@@ -265,7 +265,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     def my_f(x, z, *, w, y):
       pass
 
-    dbg = api_util.debug_info("jit", my_f, (1,), dict(y=2, z=3, w=4),
+    dbg = api_util.debug_info("jit", my_f, (1,), {"y": 2, "z": 3, "w": 4},
                               static_argnums=(1,),
                               static_argnames=("w",))
     self.assertEqual(dbg.arg_names, ("x", "y", "z"))
@@ -275,13 +275,13 @@ class DebugInfoTest(jtu.JaxTestCase):
       pass
 
     dbg = api_util.debug_info("jit", my_f, ((1, 2), (2, 3)),
-                              dict(z=(3, 4), w=(5, 6), t=7),
+                              {"z": (3, 4), "w": (5, 6), "t": 7},
                               static_argnums=(1,),
                               static_argnames=("w",))
     self.assertEqual(dbg.arg_names, ("x[0]", "x[1]", "t", "z[0]", "z[1]"))
 
     dbg = api_util.debug_info("jit", my_f, ((1, 2),),
-                              dict(z=(3, 4), w=(5, 6), t=7, y=3),
+                              {"z": (3, 4), "w": (5, 6), "t": 7, "y": 3},
                               static_argnums=(1,),
                               static_argnames=("w",))
     self.assertEqual(dbg.arg_names, ("x[0]", "x[1]", "t", "y", "z[0]", "z[1]"))
@@ -290,7 +290,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     def my_f(x):
       pass
 
-    dbg = api_util.debug_info("jit", my_f, (1, 2, 3), dict(z=3))
+    dbg = api_util.debug_info("jit", my_f, (1, 2, 3), {"z": 3})
     self.assertEqual(dbg.arg_names, ('args[0]', 'args[1]', 'args[2]', "kwargs['z']"))
 
   def test_debug_info_no_source_info_built_in(self):
@@ -593,11 +593,11 @@ class DebugInfoTest(jtu.JaxTestCase):
     tracer_spy = TracerSpy()
     def my_f(x_dict, y):
       tracer_spy.append(x_dict["a"])
-      return dict(c=x_dict["a"] + x_dict["b"], d=y)
+      return {"c": x_dict["a"] + x_dict["b"], "d": y}
 
     self._check_tracers_and_jaxprs(
         jax.jit(my_f),
-        dict(a=1, b=2), 3,
+        {"a": 1, "b": 2}, 3,
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=x_dict['a'],x_dict['b'],y, result_paths=result['c'],result['d']"
@@ -852,7 +852,7 @@ class DebugInfoTest(jtu.JaxTestCase):
 
       def my_g(u, v):
         tracer_spy.append(u)
-        return dict(c=u * v, d=v)
+        return {"c": u * v, "d": v}
 
       return jax.jit(my_g)(y, x)["c"]
 
@@ -924,7 +924,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       tracer_spy.append(y[0])
       return {'a': x * y[0], 'b': [y]}
     self._check_tracers_and_jaxprs(
-        lambda x, y, z: jax.vjp(jax.jit(my_f), x, y, z)[1](dict(a=x, b=[y])),
+        lambda x, y, z: jax.vjp(jax.jit(my_f), x, y, z)[1]({"a": x, "b": [y]}),
         jnp.float32(1.), (jnp.float32(2.),), [jnp.float32(3.)],
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=x,y[0], result_paths=result",
@@ -951,7 +951,7 @@ class DebugInfoTest(jtu.JaxTestCase):
 
       def my_g(u, v):
         tracer_spy.append(u)
-        return dict(c=u * v, d=v)
+        return {"c": u * v, "d": v}
 
       return jax.jit(my_g)(y, x)["c"]
     if config.use_direct_linearize.value:
@@ -1171,16 +1171,16 @@ class DebugInfoTest(jtu.JaxTestCase):
         def fn(r, x):
           tracer_spy.append(r)
           tracer_spy.append(x["c"])
-          return dict(b=x["c"] / r)
+          return {"b": x["c"] / r}
 
         @fn.def_transpose
         def fn_tp(r, t):
           tracer_spy.append(r)
-          return dict(c=2 * t / r)
+          return {"c": 2 * t / r}
 
         return x["c"] + fn(jnp.ones(2) * 3., x)
 
-      return lax.cond(i > 0, my_f, lambda x: x["c"], dict(c=x))
+      return lax.cond(i > 0, my_f, lambda x: x["c"], {"c": x})
 
     x = jnp.ones(2) * 6.
     self._check_tracers_and_jaxprs(
@@ -1206,17 +1206,17 @@ class DebugInfoTest(jtu.JaxTestCase):
       def fn(r, x):
         tracer_spy.append(r)
         tracer_spy.append(x["c"])
-        return dict(b=x["c"] * r)
+        return {"b": x["c"] * r}
       def fn_tp(r, t):
         tracer_spy.append(t["b"])
-        return dict(c=t["b"] * r)
-      return dict(a=x["c"] + jax.custom_derivatives.linear_call(fn, fn_tp, y, x)["b"])
+        return {"c": t["b"] * r}
+      return {"a": x["c"] + jax.custom_derivatives.linear_call(fn, fn_tp, y, x)["b"]}
 
     f1 = lambda x: my_f(x, jnp.ones(2) * 3.)
     x = jnp.ones(2) * 6.
 
     self._check_tracers_and_jaxprs(
-        jax.jit(lambda x: jax.linear_transpose(f1, dict(c=x))(dict(a=x))),
+        jax.jit(lambda x: jax.linear_transpose(f1, {"c": x})({"a": x})),
         x,
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
@@ -1239,7 +1239,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     def my_f(xdict):
       x = xdict["x"]
       tracer_spy.append(x)
-      return dict(a=jnp.sin(x))
+      return {"a": jnp.sin(x)}
 
     @my_f.def_vmap
     def my_rule(axis_size, in_batched, xys):
@@ -1248,9 +1248,9 @@ class DebugInfoTest(jtu.JaxTestCase):
       xs_batched, = in_batched
       self.assertEqual(xs_batched["x"], True)
       self.assertEqual(axis_size, xs.shape[0])
-      return dict(a=jnp.cos(xs)), dict(a=xs_batched["x"])
+      return {"a": jnp.cos(xs)}, {"a": xs_batched["x"]}
 
-    xy = dict(x=np.ones((8,), dtype=np.float32), y=np.zeros((8,), dtype=np.float32))
+    xy = {"x": np.ones((8,), dtype=np.float32), "y": np.zeros((8,), dtype=np.float32)}
     self._check_tracers_and_jaxprs(
         jax.jit(jax.vmap(my_f)),
         xy,
@@ -1545,7 +1545,7 @@ class DebugInfoTest(jtu.JaxTestCase):
 
       def my_g(u, v):
         tracer_spy.append(u)
-        return dict(c=u * v, d=v)
+        return {"c": u * v, "d": v}
 
       return jax.jit(my_g)(y, x)["c"]
 
@@ -1598,7 +1598,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       tracer_spy.append(b4)
       tracer_spy.append(kwargs["c6"])
       s0 = x0 + y1[0] + b4[0] + args[1][0] + kwargs["c6"][0]
-      return dict(v1=jnp.broadcast_to(s0, (1,)), u0=s0)
+      return {"v1": jnp.broadcast_to(s0, (1,)), "u0": s0}
 
     self._check_tracers_and_jaxprs(
         jax.pmap(my_f, static_broadcasted_argnums=(0,)),
@@ -1655,7 +1655,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       # y is dead, x is static broadcasted
       tracer_spy.append(args[1])
       s = x + args[1]
-      return dict(u=s, v=x)
+      return {"u": s, "v": x}
 
     x = jnp.ones((jax.device_count(), 1), dtype=np.float32)
     x_tan = jnp.full_like(x, .1)

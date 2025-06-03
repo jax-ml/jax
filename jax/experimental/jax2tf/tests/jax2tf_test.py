@@ -355,7 +355,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_gradients_pytree(self, with_function=False):
     def f(xy: tuple[float, float]) -> dict[str, float]:
       x, y = xy
-      return dict(one=x * x, two=x * y)
+      return {"one": x * x, "two": x * y}
 
     f_tf = jax2tf.convert(f, with_gradient=True)
     if with_function:
@@ -595,17 +595,17 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # https://github.com/jax-ml/jax/issues/6975
     # Also issue #6975.
     # An expanded version of test_gradients_unused_argument
-    state = dict(
-        float_used=np.array([0.7, 0.9], dtype=np.float32),
-        float_passthrough=np.float16(1.),
-        float_unused=np.array([1.1, 2.2, 3.3], dtype=np.float32),
-        int_used=np.int16(5),
-        int_passthrough=np.int8(7),
-        int_unused=np.array([1, 2, 3], dtype=np.uint32),
-        bool_used=np.array([True, False, False, True], dtype=np.bool_),
-        bool_passthrough=np.array([True, False, False, True, False], dtype=np.bool_),
-        bool_unused=np.array([[True, False], [False, True]], dtype=np.bool_),
-    )
+    state = {
+        "float_used": np.array([0.7, 0.9], dtype=np.float32),
+        "float_passthrough": np.float16(1.),
+        "float_unused": np.array([1.1, 2.2, 3.3], dtype=np.float32),
+        "int_used": np.int16(5),
+        "int_passthrough": np.int8(7),
+        "int_unused": np.array([1, 2, 3], dtype=np.uint32),
+        "bool_used": np.array([True, False, False, True], dtype=np.bool_),
+        "bool_passthrough": np.array([True, False, False, True, False], dtype=np.bool_),
+        "bool_unused": np.array([[True, False], [False, True]], dtype=np.bool_),
+    }
     def jax_f(state):
       res = dict(state,
                  float_used=2. * state["float_used"],
@@ -879,7 +879,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(x, None), res_tf)
 
   @parameterized.named_parameters(
-      dict(testcase_name=mode, mode=mode)
+      {"testcase_name": mode, "mode": mode}
       for mode in ("eager", "graph", "compiled"))
   def test_jit_unused_grad(self, mode="eager"):
     def f_jax(x, y_unused):
@@ -1408,13 +1408,13 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
               f"See op.name = : {op.name}")
 
   @parameterized.named_parameters(
-      dict(testcase_name=(
+      {"testcase_name": (
           f"{'with_mesh_' if with_mesh else ''}"
           f"2={transform2 if transform2 != 'none' else ''}"
           f"_1={transform1 if transform1 != 'none' else ''}"
           f"{'_nullary' if nullary else ''}"),
-          with_mesh=with_mesh, transform1=transform1,
-          transform2=transform2, nullary=nullary)
+          "with_mesh": with_mesh, "transform1": transform1,
+          "transform2": transform2, "nullary": nullary}
       # Test transform2(transform1(func)
       for transform1 in [
           "none",
@@ -1456,27 +1456,27 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     func_shard_map = lambda x: lax.all_gather(x, 'a', axis=1, tiled=True)
 
     def apply_transform(func, transform: str):
-      transformed_func = dict(
-          none=func,
-          jit=jax.jit(func),
-          jit_in_shardings_None=jax.jit(func, in_shardings=None),
-          jit_in_shardings_P=jax.jit(func, in_shardings=(P("a"),)),
-          jit_in_shardings_Sharding=jax.jit(
+      transformed_func = {
+          "none": func,
+          "jit": jax.jit(func),
+          "jit_in_shardings_None": jax.jit(func, in_shardings=None),
+          "jit_in_shardings_P": jax.jit(func, in_shardings=(P("a"),)),
+          "jit_in_shardings_Sharding": jax.jit(
               func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),
-          pjit=pjit.pjit(func),
-          pjit_in_shardings_None=pjit.pjit(func, in_shardings=None,
+          "pjit": pjit.pjit(func),
+          "pjit_in_shardings_None": pjit.pjit(func, in_shardings=None,
                                            out_shardings=None),
-          pjit_in_shardings_P=pjit.pjit(func, in_shardings=(P("a"),),
+          "pjit_in_shardings_P": pjit.pjit(func, in_shardings=(P("a"),),
                                         out_shardings=P("a")),
-          pjit_in_shardings_Sharding=pjit.pjit(
+          "pjit_in_shardings_Sharding": pjit.pjit(
               func,
               in_shardings=(sharding.NamedSharding(mesh, P("a")),),
               out_shardings=sharding.NamedSharding(mesh, P("a"))),
-          shard_map=(
+          "shard_map": (
               shard_map(func, mesh=mesh, in_specs=(P("a", None),),
                         out_specs=P("a", None))),
-          pmap=jax.pmap(func, in_axes=0, out_axes=0),
-      )[transform]
+          "pmap": jax.pmap(func, in_axes=0, out_axes=0),
+      }[transform]
       return transformed_func
 
     transformed1_func = apply_transform(
@@ -1643,7 +1643,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # Checks that we dispatch from TF to the proper JAX platform lowering.
 
     # We add a different value to it: cpu=2., tpu=3., cuda=.4, rocm=5.
-    _testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
+    _testing_multi_platform_to_add = {"cpu": 2., "tpu": 3., "cuda": 4., "rocm": 5.}
 
     def f_jax(x):
       return x + lax.platform_dependent(
@@ -1663,9 +1663,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         f"Running on tf_device = {tf_device} of device_type = {tf_device.device_type}")
       with tf.device(tf_device):
         res = f_tf(x)
-      tf_device_jax_platform = dict(
-        CPU="cpu", GPU="cuda", TPU="tpu"
-      )[tf_device.device_type]
+      tf_device_jax_platform = {
+        "CPU": "cpu", "GPU": "cuda", "TPU": "tpu"
+      }[tf_device.device_type]
       self.assertAllClose(
         res,
         x + _testing_multi_platform_to_add[tf_device_jax_platform])

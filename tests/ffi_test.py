@@ -306,11 +306,11 @@ def ffi_call_geqrf(x, _use_extend=False, **kwargs):
       x, jax.ShapeDtypeStruct(x.shape[:-2] + (min(*x.shape[-2:]),), x.dtype)]
 
   def call(platform, x):
-    target_name = dict(
-        cpu="lapack_sgeqrf_ffi",
-        rocm="hipsolver_geqrf_ffi",
-        cuda="cusolver_geqrf_ffi",
-    )[platform]
+    target_name = {
+        "cpu": "lapack_sgeqrf_ffi",
+        "rocm": "hipsolver_geqrf_ffi",
+        "cuda": "cusolver_geqrf_ffi",
+    }[platform]
     f = jex.ffi.ffi_call if _use_extend else jax.ffi.ffi_call
     return f(
         target_name, output_types, input_output_aliases={0: 0},

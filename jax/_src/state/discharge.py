@@ -825,9 +825,9 @@ def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
 
   assert len(unknown_inputs) == len(res_ref_unknown_outputs)
   assert len(unknown_inputs) == len(jaxpr_unknown.invars)
-  uk_params = dict(jaxpr=jaxpr_unknown, which_linear=unknown_which_linear,
+  uk_params = {"jaxpr": jaxpr_unknown, "which_linear": unknown_which_linear,
                    # TODO(sharadmv); compute this in the general case
-                   is_initialized=(True,) * len(jaxpr_unknown.invars))
+                   "is_initialized": (True,) * len(jaxpr_unknown.invars)}
   _, eqn_effects = run_state_p.abstract_eval(*[v.aval for v in unknown_inputs],
                                              **uk_params)
   eqn = pe.new_eqn_recipe(trace, unknown_inputs, res_ref_unknown_outputs,
@@ -918,9 +918,9 @@ def _run_state_partial_eval_custom(
   jaxpr_known_which_linear = (*known_which_linear, *(False,) * num_res)
   known_and_res_invars = [*known_invars, *ref_resvars, *nonref_resvars]
 
-  known_params = dict(jaxpr=jaxpr_known, which_linear=jaxpr_known_which_linear,
+  known_params = {"jaxpr": jaxpr_known, "which_linear": jaxpr_known_which_linear,
                       # TODO(sharadmv): compute this in the general case
-                      is_initialized=(True,) * len(jaxpr_known.invars))
+                      "is_initialized": (True,) * len(jaxpr_known.invars)}
   _, known_effects = run_state_p.abstract_eval(
       *[v.aval for v in known_and_res_invars], **known_params)
   eqn_known = pe.new_jaxpr_eqn(known_and_res_invars,
@@ -932,9 +932,9 @@ def _run_state_partial_eval_custom(
 
   _, staged_which_linear = partition_list(in_unknowns, which_linear)
   which_linear_unknown = (*[False] * num_res, *staged_which_linear)
-  staged_params = dict(jaxpr=jaxpr_staged, which_linear=which_linear_unknown,
+  staged_params = {"jaxpr": jaxpr_staged, "which_linear": which_linear_unknown,
                        # TODO(sharadmv): compute this in the general case
-                       is_initialized=(True,) * len(jaxpr_staged.invars))
+                       "is_initialized": (True,) * len(jaxpr_staged.invars)}
   rejiggered_resvars = [*nonref_resvars, *ref_resvars]
   _, staged_invars = partition_list(in_unknowns, eqn.invars)
   res_staged_invars = [*rejiggered_resvars, *staged_invars]
@@ -952,7 +952,7 @@ def _run_state_partial_eval_custom(
     eqn_staged = pe.new_jaxpr_eqn(res_staged_invars,
                                   staged_outvars,
                                   core.closed_call_p,
-                                  dict(call_jaxpr=pe.close_jaxpr(staged_call_jaxpr)),
+                                  {"call_jaxpr": pe.close_jaxpr(staged_call_jaxpr)},
                                   staged_effects, eqn.source_info, eqn.ctx)
     assert len(res_staged_invars) == len(staged_call_jaxpr.invars)
     assert len(staged_outvars) == len(staged_call_jaxpr.outvars)

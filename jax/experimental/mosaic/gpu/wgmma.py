@@ -375,7 +375,7 @@ def wgmma(
   # Step 3. Compute the operand descriptors.
   if a_in_regs:
     a_desc_base = a_m_group_stride = a_k_group_stride = None
-    a_instr_params = dict(a_transpose=None, a_k_stride=None)
+    a_instr_params = {"a_transpose": None, "a_k_stride": None}
   else:
     (
         (a_desc_base, a_k_instr_stride),
@@ -388,8 +388,8 @@ def wgmma(
         group_size=(m_group_elems, k_group_elems),
         logical_k_major=False,
     )
-    a_instr_params = dict(a_transpose=a_fastest != mma_utils.Dim.K,
-                          a_k_stride=a_k_instr_stride)
+    a_instr_params = {"a_transpose": a_fastest != mma_utils.Dim.K,
+                          "a_k_stride": a_k_instr_stride}
   (
       (b_desc_base, b_k_instr_stride),
       (b_n_group_stride, b_k_group_stride),

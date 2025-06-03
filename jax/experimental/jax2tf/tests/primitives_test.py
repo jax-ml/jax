@@ -310,8 +310,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # The rest of the test are checking special cases
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_{f_jax.__name__}",
-           f_jax=f_jax)
+      {"testcase_name": f"_{f_jax.__name__}",
+           "f_jax": f_jax}
       for f_jax in [jnp.add, jnp.subtract, jnp.multiply, jnp.divide,
                     jnp.less, jnp.less_equal, jnp.equal, jnp.greater,
                     jnp.greater_equal, jnp.not_equal, jnp.maximum,

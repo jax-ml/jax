@@ -734,7 +734,7 @@ class TreeTest(jtu.JaxTestCase):
     all_zeros = tree_util.tree_map_with_path(
         lambda kp, val: val - kp[1].key + kp[0].idx, tree
     )
-    self.assertEqual(all_zeros, [{i: 0 for i in range(10)}])
+    self.assertEqual(all_zeros, [dict.fromkeys(range(10), 0)])
 
   def testTreeMapWithPathMultipleTrees(self):
     tree1 = [AnObject2(x=12,
@@ -1569,7 +1569,7 @@ class RegistrationTest(jtu.JaxTestCase):
     @dataclasses.dataclass
     class Foo:
       x: int
-      y: int = dataclasses.field(metadata=dict(static=True))
+      y: int = dataclasses.field(metadata={"static": True})
 
     f = Foo(2, 3)
     self.assertLen(jax.tree.leaves(f), 1)

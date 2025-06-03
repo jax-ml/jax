@@ -186,8 +186,8 @@ class RooflineTest(jtu.JaxTestCase):
     expected = roofline.RooflineResult(
         flops=2 * m * k * n,
         unfused_flops=2 * m * k * n,
-        ici_bytes={axis: ici_bytes for axis in ("x", "y")},
-        ici_latency={axis: ici_latency for axis in ("x", "y")},
+        ici_bytes=dict.fromkeys(("x", "y"), ici_bytes),
+        ici_latency=dict.fromkeys(("x", "y"), ici_latency),
         hbm_bytes=itemsize * (mk + kn + mn),
         unfused_hbm_bytes=itemsize * (mk + kn + mn),
         peak_hbm_bytes=itemsize * (mn),
@@ -632,14 +632,14 @@ class RooflineTest(jtu.JaxTestCase):
     self.assertEqual(result.unfused_hbm_bytes, expected_unfused_hbm_bytes)
 
   @jtu.parameterized.named_parameters(
-      dict(
-          testcase_name="same",
-          padding="SAME",
-      ),
-      dict(
-          testcase_name="same_lower",
-          padding="SAME_LOWER",
-      ),
+      {
+          "testcase_name": "same",
+          "padding": "SAME",
+      },
+      {
+          "testcase_name": "same_lower",
+          "padding": "SAME_LOWER",
+      },
   )
   def test_conv_general_dilated_padding_string(
       self, padding: str
@@ -711,20 +711,20 @@ class RooflineTest(jtu.JaxTestCase):
 
 
   @jtu.parameterized.named_parameters(
-      dict(
-          testcase_name="padding",
-          input_spatial_dim=1,
-          window_strides=[1],
-          padding=[(_VERY_LARGE_NUMBER - 1, _VERY_LARGE_NUMBER - 1)],
-          lhs_dilation=[1],
-      ),
-      dict(
-          testcase_name="input",
-          input_spatial_dim=_VERY_LARGE_NUMBER,
-          window_strides=[_VERY_LARGE_NUMBER - 1],
-          padding=[(0, 0)],
-          lhs_dilation=[_VERY_LARGE_NUMBER],
-      ),
+      {
+          "testcase_name": "padding",
+          "input_spatial_dim": 1,
+          "window_strides": [1],
+          "padding": [(_VERY_LARGE_NUMBER - 1, _VERY_LARGE_NUMBER - 1)],
+          "lhs_dilation": [1],
+      },
+      {
+          "testcase_name": "input",
+          "input_spatial_dim": _VERY_LARGE_NUMBER,
+          "window_strides": [_VERY_LARGE_NUMBER - 1],
+          "padding": [(0, 0)],
+          "lhs_dilation": [_VERY_LARGE_NUMBER],
+      },
   )
   def test_conv_general_dilated_flops_very_large(
       self, input_spatial_dim, window_strides, padding, lhs_dilation

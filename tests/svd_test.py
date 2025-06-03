@@ -60,7 +60,7 @@ class SvdTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, rtol=_SVD_RTOL)
 
   @jtu.sample_product(
-    [dict(m=m, n=n) for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])],
+    [{'m': m, 'n': n} for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])],
     log_cond=np.linspace(1, _MAX_LOG_CONDITION_NUM, 4),
     full_matrices=[True, False],
   )
@@ -112,7 +112,7 @@ class SvdTest(jtu.JaxTestCase):
             expected_s, jnp.real(actual_s), rtol=_SVD_RTOL, atol=1E-6)
 
   @jtu.sample_product(
-    [dict(m=m, n=n) for m, n in zip([50, 6], [3, 60])],
+    [{'m': m, 'n': n} for m, n in zip([50, 6], [3, 60])],
   )
   def testSvdWithSkinnyTallInput(self, m, n):
     """Tests SVD with skinny and tall input."""
@@ -127,7 +127,7 @@ class SvdTest(jtu.JaxTestCase):
       np.testing.assert_almost_equal(relative_diff, 1E-6, decimal=6)
 
   @jtu.sample_product(
-    [dict(m=m, r=r) for m, r in zip([8, 8, 8, 10], [3, 5, 7, 9])],
+    [{'m': m, 'r': r} for m, r in zip([8, 8, 8, 10], [3, 5, 7, 9])],
     log_cond=np.linspace(1, 3, 3),
   )
   def testSvdWithOnRankDeficientInput(self, m, r, log_cond):
@@ -149,7 +149,7 @@ class SvdTest(jtu.JaxTestCase):
       np.testing.assert_almost_equal(diff, 1E-4, decimal=2)
 
   @jtu.sample_product(
-      [dict(m=m, r=r) for m, r in zip([8, 8, 8, 10], [3, 5, 7, 9])],
+      [{'m': m, 'r': r} for m, r in zip([8, 8, 8, 10], [3, 5, 7, 9])],
   )
   def testSvdWithOnRankDeficientInputZeroColumns(self, m, r):
     """Tests SVD with rank-deficient input."""
@@ -169,7 +169,7 @@ class SvdTest(jtu.JaxTestCase):
       self.assertAllClose(v.T.conj() @ v, np.eye(m), atol=30 * _SVD_TEST_EPS)
 
   @jtu.sample_product(
-    [dict(m=m, n=n) for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])],
+    [{'m': m, 'n': n} for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])],
     log_cond=np.linspace(1, _MAX_LOG_CONDITION_NUM, 4),
     full_matrices=[True, False],
   )
@@ -210,7 +210,7 @@ class SvdTest(jtu.JaxTestCase):
         np.testing.assert_array_less(actual_diff, np.zeros_like(actual_diff))
 
   @jtu.sample_product(
-      [dict(m=m, n=n) for m, n in zip([2, 4, 8], [4, 4, 6])],
+      [{'m': m, 'n': n} for m, n in zip([2, 4, 8], [4, 4, 6])],
       full_matrices=[True, False],
       compute_uv=[True, False],
       dtype=jtu.dtypes.floating + jtu.dtypes.complex,
@@ -228,7 +228,7 @@ class SvdTest(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker_svd)
 
   @jtu.sample_product(
-      [dict(m=m, n=n) for m, n in zip([2, 4, 8], [4, 4, 6])],
+      [{'m': m, 'n': n} for m, n in zip([2, 4, 8], [4, 4, 6])],
       fill_value=[-np.inf, np.inf, np.nan],
       full_matrices=[True, False],
       compute_uv=[True, False],
@@ -250,7 +250,7 @@ class SvdTest(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker_svd)
 
   @jtu.sample_product(
-    [dict(m=m, n=n, r=r, c=c)
+    [{'m': m, 'n': n, 'r': r, 'c': c}
      for m, n, r, c in zip([2, 4, 8], [4, 4, 6], [1, 0, 1], [1, 0, 1])],
     dtype=jtu.dtypes.floating,
   )

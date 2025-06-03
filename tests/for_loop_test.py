@@ -49,7 +49,7 @@ FOR_LOOP_IMPLS = [
 
 def _for_loop_impls(f):
   return parameterized.named_parameters(
-      dict(testcase_name=impl_name, for_impl=for_impl)
+      {'testcase_name': impl_name, 'for_impl': for_impl}
       for for_impl, impl_name in FOR_LOOP_IMPLS
       )(f)
 
@@ -208,8 +208,8 @@ for_reference = for_loop.discharged_for_loop
 class ForLoopTransformationTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
-    [dict(for_body_name=for_body_name, f=for_body, ref=ref,
-          body_shapes=body_shapes, n=nsteps)
+    [{'for_body_name': for_body_name, 'f': for_body, 'ref': ref,
+          'body_shapes': body_shapes, 'n': nsteps}
       for for_body_name, for_body, ref, body_shapes, nsteps in [
         ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
         ("swap_swap", for_body_swap_swap, swap_swap_ref, [(4,), (4,)], 4),
@@ -220,7 +220,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
         ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
       ]
     ],
-    [dict(for_impl=for_impl, impl_name=impl_name)
+    [{'for_impl': for_impl, 'impl_name': impl_name}
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
   @jtu.skip_on_devices("gpu", "cpu")  # TODO(mattjj,sharadmv, dougalm): timeouts?
@@ -240,8 +240,8 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     jtu.check_grads(partial(for_, n, f), (args,), order=2, modes=["fwd"])
 
   @jtu.sample_product(
-    [dict(for_body_name=for_body_name, f=for_body, ref=ref,
-          body_shapes=body_shapes, n=nsteps)
+    [{'for_body_name': for_body_name, 'f': for_body, 'ref': ref,
+          'body_shapes': body_shapes, 'n': nsteps}
       for for_body_name, for_body, ref, body_shapes, nsteps in [
         ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
         ("swap_swap", for_body_swap_swap, swap_swap_ref, [(4,), (4,)], 4),
@@ -252,7 +252,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
         ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
       ]
     ],
-    [dict(for_impl=for_impl, impl_name=impl_name)
+    [{'for_impl': for_impl, 'impl_name': impl_name}
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
   @jtu.skip_on_devices("gpu", "cpu")  # TODO(mattjj,sharadmv, dougalm): timeouts?
@@ -349,8 +349,8 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
                                rtol=1e-6)
 
   @jtu.sample_product(
-    [dict(for_body_name=for_body_name, f=for_body, ref=ref,
-          body_shapes=body_shapes, n=nsteps)
+    [{'for_body_name': for_body_name, 'f': for_body, 'ref': ref,
+          'body_shapes': body_shapes, 'n': nsteps}
       for for_body_name, for_body, ref, body_shapes, nsteps in [
         ("noop", for_body_noop, noop_ref, [(4,), (4,)], 4),
         ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
@@ -362,7 +362,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
         ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
       ]
     ],
-    [dict(for_impl=for_impl, impl_name=impl_name)
+    [{'for_impl': for_impl, 'impl_name': impl_name}
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
   @jtu.skip_on_devices("gpu", "cpu")  # TODO(mattjj,sharadmv, dougalm): timeouts?

@@ -338,10 +338,10 @@ def _extract_gmem_copy_params(transforms):
       raise NotImplementedError(
           "Non-indexing transforms on GMEM refs are not implemented.")
   indexer = lowering.merge_indexers(indexers)
-  return dict(
-      gmem_slice=lowering._ndindexer_indices(indexer),
-      gmem_peer_id=peer_id,
-  )
+  return {
+      "gmem_slice": lowering._ndindexer_indices(indexer),
+      "gmem_peer_id": peer_id,
+  }
 
 
 def _extract_smem_copy_params(transforms):
@@ -354,10 +354,10 @@ def _extract_smem_copy_params(transforms):
     case _:
       swizzle = None
   gpu_transforms = tuple(t.undo_to_gpu_transform() for t in transforms[::-1])
-  return dict(
-      gmem_transform=gpu_transforms,
-      swizzle=swizzle,
-  )
+  return {
+      "gmem_transform": gpu_transforms,
+      "swizzle": swizzle,
+  }
 
 
 def copy_smem_to_gmem(

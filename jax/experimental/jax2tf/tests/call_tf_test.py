@@ -139,7 +139,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     def fun_tf(x: dict, y: tuple) -> tuple:
       return (x["first"] * x["second"], y[0] + y[1])
 
-    x = dict(first=np.float32(3.), second=np.float32(4.))
+    x = {"first": np.float32(3.), "second": np.float32(4.)}
     y = (np.float64(5.), np.float64(6.))
     fun_jax = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))
     res = fun_jax(x, y)
@@ -229,10 +229,10 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(np.float32(x * 5 * 5 * 5), res)
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name=f"_{dtype.__name__}{'_jit' if with_jit else ''}",
-          dtype=dtype,
-          with_jit=with_jit)
+      {
+          "testcase_name": f"_{dtype.__name__}{'_jit' if with_jit else ''}",
+          "dtype": dtype,
+          "with_jit": with_jit}
       for dtype in set(jtu.dtypes.all) - {np.bool_}
       for with_jit in [True, False])
   def test_dtypes(self, dtype=np.int32, with_jit=True):
@@ -411,11 +411,11 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     def fun_tf(x: dict, y: tuple) -> tuple:
       return x["first"] * x["second"] + 3. * y[0] + 4. * y[1]
 
-    x = dict(first=np.float32(3.), second=np.float32(4.))
+    x = {"first": np.float32(3.), "second": np.float32(4.)}
     y = (np.float32(5.), np.float32(6.))
     grad_x = _maybe_jit(with_jit, jax.grad(jax2tf.call_tf(fun_tf)))(x, y)
     self.assertAllClose(
-        dict(first=np.float32(4.), second=np.float32(3.)), grad_x)
+        {"first": np.float32(4.), "second": np.float32(3.)}, grad_x)
 
   def test_grad_nested(self):
     # We embed the call_tf function in a larger function whose gradient we take
@@ -424,14 +424,14 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
     b = np.array([[11., 12., 13.], [21., 22., 23.]], dtype=np.float32)  # [2, 3]
     c = np.array([[31., 32.], [41., 42.], [51., 52.], [61., 62.]], dtype=np.float32)  # [4, 2]
-    x_dict = dict(b=b, c=c)  # b:[2, 3], c=[4, 2]
+    x_dict = {"b": b, "c": c}  # b:[2, 3], c=[4, 2]
     # res: dict(r:[4, 3], s:[4, 2])
     def f_tf(x_dict):
-      return dict(r=tf.matmul(x_dict["c"], x_dict["b"]), s=7. * x_dict["c"])
+      return {"r": tf.matmul(x_dict["c"], x_dict["b"]), "s": 7. * x_dict["c"]}
 
     @jax.jit  # To recognize it in jaxpr
     def f_jax(x_dict):
-      return dict(r=jnp.matmul(x_dict["c"], x_dict["b"]), s=7. * x_dict["c"])
+      return {"r": jnp.matmul(x_dict["c"], x_dict["b"]), "s": 7. * x_dict["c"]}
 
     def loss(functional, x_dict):
       prediction = functional(x_dict)  # r:[4, 3], s:[4, 2]
@@ -454,7 +454,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       return param * x, state
 
     param = np.array([0.7, 0.9], dtype=np.float32)
-    state = dict(array=np.float32(1.), counter=7, truth=True)
+    state = {"array": np.float32(1.), "counter": 7, "truth": True}
     x = np.float32(3.)
 
     # tf.function is important, without it the bug does not appear
@@ -535,10 +535,10 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(np.float32(3.) * x, grad_x)
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name=f"_{degree=}{'_jit' if with_jit else ''}",
-          degree=degree,
-          with_jit=with_jit)
+      {
+          "testcase_name": f"_{degree=}{'_jit' if with_jit else ''}",
+          "degree": degree,
+          "with_jit": with_jit}
       for degree in [1, 2, 3, 4]
       for with_jit in [True, False])
   def test_higher_order_grad(self, degree=2, with_jit=False):
@@ -909,8 +909,8 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
 
   def test_pytree(self):
     def f_jax(x):  # x: dict(a=f32, b=f32)
-      return dict(a=x["a"]+1., b=x)
-    x = dict(a=0.7, b=0.8)
+      return {"a": x["a"]+1., "b": x}
+    x = {"a": 0.7, "b": 0.8}
     f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax))
     self.assertAllClose(f_jax(x), f_jax_rt(x))
 
@@ -1075,10 +1075,10 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(expected, res.numpy(), atol=1e-5, rtol=1e-5)
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name=f"_{dtype.__name__}",
-          dtype=dtype,
-      )
+      {
+          "testcase_name": f"_{dtype.__name__}",
+          "dtype": dtype,
+      }
       for dtype in set(jtu.dtypes.all_floating)
   )
   def test_all_floating_input_gradient(self, dtype):
@@ -1136,10 +1136,10 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     )
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name=f"_{dtype.__name__}",
-          dtype=dtype,
-      )
+      {
+          "testcase_name": f"_{dtype.__name__}",
+          "dtype": dtype,
+      }
       for dtype in set(jtu.dtypes.complex)
   )
   def test_complex_input_gradient(self, dtype):
@@ -1577,16 +1577,16 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       self.assertLen(called_index_list, 1)
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name="multiple_outputs",
-          tf_f=lambda x: tf.py_function(np.sin, [x], tf.float32),
-          output_shape_dtype=jax.ShapeDtypeStruct((10,), jnp.float32),
-      ),
-      dict(
-          testcase_name="zero_outputs",
-          tf_f=lambda x: print(tf.strings.length(tf.constant("hello, world"))),
-          output_shape_dtype=None,
-      ),
+      {
+          "testcase_name": "multiple_outputs",
+          "tf_f": lambda x: tf.py_function(np.sin, [x], tf.float32),
+          "output_shape_dtype": jax.ShapeDtypeStruct((10,), jnp.float32),
+      },
+      {
+          "testcase_name": "zero_outputs",
+          "tf_f": lambda x: print(tf.strings.length(tf.constant("hello, world"))),
+          "output_shape_dtype": None,
+      },
   )
   def test_call_tf_graph_non_compilable(self, tf_f, output_shape_dtype):
     inputs = jnp.ones([10], dtype=jnp.float32)
@@ -1707,7 +1707,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt_2, input_args=[])
 
   @jtu.parameterized_filterable(
-    kwargs=[dict(version=version) for version in [9]]
+    kwargs=[{"version": version} for version in [9]]
   )
   def test_call_tf_graph_ordered(self, *, version: int):
     with config.jax_export_calling_convention_version(version):
@@ -1778,7 +1778,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
 
   @jtu.parameterized_filterable(
-    kwargs=[dict(poly=poly, version=version)
+    kwargs=[{"poly": poly, "version": version}
             for poly in [True, False]
             for version in [9]]
   )
@@ -1802,7 +1802,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
                           f_tf(x1, x_dead, x3))
 
   @jtu.parameterized_filterable(
-    kwargs=[dict(ordered=ordered, version=version)
+    kwargs=[{"ordered": ordered, "version": version}
       for ordered in [True, False]
       for version in [9]
     ]

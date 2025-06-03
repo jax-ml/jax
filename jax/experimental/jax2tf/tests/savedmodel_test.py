@@ -257,8 +257,8 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
       return x @ params["w"] + params["b"]
 
     x = np.ones((2, 3), dtype=np.float32)
-    params = dict(w=np.ones((3, 4), dtype=np.float32),
-                  b=np.ones((2, 4), dtype=np.float32))
+    params = {"w": np.ones((3, 4), dtype=np.float32),
+                  "b": np.ones((2, 4), dtype=np.float32)}
     res_jax = f_jax(params, x)
     f_tf = jax2tf.convert(f_jax)
 

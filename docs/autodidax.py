@@ -1647,8 +1647,7 @@ def execute_compiled(compiled, out_avals, *args):
   return [handle_result(aval, buf) for aval, buf in zip(out_avals, out_bufs)]
 
 default_input_handler = xb.get_backend(None).buffer_from_pyval
-input_handlers = {ty: default_input_handler for ty in
-                  [bool, int, float, np.ndarray, np.float64, np.float32]}
+input_handlers = dict.fromkeys((bool, int, float, np.ndarray, np.float64, np.float32), default_input_handler)
 
 def handle_result(aval: ShapedArray, buf):
   del aval  # Unused for now
@@ -2353,7 +2352,7 @@ def xla_call_partial_eval(trace, tracers, *, jaxpr, num_consts):
   outs2 = [PartialEvalTracer(trace, PartialVal.unknown(v.aval), None)
            for v in jaxpr2.outs]
   eqn = JaxprEqnRecipe(xla_call_p, res_tracers + unknown_tracers,
-                       dict(jaxpr=jaxpr2, num_consts=0),
+                       {'jaxpr': jaxpr2, 'num_consts': 0},
                        [v.aval for v in jaxpr2.outs], map(ref, outs2))
   for t in outs2: t.recipe = eqn
   return merge_lists(out_unknowns, outs1, outs2)
@@ -2436,10 +2435,10 @@ def xla_call_peval_eqn(unks_in: list[bool], eqn: JaxprEqn,
   ins1, ins2 = partition_list(unks_in, eqn.inputs)
   out_binders1, out_binders2 = partition_list(unks_out, eqn.out_binders)
   residuals = [Var(v.aval) for v in jaxpr2.in_binders[:num_res]]
-  eqn1 = JaxprEqn(xla_call_p, ins1, dict(jaxpr=jaxpr1, num_consts=0),
+  eqn1 = JaxprEqn(xla_call_p, ins1, {'jaxpr': jaxpr1, 'num_consts': 0},
                   out_binders1 + residuals)
   eqn2 = JaxprEqn(xla_call_p, residuals + ins2,
-                  dict(jaxpr=jaxpr2, num_consts=0), out_binders2)
+                  {'jaxpr': jaxpr2, 'num_consts': 0}, out_binders2)
   return eqn1, eqn2, unks_out, residuals
 partial_eval_jaxpr_rules[xla_call_p] = xla_call_peval_eqn
 
@@ -2929,7 +2928,7 @@ def cond_partial_eval(trace, tracers, *, true_jaxpr, false_jaxpr):
   outs2 = [PartialEvalTracer(trace, PartialVal.unknown(v.aval), None)
            for v in t_jaxpr2.outs]
   eqn = JaxprEqnRecipe(cond_p, [pred_tracer_, *res_tracers, *unknown_tracers],
-                       dict(true_jaxpr=t_jaxpr2, false_jaxpr=f_jaxpr2),
+                       {'true_jaxpr': t_jaxpr2, 'false_jaxpr': f_jaxpr2},
                        [v.aval for v in t_jaxpr2.outs], map(ref, outs2))
   for t in outs2: t.recipe = eqn
   return merge_lists(out_uks, outs1, outs2)
@@ -2985,10 +2984,10 @@ def cond_peval_eqn(unks_in: list[bool], eqn: JaxprEqn,
   outs1, outs2 = partition_list(unks_out, eqn.out_binders)
   residuals, _ = split_list(t_jaxpr2.in_binders, num_res)
   eqn1 = JaxprEqn(cond_p, [eqn.inputs[0], *ins1],
-                  dict(true_jaxpr=t_jaxpr1, false_jaxpr=f_jaxpr1),
+                  {'true_jaxpr': t_jaxpr1, 'false_jaxpr': f_jaxpr1},
                   outs1 + residuals)
   eqn2 = JaxprEqn(cond_p, [eqn.inputs[0], *residuals, *ins2],
-                  dict(true_jaxpr=t_jaxpr2, false_jaxpr=f_jaxpr2),
+                  {'true_jaxpr': t_jaxpr2, 'false_jaxpr': f_jaxpr2},
                   outs2)
   res = [eqn.inputs[0], *residuals] if type(eqn.inputs[0]) is Var else residuals
   return eqn1, eqn2, unks_out, res

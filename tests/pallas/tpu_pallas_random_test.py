@@ -270,7 +270,7 @@ class ThreefryTest(parameterized.TestCase):
       ((137, 275),),  # Non block-aligned shape
       ((4, 512, 512),),  # Greater than 2D shape
       ((34,),),  # 1D
-      (tuple(),),  # 0D
+      ((),),  # 0D
   )
   def test_threefry_kernel_matches_jax_threefry(self, shape):
     with jax.threefry_partitionable(True):
@@ -326,7 +326,7 @@ class PhiloxTest(parameterized.TestCase):
       ((137, 275),),  # Non block-aligned shape
       ((4, 512, 512),),  # Greater than 2D shape
       ((34,),),  # 1D
-      (tuple(),),  # 0D
+      ((),),  # 0D
   )
   def test_generate_uniform(self, shape):
     key = jax_random.key(0, impl="pallas_philox4x32")

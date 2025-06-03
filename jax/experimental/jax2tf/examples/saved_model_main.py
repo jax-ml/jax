@@ -197,11 +197,11 @@ def tf_accelerator_and_tolerances():
                     tf.config.list_logical_devices("CPU"))[0]
   logging.info("Using tf_accelerator = %s", tf_accelerator)
   if tf_accelerator.device_type == "TPU":
-    tolerances = dict(atol=1e-6, rtol=1e-6)
+    tolerances = {"atol": 1e-6, "rtol": 1e-6}
   elif tf_accelerator.device_type == "GPU":
-    tolerances = dict(atol=1e-6, rtol=1e-4)
+    tolerances = {"atol": 1e-6, "rtol": 1e-4}
   elif tf_accelerator.device_type == "CPU":
-    tolerances = dict(atol=1e-5, rtol=1e-5)
+    tolerances = {"atol": 1e-5, "rtol": 1e-5}
   logging.info("Using tolerances %s", tolerances)
   return tf_accelerator, tolerances
 

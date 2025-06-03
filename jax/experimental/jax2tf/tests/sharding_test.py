@@ -183,8 +183,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_in_shardings={in_shardings}_out_shardings={out_shardings}",
-           in_shardings=in_shardings, out_shardings=out_shardings)
+      {"testcase_name": f"_in_shardings={in_shardings}_out_shardings={out_shardings}",
+           "in_shardings": in_shardings, "out_shardings": out_shardings}
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
   ])
@@ -325,8 +325,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_nested_pjit={nested_pjit}_constraint={constraint}_poly={poly}",
-           nested_pjit=nested_pjit, constraint=constraint, poly=poly)
+      {"testcase_name": f"_nested_pjit={nested_pjit}_constraint={constraint}_poly={poly}",
+           "nested_pjit": nested_pjit, "constraint": constraint, "poly": poly}
       # We add a constraint either with a nested pjit or with a sharding_constraint
       for nested_pjit in (True, False)
       for constraint in (None, "P")
@@ -373,8 +373,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_in_shardings={in_shardings}_out_shardings={out_shardings}",
-           in_shardings=in_shardings, out_shardings=out_shardings)
+      {"testcase_name": f"_in_shardings={in_shardings}_out_shardings={out_shardings}",
+           "in_shardings": in_shardings, "out_shardings": out_shardings}
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
   ])
@@ -478,7 +478,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_func={func}", func=func)
+      {"testcase_name": f"_func={func}", "func": func}
       for func in ("pjit_sharded", "pjit_replicated",
                    "nested_pjit_sharded", "nested_pjit_replicated")
   ])
@@ -600,7 +600,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_poly={poly}", poly=poly)
+      {"testcase_name": f"_poly={poly}", "poly": poly}
       for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
     ])
   def test_shmap_collective_permute(self, poly=None):

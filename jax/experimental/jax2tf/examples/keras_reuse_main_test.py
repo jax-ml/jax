@@ -39,7 +39,7 @@ class KerasReuseMainTest(tf_test_util.JaxToTfTestCase):
     FLAGS.serving_batch_size = 1
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_{model}", model=model)
+      {"testcase_name": f"_{model}", "model": model}
       for model in ["mnist_pure_jax", "mnist_flax"])
   @jtu.ignore_warning(message="the imp module is deprecated")
   def test_keras_reuse(self, model="mnist_pure_jax"):

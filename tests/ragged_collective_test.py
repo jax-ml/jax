@@ -40,9 +40,9 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
       self.skipTest('ragged-all-to-all is not supported on CPU')
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=2)
-      ),
+      {
+          'testcase_name': '_single_axis_name', 'axis_name': 'x', 'mesh_axes': {'x': 2}
+      },
   )
   def test_ragged_all_to_all(self, axis_name, mesh_axes):
     device_type = jax.devices()[0].platform
@@ -127,9 +127,9 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     )
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=2)
-      ),
+      {
+          'testcase_name': '_single_axis_name', 'axis_name': 'x', 'mesh_axes': {'x': 2}
+      },
   )
   def test_ragged_all_to_all_grad(self, axis_name, mesh_axes):
     device_type = jax.devices()[0].platform
@@ -201,9 +201,9 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     jtu.check_grads(lambda op, out: fwd(op, out, *args), (operand, output), order=1)
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=4)
-      ),
+      {
+          'testcase_name': '_single_axis_name', 'axis_name': 'x', 'mesh_axes': {'x': 4}
+      },
   )
   def test_ragged_all_to_all_axis_index_groups(self, axis_name, mesh_axes):
     device_type = jax.devices()[0].platform
@@ -295,9 +295,9 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     )
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=2)
-      ),
+      {
+          'testcase_name': '_single_axis_name', 'axis_name': 'x', 'mesh_axes': {'x': 2}
+      },
   )
   def test_ragged_all_to_all_degenerate_groups(self, axis_name, mesh_axes):
     device_type = jax.devices()[0].platform
@@ -391,7 +391,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
       )
 
     axis_name = 'x'
-    mesh_axes = dict(x=2)
+    mesh_axes = {'x': 2}
     mesh = jtu.create_mesh(tuple(mesh_axes.values()), tuple(mesh_axes.keys()))
     data_sharding = P(axis_name, None, None)
     operand_data = jnp.zeros((2, 2, 3), dtype=jnp.int32)
@@ -443,42 +443,42 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     self.assertEqual(res.shape, (2, 2, 4))
 
   @parameterized.named_parameters(
-    dict(
-        testcase_name='_batch_0_data_shard_axis_0_input_0',
-        axis_name='x',
-        vmap_axis_name='y',
-        mesh_axes=dict(x=2, y=2),
-        vmap_batch_axis=0,
-        data_shard_axis=0,
-        input_config=0,
-    ),
-    dict(
-        testcase_name='_batch_0_data_shard_axis_1_input_0',
-        axis_name='x',
-        vmap_axis_name='y',
-        mesh_axes=dict(x=2, y=2),
-        vmap_batch_axis=0,
-        data_shard_axis=1,
-        input_config=0,
-    ),
-    dict(
-        testcase_name='_batch_1_data_shard_axis_0_input_1',
-        axis_name='x',
-        vmap_axis_name='y',
-        mesh_axes=dict(x=2, y=2),
-        vmap_batch_axis=1,
-        data_shard_axis=0,
-        input_config=1,
-    ),
-    dict(
-        testcase_name='_batch_1_data_shard_axis_1_input_1',
-        axis_name='x',
-        vmap_axis_name='y',
-        mesh_axes=dict(x=2, y=2),
-        vmap_batch_axis=1,
-        data_shard_axis=1,
-        input_config=1,
-    ),
+    {
+        'testcase_name': '_batch_0_data_shard_axis_0_input_0',
+        'axis_name': 'x',
+        'vmap_axis_name': 'y',
+        'mesh_axes': {'x': 2, 'y': 2},
+        'vmap_batch_axis': 0,
+        'data_shard_axis': 0,
+        'input_config': 0,
+    },
+    {
+        'testcase_name': '_batch_0_data_shard_axis_1_input_0',
+        'axis_name': 'x',
+        'vmap_axis_name': 'y',
+        'mesh_axes': {'x': 2, 'y': 2},
+        'vmap_batch_axis': 0,
+        'data_shard_axis': 1,
+        'input_config': 0,
+    },
+    {
+        'testcase_name': '_batch_1_data_shard_axis_0_input_1',
+        'axis_name': 'x',
+        'vmap_axis_name': 'y',
+        'mesh_axes': {'x': 2, 'y': 2},
+        'vmap_batch_axis': 1,
+        'data_shard_axis': 0,
+        'input_config': 1,
+    },
+    {
+        'testcase_name': '_batch_1_data_shard_axis_1_input_1',
+        'axis_name': 'x',
+        'vmap_axis_name': 'y',
+        'mesh_axes': {'x': 2, 'y': 2},
+        'vmap_batch_axis': 1,
+        'data_shard_axis': 1,
+        'input_config': 1,
+    },
   )
   def test_ragged_all_to_all_vmap(
       self,
@@ -584,7 +584,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
       )
 
     axis_name = 'x'
-    mesh_axes = dict(x=2)
+    mesh_axes = {'x': 2}
     mesh = jtu.create_mesh(tuple(mesh_axes.values()), tuple(mesh_axes.keys()))
     data_sharding = P(axis_name, None, None)
     operand_data = jnp.zeros((2, 2, 3), dtype=jnp.int32)

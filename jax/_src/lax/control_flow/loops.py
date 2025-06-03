@@ -623,7 +623,7 @@ def _empty_array(prefix, length_spec, aval):
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
 def _stage_jaxpr(trace: pe.JaxprTrace, *tracers, jaxpr: core.ClosedJaxpr):
-  params = dict(call_jaxpr=jaxpr)
+  params = {'call_jaxpr': jaxpr}
   return trace.default_process_primitive(core.closed_call_p, tracers, params)
 pe.custom_staging_rules[eval_jaxpr_p] = _stage_jaxpr
 
@@ -949,11 +949,11 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   assert len(out_tracers) == len(jaxpr_unknown.out_avals)
   eqn = pe.new_eqn_recipe(trace, [*intensive_res, *unknown_inputs, *extensive_res],
                           out_tracers, scan_p,
-                          dict(reverse=reverse, length=length, unroll=unroll,
-                               jaxpr=jaxpr_unknown, linear=linear_unknown,
-                               num_consts=len(intensive_res) + sum(const_uk),
-                               num_carry=sum(carry_uk),
-                               _split_transpose=_split_transpose),
+                          {'reverse': reverse, 'length': length, 'unroll': unroll,
+                               'jaxpr': jaxpr_unknown, 'linear': linear_unknown,
+                               'num_consts': len(intensive_res) + sum(const_uk),
+                               'num_carry': sum(carry_uk),
+                               '_split_transpose': _split_transpose},
                           jaxpr_unknown.effects, source)
   for t in out_tracers: t.recipe = eqn
 
@@ -1351,7 +1351,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*intensive_res, *out_binders_known, *extensive_res],
-      core.closed_call_p, dict(call_jaxpr=call_jaxpr), call_jaxpr.effects,
+      core.closed_call_p, {'call_jaxpr': call_jaxpr}, call_jaxpr.effects,
       eqn.source_info, eqn.ctx)
 
   # Create the staged eqn.
@@ -1938,8 +1938,8 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   # error for reverse differentiation of `while`.
 
   unknowns = [not t.pval.is_known() for t in tracers]
-  params = dict(cond_nconsts=cond_nconsts, cond_jaxpr=cond_jaxpr,
-                body_nconsts=body_nconsts, body_jaxpr=body_jaxpr)
+  params = {'cond_nconsts': cond_nconsts, 'cond_jaxpr': cond_jaxpr,
+                'body_nconsts': body_nconsts, 'body_jaxpr': body_jaxpr}
 
   cond_consts_uk, body_consts_uk, carry_init_uk = \
       split_list(unknowns, [cond_nconsts, body_nconsts])
@@ -2040,9 +2040,9 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   unks_in = [*cond_consts_uk, *body_consts_uk, *carry_uk]  # fixpoint carry_uk
   ins_known, _ = partition_list(unks_in, eqn.invars)
   out_binders_known, _ = partition_list(carry_uk, eqn.outvars)
-  params_known = dict(cond_jaxpr=cond_jaxpr_known, body_jaxpr=body_jaxpr_known,
-                      cond_nconsts=len(cond_consts_uk) - sum(cond_consts_uk),
-                      body_nconsts=len(body_consts_uk) - sum(body_consts_uk))
+  params_known = {'cond_jaxpr': cond_jaxpr_known, 'body_jaxpr': body_jaxpr_known,
+                      'cond_nconsts': len(cond_consts_uk) - sum(cond_consts_uk),
+                      'body_nconsts': len(body_consts_uk) - sum(body_consts_uk)}
   effects_known = core.join_effects(cond_jaxpr_known.effects,
                                     body_jaxpr_known.effects)
   eqn_known = pe.new_jaxpr_eqn(ins_known, out_binders_known, while_p,

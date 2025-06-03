@@ -65,7 +65,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
   @jtu.sample_product(
-    [dict(shape=shape, axes=axes, s=s)
+    [{'shape': shape, 'axes': axes, 's': s}
      for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
      for axes in _get_dctn_test_axes(shape)
      for s in _get_dctn_test_s(shape, axes)],
@@ -101,7 +101,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
   @jtu.sample_product(
-    [dict(shape=shape, axes=axes, s=s)
+    [{'shape': shape, 'axes': axes, 's': s}
      for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
      for axes in _get_dctn_test_axes(shape)
      for s in _get_dctn_test_s(shape, axes)],

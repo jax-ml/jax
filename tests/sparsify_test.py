@@ -225,7 +225,7 @@ class SparsifyTest(jtu.JaxTestCase):
       self.sparsify(operator.add)(x, 1.)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [{"shape": shape, "n_batch": n_batch, "n_dense": n_dense}
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)
@@ -259,7 +259,7 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertAllClose(out.todense(), x.todense() * y.todense())
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [{"shape": shape, "n_batch": n_batch, "n_dense": n_dense}
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)
@@ -364,7 +364,7 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertAllClose(result_sparse, result_dense)
 
   @jtu.sample_product(
-    [dict(shapes=shapes, func=func, n_batch=n_batch)
+    [{"shapes": shapes, "func": func, "n_batch": n_batch}
       for shapes, func, n_batch in [
           ([(4,), (4,)], "concatenate", 0),
           ([(4,), (4,)], "stack", 0),
@@ -394,7 +394,7 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(f(arrs), f(sparrs).todense())
 
   @jtu.sample_product(
-    [dict(shapes=shapes, func=func, n_batch=n_batch)
+    [{"shapes": shapes, "func": func, "n_batch": n_batch}
       for shapes, func, n_batch in [
           ([(2, 4), (2, 4)], "stack", 0),
           ([(2, 4), (3, 4)], "vstack", 0),

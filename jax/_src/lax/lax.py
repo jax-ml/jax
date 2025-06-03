@@ -4917,7 +4917,7 @@ def _convert_element_type_batching_rule(
     axis_data, batched_args, batch_dims, *, new_dtype, weak_type, sharding):
   if sharding is not None:
     sharding = batching.get_sharding_for_vmap(axis_data, sharding, 0)
-  new_params = dict(new_dtype=new_dtype, weak_type=weak_type, sharding=sharding)
+  new_params = {"new_dtype": new_dtype, "weak_type": weak_type, "sharding": sharding}
   return convert_element_type_p.bind(*batched_args, **new_params), batch_dims[0]
 batching.fancy_primitive_batchers[convert_element_type_p] = _convert_element_type_batching_rule
 batching.skippable_batchers[convert_element_type_p] = lambda _: ()
@@ -6521,8 +6521,8 @@ def _broadcast_in_dim_fwd_rule(eqn):
 
 def _broadcast_in_dim_staging_rule(
     trace, x, *dyn, shape, broadcast_dimensions, sharding):
-  params = dict(shape=shape, broadcast_dimensions=broadcast_dimensions,
-                sharding=sharding)
+  params = {"shape": shape, "broadcast_dimensions": broadcast_dimensions,
+                "sharding": sharding}
   if not dyn:
     return trace.default_process_primitive(broadcast_in_dim_p, (x,), params)
   aval = core.DShapedArray(_merge_dyn_shape(shape, dyn), x.dtype, x.weak_type)
@@ -6567,8 +6567,8 @@ def _broadcast_in_dim_partial_eval(
   if not dyn_shape:
     return trace.default_process_primitive(
         broadcast_in_dim_p, (operand, *dyn_shape),
-        dict(shape=shape, broadcast_dimensions=broadcast_dimensions,
-             sharding=sharding))
+        {"shape": shape, "broadcast_dimensions": broadcast_dimensions,
+             "sharding": sharding})
   assert all(t.pval.is_known() for t in dyn_shape)
   operand_tracer = trace.instantiate_const(operand)
   dyn_shape_tracers = map(trace.instantiate_const, dyn_shape)
@@ -6578,8 +6578,8 @@ def _broadcast_in_dim_partial_eval(
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
   eqn = pe.new_eqn_recipe(
       trace, [operand_tracer, *dyn_shape_tracers], [out_tracer], broadcast_in_dim_p,
-      dict(shape=shape, broadcast_dimensions=broadcast_dimensions,
-           sharding=None),
+      {"shape": shape, "broadcast_dimensions": broadcast_dimensions,
+           "sharding": None},
       core.no_effects, source_info_util.current())
   out_tracer.recipe = eqn
   return out_tracer
@@ -7242,7 +7242,7 @@ def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions, sharding):
 
 def _reshape_staging_rule(
     trace, x, *dyn, new_sizes, dimensions, sharding):
-  params = dict(new_sizes=new_sizes, dimensions=dimensions, sharding=sharding)
+  params = {"new_sizes": new_sizes, "dimensions": dimensions, "sharding": sharding}
   if not dyn:
     return trace.default_process_primitive(reshape_p, (x,), params)
   av = core.DShapedArray(_merge_dyn_shape(new_sizes, dyn), x.dtype, x.weak_type)
@@ -8440,7 +8440,7 @@ def _rng_bit_generator_lowering(
         result_types=[key.type,
                       mlir.aval_to_ir_type(core.ShapedArray(shape, rbg_dtype))],
         operands=[key, output_shape],
-        extra_attributes=dict(rng_algorithm=algorithm_attr)).results
+        extra_attributes={"rng_algorithm": algorithm_attr}).results
   else:
     out_key, out_vals = hlo.RngBitGeneratorOp(
         key.type,
@@ -8586,8 +8586,8 @@ iota_p.def_abstract_eval(_iota_abstract_eval)
 batching.ragged_prop_rules[iota_p] = batching.ragged_mask_no_op_rule
 
 def _iota_staging_rule(trace, *dyn_shape, dtype, shape, dimension, sharding):
-  params = dict(dtype=dtype, shape=shape, dimension=dimension,
-                sharding=sharding)
+  params = {"dtype": dtype, "shape": shape, "dimension": dimension,
+                "sharding": sharding}
   if not dyn_shape:
     return trace.default_process_primitive(iota_p, (), params)
   aval = core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), dtype, False)

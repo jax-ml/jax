@@ -68,11 +68,11 @@ class InfeedTest(jtu.JaxTestCase):
 
     x = np.float32(1.5)
     y = np.reshape(np.arange(12, dtype=np.int16), (3, 4))
-    to_infeed = dict(a=x, b=y)
-    to_infeed_shape = dict(
-        a=core.ShapedArray((), dtype=np.float32),
-        b=core.ShapedArray((3, 4), dtype=np.int16),
-    )
+    to_infeed = {"a": x, "b": y}
+    to_infeed_shape = {
+        "a": core.ShapedArray((), dtype=np.float32),
+        "b": core.ShapedArray((3, 4), dtype=np.int16),
+    }
 
     @jax.jit
     def f(x):

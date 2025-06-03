@@ -120,7 +120,7 @@ def blocked_fold_in(
       for i in range(block_size_in_tiles[axis]):
         keys.append(_keygen_loop(axis+1, prefix+(i,)))
       return keys
-  return _keygen_loop(0, tuple())
+  return _keygen_loop(0, ())
 
 
 def sample_block(
@@ -169,4 +169,4 @@ def sample_block(
       for i in range(size_in_tiles[axis]):
         samples.append(_sample_loop(axis+1, prefix+(i,)))
       return jnp.concatenate(samples, axis=axis)
-  return _sample_loop(0, tuple())
+  return _sample_loop(0, ())

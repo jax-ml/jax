@@ -54,10 +54,10 @@ def matmul_benchmark(*args):
 
 
 @matmul_benchmark(
-    dict(m=55 * 128, n=95 * 128, k=48 * 128, stages=4, tile_m=128),
-    dict(m=55 * 128, n=45 * 128, k=48 * 128, stages=4, tile_m=128),
-    dict(m=64, n=95 * 128, k=48 * 128, stages=4, tile_m=64),
-    dict(m=64, n=45 * 128, k=48 * 128, stages=4, tile_m=64),
+    {"m": 55 * 128, "n": 95 * 128, "k": 48 * 128, "stages": 4, "tile_m": 128},
+    {"m": 55 * 128, "n": 45 * 128, "k": 48 * 128, "stages": 4, "tile_m": 128},
+    {"m": 64, "n": 95 * 128, "k": 48 * 128, "stages": 4, "tile_m": 64},
+    {"m": 64, "n": 45 * 128, "k": 48 * 128, "stages": 4, "tile_m": 64},
 )
 def bf16_i8_matmul(m, k, n, stages, tile_m):
   # RHS.element_size==1b so k_tile=128
@@ -76,9 +76,9 @@ def bf16_i8_matmul(m, k, n, stages, tile_m):
   )
 
 @matmul_benchmark(
-    dict(m=1024, n=1024, k=1024, stages=4, tile_m=128, tile_n=256),
-    dict(m=1024, n=1024, k=1024, stages=4, tile_m=128, tile_n=128),
-    dict(m=1024, n=1024, k=1024, stages=4, tile_m=64, tile_n=128),
+    {"m": 1024, "n": 1024, "k": 1024, "stages": 4, "tile_m": 128, "tile_n": 256},
+    {"m": 1024, "n": 1024, "k": 1024, "stages": 4, "tile_m": 128, "tile_n": 128},
+    {"m": 1024, "n": 1024, "k": 1024, "stages": 4, "tile_m": 64, "tile_n": 128},
 )
 def f32_matmul(m, n, k, stages, tile_m, tile_n):
   if stages * 32 > k:
