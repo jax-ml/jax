@@ -558,6 +558,7 @@ jax_multiplatform_test(
     disable_configs = ["cpu_shardy"],
     enable_backends = ["cpu"],
     deps = [
+        "//jax:experimental",
         "//jax:pallas",
         "//jax:pallas_tpu",
     ] + py_deps([
