@@ -482,7 +482,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     y_scalar = nn.prelu(x, 0.1)
     self.assertAllClose(y_scalar, expected,check_dtypes=False)
   
-  def testprelugrad(x, a):
+  def testPreluGrad(x, a):
     return jnp.sum(nn.prelu(x, a))
     check_grads(testprelugrad, (x, a), order=1)
     
