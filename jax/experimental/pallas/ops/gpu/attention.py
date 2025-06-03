@@ -57,10 +57,10 @@ class BlockSizes:
     return BlockSizes(
         block_q=128,
         block_k=128,
-        block_q_dkv=128,
-        block_kv_dkv=128,
-        block_q_dq=128,
-        block_kv_dq=128,
+        block_q_dkv=32,
+        block_kv_dkv=32,
+        block_q_dq=32,
+        block_kv_dq=32,
     )
 
   @property
