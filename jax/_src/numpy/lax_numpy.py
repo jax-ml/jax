@@ -35,9 +35,9 @@ import os
 from typing import (Any, IO, Literal, Protocol, TypeVar, Union, overload)
 import warnings
 
-import jax
-from jax import jit
 from jax import lax
+from jax._src.api import jit
+from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import deprecations
@@ -508,7 +508,7 @@ def isscalar(element: Any) -> bool:
   """
   if np.isscalar(element):
     return True
-  elif isinstance(element, (np.ndarray, jax.Array)):
+  elif isinstance(element, (np.ndarray, Array)):
     return element.ndim == 0
   elif hasattr(element, '__jax_array__'):
     return asarray(element).ndim == 0
@@ -3418,7 +3418,7 @@ def clip(
     )
 
   util.check_arraylike("clip", arr)
-  if any(jax.numpy.iscomplexobj(t) for t in (arr, min, max)):
+  if any(iscomplexobj(t) for t in (arr, min, max)):
     raise ValueError(
       "Clip received a complex value either through the input or the min/max "
       "keywords. Complex values have no ordering and cannot be clipped. "
@@ -4676,7 +4676,7 @@ def concat(arrays: Sequence[ArrayLike], /, *, axis: int | None = 0) -> Array:
            [1., 1., 1., 0.]], dtype=float32)
   """
   util.check_arraylike("concat", *arrays)
-  return jax.numpy.concatenate(arrays, axis=axis)
+  return concatenate(arrays, axis=axis)
 
 
 @export
@@ -4732,7 +4732,7 @@ def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   """
   arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
-    arrs = jax.vmap(atleast_2d)(tup)
+    arrs = api.vmap(atleast_2d)(tup)
   else:
     # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
     util.check_arraylike("vstack", *tup, emit_warning=True)
@@ -4791,7 +4791,7 @@ def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   """
   arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
-    arrs = jax.vmap(atleast_1d)(tup)
+    arrs = api.vmap(atleast_1d)(tup)
     arr0_ndim = arrs.ndim - 1
   else:
     # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
@@ -4854,7 +4854,7 @@ def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   """
   arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
-    arrs = jax.vmap(atleast_3d)(tup)
+    arrs = api.vmap(atleast_3d)(tup)
   else:
     # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
     util.check_arraylike("dstack", *tup, emit_warning=True)
@@ -4916,7 +4916,7 @@ def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
   """
   arrs: Array | list[Array] | np.ndarray
   if isinstance(tup, (np.ndarray, Array)):
-    arrs = jax.vmap(lambda x: atleast_2d(x).T)(tup) if tup.ndim < 3 else tup
+    arrs = api.vmap(lambda x: atleast_2d(x).T)(tup) if tup.ndim < 3 else tup
   else:
     # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
     util.check_arraylike("column_stack", *tup, emit_warning=True)
@@ -5354,7 +5354,7 @@ def _make_string_array(
     )
 
   # Just do a device_put since XLA does not support string as a data type.
-  return jax.device_put(x=object, device=device)
+  return api.device_put(x=object, device=device)
 
 
 @export
@@ -5447,7 +5447,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       (dtype is None or dtype == object.dtype) and (ndmin <= object.ndim) and
       device is None):
     # Keep the output uncommitted.
-    return jax.device_put(object)
+    return api.device_put(object)
 
   # String arrays need separate handling because XLA does not support string
   # as a data type.
@@ -5551,7 +5551,7 @@ def _get_platform(
     return device_or_sharding
   elif device_or_sharding is None:
     if config.default_device.value is None:
-      return jax.default_backend()
+      return xla_bridge.default_backend()
     else:
       return _get_platform(config.default_device.value)
   else:
@@ -6077,7 +6077,7 @@ def fromfunction(function: Callable[..., Array], shape: Any,
   shape = core.canonicalize_shape(shape, context="shape argument of jnp.fromfunction()")
   for i in range(len(shape)):
     in_axes = [0 if i == j else None for j in range(len(shape))]
-    function = jax.vmap(function, in_axes=tuple(in_axes[::-1]))
+    function = api.vmap(function, in_axes=tuple(in_axes[::-1]))
   return function(*(arange(s, dtype=dtype) for s in shape), **kwargs)
 
 
@@ -6166,7 +6166,7 @@ def eye(N: DimSize, M: DimSize | None = None,
   # instead of putting it on default device and then on the specific device
   output = _eye(N, M=M, k=k, dtype=dtype)
   if device is not None:
-    return jax.device_put(output, device=device)
+    return api.device_put(output, device=device)
   return output
 
 
@@ -6299,7 +6299,7 @@ def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
   # instead of putting it on default device and then on the specific device
   output = _arange(start, stop=stop, step=step, dtype=dtype)
   if device is not None:
-    return jax.device_put(output, device=device)
+    return api.device_put(output, device=device)
   return output
 
 
@@ -6496,7 +6496,7 @@ def _i0(x):
 
 @_i0.defjvp
 def _i0_jvp(primals, tangents):
-  primal_out, tangent_out = jax.jvp(_i0.fun, primals, tangents)
+  primal_out, tangent_out = api.jvp(_i0.fun, primals, tangents)
   return primal_out, where(primals[0] == 0, 0.0, tangent_out)
 
 @export
@@ -7792,7 +7792,7 @@ def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
   util.check_arraylike("trim_zeros", filt, emit_warning=True)
   core.concrete_or_error(None, filt,
                          "Error arose in the `filt` argument of trim_zeros()")
-  filt_arr = jax.numpy.asarray(filt)
+  filt_arr = asarray(filt)
   del filt
   if filt_arr.ndim != 1:
     # Added on 2024-09-11
@@ -8173,9 +8173,9 @@ def apply_along_axis(
   axis = _canonicalize_axis(axis, num_dims)
   func = lambda arr: func1d(arr, *args, **kwargs)
   for i in range(1, num_dims - axis):
-    func = jax.vmap(func, in_axes=i, out_axes=-1)
+    func = api.vmap(func, in_axes=i, out_axes=-1)
   for i in range(axis):
-    func = jax.vmap(func, in_axes=0, out_axes=0)
+    func = api.vmap(func, in_axes=0, out_axes=0)
   return func(arr)
 
 
@@ -9623,7 +9623,7 @@ def _searchsorted_via_sort(sorted_arr: Array, query: Array, side: str, dtype: ty
 
 def _searchsorted_via_compare_all(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
   op = _sort_lt_comparator if side == 'left' else _sort_le_comparator
-  comparisons = jax.vmap(op, in_axes=(0, None))(sorted_arr, query)
+  comparisons = api.vmap(op, in_axes=(0, None))(sorted_arr, query)
   return comparisons.sum(dtype=dtype, axis=0)
 
 

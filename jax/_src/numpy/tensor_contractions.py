@@ -20,7 +20,6 @@ from functools import partial
 
 import numpy as np
 
-import jax
 from jax import lax
 from jax._src import core
 from jax._src import dtypes
@@ -378,7 +377,7 @@ def vdot(
   a, b = util.ensure_arraylike("vdot", a, b)
   if dtypes.issubdtype(dtypes.dtype(a, canonicalize=True), np.complexfloating):
     a = ufuncs.conj(a)
-  return dot(jax.numpy.ravel(a), jax.numpy.ravel(b), precision=precision,
+  return dot(a.ravel(), b.ravel(), precision=precision,
              preferred_element_type=preferred_element_type)
 
 
@@ -429,11 +428,13 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
     >>> jnp.linalg.vecdot(a, b, axis=-1)
     Array([20, 47], dtype=int32)
   """
+  from jax._src.numpy.lax_numpy import moveaxis
+
   x1_arr, x2_arr = util.ensure_arraylike("jnp.vecdot", x1, x2)
   if x1_arr.shape[axis] != x2_arr.shape[axis]:
     raise ValueError(f"axes must match; got shapes {x1_arr.shape} and {x2_arr.shape} with {axis=}")
-  x1_arr = jax.numpy.moveaxis(x1_arr, axis, -1)
-  x2_arr = jax.numpy.moveaxis(x2_arr, axis, -1)
+  x1_arr = moveaxis(x1_arr, axis, -1)
+  x2_arr = moveaxis(x2_arr, axis, -1)
   return vectorize(partial(vdot, precision=precision, preferred_element_type=preferred_element_type),
                    signature="(n),(n)->()")(x1_arr, x2_arr)
 
@@ -604,8 +605,9 @@ def inner(
   """
   a, b = util.ensure_arraylike("inner", a, b)
   if np.ndim(a) == 0 or np.ndim(b) == 0:
-    a = jax.numpy.asarray(a, dtype=preferred_element_type)
-    b = jax.numpy.asarray(b, dtype=preferred_element_type)
+    if preferred_element_type is not None:
+      a = a.astype(preferred_element_type)
+      b = b.astype(preferred_element_type)
     return a * b
   return tensordot(a, b, (-1, -1), precision=precision,
                    preferred_element_type=preferred_element_type)
@@ -643,4 +645,4 @@ def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
     raise NotImplementedError("The 'out' argument to jnp.outer is not supported.")
   a, b = util.ensure_arraylike("outer", a, b)
   a, b = util.promote_dtypes(a, b)
-  return jax.numpy.ravel(a)[:, None] * jax.numpy.ravel(b)[None, :]
+  return a.ravel()[:, None] * b.ravel()[None, :]

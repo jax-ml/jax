@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from types import ModuleType
 
-import jax
 from jax._src.sharding import Sharding
 from jax._src.lib import xla_client as xc
 from jax._src import config
@@ -40,6 +39,7 @@ def __array_namespace__(self, *, api_version: None | str = None) -> ModuleType:
   if api_version is not None and api_version != __array_api_version__:
     raise ValueError(f"{api_version=!r} is not available; "
                      f"available versions are: {[__array_api_version__]}")
+  import jax.numpy  # pytype: disable=import-error
   return jax.numpy
 
 
@@ -77,7 +77,7 @@ class ArrayNamespaceInfo:
   def devices(self):
     out = [None]  # None indicates "uncommitted"
     for backend in xb.backends():
-        out.extend(jax.devices(backend))
+        out.extend(xb.devices(backend))
     return out
 
   def capabilities(self):

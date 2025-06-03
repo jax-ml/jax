@@ -17,14 +17,14 @@ from typing import Sequence
 
 import numpy as np
 
-import jax
+from jax import lax
+
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src.numpy import util
 from jax._src.util import canonicalize_axis, set_module
 from jax._src.typing import Array, ArrayLike
-from jax import lax
 
 export = set_module('jax.numpy')
 
@@ -226,7 +226,7 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   axis = canonicalize_axis(axis, arr.ndim)
   kth = canonicalize_axis(kth, arr.shape[axis])
 
-  arr = jax.numpy.swapaxes(arr, axis, -1)
+  arr = arr.swapaxes(axis, -1)
   if dtypes.isdtype(arr.dtype, "unsigned integer"):
     # Here, we apply a trick to handle correctly 0 values for unsigned integers
     bottom = -lax.top_k(-(arr + 1), kth + 1)[0] - 1
@@ -234,7 +234,7 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
     bottom = -lax.top_k(-arr, kth + 1)[0]
   top = lax.top_k(arr, arr.shape[-1] - kth - 1)[0]
   out = lax.concatenate([bottom, top], dimension=arr.ndim - 1)
-  return jax.numpy.swapaxes(out, -1, axis)
+  return out.swapaxes(-1, axis)
 
 
 @export
@@ -297,7 +297,7 @@ def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   axis = canonicalize_axis(axis, arr.ndim)
   kth = canonicalize_axis(kth, arr.shape[axis])
 
-  arr = jax.numpy.swapaxes(arr, axis, -1)
+  arr = arr.swapaxes(axis, -1)
   if dtypes.isdtype(arr.dtype, "unsigned integer"):
     # Here, we apply a trick to handle correctly 0 values for unsigned integers
     bottom_ind = lax.top_k(-(arr + 1), kth + 1)[1]
@@ -307,11 +307,11 @@ def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   # To avoid issues with duplicate values, we compute the top indices via a proxy
   set_to_zero = lambda a, i: a.at[i].set(0)
   for _ in range(arr.ndim - 1):
-    set_to_zero = jax.vmap(set_to_zero)
-  proxy = set_to_zero(jax.numpy.ones(arr.shape), bottom_ind)
+    set_to_zero = api.vmap(set_to_zero)
+  proxy = set_to_zero(lax.full(arr.shape, 1.0), bottom_ind)
   top_ind = lax.top_k(proxy, arr.shape[-1] - kth - 1)[1]
   out = lax.concatenate([bottom_ind, top_ind], dimension=arr.ndim - 1)
-  return jax.numpy.swapaxes(out, -1, axis)
+  return out.swapaxes(-1, axis)
 
 
 @export
@@ -421,7 +421,7 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
   if len({np.shape(key) for key in key_arrays}) > 1:
     raise ValueError("all keys need to be the same shape")
   if np.ndim(key_arrays[0]) == 0:
-    return jax.numpy.array(0, dtype=dtypes.canonicalize_dtype(dtypes.int_))
+    return lax.full((), 0, dtypes.canonicalize_dtype(dtypes.int_))
   axis = canonicalize_axis(axis, np.ndim(key_arrays[0]))
   use_64bit_index = key_arrays[0].shape[axis] >= (1 << 31)
   iota = lax.broadcasted_iota(np.dtype('int64') if use_64bit_index else dtypes.int_,

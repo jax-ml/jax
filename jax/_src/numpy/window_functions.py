@@ -16,11 +16,11 @@ import numpy as np
 
 from jax._src import core
 from jax._src import dtypes
+from jax._src.lax import lax
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import set_module
-from jax import lax
 
 export = set_module('jax.numpy')
 

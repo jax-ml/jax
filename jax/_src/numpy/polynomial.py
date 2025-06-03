@@ -19,8 +19,8 @@ import operator
 
 import numpy as np
 
-from jax import jit
 from jax import lax
+from jax._src.api import jit
 from jax._src import dtypes
 from jax._src import core
 from jax._src.lax import lax as lax_internal

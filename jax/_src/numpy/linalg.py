@@ -23,10 +23,11 @@ import numpy as np
 import operator
 from typing import Literal, NamedTuple, overload
 
-import jax
-from jax import jit, custom_jvp
 from jax import lax
 
+from jax._src.api import jit
+from jax._src import config
+from jax._src.custom_derivatives import custom_jvp
 from jax._src import deprecations
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import PrecisionLike
@@ -44,24 +45,24 @@ export = set_module('jax.numpy.linalg')
 
 
 class EighResult(NamedTuple):
-  eigenvalues: jax.Array
-  eigenvectors: jax.Array
+  eigenvalues: Array
+  eigenvectors: Array
 
 
 class QRResult(NamedTuple):
-  Q: jax.Array
-  R: jax.Array
+  Q: Array
+  R: Array
 
 
 class SlogdetResult(NamedTuple):
-  sign: jax.Array
-  logabsdet: jax.Array
+  sign: Array
+  logabsdet: Array
 
 
 class SVDResult(NamedTuple):
-  U: jax.Array
-  S: jax.Array
-  Vh: jax.Array
+  U: Array
+  S: Array
+  Vh: Array
 
 
 def _H(x: ArrayLike) -> Array:
@@ -995,7 +996,7 @@ def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) 
 
 
 @_pinv.defjvp
-@jax.default_matmul_precision("float32")
+@config.default_matmul_precision("float32")
 def _pinv_jvp(rtol, hermitian, primals, tangents):
   # The Differentiation of Pseudo-Inverses and Nonlinear Least Squares Problems
   # Whose Variables Separate. Author(s): G. H. Golub and V. Pereyra. SIAM
@@ -1617,7 +1618,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
   ndim = x_arr.ndim
   if ndim < 2:
     raise ValueError(f"matrix_transpose requres at least 2 dimensions; got {ndim=}")
-  return jax.lax.transpose(x_arr, (*range(ndim - 2), ndim - 1, ndim - 2))
+  return lax.transpose(x_arr, (*range(ndim - 2), ndim - 1, ndim - 2))
 
 
 @export

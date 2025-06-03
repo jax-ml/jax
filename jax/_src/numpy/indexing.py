@@ -20,7 +20,8 @@ import operator
 import string
 from typing import Any, NamedTuple, Sequence
 
-import jax
+import numpy as np
+
 from jax import lax
 from jax._src import array
 from jax._src import config
@@ -39,7 +40,6 @@ from jax._src.pjit import auto_axes
 from jax._src.tree_util import tree_flatten
 from jax._src.typing import Array, ArrayLike, StaticScalar
 from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update
-import numpy as np
 
 export = set_module('jax.numpy')
 
@@ -314,8 +314,10 @@ def take_along_axis(
     return lax.full(out_shape, 0, a.dtype)
 
   if mode == "one_hot":
+    from jax import nn  # pytype: disable=import-error
+
     indices = _normalize_index(indices, axis_size)
-    hot = jax.nn.one_hot(indices, axis_size, dtype=np.bool_)
+    hot = nn.one_hot(indices, axis_size, dtype=np.bool_)
     if a.ndim == 1:
       return einsum.einsum("...b,b->...", hot, a, preferred_element_type=a.dtype)
     if axis_int > len(string.ascii_letters) - 2:
