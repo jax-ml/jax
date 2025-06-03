@@ -5524,7 +5524,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     out = _array_copy(object) if copy else object
   elif isinstance(object, (list, tuple)):
     if object:
-      out = stack([asarray(elt, dtype=dtype) for elt in object])
+      arrs = (array(elt, dtype=dtype, copy=False) for elt in object)
+      out = lax.concatenate([lax.expand_dims(arr, [0]) for arr in arrs], 0)
     else:
       out = np.array([], dtype=dtype)
   elif _supports_buffer_protocol(object):
