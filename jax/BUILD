@@ -1501,17 +1501,6 @@ pytype_library(
     deps = [":jax"],
 )
 
-# TODO(apaszke): Remove this target
-pytype_library(
-    name = "pjit",
-    srcs = ["experimental/pjit.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":experimental",
-        ":jax",
-    ],
-)
-
 pytype_library(
     name = "jet",
     srcs = ["experimental/jet.py"],
