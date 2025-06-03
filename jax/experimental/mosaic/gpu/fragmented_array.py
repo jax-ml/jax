@@ -2063,10 +2063,18 @@ class FragmentedArray:
             ),
         )
         registers = np.full(layout.registers_shape(shape), zero, dtype=object)
-        reg_ty = ir.VectorType.get((layout.vector_length,), ref_ty.element_type)
+        is_f8 = ir.FloatType.isinstance(dtype) and utils.bitwidth(dtype) == 8
+        i8 = ir.IntegerType.get_signless(8)
+        reg_ty = ir.VectorType.get((layout.vector_length,), dtype)
+        # f8 data types are not handled by the LLVM dialect, so we need to
+        # transfer them as i8 and bitcast them back to f8.
+        transfer_ty = ir.VectorType.get((layout.vector_length,), i8 if is_f8 else dtype)
         loads = cls.transfer_tiled2(ref, swizzle, layout, shape, optimized)
         for _, update, ptr in loads:
-          update(registers, llvm.load(reg_ty, ptr))
+          loaded_reg = llvm.load(transfer_ty, ptr)
+          if is_f8:
+            loaded_reg = vector.bitcast(reg_ty, loaded_reg)
+          update(registers, loaded_reg)
       case _:
         raise NotImplementedError(layout)
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
@@ -2259,7 +2267,12 @@ class FragmentedArray:
     # Technically we should keep the vector_dim set to 1, but its shape is 1
     # so it does not matter.
     transfer_tiled_strides = [s // layout.vector_length for s in elem_tiled_strides]
-    transfer_dtype = ir.VectorType.get((layout.vector_length,), dtype)
+    is_f8 = ir.FloatType.isinstance(dtype) and element_bits == 8
+    i8 = ir.IntegerType.get_signless(8)
+    if is_f8:
+      transfer_dtype = ir.VectorType.get((layout.vector_length,), i8)
+    else:
+      transfer_dtype = ir.VectorType.get((layout.vector_length,), dtype)
 
     if ref_ty.memory_space is None:
       llvm_memory_space = None
@@ -2327,7 +2340,13 @@ class FragmentedArray:
         return (*reg_tiled_idx, *idx[base_idx:])
       reg_idxs = [mem_idx_to_reg_idx(idx) for idx in indices.tolist()]
       def get_register(regs, reg_idxs=reg_idxs):
-        return plan.select([regs[reg_idx] for reg_idx in reg_idxs])
+        def cast_if_f8(x):
+          if is_f8:
+            return vector.bitcast(transfer_dtype, x)
+          return x
+        # f8 data types are not handled by the LLVM dialect, so we need to
+        # transfer them as i8 and bitcast them back to f8.
+        return plan.select([cast_if_f8(regs[reg_idx]) for reg_idx in reg_idxs])
       def update_registers(regs, new, reg_idxs=reg_idxs):
         # TODO(apaszke): If the staggering forms a permutation with a small
         # cycle length, then instead of blending at each step we could construct
