@@ -96,7 +96,7 @@ def _pallas_call_abstract_eval(
 ):
   del avals
 
-  if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+  if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
     # Report effects that will be introduced when running/lowering
     # mosaic_tpu_interpret.mosaic_tpu_interpret.interpret_pallas_call .
     effs = mosaic_tpu_interpret.get_interpret_effects()
@@ -1261,7 +1261,7 @@ def _pallas_call_lowering(
   if params['jaxpr'].constvars:
     raise ValueError('Cannot lower a pallas_call with constants.')
   if interpret:
-    if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+    if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
       impl = partial(mosaic_tpu_interpret.interpret_pallas_call,
                      interpret_params=interpret,
                      **params)
@@ -1774,5 +1774,5 @@ try:
   from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret
 except ImportError:
   mosaic_tpu_interpret = types.SimpleNamespace(  # type: ignore
-      TPUInterpretParams=types.new_class('_NoInstances', (enum.Enum,)),
+      InterpretParams=types.new_class('_NoInstances', (enum.Enum,)),
   )
