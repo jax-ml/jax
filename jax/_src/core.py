@@ -2316,6 +2316,7 @@ class MutableArray:
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
   sharding = property(lambda self: self._buf.sharding)
+  format = property(lambda self: self._buf.format)
   def __getitem__(self, idx): return self._aval._getitem(self, idx)
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
   def __repr__(self) -> str: return 'Mutable' + repr(self[...])
