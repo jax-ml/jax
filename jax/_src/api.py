@@ -3164,6 +3164,7 @@ def clear_backends():
   dispatch.xla_primitive_callable.cache_clear()
   util.clear_all_caches()
   pjit._infer_params_cached.cache_clear()
+  pjit._pjit_lower_cached.cache_clear()
   pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
