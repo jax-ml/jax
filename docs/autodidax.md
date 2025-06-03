@@ -1590,7 +1590,7 @@ def xla_callable(hashable_jaxpr: IDHashable,
   output = io.StringIO()
   c.module.operation.print(file=output)
   backend = xb.get_backend(None)
-  compiled = backend.compile(output.getvalue(), backend.devices()[:1])
+  compiled = backend.compile_and_load(output.getvalue(), backend.devices()[:1])
   return partial(execute_compiled, compiled, [v.aval for v in jaxpr.outs])
 
 def _mlir_dtype(dtype: np.dtype) -> ir.Type:
