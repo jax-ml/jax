@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "jaxlib/mlir.h"
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
 #include "absl/log/log.h"
@@ -32,6 +34,7 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LogicalResult.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "stablehlo/dialect/Serialization.h"
@@ -108,7 +111,7 @@ absl::StatusOr<XlaComputation> PyMlirModuleToXlaComputation(
   XlaComputation computation;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
                                           return_tuple,
-                                          /*use_shardy=*/false));
+                                          /*exec_build_options=*/nullptr));
   return computation;
 }
 
@@ -137,7 +140,8 @@ absl::StatusOr<nb::bytes> PyMhloToStablehlo(absl::string_view mlir_module) {
 }
 
 absl::StatusOr<nb::bytes> PySerializePortableArtifact(
-    absl::string_view mlir_module, absl::string_view target) {
+    absl::string_view mlir_module, absl::string_view target,
+    std::optional<int64_t> plugin_version) {
   mlir::MLIRContext context;
   if (VLOG_IS_ON(3)) context.disableMultithreading();
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
@@ -146,17 +150,18 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
   // Serialize portable artifact
   TF_ASSIGN_OR_RETURN(
       std::string bytecode,
-      SerializeUsingVersionedStablehlo(*module, target, /*inplace=*/true));
+      SerializeUsingVersionedStablehlo(*module, target, /*inplace=*/true,
+        plugin_version));
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
 absl::StatusOr<std::string> PyDeserializePortableArtifact(
     const nb::bytes& bytecode_str) {
   mlir::MLIRContext context;
-  mlir::OwningOpRef<mlir::ModuleOp> module =
-      mlir::stablehlo::deserializePortableArtifact(
+  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+      ParseMlirModuleString(
           absl::string_view(bytecode_str.c_str(), bytecode_str.size()),
-          &context);
+          context));
   if (!module)
     return tsl::errors::InvalidArgument("Failed to deserialize StableHLO");
   return PrintModule(*module);
@@ -198,14 +203,22 @@ void BuildMlirSubmodule(nb::module_& m) {
                   nb::arg("mlir_module"));
   mlir_module.def(
       "serialize_portable_artifact",
-      [](const nb::bytes& bytecode, absl::string_view target) {
+      [](const nb::bytes& bytecode, absl::string_view target,
+        std::optional<int64_t> plugin_version) {
         return xla::ValueOrThrow(PySerializePortableArtifact(
-            absl::string_view(bytecode.c_str(), bytecode.size()), target));
+            absl::string_view(bytecode.c_str(), bytecode.size()), target,
+            plugin_version));
       },
-      nb::arg("mlir_module"), nb::arg("target"));
+      nb::arg("mlir_module"), nb::arg("target"),
+      nb::arg("plugin_version").none());
   mlir_module.def("serialize_portable_artifact",
-                  xla::ValueOrThrowWrapper(PySerializePortableArtifact),
-                  nb::arg("mlir_module"), nb::arg("target"));
+                  [](absl::string_view mlir_module, absl::string_view target,
+                     std::optional<int64_t> plugin_version) {
+                    return xla::ValueOrThrow(PySerializePortableArtifact(
+                        mlir_module, target, plugin_version));
+                  },
+                  nb::arg("mlir_module"), nb::arg("target"),
+                  nb::arg("plugin_version").none());
   mlir_module.def("deserialize_portable_artifact",
                   xla::ValueOrThrowWrapper(PyDeserializePortableArtifact),
                   nb::arg("mlir_module"));

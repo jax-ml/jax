@@ -15,14 +15,6 @@
 
 from jaxlib.mlir import ir
 
-def sdy_round_trip_export_pipeline(
-    module: ir.module
-) -> str: ...
-
-def sdy_round_trip_import_shardings(
-    module: ir.module
-) -> str: ...
-
 def get_mesh(
     module: ir.module
 ) -> tuple[tuple[str, int], ...]: ...

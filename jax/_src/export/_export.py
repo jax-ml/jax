@@ -833,8 +833,9 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   else:
     target_version = hlo.get_version_from_compatibility_requirement(
       hlo.StablehloCompatibilityRequirement.WEEK_4)
+  pjrt_version = xb.backend_pjrt_c_api_version()
   module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
-      mlir_str, target_version)
+      mlir_str, target_version, pjrt_version[1] if pjrt_version else None)
   return module_serialized
 
 
@@ -1123,7 +1124,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "shape_assertion",  # Used by shape_poly to evaluate assertions
 }
 
-check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|\[({}, )*{}\]"")$")
+check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|.*\[({}, )*{}\]"")$")
 
 def _check_module(mod: ir.Module, *,
                   disabled_checks: Sequence[DisabledSafetyCheck],
@@ -1149,7 +1150,7 @@ def _check_module(mod: ir.Module, *,
   module_uses_non_replicated_sharding = False
   def check_sharding(op: ir.Operation, loc: ir.Location):
     try:
-      sharding = (op.attributes["sdy.sharding"] if shardy_enabled else
+      sharding = (op.attributes["sharding"] if shardy_enabled else
                   op.attributes["mhlo.sharding"])
     except KeyError:
       pass
@@ -1178,6 +1179,8 @@ def _check_module(mod: ir.Module, *,
         disallowed_custom_call_ops.append(f"{op} at {op.location}")
       if call_target_name_attr == sharding_attr:
         check_sharding(op, op.location)
+    elif op_name == "sdy.sharding_constraint":
+      check_sharding(op, op.location)
 
   def walk_operations(op):
     check_op(op)
@@ -1430,17 +1433,11 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
   submodule_bc = mlir.module_to_bytecode(submodule)
   shardy_enabled = _jax.sdy.lowered_with_shardy(submodule_bc)
-  if shardy_enabled:
-    if not config.use_shardy_partitioner.value:
-      raise ValueError(
-          "The function was exported with shardy enabled but you are calling "
-          "it with Shardy disabled. Please enable Shardy using "
-          "`--jax_use_shardy_partitioner=True`.")
-    submodule = ir.Module.parse(
-        _jax.sdy.sdy_round_trip_import_shardings(submodule_bc)
-    )
-  elif config.use_shardy_partitioner.value:
-    shardy_enabled = True
+  if shardy_enabled and not config.use_shardy_partitioner.value:
+    raise ValueError(
+        "The function was exported with shardy enabled but you are calling "
+        "it with Shardy disabled. Please enable Shardy using "
+        "`--jax_use_shardy_partitioner=True`.")
 
   with submodule.context:
     pipeline = passmanager.PassManager.parse(
