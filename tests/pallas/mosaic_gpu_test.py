@@ -423,7 +423,7 @@ class PallasCallTest(PallasTest):
               plgpu.TransposeTransform((1, 0, 2, 3)),
               plgpu.SwizzleTransform(128),
           )),),
-          return_type=plgpu.GPUShapeDtypeStruct(
+          return_type=plgpu.ShapeDtypeStruct(
               shape, dtype, layout=plgpu.Layout.WGMMA
           ),
       )
