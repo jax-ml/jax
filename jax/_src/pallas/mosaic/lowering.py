@@ -15,12 +15,12 @@
 """Module for lowering JAX to Mosaic-compatible MLIR dialects."""
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Hashable, Sequence
 import contextlib
 import dataclasses
 import functools
 import string
-from typing import Any, Hashable, TypeVar
+from typing import Any, TypeVar
 
 import jax
 from jax import api_util
@@ -86,10 +86,10 @@ import numpy as np
 # mypy: ignore-errors
 
 NDIndexer = indexing.NDIndexer
-TPUMemorySpace = tpu_core.TPUMemorySpace
-MemorySpace = pallas_core.MemorySpace | TPUMemorySpace
-VMEM = tpu_core.TPUMemorySpace.VMEM
-SMEM = tpu_core.TPUMemorySpace.SMEM
+TPUMemorySpace = tpu_core.MemorySpace
+AnyMemorySpace = pallas_core.MemorySpace | TPUMemorySpace
+VMEM = TPUMemorySpace.VMEM
+SMEM = TPUMemorySpace.SMEM
 # Booleans are stored as the following type in memrefs.
 BOOL_MEMREF_TYPE = np.dtype('int32')
 
@@ -212,7 +212,7 @@ class LoweringRuleContext:
     return self.lowering_context.forward_compatible
 
 
-def _memory_space_to_tpu_memory_space(memory_space: MemorySpace | None
+def _memory_space_to_tpu_memory_space(memory_space: AnyMemorySpace | None
                                      ) -> TPUMemorySpace:
   match memory_space:
     case None:
@@ -235,7 +235,7 @@ def _memory_space_to_tpu_memory_space(memory_space: MemorySpace | None
       raise ValueError(f"Invalid memory space: {memory_space}")
 
 
-def _memory_space_to_mosaic_attribute(memory_space: MemorySpace | None
+def _memory_space_to_mosaic_attribute(memory_space: AnyMemorySpace | None
                                       ) -> ir.Attribute:
   tpu_memory_space = _memory_space_to_tpu_memory_space(memory_space)
   return ir.Attribute.parse(f"#tpu.memory_space<{tpu_memory_space}>")
@@ -266,7 +266,7 @@ def aval_to_ir_type(
     dynamic_shape_replacement_fn,
     aval,
     shape=None,
-    memory_space: MemorySpace | None = None,
+    memory_space: AnyMemorySpace | None = None,
     is_kernel_boundary: bool = False,
 ):
   if isinstance(aval, tpu_core.AbstractSemaphore):
@@ -600,9 +600,9 @@ def _check_block_mappings(
     # TODO(necula): add tests for SMEM blocks with trivial windowing
     # We support scalars too
     memory_space = _memory_space_to_tpu_memory_space(bm.block_aval.memory_space)
-    if memory_space == tpu_core.TPUMemorySpace.SMEM and bm.has_trivial_window():
+    if memory_space == tpu_core.MemorySpace.SMEM and bm.has_trivial_window():
       continue
-    if memory_space == tpu_core.TPUMemorySpace.SEMAPHORE:
+    if memory_space == tpu_core.MemorySpace.SEMAPHORE:
       continue
 
     def err_details():
@@ -619,7 +619,7 @@ def _check_block_mappings(
           "rank >= 1. " + err_details())
 
     if (
-        memory_space == tpu_core.TPUMemorySpace.ANY
+        memory_space == tpu_core.MemorySpace.ANY
         and not bm.has_trivial_window()
     ):
       raise ValueError(
@@ -761,8 +761,8 @@ def lower_jaxpr_to_module(
       tpu_memory_space = _memory_space_to_tpu_memory_space(
           bm.block_aval.memory_space)
       if (
-          tpu_memory_space == tpu_core.TPUMemorySpace.ANY
-          or tpu_memory_space == tpu_core.TPUMemorySpace.SEMAPHORE
+          tpu_memory_space == tpu_core.MemorySpace.ANY
+          or tpu_memory_space == tpu_core.MemorySpace.SEMAPHORE
       ):
         # We checked above that the block does not require windowing.
         window_params.append(ir.DictAttr.get())
@@ -784,7 +784,7 @@ def lower_jaxpr_to_module(
       # Force single-buffering pipelining for trivial windowing in VMEM.
       pipeline_mode = bm.pipeline_mode
       if (
-          tpu_memory_space == tpu_core.TPUMemorySpace.VMEM
+          tpu_memory_space == tpu_core.MemorySpace.VMEM
           and bm.has_trivial_window()
       ):
         pipeline_mode = pallas_core.Buffered(1)
@@ -1520,7 +1520,7 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   ):
     if not is_smem_load:
       raise ValueError("PRNG keys must be loaded from SMEM. Did you set "
-                       "the memory space to TPUMemorySpace.SMEM in the "
+                       "the memory space to MemorySpace.SMEM in the "
                        "BlockSpec for the PRNG key input?")
     return _prng_key_load_lowering_rule(ctx, *args_flat, args_tree=args_tree)
   if not is_smem_load and not ref_block_shape:
