@@ -303,7 +303,6 @@ py_library_providing_imports_info(
         "_src/checkify.py",
         "_src/custom_batching.py",
         "_src/custom_partitioning.py",
-        "_src/custom_partitioning_sharding_rule.py",
         "_src/debugging.py",
         "_src/dispatch.py",  # TODO(vanderplas): remove this and depend on :api instead
         "_src/dlpack.py",
@@ -388,6 +387,7 @@ py_library_providing_imports_info(
         ":custom_api_util",
         ":custom_dce",
         ":custom_derivatives",
+        ":custom_partitioning_sharding_rule",
         ":custom_transpose",
         ":deprecations",
         ":dtypes",
@@ -697,6 +697,14 @@ pytype_strict_library(
         ":tree_util",
         ":util",
         ":xla",
+    ],
+)
+
+pytype_strict_library(
+    name = "custom_partitioning_sharding_rule",
+    srcs = ["_src/custom_partitioning_sharding_rule.py"],
+    deps = [
+        "//jax/_src/lib",
     ],
 )
 
