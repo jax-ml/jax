@@ -235,7 +235,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
           in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
           out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
           out_shape=x,
-          compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+          compiler_params=pltpu.CompilerParams(collective_id=0),
       )(x)
 
     device_mesh = mesh_utils.create_device_mesh(

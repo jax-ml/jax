@@ -817,16 +817,16 @@ def _allocate_semaphores(
   ).reshape(shape)
 
 
-TPU_MEMORY_SPACE_IDXS : dict[mosaic_core.TPUMemorySpace | pallas_core.MemorySpace | None, int] = {
-    v: i for i, v in enumerate(mosaic_core.TPUMemorySpace)}
+TPU_MEMORY_SPACE_IDXS : dict[mosaic_core.MemorySpace | pallas_core.MemorySpace | None, int] = {
+    v: i for i, v in enumerate(mosaic_core.MemorySpace)}
 TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY] = (
-    TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY])
+    TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY])
 TPU_MEMORY_SPACE_NAMES = {
-    i: v.value for i, v in enumerate(mosaic_core.TPUMemorySpace)}
+    i: v.value for i, v in enumerate(mosaic_core.MemorySpace)}
 
 # Default to VMEM when no memory space is specified.
 TPU_MEMORY_SPACE_IDXS[None] = (
-    TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.VMEM])
+    TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.VMEM])
 
 def get_barrier_semaphore(device_id, collective_id):
   del device_id
@@ -1340,7 +1340,7 @@ def _to_jaxpr(flat_fun, in_avals):
   return new_jaxpr
 
 def _is_any(memory_space):
-  return ((memory_space == mosaic_core.TPUMemorySpace.ANY) or
+  return ((memory_space == mosaic_core.MemorySpace.ANY) or
           (memory_space == pallas_core.MemorySpace.ANY))
 
 def _is_float(dtype):
@@ -1521,7 +1521,7 @@ def _interpret_jaxpr(
         # runs the same sequence of `run_scoped`s.
         allocs = []
         for v in eqn.params['jaxpr'].invars:
-          if v.aval.memory_space == mosaic_core.TPUMemorySpace.SEMAPHORE:
+          if v.aval.memory_space == mosaic_core.MemorySpace.SEMAPHORE:
             allocs.append(callback.io_callback(
                 _allocate_semaphores,
                 jax.ShapeDtypeStruct(v.aval.shape, jnp.int16),
@@ -1543,7 +1543,7 @@ def _interpret_jaxpr(
         out = _interpret(eqn.params['jaxpr'], *deferred_invals(), *allocs)
 
         for a, v in zip(allocs, eqn.params['jaxpr'].invars):
-          if v.aval.memory_space == mosaic_core.TPUMemorySpace.SEMAPHORE:
+          if v.aval.memory_space == mosaic_core.MemorySpace.SEMAPHORE:
             # TODO(jburnim): De-allocate semaphores.
             # callback.io_callback(
             #     _deallocate_semaphores,
@@ -1609,9 +1609,9 @@ def _interpret_jaxpr(
             (),
             device_id,
             local_core_id,
-            TPU_MEMORY_SPACE_IDXS[getattr(orig_src_ref.aval, 'memory_space', mosaic_core.TPUMemorySpace.ANY)],
+            TPU_MEMORY_SPACE_IDXS[getattr(orig_src_ref.aval, 'memory_space', mosaic_core.MemorySpace.ANY)],
             src, src_transforms,
-            TPU_MEMORY_SPACE_IDXS[getattr(orig_dst_ref.aval, 'memory_space', mosaic_core.TPUMemorySpace.ANY)],
+            TPU_MEMORY_SPACE_IDXS[getattr(orig_dst_ref.aval, 'memory_space', mosaic_core.MemorySpace.ANY)],
             dst, dst_transforms,
             state_discharge.transform_array(dst_sem, dst_sem_transforms),
             state_discharge.transform_array(src_sem, src_sem_transforms),
@@ -1749,11 +1749,11 @@ def _get_next_indices(grid, indices):
   return tuple(reversed(next_indices))
 
 
-def _get_mosaic_params(compiler_params: dict[str, pallas_core.CompilerParams]) -> tpu_core.TPUCompilerParams:
+def _get_mosaic_params(compiler_params: dict[str, pallas_core.CompilerParams]) -> tpu_core.CompilerParams:
   try:
-    return cast(tpu_core.TPUCompilerParams, compiler_params['mosaic_tpu'])
+    return cast(tpu_core.CompilerParams, compiler_params['mosaic_tpu'])
   except KeyError:
-    return tpu_core.TPUCompilerParams()
+    return tpu_core.CompilerParams()
 
 
 def _get_parallel_dim_semantics(
@@ -1762,7 +1762,7 @@ def _get_parallel_dim_semantics(
   """Returns a tuple indicating which grid dimensions have parallel semantics.
 
   Args:
-    compiler_params: Representation of a `mosaic_core.TPUCompilerParams` object
+    compiler_params: Representation of a `mosaic_core.CompilerParams` object
       as a dictionary.
     num_dimensions_in_grid: The number of dimensions in the grid.
 
@@ -1818,7 +1818,7 @@ def _get_randomized_grid_coordinates(
 
   Args:
     grid: Tuple of sizes of the dimensions in the grid.
-    compiler_params: Representation of a `mosaic_core.TPUCompilerParams` object
+    compiler_params: Representation of a `mosaic_core.CompilerParams` object
       as a dictionary.
     parallel_semantics_per_dim: A tuple of booleans indicating whether the
       corresponding dimension in the grid has parallel semantics.
@@ -1986,7 +1986,7 @@ def interpret_pallas_call(
         jax.ShapeDtypeStruct((), jnp.int16),
         device_id,
         None,  # local_core_id
-        TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
+        TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
         input_args[i],
         ordered=True))
 
@@ -2016,7 +2016,7 @@ def interpret_pallas_call(
               jax.ShapeDtypeStruct((), jnp.int16),
               device_id,
               None,  # local_core_id
-              TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
+              TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
               padded_val,
               ordered=True,
           )
@@ -2036,7 +2036,7 @@ def interpret_pallas_call(
             jax.ShapeDtypeStruct((), jnp.int16),
             device_id,
             None,  # local_core_id,
-            TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.SMEM],
+            TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.SMEM],
             val,
             ordered=True,
         )
@@ -2047,7 +2047,7 @@ def interpret_pallas_call(
     output_idx = i - grid_mapping.num_inputs
     is_input = i < grid_mapping.num_inputs
     is_output = (output_idx >= 0) and (output_idx < grid_mapping.num_outputs)
-    if var.aval.memory_space == mosaic_core.TPUMemorySpace.SEMAPHORE:
+    if var.aval.memory_space == mosaic_core.MemorySpace.SEMAPHORE:
       kernel_buffer_ids.append(
           callback.io_callback(
               _allocate_semaphores,
@@ -2241,7 +2241,7 @@ def interpret_pallas_call(
             jax.ShapeDtypeStruct(input_var.aval.shape, input_var.aval.dtype),
             device_id,
             cur_local_core_id,
-            TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
+            TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
             input_buffer_ids[index],
             (transform,),
             ordered=True,
@@ -2318,7 +2318,7 @@ def interpret_pallas_call(
             (),
             device_id,
             cur_local_core_id,
-            TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
+            TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
             output_buffer_ids[index],
             (transform,),
             kernel_output_val,
@@ -2398,7 +2398,7 @@ def interpret_pallas_call(
           val,
           device_id,
           0,  # local_core_id
-          TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
+          TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
           output_buffer_id,
           (indexing.NDIndexer.from_indices_shape(
               tuple(indexing.ds(0, s) for s in val.shape),
