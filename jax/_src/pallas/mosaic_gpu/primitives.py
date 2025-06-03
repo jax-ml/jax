@@ -1796,7 +1796,7 @@ def jaxpr_call(
 
 
 @dataclasses.dataclass(frozen=True)
-class GPUShapeDtypeStruct:
+class ShapeDtypeStruct:
   shape: tuple[int, ...]
   dtype: jnp.dtype
   layout: ParameterizedLayout | Layout
@@ -1821,52 +1821,43 @@ def _undo_transforms(
   return tmp_ref.transforms
 
 
-def inline_mgpu(arg_types=(), return_type=None):
-  """Decorate a function that inlines mgpu code.
+def inline_mgpu(*, arg_types=(), return_type=None):
+  r"""Returns a decorator that inlines Mosaic GPU code.
 
-  Arguments provided to the decorated function may be Pallas
-  references or array values. The body will accept the corresponding
-  mgpu values.
+  This allows using lower-level Mosaic GPU abstractions and operations, which
+  are otherwise not directly exposed in Pallas.
 
-  The decorated function may return a tree of `FragmentedArray`s.
+  Example::
 
-  ```
-  layout = plgpu.Layout.WG_STRIDED(x_ref.shape, vec_size=4)
-  @plgpu.inline_mgpu(
-      arg_types=(plgpu.RefType(),),
-      return_type=plgpu.GPUShapeDtypeStruct(
-          (128, 128), dtype, layout=layout
-      ),
-  )
-  def foo(ctx, smem_ref):
-    del ctx
-    x = mgpu.FragmentedArray.load_tiled(smem_ref, )
-    y = mgpu.FragmentedArray.splat(
-        mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
-    )
-    return (x + y)
+      layout = plgpu.Layout.WG_STRIDED(x_ref.shape, vec_size=4)
 
-  arr = foo(smem_ref)
-  ```
+      @plgpu.inline_mgpu(
+          arg_types=(plgpu.RefType(),),
+          return_type=plgpu.ShapeDtypeStruct(
+              (128, 128), dtype, layout=layout
+          ),
+      )
+      def add_one(ctx, smem_ref):
+        x = mgpu.FragmentedArray.load_tiled(smem_ref)
+        y = mgpu.FragmentedArray.splat(
+            mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
+        )
+        return x + y
 
   Args:
-
-    arg_types: a sequence of pytrees where the leaves are `RefType` or
-      `Layout` for references or arrays respectively as the return
-      type.
-
-    return_type: A pytree where the leaves are `GPUShapeDtypeStruct`
-      represeinting the arrays returned by the decorated function.
-
-  Returns:
-    A decorator that creates a function that inlines mgpu code.
-
+    arg_types: A sequence of pytrees where the leaves are
+      {class}`~jax.experimental.pallas.mosaic_gpu.RefType`\s or
+      {class}`~jax.experimental.pallas.mosaic_gpu.Layout`\s for reference or
+      array arguments respectively.
+    return_type: A pytree where the leaves are
+      {class}`~jax.experimental.pallas.mosaic_gpu.ShapeDtypeStruct`\s
+      representing the arrays returned by the decorated function.
   """
   flat_arg_types, treedef_ty = jax.tree.flatten(tuple(arg_types))
   flat_ret_ty, pytree_ret_ty = jax.tree.flatten(return_type)
-  if return_type and not all(isinstance(r, GPUShapeDtypeStruct) for r in flat_ret_ty):
+  if return_type and not all(isinstance(r, ShapeDtypeStruct) for r in flat_ret_ty):
     raise ValueError(
-        "inline_mgpu_p only supports GPUShapeDtypeStructx return types."
+        "inline_mgpu_p only supports plgpu.ShapeDtypeStruct return types."
     )
   if not all(isinstance(r, (Layout, ParameterizedLayout, RefType)) for r in flat_arg_types):
     raise ValueError(
@@ -1951,7 +1942,7 @@ def _type_check_mgpu(v, ty):
   match (ty, v):
     case (RefType(), ir.Value()) if ir.MemRefType.isinstance(v.type):
       pass
-    case (GPUShapeDtypeStruct(), mgpu.FragmentedArray()):
+    case (ShapeDtypeStruct(), mgpu.FragmentedArray()):
       mlir_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
       if v.mlir_dtype != mlir_dtype:
         raise ValueError(

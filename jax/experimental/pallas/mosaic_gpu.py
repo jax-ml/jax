@@ -46,7 +46,7 @@ from jax._src.pallas.mosaic_gpu.primitives import barrier_wait as barrier_wait
 from jax._src.pallas.mosaic_gpu.primitives import broadcasted_iota as broadcasted_iota
 from jax._src.pallas.mosaic_gpu.primitives import commit_smem as commit_smem
 from jax._src.pallas.mosaic_gpu.primitives import commit_smem_to_gmem_group as commit_smem_to_gmem_group
-from jax._src.pallas.mosaic_gpu.primitives import GPUShapeDtypeStruct as GPUShapeDtypeStruct
+from jax._src.pallas.mosaic_gpu.primitives import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu
