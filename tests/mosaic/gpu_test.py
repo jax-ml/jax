@@ -587,6 +587,53 @@ class WGMMALayoutTest(TestCase):
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, y, (x, y))
     np.testing.assert_array_equal(f(x), y)
 
+  def test_f8_conversions(self):
+    jax_dtype_from, jax_dtype_to = jnp.float32, jnp.float8_e4m3fn
+    mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
+    def kernel(ctx, inp, out, smem):
+      del ctx
+      smem_from, smem_to = smem
+      copy(inp, smem_from, swizzle=128)
+      t = mgpu.FragmentedArray.load_tiled(
+          smem_from,
+          swizzle=128,
+          is_signed=None,
+          layout=fa.WGMMA_LAYOUT,
+      )
+      t = t.astype(mlir_dtype_to, is_signed=utils.is_signed(jax_dtype_to))
+      t.store_tiled(smem_to, swizzle=128)
+      copy(smem_to, out, swizzle=128)
+
+    # These generative shenanigans are to ensure that we don't generate values
+    # that are too large for the target type. That is because the saturation
+    # behavior of the conversion is different between XLA and Mosaic GPU here
+    # (to use the NVIDIA internal, we allow Mosaic GPU to use the .satfinite
+    # modifier, which saturates to the largest finite value---while XLA would
+    # give us NaNs in this case).
+    max_finite_val = 0b111_1110
+
+    expected = jax.lax.bitcast_convert_type(
+        jax.random.randint(
+            jax.random.key(42),
+            (1, 1, 64, 128),
+            -max_finite_val,
+            max_finite_val + 1,
+            dtype=jnp.uint8,
+        ),
+        jax_dtype_to,
+    )
+    x = expected.astype(jax_dtype_from)
+
+    res = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        expected,
+        (x, expected),
+    )(x)
+    np.testing.assert_array_equal(res, expected)
+
   @parameterized.product(
       jax_dtype_from_to=(
           (jnp.int8, jnp.bfloat16),
