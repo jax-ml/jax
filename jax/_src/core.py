@@ -1533,7 +1533,7 @@ class AbstractValue:
   def update(self, **kwargs):
     raise NotImplementedError("must override")
 
-  def str_short(self, short_dtypes=False):
+  def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str(self)
 
 # For type signatures involving dynamic shapes, we use lists of abstract values
@@ -1790,7 +1790,7 @@ class UnshapedArray(AbstractValue):
   _oct     = concretization_function_error(oct)
   _index   = concretization_function_error(operator.index)
 
-  def str_short(self, short_dtypes=False) -> str:
+  def str_short(self, short_dtypes=False, mesh_axis_types=False) -> str:
     return dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
 
   def update_weak_type(self, weak_type):
@@ -2191,7 +2191,7 @@ class DShapedArray(UnshapedArray):
                   0 if any(type(d) is int and d == 0 for d in self.shape)
                   else math.prod(self.shape))
 
-  def str_short(self, short_dtypes=False) -> str:
+  def str_short(self, short_dtypes=False, mesh_axis_types=False) -> str:
     del short_dtypes  # ignored
     shape = f'{",".join(str(d) for d in self.shape)}' if self.shape else ''
     dtype = dtypes.short_dtype_name(self.dtype)
@@ -2358,7 +2358,7 @@ def _freeze_impl(ref):
   return ref[()]
 
 class AbstractToken(AbstractValue):
-  def str_short(self, short_dtypes=False): return 'Tok'
+  def str_short(self, short_dtypes=False, mesh_axis_types=False): return 'Tok'
   def to_tangent_aval(self): return self
 abstract_token: AbstractToken = AbstractToken()
 

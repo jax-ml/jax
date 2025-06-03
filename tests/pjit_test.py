@@ -7907,6 +7907,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     jax.lax.map(lambda _x: simple_func(w, _x), x, batch_size=2)  # doesn't crash
 
+  @config.numpy_rank_promotion('allow')
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_lax_map_remainder(self, mesh):
+    def simple_func(w, x):
+      return jnp.sum(w * x, axis=-1)
+
+    w = jax.device_put(np.arange(4, dtype=np.float32), P())
+    x = jax.device_put(np.ones((5, 2, 4), dtype=np.float32),
+                       P(None, 'x', None))
+
+    jax.lax.map(lambda _x: simple_func(w, _x), x, batch_size=2)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
