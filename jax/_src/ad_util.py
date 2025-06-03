@@ -139,6 +139,25 @@ def replace_rule_output_symbolic_zeros(
     x: JaxTypeOrTracer | SymbolicZero) -> JaxTypeOrTracer | Zero:
   return Zero(x.aval) if type(x) is SymbolicZero else x
 
+def ones_like_aval(aval) -> Ones | Array:
+  if aval.sharding.spec.unreduced:
+    return Ones(aval)
+  return aval_ones_likers[type(aval)](aval)
+
+
+class Ones:
+  __slots__ = ['aval']
+
+  def __init__(self, aval: core.AbstractValue):
+    self.aval = aval
+
+  def __repr__(self) -> str:
+    return f'Ones({self.aval})'
+
+register_pytree_node(Ones, lambda z: ((), z.aval), lambda aval, _: Ones(aval))
+
+aval_ones_likers: dict[type, Callable[[Any], Array]] = {}
+
 
 # TODO(mattjj): remove these after fixing downstream users relying on them
 zeros_like_p: Primitive = Primitive('zeros_like')

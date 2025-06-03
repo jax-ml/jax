@@ -2057,9 +2057,15 @@ class ShapedArray(UnshapedArray):
                  self.vma))
 
   def to_tangent_aval(self):
+    dtype = primal_dtype_to_tangent_dtype(self.dtype)
     return ShapedArray(
-        self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-        self.weak_type, sharding=self.sharding, vma=self.vma)
+        self.shape, dtype, self.weak_type, sharding=self.sharding, vma=self.vma)
+
+  def to_cotangent_aval(self):
+    dtype = primal_dtype_to_tangent_dtype(self.dtype)
+    sharding = primal_sharding_to_cotangent_sharding(self.sharding)
+    return ShapedArray(
+        self.shape, dtype, self.weak_type, sharding=sharding, vma=self.vma)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
@@ -2105,6 +2111,10 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
     return dtypes.float0
   else:
     return primal_dtype
+
+def primal_sharding_to_cotangent_sharding(sharding):
+  new_spec = P(*sharding.spec, unreduced=sharding.replicated_axes)
+  return sharding.with_spec(new_spec)
 
 
 def pvary(x, axis_name):

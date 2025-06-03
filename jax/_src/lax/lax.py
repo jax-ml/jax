@@ -3358,10 +3358,14 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   else:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
   out = broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
-  out = core.pvary(out, tuple(aval.vma))
-  return out
-
+  return core.pvary(out, tuple(aval.vma))
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
+
+def ones_like_shaped_array(aval: ShapedArray) -> Array:
+  one = _convert_element_type(1, aval.dtype, aval.weak_type)
+  out = broadcast(one, aval.shape, out_sharding=aval.sharding)
+  return core.pvary(out, tuple(aval.vma))
+ad_util.aval_ones_likers[ShapedArray] = ones_like_shaped_array
 
 def zeros_like_abstract_ref(aval: state.AbstractRef) -> core.MutableArray:
   val = ad_util.zeros_like_aval(aval.inner_aval)
@@ -7638,6 +7642,8 @@ def _reduce_number_dtype_rule(name, operand, *args, **kw):
 
 def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert ad.is_undefined_primal(operand)
+  if isinstance(cotangent, ad_util.Ones):
+    return [ad_util.ones_like_aval(operand.aval.to_cotangent_aval())]
   input_shape = operand.aval.shape
   broadcast_dimensions = tuple(np.delete(np.arange(len(input_shape)), axes))
   result = broadcast_in_dim(cotangent, input_shape, broadcast_dimensions,
