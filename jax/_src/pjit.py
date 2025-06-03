@@ -1923,7 +1923,13 @@ def _pjit_call_impl(*args, jaxpr,
 pjit_p.def_impl(_pjit_call_impl)
 
 
-def _pjit_lower(
+def _pjit_lower(*args, **kwargs):
+  util.test_event("pjit_lower")
+  return _pjit_lower_cached(*args, **kwargs)
+
+# This cache is important for python dispatch performance.
+@weakref_lru_cache
+def _pjit_lower_cached(
     jaxpr: core.ClosedJaxpr,
     in_shardings,
     out_shardings,
@@ -1939,7 +1945,6 @@ def _pjit_lower(
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
-  util.test_event("pjit_lower")
   return pxla.lower_sharding_computation(
       jaxpr, 'jit', name, in_shardings, out_shardings,
       in_layouts, out_layouts, tuple(donated_invars),
