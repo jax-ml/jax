@@ -28,7 +28,7 @@ from jax._src.pallas.mosaic.core import CompilerParams as CompilerParams
 from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
 from jax._src.pallas.mosaic.helpers import core_barrier as core_barrier
 from jax._src.pallas.mosaic.helpers import run_on_first_core as run_on_first_core
-from jax._src.pallas.mosaic.interpret import TPUInterpretParams as TPUInterpretParams
+from jax._src.pallas.mosaic.interpret import InterpretParams as InterpretParams
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
 from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
 from jax._src.pallas.mosaic.pipeline import BufferedRefBase as BufferedRefBase

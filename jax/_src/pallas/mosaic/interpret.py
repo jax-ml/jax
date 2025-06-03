@@ -67,7 +67,7 @@ CostEstimate = pallas_core.CostEstimate
 
 
 @dataclasses.dataclass(frozen=True)
-class TPUInterpretParams:
+class InterpretParams:
   """Parameters for Mosaic TPU interpret mode.
 
   Attributes:
@@ -524,7 +524,7 @@ def check_write(device_id, local_core_id, clock, buffer_key, rnge, source_info=N
 
 @dataclasses.dataclass
 class SharedMemory:
-  interpret_params: TPUInterpretParams
+  interpret_params: InterpretParams
   num_devices: int
   num_cores_per_device: int
   clocks: list[VectorClock]
@@ -1926,7 +1926,7 @@ def interpret_pallas_call(
     compiler_params: dict[str, Any],
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    interpret_params: TPUInterpretParams,
+    interpret_params: InterpretParams,
 ):
   del debug, cost_estimate, out_avals
 

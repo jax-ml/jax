@@ -1250,7 +1250,7 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
   if interpret:
     try:
       from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret  # Avoid circular dependency.
-      if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+      if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
         effs = mosaic_tpu_interpret.get_interpret_effects()
     except ImportError:
       pass
@@ -1353,7 +1353,7 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
   if interpret:
     try:
       from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret  # Avoid circular dependency.
-      if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+      if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
         effs = mosaic_tpu_interpret.get_interpret_effects()
     except ImportError:
       pass
