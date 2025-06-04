@@ -2148,7 +2148,7 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
   # default QR algorithm, but users can (in principle) override this behavior
   # by passing `use_jacobi=True`.
   #
-  # TODO(danfm): Since this was originally implemented, hipSolver appers to
+  # TODO(danfm): Since this was originally implemented, hipSolver appears to
   # have added support for the Jacobi algorithm, so we should investigate
   # removing this condition.
   if algorithm is None or algorithm == SvdAlgorithm.DEFAULT:
@@ -2339,7 +2339,7 @@ def _triangular_solve_jvp_rule_a(
                             transpose_a=transpose_a, conjugate_a=conjugate_a,
                             unit_diagonal=unit_diagonal)
 
-  # triangular_solve is about the same cost as matrix multplication (~n^2 FLOPs
+  # triangular_solve is about the same cost as matrix multiplication (~n^2 FLOPs
   # for matrix/vector inputs). Order these operations in whichever order is
   # cheaper.
   if left_side:
@@ -2776,8 +2776,8 @@ def _column_major_matrix_layout(dim: int) -> tuple[int, ...]:
 
 def _sdy_rule_for_aval(letters, num_batch_dims, aval):
   d = len(aval.shape) - num_batch_dims
-  preffix = "... " if num_batch_dims and d >= 0 else ""
-  return preffix + " ".join(next(letters) for _ in range(d))
+  prefix = "... " if num_batch_dims and d >= 0 else ""
+  return prefix + " ".join(next(letters) for _ in range(d))
 
 def _build_sdy_sharding_rule(num_batch_dims, avals_in, avals_out):
   letters = iter(string.ascii_letters)

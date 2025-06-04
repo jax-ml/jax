@@ -368,7 +368,7 @@ class RefUnion(GPUMemoryRef):
   """A sequence of trees of refs that are allowed to reuse the same memory.
 
   One should not make assumptions as to how each ref will map to the underlying
-  memory region, since arbitrary padding may be applied inbetween different
+  memory region, since arbitrary padding may be applied in between different
   refs.
 
   As such, ref unions are only safe to use when the groups of refs that we
@@ -459,7 +459,7 @@ class UntileRef(state_types.Transform):
       self, perm: tuple[int, ...]
   ) -> tuple[tuple[int, ...], state_types.Transform]:
     # The transpose in question is applied to the utiled ref so we
-    # need to translate it by duplicating and offseting the last part.
+    # need to translate it by duplicating and offsetting the last part.
     off = len(perm)
     new_suffix = [i + off for i in perm[-len(self.tiling) :]]
     if set(new_suffix) != set(range(off, off + len(self.tiling))):
@@ -871,7 +871,7 @@ class Barrier:
       barriers can be accessed by indexing into the barrier Ref.
     for_tensor_core: Whether this barrier is used for synchronizing with
       the tensor core. This should be set to True when waiting on Blackwell
-      (TC Gen 5) asynchoronous matmul instructions.
+      (TC Gen 5) asynchronous matmul instructions.
   """
   num_arrivals: int = 1
   num_barriers: int = 1

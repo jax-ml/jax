@@ -1548,7 +1548,7 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertIn("jax.uses_shape_polymorphism = true",
                   module_str)
 
-    # Call with argument placed on different plaforms
+    # Call with argument placed on different platforms
     for platform in self.platforms:
       x_device = jax.device_put(x, jax.devices(platform)[0])
       res_exp = exp.call(x_device)
@@ -1573,7 +1573,7 @@ class JaxExportTest(jtu.JaxTestCase):
     count_sine = len(re.findall("stablehlo.sine", exp2_module_str))
     self.assertEqual(1, count_sine)
 
-    # Call with argument placed on different plaforms
+    # Call with argument placed on different platforms
     for platform in self.platforms:
       if platform == "tpu": continue
       x_device = jax.device_put(x, jax.devices(platform)[0])
@@ -1716,7 +1716,7 @@ class JaxExportTest(jtu.JaxTestCase):
     res_native = f_jax(a)
     exp = get_exported(f_jax, platforms=("cpu", "tpu", "cuda", "rocm"))(a)
 
-    # Call with argument placed on different plaforms
+    # Call with argument placed on different platforms
     for platform in self.platforms:
       run_devices = jax.devices(platform)[0:len(export_devices)]
       if len(run_devices) != len(export_devices):

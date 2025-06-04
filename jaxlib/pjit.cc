@@ -653,7 +653,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     // development.
     //
     // TODO(chky): Consider support uncommitted PyArray in cpp when the python
-    // side stablizes.
+    // side stabilizes.
     if (!py_array.committed() &&
         jax::Sharding::SafeNumDevices(py_array.sharding()) > 1) {
       VLOG(2) << "PyArray argument is not committed and number of global "

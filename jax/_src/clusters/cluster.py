@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class ClusterEnv:
   """Interface for defining a cluster environment.
 
-  To enable auto bootrapping (aka :func:`jax.distributed.initialize()`),
+  To enable auto bootstrapping (aka :func:`jax.distributed.initialize()`),
   cluster environments need to derive from :class:`ClusterEnv` and implement
   :func:`is_env_present`, :func:`get_coordinator_address`,
   :func:`get_process_count`, and :func:`get_process_id`.

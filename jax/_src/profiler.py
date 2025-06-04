@@ -402,7 +402,7 @@ def save_device_memory_profile(filename, backend: str | None = None) -> None:
 
 
 # Allows to run model with profiler given amount of times. After required amount
-# of retries achived client can collect FDO data.
+# of retries achieved client can collect FDO data.
 class PGLEProfiler:
 
   def __init__(self, retries: int, percentile: int):

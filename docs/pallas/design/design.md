@@ -71,7 +71,7 @@ A JAX-based kernel language offers several advantages:
 * JAX as a tracing-based frontend for numerical computing is both
   mature and well-used.
   By embedding the kernel programming language in JAX itself,
-  we can re-use JAX’s tracing infrastructure and provide a
+  we can reuse JAX’s tracing infrastructure and provide a
   NumPy-like frontend that’s already familiar to users.
 * JAX transformations are key to its success, allowing users to
   express simple programs but transform them to achieve complex
@@ -551,7 +551,7 @@ along that dimension.
 `grad` of `pallas_call` enables automatic differentiation of kernels.
 `jax.grad` breaks down into applications of three distinct transforms:
 `jvp`, `partial_eval` and `transpose`.
-In principle, we can re-use most of JAX’s infrastructure when
+In principle, we can reuse most of JAX’s infrastructure when
 implementing these rules for `pallas_call` (since it behaves much like
 existing JAX higher order primitives).
 

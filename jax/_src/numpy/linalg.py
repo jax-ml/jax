@@ -1617,7 +1617,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
   x_arr = ensure_arraylike('jnp.linalg.matrix_transpose', x)
   ndim = x_arr.ndim
   if ndim < 2:
-    raise ValueError(f"matrix_transpose requres at least 2 dimensions; got {ndim=}")
+    raise ValueError(f"matrix_transpose requires at least 2 dimensions; got {ndim=}")
   return lax.transpose(x_arr, (*range(ndim - 2), ndim - 1, ndim - 2))
 
 

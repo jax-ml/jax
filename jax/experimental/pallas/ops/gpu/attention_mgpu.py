@@ -524,7 +524,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
 
       def _compute(refs):
         # Combining two WGMMA calls in one block to avoid the unnecessary
-        # sychronization from two `wgmma.wait_group` calls.
+        # synchronization from two `wgmma.wait_group` calls.
         dv_acc_ref, dpT_acc_ref = refs
         plgpu.wgmma(dv_acc_ref, pT.astype(dtype), do_smem)  # dV
         plgpu.wgmma(dpT_acc_ref, v_smem, plgpu.transpose_ref(do_smem, (1, 0)))  # dpT

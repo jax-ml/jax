@@ -196,7 +196,7 @@ absl::StatusOr<Shape> MakeShapeWithDenseLayout(
 // `subgroup_types`: indicates the subgroups of the last `subgroup_types.size()`
 //   dimensions in `dims`.
 //
-// In practice, `reshape_dims` often maps to the axises of user defined device
+// In practice, `reshape_dims` often maps to the axes of user defined device
 // mesh, and `transpose_perm` often maps to the user specification of how a
 // tensor is partitioned based on the axes defined in the mesh, e.g. for a mesh
 // of size 4x2x2 as AxBxC:

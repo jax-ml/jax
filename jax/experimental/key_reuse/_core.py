@@ -212,7 +212,7 @@ def key_reuse_signature_from_eqn(eqn: core.JaxprEqn) -> KeyReuseSignature:
       return sig.signature(eqn)
     else:
       raise TypeError(
-        f"Unrecognized key reuse sigature of type {type(sig)}: {sig}")
+        f"Unrecognized key reuse signature of type {type(sig)}: {sig}")
   else:
     return unknown_signature(eqn)
 
@@ -231,7 +231,7 @@ def key_reuse_signature_from_primitive(prim, *args, **params):
     return jaxpr_type_signature(jaxpr)
   else:
     raise TypeError(
-      f"Unrecognized key reuse sigature of type {type(sig)}: {sig}")
+      f"Unrecognized key reuse signature of type {type(sig)}: {sig}")
 
 
 consume_p = core.Primitive("consume")

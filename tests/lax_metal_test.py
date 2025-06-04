@@ -3867,7 +3867,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
 
   @jtu.sample_product(
-    # Final dimension must be a multiple of 16 to ensure compatibilty of all dtype pairs.
+    # Final dimension must be a multiple of 16 to ensure compatibility of all dtype pairs.
     shape=[(0,), (32,), (2, 16)],
     a_dtype=all_dtypes,
     dtype=(*all_dtypes, None) if config.enable_x64.value else all_dtypes,

@@ -92,7 +92,7 @@ class PyClient {
     return pjrt_client->shared_ptr_pjrt_client();
   }
 
-  // Legacy alises.
+  // Legacy aliases.
   std::shared_ptr<PjRtClient> shared_pjrt_client() {
     return shared_ptr_pjrt_client();
   }

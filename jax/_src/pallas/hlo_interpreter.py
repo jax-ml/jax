@@ -189,7 +189,7 @@ def eval_jaxpr_recursive(
     consts: Consts that ``jaxpr`` closes over.
     *args: Input arguments to the ``jaxpr``.
     recurse_hop_rule: A Jaxpr interpreter to call on sub-jaxprs of
-      higher-order primtives.
+      higher-order primitives.
     propagate_source_info: Whether to propagate source info.
   """
   def read(v: jax_core.Atom) -> Any:
@@ -419,7 +419,7 @@ def pallas_call_hlo_interpret(
     num_iterations = 1
 
   # The scan carry: (i, loop_idx, *consts, *ins, *outs, *scratch)
-  # i:int32 is the interation index
+  # i:int32 is the iteration index
   # loop_idx: tuple[int32] are the program ids for each grid axis
   def cond(carry):
     i, *_ = carry

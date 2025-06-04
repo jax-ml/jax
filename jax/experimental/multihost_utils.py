@@ -203,7 +203,7 @@ def reached_preemption_sync_point(step_id: int) -> bool:
     after some hosts are preempted.
 
   Raises:
-    RuntimeError: if preemption sync manager has not been inititialized.
+    RuntimeError: if preemption sync manager has not been initialized.
   """
   if distributed.global_state.client is None:
     return False
@@ -328,7 +328,7 @@ def host_local_array_to_global_array(
   >>>
   >>> host_local_output = multihost_utils.global_array_to_host_local_array(global_out, mesh, out_pspecs) # doctest: +SKIP
 
-  Please note ths function requires global mesh to be a continuous mesh, meaning
+  Please note this function requires global mesh to be a continuous mesh, meaning
   that  devices that belong to each host should form a subcube in this mesh.
   To move local data to global array with non-continuous mesh use
   jax.make_array_from_callback or jax.make_array_from_single_device_arrays
