@@ -7781,14 +7781,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x, y, a, b):
-      m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
-      self.assertEqual(m1.aval.sharding.spec, P('x', None, unreduced='y'))
+      m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'y'}))
+      self.assertEqual(m1.aval.sharding.spec, P('x', None, unreduced={'y'}))
 
-      m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x', unreduced='y'))
-      self.assertEqual(m2.aval.sharding.spec, P('x', None, unreduced='y'))
+      m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x', unreduced={'y'}))
+      self.assertEqual(m2.aval.sharding.spec, P('x', None, unreduced={'y'}))
 
       s = m1 + m2  # unreduced
-      self.assertEqual(s.aval.sharding.spec, P('x', None, unreduced='y'))
+      self.assertEqual(s.aval.sharding.spec, P('x', None, unreduced={'y'}))
 
       out = reshard(s, P('x'))  # reduce
       self.assertEqual(out.aval.sharding.spec, P('x', None))
@@ -7808,7 +7808,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x, y):
-      return jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='z'))
+      return jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'z'}))
     with self.assertRaisesRegex(
         core.ShardingTypeError,
         "unreduced axes should be equal to the contracting specs"):
@@ -7819,7 +7819,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     y = jax.device_put(np_inp.T, P(None, None))
     @jax.jit
     def g(x, y):
-      return jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
+      return jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'y'}))
     with self.assertRaisesRegex(
         core.ShardingTypeError,
         "lhs and rhs contracting dims should be sharded identically"):
@@ -7831,7 +7831,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def h(x, y):
-      return jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
+      return jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'y'}))
     with self.assertRaisesRegex(
         core.ShardingTypeError,
         "unreduced axes should be equal to the contracting specs"):
@@ -7847,8 +7847,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x, y, a, b):
-      m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
-      m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x', unreduced='z'))
+      m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'y'}))
+      m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x', unreduced={'z'}))
       return m1 + m2
 
     with self.assertRaisesRegex(
@@ -7858,7 +7858,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def g(x, y):
-      m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced='y'))
+      m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'y'}))
       m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x'))
       return m1 + m2
 

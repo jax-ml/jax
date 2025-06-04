@@ -5228,7 +5228,7 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
             ' out_sharding provided to dot_general mentions unreduced_axes.'
             f' Got {out_sharding=}, {lhs_contracting_spec=},'
             f' {rhs_contracting_spec=}')
-      if out_sharding.spec.unreduced != lhs_contracting_spec:
+      if out_sharding.spec.unreduced != frozenset(lhs_contracting_spec):
         raise core.ShardingTypeError(
             "out_sharding's unreduced axes should be equal to the contracting"
             f' specs. Got unreduced axes={out_sharding.spec.unreduced} and'
