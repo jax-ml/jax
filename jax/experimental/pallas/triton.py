@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Triton-specific Pallas APIs."""
+"""Public API for Triton."""
+# pylint:disable=unused-import (one stop file to import all Triton APIs)
 
 from jax._src.pallas.triton.core import CompilerParams as CompilerParams
 from jax._src.pallas.triton.primitives import approx_tanh as approx_tanh

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Mosaic-specific Pallas APIs."""
+# pylint:disable=unused-import (one stop file to import all Mosaic APIs)
 
 from jax._src.pallas.mosaic import core as core
 from jax._src.pallas.mosaic.core import ARBITRARY as ARBITRARY

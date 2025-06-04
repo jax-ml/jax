@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Public API for fuser."""
+# pylint:disable=unused-import (one stop file to import all fuser APIs)
 
 from jax._src.pallas.fuser.block_spec import get_fusion_values as get_fusion_values
 from jax._src.pallas.fuser.block_spec import make_scalar_prefetch_handler as make_scalar_prefetch_handler

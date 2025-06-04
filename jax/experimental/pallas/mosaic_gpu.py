@@ -16,6 +16,7 @@
 
 These APIs are highly unstable and can change weekly. Use at your own risk.
 """
+# pylint:disable=unused-import (one stop file to import all Mosaic GPU APIs)
 
 from jax._src.pallas.mosaic_gpu.core import Barrier as Barrier
 from jax._src.pallas.mosaic_gpu.core import ClusterBarrier as ClusterBarrier
