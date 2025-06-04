@@ -1451,6 +1451,7 @@ class Layout(enum.Enum):
   WG_STRIDED = enum.auto()
 
   TCGEN05 = enum.auto()
+  TCGEN05_ROW = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
@@ -1480,6 +1481,9 @@ class Layout(enum.Enum):
       case Layout.TCGEN05:
         check_no_args()
         return mgpu.TCGEN05_LAYOUT
+      case Layout.TCGEN05_ROW:
+        check_no_args()
+        return mgpu.TCGEN05_ROW_LAYOUT
 
 @dataclasses.dataclass(frozen=True)
 class ParameterizedLayout:

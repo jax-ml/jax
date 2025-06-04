@@ -105,4 +105,5 @@ from .wgmma import (
 
 from .tcgen05 import (
   LAYOUT as TCGEN05_LAYOUT,  # noqa: F401
+  ROW_LAYOUT as TCGEN05_ROW_LAYOUT,  # noqa: F401
 )
