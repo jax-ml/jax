@@ -902,37 +902,6 @@ PyType_Slot PyClient::slots_[] = {
           nb::arg("computation"), nb::arg("executable_devices"),
           nb::arg("compile_options") = CompileOptions(),
           nb::arg("host_callbacks") = std::vector<nb::callable>())
-      // The following two overloads are for users of deprecated APIs who call
-      // `backend.compile` but do not have visibility to `DeviceList`.
-      .def(
-          "compile_and_load",
-          [](nb_class_ptr<PyClient> client, nb::bytes mlir_module,
-             nb::sequence& py_executable_devices, CompileOptions options) {
-            ifrt::DeviceListRef executable_devices =
-                ValueOrThrow(jax::PyDeviceList(nb::tuple(py_executable_devices))
-                                 .ifrt_device_list());
-            return ValueOrThrow(PyClient::CompileAndLoad(
-                std::move(client),
-                std::string(mlir_module.c_str(), mlir_module.size()),
-                std::move(executable_devices), std::move(options),
-                std::vector<nb::capsule>()));
-          },
-          nb::arg("computation"), nb::arg("executable_devices"),
-          nb::arg("compile_options") = CompileOptions())
-      .def(
-          "compile_and_load",
-          [](nb_class_ptr<PyClient> client, std::string mlir_module,
-             nb::sequence& py_executable_devices, CompileOptions options) {
-            ifrt::DeviceListRef executable_devices =
-                ValueOrThrow(jax::PyDeviceList(nb::tuple(py_executable_devices))
-                                 .ifrt_device_list());
-            return ValueOrThrow(PyClient::CompileAndLoad(
-                std::move(client), std::move(mlir_module),
-                std::move(executable_devices), std::move(options),
-                std::vector<nb::capsule>()));
-          },
-          nb::arg("computation"), nb::arg("executable_devices"),
-          nb::arg("compile_options") = CompileOptions())
       .def("compile_ifrt_program",
            xla::ValueOrThrowWrapper(PyClient::CompileAndLoadIfrtProgram))
       .def("compile_and_load_ifrt_program",
