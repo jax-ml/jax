@@ -158,12 +158,12 @@ class PgleTest(jtu.JaxTestCase):
       with config.pgle_profiling_runs(2), config.enable_pgle(True):
         # Run 1: Module should be compiled without FDO. Two modules are expected
         # One is the funtion f, the other one is multi slice module
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
 
         # Run 2: Second PGLE run. Profile should be empty.
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
@@ -175,7 +175,7 @@ class PgleTest(jtu.JaxTestCase):
             os.path.getsize(os.path.join(dump_dir, fdo_profiles_before_pgle[0])), 0)
 
         # Run 3: The module should be recompiled with FDO profiles
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_after_pgle = self.get_fdo_profiles(dump_dir)
@@ -190,7 +190,7 @@ class PgleTest(jtu.JaxTestCase):
             )
 
         # Run 4: Fast-path should be used after PGLE is done
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertLess(cache_miss_count(), 2)
 
