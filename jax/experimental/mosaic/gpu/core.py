@@ -316,6 +316,19 @@ class _TMEMAlloc:
     )
 
 
+def _slice_smem(
+    result: ir.Type,
+    smem_base: ir.Value,
+    offset: ir.Value,  # This should be an ir.IndexType.
+    lowering_semantics: LoweringSemantics,
+) -> ir.Value:
+  if lowering_semantics == LoweringSemantics.Warpgroup:
+    offset = arith.index_cast(ir.IntegerType.get_signless(32), offset)
+    return dialect.slice_smem(result, offset)
+  else:
+    return memref.view(result, smem_base, offset, [])
+
+
 def _construct_smem_reftree(
     cluster_shape: tuple[int, int, int],
     dynamic_smem: ir.Value,
@@ -392,9 +405,11 @@ def _construct_smem_reftree(
             cluster_shape,
         )
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
-        addr_ref = memref.view(
+        addr_ref = _slice_smem(
             ir.MemRefType.get([], i32, memory_space=smem),
-            dynamic_smem, c(dynamic_smem_offset, index), [],
+            dynamic_smem,
+            c(dynamic_smem_offset, index),
+            lowering_semantics,
         )
         if layout is None:
           layout = tcgen05._infer_tmem_layout(
@@ -410,9 +425,11 @@ def _construct_smem_reftree(
         dynamic_smem_offset += 4  # i32 takes up 4 bytes
       case _:
         mlir_dtype = utils.dtype_to_ir_type(ref_ty.dtype)
-        tile_smem = memref.view(
+        tile_smem = _slice_smem(
             ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=smem),
-            dynamic_smem, c(dynamic_smem_offset, index), [],
+            dynamic_smem,
+            c(dynamic_smem_offset, index),
+            lowering_semantics,
         )
         dynamic_smem_offset += _count_buffer_bytes(ref_ty)
         ref = tile_smem
@@ -510,18 +527,19 @@ def _launch(
   smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   with ir.InsertionPoint(launch_op.body.blocks[0]):
     dynamic_smem = gpu.dynamic_shared_memory(
-        ir.MemRefType.get(
-            (ir.ShapedType.get_dynamic_size(),), i8, memory_space=smem
-        )
+        ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
     )
 
     if profiler_spec:
-      prof_smem = memref.view(
+      prof_smem = _slice_smem(
           ir.MemRefType.get(
               (profiler_spec.smem_i32_elements(block=block),),
-              i32, memory_space=smem,
+              i32,
+              memory_space=smem,
           ),
-          dynamic_smem, c(profiler_start, index), [],
+          dynamic_smem,
+          c(profiler_start, index),
+          lowering_semantics,
       )
       prof = profiler.OnDeviceProfiler(
           profiler_spec, prof_smem, maybe_prof_buffer
