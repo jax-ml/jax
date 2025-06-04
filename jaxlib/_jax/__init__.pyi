@@ -511,8 +511,7 @@ class Client:
       computation: str | bytes,
       executable_devices: DeviceList | Sequence[Device],
       compile_options: CompileOptions = ...,
-      host_callbacks: Sequence[Any] = ...,
-  ) -> LoadedExecutable: ...
+  ) -> Executable: ...
   def compile_and_load(
       self,
       computation: str | bytes,
@@ -560,8 +559,7 @@ class CompileOnlyPyClient(Client):
       computation: str | bytes,
       executable_devices: DeviceList | Sequence[Device],
       compile_options: CompileOptions = ...,
-      host_callbacks: Sequence[Any] = ...,
-  ) -> LoadedExecutable: ...
+  ) -> Executable: ...
 
 
 class CpuCollectives: ...

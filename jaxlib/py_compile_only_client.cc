@@ -73,12 +73,7 @@ class CompileOnlyPyClient : public PyClient {
 
   absl::StatusOr<nb_class_ptr<PyExecutable>> CompileUnloaded(
       absl::string_view mlir_module, ifrt::DeviceListRef executable_devices,
-      CompileOptions options, std::vector<nb::capsule> host_callbacks) {
-    if (!host_callbacks.empty()) {
-      return Unimplemented(
-          "Compiling with host_callbacks not available with compile-only "
-          "client.");
-    }
+      CompileOptions options) {
     ifrt::ExecutableRef ifrt_executable;
     {
       nb::gil_scoped_release gil_release;
@@ -125,8 +120,7 @@ void RegisterCompileOnlyClient(nb::module_& m) {
                 ValueOrThrow(py_executable_devices.ifrt_device_list());
             return ValueOrThrow(self.CompileUnloaded(
                 absl::string_view(mlir_module.c_str(), mlir_module.size()),
-                std::move(executable_devices), std::move(options),
-                std::move(host_callbacks)));
+                std::move(executable_devices), std::move(options)));
           },
           nb::arg("computation"), nb::arg("executable_devices"),
           nb::arg("compile_options") = CompileOptions(),
@@ -134,8 +128,7 @@ void RegisterCompileOnlyClient(nb::module_& m) {
       .def("compile",
            ValueOrThrowWrapper(&CompileOnlyPyClient::CompileUnloaded),
            nb::arg("computation"), nb::arg("executable_devices"),
-           nb::arg("compile_options") = CompileOptions(),
-           nb::arg("host_callbacks") = std::vector<nb::capsule>());
+           nb::arg("compile_options") = CompileOptions());
 }
 
 }  // namespace xla
