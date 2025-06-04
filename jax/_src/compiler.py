@@ -292,11 +292,35 @@ def backend_compile(
     module: ir.Module,
     executable_devices: xc.DeviceList,
     options: xc.CompileOptions,
-    host_callbacks: Sequence[Any],
-) -> xc.LoadedExecutable:
-  return backend_compile_and_load(
-      backend, module, executable_devices, options, host_callbacks
-  )
+) -> xc.Executable:
+  sym_name = module.operation.attributes['sym_name']
+  module_name = ir.StringAttr(sym_name).value
+  # Convert ir.Module to a string representation, unless the backend
+  # explicitly flags the ability to handle a module directly (avoiding the
+  # overhead of back and forth conversions).
+  # TODO(slebedev): Change the backend.compile() to accept ir.Module.
+  built_c: Any
+  if getattr(backend, "needs_str_ir", True):
+    built_c = mlir.module_to_bytecode(module)
+  else:
+    built_c = module
+
+  if (options.executable_build_options.fdo_profile is not None
+      and len(options.executable_build_options.fdo_profile)):
+    logger.debug(
+        "Compiling module %s with FDO profile of length %d",
+        module_name,
+        len(options.executable_build_options.fdo_profile),
+    )
+
+  try:
+    return backend.compile(built_c, executable_devices, options)
+  except xc.XlaRuntimeError as e:
+    for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
+      handler_result = error_handler(e)
+      if handler_result is not None:
+        raise handler_result from e
+    raise e
 
 
 @profiler.annotate_function
@@ -330,8 +354,7 @@ def backend_compile_and_load(
   try:
     # we use a separate function call to ensure that XLA compilation appears
     # separately in Python profiling results
-    # TODO(dsuo): Simplify this logic once backend_compile actually returns an
-    # unloaded executable.
+    # TODO(dsuo): Simplify this logic once we delete _jax.CompileOnlyPyClient.
     if jaxlib_extension_version < 345 or (
         jaxlib_extension_version >= 345
         and isinstance(backend, _jax.CompileOnlyPyClient)
@@ -341,7 +364,7 @@ def backend_compile_and_load(
             built_c,
             executable_devices=executable_devices,  # type: ignore
             compile_options=options,
-            host_callbacks=host_callbacks,
+            host_callbacks=host_callbacks,  # type: ignore
         )
       # Some backends don't have `host_callbacks` option yet
       # TODO(sharadmv): remove this fallback when all backends allow `compile`
