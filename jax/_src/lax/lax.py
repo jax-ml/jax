@@ -8094,6 +8094,15 @@ def _top_k_abstract_eval(operand, *, k):
   if shape[-1] < k:
     msg = "k argument to top_k must be no larger than minor dimension; {} vs {}"
     raise ValueError(msg.format(k, shape))
+  int32_max = dtypes.iinfo('int32').max
+  try:
+    too_large = (shape[-1] > int32_max + 1)
+  except core.InconclusiveDimensionOperation:
+    pass
+  else:
+    if too_large:
+      raise ValueError("top_k returns int32 indices, which will overflow for array dimensions "
+                       f"larger than the maximum int32 ({int32_max}). Got {operand.shape=}")
   shape[-1] = k
   return (operand.update(shape=shape, dtype=operand.dtype,
                          weak_type=operand.weak_type),
