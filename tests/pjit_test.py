@@ -5912,6 +5912,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, (np_inp @ np_inp.T) * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
+  def test_full_like_eager_non_concrete_sharding(self):
+    s = NamedSharding(mesh_lib.AbstractMesh((2,), ('x',)), P('x'))
+    arr = jax.ShapeDtypeStruct((8, 2), np.float32, sharding=s)
+    out = jax.lax.full_like(arr, 0)
+    # The sharding is single device because the sharding of input `arr`` to
+    # full_like is not concrete.
+    self.assertEqual(out.sharding, SingleDeviceSharding(jax.devices()[0]))
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_slice(self, mesh):
     np_inp = np.arange(16.).reshape(4, 4)

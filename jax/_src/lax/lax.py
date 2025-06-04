@@ -3564,12 +3564,13 @@ def full_like(x: ArrayLike | DuckTypedArray,
         # This bypasses the check.
         and not isinstance(x, core.Tracer)
         and hasattr(x, 'sharding')
+        and x.sharding is not None
+        and x.sharding._is_concrete
         and getattr(x, '_committed', True)
         and not weak_type
         and fill_shape == np.shape(x)  # type: ignore[arg-type]
     )
     if use_x_sharding:
-      # TODO(yashkatariya): Use shard_alike in tracing_mode once it is supported.
       sharding = x.sharding  # type: ignore
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
