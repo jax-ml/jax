@@ -8812,8 +8812,8 @@ class ShardyTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     x = jax.device_put(np.arange(32 * 16).reshape(32, 16),
                        NamedSharding(mesh, P(None, 'x')))
-    with self.assertRaisesRegex(ValueError, "provide sharding_rule to migrate "
-                                "to Shardy"):
+    with self.assertRaisesRegex(
+        NotImplementedError, 'provide sharding_rule to migrate to Shardy'):
       jax.jit(f)(x)
 
   def test_reshard_empty_mesh_error(self):
