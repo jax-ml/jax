@@ -302,7 +302,7 @@ class SdyArray:
   dim_shardings: Sequence[SdyDim]
   logical_device_ids: tuple[int, ...] | None = None
   replicated_axes: tuple[str, ...] = ()
-  unreduced_axes: tuple[str, ...] = ()
+  unreduced_axes: frozenset[str] = frozenset()
 
   def build(self) -> sdy.TensorShardingAttr:
     if self.mesh_shape is None:
@@ -503,24 +503,11 @@ def _check_mesh_resource_axis(mesh, pspec):
         f' axis_types: {mesh._axis_types_dict}')
 
 def _check_mesh_unreduced(mesh, pspec):
-  counts = {}
-  duplicate = False
   for u in pspec.unreduced:
     if u not in mesh.axis_names:
       raise ValueError(
           f'Unreduced axes {u} is not found in {mesh.axis_names=}. '
           f'Got {pspec=}')
-    count = counts.get(u, 0)
-    if count > 0:
-      duplicate = True
-    counts[u] = count + 1
-  if duplicate:
-    multiple_uses = [r for r, c in counts.items() if c > 1]
-    raise ValueError(
-        f'Unreduced axes in {pspec} has duplicate entries which is not allowed.'
-        f' Got {mesh_lib.show_axes(multiple_uses)}')
-
-  for u in pspec.unreduced:
     if mesh._name_to_type[u] in (AxisType.Auto, AxisType.Manual):
       raise ValueError(
           'Unreduced axes can only refer to mesh axes that is of type'

@@ -1412,67 +1412,63 @@ class ShardingTest(jtu.JaxTestCase):
       NamedSharding(abstract_mesh, P(), memory_kind='weird_device')
 
   def test_pspec_unreduced(self):
-    pspec1 = P('a', 'b', None, unreduced=('c',))
+    pspec1 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(repr(pspec1),
-                     "PartitionSpec('a', 'b', None, unreduced=('c',))")
+                     "PartitionSpec('a', 'b', None, unreduced={'c'})")
 
-    pspec2 = P('a', 'b', None, unreduced=('c',))
+    pspec2 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(pspec1, pspec2)
 
-    pspec3 = P('a', 'b', None, unreduced=('d',))
+    pspec3 = P('a', 'b', None, unreduced={'d'})
     self.assertNotEqual(pspec1, pspec3)
 
-    out = P('x', unreduced=('z',)) + P('a', unreduced='b')
-    self.assertEqual(out, P('x', 'a', unreduced=('z', 'b')))
+    out = P('x', unreduced={'z'}) + P('a', unreduced={'b'})
+    self.assertEqual(out, P('x', 'a', unreduced={'z', 'b'}))
 
-    pspec4 = P('x', unreduced='y')
+    pspec4 = P('x', unreduced={'y'})
     self.assertEqual(repr(pspec4),
-                     "PartitionSpec('x', unreduced=('y',))")
+                     "PartitionSpec('x', unreduced={'y'})")
 
-    pspec5 = P(None, None, unreduced='x')
+    pspec5 = P(None, None, unreduced={'x'})
     self.assertEqual(repr(pspec5),
-                     "PartitionSpec(None, None, unreduced=('x',))")
+                     "PartitionSpec(None, None, unreduced={'x'})")
 
-    pspec6 = P(None, unreduced='x')
-    self.assertEqual(repr(pspec6), "PartitionSpec(None, unreduced=('x',))")
+    pspec6 = P(None, unreduced={'x'})
+    self.assertEqual(repr(pspec6), "PartitionSpec(None, unreduced={'x'})")
 
-    pspec7 = P(unreduced='x')
-    self.assertEqual(repr(pspec7), "PartitionSpec(unreduced=('x',))")
+    pspec7 = P(unreduced={'x'})
+    self.assertEqual(repr(pspec7), "PartitionSpec(unreduced={'x'})")
 
     with self.assertRaisesRegex(
         TypeError, 'unreduced in `__add__` of PartitionSpec'):
-      P('x', unreduced=('z',)) + (None,) * 2
+      P('x', unreduced={'z'}) + (None,) * 2
 
     with self.assertRaisesRegex(
         TypeError, "unreduced in `__radd__` of PartitionSpec"):
-      (None,) * 2 + P('x', unreduced='y')
+      (None,) * 2 + P('x', unreduced={'y'})
 
     with self.assertRaisesRegex(
         ValueError, "partitions cannot overlap with unreduced"):
-      P('x', 'y', unreduced='x')
+      P('x', 'y', unreduced={'x'})
 
     with self.assertRaisesRegex(
         ValueError, "partitions cannot overlap with unreduced"):
-      P('x', None, 'y', unreduced=('z', 'y'))
+      P('x', None, 'y', unreduced={'z', 'y'})
 
   def test_named_sharding_unreduced_error(self):
     mesh = jtu.create_mesh((1, 1, 1), ('x', 'y', 'z'))
 
     with self.assertRaisesRegex(
         ValueError, "Unreduced axes.*not found in mesh.*"):
-      NamedSharding(mesh, P('x', unreduced='a'))
-
-    with self.assertRaisesRegex(
-        ValueError, "Unreduced.*has duplicate entries"):
-      NamedSharding(mesh, P('x', unreduced=('y', 'y')))
+      NamedSharding(mesh, P('x', unreduced={'a'}))
 
     with self.assertRaisesRegex(
         ValueError, "Unreduced axes can only refer to mesh axes.*Explicit"):
-      NamedSharding(mesh, P('x', unreduced=('y', 'z')))
+      NamedSharding(mesh, P('x', unreduced={'y', 'z'}))
 
     with self.assertRaisesRegex(
         ValueError, "unreduced cannot contain None.*"):
-      NamedSharding(mesh, P('x', unreduced=('y', None)))
+      NamedSharding(mesh, P('x', unreduced={'y', None}))
 
   def test_hlo_sharding_get_axis_sizes(self):
     if jaxlib_extension_version < 343:

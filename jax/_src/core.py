@@ -1924,8 +1924,8 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
       temp_s = s[0] if isinstance(s, tuple) else s
       new_spec.append(s if mesh._name_to_type[temp_s] == AxisType.Explicit
                       else None)
-  new_unreduced = tuple(u for u in spec.unreduced
-                        if mesh._name_to_type[u] == AxisType.Explicit)
+  new_unreduced = {u for u in spec.unreduced
+                   if mesh._name_to_type[u] == AxisType.Explicit}
   return P(*new_spec, unreduced=new_unreduced)
 
 def _maybe_modify_sharding(sharding, ndim):
