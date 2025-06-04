@@ -113,6 +113,11 @@ setup(
         'k8s': [
           'kubernetes',
         ],
+
+        # For including XProf server
+        'xprof': [
+          'xprof',
+        ],
     },
     url='https://github.com/jax-ml/jax',
     license='Apache-2.0',
