@@ -292,8 +292,10 @@ class ufunc:
       if where is not None:
         where = _moveaxis(where, axis, 0)
 
-    if initial is None and arr.shape[0] == 0:
-      raise ValueError("zero-size array to reduction operation {self.__name__} which has no ideneity")
+    if arr.shape[0] == 0:
+      if initial is None:
+        raise ValueError(f"zero-size array to reduction operation {self.__name__} which has no ideneity")
+      return lax.full(final_shape, initial, dtype)
 
     def body_fun(i, val):
       if where is None:
@@ -387,6 +389,8 @@ class ufunc:
       raise ValueError("accumulate does not allow multiple axes")
     axis = canonicalize_axis(axis, np.ndim(arr))
 
+    if arr.size == 0:
+      return lax.full(arr.shape, 0, dtype)
     arr = _moveaxis(arr, axis, 0)
     def scan_fun(carry, _):
       i, x = carry
