@@ -15,6 +15,7 @@
 import contextlib
 import dataclasses
 import functools
+import itertools
 import math
 import operator
 import os
@@ -1786,6 +1787,92 @@ class PallasCallTest(PallasTest):
       self.assertIn(offending_line, traceback.format_exc())
     else:
       self.fail("Should have raised an exception")
+
+  @parameterized.named_parameters(
+    (
+        f"_{''.join(map(str, collective_dims))}={collective_size}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
+        collective_dims,
+        noncollective_dims,
+        collective_size,
+    )
+    for collective_dims in itertools.chain.from_iterable(
+        itertools.combinations("xyz", n) for n in range(1, 4)
+    )
+    for noncollective_dims in itertools.chain.from_iterable(
+        itertools.combinations("xyz", n) for n in range(3)
+    )
+    for collective_size in (1, 2, 4)
+    if all(d not in noncollective_dims for d in collective_dims)
+  )
+  def test_tma_load_multicast(self, collective_dims, noncollective_dims, collective_dim_size):
+    """
+      1. Broadcast a GMEM slice to SMEM across collective CTAs.
+      2. Send a SMEM slice from each collective CTA to reconstruct the GMEM slice.
+        It's not strictly necessary to use every collective CTA, but we use them
+        to test that the cluster axes are used correctly.
+    """
+
+    dtype = jnp.float16
+    cluster = [1, 1, 1]
+    for d in collective_dims:
+      cluster["xyz".index(d)] = collective_dim_size
+    for d in noncollective_dims:
+      cluster["xyz".index(d)] = 2
+    if math.prod(cluster) > 16:
+      self.skipTest("Cluster is too big.")
+
+    collective_size = math.prod(cluster["xyz".index(d)] for d in collective_dims)
+    noncollective_size = math.prod(cluster) // collective_size
+
+    swizzle = 128
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+    shape = (noncollective_size, collective_size * 8, swizzle_elems)
+
+    def body(x_gmem, out_gmem, smem, tma_barrier):
+      # Compute the index in a subset of the cluster.
+      def cluster_id(axes):
+        idx, stride = 0, 1
+        for d in sorted(axes):
+          idx += lax.axis_index(d) * stride
+          stride *= lax.axis_size(d)
+        return idx
+
+      noncollective_idx = cluster_id(noncollective_dims)
+      collective_idx = cluster_id(collective_dims)
+
+      plgpu.copy_gmem_to_smem(
+            x_gmem.at[noncollective_idx],
+            smem,
+            tma_barrier,
+            collective_axes=collective_dims)
+      plgpu.barrier_wait(tma_barrier)
+
+      plgpu.commit_smem()
+      collective_slice = pl.ds(8 * collective_idx, 8)
+      plgpu.copy_smem_to_gmem(
+          smem.at[collective_slice],
+          out_gmem.at[noncollective_idx, collective_slice, :],
+      )
+      plgpu.wait_smem_to_gmem(0)
+
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    kernel = plgpu.kernel(
+      body,
+      grid=cluster,
+      grid_names=("grid_x", "grid_y", "grid_z"),
+      cluster=cluster,
+      cluster_names=("x", "y", "z"),
+      out_shape=jax.ShapeDtypeStruct(shape, dtype),
+      scratch_shapes=(
+        plgpu.SMEM(shape[1:], dtype, transforms=transforms),
+        plgpu.Barrier(),
+      )
+    )
+    np.testing.assert_array_equal(kernel(x), x)
 
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
