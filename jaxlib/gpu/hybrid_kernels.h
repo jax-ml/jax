@@ -22,7 +22,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "xla/ffi/api/ffi.h"
 
 namespace jax {

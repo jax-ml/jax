@@ -38,7 +38,7 @@ limitations under the License.
 #include "jaxlib/gpu/make_batch_pointers.h"
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/solver_interface.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "xla/ffi/api/ffi.h"
 
 #define JAX_FFI_RETURN_IF_GPU_ERROR(...) \

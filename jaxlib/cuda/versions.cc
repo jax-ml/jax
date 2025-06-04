@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "nanobind/nanobind.h"
 #include "jaxlib/cuda/versions_helpers.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 
 namespace jax::cuda {
 namespace {

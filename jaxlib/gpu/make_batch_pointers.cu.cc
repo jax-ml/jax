@@ -19,7 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {

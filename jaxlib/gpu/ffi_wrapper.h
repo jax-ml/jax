@@ -21,7 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "jaxlib/ffi_helpers.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "xla/ffi/api/ffi.h"
 
 namespace jax {

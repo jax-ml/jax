@@ -47,7 +47,7 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/mosaic/dialect/tpu/integrations/c/tpu_dialect.h"
+#include "xla/mosaic/dialect/tpu/integrations/c/tpu_dialect.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 

@@ -17,7 +17,7 @@ limitations under the License.
 #define JAXLIB_GPU_BLAS_HANDLE_POOL_H_
 
 #include "absl/status/statusor.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "jaxlib/gpu/handle_pool.h"
 
 namespace jax {

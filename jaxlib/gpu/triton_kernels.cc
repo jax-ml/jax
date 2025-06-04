@@ -45,7 +45,7 @@ limitations under the License.
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/triton_utils.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "xla/service/custom_call_status.h"
 
 #ifdef JAX_GPU_CUDA

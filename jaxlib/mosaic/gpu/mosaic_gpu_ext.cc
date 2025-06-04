@@ -27,7 +27,7 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
@@ -60,17 +60,16 @@ static const auto* kEventRecord =
         .RemainingArgs()
         .Ret<ffi::BufferR0<ffi::U64>>()  // event
         .RemainingRets()
-        .To([](gpuStream_t stream, bool copy_before,
-               auto remaining_args, auto ret, auto remaining_rets) {
+        .To([](gpuStream_t stream, bool copy_before, auto remaining_args,
+               auto ret, auto remaining_rets) {
           static auto* event = new gpuEvent_t;
-          if (auto res = gpuEventCreate(event, GPU_EVENT_DEFAULT);
-              res) {
+          if (auto res = gpuEventCreate(event, GPU_EVENT_DEFAULT); res) {
             return ffi::Error::Internal(
                 absl::StrCat("Failed to create event: ", ToString(res)));
           }
           auto do_copy = [&]() {
-            gpuMemcpyAsync(ret->untyped_data(), event,
-                           sizeof(gpuEvent_t), gpuMemcpyHostToDevice, stream);
+            gpuMemcpyAsync(ret->untyped_data(), event, sizeof(gpuEvent_t),
+                           gpuMemcpyHostToDevice, stream);
           };
           if (copy_before) {
             do_copy();
@@ -168,8 +167,8 @@ void callback_request(uint8_t** buffer, size_t* size, size_t* maxNumRecords) {
   *maxNumRecords = 0;
 }
 
-void callback_complete(CUcontext context, uint32_t streamId,
-                       uint8_t* buffer, size_t size, size_t validSize) {
+void callback_complete(CUcontext context, uint32_t streamId, uint8_t* buffer,
+                       size_t size, size_t validSize) {
   // take ownership of the buffer once CUPTI is done using it
   absl::Cleanup cleanup = [buffer]() {
     operator delete[](buffer, std::align_val_t(8));
@@ -207,8 +206,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
   m.def("registrations", []() {
     return nb::make_tuple(
         nb::make_tuple("mgpu_event_record", EncapsulateFunction(EventRecord)),
-        nb::make_tuple("mgpu_event_elapsed", EncapsulateFunction(EventElapsed))
-    );
+        nb::make_tuple("mgpu_event_elapsed",
+                       EncapsulateFunction(EventElapsed)));
   });
   m.def("_sync_all_devices", []() {
     int devices = 0;

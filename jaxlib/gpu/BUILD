@@ -69,7 +69,6 @@ exports_files(srcs = [
     "triton_kernels.h",
     "triton_utils.cc",
     "triton_utils.h",
-    "vendor.h",
 ])
 
 proto_library(

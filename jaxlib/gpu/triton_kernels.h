@@ -26,7 +26,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/triton.pb.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "xla/service/custom_call_status.h"
 
 namespace jax::JAX_GPU_NAMESPACE {

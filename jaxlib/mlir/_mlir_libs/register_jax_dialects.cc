@@ -32,7 +32,7 @@ limitations under the License.
 #include "mlir-c/Transforms.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "shardy/integrations/c/passes.h"
-#include "jaxlib/mosaic/gpu/integrations/c/passes.h"
+#include "xla/mosaic/gpu/integrations/c/passes.h"
 #include "xla/service/spmd/shardy/integrations/c/passes.h"
 
 namespace nb = nanobind;

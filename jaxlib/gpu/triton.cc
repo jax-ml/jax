@@ -35,7 +35,7 @@ limitations under the License.
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/triton_kernels.h"
 #include "jaxlib/gpu/triton_utils.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 
 #define GPU_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))

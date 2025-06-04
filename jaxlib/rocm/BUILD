@@ -32,7 +32,7 @@ package(
 cc_library(
     name = "hip_vendor",
     hdrs = [
-        "//jaxlib/gpu:vendor.h",
+        "@xla//xla/backends/gpu/runtime:vendor.h",
     ],
     defines = ["JAX_GPU_HIP=1"],
     deps = [
