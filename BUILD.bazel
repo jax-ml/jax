@@ -52,6 +52,7 @@ wheel_sources(
         "//jax/_src/pallas/fuser",
         "//jax/_src/pallas/mosaic_gpu",
         "//jax/experimental/array_serialization:serialization",
+        "//jax/experimental/array_serialization:pytree_serialization",
         "//jax/experimental/jax2tf",
         "//jax/experimental/mosaic/gpu/examples:flash_attention",
         "//jax/experimental/mosaic/gpu/examples:matmul",

@@ -52,9 +52,10 @@ pytype_library(
         "//jax",
         "//jax/experimental/array_serialization:pytree_serialization_utils",
         "//jax/experimental/array_serialization:tensorstore_impl",
-        "//third_party/py/absl/logging",
-        "//third_party/py/numpy",
-    ],
+    ] + py_deps([
+        "absl/logging",
+        "numpy",
+    ]),
 )
 
 pytype_library(
@@ -62,9 +63,10 @@ pytype_library(
     srcs = ["pytree_serialization_utils.py"],
     deps = [
         "//jax",
-        "//third_party/py/absl/logging",
-        "//third_party/py/numpy",
-    ],
+    ] + py_deps([
+        "absl/logging",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
