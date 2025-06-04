@@ -37,6 +37,7 @@ from jaxlib._jax import HostBufferSemantics as HostBufferSemantics
 from jaxlib._jax import ifrt_programs as ifrt_programs
 from jaxlib._jax import Layout as Layout
 from jaxlib._jax import LoadedExecutable as LoadedExecutable
+from jaxlib._jax import Executable as Executable
 from jaxlib._jax import Memory as Memory
 from jaxlib._jax import NamedSharding as NamedSharding
 from jaxlib._jax import OpSharding as OpSharding
