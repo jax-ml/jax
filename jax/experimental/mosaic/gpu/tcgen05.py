@@ -35,28 +35,10 @@ from .launch_context import LaunchContext
 
 TMEM_ROWS = 128
 TCGEN05_SMEM_DESCRIPTOR_BIT = 1 << 46
-# Like WGMMA_LAYOUT, only each warp holds a 32xN strip instead of 16xN.
-# The name is so short, because it's meant to be used qualified (tcgen05.LAYOUT)
-LAYOUT = fa.TiledLayout(
-    fa.Tiling(((128, 8), (32, 8), (8, 8), (1, 2))),
-    warp_dim=-8,
-    lane_dims=(-4, -3),
-    vector_dim=-1,
-)
-# ROW_LAYOUT is to LAYOUT as WGMMA_ROW_LAYOUT is to WGMMA_LAYOUT.
-ROW_LAYOUT = fa.TiledLayout(
-    fa.Tiling(tiles=((128,), (32,), (8,), (1,), (1,))),
-    warp_dim=-5,
-    lane_dims=(-3, fa.Replicated(times=4)),
-    vector_dim=-1
-)
-# COL_LAYOUT is to LAYOUT as WGMMA_COL_LAYOUT is to WGMMA_LAYOUT.
-COL_LAYOUT = fa.TiledLayout(
-    fa.Tiling(tiles=((8,), (8,), (8,), (2,))),
-    warp_dim=fa.Replicated(times=4),
-    lane_dims=(fa.Replicated(times=8), -2),
-    vector_dim=-1
-)
+LAYOUT = fa.TCGEN05_LAYOUT
+ROW_LAYOUT = fa.TCGEN05_ROW_LAYOUT
+COL_LAYOUT = fa.TCGEN05_COL_LAYOUT
+
 # A layout resembling the logical organization of TMEM. The 128 rows in a tile
 # are assigned to 128 lanes in the warpgroup. Useful when the result needs to be
 # processed in registers and then stored back into TMEM. Should not be used if

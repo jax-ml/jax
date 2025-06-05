@@ -58,6 +58,9 @@ from .transform_inference import (
 from .fragmented_array import (
     FragmentedArray as FragmentedArray,
     FragmentedLayout as FragmentedLayout,
+    TCGEN05_LAYOUT as TCGEN05_LAYOUT,
+    TCGEN05_ROW_LAYOUT as TCGEN05_ROW_LAYOUT,
+    TCGEN05_COL_LAYOUT as TCGEN05_COL_LAYOUT,
     TiledLayout as TiledLayout,
     WGMMA_LAYOUT as WGMMA_LAYOUT,
     WGMMA_ROW_LAYOUT as WGMMA_ROW_LAYOUT,
@@ -101,10 +104,4 @@ from .utils import (
 from .wgmma import (
     WGMMAAccumulator as WGMMAAccumulator,
     wgmma as wgmma,
-)
-
-from .tcgen05 import (
-  LAYOUT as TCGEN05_LAYOUT,  # noqa: F401
-  ROW_LAYOUT as TCGEN05_ROW_LAYOUT,  # noqa: F401
-  COL_LAYOUT as TCGEN05_COL_LAYOUT,  # noqa: F401
 )

@@ -115,7 +115,12 @@ def _load_p_lowering_rule(
             val, shape=(), layout=layout, is_signed=is_signed
         )
       match layout:
-        case mgpu.WGMMA_ROW_LAYOUT | mgpu.WGMMA_COL_LAYOUT:
+        case (
+            mgpu.WGMMA_ROW_LAYOUT
+            | mgpu.WGMMA_COL_LAYOUT
+            | mgpu.TCGEN05_ROW_LAYOUT
+            | mgpu.TCGEN05_COL_LAYOUT
+        ):
           return mgpu.FragmentedArray.load_untiled(
               x_ref,
               is_signed=is_signed,
