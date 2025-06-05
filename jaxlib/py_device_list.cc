@@ -356,6 +356,20 @@ const std::set<int>& PyDeviceList::ProcessIndices() {
   return *process_indices_;
 }
 
+const std::string& PyDeviceList::DeviceKind() {
+  if (!device_kind_.has_value()) {
+    auto device_list = ifrt_device_list();
+    if (!device_list.ok()) {
+      throw nb::value_error(device_list.status().ToString().c_str());
+    }
+    if (Len() == 0) {
+      throw nb::value_error("DeviceList is empty");
+    }
+    device_kind_ = (*device_list)->devices()[0]->Kind();
+  }
+  return *device_kind_;
+}
+
 void PyDeviceList::PopulateMemoryKindInfo() {
   if (device_list_.index() == 1) {
     // Handle Python duck-type devices in a separate function for readability.
@@ -476,7 +490,8 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
           throw nb::value_error(kinds.status().ToString().c_str());
         }
         return *kinds;
-      });
+      })
+      .def_prop_ro("device_kind", &PyDeviceList::DeviceKind, nb::lock_self());
 }
 
 }  // namespace jax

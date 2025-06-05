@@ -388,6 +388,9 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   if (xla_bridge.process_count() == 1 or backend.platform != "tpu" or
       "TFRT TPU" not in backend.platform_version):
     return False
+  if (src_sharding._internal_device_list.device_kind !=
+      dst_sharding._internal_device_list.device_kind):
+    return False
   if (src_sharding._to_xla_hlo_sharding(ndim) !=
       dst_sharding._to_xla_hlo_sharding(ndim)):
     return False
