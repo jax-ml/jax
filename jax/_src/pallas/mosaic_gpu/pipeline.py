@@ -435,7 +435,7 @@ def emit_pipeline_warp_specialized(
     body: Callable[..., None],
     *,
     grid: pallas_core.TupleGrid,
-    memory_registers: int,
+    memory_registers: int | None,
     in_specs: Sequence[pl.BlockSpec] = (),
     out_specs: Sequence[pl.BlockSpec] = (),
     max_concurrent_steps: int = 2,
@@ -468,7 +468,8 @@ def emit_pipeline_warp_specialized(
     body: The pipeline body.
     grid: The grid to use for the pipeline.
     memory_registers: The number of registers to reserve for the memory thread.
-      For H100 GPUs, 40 is a reasonable value.
+      For H100 GPUs, 40 is a reasonable value. None does not reserve a special number
+      of registers.
     in_specs: The block specs for the inputs.
     out_specs: The block specs for the outputs.
     max_concurrent_steps: The maximum number of sequential stages that are
@@ -607,9 +608,10 @@ def emit_pipeline_warp_specialized(
     ]
 
     def compute_block():
-      gpu_primitives.set_max_registers(
-          _compute_registers(memory_registers, num_compute_wgs),
-          action="increase")
+      if memory_registers is not None:
+        gpu_primitives.set_max_registers(
+            _compute_registers(memory_registers, num_compute_wgs),
+            action="increase")
 
       # This is true if any of the outputs need to be transferred inside the loop.
       copies_out_in_loop = not all(bref.is_index_invariant for bref in out_brefs)
@@ -719,7 +721,8 @@ def emit_pipeline_warp_specialized(
 
     # The memory thread executes this block which issues all pipelined DMAs.
     def memory_block():
-      gpu_primitives.set_max_registers(memory_registers, action="decrease")
+      if memory_registers is not None:
+        gpu_primitives.set_max_registers(memory_registers, action="decrease")
       indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
       if has_dynamic_grid:
         prologue_steps = lax.min(max_concurrent_steps, num_steps)
