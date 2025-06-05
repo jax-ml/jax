@@ -1554,26 +1554,19 @@ class FragmentedArray:
       if vector_len != 2:
         raise NotImplementedError(vector_len)
       new_registers = np.empty_like(self.registers)
-      empty_vec_32 = llvm.mlir_undef(ir.VectorType.get((1,), i32))
-      empty_result_vec = llvm.mlir_undef(ir.VectorType.get((2,), i8))
+      empty_vec_16 = llvm.mlir_undef(ir.VectorType.get((1,), i16))
       for idx, reg in np.ndenumerate(self.registers):
         e0 = vector.extractelement(reg, position=c(0, index))
         e1 = vector.extractelement(reg, position=c(1, index))
-        new_reg_32 = llvm.inline_asm(
-            i32,
+        new_reg_16 = llvm.inline_asm(
+            i16,
             [e1, e0],
             "cvt.rn.satfinite.e4m3x2.f32 $0, $1, $2;",
             "=h,f,f",
         )
-        new_vec_32 = llvm.insertelement(empty_vec_32, new_reg_32, c(0, i32))
-        new_vec_f8 = vector.bitcast(ir.VectorType.get((4,), i8), new_vec_32)
-        res = llvm.insertelement(
-            empty_result_vec,
-            vector.extractelement(new_vec_f8, position=c(0, i32)), c(0, i32))
-        res = llvm.insertelement(
-            res,
-            vector.extractelement(new_vec_f8, position=c(1, i32)), c(1, i32))
-        new_registers[idx] = vector.bitcast(ir.VectorType.get((2,), f8e4m3fn), res)
+        new_registers[idx] = vector.bitcast(
+            ir.VectorType.get((2,), f8e4m3fn),
+            llvm.insertelement(empty_vec_16, new_reg_16, c(0, i32)))
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
