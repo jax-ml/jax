@@ -778,7 +778,8 @@ class _IndexUpdateRef:
 
   def get(self, *, indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | lax.GatherScatterMode | None = None,
-          fill_value: ArrayLike | None = None, out_sharding: Sharding | None = None):
+          fill_value: ArrayLike | None = None,
+          out_sharding: Sharding | PartitionSpec | None = None):
     """Equivalent to ``x[idx]``.
 
     Returns the value of ``x`` that would result from the NumPy-style
