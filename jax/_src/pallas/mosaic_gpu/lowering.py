@@ -24,7 +24,7 @@ import functools
 import itertools
 import math
 import operator
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, TypeVar, Union
 
 import jax
 from jax import api_util
@@ -80,6 +80,7 @@ zip, unsafe_zip = util.safe_zip, zip
 partial = functools.partial
 SMEM = gpu_core.SMEM
 WARPGROUP_SIZE = 128
+RefOrTmemType = TypeVar("RefOrTmemType", bound=Union[ir.Value, tcgen05.TMEMRef])
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -1300,18 +1301,21 @@ def _extract_aliased_ref(
 
 def _handle_transforms(
     ctx: LoweringRuleContext,
-    ref: ir.Value,
+    ref: RefOrTmemType,
     transforms: Sequence[gpu_core.Transform],
     *,
     handle_transposes=True,
     handle_reshapes=True,
     allow_peer_refs=False,
-) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
-  # Before we handle other transforms, we resolve any possible leading aliasing
-  # transform.
-  ref, transforms = _extract_aliased_ref(ref, transforms)
+) -> tuple[RefOrTmemType, Sequence[gpu_core.Transform]]:
+  if isinstance(ref, tcgen05.TMEMRef):
+    mlir_dtype = ref.dtype
+  else:
+    # Before we handle other transforms, we resolve any possible leading
+    # aliasing transform.
+    ref, transforms = _extract_aliased_ref(ref, transforms)
+    mlir_dtype = ir.MemRefType(ref.type).element_type
   transformed_ref = ref
-  mlir_dtype = ir.MemRefType(ref.type).element_type
   new_transforms = []
   def _bubble_up(untransform_fn, data):
     nonlocal new_transforms
@@ -1334,15 +1338,22 @@ def _handle_transforms(
         indices = _bubble_up(
             lambda t, idxs: t.untransform_index(mlir_dtype, idxs), indices
         )
-        transformed_ref = mgpu.memref_slice(transformed_ref, indices)
+        if isinstance(transformed_ref, tcgen05.TMEMRef):
+          transformed_ref = transformed_ref.slice(*indices)
+        else:
+          transformed_ref = mgpu.memref_slice(transformed_ref, indices)
       case gpu_core.TransposeRef(perm) if handle_transposes:
         perm = _bubble_up(lambda t, p: t.untransform_transpose(p),
                                           perm)
+        if isinstance(transformed_ref, tcgen05.TMEMRef):
+          raise ValueError("TMEM transpose not allowed.")
         transformed_ref = mgpu.memref_transpose(transformed_ref, perm)
       case RefReshaper(dtype=dtype, shape=shape) if handle_reshapes:
         shape = _bubble_up(
             lambda t, p: t.untransform_reshape(dtype, p),  # pylint: disable=cell-var-from-loop
             shape)
+        if isinstance(transformed_ref, tcgen05.TMEMRef):
+          raise ValueError("TMEM reshape not allowed.")
         transformed_ref = mgpu.memref_reshape(transformed_ref, shape)
       case gpu_core.PeerMemRef(device_id, device_id_type):
         if device_id_type != primitives.DeviceIdType.LOGICAL:
@@ -1387,15 +1398,14 @@ def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...
 def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
   if isinstance(x_ref, tcgen05.TMEMRef):
     transforms = jax.tree.unflatten(tree, leaves)
-    if len(transforms) != 1 or not isinstance(
-        transforms[0], indexing.NDIndexer):
+    x_tmem, transforms = _handle_transforms(
+        ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
+    )
+    if transforms:
       raise NotImplementedError(
-          "Only a single indexing transform is supported for TMEM refs.")
-    indexer = cast(indexing.NDIndexer, transforms[0])
-    if not gpu_core.is_trivial_index(indexer.indices, x_ref.shape):
-      raise NotImplementedError(
-          "Only trivial indexing is supported for TMEM refs.")
-    return x_ref.load()
+          f"Unimplemented transforms for TMEM refs. {transforms=}"
+      )
+    return x_tmem.load()
 
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
     raise TypeError(f"Can only load from references (got {x_ref}).")
@@ -1468,16 +1478,15 @@ def _swap_lowering_rule(
 
   if isinstance(x_ref, tcgen05.TMEMRef):
     transforms = jax.tree.unflatten(tree, leaves)
-    match transforms:
-      case (indexer,) if isinstance(indexer, indexing.NDIndexer):
-        if not gpu_core.is_trivial_index(indexer.indices, x_ref.shape):
-          raise NotImplementedError(
-              "Only trivial indexing is supported for TMEM refs.")
-      case _:
-        raise NotImplementedError(
-            "Only a single indexing transform is supported for TMEM refs.")
-    old_value = x_ref.load(layout=value.layout)
-    x_ref.store(value)
+    x_tmem, transforms = _handle_transforms(
+        ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
+    )
+    if transforms:
+      raise NotImplementedError(
+          f"Unimplemented transforms for TMEM refs. {transforms=}"
+      )
+    old_value = x_tmem.load(layout=value.layout)
+    x_tmem.store(value)
     return old_value
 
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):

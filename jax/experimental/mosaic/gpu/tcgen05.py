@@ -681,7 +681,8 @@ class TMEMRef:
       raise NotImplementedError("TMEM cannot be sliced along rows")
     if slice_shape[1] % 8:
       raise NotImplementedError(
-          "TMEM column slice length must be a multiple of 8"
+          "TMEM column slice length must be a multiple of 8. "
+          f"Got {slice_shape[1]}."
       )
     col_idx = base_idx[1]
     if not isinstance(col_idx, ir.Value):
