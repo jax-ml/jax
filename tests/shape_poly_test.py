@@ -3543,7 +3543,7 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
     harness_groups[h.group_name].append(h)
 
   selected_harnesses = []
-  for _, hlist in harness_groups.items():
+  for hlist in harness_groups.values():
     # Pick the dtype with the most harnesses in this group. Some harness
     # groups only test different use cases at a few dtypes.
     c = collections.Counter([h.dtype for h in hlist])

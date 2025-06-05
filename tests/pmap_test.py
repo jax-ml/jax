@@ -2183,8 +2183,7 @@ class CppPmapTest(PythonPmapTest):
     # thread-local config settings are identical.
     futures = []
     with ThreadPoolExecutor(max_workers=2) as executor:
-      for _ in range(8):
-        futures.append(executor.submit(lambda: pmaped_f(inputs)))
+      futures.extend(executor.submit(lambda: pmaped_f(inputs)) for _ in range(8))
       outputs = [f.result() for f in futures]
 
     if pmaped_f._cache_size != 1:

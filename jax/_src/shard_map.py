@@ -354,9 +354,7 @@ def _check_specs(error_type: SpecErrorType, specs: Any, manual_axes) -> None:
     for key, p in generate_key_paths(specs):
       for names in p:
         names = (names,) if not isinstance(names, tuple) else names
-        for name in names:
-          if name is not None and name not in manual_axes:
-            msgs.append(f"  {prefix}_specs{keystr(key)} refers to {repr(name)}")
+        msgs.extend(f"  {prefix}_specs{keystr(key)} refers to {repr(name)}" for name in names if name is not None and name not in manual_axes)
     raise ValueError(
         f"shard_map {prefix}_specs argument must refer to an axis "
         f"marked as manual ({manual_axes}), but:\n\n"

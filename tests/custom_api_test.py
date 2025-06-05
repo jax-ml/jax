@@ -727,9 +727,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     # we just don't want this to crash
     n_workers = 2
     with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as e:
-      futures = []
-      for _ in range(n_workers):
-        futures.append(e.submit(run))
+      futures = [e.submit(run) for _ in range(n_workers)]
       results = [f.result() for f in futures]
     for ans in results:
       self.assertAllClose(ans, expected)

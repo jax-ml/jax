@@ -298,8 +298,7 @@ def _align_annotations(lines):
     else:
       out.append(l._replace(text=l.text + " " * (maxlen - l.width),
                             annotations=l.annotations[0]))
-      for a in l.annotations[1:]:
-        out.append(_Line(text=" " * maxlen, width=l.width, annotations=a))
+      out.extend(_Line(text=" " * maxlen, width=l.width, annotations=a) for a in l.annotations[1:])
   return out
 
 

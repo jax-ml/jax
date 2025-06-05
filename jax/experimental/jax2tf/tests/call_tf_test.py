@@ -1591,7 +1591,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   def test_call_tf_graph_non_compilable(self, tf_f, output_shape_dtype):
     inputs = jnp.ones([10], dtype=jnp.float32)
     called_index_list = []
-    xla_call_module_list = []
 
     def _extract_info(op):
       if op.operation.name != "stablehlo.custom_call":
@@ -1637,9 +1636,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     )
     func_def = restored_model.f.concrete_functions[0]
 
-    for node_def in func_def.graph.as_graph_def().node:
-      if node_def.op == "XlaCallModule":
-        xla_call_module_list.append(node_def)
+    xla_call_module_list = [node_def for node_def in func_def.graph.as_graph_def().node if node_def.op == "XlaCallModule"]
     # There is only one xla_call_module in the saved model.
     self.assertLen(xla_call_module_list, 1)
 

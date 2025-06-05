@@ -3927,7 +3927,7 @@ def sample_smap() -> Chooser:
 def sample_in_axes(body_in_types) -> Chooser:
   in_axes = []
   for ty in body_in_types:
-    in_axes.append((yield [None, *range(ty.ndim)]))
+    in_axes.append((yield [None, *range(ty.ndim)]))  # noqa: PERF401
   return tuple(in_axes)
 
 def sample_out_axes(out_rep, body_out_type) -> Chooser:

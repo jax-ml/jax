@@ -142,16 +142,14 @@ def with_dtype_arguments(xs: tuple[Any, ...]) -> tuple[Any, ...]:
 
   result = []
   for x in xs:
-    for dtypes_tuple in itertools.product(dtypes, dtypes, dtypes):
-      result.append(x + dtypes_tuple)
+    result.extend(x + dtypes_tuple for dtypes_tuple in itertools.product(dtypes, dtypes, dtypes))
   return tuple(result)
 
 def with_transpose_argument(xs: tuple[Any, ...]) -> tuple[Any, ...]:
   flags = [False, True]
   result = []
   for x in xs:
-    for flag in flags:
-      result.append(x + (flag,))
+    result.extend(x + (flag,) for flag in flags)
   return tuple(result)
 
 def tolerances(

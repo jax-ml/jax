@@ -119,11 +119,14 @@ ignore = [
     "B904",
     # Zip without explicit strict parameter
     "B905",
+    # `try`-`except` within a loop incurs performance overhead
+    "PERF203",
 ]
 select = [
     "B9",
     "C",
     "F",
+    "PERF",
     "W",
     "YTT",
     "ASYNC",

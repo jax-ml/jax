@@ -274,8 +274,7 @@ class MeshUtilsTest(test_util.JaxTestCase):
     for start_y in (0, 2):
       subslice_devices = []
       for x in range(4):
-        for delta_y in range(2):
-          subslice_devices.append(device_array[x, start_y + delta_y, 0])
+        subslice_devices.extend(device_array[x, start_y + delta_y, 0] for delta_y in range(2))
       logging.info(
           'start_y=%s subslice_devices=%s', start_y, subslice_devices
       )

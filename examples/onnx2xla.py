@@ -100,8 +100,7 @@ def interpret_onnx(graph, *args):
     args = (vals[name] for name in node.input)
     attrs = {a.name: attribute_handlers[a.type](a) for a in node.attribute}
     outputs = onnx_ops[node.op_type](*args, **attrs)
-    for name, output in zip(node.output, outputs):
-      vals[name] = output
+    vals.update(dict(zip(node.output, outputs)))
   return [vals[n.name] for n in graph.output]
 
 

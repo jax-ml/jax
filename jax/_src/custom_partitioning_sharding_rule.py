@@ -436,7 +436,6 @@ def sdy_sharding_rule_to_mlir(
   tensor_mappings = []
   for i, mapping in enumerate(rule.operand_mappings + rule.result_mappings):
     value = tuple(mapping)
-    dim_mappings = []
     if value and _is_batching(value[0]):
       batching_group = _get_batching_group(value[0])
       value = value[1:]
@@ -450,12 +449,10 @@ def sdy_sharding_rule_to_mlir(
       current_batching_rank = 0
       batching_group = None
 
-    for j in range(current_batching_rank):
-      #  This type check error is not correct, disable it:
-      # Argument 1 to "_get_batching_dim_factor_name" has incompatible type "str | None"; expected "str"  [arg-type]
-      dim_mappings.append(
-        sdy.DimMappingAttr.get(factor_indices=[
-          factors_to_indices_sizes[_get_batching_dim_factor_name(batching_group, j)][0]])) # type: ignore
+    #  This type check error is not correct, disable it:
+    # Argument 1 to "_get_batching_dim_factor_name" has incompatible type "str | None"; expected "str"  [arg-type]
+    dim_mappings = [sdy.DimMappingAttr.get(factor_indices=[
+          factors_to_indices_sizes[_get_batching_dim_factor_name(batching_group, j)][0]]) for j in range(current_batching_rank)] # type: ignore
 
     for j, dim in enumerate(value):
       if isinstance(dim, str):

@@ -711,9 +711,7 @@ def _pallas_call_batching_rule(
     # of forcing implementers to account for all outputs and intermediaries is
     # a very nice one.
 
-    var_to_raggedness = {}
-    for invar, rav in zip(jaxpr.invars, ragged_axis_values):
-      var_to_raggedness[invar] = rav
+    var_to_raggedness = dict(zip(jaxpr.invars, ragged_axis_values))
 
     for eqn in jaxpr.eqns:
       prim = eqn.primitive
@@ -739,12 +737,9 @@ def _pallas_call_batching_rule(
             f" {eqn.outvars}. Underlying reason: {e}"
         ) from e
 
-      for invar, rav in zip(eqn.invars, invar_raggedness):  # type: ignore[assignment]
-        if isinstance(invar, jax_core.Var):
-          var_to_raggedness[invar] = rav
-      for outvar, rav in zip(eqn.outvars, outvar_raggedness):
-        if isinstance(outvar, jax_core.Var):
-          var_to_raggedness[outvar] = rav
+      # type: ignore[assignment]
+      var_to_raggedness.update({invar: rav for invar, rav in zip(eqn.invars, invar_raggedness) if isinstance(invar, jax_core.Var)})
+      var_to_raggedness.update({outvar: rav for outvar, rav in zip(eqn.outvars, outvar_raggedness) if isinstance(outvar, jax_core.Var)})
 
     for pos, invar in enumerate(jaxpr.invars):
       ragged_axis_values[pos] = var_to_raggedness[invar]

@@ -1129,8 +1129,7 @@ def jaxpr_subcomp(
     assert is_valid_type, type(val)
     env[var] = val
 
-  for invar, bs in zip(jaxpr.invars, ctx.block_shapes):
-    block_shape_env[invar] = bs
+  block_shape_env.update(dict(zip(jaxpr.invars, ctx.block_shapes)))
   foreach(write_env, jaxpr.invars, args)
 
   initial_name_stack = [scope.name for scope in ctx.name_stack.stack]

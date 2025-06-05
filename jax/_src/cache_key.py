@@ -225,9 +225,7 @@ def _hash_devices(hash_obj, devices: np.ndarray) -> None:
 
 
 def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
-  accelerator_devices = []
-  for accelerator in accelerators.flat:
-    accelerator_devices.append(accelerator)
+  accelerator_devices = list(accelerators.flat)
   try:
     hash_obj.update(
         xla_client.get_topology_for_devices(accelerator_devices).serialize()
@@ -346,11 +344,9 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
   if libtpu_init_args_env_var:
     xla_flags.extend(libtpu_init_args_env_var.split())
 
-  for arg in sys.argv:
-    if arg.startswith("--xla") or any(
+  xla_flags.extend(arg for arg in sys.argv if arg.startswith("--xla") or any(
         arg.startswith(p) for p in extra_flag_prefixes
-    ):
-      xla_flags.append(arg)
+    ))
 
   # N.B. all XLA flags that take an argument must use '=' and not a space
   # (e.g. --xla_force_host_platform_device_count=8) (I think).

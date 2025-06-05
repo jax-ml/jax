@@ -462,14 +462,10 @@ def _saved_residuals(jaxpr: core.Jaxpr,
   res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
-  results = []
 
-  for x in res_lits:
-    results.append((x.aval, 'from a literal'))
+  results = [(x.aval, 'from a literal') for x in res_lits]
 
-  for v in jaxpr.constvars:
-    if v in res_vars:
-      results.append((v.aval, 'from a constant'))
+  results.extend((v.aval, 'from a constant') for v in jaxpr.constvars if v in res_vars)
 
   for i, v in enumerate(jaxpr.invars):
     if v in res_vars:
