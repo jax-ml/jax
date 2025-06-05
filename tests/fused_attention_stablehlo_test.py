@@ -789,8 +789,18 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       outs = jitted_sdpa_train(query, key, value, (grad, grad_stat))
       assert len(outs) == 2
 
+  @jtu.sample_product(
+      batch_size=[4],
+      q_seq_len=[1, 1024],
+      kv_seq_len=[1024],
+      num_heads=[8],
+      head_dim=[64, 128],
+      block_size=[64, 128],
+      dtype=[jnp.float16, jnp.bfloat16]
+  )
   @jtu.run_on_devices("cuda")
-  def test_sdpa_paged_attention(self):
+  def test_sdpa_paged_attention(self, batch_size, q_seq_len, kv_seq_len,
+                                num_heads, head_dim, block_size, dtype):
     try:
       cudnn_version = check_cudnn_version()
     except RuntimeError as e:
@@ -799,24 +809,28 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     if cudnn_version < 90500:
       self.skipTest("Requires >= cuDNN 9.5.0")
 
-    B, T, N, H = 2, 1024, 2, 128
     keys = jax.random.split(jax.random.key(0), 5)
-    block_size = 64
-    blocks_per_batch = T // block_size
-    num_blocks = B * blocks_per_batch
+    blocks_per_batch = kv_seq_len // block_size
+    num_blocks = batch_size * blocks_per_batch
 
-    q = jax.random.normal(keys[0], (B, T, N, H), dtype=jnp.bfloat16)
-    k_container = jax.random.normal(keys[1], (num_blocks, block_size, N, H), dtype=jnp.bfloat16)
-    v_container = jax.random.normal(keys[2], (num_blocks, block_size, N, H), dtype=jnp.bfloat16)
-    page_table_k = jax.random.randint(keys[3], (B, 1, blocks_per_batch, 1), 0, num_blocks-1, dtype=jnp.int32)
-    page_table_v = jax.random.randint(keys[4], (B, 1, blocks_per_batch, 1), 0, num_blocks-1, dtype=jnp.int32)
+    # different q_seq_len for prefill and decode
+    q = jax.random.normal(
+      keys[0], (batch_size, q_seq_len, num_heads, head_dim), dtype=dtype)
+    k_container = jax.random.normal(
+      keys[1], (num_blocks, block_size, num_heads, head_dim), dtype=dtype)
+    v_container = jax.random.normal(
+      keys[2], (num_blocks, block_size, num_heads, head_dim), dtype=dtype)
+    page_table_k = jax.random.randint(
+      keys[3], (batch_size, 1, blocks_per_batch, 1), 0, num_blocks-1, dtype=jnp.int32)
+    page_table_v = jax.random.randint(
+      keys[4], (batch_size, 1, blocks_per_batch, 1), 0, num_blocks-1, dtype=jnp.int32)
     # full page table
-    q_seqlen = jnp.full((B,), T, jnp.int32)
-    kv_seqlen = jnp.full((B,), T, jnp.int32)
+    q_seqlen = jnp.full((batch_size,), q_seq_len, jnp.int32)
+    kv_seqlen = jnp.full((batch_size,), kv_seq_len, jnp.int32)
 
     def unpaged(paged, page_table):
-      output = jnp.zeros((B, T, N, H), dtype=jnp.bfloat16)
-      for b in range(B):
+      output = jnp.zeros((batch_size, kv_seq_len, num_heads, head_dim), dtype=dtype)
+      for b in range(batch_size):
         for block in range(blocks_per_batch):
           block_idx = page_table[b, 0, block, 0]
           output = output.at[
