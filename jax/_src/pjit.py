@@ -414,8 +414,10 @@ def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
   if backend is not None or device is not None:
     warnings.warn(
         'backend and device argument on jit is deprecated. You can use'
-        ' `jax.device_put(..., jax.local_devices("cpu")[0])` on the inputs to'
-        ' the jitted function to get the same behavior.', DeprecationWarning)
+        ' `jax.device_put(..., jax.local_devices(backend="cpu")[0])` on the'
+        ' inputs to the jitted function to get the same behavior.',
+        DeprecationWarning,
+    )
     if device is not None and backend is not None:
       raise ValueError("can't specify both a device and a backend for jit, "
                        f"got {device=} and {backend=}")
