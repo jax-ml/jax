@@ -2501,6 +2501,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       (jnp.max,)
   )
   def test_reduce_with_tcgen05_layout(self, op):
+    self.skip_if_wg_semantics()
     axis = -1
     swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
     transforms = (
