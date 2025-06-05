@@ -2020,6 +2020,7 @@ def str_short_aval(shape, dtype, mesh, spec, vma,
   vma_ur = _vma_ur_str(vma, spec.unreduced)
   return f'{dt_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
+@cache(max_size=4096, trace_context_in_key=False)
 def get_vma(vma, mesh):
   if mesh.empty:
     return vma
