@@ -461,6 +461,12 @@ class TiledLayout:
         new_vector_dim,
     )
 
+  def reduce(self, axes: Sequence[int]) -> TiledLayout:
+    reduced_layout = self
+    for a in sorted(axes, reverse=True):
+      reduced_layout = reduced_layout.remove_dimension(a)
+    return reduced_layout
+
 
 def _tiled_wgmma_layout(shape: tuple[int, ...]):
   """Returns the tiled layout relevant for WGMMA operations.
@@ -1825,9 +1831,7 @@ class FragmentedArray:
       out_reg = vector.extractelement(out_reg, position=c(0, index))
       out_regs = np.asarray(out_reg, dtype=object)
     else:
-      reduced_layout = layout
-      for a in sorted(axis, reverse=True):
-        reduced_layout = reduced_layout.remove_dimension(a)
+      reduced_layout = layout.reduce(axis)
       out_regs = out_regs.reshape(reduced_layout.registers_shape(reduced_logical_shape))
     return FragmentedArray(
         _registers=out_regs, _layout=reduced_layout, _is_signed=self.is_signed

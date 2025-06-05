@@ -50,6 +50,13 @@ ROW_LAYOUT = fa.TiledLayout(
     lane_dims=(-3, fa.Replicated(times=4)),
     vector_dim=-1
 )
+# COL_LAYOUT is to LAYOUT as WGMMA_COL_LAYOUT is to WGMMA_LAYOUT.
+COL_LAYOUT = fa.TiledLayout(
+    fa.Tiling(tiles=((8,), (8,), (8,), (2,))),
+    warp_dim=fa.Replicated(times=4),
+    lane_dims=(fa.Replicated(times=8), -2),
+    vector_dim=-1
+)
 # A layout resembling the logical organization of TMEM. The 128 rows in a tile
 # are assigned to 128 lanes in the warpgroup. Useful when the result needs to be
 # processed in registers and then stored back into TMEM. Should not be used if
