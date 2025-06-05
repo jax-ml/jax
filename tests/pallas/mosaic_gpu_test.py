@@ -2417,7 +2417,11 @@ class PallasCallSm90AWGTest(
 
 class PallasCallSm100ATest(PallasSm100ATest):
 
-  def test_tmem(self):
+  @parameterized.parameters(
+      (False,),
+      (True,),
+  )
+  def test_tmem(self, collective):
     self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
     swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
     transforms = (
@@ -2428,13 +2432,15 @@ class PallasCallSm100ATest(PallasSm100ATest):
         self.kernel,
         out_shape=jnp.zeros((128, 128), jnp.float32),
         scratch_shapes=[
-            plgpu.TMEM((128, 128), jnp.float32),
-            plgpu.TMEM((128, 128), jnp.float32),
+            plgpu.TMEM((128, 128), jnp.float32, collective=collective),
+            plgpu.TMEM((128, 128), jnp.float32, collective=collective),
             plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
             plgpu.Barrier(),
         ],
         num_threads=1,
         thread_name="x",
+        cluster=(2,) if collective else (),
+        cluster_names=("x",) if collective else (),
     )
     def kernel(x_ref, y_ref, tmem_ref, tmem_ref2, smem_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)

@@ -103,6 +103,7 @@ AnyBarrier = mgpu.Barrier | mgpu.ClusterBarrier
 class Resources:
   smem_scratch_bytes: int = 0
   tmem_scratch_cols: int = 0
+  tmem_collective_scratch_cols: int = 0
   barrier_counts: collections.Counter[AnyBarrier] = dataclasses.field(
       default_factory=collections.Counter
   )
@@ -114,11 +115,17 @@ class Resources:
         "smem_scratch_bytes",
         gpu_core.align_to(self.smem_scratch_bytes, gpu_core.SMEM_ALIGNMENT),
     )
+
+    # TMEM must be allocated in 128x8 chunks.
     object.__setattr__(
         self,
         "tmem_scratch_cols",
-        # TMEM must be allocated in 128x8 chunks.
         gpu_core.align_to(self.tmem_scratch_cols, 8),
+    )
+    object.__setattr__(
+        self,
+        "tmem_collective_scratch_cols",
+        gpu_core.align_to(self.tmem_collective_scratch_cols, 8),
     )
 
   @property
@@ -133,6 +140,8 @@ class Resources:
     return Resources(
         smem_scratch_bytes=self.smem_scratch_bytes + other.smem_scratch_bytes,
         tmem_scratch_cols=self.tmem_scratch_cols + other.tmem_scratch_cols,
+        tmem_collective_scratch_cols=self.tmem_collective_scratch_cols
+        + other.tmem_collective_scratch_cols,
         barrier_counts=self.barrier_counts + other.barrier_counts,
         gmem_semaphores=self.gmem_semaphores + other.gmem_semaphores,
     )
@@ -142,8 +151,10 @@ class Resources:
         smem_scratch_bytes=max(
             self.smem_scratch_bytes, other.smem_scratch_bytes
         ),
-        tmem_scratch_cols=max(
-            self.tmem_scratch_cols, other.tmem_scratch_cols
+        tmem_scratch_cols=max(self.tmem_scratch_cols, other.tmem_scratch_cols),
+        tmem_collective_scratch_cols=max(
+            self.tmem_collective_scratch_cols,
+            other.tmem_collective_scratch_cols,
         ),
         barrier_counts=self.barrier_counts | other.barrier_counts,
         gmem_semaphores=max(self.gmem_semaphores, other.gmem_semaphores),
@@ -303,7 +314,10 @@ def _run_scoped_resource_estimator(
       layout = tcgen05._infer_tmem_layout(aval.shape, packing=packing)
       cols_used = layout.cols_in_shape(aval.shape)
       cols_used = tcgen05._alloc_ncols(cols_used, exact=False)
-      rs += Resources(tmem_scratch_cols=cols_used)
+      if aval.collective:
+        rs += Resources(tmem_collective_scratch_cols=cols_used)
+      else:
+        rs += Resources(tmem_scratch_cols=cols_used)
     elif aval.memory_space == gpu_core.SMEM:
       rs += Resources(
           smem_scratch_bytes=math.prod(aval.shape) * aval.dtype.itemsize
@@ -359,6 +373,9 @@ class ModuleContext:
   tmem_requested_cols: int
   tmem_used_cols: int
   tmem_base_ptr: ir.Value
+  tmem_collective_requested_cols: int
+  tmem_collective_used_cols: int
+  tmem_collective_base_ptr: ir.Value
   gmem_used_semaphores: int
   gmem_semaphore_base_ptr: ir.Value | None
   runtime_barriers: MutableMapping[AnyBarrier, MutableSequence[AnyBarrierRef]]
@@ -435,17 +452,28 @@ class ModuleContext:
       layout = tcgen05._infer_tmem_layout(struct.shape, packing=packing)
     unpadded_cols_used = layout.cols_in_shape(struct.shape)
     cols_used = tcgen05._alloc_ncols(unpadded_cols_used, exact_cols)
-
-    off = arith_dialect.addi(self.tmem_base_ptr,
-                             _i32_constant(self.tmem_used_cols))
+    if collective:
+      off = arith_dialect.addi(
+          self.tmem_collective_base_ptr,
+          _i32_constant(self.tmem_collective_used_cols),
+      )
+    else:
+      off = arith_dialect.addi(
+          self.tmem_base_ptr, _i32_constant(self.tmem_used_cols)
+      )
     tmem_ref = tcgen05.TMEMRef(
         address=off,
         shape=struct.shape,
         dtype=mgpu_utils.dtype_to_ir_type(struct.dtype),
         layout=layout)
-    self.tmem_used_cols += cols_used
-    yield tmem_ref
-    self.tmem_used_cols -= cols_used
+    if collective:
+      self.tmem_collective_used_cols += cols_used
+      yield tmem_ref
+      self.tmem_collective_used_cols -= cols_used
+    else:
+      self.tmem_used_cols += cols_used
+      yield tmem_ref
+      self.tmem_used_cols -= cols_used
 
   # TODO(cperivol): Only return the shapes and figure out the sizes when freeing.
   @contextlib.contextmanager
@@ -808,7 +836,12 @@ def lower_jaxpr_to_module(
   )
 
   def body(launch_ctx: mgpu.LaunchContext, *buffers: ir.Value):
-    *buffers_gmem, (runtime_smem, runtime_barriers, runtime_tmem) = buffers
+    *buffers_gmem, (
+        runtime_smem,
+        runtime_barriers,
+        runtime_tmem,
+        runtime_tmem_collective,
+    ) = buffers
     gmem_semaphores = None
     if rs.gmem_semaphores:
       # Extract the semaphores local to the current block.
@@ -833,6 +866,12 @@ def lower_jaxpr_to_module(
       tmem_cols = math.prod(runtime_tmem.shape) // tcgen05.TMEM_ROWS
     else:
       tmem_cols = 0
+    if runtime_tmem_collective is not None:
+      tmem_collective_cols = (
+          math.prod(runtime_tmem_collective.shape) // tcgen05.TMEM_ROWS
+      )
+    else:
+      tmem_collective_cols = 0
 
     if lowering_semantics == mgpu.LoweringSemantics.Lane:
       single_wg_lane_predicate = mgpu.single_thread_predicate(
@@ -855,6 +894,11 @@ def lower_jaxpr_to_module(
         tmem_requested_cols=tmem_cols,
         tmem_used_cols=0,
         tmem_base_ptr=runtime_tmem.address if runtime_tmem else None,
+        tmem_collective_requested_cols=tmem_collective_cols,
+        tmem_collective_used_cols=0,
+        tmem_collective_base_ptr=runtime_tmem_collective.address
+        if runtime_tmem_collective
+        else None,
         gmem_used_semaphores=0,
         gmem_semaphore_base_ptr=gmem_semaphores,
         runtime_barriers=grouped_barriers,
@@ -878,7 +922,19 @@ def lower_jaxpr_to_module(
   if rs.tmem_scratch_cols > 0:
     scratch_buffers.append(
         mgpu.TMEM(
-            shape=[tcgen05.TMEM_ROWS, rs.tmem_scratch_cols], dtype=np.int32
+            shape=[tcgen05.TMEM_ROWS, rs.tmem_scratch_cols],
+            dtype=np.int32,
+            collective=False,
+        ),
+    )
+  else:
+    scratch_buffers.append(None)
+  if rs.tmem_collective_scratch_cols > 0:
+    scratch_buffers.append(
+        mgpu.TMEM(
+            shape=[tcgen05.TMEM_ROWS, rs.tmem_collective_scratch_cols],
+            dtype=np.int32,
+            collective=True,
         ),
     )
   else:
