@@ -2289,6 +2289,20 @@ class FragmentedArrayTest(TestCase):
     result = m * n if reduce_both else n
     np.testing.assert_array_equal(kernel_fn(), jnp.full((m,), result, dtype))
 
+  @parameterized.named_parameters(
+      ("wgmma_row", fa.WGMMA_LAYOUT, fa.WGMMA_ROW_LAYOUT, 1),
+      ("wgmma_col", fa.WGMMA_LAYOUT, fa.WGMMA_COL_LAYOUT, 0),
+      ("tcgen05_row", tcgen05.LAYOUT, tcgen05.ROW_LAYOUT, 1),
+      ("tcgen05_col", tcgen05.LAYOUT, tcgen05.COL_LAYOUT, 0),
+  )
+  def test_layout_reduction_definition(self, layout, expected_reduced_layout, axis):
+    def squeeze_shape(shape):
+      return tuple(s for s in shape if s != 1)
+    reduced_layout = layout.reduce((axis,))
+    tiled_shape = squeeze_shape(reduced_layout.tiled_tiling_shape)
+    expected_tiled_shape = squeeze_shape(expected_reduced_layout.tiled_tiling_shape)
+    self.assertEqual(tiled_shape, expected_tiled_shape)
+
   @parameterized.product(
       op=(arith.addf, arith.maximumf),
       m=(64, 128),
