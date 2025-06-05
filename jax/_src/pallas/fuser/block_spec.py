@@ -814,12 +814,15 @@ def register_default_eval_rule(prim: core.Primitive):
   def default_rule(ctx, *args, **params):
     assert all(bs is pallas_core.no_block_spec for bs in ctx.out_block_specs)
     return prim.bind(*args, **params)
+
   register_eval_rule(prim)(default_rule)
+
 
 def register_binop_rule(prim: core.Primitive):
   register_pull_block_spec_rule(prim)(functools.partial(_binop_pull_rule, prim))
   register_usage_rule(prim)(functools.partial(_binop_usage_rule, prim))
   register_eval_rule(prim)(functools.partial(_binop_eval_rule, prim))
+
 
 register_default_eval_rule(state_primitives.get_p)
 
@@ -1074,6 +1077,7 @@ def _dynamic_slice_rule(
       len(ctx.avals_in) - 1
   )
 
+
 @register_pull_block_spec_rule(state_primitives.swap_p)
 def _swap_pull_rule(
     ctx: PullRuleContext,
@@ -1084,14 +1088,9 @@ def _swap_pull_rule(
   # The output and val block spec are the same.
   return [block_spec, block_spec]
 
+
 @register_eval_rule(state_primitives.swap_p)
-def _swap_eval_rule(
-    ctx: KernelEvalContext,
-    ref,
-    val,
-    *idx,
-    tree
-):
+def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   ref_aval, _ = ctx.avals_in[:2]
   indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[2:])
@@ -1123,17 +1122,15 @@ def _swap_eval_rule(
     return i if b is None else indexing.ds(i * b, b)
 
   indexer = tuple(
-      _slice(i, b) for i, b in zip(block_idx, block_spec.block_shape,
-                                   strict=True)
+      _slice(i, b)
+      for i, b in zip(block_idx, block_spec.block_shape, strict=True)
   )
   return ref.swap(val, idx=indexer)
 
+
 @register_pull_block_spec_rule(state_primitives.get_p)
 def _get_pull_rule(
-    ctx: PullRuleContext,
-    block_spec: pallas_core.BlockSpec,
-    *,
-    tree
+    ctx: PullRuleContext, block_spec: pallas_core.BlockSpec, *, tree
 ):
   ref_aval = ctx.avals_in[0]
   assert hasattr(ref_aval, 'shape')
@@ -1166,6 +1163,7 @@ def _get_pull_rule(
     bd = next(block_shape_iter)
     block_shape.append(_block_size(bd))
   assert next(block_shape_iter, None) is None
+
   def new_index_map(*args):
     idx = block_spec.index_map(*args)
     idx_iter = iter(idx)
@@ -1177,16 +1175,13 @@ def _get_pull_rule(
     )
     assert next(idx_iter, None) is None
     return indices
+
   block_spec = pallas_core.BlockSpec(block_shape, new_index_map)
   return [block_spec] + [pallas_core.no_block_spec] * (len(ctx.avals_in) - 1)
 
+
 @register_eval_rule(state_primitives.get_p)
-def _get_eval_rule(
-    ctx: KernelEvalContext,
-    ref,
-    *idx,
-    tree
-):
+def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   ref_aval = ctx.avals_in[0]
   indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[1:])
@@ -1239,6 +1234,7 @@ def _get_eval_rule(
     block_indexer.append(_slice(bidx, bd))
   assert next(block_idx_iter, None) is None
   return ref.get(idx=tuple(block_indexer))
+
 
 @register_eval_rule(lax.concatenate_p)
 def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
@@ -1525,17 +1521,16 @@ def _random_bits_pull_rule(
   )
   return [key_block_spec]
 
+
 @register_eval_rule(prng.random_wrap_p)
 def _random_wrap_eval_rule(eval_ctx: KernelEvalContext, arr, *, impl):
   del eval_ctx
   return jax.random.wrap_key_data(arr, impl=impl)
 
+
 @register_pull_block_spec_rule(prng.random_wrap_p)
 def _random_wrap_pull_rule(
-    ctx: PullRuleContext,
-    block_spec: pallas_core.BlockSpec,
-    *,
-    impl
+    ctx: PullRuleContext, block_spec: pallas_core.BlockSpec, *, impl
 ):
   del ctx, block_spec, impl
   return [pallas_core.BlockSpec(block_shape=None)]
@@ -1578,13 +1573,32 @@ def _pattern_match_sublanes_to_lanes_reshape(
     aval_out: core.ShapedArray,
 ) -> bool:
   # Pattern matches a reshape of the form (..., n/l, l) -> (..., n * l)
-  # where l is a multiple of 128 n/l is a multiple of packing.
+  # where l is a multiple of 128.
 
   *leading_in, second_to_last_dim, last_dim = aval_in.shape
   *leading_out, last_dim_out = aval_out.shape
   if leading_in != leading_out:
     return False
-  assert last_dim_out == second_to_last_dim * last_dim
+  if second_to_last_dim * last_dim != last_dim_out:
+    return False
+  if last_dim % 128 != 0:
+    return False
+  return True
+
+
+def _pattern_match_lanes_to_sublanes_reshape(
+    aval_in: core.ShapedArray,
+    aval_out: core.ShapedArray,
+) -> bool:
+  # Pattern matches a reshape of the form (..., n * l) -> (..., n, l)
+  # where l is a multiple of 128.
+
+  *leading_out, last_dim_in = aval_in.shape
+  *leading_in, second_to_last_dim_out, last_dim = aval_out.shape
+  if leading_in != leading_out:
+    return False
+  if second_to_last_dim_out * last_dim != last_dim_in:
+    return False
   if last_dim % 128 != 0:
     return False
   return True
@@ -1606,6 +1620,8 @@ def _reshape_pull_rule(
   assert isinstance(aval_in, core.ShapedArray)
   aval_out = ctx.avals_out[0]
   assert isinstance(aval_out, core.ShapedArray)
+
+  # Handle the case where we reshape from (..., n/l, l) -> (..., n * l)
   if _pattern_match_sublanes_to_lanes_reshape(aval_in, aval_out):
     block_shape = tuple(block_spec.block_shape)
     if not isinstance(block_shape[-1], (int, pallas_core.Blocked)):
@@ -1625,6 +1641,44 @@ def _reshape_pull_rule(
       return *idx, 0
 
     return [pallas_core.BlockSpec(new_block_shape, new_index_map)]
+
+  # Handle the case where we reshape from (..., n * l) -> (..., n, l)
+  if _pattern_match_lanes_to_sublanes_reshape(aval_in, aval_out):
+    block_shape = tuple(block_spec.block_shape)
+    if not isinstance(block_shape[-1], (int, pallas_core.Blocked)):
+      raise NotImplementedError(
+          f'reshape must use Blocked block size on lanes: {block_shape}'
+      )
+    if not isinstance(block_shape[-2], (int, pallas_core.Blocked)):
+      raise NotImplementedError(
+          f'reshape must use Blocked block size on sublanes: {block_shape}'
+      )
+    last_dim = aval_out.shape[-1]
+    block_sublane_dim, block_lane_dim = (
+        _block_size(block_shape[-2]),
+        _block_size(block_shape[-1]),
+    )
+    total_block_size = block_sublane_dim * block_lane_dim
+    if total_block_size % 128 != 0:
+      raise NotImplementedError(
+          'reshape with non-128 aligned block size on lanes not supported yet'
+      )
+    if block_lane_dim != last_dim:
+      raise NotImplementedError(
+          'reshape with non-matching block size on lanes not supported yet:'
+          f' {block_shape}'
+      )
+    new_block_shape = block_shape[:-2] + (total_block_size,)
+    def new_index_map(*args):  # pylint: disable=function-redefined
+      *idx, second_to_last, last = block_spec.index_map(*args)
+      # last should always be 0
+      if not isinstance(last, int) and last != 0:
+        raise NotImplementedError(
+            'Must select entire block on last dimension for reshape'
+        )
+      return *idx, second_to_last
+    return [pallas_core.BlockSpec(new_block_shape, new_index_map)]
+
   raise NotImplementedError(f'reshape not supported yet: {aval_in}, {aval_out}')
 
 
@@ -1639,13 +1693,8 @@ def _reshape_eval_rule(
   out_shape = tuple(s for s in out_shape_nones if s is not None)
   # Because we have restricted the pull block spec rule, we can just apply a
   # basic reshape here.
-  orig_dtype = x.dtype
-  if jnp.issubdtype(orig_dtype, jnp.integer):
-    x = x.astype(jnp.int32)
-  elif jnp.issubdtype(orig_dtype, jnp.floating):
-    x = x.astype(jnp.float32)
   x = x.reshape(out_shape)
-  return x.astype(orig_dtype)
+  return x
 
 
 # Higher order primitives
@@ -1667,8 +1716,10 @@ def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
     raise NotImplementedError('pjit with consts not supported yet')
   out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
   in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
+
   def read_usage_env(_: core.Var):
     return {Usage.REGULAR}
+
   _, env, _ = _pull_block_spec(
       jaxpr,
       ctx.out_block_specs,
@@ -1697,8 +1748,10 @@ def _jit_pull_block_spec_rule(
   jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
   if consts:
     raise NotImplementedError('pjit with consts not supported yet')
+
   def read_usage_env(_: core.Var):
     return {Usage.REGULAR}
+
   in_block_specs, _, _ = _pull_block_spec(
       jaxpr,
       out_block_specs,
@@ -1728,8 +1781,10 @@ def _custom_jvp_call_eval_rule(
     raise NotImplementedError('custom_jvp_call with consts not supported yet')
   out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
   in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
+
   def read_usage_env(_: core.Var):
     return {Usage.REGULAR}
+
   _, env, _ = _pull_block_spec(
       jaxpr,
       ctx.out_block_specs,
@@ -1758,8 +1813,10 @@ def _custom_jvp_call_pull_block_spec_rule(
   jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
   if consts:
     raise NotImplementedError('custom_jvp_call with consts not supported yet')
+
   def read_usage_env(_: core.Var):
     return {Usage.REGULAR}
+
   in_block_specs, _, _ = _pull_block_spec(
       jaxpr,
       out_block_specs,
@@ -2009,3 +2066,45 @@ register_eltwise_rule(lax.sqrt_p)
 register_eltwise_rule(lax.rsqrt_p)
 register_eltwise_rule(lax.log_p)
 register_eltwise_rule(lax.integer_pow_p)
+
+@register_push_block_spec_rule(lax.reshape_p)
+def _reshape_push_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    dimensions: tuple[int, ...] | None,
+    new_sizes: tuple[int, ...],
+    sharding: jax.sharding.Sharding,
+):
+  del sharding, new_sizes
+  if dimensions is not None:
+    raise NotImplementedError('reshape with None dimensions not supported yet')
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  aval_out = ctx.avals_out[0]
+  assert isinstance(aval_out, core.ShapedArray)
+  if _pattern_match_lanes_to_sublanes_reshape(aval_in, aval_out):
+    block_shape = tuple(block_spec.block_shape)
+    if not isinstance(block_shape[-1], (int, pallas_core.Blocked)):
+      raise NotImplementedError(
+          f'reshape must use Blocked block size on lanes: {block_shape}'
+      )
+    last_dim = aval_out.shape[-1]
+    last_block_dim = _block_size(block_shape[-1])
+    if last_block_dim % 128 != 0:
+      raise NotImplementedError(
+          'reshape with non-128 aligned block size on lanes not supported yet'
+      )
+    if last_block_dim % last_dim != 0:
+      raise NotImplementedError(
+          'reshape with non-divisible block size on lanes not supported yet'
+      )
+    num_last_dim_blocks = last_block_dim // last_dim
+    new_block_shape = block_shape[:1] + (num_last_dim_blocks, last_dim)
+
+    def new_index_map(*args):
+      *idx, last = block_spec.index_map(*args)
+      return *idx, last, 0
+
+    return pallas_core.BlockSpec(new_block_shape, new_index_map)
+  raise NotImplementedError(f'reshape not supported yet: {aval_in}, {aval_out}')
