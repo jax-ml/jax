@@ -4951,6 +4951,9 @@ def _to_edtype_abstract_eval(x, *, edtype):
           not isinstance(x.dtype, dtypes.ExtendedDType))
   # For backward compatibility, if the edtype rules have a `convert_to` method,
   # use that rather than looking for an `allow_conversion: bool` attribute.
+  if not isinstance(x, (ShapedArray, core.DShapedArray)):
+    raise TypeError("can only convert to an extended dtype on an array type,"
+                    f"but got {type(x)}")
   if convert_to := getattr(edtype._rules, 'convert_to', None):
     allow_conversion = convert_to(x.dtype, edtype)
   else:
@@ -4960,6 +4963,7 @@ def _to_edtype_abstract_eval(x, *, edtype):
         f"Cannot convert_element_type from {dtype_to_string(x.dtype)} "
         f"to {dtype_to_string(edtype)}")
   rep_aval = core.physical_element_aval(edtype)
+  assert tuple(rep_aval.sharding.spec) == (None,) * rep_aval.ndim
   if x.dtype != rep_aval.dtype:
     raise ValueError(
         "can only convert to extended dtype from its representation dtype, "
@@ -4982,7 +4986,20 @@ def _to_edtype_abstract_eval(x, *, edtype):
         f" has a representation shape {rep_aval.shape} while the given "
         f"representation array has shape {x.shape}, so the shape suffix "
         f"does not match: given {shape_suffix} but required {rep_aval.shape}.")
-  return x.update(shape=shape_prefix, dtype=edtype)
+  if isinstance(x, ShapedArray):
+    spec_prefix, spec_suffix = x.sharding.spec[:n], x.sharding.spec[n:]
+    if tuple(spec_suffix) != (None,) * len(spec_suffix):
+      raise ValueError(
+          "can only convert to extended dtype from an array with trailing "
+          "axes that are not explicitly sharded, but tried to convert from "
+          f"{x.str_short(short_dtypes=True)} to an extended dtype with element "
+          f"shape {rep_aval.shape}")
+    return x.update(shape=shape_prefix, dtype=edtype,
+                    sharding=x.sharding.with_spec(spec_prefix))
+  elif isinstance(x, core.DShapedArray):
+    return x.update(shape=shape_prefix, dtype=edtype)
+  else:
+    assert False  # unreachable, see isinstance check above
 
 to_edtype_p = Primitive('to_edtype')
 to_edtype_p.def_impl(partial(dispatch.apply_primitive, to_edtype_p))
@@ -4999,6 +5016,9 @@ mlir.register_lowering(to_edtype_p, lambda _, x, **__: [x])
 def _from_edtype_abstract_eval(x, *, dtype):
   assert (isinstance(x.dtype, dtypes.ExtendedDType) and
           not isinstance(dtype, dtypes.ExtendedDType))
+  if not isinstance(x, (ShapedArray, core.DShapedArray)):
+    raise TypeError("can only convert from an extended dtype on an array type,"
+                    f"but got {type(x)}")
   if convert_from := getattr(x.dtype._rules, 'convert_from', None):
     allow_conversion = convert_from(x.dtype, dtype)
   else:
@@ -5008,16 +5028,22 @@ def _from_edtype_abstract_eval(x, *, dtype):
         f"Cannot convert_element_type from {dtype_to_string(x.dtype)} "
         f"to {dtype_to_string(dtype)}")
   rep_aval = core.physical_element_aval(x.dtype)
+  assert tuple(rep_aval.sharding.spec) == (None,) * rep_aval.ndim
   if rep_aval.dtype != dtype:
     raise ValueError(
         "can only convert from extended dtype to its representation dtype, "
         f"but tried to convert from {dtype_to_string(x.dtype)} to "
         f"{dtype_to_string(dtype)} which doesn't match the representation type "
         f"{dtype_to_string(rep_aval.dtype)}.")
-  if all(isinstance(d, int) for d in x.shape):
-    return core.ShapedArray(shape=(*x.shape, *rep_aval.shape), dtype=dtype)
+  if isinstance(x, ShapedArray):
+    return x.update(shape=(*x.shape, *rep_aval.shape), dtype=dtype)
+  elif isinstance(x, core.DShapedArray):
+    if all(isinstance(d, int) for d in x.shape):
+      return core.ShapedArray(shape=(*x.shape, *rep_aval.shape), dtype=dtype)
+    else:
+      raise NotImplementedError
   else:
-    raise NotImplementedError
+    assert False  # unreachable, see isinstance check above
 
 from_edtype_p = Primitive('from_edtype')
 from_edtype_p.def_impl(partial(dispatch.apply_primitive, from_edtype_p))

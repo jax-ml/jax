@@ -46,6 +46,7 @@ from jax._src.shard_map import shard_map
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax.experimental.custom_partitioning import (
     custom_partitioning, SdyShardingRule, BATCHING)
+from jax.experimental import primal_tangent_dtype
 from jax._src import array
 from jax._src.sharding import Sharding, common_devices_indices_map
 from jax._src import op_shardings
@@ -7927,6 +7928,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                        P(None, 'x', None))
 
     jax.lax.map(lambda _x: simple_func(w, _x), x, batch_size=2)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_extended_dtypes(self, mesh):
+    dtype = primal_tangent_dtype(jnp.dtype('int8'), jnp.dtype('bfloat16'))
+
+    @jax.jit
+    def f(x):
+      x = jax.lax.convert_element_type(x, dtype)
+      self.assertEqual(x.aval.sharding.spec, P('x'))
+      x = jax.lax.convert_element_type(x, 'int8')
+      self.assertEqual(x.aval.sharding.spec, P('x'))
+
+    x = jax.device_put(jnp.arange(8, dtype='int8'), P('x',))
+    f(x)  # doesn't crash
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
