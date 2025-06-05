@@ -148,7 +148,7 @@ def _get_cmdclass(pkg_source_path):
         _write_version(os.path.join(base_dir, pkg_source_path,
                                     os.path.basename(__file__)))
 
-  return dict(sdist=_sdist, build_py=_build_py)
+  return {"sdist": _sdist, "build_py": _build_py}
 
 
 __version__ = _get_version_string()

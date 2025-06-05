@@ -259,14 +259,14 @@ class ShardMapTest(jtu.JaxTestCase):
       )
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=8)
-      ),
-      dict(
-          testcase_name='_multiple_axis_names',
-          axis_name=('x', 'y'),
-          mesh_axes=dict(x=4, y=2),
-      ),
+      {
+          'testcase_name': '_single_axis_name', 'axis_name': 'x', 'mesh_axes': {'x': 8}
+      },
+      {
+          'testcase_name': '_multiple_axis_names',
+          'axis_name': ('x', 'y'),
+          'mesh_axes': {'x': 4, 'y': 2},
+      },
   )
   def test_all_to_all(self, axis_name, mesh_axes):
     mesh = jtu.create_mesh(tuple(mesh_axes.values()), tuple(mesh_axes.keys()))
@@ -291,13 +291,13 @@ class ShardMapTest(jtu.JaxTestCase):
     assert (c == jnp.reshape(a.T, (1, 64))).all()
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name='_partial_replicated', replicate_on_axes='x',
-      ),
-      dict(
-          testcase_name='_fully_replicated',
-          replicate_on_axes=('x', 'y'),
-      ),
+      {
+          'testcase_name': '_partial_replicated', 'replicate_on_axes': 'x',
+      },
+      {
+          'testcase_name': '_fully_replicated',
+          'replicate_on_axes': ('x', 'y'),
+      },
   )
   @jtu.run_on_devices("gpu")
   def test_pbroadcast(self, replicate_on_axes):

@@ -85,7 +85,7 @@ class TestBFGS(jtu.JaxTestCase):
           func(jnp),
           x0,
           method='BFGS',
-          options=dict(maxiter=maxiter, gtol=1e-6),
+          options={'maxiter': maxiter, 'gtol': 1e-6},
       )
       return result.x
 
@@ -164,7 +164,7 @@ class TestLBFGS(jtu.JaxTestCase):
           func(jnp),
           x0,
           method='l-bfgs-experimental-do-not-rely-on-this',
-          options=dict(maxiter=maxiter, gtol=1e-7),
+          options={'maxiter': maxiter, 'gtol': 1e-7},
       )
       return result.x
 
@@ -203,7 +203,7 @@ class TestLBFGS(jtu.JaxTestCase):
           f,
           x0,
           method='l-bfgs-experimental-do-not-rely-on-this',
-          options=dict(gtol=1e-6),
+          options={'gtol': 1e-6},
       )
       return result.x
 
@@ -231,7 +231,7 @@ class TestLBFGS(jtu.JaxTestCase):
           f,
           z0,
           method='l-bfgs-experimental-do-not-rely-on-this',
-          options=dict(gtol=1e-6),
+          options={'gtol': 1e-6},
       )
       return result.x
 

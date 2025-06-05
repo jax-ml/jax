@@ -42,17 +42,15 @@ class LaxBackedScipyInterpolateTests(jtu.JaxTestCase):
         *init_args[:2], method, False, *init_args[2:])(*call_args)
 
     def args_maker():
-      points = tuple(map(lambda x: np.linspace(*x), spaces))
+      points = tuple((np.linspace(*x) for x in spaces))
       values = rng(reduce(operator.add, tuple(map(np.shape, points))), float)
       fill_value = np.nan
 
       init_args = (points, values, fill_value)
       n_validation_points = 50
       valid_points = tuple(
-          map(
-              lambda x: np.linspace(x[0] - 0.2 * (x[1] - x[0]), x[1] + 0.2 *
-                                    (x[1] - x[0]), n_validation_points),
-              spaces))
+          (np.linspace(x[0] - 0.2 * (x[1] - x[0]), x[1] + 0.2 *
+                                    (x[1] - x[0]), n_validation_points) for x in spaces))
       valid_points = np.squeeze(np.stack(valid_points, axis=1))
       call_args = (valid_points,)
       return init_args, call_args

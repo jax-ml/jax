@@ -640,7 +640,7 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Sub-byte types are not yet supported with Mosaic GPU")
 
     # XLA does not specify the float->int conversion result for NaNs.
-    elements = dict(allow_nan=not jnp.issubdtype(to_dtype, jnp.integer))
+    elements = {"allow_nan": not jnp.issubdtype(to_dtype, jnp.integer)}
     shape = (8, 128)
     if to_dtype in {"int2", "uint2"}:
       # Make sure #rows is a least the packing factor of int2.
@@ -2723,7 +2723,7 @@ class PallasPrimitivesTest(PallasBaseTest):
     )(x)
     kwargs = {}
     if approx:
-      kwargs.update(dict(atol=2e-5, rtol=2e-5))
+      kwargs.update({"atol": 2e-5, "rtol": 2e-5})
     np.testing.assert_allclose(out, jax.lax.reciprocal(x), **kwargs)
 
 

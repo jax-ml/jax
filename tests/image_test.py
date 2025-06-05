@@ -107,7 +107,7 @@ class ImageTest(jtu.JaxTestCase):
                             atol=3e-5)
 
   @jtu.sample_product(
-    [dict(image_shape=image_shape, target_shape=target_shape)
+    [{"image_shape": image_shape, "target_shape": target_shape}
      for image_shape, target_shape in [
        ([3, 1, 2], [6, 1, 4]),
        ([1, 3, 2, 1], [1, 6, 4, 1]),
@@ -167,7 +167,7 @@ class ImageTest(jtu.JaxTestCase):
     jtu.check_grads(jax_fn, args_maker(), order=2, rtol=1e-2, eps=1.)
 
   @jtu.sample_product(
-    [dict(image_shape=image_shape, target_shape=target_shape)
+    [{"image_shape": image_shape, "target_shape": target_shape}
      for image_shape, target_shape in [
        ([1], [0]),
        ([5, 5], [5, 0]),
@@ -186,8 +186,8 @@ class ImageTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, jnp.zeros(target_shape, dtype))
 
   @jtu.sample_product(
-    [dict(image_shape=image_shape, target_shape=target_shape, scale=scale,
-          translation=translation)
+    [{"image_shape": image_shape, "target_shape": target_shape, "scale": scale,
+          "translation": translation}
      for image_shape, target_shape, scale, translation in [
        ([3, 1, 2], [6, 1, 4], [2.0, 1.0, 2.0], [1.0, 0.0, -1.0]),
        ([1, 3, 2, 1], [1, 6, 4, 1], [1.0, 2.0, 2.0, 1.0], [0.0, 1.0, -1.0, 0.0])

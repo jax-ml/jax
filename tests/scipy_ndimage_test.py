@@ -59,11 +59,11 @@ def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0):
 class NdimageTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
-    [dict(mode=mode, cval=cval)
+    [{'mode': mode, 'cval': cval}
      for mode in ['wrap', 'constant', 'nearest', 'mirror', 'reflect']
      for cval in ([0, -1] if mode == 'constant' else [0])
     ],
-    [dict(impl=impl, rng_factory=rng_factory)
+    [{'impl': impl, 'rng_factory': rng_factory}
      for impl, rng_factory in [
        ("original", partial(jtu.rand_uniform, low=0, high=1)),
        ("fixed", partial(jtu.rand_uniform, low=-0.75, high=1.75)),

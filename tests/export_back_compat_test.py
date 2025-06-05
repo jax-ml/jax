@@ -187,35 +187,35 @@ class CompatTest(bctu.CompatTestBase):
     return np.matmul(a, np.conj(np.swapaxes(a, -1, -2)))
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_cholesky_lapack_potrf(self, dtype_name="f32"):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     shape = (4, 4)
     input = self.cholesky_input(shape, dtype)
     del input  # Input is in the testdata, here for readability
     func = lax.linalg.cholesky
 
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
 
     info = cpu_cholesky_lapack_potrf.data_2024_05_31[dtype_name]
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_eig_lapack_geev(self, dtype_name="f32"):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     shape = (4, 4)
     def func():
       # Compute the inputs to simplify the harness
@@ -224,8 +224,8 @@ class CompatTest(bctu.CompatTestBase):
                             compute_left_eigenvectors=True,
                             compute_right_eigenvectors=True)
 
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
 
     def check_eig_results(res_run, res_expected, *, rtol, atol):
       # Test ported from tests.linlag_test.testEig
@@ -300,20 +300,20 @@ class CompatTest(bctu.CompatTestBase):
     self.assertAllClose(w_expected, w_now, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_eigh_lapack_syevd(self, dtype_name="f32"):
     # For lax.linalg.eigh
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     size = 8
     operand = CompatTest.eigh_input((size, size), dtype)
     func = lambda: CompatTest.eigh_harness((8, 8), dtype)
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
 
     info = cpu_eigh_lapack_syev.data_2024_08_19[dtype_name]
     data = self.load_testdata(cpu_eigh_lapack_syev.data_2024_08_19[dtype_name])
@@ -321,18 +321,18 @@ class CompatTest(bctu.CompatTestBase):
                       check_results=partial(self.check_eigh_results, operand))
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_gpu_eigh_solver_syev(self, dtype_name="f32"):
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Unsupported platform")
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     size = 4
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-2, f64=1e-10, c64=1e-2, c128=1e-10)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-2, "f64": 1e-10, "c64": 1e-2, "c128": 1e-10}[dtype_name]
     operand = CompatTest.eigh_input((size, size), dtype)
     data = self.load_testdata(cuda_eigh_cusolver_syev.data_2024_09_30[dtype_name])
     func = lambda: CompatTest.eigh_harness((size, size), dtype)
@@ -364,14 +364,14 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data)
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}",
-           dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}",
+           "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cuda_lu_cusolver_getrf(self, dtype_name:str):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     shape = (3, 4)
     func = lambda: CompatTest.lu_harness(shape, dtype)
     data = self.load_testdata(cuda_lu_cusolver_getrf.data_2024_08_19[dtype_name])
@@ -384,14 +384,14 @@ class CompatTest(bctu.CompatTestBase):
     return lax.linalg.qr(operand, full_matrices=True)
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_qr_lapack_geqrf(self, dtype_name="f32"):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     func = lambda: CompatTest.qr_harness((3, 3), dtype)
 
     info = cpu_qr_lapack_geqrf.data_2025_04_02[dtype_name]
@@ -399,16 +399,16 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol)
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_gpu_qr_solver_geqrf(self, dtype_name="f32"):
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Unsupported platform")
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
     shape = (2, 3, 3)
     func = lambda: CompatTest.qr_harness(shape, dtype)
     data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2024_09_26[dtype_name])
@@ -452,20 +452,20 @@ class CompatTest(bctu.CompatTestBase):
                                             dtype=dtype))
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}",
-           dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}",
+           "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_lu_lapack_getrf(self, dtype_name:str):
     # For lax.linalg.lu on CPU.
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     shape = (3, 3)
     func = lambda: CompatTest.lu_harness(shape, dtype)
     operand = np.reshape(np.arange(math.prod(shape), dtype=dtype), shape)
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
     info = cpu_lu_lapack_getrf.data_2024_05_31[dtype_name]
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
@@ -537,24 +537,24 @@ class CompatTest(bctu.CompatTestBase):
                                   np.asarray(out), atol=1e-4, rtol=1e-4))
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}",
-           dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}",
+           "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   @jax.default_matmul_precision("float32")
   def test_cpu_schur_lapack_gees(self, dtype_name="f32"):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     shape = (4, 4)
     input = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
 
     def func(input):
       return lax.linalg.schur(input, compute_schur_vectors=True)
 
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
 
     def check_schur_results(res_run, res_expected, *, rtol, atol):
       t_run, s_run = res_run
@@ -571,7 +571,7 @@ class CompatTest(bctu.CompatTestBase):
                       expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   @jax.default_matmul_precision("float32")
   def test_cpu_svd_lapack_gesdd(self, dtype_name="f32"):
@@ -581,8 +581,8 @@ class CompatTest(bctu.CompatTestBase):
     def func(operand):
       return lax.linalg.svd(operand, full_matrices=True, compute_uv=True)
 
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
 
     info = cpu_svd_lapack_gesdd.data_2024_08_13[dtype_name]
     data = self.load_testdata(info)
@@ -591,8 +591,8 @@ class CompatTest(bctu.CompatTestBase):
                                             *data.inputs))
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}_algorithm={algorithm_name}",
-           dtype_name=dtype_name, algorithm_name=algorithm_name)
+      {"testcase_name": f"_dtype={dtype_name}_algorithm={algorithm_name}",
+           "dtype_name": dtype_name, "algorithm_name": algorithm_name}
       for dtype_name in ("f32", "f64", "c64", "c128")
       for algorithm_name in ("qr", "jacobi"))
   @jax.default_matmul_precision("float32")
@@ -604,10 +604,10 @@ class CompatTest(bctu.CompatTestBase):
       return lax.linalg.svd(operand, full_matrices=True, compute_uv=True,
                             algorithm=algorithm)
 
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
-    algorithm = dict(qr=lax.linalg.SvdAlgorithm.QR,
-                     jacobi=lax.linalg.SvdAlgorithm.JACOBI)[algorithm_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
+    algorithm = {"qr": lax.linalg.SvdAlgorithm.QR,
+                     "jacobi": lax.linalg.SvdAlgorithm.JACOBI}[algorithm_name]
 
     info = cuda_svd_cusolver_gesvd.data_2024_10_08[algorithm_name][dtype_name]
     data = self.load_testdata(info)
@@ -617,15 +617,15 @@ class CompatTest(bctu.CompatTestBase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128")])
   @jax.default_matmul_precision("float32")
   def test_cpu_triangular_solve_blas_trsm(self, dtype_name="f32"):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     a_shape = (4, 4)
     a = np.arange(math.prod(a_shape), dtype=dtype).reshape(a_shape)
     a = np.tril(a + 5 * np.eye(a.shape[-1], dtype=a.dtype))
@@ -638,8 +638,8 @@ class CompatTest(bctu.CompatTestBase):
                       conjugate_a=False, unit_diagonal=False,
                       left_side=left_side)
 
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
 
     def check_triangular_solve_results(res_run, res_expected, *, rtol, atol):
       x, = res_run
@@ -658,46 +658,46 @@ class CompatTest(bctu.CompatTestBase):
                       expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   @jax.default_matmul_precision("float32")
   def test_cpu_hessenberg_lapack_gehrd(self, dtype_name="f32"):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     shape = (2, 4, 4)
     input_data = jtu.rand_default(self.rng())(shape, dtype)
     # del input_data  # Input is in the testdata, here for readability
     def func():
       return lax.linalg.hessenberg(input_data)
 
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
 
     info = cpu_hessenberg_lapack_gehrd.data_2024_08_31[dtype_name]
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   @jax.default_matmul_precision("float32")
   def test_cpu_tridiagonal_lapack_sytrd_hetrd(self, dtype_name="f32"):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    dtype = {"f32": np.float32, "f64": np.float64,
+                 "c64": np.complex64, "c128": np.complex128}[dtype_name]
     shape = (2, 4, 4)
     input_data = jtu.rand_default(self.rng())(shape, dtype)
     # del input_data  # Input is in the testdata, here for readability
     def func():
       return lax.linalg.tridiagonal(input_data, lower=True)
 
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
 
     info = cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01[dtype_name]
     data = self.load_testdata(info)
@@ -710,22 +710,22 @@ class CompatTest(bctu.CompatTestBase):
                       expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   @jax.default_matmul_precision("float32")
   def test_cpu_tridiagonal_solve_lapack_gtsv(self, dtype_name):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
     data = self.load_testdata(
         cpu_tridiagonal_solve_lapack_gtsv.data_2025_01_09[dtype_name]
     )
     self.run_one_test(lax.linalg.tridiagonal_solve, data, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      {"testcase_name": f"_dtype={dtype_name}", "dtype_name": dtype_name}
       for dtype_name in ("f32", "f64", "c64", "c128"))
   @jax.default_matmul_precision("float32")
   def test_gpu_tridiagonal_solver_sytrd(self, dtype_name):
@@ -735,8 +735,8 @@ class CompatTest(bctu.CompatTestBase):
     def func(x):
       return lax.linalg.tridiagonal(x, lower=True)
 
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    rtol = {"f32": 1e-3, "f64": 1e-5, "c64": 1e-3, "c128": 1e-5}[dtype_name]
+    atol = {"f32": 1e-4, "f64": 1e-12, "c64": 1e-4, "c128": 1e-12}[dtype_name]
 
     data = self.load_testdata(
         cuda_tridiagonal_cusolver_sytrd.data_2025_01_09[dtype_name]
@@ -788,7 +788,7 @@ class CompatTest(bctu.CompatTestBase):
       self.run_one_test(func, data)
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_platform={platform}", platform=platform)
+      {"testcase_name": f"_platform={platform}", "platform": platform}
       for platform in ("tpu", "gpu"))
   def test_annotate_device_placement(self, platform):
     if not jtu.test_device_matches([platform]):

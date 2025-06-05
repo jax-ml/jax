@@ -27,8 +27,8 @@ jax.config.parse_flags_with_absl()
 class VectorizeTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
-    [dict(left_shape=left_shape, right_shape=right_shape,
-          result_shape=result_shape)
+    [{'left_shape': left_shape, 'right_shape': right_shape,
+          'result_shape': result_shape}
       for left_shape, right_shape, result_shape in [
           ((2, 3), (3, 4), (2, 4)),
           ((2, 3), (1, 3, 4), (1, 2, 4)),
@@ -45,8 +45,8 @@ class VectorizeTest(jtu.JaxTestCase):
                             jnp.zeros(right_shape)).shape, result_shape)
 
   @jtu.sample_product(
-    [dict(left_shape=left_shape, right_shape=right_shape,
-          result_shape=result_shape)
+    [{'left_shape': left_shape, 'right_shape': right_shape,
+          'result_shape': result_shape}
       for left_shape, right_shape, result_shape in [
           ((2, 3), (3,), (2,)),
           ((2, 3), (1, 3), (1, 2)),
@@ -62,8 +62,8 @@ class VectorizeTest(jtu.JaxTestCase):
                             jnp.zeros(right_shape)).shape, result_shape)
 
   @jtu.sample_product(
-    [dict(left_shape=left_shape, right_shape=right_shape,
-          result_shape=result_shape)
+    [{'left_shape': left_shape, 'right_shape': right_shape,
+          'result_shape': result_shape}
       for left_shape, right_shape, result_shape in [
           ((3,), (3,), ()),
           ((2, 3), (3,), (2,)),
@@ -78,7 +78,7 @@ class VectorizeTest(jtu.JaxTestCase):
                             jnp.zeros(right_shape)).shape, result_shape)
 
   @jtu.sample_product(
-    [dict(shape=shape, result_shape=result_shape)
+    [{'shape': shape, 'result_shape': result_shape}
       for shape, result_shape in [
           ((3,), ()),
           ((2, 3,), (2,)),
@@ -99,7 +99,7 @@ class VectorizeTest(jtu.JaxTestCase):
     self.assertEqual(magnitude(inputs).shape, result_shape)
 
   @jtu.sample_product(
-    [dict(shape=shape, result_shape=result_shape)
+    [{'shape': shape, 'result_shape': result_shape}
       for shape, result_shape in [
           ((3,), ()),
           ((2, 3), (2,)),
@@ -112,7 +112,7 @@ class VectorizeTest(jtu.JaxTestCase):
     self.assertEqual(mean(jnp.zeros(shape)).shape, result_shape)
 
   @jtu.sample_product(
-    [dict(shape=shape, result_shape=result_shape)
+    [{'shape': shape, 'result_shape': result_shape}
       for shape, result_shape in [
           ((), (2,)),
           ((3,), (3,2,)),

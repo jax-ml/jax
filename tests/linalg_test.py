@@ -226,7 +226,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(dtype=dtype, method=method)
+    [{"dtype": dtype, "method": method}
      for dtype in float_types + complex_types
      for method in (["lu"] if jnp.issubdtype(dtype, jnp.complexfloating)
                      else ["lu", "qr"])
@@ -667,7 +667,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertArraysEqual(actual, expected)
 
   @jtu.sample_product(
-    [dict(axis=axis, shape=shape, ord=ord)
+    [{"axis": axis, "shape": shape, "ord": ord}
      for axis, shape in [
        (None, (1,)), (None, (7,)), (None, (5, 8)),
        (0, (9,)), (0, (4, 5)), ((1,), (10, 7, 3)), ((-2,), (4, 8)),
@@ -728,7 +728,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @skipIf(jtu.numpy_version() < (2, 0, 0), "np.linalg.vector_norm requires NumPy 2.0")
   @jtu.sample_product(
       [
-        dict(shape=shape, axis=axis)
+        {"shape": shape, "axis": axis}
         for shape in [(3,), (3, 4), (2, 3, 4, 5)]
         for axis in _axis_for_ndim(len(shape))
       ],
@@ -757,9 +757,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   # jnp.linalg.vecdot is an alias of jnp.vecdot; do a minimal test here.
   @jtu.sample_product(
       [
-        dict(lhs_shape=(2, 2, 2), rhs_shape=(2, 2), axis=0),
-        dict(lhs_shape=(2, 2, 2), rhs_shape=(2, 2), axis=1),
-        dict(lhs_shape=(2, 2, 2), rhs_shape=(2, 2), axis=-1),
+        {"lhs_shape": (2, 2, 2), "rhs_shape": (2, 2), "axis": 0},
+        {"lhs_shape": (2, 2, 2), "rhs_shape": (2, 2), "axis": 1},
+        {"lhs_shape": (2, 2, 2), "rhs_shape": (2, 2), "axis": -1},
       ],
       dtype=int_types + float_types + complex_types
   )
@@ -785,10 +785,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   # jnp.linalg.matmul is an alias of jnp.matmul; do a minimal test here.
   @jtu.sample_product(
       [
-        dict(lhs_shape=(3,), rhs_shape=(3,)), # vec-vec
-        dict(lhs_shape=(2, 3), rhs_shape=(3,)), # mat-vec
-        dict(lhs_shape=(3,), rhs_shape=(3, 4)), # vec-mat
-        dict(lhs_shape=(2, 3), rhs_shape=(3, 4)), # mat-mat
+        {"lhs_shape": (3,), "rhs_shape": (3,)}, # vec-vec
+        {"lhs_shape": (2, 3), "rhs_shape": (3,)}, # mat-vec
+        {"lhs_shape": (3,), "rhs_shape": (3, 4)}, # vec-mat
+        {"lhs_shape": (2, 3), "rhs_shape": (3, 4)}, # mat-mat
       ],
       dtype=float_types + complex_types
   )
@@ -813,9 +813,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   # jnp.linalg.tensordot is an alias of jnp.tensordot; do a minimal test here.
   @jtu.sample_product(
       [
-        dict(lhs_shape=(2, 2, 2), rhs_shape=(2, 2), axes=0),
-        dict(lhs_shape=(2, 2, 2), rhs_shape=(2, 2), axes=1),
-        dict(lhs_shape=(2, 2, 2), rhs_shape=(2, 2), axes=2),
+        {"lhs_shape": (2, 2, 2), "rhs_shape": (2, 2), "axes": 0},
+        {"lhs_shape": (2, 2, 2), "rhs_shape": (2, 2), "axes": 1},
+        {"lhs_shape": (2, 2, 2), "rhs_shape": (2, 2), "axes": 2},
       ],
       dtype=float_types + complex_types
   )
@@ -841,7 +841,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
       [
-          dict(m=m, n=n, full_matrices=full_matrices, hermitian=hermitian)
+          {"m": m, "n": n, "full_matrices": full_matrices, "hermitian": hermitian}
           for (m, n), full_matrices in (
               list(
                   itertools.product(
@@ -1117,7 +1117,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape}
      for lhs_shape, rhs_shape in [
       ((1, 1), (1, 1)),
       ((4, 4), (4,)),
@@ -1175,7 +1175,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.linalg.inv, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, hermitian=hermitian)
+    [{"shape": shape, "hermitian": hermitian}
      for shape in [(1, 1), (4, 4), (3, 10, 10), (2, 70, 7), (2000, 7),
                    (7, 1000), (70, 7, 2), (2, 0, 0), (3, 0, 2), (1, 0),
                    (400000, 2), (2, 400000)]
@@ -1281,7 +1281,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                           atol=tol, rtol=tol)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape}
       for lhs_shape, rhs_shape in [
           ((1, 1), (1, 1)),
           ((4, 6), (4,)),
@@ -1352,7 +1352,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertFalse(np.any(np.isnan(cube_func(a))))
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, axis=axis)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "axis": axis}
       for lhs_shape, rhs_shape, axis in [
           [(3,), (3,), -1],
           [(2, 3), (2, 3), -1],
@@ -1517,7 +1517,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp.linalg.lu_factor, args_maker)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape}
      for lhs_shape, rhs_shape in [
        ((1, 1), (1, 1)),
        ((4, 4), (4,)),
@@ -1542,14 +1542,14 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape}
       for lhs_shape, rhs_shape in [
         ((1, 1), (1, 1)),
         ((4, 4), (4,)),
         ((8, 8), (8, 4)),
       ]
     ],
-    [dict(assume_a=assume_a, lower=lower)
+    [{"assume_a": assume_a, "lower": lower}
       for assume_a, lower in [
         ('gen', False),
         ('pos', False),
@@ -1574,7 +1574,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape}
       for lhs_shape, rhs_shape in [
         ((4, 4), (4,)),
         ((4, 4), (4, 3)),
@@ -1617,7 +1617,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                         rtol={np.float32: 1e-4, np.float64: 1e-11})
 
   @jtu.sample_product(
-    [dict(left_side=left_side, a_shape=a_shape, b_shape=b_shape)
+    [{"left_side": left_side, "a_shape": a_shape, "b_shape": b_shape}
       for left_side, a_shape, b_shape in [
           (False, (4, 4), (4,)),
           (False, (4, 4), (1, 4,)),
@@ -1628,7 +1628,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
           (True, (2, 8, 8), (2, 8, 10)),
       ]
     ],
-    [dict(dtype=dtype, conjugate_a=conjugate_a)
+    [{"dtype": dtype, "conjugate_a": conjugate_a}
       for dtype in float_types + complex_types
       for conjugate_a in (
           [False] if jnp.issubdtype(dtype, jnp.floating) else [False, True])
@@ -1652,7 +1652,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     jtu.check_grads(f, (A, B), order=1, rtol=4e-2, eps=1e-3)
 
   @jtu.sample_product(
-    [dict(left_side=left_side, a_shape=a_shape, b_shape=b_shape, bdims=bdims)
+    [{"left_side": left_side, "a_shape": a_shape, "b_shape": b_shape, "bdims": bdims}
       for left_side, a_shape, b_shape, bdims in [
           (False, (4, 4), (2, 3, 4,), (None, 0)),
           (False, (2, 4, 4), (2, 2, 3, 4,), (None, 0)),
@@ -1752,7 +1752,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
   @jtu.sample_product(
-      [dict(shape=shape, k=k)
+      [{"shape": shape, "k": k}
        for shape in [(1, 1), (3, 4, 4), (10, 5)]
        # TODO(phawkins): there are some test failures on GPU for k=0
        for k in range(1, shape[-1] + 1)],
@@ -1858,7 +1858,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker_zeros)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+    [{"lhs_shape": lhs_shape, "rhs_shape": rhs_shape}
       for lhs_shape, rhs_shape in [
           [(1, 1), (1,)],
           [(4, 4), (4,)],
@@ -2039,7 +2039,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(R @ R, arg, atol=tol, check_dtypes=False)
 
   @jtu.sample_product(
-    [dict(diag=diag, expected=expected)
+    [{"diag": diag, "expected": expected}
      for diag, expected in [([1, 0, 0], [1, 0, 0]), ([0, 4, 0], [0, 2, 0]),
                             ([0, 0, 0, 9],[0, 0, 0, 3]),
                             ([0, 0, 9, 0, 0, 4], [0, 0, 3, 0, 0, 2])]

@@ -175,7 +175,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -192,7 +192,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for layout in sptu.iter_sparse_layouts((3, 3))
       ],
       N=[3, 5],
@@ -214,7 +214,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -262,7 +262,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -331,7 +331,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -365,7 +365,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -409,7 +409,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape, min_n_batch=1)
       ],
@@ -457,12 +457,12 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              lhs_shape=lhs_shape,
-              rhs_shape=rhs_shape,
-              lhs_contracting=lhs_contracting,
-              rhs_contracting=rhs_contracting,
-          )
+          {
+              "lhs_shape": lhs_shape,
+              "rhs_shape": rhs_shape,
+              "lhs_contracting": lhs_contracting,
+              "rhs_contracting": rhs_contracting,
+          }
           for lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
               [(5,), (5,), [0], [0]],
               [(5,), (5, 7), [0], [0]],
@@ -505,13 +505,13 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              n_batch=n_batch,
-              lhs_shape=lhs_shape,
-              rhs_shape=rhs_shape,
-              lhs_contracting=lhs_contracting,
-              rhs_contracting=rhs_contracting,
-          )
+          {
+              "n_batch": n_batch,
+              "lhs_shape": lhs_shape,
+              "rhs_shape": rhs_shape,
+              "lhs_contracting": lhs_contracting,
+              "rhs_contracting": rhs_contracting,
+          }
           for n_batch, lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
               [1, (1, 2, 3), (3, 2), [2], [0]],
               [1, (1, 3, 2), (3, 2), [1], [0]],
@@ -560,13 +560,13 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              n_batch=n_batch,
-              lhs_shape=lhs_shape,
-              rhs_shape=rhs_shape,
-              lhs_contracting=lhs_contracting,
-              rhs_contracting=rhs_contracting,
-          )
+          {
+              "n_batch": n_batch,
+              "lhs_shape": lhs_shape,
+              "rhs_shape": rhs_shape,
+              "lhs_contracting": lhs_contracting,
+              "rhs_contracting": rhs_contracting,
+          }
           for n_batch, lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
               [1, (1, 2, 3), (3), [2], [0]],
               [1, (1, 2), (3, 2), [1], [1]],
@@ -680,13 +680,13 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              n_batch=n_batch,
-              n_dense=n_dense,
-              lhs_shape=lhs_shape,
-              rhs_shape=rhs_shape,
-              dimension_numbers=dimension_numbers,
-          )
+          {
+              "n_batch": n_batch,
+              "n_dense": n_dense,
+              "lhs_shape": lhs_shape,
+              "rhs_shape": rhs_shape,
+              "dimension_numbers": dimension_numbers,
+          }
           for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
               ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 0),
               ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 2, 0),
@@ -809,13 +809,13 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              n_batch=n_batch,
-              n_dense=n_dense,
-              lhs_shape=lhs_shape,
-              rhs_shape=rhs_shape,
-              dimension_numbers=dimension_numbers,
-          )
+          {
+              "n_batch": n_batch,
+              "n_dense": n_dense,
+              "lhs_shape": lhs_shape,
+              "rhs_shape": rhs_shape,
+              "dimension_numbers": dimension_numbers,
+          }
           for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
               ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 0),
               ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 1),
@@ -875,13 +875,13 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              lhs_n_batch=lhs_n_batch,
-              rhs_n_batch=rhs_n_batch,
-              lhs_shape=lhs_shape,
-              rhs_shape=rhs_shape,
-              dimension_numbers=dimension_numbers,
-          )
+          {
+              "lhs_n_batch": lhs_n_batch,
+              "rhs_n_batch": rhs_n_batch,
+              "lhs_shape": lhs_shape,
+              "rhs_shape": rhs_shape,
+              "dimension_numbers": dimension_numbers,
+          }
           for lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dimension_numbers in [
               # (batched) outer products (no contraction)
               ((5,), 0, (6,), 0, (([], []), ([], []))),
@@ -1009,7 +1009,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -1024,7 +1024,7 @@ class BCOOTest(sptu.SparseTestCase):
     slices.sort(1)
     start_indices, limit_indices = unzip2(slices)
     strides = list(rng.randint(1, 4, len(shape)))
-    kwds = dict(start_indices=start_indices, limit_indices=limit_indices, strides=strides)
+    kwds = {"start_indices": start_indices, "limit_indices": limit_indices, "strides": strides}
 
     dense_func = partial(lax.slice, **kwds)
     sparse_func = partial(sparse.bcoo_slice, **kwds)
@@ -1047,7 +1047,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -1062,7 +1062,7 @@ class BCOOTest(sptu.SparseTestCase):
     # Note: test out-of-range start indices
     start_indices = rng.randint(-max(shape, default=0), max(shape, default=0), len(shape))
     slice_sizes = rng.randint(0, shape, len(shape))
-    kwds = dict(start_indices=start_indices, slice_sizes=slice_sizes)
+    kwds = {"start_indices": start_indices, "slice_sizes": slice_sizes}
     dense_func = partial(lax.dynamic_slice, **kwds)
     sparse_func = partial(sparse.bcoo_dynamic_slice, **kwds)
 
@@ -1084,7 +1084,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=n_batch, n_dense=n_dense, idx=idx)
+          {"shape": shape, "n_batch": n_batch, "n_dense": n_dense, "idx": idx}
           for shape, idx in [
               [(5,), np.index_exp[:]],
               [(5,), np.index_exp[4]],
@@ -1119,7 +1119,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+          {"shape": shape, "n_batch": n_batch, "n_dense": n_dense}
           for shape in [(2,), (3, 4), (5, 6, 2)]
           for n_batch in range(len(shape) + 1)
           for n_dense in [0]  # TODO(jakevdp): add tests with n_dense
@@ -1134,12 +1134,12 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              shape=shape,
-              n_batch=layout.n_batch,
-              n_dense=layout.n_dense,
-              nse=nse,
-          )
+          {
+              "shape": shape,
+              "n_batch": layout.n_batch,
+              "n_dense": layout.n_dense,
+              "nse": nse,
+          }
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
           for nse in [None, math.prod(shape) - 1]
@@ -1173,7 +1173,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -1198,7 +1198,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape, min_n_batch=1)
       ],
@@ -1223,7 +1223,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -1301,12 +1301,12 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              shape=shape,
-              n_batch=layout.n_batch,
-              n_dense=layout.n_dense,
-              axes=axes,
-          )
+          {
+              "shape": shape,
+              "n_batch": layout.n_batch,
+              "n_dense": layout.n_dense,
+              "axes": axes,
+          }
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
           for naxes in range(len(shape))
@@ -1327,12 +1327,12 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              shape=shape,
-              dimensions=dimensions,
-              n_batch=layout.n_batch,
-              n_dense=layout.n_dense,
-          )
+          {
+              "shape": shape,
+              "dimensions": dimensions,
+              "n_batch": layout.n_batch,
+              "n_dense": layout.n_dense,
+          }
           for shape, dimensions in [
               [(1,), (0,)],
               [(1,), (-1,)],
@@ -1357,17 +1357,17 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(batch_shapes=shapes, batch_perm=perm)
+          {"batch_shapes": shapes, "batch_perm": perm}
           for shapes in COMPATIBLE_SHAPE_PAIRS
           for perm in itertools.permutations(range(len(shapes[0])))
       ],
       [
-          dict(sparse_shapes=shapes, sparse_perm=perm)
+          {"sparse_shapes": shapes, "sparse_perm": perm}
           for shapes in COMPATIBLE_SHAPE_PAIRS
           for perm in itertools.permutations(range(len(shapes[0])))
       ],
       [
-          dict(dense_shapes=shapes, dense_perm=perm)
+          {"dense_shapes": shapes, "dense_perm": perm}
           for shapes in [[(), ()]]  # TODO(jakevdp) add support for dense shapes
           for perm in itertools.permutations(range(len(shapes[0])))
       ],
@@ -1415,12 +1415,12 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              shape=shape,
-              dimensions=dimensions,
-              n_batch=layout.n_batch,
-              n_dense=layout.n_dense,
-          )
+          {
+              "shape": shape,
+              "dimensions": dimensions,
+              "n_batch": layout.n_batch,
+              "n_dense": layout.n_dense,
+          }
           for shape in [(3,), (3, 4), (3, 4, 5)]
           for dimensions in sptu.iter_subsets(range(len(shape)))
           for layout in sptu.iter_sparse_layouts(shape)
@@ -1451,7 +1451,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+          {"lhs_shape": lhs_shape, "rhs_shape": rhs_shape}
           for lhs_shape, rhs_shape in [
               [(3, 4), (4,)],
               [(3, 4), (4, 5)],
@@ -1482,7 +1482,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+          {"lhs_shape": lhs_shape, "rhs_shape": rhs_shape}
           for lhs_shape, rhs_shape in [
               [(3,), (3,)],
               [(3, 4), (4,)],
@@ -1524,12 +1524,12 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              lhs_shape=lhs_shape,
-              rhs_shape=rhs_shape,
-              n_batch=layout.n_batch,
-              n_dense=layout.n_dense,
-          )
+          {
+              "lhs_shape": lhs_shape,
+              "rhs_shape": rhs_shape,
+              "n_batch": layout.n_batch,
+              "n_dense": layout.n_dense,
+          }
           for lhs_shape, rhs_shape in [
               [(3,), ()],
               [(3,), (1,)],
@@ -1566,13 +1566,13 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              lhs_shape=lhs_shape,
-              rhs_shape=rhs_shape,
-              lhs_n_batch=lhs_n_batch,
-              rhs_n_batch=rhs_n_batch,
-              n_dense=n_dense,
-          )
+          {
+              "lhs_shape": lhs_shape,
+              "rhs_shape": rhs_shape,
+              "lhs_n_batch": lhs_n_batch,
+              "rhs_n_batch": rhs_n_batch,
+              "n_dense": n_dense,
+          }
           # TODO(jakevdp): add broadcasted shapes (from bcoo_mul_dense) once sparse-sparse mul
           # supports inputs of differing rank.
           for lhs_shape, rhs_shape in [
@@ -1617,7 +1617,7 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(), (3,), (3, 5), (3, 5, 4)]
           for layout in sptu.iter_sparse_layouts(shape)
       ],
@@ -1642,12 +1642,12 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              shape=shape,
-              n_batch=layout.n_batch,
-              n_dense=layout.n_dense,
-              dimension=dimension,
-          )
+          {
+              "shape": shape,
+              "n_batch": layout.n_batch,
+              "n_dense": layout.n_dense,
+              "dimension": dimension,
+          }
           for shape in [(3,), (3, 5), (3, 5, 4)]
           for layout in sptu.iter_sparse_layouts(shape)
           for dimension in range(
@@ -1676,7 +1676,7 @@ class BCOOTest(sptu.SparseTestCase):
   @jax.default_matmul_precision("float32")
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_bcoo_conv_general_dilated(self, lhs_shape, rhs_shape, dtype, padding, format):
-    kwds = dict(window_strides=(1,), padding=padding)
+    kwds = {"window_strides": (1,), "padding": padding}
     sparse_fun = partial(sparse.bcoo_conv_general_dilated, **kwds)
     dense_fun = partial(lax.conv_general_dilated, **kwds)
     sprng = sptu.rand_bcoo(self.rng(), n_batch=2, n_dense=0)
@@ -1709,13 +1709,13 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              shape=shape,
-              n_batch=layout.n_batch,
-              n_dense=layout.n_dense,
-              n_batch_out=layout_out.n_batch,
-              n_dense_out=layout_out.n_dense,
-          )
+          {
+              "shape": shape,
+              "n_batch": layout.n_batch,
+              "n_dense": layout.n_dense,
+              "n_batch_out": layout_out.n_batch,
+              "n_dense_out": layout_out.n_dense,
+          }
           for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_sparse_layouts(shape)
           for layout_out in sptu.iter_sparse_layouts(shape)
@@ -1725,7 +1725,7 @@ class BCOOTest(sptu.SparseTestCase):
   def test_bcoo_update_layout(self, shape, dtype, n_batch, n_batch_out, n_dense, n_dense_out):
     rng = sptu.rand_sparse(self.rng())
     mat = sparse.BCOO.fromdense(rng(shape, dtype), n_batch=n_batch, n_dense=n_dense)
-    kwds = dict(n_batch=n_batch_out, n_dense=n_dense_out)
+    kwds = {"n_batch": n_batch_out, "n_dense": n_dense_out}
     # TODO(jakevdp): in case of length-0 or length-1 shapes errors/warnings will not be raised.
     if n_dense_out > n_dense or n_batch_out > n_batch:
       with self.assertRaises(sparse.SparseEfficiencyError):
@@ -1787,7 +1787,7 @@ class BCSRTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for layout in sptu.iter_bcsr_layouts(shape)
       ],
@@ -1817,7 +1817,7 @@ class BCSRTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=n_batch)
+          {"shape": shape, "n_batch": n_batch}
           for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for n_batch in range(len(shape) - 1)
       ],
@@ -1846,7 +1846,7 @@ class BCSRTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=n_batch)
+          {"shape": shape, "n_batch": n_batch}
           for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
           for n_batch in range(len(shape) - 1)
       ],
@@ -1897,7 +1897,7 @@ class BCSRTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+          {"shape": shape, "n_batch": layout.n_batch, "n_dense": layout.n_dense}
           for shape in [(3, 5), (3, 5, 4)]
           for layout in sptu.iter_bcsr_layouts(shape)
       ],
@@ -1917,12 +1917,12 @@ class BCSRTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
       [
-          dict(
-              shape=shape,
-              n_batch=layout.n_batch,
-              n_dense=layout.n_dense,
-              dimension=dimension,
-          )
+          {
+              "shape": shape,
+              "n_batch": layout.n_batch,
+              "n_dense": layout.n_dense,
+              "dimension": dimension,
+          }
           for shape in [(3, 5), (3, 5, 4)]
           for layout in sptu.iter_sparse_layouts(shape)
           for dimension in range(

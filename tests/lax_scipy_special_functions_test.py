@@ -181,9 +181,9 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
     map(_pretty_special_fun_name, jtu.sample_product_testcases(
-      [dict(op=rec.name, rng_factory=rec.rng_factory,
-            test_autodiff=rec.test_autodiff,
-            nondiff_argnums=rec.nondiff_argnums)],
+      [{"op": rec.name, "rng_factory": rec.rng_factory,
+            "test_autodiff": rec.test_autodiff,
+            "nondiff_argnums": rec.nondiff_argnums}],
       shapes=itertools.combinations_with_replacement(all_shapes, rec.nargs),
       dtypes=(itertools.combinations_with_replacement(rec.dtypes, rec.nargs)
         if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)),

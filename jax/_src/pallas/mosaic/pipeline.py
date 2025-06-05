@@ -1007,42 +1007,42 @@ class Scheduler:
 
 # Copy of the default pipeline schedule.  The default schedule tacitly assumes
 # that the source and target HBM Refs change with each cycle.
-_default_schedule = dict(
-    prologue_copy_in=lambda s, bref, _: s.first_step_ever,
+_default_schedule = {
+    "prologue_copy_in": lambda s, bref, _: s.first_step_ever,
     # We assume that the source ref changed for prefetch.
-    wait_in=lambda s, bref, _: s.has_changed(bref) | s.first_step,
-    copy_in=lambda s, bref, _: s.will_change(bref) & ~s.last_step_ever,
+    "wait_in": lambda s, bref, _: s.has_changed(bref) | s.first_step,
+    "copy_in": lambda s, bref, _: s.will_change(bref) & ~s.last_step_ever,
     # We assume that the source ref changed. E.g. because of a CM DMA.
-    prefetch=lambda s, bref, _: (
+    "prefetch": lambda s, bref, _: (
         (s.will_change(bref) | s.last_step) & ~s.last_step_ever
     ),
     # We assume that the target ref changed. E.g. because of a CM DMA.
-    wait_out=lambda s, bref, _: (
+    "wait_out": lambda s, bref, _: (
         (s.has_changed(bref) | s.first_step) & ~s.first_step_ever
     ),
     # We assume that the target ref is changing. E.g. because of a CM DMA.
-    copy_out=lambda s, bref, _: s.will_change(bref) | s.last_step,
-    epilogue_wait_out=lambda s, bref, _: s.last_step_ever,
-)
+    "copy_out": lambda s, bref, _: s.will_change(bref) | s.last_step,
+    "epilogue_wait_out": lambda s, bref, _: s.last_step_ever,
+}
 
 
 # Alternative schedule needed for accumulators reading and writing to a fixed
 # HBM reference to avoid HBM data races for trivially small grids: only
 # read/write when tiles change or at the very beginning or end of a fused
 # pipeline schedule.
-_fixed_schedule = dict(
-    prologue_copy_in=lambda s, bref, _: s.first_step_ever,
+_fixed_schedule = {
+    "prologue_copy_in": lambda s, bref, _: s.first_step_ever,
     # We don't assume that the source ref changed for prefetch.
-    wait_in=lambda s, bref, _: s.has_changed(bref) | s.first_step_ever,
-    copy_in=lambda s, bref, _: s.will_change(bref) & ~s.last_step_ever,
+    "wait_in": lambda s, bref, _: s.has_changed(bref) | s.first_step_ever,
+    "copy_in": lambda s, bref, _: s.will_change(bref) & ~s.last_step_ever,
     # We don't assume that the source ref changed.
-    prefetch=lambda s, bref, _: s.will_change(bref) & ~s.last_step_ever,
+    "prefetch": lambda s, bref, _: s.will_change(bref) & ~s.last_step_ever,
     # We don't assume that the target ref changed.
-    wait_out=lambda s, bref, _: s.has_changed(bref) & ~s.first_step_ever,
+    "wait_out": lambda s, bref, _: s.has_changed(bref) & ~s.first_step_ever,
     # We don't assume that the target ref is changing.
-    copy_out=lambda s, bref, _: s.will_change(bref) | s.last_step_ever,
-    epilogue_wait_out=lambda s, bref, _: s.last_step_ever,
-)
+    "copy_out": lambda s, bref, _: s.will_change(bref) | s.last_step_ever,
+    "epilogue_wait_out": lambda s, bref, _: s.last_step_ever,
+}
 
 
 def skip_input_copies_when_init_accumulators(schedule) -> Any:

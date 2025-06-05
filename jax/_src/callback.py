@@ -598,9 +598,9 @@ def send_to_host(
   send_op = hlo.SendOp([operand], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
   send_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
-      dict(
-          _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
-          _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
+      {
+          "_xla_host_transfer_handler_name": ir.StringAttr.get(str(name)),
+          "_xla_host_transfer_rendezvous": ir.StringAttr.get(str(name))})
   if sharding is not None:
     if config.use_shardy_partitioner.value:
       # `SendOp`'s return type is a StableHLO `TokenType`. However JAX passed
@@ -631,9 +631,9 @@ def receive_from_host(
                         hlo.TokenType.get()], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
   recv_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
-      dict(
-          _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
-          _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
+      {
+          "_xla_host_transfer_handler_name": ir.StringAttr.get(str(name)),
+          "_xla_host_transfer_rendezvous": ir.StringAttr.get(str(name))})
   if sharding is not None:
     if config.use_shardy_partitioner.value:
       assert isinstance(sharding, SdyArrayList)

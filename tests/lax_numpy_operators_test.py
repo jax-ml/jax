@@ -451,10 +451,10 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(op_name=rec.name, rng_factory=rec.rng_factory,
-            check_dtypes=rec.check_dtypes, tolerance=rec.tolerance,
-            inexact=rec.inexact, kwargs=rec.kwargs or {}, alias=rec.alias)],
-      [dict(shapes=shapes, dtypes=dtypes)
+      [{"op_name": rec.name, "rng_factory": rec.rng_factory,
+            "check_dtypes": rec.check_dtypes, "tolerance": rec.tolerance,
+            "inexact": rec.inexact, "kwargs": rec.kwargs or {}, "alias": rec.alias}],
+      [{"shapes": shapes, "dtypes": dtypes}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           itertools.combinations_with_replacement(rec.shapes, rec.nargs))
@@ -492,8 +492,8 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, tol=rec.tolerance)],
-      [dict(shapes=shapes, dtypes=dtypes)
+      [{"name": rec.name, "rng_factory": rec.rng_factory, "tol": rec.tolerance}],
+      [{"shapes": shapes, "dtypes": dtypes}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           itertools.combinations_with_replacement(rec.shapes, rec.nargs))
@@ -513,9 +513,9 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory,
-            op_tolerance=rec.tolerance)],
-      [dict(shapes=shapes, dtypes=dtypes)
+      [{"name": rec.name, "rng_factory": rec.rng_factory,
+            "op_tolerance": rec.tolerance}],
+      [{"shapes": shapes, "dtypes": dtypes}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           itertools.combinations_with_replacement(rec.shapes, rec.nargs))
@@ -566,7 +566,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       getattr(arr, name)(other)
 
   @jtu.sample_product(
-    [dict(op_name=rec.name, rng_factory=rec.rng_factory, dtype=dtype)
+    [{"op_name": rec.name, "rng_factory": rec.rng_factory, "dtype": dtype}
      for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2
      for dtype in rec.dtypes],
   )
@@ -594,7 +594,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, alias=rec.alias)],
+      [{"name": rec.name, "rng_factory": rec.rng_factory, "alias": rec.alias}],
       shapes=filter(
         _shapes_are_broadcast_compatible,
         itertools.combinations_with_replacement(rec.shapes, rec.nargs)),
@@ -629,7 +629,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.bitwise_count, args_maker)
 
   @jtu.sample_product(
-    [dict(dtypes=dtypes, shapes=shapes)
+    [{"dtypes": dtypes, "shapes": shapes}
       for shapes in filter(
         _shapes_are_broadcast_compatible,
         # TODO numpy always promotes to shift dtype for zero-dim shapes:

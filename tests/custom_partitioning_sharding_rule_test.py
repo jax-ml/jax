@@ -220,7 +220,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
     return ir.Operation.create(
         "stablehlo.custom_call",
         results=[self.get_tensor_type(shape)],
-        attributes=dict(call_target_name=ir.StringAttr.get("dummy_target"))
+        attributes={"call_target_name": ir.StringAttr.get("dummy_target")}
         ).result
 
   def test_conversion_rule_op_mismatch_in_operands_num(self):
@@ -230,7 +230,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((16, 32))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")),)
+        attributes={"call_target_name": ir.StringAttr.get("foo")},)
     rule = str_to_sdy_sharding_rule("i j-> i j")
     with self.assertRaisesRegex(
         ValueError,
@@ -246,7 +246,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((16, 32))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")),)
+        attributes={"call_target_name": ir.StringAttr.get("foo")},)
     rule = str_to_sdy_sharding_rule("i j, i j k-> i j")
     with self.assertRaisesRegex(
         ValueError,
@@ -264,7 +264,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         results=[self.get_tensor_type((16, 32))],
         operands=[opnd0,
             opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")),)
+        attributes={"call_target_name": ir.StringAttr.get("foo")},)
     rule = str_to_sdy_sharding_rule("i j, i j -> i j, i j")
     with self.assertRaisesRegex(
         ValueError,
@@ -280,7 +280,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((16, 32))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+        attributes={"call_target_name": ir.StringAttr.get("foo")})
     rule = str_to_sdy_sharding_rule("i j, i j -> i j k")
     with self.assertRaisesRegex(
         ValueError,
@@ -297,7 +297,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((16, 64))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+        attributes={"call_target_name": ir.StringAttr.get("foo")})
     rule = str_to_sdy_sharding_rule("i j, i j -> i j")
     with self.assertRaisesRegex(
         ValueError,
@@ -313,7 +313,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((16, 64))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+        attributes={"call_target_name": ir.StringAttr.get("foo")})
     rule = str_to_sdy_sharding_rule("..., ... -> ...")
     with self.assertRaisesRegex(
         ValueError,
@@ -329,7 +329,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((16, 32))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")),)
+        attributes={"call_target_name": ir.StringAttr.get("foo")},)
     rule = str_to_sdy_sharding_rule("... i j k, ... i j k -> ... i j k")
     with self.assertRaisesRegex(
         ValueError,
@@ -344,7 +344,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((9,))],
         operands=[opnd,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+        attributes={"call_target_name": ir.StringAttr.get("foo")})
     rule = str_to_sdy_sharding_rule("i j -> (i j)")
     with self.assertRaisesRegex(
         ValueError,
@@ -361,7 +361,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((16, 32))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+        attributes={"call_target_name": ir.StringAttr.get("foo")})
     rule = str_to_sdy_sharding_rule("..., ... -> ...")
     with self.assertRaisesRegex(
         ValueError,
@@ -376,7 +376,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((2,4))],
         operands=[opnd,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+        attributes={"call_target_name": ir.StringAttr.get("foo")})
     rule = str_to_sdy_sharding_rule("(i j) -> i j")
     mlir_rule = sdy_sharding_rule_to_mlir(rule,
           [result.operands[0].type],
@@ -392,7 +392,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type(())],
         operands=[opnd0, opnd1],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")),)
+        attributes={"call_target_name": ir.StringAttr.get("foo")},)
     rule = str_to_sdy_sharding_rule("..., ... -> ...")
     mlir_rule = sdy_sharding_rule_to_mlir(rule,
         [result.operands[0].type, result.operands[1].type],
@@ -408,7 +408,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((16, 32))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")),)
+        attributes={"call_target_name": ir.StringAttr.get("foo")},)
     rule = str_to_sdy_sharding_rule("..., ... -> ...")
     mlir_rule = sdy_sharding_rule_to_mlir(rule,
         [result.operands[0].type, result.operands[1].type],
@@ -424,7 +424,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((16, 32))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")),)
+        attributes={"call_target_name": ir.StringAttr.get("foo")},)
     rule = str_to_sdy_sharding_rule("...,  -> ...")
     mlir_rule = sdy_sharding_rule_to_mlir(rule,
         [result.operands[0].type, result.operands[1].type],
@@ -439,7 +439,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((8,))],
         operands=[opnd0,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+        attributes={"call_target_name": ir.StringAttr.get("foo")})
     rule = str_to_sdy_sharding_rule("i j -> (i j)")
     mlir_rule = sdy_sharding_rule_to_mlir(rule,
         [result.operands[0].type],
@@ -455,7 +455,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((16, 8))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+        attributes={"call_target_name": ir.StringAttr.get("foo")})
     rule = str_to_sdy_sharding_rule("... contracting_dim, contracting_dim k -> ... k")
     mlir_rule = sdy_sharding_rule_to_mlir(rule,
         [result.operands[0].type, result.operands[1].type],
@@ -472,7 +472,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         "stablehlo.custom_call",
         results=[self.get_tensor_type((4, 5, 32, 16))],
         operands=[opnd0, opnd1,],
-        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+        attributes={"call_target_name": ir.StringAttr.get("foo")})
     rule = str_to_sdy_sharding_rule("... j i, ...1 i j -> ...i j")
     mlir_rule = sdy_sharding_rule_to_mlir(rule,
         [result.operands[0].type, result.operands[1].type],

@@ -28,7 +28,7 @@ def download_dataset(dir_path, nb_classes):
     'third_party/zaidalyafeai.github.io/class_names.txt')
   with open(classes_path) as classes_file:
     classes = (
-      list(map(lambda c: c.strip(), classes_file.readlines()))[:nb_classes])
+      [c.strip() for c in classes_file.readlines()][:nb_classes])
 
   url = 'https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/'
   for cls in classes:

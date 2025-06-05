@@ -176,8 +176,8 @@ class DimExprTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
       kwargs=[
-          dict(testcase_name=f"_{dim_spec}",
-               dim_spec=dim_spec, dim_poly=dim_poly, expected_str=expected_str)
+          {"testcase_name": f"_{dim_spec}",
+               "dim_spec": dim_spec, "dim_poly": dim_poly, "expected_str": expected_str}
           for dim_spec, dim_poly, expected_str in [
               ("2*b*a", 2 * a * b, "2*a*b"),
               ("-2 * b * a^2 + b^2", -2 * a * a * b + b * b,
@@ -216,7 +216,7 @@ class DimExprTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
       kwargs=[
-          dict(dim_spec=dim_spec)
+          {"dim_spec": dim_spec}
           for dim_spec in [
               "b + a",
               "b - a",
@@ -239,13 +239,13 @@ class DimExprTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     kwargs=[
       # sanitized shape_spec sometimes collide
-      dict(testcase_name=(
+      {"testcase_name": (
         f"_shape_spec={shape_spec}" +
         {"...": "name=ellipsis",
          ")(": "name=bad_parens",
          "a ;": "name=a_semicolon",
          "'a'": "name=a_quotes"}.get(shape_spec, "")),
-        shape_spec=shape_spec)
+        "shape_spec": shape_spec}
       for shape_spec in [
           "2.5", "a + a a", "a ^ a", "a; a",
           "_", "...", "a ;", ")(", "2a", "a@", "'a'", "('a', ...)",
@@ -259,8 +259,8 @@ class DimExprTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_{shape_spec=}",
-           shape_spec=shape_spec, arg_shape=arg_shape, error_msg=error_msg)
+      {"testcase_name": f"_{shape_spec=}",
+           "shape_spec": shape_spec, "arg_shape": arg_shape, "error_msg": error_msg}
       for shape_spec, arg_shape, error_msg in [
           ("3", (4,), "different size"),
           ("b, 3", (None, 4), "different size"),
@@ -314,9 +314,9 @@ class DimExprTest(jtu.JaxTestCase):
   def test_evaluate(self):
     a, b = shape_poly.symbolic_shape("a, b")
 
-    self.assertEqual(1, (a * a - b)._evaluate(dict(a=2, b=3)))
-    self.assertEqual(1, ((a * a) // b)._evaluate(dict(a=2, b=3)))
-    self.assertEqual(4, ((a * a) % b)._evaluate(dict(a=5, b=7)))
+    self.assertEqual(1, (a * a - b)._evaluate({"a": 2, "b": 3}))
+    self.assertEqual(1, ((a * a) // b)._evaluate({"a": 2, "b": 3}))
+    self.assertEqual(4, ((a * a) % b)._evaluate({"a": 5, "b": 7}))
 
   def test_dim_vars_definitely_equal(self):
     a, b = shape_poly.symbolic_shape("a, b")
@@ -482,7 +482,7 @@ class DimExprTest(jtu.JaxTestCase):
       lb, ub = _bounds(fact)
       self.assertLessEqual(lb, ub)
       for a_val in (1, 5, 10000):
-        fact_val = fact._evaluate(dict(a=a_val))
+        fact_val = fact._evaluate({"a": a_val})
         self.assertGreaterEqual(fact_val, lb)
         self.assertLessEqual(fact_val, ub)
 
@@ -689,9 +689,9 @@ class DimExprTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_D={dividend}_d={divisor}_q={quotient}_r={remainder}",
-           dividend=dividend, divisor=divisor, quotient=quotient,
-           remainder=remainder)
+      {"testcase_name": f"_D={dividend}_d={divisor}_q={quotient}_r={remainder}",
+           "dividend": dividend, "divisor": divisor, "quotient": quotient,
+           "remainder": remainder}
       for dividend, divisor, quotient, remainder in [
           (a, 1, a, 0),
           (3 * a, 3, a, 0),
@@ -943,13 +943,13 @@ class DimExprTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
       kwargs=[
-          dict(constraint="2*a + 3*b >= 10", exp="a + b - 2",
-               bounds=(2, np.inf)),
-          dict(constraint="-2*a + 3*b >= 10", exp="a + 2*b",
-               bounds=(9, np.inf)),
-          dict(constraint="-2*a + -3*b >= -10", exp="-1*a + 2*b",
-               bounds=(-1, 3)),
-          dict(constraint="2*a + -3*b >= 10", exp="-1*a + 2*b", bounds=(-np.inf, np.inf)),
+          {"constraint": "2*a + 3*b >= 10", "exp": "a + b - 2",
+               "bounds": (2, np.inf)},
+          {"constraint": "-2*a + 3*b >= 10", "exp": "a + 2*b",
+               "bounds": (9, np.inf)},
+          {"constraint": "-2*a + -3*b >= -10", "exp": "-1*a + 2*b",
+               "bounds": (-1, 3)},
+          {"constraint": "2*a + -3*b >= 10", "exp": "-1*a + 2*b", "bounds": (-np.inf, np.inf)},
       ]
   )
   def test_constraints_ge_complex_gen(self,
@@ -1393,7 +1393,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"expr={name}", expr=expr)
+      {"testcase_name": f"expr={name}", "expr": expr}
       for name, expr in [
           ("d + 2", lambda d: d + 2),
           ("2 - d", lambda d: 2 - d),
@@ -1432,17 +1432,17 @@ class ShapePolyTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
       # The function `f` will be called with x: f32[b]
       kwargs=[
-          dict(testcase_name="cube", f=lambda x: x.shape[0] ** 3),
-          dict(testcase_name="zero", f=lambda x: x.shape[0] ** 0),
-          dict(testcase_name="rpow", f=lambda x: 2 ** x.shape[0]),
-          dict(testcase_name="negative",
-               f=lambda x: x.shape[0] ** -2,
-               expect_error=(ValueError, "cannot be raised to negative powers")),
-          dict(testcase_name="non_integer",
-               f=lambda x: x.shape[0] ** 1.5,
-               expect_error=(ValueError, "cannot be raised to non-integer powers")),
-          dict(testcase_name="sym_pow",
-               f=lambda x: x.shape[0] ** x.shape[0]),
+          {"testcase_name": "cube", "f": lambda x: x.shape[0] ** 3},
+          {"testcase_name": "zero", "f": lambda x: x.shape[0] ** 0},
+          {"testcase_name": "rpow", "f": lambda x: 2 ** x.shape[0]},
+          {"testcase_name": "negative",
+               "f": lambda x: x.shape[0] ** -2,
+               "expect_error": (ValueError, "cannot be raised to negative powers")},
+          {"testcase_name": "non_integer",
+               "f": lambda x: x.shape[0] ** 1.5,
+               "expect_error": (ValueError, "cannot be raised to non-integer powers")},
+          {"testcase_name": "sym_pow",
+               "f": lambda x: x.shape[0] ** x.shape[0]},
       ]
   )
   def test_pow(self, f, expect_error: tuple[Exception, str] | None = None):
@@ -1535,12 +1535,12 @@ class ShapePolyTest(jtu.JaxTestCase):
                               x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
 
     x = np.arange(4, dtype=_f32)
-    args = (([x, x], [x]), dict(a=x, b=x))
+    args = (([x, x], [x]), {"a": x, "b": x})
     check_shape_poly(self,
                      add_all_jax,
                      arg_descriptors=args,
                      polymorphic_shapes=[(["v", "v"], ["v"]),
-                                         dict(a="v", b="v")])
+                                         {"a": "v", "b": "v"}])
 
     # Prefix polymorphic shapes
     check_shape_poly(self,
@@ -1563,15 +1563,15 @@ class ShapePolyTest(jtu.JaxTestCase):
                      add_all_jax,
                      arg_descriptors=args,
                      polymorphic_shapes=[(["(4,)", "(_,)"], [("4,")]),
-                                         dict(a="(_,)", b="(4,)")])
+                                         {"a": "(_,)", "b": "(4,)"}])
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=name, polymorphic_shapes=polymorphic_shapes)
+      {"testcase_name": name, "polymorphic_shapes": polymorphic_shapes}
       for name, polymorphic_shapes in [
           ("1", ("b", "b", "b")),
-          ("2", dict(a="b")),
-          ("3", (dict(a="b"), "b")),
+          ("2", {"a": "b"}),
+          ("3", ({"a": "b"}, "b")),
       ]]
   )
   def test_pytree_errors(self, polymorphic_shapes=("b", "b", "b")):
@@ -1579,7 +1579,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
     # Arguments are of the form [([x00, x01], [x10]), dict(a=ya, b=yb)]
     x = np.arange(4, dtype=_f32)
-    args = (([x, x], [x]), dict(a=x, b=x))
+    args = (([x, x], [x]), {"a": x, "b": x})
     def add_all_jax(x_pair_of_list, y_dict):
       x_list_0, x_list_1 = x_pair_of_list
       return functools.reduce(op.add,
@@ -1602,7 +1602,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=str(polymorphic_shapes), polymorphic_shapes=polymorphic_shapes)
+      {"testcase_name": str(polymorphic_shapes), "polymorphic_shapes": polymorphic_shapes}
       # The polymorphic_shapes should have three comma-separated DimExpr matching
       # 16, 24, 32
       for polymorphic_shapes in [
@@ -1977,7 +1977,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=op_name, op=op)
+      {"testcase_name": op_name, "op": op}
       for op, op_name in [
           (jnp.array, "array"),
           (jnp.sin, "sin"),
@@ -1996,9 +1996,9 @@ class ShapePolyTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_{op.__name__}_other={other}:{type(other)}{'_other_jnp_array' if other_jnp_array else ''}{'_swap' if swap else ''}",
-           op=op, other=other,
-           other_jnp_array=other_jnp_array, swap=swap)
+      {"testcase_name": f"_{op.__name__}_other={other}:{type(other)}{'_other_jnp_array' if other_jnp_array else ''}{'_swap' if swap else ''}",
+           "op": op, "other": other,
+           "other_jnp_array": other_jnp_array, "swap": swap}
       for op in [op.add, op.mul, op.sub,
                  op.mod, op.floordiv, op.truediv]
       for other in [
@@ -2112,7 +2112,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
       kwargs=[
-          dict(slc=slc)
+          {"slc": slc}
           for slc in [
               slice(None, None, None),
               slice(2, 5),
@@ -3077,11 +3077,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
       ]
         for key_size, flags_name, override_jax_config_flags in [
           (2, "threefry_non_partitionable",
-           dict(jax_default_prng_impl="threefry2x32", jax_threefry_partitionable=False)),
+           {"jax_default_prng_impl": "threefry2x32", "jax_threefry_partitionable": False}),
           (2, "threefry_partitionable",
-           dict(jax_default_prng_impl="threefry2x32", jax_threefry_partitionable=True)),
+           {"jax_default_prng_impl": "threefry2x32", "jax_threefry_partitionable": True}),
           (4, "unsafe_rbg",
-           dict(jax_default_prng_impl="unsafe_rbg"))
+           {"jax_default_prng_impl": "unsafe_rbg"})
         ]
     ],
     # For reduce_window we have a variant with one reduction axis of

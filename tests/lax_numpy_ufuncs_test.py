@@ -57,7 +57,7 @@ def _jnp_ufunc_props(name):
   assert isinstance(jnp_func, jnp.ufunc)
   np_func = getattr(np, name)
   dtypes = [np.dtype(c) for c in "FfIi?" if f"{c}{c}->{c}" in np_func.types or f"{c}->{c}" in np_func.types]
-  return [dict(name=name, dtype=dtype) for dtype in dtypes]
+  return [{'name': name, 'dtype': dtype} for dtype in dtypes]
 
 
 JAX_NUMPY_UFUNCS = [

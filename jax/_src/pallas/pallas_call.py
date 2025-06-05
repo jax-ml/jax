@@ -1311,10 +1311,10 @@ def _pallas_call_lowering(
     )
 
   return mlir.lower_per_platform(ctx, "pallas_call",
-                                 dict(cpu=cpu_lowering,
-                                      tpu=tpu_lowering,
-                                      cuda=gpu_lowering,
-                                      rocm=gpu_lowering),
+                                 {'cpu': cpu_lowering,
+                                      'tpu': tpu_lowering,
+                                      'cuda': gpu_lowering,
+                                      'rocm': gpu_lowering},
                                  None,  # default_rule
                                  effects.no_effects,
                                  *in_nodes,

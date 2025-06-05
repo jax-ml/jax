@@ -545,7 +545,7 @@ class JVPTrace(Trace):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace, (fun, f_jvp, *primals_in),
-                                  dict(symbolic_zeros=symbolic_zeros))
+                                  {'symbolic_zeros': symbolic_zeros})
     with core.set_current_trace(self.parent_trace):
       if not symbolic_zeros:
         tangents_in = map(instantiate_zeros, tangents_in)
@@ -563,7 +563,7 @@ class JVPTrace(Trace):
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace,
                                   (fun, fwd, bwd, *primals_in),
-                                  dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
+                                  {'out_trees': out_trees, 'symbolic_zeros': symbolic_zeros})
     fwd_in = [(p, type(t) is not Zero) for p, t in zip(primals_in, tangents_in)]
     fwd_in = [x for pair in fwd_in for x in pair]   # flatten
     with core.set_current_trace(self.parent_trace):
@@ -711,7 +711,7 @@ class LinearizeTrace(Trace):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace, (fun, f_jvp, *primals_in),
-                                  dict(symbolic_zeros=symbolic_zeros))
+                                  {'symbolic_zeros': symbolic_zeros})
 
     @partial(lu.wrap_init, debug_info=f_jvp.debug_info)
     def _f_jvp(primals, tangents):
@@ -740,7 +740,7 @@ class LinearizeTrace(Trace):
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace,
                                   (fun, fwd, bwd, *primals_in),
-                                  dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
+                                  {'out_trees': out_trees, 'symbolic_zeros': symbolic_zeros})
     fwd_in = [(p, type(t) is not Zero) for p, t in zip(primals_in, tangents_in)]
     fwd_in_flat = [x for pair in fwd_in for x in pair]   # flatten
     with core.set_current_trace(self.parent_trace):

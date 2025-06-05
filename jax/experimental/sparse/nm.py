@@ -37,7 +37,7 @@ def nm_spmm(
     lhs: Array,
     rhs: Array,
     metadata: Array,
-    dimension_numbers: DotDimensionNumbers = (((1,), (0,)), (tuple(), tuple())),
+    dimension_numbers: DotDimensionNumbers = (((1,), (0,)), ((), ())),
     sparse_operand_idx: int = 0,
     output_dtype: DTypeLike = jnp.bfloat16,
 ) -> Array:

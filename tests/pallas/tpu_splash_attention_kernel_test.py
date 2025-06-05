@@ -252,7 +252,7 @@ def block_sizes_strategy(
   q_layout = draw(hps.sampled_from(splash.QKVLayout))
   k_layout = draw(hps.sampled_from(splash.QKVLayout))
   v_layout = draw(hps.sampled_from(splash.QKVLayout))
-  layouts = dict(q_layout=q_layout, k_layout=k_layout, v_layout=v_layout)
+  layouts = {"q_layout": q_layout, "k_layout": k_layout, "v_layout": v_layout}
   q_valid_block_shapes = [bs for bs in all_block_shapes if bs <= q_seq_len]
   kv_valid_block_shapes = [bs for bs in all_block_shapes if bs <= kv_seq_len]
   bq, bkv = (

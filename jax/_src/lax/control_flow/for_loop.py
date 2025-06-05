@@ -499,10 +499,10 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   assert len(unknown_inputs) == len(res_ref_unknown_outputs)
   assert len(unknown_inputs) == len(jaxpr_unknown.invars) - 1
   eqn = pe.new_eqn_recipe(trace, unknown_inputs, res_ref_unknown_outputs,
-                          for_p, dict(jaxpr=jaxpr_unknown, nsteps=nsteps,
-                                      reverse=reverse,
-                                      which_linear=which_linear_unknown,
-                                      unroll=unroll),
+                          for_p, {'jaxpr': jaxpr_unknown, 'nsteps': nsteps,
+                                      'reverse': reverse,
+                                      'which_linear': which_linear_unknown,
+                                      'unroll': unroll},
                           core.no_effects, source)
   for t in res_ref_unknown_outputs: t.recipe = eqn
   _, unknown_outputs = split_list(res_ref_unknown_outputs, [num_res])
@@ -589,7 +589,7 @@ def _for_partial_eval_custom(saveable, in_unknowns, in_inst, eqn):
       [v.aval for v in known_invars])
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   eqn_known = pe.new_jaxpr_eqn(known_invars, [*known_outvars, *resvars],
-                               core.closed_call_p, dict(call_jaxpr=call_jaxpr),
+                               core.closed_call_p, {'call_jaxpr': call_jaxpr},
                                call_jaxpr.effects, eqn.source_info, eqn.ctx)
 
   jaxpr_staged = _convert_inputs_to_reads(nsteps, len(res_avals),
@@ -613,7 +613,7 @@ def _for_partial_eval_custom(saveable, in_unknowns, in_inst, eqn):
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   _, outvars = partition_list(out_inst, eqn.outvars)
   eqn_staged = pe.new_jaxpr_eqn([*resvars, *eqn.invars], outvars,
-                               core.closed_call_p, dict(call_jaxpr=call_jaxpr),
+                               core.closed_call_p, {'call_jaxpr': call_jaxpr},
                                call_jaxpr.effects, eqn.source_info, eqn.ctx)
   new_vars = [*new_inst, *resvars]
   return eqn_known, eqn_staged, in_unknowns, out_inst, new_vars

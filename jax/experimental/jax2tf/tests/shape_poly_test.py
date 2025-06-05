@@ -308,7 +308,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   @jtu.parameterized_filterable(
     # make_args invoked with op.shape[0]: start, stop, step, dtype
     kwargs=[
-      dict(testcase_name=name, make_args=make_args, expect_error=expect_error, expect_msg=expect_msg)
+      {"testcase_name": name, "make_args": make_args, "expect_error": expect_error, "expect_msg": expect_msg}
       for name, make_args, expect_error, expect_msg in [
           # make_args invoked with op.shape[0]: start, stop, step, dtype
           ("float_start", lambda b: (0., b, None),
@@ -335,7 +335,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"expr={name}", expr=expr)
+      {"testcase_name": f"expr={name}", "expr": expr}
       for name, expr in [
           ("d + 2", lambda d: d + 2),
           ("2 - d", lambda d: 2 - d),
@@ -516,25 +516,25 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         arg_shapes=[(2, 3)],
         polymorphic_shapes=["a + 1, b + 2"],
         eager_mode=True,
-        expected_shapeenv=dict(a=1, b=1))
+        expected_shapeenv={"a": 1, "b": 1})
 
     check_avals(
         arg_shapes=[(7, 5)],
         polymorphic_shapes=["2 * a + b, b + 2"],
         eager_mode=True,
-        expected_shapeenv=dict(a=2, b=3))
+        expected_shapeenv={"a": 2, "b": 3})
 
     check_avals(
         arg_shapes=[(7, 11, 4)],
         polymorphic_shapes=["2 * a + b, b * b + 2, b + 1"],
         eager_mode=True,
-        expected_shapeenv=dict(a=2, b=3))
+        expected_shapeenv={"a": 2, "b": 3})
 
     check_avals(
         arg_shapes=[(7, 11, 19, 7)],
         polymorphic_shapes=["2 * a + b, b * b + 2, b + c * c, 2 * c + -1"],
         eager_mode=True,
-        expected_shapeenv=dict(a=2, b=3, c=4))
+        expected_shapeenv={"a": 2, "b": 3, "c": 4})
 
   def test_arg_avals_errors(self):
     """Test error reporting for shape polymorphism."""
@@ -585,46 +585,46 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   @jtu.parameterized_filterable(
     testcase_name=lambda kw: kw["shape"],
     kwargs=[
-      dict(shape=(8, 2, 9),  # a = 2, b = 3, c = 4
-           poly_spec="(a + 2*b, a, a + b + c)"),
-      dict(shape=(2, 2, 6),  # a = 2, b = 0, c = 4
-           poly_spec="(a + 2*b, a, a + b + c)",
-           expect_error=(
+      {"shape": (8, 2, 9),  # a = 2, b = 3, c = 4
+           "poly_spec": "(a + 2*b, a, a + b + c)"},
+      {"shape": (2, 2, 6),  # a = 2, b = 0, c = 4
+           "poly_spec": "(a + 2*b, a, a + b + c)",
+           "expect_error": (
              "Input shapes do not match the polymorphic shapes specification. "
              "Expected value >= 1 for dimension variable 'b'. "
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 0 from specification '2*b + a' for dimension args[0].shape[0] (= 2), . "
              "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
-           )),
-      dict(shape=(3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
-           poly_spec="(a + 2*b, a, a + b + c)",
-           expect_error=(
+           )},
+      {"shape": (3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
+           "poly_spec": "(a + 2*b, a, a + b + c)",
+           "expect_error": (
              "Input shapes do not match the polymorphic shapes specification. "
              "Division had remainder 1 when computing the value of 'b'. "
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), . "
              "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
-           )),
-      dict(shape=(8, 2, 6),  # a = 2, b = 3 - inconsistency
-           poly_spec="(a + 2*b, a, a + b)",
-           expect_error=(
+           )},
+      {"shape": (8, 2, 6),  # a = 2, b = 3 - inconsistency
+           "poly_spec": "(a + 2*b, a, a + b)",
+           "expect_error": (
              "Input shapes do not match the polymorphic shapes specification. "
              "Found inconsistency between dimension size args[0].shape[0] (= 8) and the specification '2*b + a' (= 10). "
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 4 from specification 'b + a' for dimension args[0].shape[2] (= 6), . "
              "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
-           )),
-      dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
-           poly_spec="(2 * a + b, a, c * c)",
-           expect_error=(
+           )},
+      {"shape": (7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
+           "poly_spec": "(2 * a + b, a, c * c)",
+           "expect_error": (
              "Cannot solve for values of dimension variables {'c'}. "
              "We can only solve linear uni-variate constraints. "
              "Using the following polymorphic shapes specifications: args[0].shape = (b + 2*a, a, c^2). "
              "Unprocessed specifications: 'c^2' for dimension size args[0].shape[2]. "
              "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
-           )),
+           )},
   ])
   def test_shape_constraints_errors(self, *,
       shape, poly_spec: str, expect_error: str | None = None):
@@ -650,14 +650,14 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     input_signature = [([tf.TensorSpec([None]), tf.TensorSpec([None])],
                                        [tf.TensorSpec([None])]),
-                                      dict(a=tf.TensorSpec([None]),
-                                           b=tf.TensorSpec([None]))]
+                                      {"a": tf.TensorSpec([None]),
+                                           "b": tf.TensorSpec([None])}]
     check_shape_poly(self,
                      add_all_jax,
                      skip_jax_run=True,
                      input_signature=input_signature,
                      polymorphic_shapes=[(["v", "v"], ["v"]),
-                                         dict(a="v", b="v")],
+                                         {"a": "v", "b": "v"}],
                      expected_output_signature=tf.TensorSpec([None]))
 
     # Prefix polymorphic shapes
@@ -688,18 +688,18 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      add_all_jax,
                      skip_jax_run=True,
                      input_signature=[([tf.TensorSpec([4]), tf.TensorSpec([4])], [tf.TensorSpec([4])]),
-                                      dict(a=tf.TensorSpec([4]), b=tf.TensorSpec([4]))],
+                                      {"a": tf.TensorSpec([4]), "b": tf.TensorSpec([4])}],
                      polymorphic_shapes=((["(4,)", "(_,)"], [("4,")]),
-                                         dict(a="(_,)", b="(4,)")),
+                                         {"a": "(_,)", "b": "(4,)"}),
                      expected_output_signature=tf.TensorSpec([4]))
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=name, polymorphic_shapes=polymorphic_shapes)
+      {"testcase_name": name, "polymorphic_shapes": polymorphic_shapes}
       for name, polymorphic_shapes in [
           ("1", ("b", "b", "b")),
-          ("2", dict(a="b")),
-          ("3", (dict(a="b"), "b")),
+          ("2", {"a": "b"}),
+          ("3", ({"a": "b"}, "b")),
       ]]
   )
   def test_pytree_errors(self, polymorphic_shapes=("b", "b", "b")):
@@ -707,7 +707,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     # Arguments are of the form [([x00, x01], [x10]), dict(a=ya, b=yb)]
     x = np.arange(4, dtype=_f32)
-    args = (([x, x], [x]), dict(a=x, b=x))
+    args = (([x, x], [x]), {"a": x, "b": x})
     def add_all_jax(x_pair_of_list, y_dict):
       x_list_0, x_list_1 = x_pair_of_list
       return functools.reduce(op.add,
@@ -728,7 +728,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=str(polymorphic_shapes), polymorphic_shapes=polymorphic_shapes)
+      {"testcase_name": str(polymorphic_shapes), "polymorphic_shapes": polymorphic_shapes}
       # The polymorphic_shapes should have three comma-separated DimExpr matching
       # 16, 24, 32
       for polymorphic_shapes in [
@@ -854,16 +854,16 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     def f(x):
       # x: dict(x=[b, 3, 4])
       # res: dict(res=[b, 3, 4])
-      return dict(res=x["x"] * 2.)
+      return {"res": x["x"] * 2.}
 
     check_shape_poly(self,
                      f,
                      skip_jax_run=True,
-                     input_signature=[dict(x=tf.TensorSpec([None, 3, 4]))],
-                     polymorphic_shapes=[dict(x=("b, 3, 4"))])
+                     input_signature=[{"x": tf.TensorSpec([None, 3, 4])}],
+                     polymorphic_shapes=[{"x": ("b, 3, 4")}])
 
-    f_tf = jax2tf.convert(f, polymorphic_shapes=[dict(x=("b, 3, 4"))])
-    x = dict(x=np.ones((2, 3, 4), dtype=np.float32))
+    f_tf = jax2tf.convert(f, polymorphic_shapes=[{"x": ("b, 3, 4")}])
+    x = {"x": np.ones((2, 3, 4), dtype=np.float32)}
     xv = tf.Variable(x["x"], dtype=np.float32)
 
     def tf_value_and_grad(xv):
@@ -872,9 +872,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       # res_grad: dict(grad=[b, 3, 4])
       with tf.GradientTape() as tape:
         tape.watch(xv)
-        res_tf = f_tf(dict(x=xv))
+        res_tf = f_tf({"x": xv})
         res_tf_grad = tape.gradient(res_tf, xv)
-        return res_tf, dict(grad=res_tf_grad)
+        return res_tf, {"grad": res_tf_grad}
 
     res_tf, res_tf_grad = tf_value_and_grad(xv)
     # Now use TF tracing for the gradient
@@ -931,7 +931,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f(x), res_tf)
 
   @jtu.parameterized_filterable(
-    kwargs=[dict(with_function=v) for v in [True, False]]
+    kwargs=[{"with_function": v} for v in [True, False]]
   )
   def test_grad_int(self, with_function=False):
     # https://github.com/jax-ml/jax/issues/7093
@@ -1204,7 +1204,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=op_name, op=op)
+      {"testcase_name": op_name, "op": op}
       for op, op_name in [
           (jnp.array, "array"),
           (jnp.sin, "sin"),
@@ -1224,9 +1224,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_{op.__name__}_other={other}:{type(other)}{'_other_jnp_array' if other_jnp_array else ''}{'_swap' if swap else ''}",
-           op=op, other=other,
-           other_jnp_array=other_jnp_array, swap=swap)
+      {"testcase_name": f"_{op.__name__}_other={other}:{type(other)}{'_other_jnp_array' if other_jnp_array else ''}{'_swap' if swap else ''}",
+           "op": op, "other": other,
+           "other_jnp_array": other_jnp_array, "swap": swap}
       for op in [op.add, op.mul, op.sub,
                  op.mod, op.floordiv, op.truediv]
       for other in [
@@ -1449,34 +1449,34 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   polymorphic_shapes=["b"])
       for kwargs in [
         # Positive step
-        dict(testcase_name="b", make_args=lambda b: (b, None, None, None)),
-        dict(testcase_name="0_b+1", make_args=lambda b: (0, b + 1, None, None)),
-        dict(testcase_name="0_5b_2", make_args=lambda b: (0, 5 * b, 2, None)),
-        dict(testcase_name="0_5b+1_2", make_args=lambda b: (0, 5 * b + 1, 2, None)),
-        dict(testcase_name="b_5b+2_2", make_args=lambda b: (b, 5 * b + 2, 2, None)),
-        dict(testcase_name="0_b-1_2", make_args=lambda b: (0, b - 1, 2, None)),
-        dict(testcase_name="0_b-2_2", make_args=lambda b: (0, b - 2, 2, None)),
-        dict(testcase_name="0_-b_2", make_args=lambda b: (0, -b, 2, None)),
-        dict(testcase_name="0_1-b_2", make_args=lambda b: (0, 1 - b, 2, None)),
-        dict(testcase_name="0_b-3_2", make_args=lambda b: (0, b - 3, 2, None)),
+        {"testcase_name": "b", "make_args": lambda b: (b, None, None, None)},
+        {"testcase_name": "0_b+1", "make_args": lambda b: (0, b + 1, None, None)},
+        {"testcase_name": "0_5b_2", "make_args": lambda b: (0, 5 * b, 2, None)},
+        {"testcase_name": "0_5b+1_2", "make_args": lambda b: (0, 5 * b + 1, 2, None)},
+        {"testcase_name": "b_5b+2_2", "make_args": lambda b: (b, 5 * b + 2, 2, None)},
+        {"testcase_name": "0_b-1_2", "make_args": lambda b: (0, b - 1, 2, None)},
+        {"testcase_name": "0_b-2_2", "make_args": lambda b: (0, b - 2, 2, None)},
+        {"testcase_name": "0_-b_2", "make_args": lambda b: (0, -b, 2, None)},
+        {"testcase_name": "0_1-b_2", "make_args": lambda b: (0, 1 - b, 2, None)},
+        {"testcase_name": "0_b-3_2", "make_args": lambda b: (0, b - 3, 2, None)},
         # Cannot tell if size >= 0
         # Negative step
-        dict(testcase_name="b_0_-1", make_args=lambda b: (b, 0, -1, None)),
-        dict(testcase_name="b_1_-2", make_args=lambda b: (b, 1, -2, None)),
-        dict(testcase_name="b_-1_-1", make_args=lambda b: (b, -1, -1, None)),
-        dict(testcase_name="5b+1_0_-2",
-             make_args=lambda b: (5 * b + 1, 0, -2, None)),
-        dict(testcase_name="5b+2_0_-2",
-             make_args=lambda b: (5 * b + 2, 0, -2, None)),
-        dict(testcase_name="b-3_0_-2", make_args=lambda b: (b - 3, 0, -2, None)),
+        {"testcase_name": "b_0_-1", "make_args": lambda b: (b, 0, -1, None)},
+        {"testcase_name": "b_1_-2", "make_args": lambda b: (b, 1, -2, None)},
+        {"testcase_name": "b_-1_-1", "make_args": lambda b: (b, -1, -1, None)},
+        {"testcase_name": "5b+1_0_-2",
+             "make_args": lambda b: (5 * b + 1, 0, -2, None)},
+        {"testcase_name": "5b+2_0_-2",
+             "make_args": lambda b: (5 * b + 2, 0, -2, None)},
+        {"testcase_name": "b-3_0_-2", "make_args": lambda b: (b - 3, 0, -2, None)},
         # Cannot tell if size >= 0
         # Symbolic step
-        dict(testcase_name="0_10_b", make_args=lambda b: (0, 10, b)),
-        dict(testcase_name="0_0_b", make_args=lambda b: (0, 0, b)),
-        dict(testcase_name="10_0_-b", make_args=lambda b: (10, 0, -b)),
-        dict(testcase_name="b_1_-b", make_args=lambda b: (b, 1, -b)),
+        {"testcase_name": "0_10_b", "make_args": lambda b: (0, 10, b)},
+        {"testcase_name": "0_0_b", "make_args": lambda b: (0, 0, b)},
+        {"testcase_name": "10_0_-b", "make_args": lambda b: (10, 0, -b)},
+        {"testcase_name": "b_1_-b", "make_args": lambda b: (b, 1, -b)},
         # Float return type
-        dict(testcase_name="0_b_1_f32", make_args=lambda b: (0, b, 1, np.float32))
+        {"testcase_name": "0_b_1_f32", "make_args": lambda b: (0, b, 1, np.float32)}
       ]
     ],
     # Reduce the poly dimension
@@ -2094,11 +2094,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
       ]
         for key_size, flags_name, override_jax_config_flags in [
           (2, "threefry_non_partitionable",
-           dict(jax_default_prng_impl="threefry2x32", jax_threefry_partitionable=False)),
+           {"jax_default_prng_impl": "threefry2x32", "jax_threefry_partitionable": False}),
           (2, "threefry_partitionable",
-           dict(jax_default_prng_impl="threefry2x32", jax_threefry_partitionable=True)),
+           {"jax_default_prng_impl": "threefry2x32", "jax_threefry_partitionable": True}),
           (4, "unsafe_rbg",
-           dict(jax_default_prng_impl="unsafe_rbg"))
+           {"jax_default_prng_impl": "unsafe_rbg"})
         ]
     ],
     # For reduce_window we have a variant with one reduction axis of

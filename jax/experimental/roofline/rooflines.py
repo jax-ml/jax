@@ -400,8 +400,8 @@ def _return_zeros_if_one_sized_axis(
   if axes_size > 1:
     return None
   return roofline.RooflineResult(
-    ici_bytes={axis: 0 for axis in axes},
-    ici_latency={axis: 0 for axis in axes},
+    ici_bytes=dict.fromkeys(axes, 0),
+    ici_latency=dict.fromkeys(axes, 0),
   )
 
 

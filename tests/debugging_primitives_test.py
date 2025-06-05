@@ -217,12 +217,12 @@ class DebugPrintTest(jtu.JaxTestCase):
   def test_can_stage_out_ordered_print_with_pytree(self):
     @jax.jit
     def f(x):
-      struct = dict(foo=x)
+      struct = {"foo": x}
       debug_print('x: {}', struct, ordered=True)
     with jtu.capture_stdout() as output:
       f(np.array(2, np.int32))
       jax.effects_barrier()
-    self.assertEqual(output(), f"x: {str(dict(foo=jnp.array(2, np.int32)))}\n")
+    self.assertEqual(output(), f"x: {str({'foo': jnp.array(2, np.int32)})}\n")
 
   def test_debug_print_should_use_default_layout(self):
     data = np.array(

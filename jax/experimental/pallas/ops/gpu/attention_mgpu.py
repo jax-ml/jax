@@ -794,7 +794,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
 def attention_reference(q, k, v, causal=False, save_residuals=False):
   batch_size, q_seq_len, num_q_heads, head_dim = q.shape
   kv_seq_len, num_kv_heads = k.shape[1], k.shape[2]
-  q, k, v = map(lambda x: x.astype(jnp.float32), (q, k, v))
+  q, k, v = (x.astype(jnp.float32) for x in (q, k, v))
   q_reshaped = q.reshape(
       batch_size, q_seq_len, num_kv_heads, num_q_heads // num_kv_heads, head_dim
   )

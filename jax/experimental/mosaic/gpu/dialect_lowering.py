@@ -807,9 +807,9 @@ def _unary_op_lowering_rule(
     raise ValueError("Layout mismatch")
   kwargs = {}
   if hasattr(op, "fastmath"):
-    kwargs = dict(
-        approx=op.fastmath == ir.Attribute.parse("#arith.fastmath<afn>")
-    )
+    kwargs = {
+        "approx": op.fastmath == ir.Attribute.parse("#arith.fastmath<afn>")
+    }
   a = _fragmented_array_from_ir(op.operand, layout, is_signed)
   return [_fragmented_array_to_ir(impl(a, **kwargs), op.result.type)]
 

@@ -1749,30 +1749,30 @@ class vectorize_with_mpmath(np.vectorize):
   """Same as numpy.vectorize but using mpmath backend for function evaluation.
   """
 
-  map_float_to_complex = dict(float16='complex32', float32='complex64', float64='complex128', float128='complex256', longdouble='clongdouble')
+  map_float_to_complex = {'float16': 'complex32', 'float32': 'complex64', 'float64': 'complex128', 'float128': 'complex256', 'longdouble': 'clongdouble'}
   map_complex_to_float = {v: k for k, v in map_float_to_complex.items()}
 
-  float_prec = dict(
+  float_prec = {
     # float16=11,
-    float32=24,
-    float64=53,
+    'float32': 24,
+    'float64': 53,
     # float128=113,
     # longdouble=113
-  )
+  }
 
-  float_minexp = dict(
-    float16=-14,
-    float32=-126,
-    float64=-1022,
-    float128=-16382
-  )
+  float_minexp = {
+    'float16': -14,
+    'float32': -126,
+    'float64': -1022,
+    'float128': -16382
+  }
 
-  float_maxexp = dict(
-    float16=16,
-    float32=128,
-    float64=1024,
-    float128=16384,
-  )
+  float_maxexp = {
+    'float16': 16,
+    'float32': 128,
+    'float64': 1024,
+    'float128': 16384,
+  }
 
   def __init__(self, *args, **kwargs):
     mpmath = kwargs.pop('mpmath', None)
@@ -1781,8 +1781,8 @@ class vectorize_with_mpmath(np.vectorize):
     self.extra_prec_multiplier = kwargs.pop('extra_prec_multiplier', 0)
     self.extra_prec = kwargs.pop('extra_prec', 0)
     self.mpmath = mpmath
-    self.contexts = dict()
-    self.contexts_inv = dict()
+    self.contexts = {}
+    self.contexts_inv = {}
     for fp_format, prec in self.float_prec.items():
       ctx = self.mpmath.mp.clone()
       ctx.prec = prec
@@ -1917,12 +1917,12 @@ class numpy_with_mpmath:
     'normalize',
   ]
 
-  _mp_names = dict(
-    abs='absmin', absolute='absmin',
-    log='ln',
-    arcsin='asin', arccos='acos', arctan='atan',
-    arcsinh='asinh', arccosh='acosh', arctanh='atanh',
-  )
+  _mp_names = {
+    'abs': 'absmin', 'absolute': 'absmin',
+    'log': 'ln',
+    'arcsin': 'asin', 'arccos': 'acos', 'arctan': 'atan',
+    'arcsinh': 'asinh', 'arccosh': 'acosh', 'arctanh': 'atanh',
+  }
 
   def __init__(self, mpmath, extra_prec_multiplier=0, extra_prec=0):
     self.mpmath = mpmath

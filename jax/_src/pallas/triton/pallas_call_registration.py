@@ -109,16 +109,16 @@ def pallas_call_lowering(
                               mlir.dtype_to_ir_type(bm.array_shape_dtype.dtype))
       for bm in grid_mapping.block_mappings_output
     ]
-    backend_config = dict(
-        name=ir.StringAttr.get(name),
-        ir=ir.StringAttr.get(buf.getvalue()),
-        num_stages=mlir.i32_attr(num_stages),
-        num_warps=mlir.i32_attr(num_warps),
-        grid_x=mlir.i32_attr(grid_x),
-        grid_y=mlir.i32_attr(grid_y),
-        grid_z=mlir.i32_attr(grid_z),
-        debug=ir.BoolAttr.get(debug),
-    )
+    backend_config = {
+        "name": ir.StringAttr.get(name),
+        "ir": ir.StringAttr.get(buf.getvalue()),
+        "num_stages": mlir.i32_attr(num_stages),
+        "num_warps": mlir.i32_attr(num_warps),
+        "grid_x": mlir.i32_attr(grid_x),
+        "grid_y": mlir.i32_attr(grid_y),
+        "grid_z": mlir.i32_attr(grid_z),
+        "debug": ir.BoolAttr.get(debug),
+    }
     if params.serialized_metadata is not None:
       # This field is unstable and may be removed in the future.
       backend_config["serialized_metadata"] = ir.StringAttr.get(

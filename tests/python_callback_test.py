@@ -45,10 +45,10 @@ map, unsafe_map = util.safe_map, map
 io_callback_ordered = functools.partial(io_callback, ordered=True)
 io_calback_unordered = functools.partial(io_callback, ordered=False)
 with_pure_and_io_callbacks = parameterized.named_parameters(
-  dict(testcase_name=flavor,
-       callback=dict(io_unordered=io_calback_unordered,
-                     io_ordered=io_callback_ordered,
-                     pure=jax.pure_callback)[flavor])
+  {"testcase_name": flavor,
+       "callback": {"io_unordered": io_calback_unordered,
+                     "io_ordered": io_callback_ordered,
+                     "pure": jax.pure_callback}[flavor]}
   for flavor in ("io_unordered", "io_ordered", "pure")
 )
 
@@ -74,15 +74,15 @@ class PythonCallbackTest(jtu.JaxTestCase):
     self.assertEqual(out, 1.)
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name=f"{flavor}_expect_dtype_{expect_dtype}",
-          callback=dict(
-              io_unordered=io_calback_unordered,
-              io_ordered=io_callback_ordered,
-              pure=jax.pure_callback,
-          )[flavor],
-          expect_dtype=expect_dtype,
-      )
+      {
+          "testcase_name": f"{flavor}_expect_dtype_{expect_dtype}",
+          "callback": {
+              "io_unordered": io_calback_unordered,
+              "io_ordered": io_callback_ordered,
+              "pure": jax.pure_callback,
+          }[flavor],
+          "expect_dtype": expect_dtype,
+      }
       for flavor in ("io_unordered", "io_ordered", "pure")
       for expect_dtype in (np.int32, np.int64, np.float32, np.float64)
   )
@@ -141,11 +141,11 @@ class PythonCallbackTest(jtu.JaxTestCase):
     self.assertEqual(out, 42.0)
 
   @parameterized.named_parameters(
-    dict(testcase_name=f"{flavor}_{dtype}",
-         dtype=dtype,
-         callback=dict(io_unordered=io_calback_unordered,
-                       io_ordered=io_callback_ordered,
-                       pure=jax.pure_callback)[flavor])
+    {"testcase_name": f"{flavor}_{dtype}",
+         "dtype": dtype,
+         "callback": {"io_unordered": io_calback_unordered,
+                       "io_ordered": io_callback_ordered,
+                       "pure": jax.pure_callback}[flavor]}
     for flavor in ("io_unordered", "io_ordered", "pure")
     for dtype in jtu.dtypes.all
   )
@@ -368,16 +368,16 @@ class PythonCallbackTest(jtu.JaxTestCase):
   def test_callback_with_pytree_arguments_and_return_values(self, *, callback):
 
     def _callback(x):
-      return dict(y=[x])
+      return {"y": [x]}
 
     @jax.jit
     def f(x):
-      return callback(_callback, dict(y=[core.ShapedArray((), np.float32)]),
+      return callback(_callback, {"y": [core.ShapedArray((), np.float32)]},
                       [x])
 
     out = f(jnp.float32(2.))
     jax.effects_barrier()
-    self.assertEqual(out, dict(y=[2.]))
+    self.assertEqual(out, {"y": [2.]})
 
   @with_pure_and_io_callbacks
   def test_callback_inside_of_while_loop_of_scalars(self, *, callback):
@@ -1236,11 +1236,11 @@ class IOCallbackTest(jtu.JaxTestCase):
       f(2., 3.)
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name=f'{ordered=}_{with_sharding=}',
-          ordered=ordered,
-          with_sharding=with_sharding,
-      )
+      {
+          "testcase_name": f'{ordered=}_{with_sharding=}',
+          "ordered": ordered,
+          "with_sharding": with_sharding,
+      }
       for ordered in [True, False]
       for with_sharding in [True, False]
   )
@@ -1255,7 +1255,7 @@ class IOCallbackTest(jtu.JaxTestCase):
       nonlocal _collected
       _collected.append(int(x.sum()))
 
-    io_callback_kwargs = dict(ordered=ordered)
+    io_callback_kwargs = {"ordered": ordered}
     callback_device = devices[0]
     if with_sharding:
       callback_device = devices[-1]
@@ -1357,10 +1357,10 @@ class IOCallbackTest(jtu.JaxTestCase):
     self.assertEqual(_collected, expected)
 
   @parameterized.named_parameters(
-    dict(testcase_name='multi_device',
-         single_device=False),
-    dict(testcase_name='single_device',
-         single_device=True)
+    {"testcase_name": 'multi_device',
+         "single_device": False},
+    {"testcase_name": 'single_device',
+         "single_device": True}
   )
   def test_can_shard_io_callback_manually(self, single_device: bool):
 

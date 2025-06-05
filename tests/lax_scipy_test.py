@@ -95,7 +95,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Scipy implementation."""
 
   @jtu.sample_product(
-    [dict(shapes=shapes, axis=axis, use_b=use_b)
+    [{"shapes": shapes, "axis": axis, "use_b": use_b}
       for shape_group in compatible_shapes
       for use_b in [False, True]
       for shapes in itertools.product(*(
@@ -299,7 +299,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertEqual(jax.jacrev(lsp_special.entr)(0.0), jnp.inf)
 
   @jtu.sample_product(
-    [dict(order=order, z=z, n_iter=n_iter)
+    [{"order": order, "z": z, "n_iter": n_iter}
      for order, z, n_iter in zip(
          [0, 1, 2, 3, 6], [0.01, 1.1, 11.4, 30.0, 100.6], [5, 20, 50, 80, 200]
      )],
@@ -456,7 +456,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(actual, expected, rtol=1e-8, atol=6e-8)
 
   @jtu.sample_product(
-    [dict(l_max=l_max, num_z=num_z)
+    [{"l_max": l_max, "num_z": num_z}
       for l_max, num_z in zip([1, 3, 8, 10], [2, 6, 7, 8])
     ],
     dtype=jtu.dtypes.all_integer,
@@ -506,7 +506,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(actual, expected, rtol=1e-8, atol=9e-5)
 
   @jtu.sample_product(
-    [dict(l_max=l_max, num_z=num_z)
+    [{"l_max": l_max, "num_z": num_z}
       for l_max, num_z in zip([1, 3, 8, 10], [2, 6, 7, 8])
     ],
     dtype=jtu.dtypes.all_integer,
@@ -633,7 +633,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       self.assertArraysEqual(actual, nan_array, check_dtypes=False)
 
   @jtu.sample_product(
-    [dict(yshape=yshape, xshape=xshape, dx=dx, axis=axis)
+    [{"yshape": yshape, "xshape": xshape, "dx": dx, "axis": axis}
       for yshape, xshape, dx, axis in [
         ((10,), None, 1.0, -1),
         ((3, 10), None, 2.0, -1),

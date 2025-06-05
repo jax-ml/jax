@@ -121,8 +121,8 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
     arguments corresponding to those of ``f`` and produces output corresponding
     to that of ``f``.
   """
-  kwargs = dict(mesh=mesh, in_specs=in_specs, out_specs=out_specs,
-                axis_names=axis_names, check_vma=check_vma)
+  kwargs = {"mesh": mesh, "in_specs": in_specs, "out_specs": out_specs,
+                "axis_names": axis_names, "check_vma": check_vma}
   if f is None:
     return lambda g: _shard_map(g, **kwargs)
   return _shard_map(f, **kwargs)
@@ -648,9 +648,9 @@ def _shard_map_staging(
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
-  params = dict(mesh=mesh, in_specs=in_specs_staged,
-                out_specs=tuple(out_specs_thunk()), jaxpr=jaxpr,
-                check_vma=check_vma, manual_axes=manual_axes)
+  params = {"mesh": mesh, "in_specs": in_specs_staged,
+                "out_specs": tuple(out_specs_thunk()), "jaxpr": jaxpr,
+                "check_vma": check_vma, "manual_axes": manual_axes}
   effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
   eqn = pe.new_jaxpr_eqn([*constvars, *invars], outvars, prim, params,
                          effs, source_info)
@@ -896,7 +896,7 @@ def _make_scoped_manual_sharding(ctx, mesh, spec):
   mesh = mesh.abstract_mesh
   if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     mesh = mesh.update_axis_types(
-        {a: AxisType.Manual for a in axis_ctx.manual_axes})
+        dict.fromkeys(axis_ctx.manual_axes, AxisType.Manual))
   return NamedSharding(mesh, spec)
 
 def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, manual_axes, spec,
@@ -1280,9 +1280,9 @@ def _shard_map_batch(
     return _batch_out_specs(spmd_axis_name, explicit_mesh_axis, out_dims(),
                             out_specs_thunk())
 
-  new_params = dict(mesh=mesh, in_specs=new_in_specs,
-                    out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
-                    manual_axes=manual_axes)
+  new_params = {"mesh": mesh, "in_specs": new_in_specs,
+                    "out_specs_thunk": new_out_specs_thunk, "check_vma": check_vma,
+                    "manual_axes": manual_axes}
   with core.set_current_trace(trace.parent_trace):
     out_vals = prim.bind(fun, *in_vals, **new_params)
   make_tracer = partial(batching.BatchTracer, trace,
@@ -1326,9 +1326,9 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
   def new_out_specs_thunk():
     out_ax = out_specs_thunk()
     return (*out_ax, *(ax for ax, nz in zip(out_ax, which_nz_out()) if nz))
-  params = dict(mesh=mesh, in_specs=(*in_specs, *tangent_in_specs),
-                out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
-                manual_axes=manual_axes)
+  params = {"mesh": mesh, "in_specs": (*in_specs, *tangent_in_specs),
+                "out_specs_thunk": new_out_specs_thunk, "check_vma": check_vma,
+                "manual_axes": manual_axes}
   f_jvp, out_tree = ad.traceable(f_jvp, in_tree)
   result = shard_map_p.bind_with_trace(trace.parent_trace, (f_jvp,) + tuple(args), params)
   primal_out, tangent_out = tree_unflatten(out_tree(), result)
@@ -1362,9 +1362,9 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
       res_specs = [P(all_names)] * len(res_avals)
     return (*out_known_specs, *res_specs)
 
-  known_params = dict(mesh=mesh, in_specs=(*known_in_specs,),
-                      out_specs_thunk=known_out_specs, check_vma=check_vma,
-                      manual_axes=manual_axes)
+  known_params = {"mesh": mesh, "in_specs": (*known_in_specs,),
+                      "out_specs_thunk": known_out_specs, "check_vma": check_vma,
+                      "manual_axes": manual_axes}
   out = shard_map_p.bind_with_trace(trace.parent_trace, (f_known, *in_consts),
                                     known_params)
   in_fwd, out_fwd, out_knowns, res_avals, jaxpr, env = aux()
@@ -1393,9 +1393,9 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   env_tracers = map(trace.to_jaxpr_tracer, env)
   unk_arg_tracers = [t for t in tracers if not t.is_known()]
   out_avals_sharded = [v.aval for v in jaxpr.outvars]
-  unk_params = dict(mesh=mesh, in_specs=unk_in_specs,
-                    out_specs=unk_out_specs, jaxpr=jaxpr,
-                    check_vma=check_vma, manual_axes=manual_axes)
+  unk_params = {"mesh": mesh, "in_specs": unk_in_specs,
+                    "out_specs": unk_out_specs, "jaxpr": jaxpr,
+                    "check_vma": check_vma, "manual_axes": manual_axes}
   out_avals = map(partial(_unshard_aval, mesh, check_vma), unk_out_specs,
                   out_avals_sharded)
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
@@ -1428,10 +1428,10 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
     else:
       res_specs = [P(all_names)] * len(res_avals)
     return (*res_specs, *out_specs)
-  fwd_params = dict(
-      mesh=mesh, in_specs=in_specs,
-      out_specs_thunk=fwd_out_specs_thunk, check_vma=check_vma,
-      manual_axes=manual_axes)
+  fwd_params = {
+      "mesh": mesh, "in_specs": in_specs,
+      "out_specs_thunk": fwd_out_specs_thunk, "check_vma": check_vma,
+      "manual_axes": manual_axes}
   all_fwd_results = shard_map_p.bind_with_trace(
       trace.parent_trace, (f_primal, *primals), fwd_params)
   res_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
@@ -1468,9 +1468,9 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
   @as_hashable_function(closure=tangent_out_specs)
   def tangent_out_specs_thunk():
     return tangent_out_specs
-  tangent_params = dict(
-      mesh=mesh, in_specs=new_in_specs, out_specs_thunk=tangent_out_specs_thunk,
-      check_vma=check_vma, manual_axes=manual_axes)
+  tangent_params = {
+      "mesh": mesh, "in_specs": new_in_specs, "out_specs_thunk": tangent_out_specs_thunk,
+      "check_vma": check_vma, "manual_axes": manual_axes}
 
   # TODO(mattjj): avoid round-tripping the jaxpr through eval_jaxpr here
   def f_tangent(*args):

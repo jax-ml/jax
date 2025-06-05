@@ -54,7 +54,7 @@ class UtilTest(jtu.JaxTestCase):
       """
       kwargs_keys = kwargs.keys()
       new_args = tuple(kwargs[k] for k in kwargs_keys)
-      new_kwargs = dict(factor=factor)
+      new_kwargs = {'factor': factor}
       results = f(*(args + new_args), **new_kwargs)  # Yield transformed (args, kwargs)
       # Assume results correspond 1:1 to the args + new_args
       assert len(results) == len(args) + len(new_args)
@@ -65,12 +65,12 @@ class UtilTest(jtu.JaxTestCase):
     # Wraps `f` as a `WrappedFun`.
     wf = lu.wrap_init(
         f,
-        debug_info=api_util.debug_info("test", f, (1, 2), dict(three=3, four=4)))
+        debug_info=api_util.debug_info("test", f, (1, 2), {'three': 3, 'four': 4}))
     wf, out_thunk = kw_to_positional(wf, 2)
     # Call the transformed function.
     scaled_positional, scaled_kwargs = wf.call_wrapped(1, 2, three=3, four=4)
     self.assertEqual((2, 4), scaled_positional)
-    self.assertEqual(dict(three=6, four=8), scaled_kwargs)
+    self.assertEqual({'three': 6, 'four': 8}, scaled_kwargs)
     self.assertEqual(2, out_thunk())
 
   def test_wrapped_fun_name(self):

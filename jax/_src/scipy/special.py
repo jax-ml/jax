@@ -2116,15 +2116,15 @@ def _expn1(x: Array, n: Array) -> Array:
   psi = -jnp.euler_gamma - jnp.log(x)
   psi = lax.fori_loop(_c(n, 1), n, lambda i, psi: psi + one / i, psi)
   n1 = jnp.where(n == _c(n, 1), one + one, n)
-  init = dict(
-    x=x,
-    z=-x,
-    xk=zero,
-    yk=one,
-    pk=one - n,
-    ans=jnp.where(n == _c(n, 1), zero, one / (one - n1)),
-    t=jnp.inf,
-  )
+  init = {
+    "x": x,
+    "z": -x,
+    "xk": zero,
+    "yk": one,
+    "pk": one - n,
+    "ans": jnp.where(n == _c(n, 1), zero, one / (one - n1)),
+    "t": jnp.inf,
+  }
 
   def body(d):
     d["xk"] += one
@@ -2151,17 +2151,17 @@ def _expn2(x: Array, n: Array) -> Array:
   zero = _c(x, 0.0)
   one = _c(x, 1.0)
 
-  init = dict(
-    k=_c(n, 1),
-    pkm2=one,
-    qkm2=x,
-    pkm1=one,
-    qkm1=x + n,
-    ans=one / (x + n),
-    t=_c(x, jnp.inf),
-    r=zero,
-    x=x,
-  )
+  init = {
+    "k": _c(n, 1),
+    "pkm2": one,
+    "qkm2": x,
+    "pkm1": one,
+    "qkm1": x + n,
+    "ans": one / (x + n),
+    "t": _c(x, jnp.inf),
+    "r": zero,
+    "x": x,
+  }
 
   def body(d):
     x = d["x"]

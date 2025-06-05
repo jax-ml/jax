@@ -332,7 +332,7 @@ def lower_jaxpr_to_triton_module(
         module_name,
         ir.TypeAttr.get(fn_type),
         sym_visibility="public",
-        res_attrs=ir.DictAttr.get(dict(noinline=ir.BoolAttr.get(False))),
+        res_attrs=ir.DictAttr.get({"noinline": ir.BoolAttr.get(False)}),
         ip=ir.InsertionPoint.at_block_begin(module.body),
     )
     fn.arg_attrs = ir.ArrayAttr.get(

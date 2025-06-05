@@ -119,7 +119,7 @@ class SdyShardingRule:
   def __init__(self, operand_mappings: tuple[ArrayMapping, ...],
                result_mappings: tuple[ArrayMapping, ...], **factor_sizes):
     # Find all factors and mark whether their size can be inferred.
-    factors_inferrable = dict()
+    factors_inferrable = {}
     for value in operand_mappings + result_mappings:
       for dim in value:
         if isinstance(dim, str):

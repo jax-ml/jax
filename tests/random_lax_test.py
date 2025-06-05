@@ -273,8 +273,8 @@ class DistributionsTest(RandomTestBase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.truncnorm(-0.3, 0.3).cdf)
 
   @jtu.sample_product(
-    [dict(shape=shape, replace=replace, axis=axis,
-          input_range_or_shape=input_range_or_shape)
+    [{'shape': shape, 'replace': replace, 'axis': axis,
+          'input_range_or_shape': input_range_or_shape}
       for shape in [(), (5,), (4, 5)]
       for replace in [True, False]
       for input_range_or_shape in [100, (10, 10), (10, 5, 2), 1, (1, 5)]
@@ -323,7 +323,7 @@ class DistributionsTest(RandomTestBase):
       'x' if is_range else None)(key(), x))
 
   @jtu.sample_product(
-    [dict(range_or_shape=range_or_shape, axis=axis)
+    [{'range_or_shape': range_or_shape, 'axis': axis}
       for range_or_shape in [0, 1, 100, (0,), (1,), (100,),
                              (10, 10), (10, 5, 2), (0, 5), (1, 5)]
       for ndim in [1 if type(range_or_shape) is int else len(range_or_shape)]
@@ -389,7 +389,7 @@ class DistributionsTest(RandomTestBase):
       self._CheckChiSquared(samples, scipy.stats.bernoulli(p).pmf)
 
   @jtu.sample_product(
-    [dict(p=p, axis=axis)
+    [{'p': p, 'axis': axis}
       for (p, axis) in [
         ([.25] * 4, -1),
         ([.1, .2, .3, .4], -1),
@@ -1388,7 +1388,7 @@ class DistributionsTest(RandomTestBase):
     assert energy_distance < tolerance
 
   @jtu.sample_product([
-      dict(shape=shape, outcomes=outcomes)
+      {'shape': shape, 'outcomes': outcomes}
       for shape in [(5,), (2, 3), (2, 3, 5)]
       for outcomes in [2, 3, 4]
   ])
@@ -1405,7 +1405,7 @@ class DistributionsTest(RandomTestBase):
     self.assertAllClose(freqs, jnp.broadcast_to(probs, freqs.shape), atol=1e-2)
 
   @jtu.sample_product([
-      dict(n_dtype=n_dtype, p_dtype=p_dtype, dtype=dtype)
+      {'n_dtype': n_dtype, 'p_dtype': p_dtype, 'dtype': dtype}
       for n_dtype in jtu.dtypes.all_floating
       for p_dtype in jtu.dtypes.all_floating
       for dtype in jtu.dtypes.all_floating

@@ -2391,7 +2391,7 @@ class APITest(jtu.JaxTestCase):
   def test_grad_and_aux_no_tracers(self):
     # see https://github.com/jax-ml/jax/issues/1950
     def f(x):
-      aux = dict(identity=x, p1=x+1)
+      aux = {"identity": x, "p1": x+1}
       return x ** 2, aux
 
     _, aux = jax.grad(f, has_aux=True)(3.)
@@ -5066,7 +5066,7 @@ class APITest(jtu.JaxTestCase):
     @jax.tree_util.register_dataclass
     @dataclasses.dataclass
     class TestClass3:
-      test_enum_field: TestEnum = dataclasses.field(metadata=dict(static=True))
+      test_enum_field: TestEnum = dataclasses.field(metadata={"static": True})
       test_data_field: int
 
     def test_jax_function(test_class: TestClass3) -> TestEnum:
@@ -7223,7 +7223,7 @@ class NamedCallTest(jtu.JaxTestCase):
     self.assertEqual(out, 5)
 
   @parameterized.parameters(
-    [dict(func=func, jit=jit)
+    [{"func": func, "jit": jit}
       for func in ['identity_trivial', 'identity', 'closure_trivial', 'closure',
                    'asarray', 'device_put']
       for jit in jtu.JIT_IMPLEMENTATION

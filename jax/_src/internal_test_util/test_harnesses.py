@@ -384,9 +384,9 @@ def parameterized(harnesses: Iterable[Harness],
       "JAX_TEST_HARNESS_ONE_CONTAINING")
   cases = tuple(
       # Change the testcase name to include the harness name.
-      dict(
-          testcase_name=harness.fullname if one_containing is None else "",
-          harness=harness) for harness in harnesses if harness.filter(
+      {
+          "testcase_name": harness.fullname if one_containing is None else "",
+          "harness": harness} for harness in harnesses if harness.filter(
               jtu.device_under_test(),
               one_containing=one_containing,
               include_jax_unimpl=include_jax_unimpl))
@@ -711,7 +711,7 @@ def _make_add_any_harness(name, *, shapes=((2,), (2,)), dtype=np.float32):
       ad_util.add_any_p,
       f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
       ad_util.add_jaxvals_p.bind,
-      list(map(lambda s: RandArg(s, dtype), shapes)),
+      [RandArg(s, dtype) for s in shapes],
       dtype=dtype,
       shapes=shapes)
 
@@ -728,9 +728,9 @@ for dtype in jtu.dtypes.all:
       shape=shape,
       dtype=dtype)
 
-_LAX_COMPARATORS = dict(eq=jnp.equal, ne=jnp.not_equal,
-                        ge=jnp.greater_equal, gt=jnp.greater,
-                        le=jnp.less_equal, lt=jnp.less)
+_LAX_COMPARATORS = {"eq": jnp.equal, "ne": jnp.not_equal,
+                        "ge": jnp.greater_equal, "gt": jnp.greater,
+                        "le": jnp.less_equal, "lt": jnp.less}
 
 
 def _make_comparator_harness(name,

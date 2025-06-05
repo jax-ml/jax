@@ -205,25 +205,25 @@ def _seq2seq_lstm_harness(name, **kwargs):
 
 
 def _min_transformer_kwargs():
-  return dict(
-      vocab_size=8,
-      output_vocab_size=8,
-      emb_dim = 4,
-      num_heads= 1,
-      num_layers = 1,
-      qkv_dim= 2,
-      mlp_dim = 2,
-      max_len = 2,
-      dropout_rate = 0.,
-      attention_dropout_rate = 0.)
+  return {
+      "vocab_size": 8,
+      "output_vocab_size": 8,
+      "emb_dim": 4,
+      "num_heads": 1,
+      "num_layers": 1,
+      "qkv_dim": 2,
+      "mlp_dim": 2,
+      "max_len": 2,
+      "dropout_rate": 0.,
+      "attention_dropout_rate": 0.}
 
 
 def _full_transformer_kwargs():
-  kwargs = dict(
-      decode = True,
-      deterministic = True,
-      logits_via_embedding=False,
-      share_embeddings=False)
+  kwargs = {
+      "decode": True,
+      "deterministic": True,
+      "logits_via_embedding": False,
+      "share_embeddings": False}
   return {**kwargs, **_min_transformer_kwargs()}
 
 

@@ -151,13 +151,13 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
         **_binary_replace(
             hi_to_j,
             state._asdict(),
-            dict(
-                a_hi=a_j,
-                phi_hi=phi_j,
-                dphi_hi=dphi_j,
-                a_rec=state.a_hi,
-                phi_rec=state.phi_hi,
-            ),
+            {
+                'a_hi': a_j,
+                'phi_hi': phi_j,
+                'dphi_hi': dphi_j,
+                'a_rec': state.a_hi,
+                'phi_rec': state.phi_hi,
+            },
         ),
     )
 
@@ -167,38 +167,38 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
         **_binary_replace(
             star_to_j,
             state._asdict(),
-            dict(
-                a_star=a_j,
-                phi_star=phi_j,
-                dphi_star=dphi_j,
-                g_star=g_j,
-            )
+            {
+                'a_star': a_j,
+                'phi_star': phi_j,
+                'dphi_star': dphi_j,
+                'g_star': g_j,
+            }
         ),
     )
     state = state._replace(
         **_binary_replace(
             hi_to_lo,
             state._asdict(),
-            dict(
-                a_hi=state.a_lo,
-                phi_hi=state.phi_lo,
-                dphi_hi=state.dphi_lo,
-                a_rec=state.a_hi,
-                phi_rec=state.phi_hi,
-            ),
+            {
+                'a_hi': state.a_lo,
+                'phi_hi': state.phi_lo,
+                'dphi_hi': state.dphi_lo,
+                'a_rec': state.a_hi,
+                'phi_rec': state.phi_hi,
+            },
         ),
     )
     state = state._replace(
         **_binary_replace(
             lo_to_j,
             state._asdict(),
-            dict(
-                a_lo=a_j,
-                phi_lo=phi_j,
-                dphi_lo=dphi_j,
-                a_rec=state.a_lo,
-                phi_rec=state.phi_lo,
-            ),
+            {
+                'a_lo': a_j,
+                'phi_lo': phi_j,
+                'dphi_lo': dphi_j,
+                'a_rec': state.a_lo,
+                'phi_rec': state.phi_lo,
+            },
         ),
     )
     state = state._replace(j=state.j + 1)
@@ -372,12 +372,12 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
         **_binary_replace(
             star_to_i,
             state._asdict(),
-            dict(
-                a_star=a_i,
-                phi_star=phi_i,
-                dphi_star=dphi_i,
-                g_star=g_i,
-            ),
+            {
+                'a_star': a_i,
+                'phi_star': phi_i,
+                'dphi_star': dphi_i,
+                'g_star': g_i,
+            },
         ),
     )
     state = state._replace(

@@ -198,16 +198,16 @@ def custom_call(
     api_version = 1
   else:
     raise ValueError("custom_call backend_config unexpected type: " + str(backend_config))
-  attributes = dict(
-      call_target_name=ir.StringAttr.get(call_target_name),
-      has_side_effect=ir.BoolAttr.get(has_side_effect),
-      backend_config=backend_config_attr,
-      api_version=ir.IntegerAttr.get(
+  attributes = {
+      "call_target_name": ir.StringAttr.get(call_target_name),
+      "has_side_effect": ir.BoolAttr.get(has_side_effect),
+      "backend_config": backend_config_attr,
+      "api_version": ir.IntegerAttr.get(
           ir.IntegerType.get_signless(32), api_version),
-      called_computations=ir.ArrayAttr.get(
+      "called_computations": ir.ArrayAttr.get(
           [ir.FlatSymbolRefAttr.get(name) for name in called_computations]
       ),
-  )
+  }
   if operand_output_aliases is not None:
     attributes["output_operand_aliases"] = ir.ArrayAttr.get([
       hlo.OutputOperandAlias.get(

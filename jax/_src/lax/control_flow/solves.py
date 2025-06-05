@@ -355,7 +355,7 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs):
   # ∂A x + A ∂x - ∂b = 0
   # ∂x = A^{-1} (∂b - ∂A x)
 
-  kwargs = dict(const_lengths=const_lengths, jaxprs=jaxprs)
+  kwargs = {'const_lengths': const_lengths, 'jaxprs': jaxprs}
   x = linear_solve_p.bind(*primals, **kwargs)
 
   params, _ = _split_linear_solve_args(primals, const_lengths)

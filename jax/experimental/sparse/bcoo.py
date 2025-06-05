@@ -1043,7 +1043,7 @@ def _bcoo_dot_general_sampled_impl(A, B, indices, *, dimension_numbers):
 @bcoo_dot_general_sampled_p.def_abstract_eval
 def _bcoo_dot_general_sampled_abstract_eval(A, B, indices, *, dimension_numbers):
   dbg = api_util.debug_info("bcoo_dot_general_sampled_abstract_eval",
-                            lax.dot_general, (A, B), dict(dimension_numbers=dimension_numbers))
+                            lax.dot_general, (A, B), {"dimension_numbers": dimension_numbers})
   dense_result, = pe.abstract_eval_fun(lambda *args: [lax.dot_general(*args, dimension_numbers=dimension_numbers)], A, B,
                                        debug_info=dbg)
   dbg = api_util.debug_info("bcoo_dot_general_sampled_abstract_eval",
@@ -2309,9 +2309,9 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
   if parsed_mode != GatherScatterMode.PROMISE_IN_BOUNDS:
     raise NotImplementedError(f"bcoo_gather: {mode=} not yet supported.")
 
-  kwds = dict(dimension_numbers=dimension_numbers, slice_sizes=slice_sizes,
-              unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
-              mode=mode, fill_value=fill_value)
+  kwds = {"dimension_numbers": dimension_numbers, "slice_sizes": slice_sizes,
+              "unique_indices": unique_indices, "indices_are_sorted": indices_are_sorted,
+              "mode": mode, "fill_value": fill_value}
 
   # Abstract eval lax.gather to validate arguments & determine output shape.
   static_argnames = ("dimension_numbers", "slice_sizes", "unique_indices",

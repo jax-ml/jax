@@ -423,7 +423,7 @@ _registry: dict[type[Any], _RegistryEntry] = {
 def _replace_nones(sentinel, tree):
   """Replaces ``None`` in ``tree`` with ``sentinel``."""
   leaves, treedef = none_leaf_registry.flatten(tree)
-  leaves = map(lambda x: sentinel if x is None else x, leaves)
+  leaves = (sentinel if x is None else x for x in leaves)
   return treedef.unflatten(leaves)
 
 
@@ -676,7 +676,7 @@ def equality_errors_pytreedef(
     tree2: PyTreeDef) -> Iterable[tuple[KeyPath, str, str, str]]:
   """Like `equality_errors` but invoked on PyTreeDef."""
   # TODO(mattjj): make equality_errors not print type name, avoid metaclass
-  leaf = type("LeafMeta", (type,), dict(__repr__=lambda _: "pytree leaf"))("Leaf", (), {})()
+  leaf = type("LeafMeta", (type,), {'__repr__': lambda _: "pytree leaf"})("Leaf", (), {})()
   return equality_errors(tree_unflatten(tree1, [leaf] * tree1.num_leaves),
                          tree_unflatten(tree2, [leaf] * tree2.num_leaves))
 

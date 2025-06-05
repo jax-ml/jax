@@ -572,7 +572,7 @@ class BatchTrace(Trace):
     fun, out_dims1 = batch_subtrace(fun, self.tag, self.axis_data, in_dims)
     jvp, out_dims2 = batch_custom_jvp_subtrace(jvp, self.tag, self.axis_data, in_dims)
     out_vals = prim.bind_with_trace(self.parent_trace, (fun, jvp, *in_vals),
-                                    dict(symbolic_zeros=symbolic_zeros))
+                                    {'symbolic_zeros': symbolic_zeros})
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
@@ -588,7 +588,7 @@ class BatchTrace(Trace):
     bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, out_dims2, in_dims)
     out_vals = prim.bind_with_trace(self.parent_trace,
                                     (fun, fwd, bwd) + tuple(in_vals),
-                                    dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
+                                    {'out_trees': out_trees, 'symbolic_zeros': symbolic_zeros})
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
       _, res_tree = out_trees()

@@ -224,11 +224,11 @@ def _mosaic_gpu_lowering_rule(
         operands=args,
         operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
         result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-        backend_config=dict(
-            kernel_hash=ir.StringAttr.get(kernel_id),
-            module=ir.StringAttr.get(module_asm),
-            use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
-        ),
+        backend_config={
+            "kernel_hash": ir.StringAttr.get(kernel_id),
+            "module": ir.StringAttr.get(module_asm),
+            "use_custom_barrier": ir.BoolAttr.get(use_custom_barrier),
+        },
         operand_output_aliases=dict(input_output_aliases),
         api_version=4,
     )

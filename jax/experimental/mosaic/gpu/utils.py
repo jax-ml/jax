@@ -1198,7 +1198,7 @@ class Partition1D:
       raise ValueError(
           "Exactly one of num_chunks and chunk_size must be specified"
       )
-    common_kwargs = dict(elements=(elements,), partition=(0,))
+    common_kwargs = {"elements": (elements,), "partition": (0,)}
     if base_offset is not None:
       common_kwargs["base_offset"] = (base_offset,)
     if num_chunks is not None:
