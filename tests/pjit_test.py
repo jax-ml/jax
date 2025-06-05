@@ -7799,6 +7799,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     lowered_text = traced.lower().as_text()
     self.assertIn('unreduced={"y"}', lowered_text)
     self.assertTrue(lowered_text.count('unreduced={"y"}') == 3)
+    x_dot_y = jnp.einsum('ik,kj->ij', x, y, out_sharding=P('x', None))
+    a_dot_b = jnp.einsum('ik,kj->ij', a, b, out_sharding=P('x', None))
+    self.assertArraysEqual(f(x, y, a, b), x_dot_y + a_dot_b)
 
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_dot_general_unreduced_error(self, mesh):
