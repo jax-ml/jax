@@ -2428,15 +2428,9 @@ def _triangular_solve_cpu_lower(
     conjugate_a = False
   if np.dtype(a_aval.dtype) in _cpu_lapack_types:
     target_name = lapack.prepare_lapack_call("trsm_ffi", a_aval.dtype)
-    # TODO(b/397715595): Remove forward_compat check no earlier than 2025-03-18.
-    if ctx.is_forward_compat() or jaxlib_version <= (0, 5, 1):
-      alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype)),
-      alpha_aval = ShapedArray((), a_aval.dtype),
-      batch_partitionable = False
-    else:
-      alpha = ()
-      alpha_aval = ()
-      batch_partitionable = True
+    alpha = ()
+    alpha_aval = ()
+    batch_partitionable = True
     rule = _linalg_ffi_lowering(target_name,
                                 [a_aval, b_aval, *alpha_aval],
                                 operand_output_aliases={1: 0},
