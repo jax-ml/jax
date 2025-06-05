@@ -2008,16 +2008,18 @@ class DynamicJaxprTrace(core.Trace):
     jaxpr_tracers = map(to_jaxpr_tracer, tracers)
     if primitive in custom_staging_rules:
       return custom_staging_rules[primitive](self, *jaxpr_tracers, **params)
-    return self.default_process_primitive(primitive, jaxpr_tracers, params)
+    return self.default_process_primitive(
+        primitive, jaxpr_tracers, params, source_info)
 
-  def default_process_primitive(self, primitive, tracers, params):
+  def default_process_primitive(self, primitive, tracers, params,
+                                source_info=None):
     aval_qdds = [t.aval_mutable_qdd for t in tracers]
     out_avals, effs = primitive.abstract_eval(*aval_qdds, **params)
     if isinstance(out_avals, (tuple, list)) != primitive.multiple_results:
       raise ValueError(f"{primitive}.abstract_eval() method should return "
                        f"a tuple or a list iff {primitive}.multiple_results.")
     out_avals = [out_avals] if not primitive.multiple_results else out_avals
-    source_info = source_info_util.current()
+    source_info = source_info or source_info_util.current()
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
     outvars = map(self.makevar, out_tracers)
