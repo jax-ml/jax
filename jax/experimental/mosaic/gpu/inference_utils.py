@@ -135,6 +135,15 @@ in_transforms_for_operand = partial(
     _in_attr_for_operand, attr_name="in_transforms"
 )
 
+def should_have_transforms(op: ir.OpView) -> bool:
+  """Returns 'True' if the operation should be assigned in/out transforms."""
+  return any(
+      map(
+          is_transformable_smem_memref,
+          itertools.chain(op.operands, op.results),
+      )
+  )
+
 def is_transformable_smem_memref(v: ir.Value) -> bool:
   """Whether the value is a memref in SMEM on which transforms should be applied."""
   barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
