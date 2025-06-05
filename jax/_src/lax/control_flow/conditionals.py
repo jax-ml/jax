@@ -677,8 +677,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
              for j in branches_known[1:])
 
   # Create residual variables.
-  newvar = core.gensym()
-  res_binders = map(newvar, all_res_avals)
+  res_binders = map(core.Var, all_res_avals)
 
   # Build the known eqn.
   ins_known, _ = partition_list(unks_in, eqn.invars)  # includes index invar
@@ -763,8 +762,7 @@ def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
 def _join_cond_pe_staged_jaxpr_inputs(jaxprs: Sequence[core.ClosedJaxpr],
                                       all_res_avals,
                                       res_aval_indices_per_jaxpr):
-  newvar = core.gensym(suffix='_')
-  all_res_vars = map(newvar, all_res_avals)
+  all_res_vars = map(core.Var, all_res_avals)
 
   def augment_jaxpr(jaxpr: core.ClosedJaxpr, res_indices) -> core.ClosedJaxpr:
     num_res = len(res_indices)
