@@ -117,7 +117,7 @@ def get_compile_options(
     num_partitions: int,
     device_assignment=None,
     use_spmd_partitioning: bool = True,
-    use_shardy_partitioner: bool = False,
+    use_shardy_partitioner: bool | None = None,
     use_auto_spmd_partitioning: bool = False,
     auto_spmd_partitioning_mesh_shape: list[int] | None = None,
     auto_spmd_partitioning_mesh_ids: list[int] | None = None,
@@ -160,7 +160,10 @@ def get_compile_options(
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
   build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
-  build_options.use_shardy_partitioner = use_shardy_partitioner
+  if use_shardy_partitioner is not None:
+    build_options.use_shardy_partitioner = use_shardy_partitioner
+  else:
+    build_options.use_shardy_partitioner = config.use_shardy_partitioner.value
   if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if use_auto_spmd_partitioning:
