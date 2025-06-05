@@ -121,6 +121,14 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Download python3.14.0b1 archive file for linux x86 python3.14 build
+        if: contains(inputs.python, '3.14')
+        run: |
+          mkdir /cpython
+          # This is a temporary experiment bucket.
+          # TODO: Move this archive file to an official bucket.
+          gsutil cp gs://louhi-flow-test/cpython/python314.tgz /cpython
+          ls /cpython
       - name: Build ${{ inputs.artifact }}
         timeout-minutes: 60
         run: ./ci/build_artifacts.sh "${{ inputs.artifact }}"
