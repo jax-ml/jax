@@ -107,6 +107,9 @@ class PyDeviceList {
   // Requires the self lock or GIL.
   const std::set<int>& ProcessIndices();
 
+  // Requires the self lock or GIL.
+  const std::string& DeviceKind();
+
   // Valid only if `device_list_` contains `xla::ifrt::DeviceList` and
   // non-empty.
   xla::nb_class_ptr<xla::PyClient> py_client_;
@@ -128,6 +131,8 @@ class PyDeviceList {
   std::optional<xla::nb_class_ptr<PyDeviceList>> addressable_device_list_;
   // Populated on demand. Guarded by the object's self lock.
   std::optional<std::set<int>> process_indices_;
+  // Populated on demand. Guarded by the object's self lock.
+  std::optional<std::string> device_kind_;
 
   struct MemoryKindInfo {
     nanobind::object default_memory_kind;
