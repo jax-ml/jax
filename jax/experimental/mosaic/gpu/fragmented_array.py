@@ -685,6 +685,30 @@ WGMMA_TRANSPOSED_LAYOUT = TiledLayout(
     vector_dim=-2,
 )
 
+# Like WGMMA_LAYOUT, only each warp holds a 32xN strip instead of 16xN.
+TCGEN05_LAYOUT = TiledLayout(
+    Tiling(((128, 8), (32, 8), (8, 8), (1, 2))),
+    warp_dim=-8,
+    lane_dims=(-4, -3),
+    vector_dim=-1,
+)
+# TCGEN05_ROW_LAYOUT is to TCGEN05_LAYOUT as WGMMA_ROW_LAYOUT is to
+# WGMMA_LAYOUT.
+TCGEN05_ROW_LAYOUT = TiledLayout(
+    Tiling(tiles=((128,), (32,), (8,), (1,), (1,))),
+    warp_dim=-5,
+    lane_dims=(-3, Replicated(times=4)),
+    vector_dim=-1,
+)
+# TCGEN05_COL_LAYOUT is to TCGEN05_LAYOUT as WGMMA_COL_LAYOUT is to
+# WGMMA_LAYOUT.
+TCGEN05_COL_LAYOUT = TiledLayout(
+    Tiling(tiles=((8,), (8,), (8,), (2,))),
+    warp_dim=Replicated(times=4),
+    lane_dims=(Replicated(times=8), -2),
+    vector_dim=-1,
+)
+
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(init=False, eq=False, frozen=True, slots=True)
 class FragmentedArray:
@@ -1863,11 +1887,15 @@ class FragmentedArray:
     )
 
   def broadcast_minor(self, n):
-    if self.layout != WGMMA_ROW_LAYOUT:
-      raise NotImplementedError
+    if self.layout == WGMMA_ROW_LAYOUT:
+      output_layout = WGMMA_LAYOUT
+    elif self.layout == TCGEN05_ROW_LAYOUT:
+      output_layout = TCGEN05_LAYOUT
+    else:
+      raise NotImplementedError(self.layout)
     if n % 8:
       raise ValueError("Number of columns must be divisible by 8")
-    reg_shape = WGMMA_LAYOUT.registers_shape((self.shape[0], n))
+    reg_shape = output_layout.registers_shape((self.shape[0], n))
     new_regs = np.empty(reg_shape, dtype=object)
     dtype = self.mlir_dtype
     i0 = arith.constant(ir.IndexType.get(), 0)
@@ -1876,26 +1904,30 @@ class FragmentedArray:
       tile[0] = row_tile
       tile[4] = row_subtile
       new_regs[tuple(tile)] = vector.splat(
-          ir.VectorType.get((WGMMA_LAYOUT.vector_length,), dtype),
+          ir.VectorType.get((output_layout.vector_length,), dtype),
           vector.extractelement(reg, position=i0),
       )
     return FragmentedArray(
-        _registers=new_regs, _layout=WGMMA_LAYOUT, _is_signed=self.is_signed
+        _registers=new_regs, _layout=output_layout, _is_signed=self.is_signed
     )
 
   def broadcast_major(self, m):
-    if self.layout != WGMMA_COL_LAYOUT:
-      raise NotImplementedError
+    if self.layout == WGMMA_COL_LAYOUT:
+      output_layout = WGMMA_LAYOUT
+    elif self.layout == TCGEN05_COL_LAYOUT:
+      output_layout = TCGEN05_LAYOUT
+    else:
+      raise NotImplementedError(self.layout)
     if m % 64:
       raise ValueError("Number of rows must be divisible by 64")
-    reg_shape = WGMMA_LAYOUT.registers_shape((m, self.shape[0]))
+    reg_shape = output_layout.registers_shape((m, self.shape[0]))
     new_regs = np.empty(reg_shape, dtype=object)
     for (col_tile, *_), reg in np.ndenumerate(self.registers):
       tile = [slice(None)] * len(new_regs.shape)
       tile[1] = col_tile
       new_regs[tuple(tile)] = reg
     return FragmentedArray(
-        _registers=new_regs, _layout=WGMMA_LAYOUT, _is_signed=self.is_signed
+        _registers=new_regs, _layout=output_layout, _is_signed=self.is_signed
     )
 
   def select(self, on_true, on_false):
