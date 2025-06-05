@@ -88,8 +88,7 @@ DebugInfo = lu.DebugInfo
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
-               '_effects', '_debug_info', '_is_high',
-               '_initial_typechange_env', '_final_typechange_env']
+               '_effects', '_debug_info', '_is_high']
 
   _constvars: list[Var]
   _invars: list[Var]
@@ -98,8 +97,6 @@ class Jaxpr:
   _effects: Effects
   _debug_info: DebugInfo
   _is_high: bool
-  _initial_typechange_env: dict[Var, Any]
-  _final_typechange_env: dict[Var, Any]
 
   @property
   def constvars(self) -> list[Var]:
@@ -129,14 +126,6 @@ class Jaxpr:
   def is_high(self) -> bool:
     return self._is_high
 
-  @property
-  def initial_typechange_env(self) -> dict[Var, Any]:
-    return self._initial_typechange_env
-
-  @property
-  def final_typechange_env(self) -> dict[Var, Any]:
-    return self._final_typechange_env
-
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
@@ -145,8 +134,6 @@ class Jaxpr:
                # is missing.
                debug_info: DebugInfo = None,  # type: ignore[annotation-type-mismatch,assignment]
                is_high: bool = False,
-               initial_typechange_env: dict | None = None,
-               final_typechange_env: dict | None = None,
                ):
     """
     Args:
@@ -172,8 +159,7 @@ class Jaxpr:
     # assert (len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
     self._is_high = is_high
-    self._initial_typechange_env = initial_typechange_env or {}
-    self._final_typechange_env = final_typechange_env or {}
+    num_vars = len(constvars) + len(invars)
 
   def __str__(self):
     return str(self.pretty_print())
@@ -201,10 +187,6 @@ class Jaxpr:
         effects=kwargs.pop("effects", self.effects),
         debug_info=kwargs.pop("debug_info", self.debug_info),
         is_high=kwargs.pop("is_high", self.is_high),
-        initial_typechange_env=kwargs.pop("initial_typechange_env",
-                                          self.initial_typechange_env),
-        final_typechange_env=kwargs.pop("final_typechange_env",
-                                        self.final_typechange_env),
     )
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
@@ -232,22 +214,6 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
     yield from jaxprs_in_params(eqn.params)
 
 
-@dataclass(frozen=True)
-class TypeChange:
-  aval: AbstractValue
-  initial_type_state: Any
-  final_type_state: Any
-
-  def to_tangent_aval(self):
-    return TypeChange(self.aval.to_tangent_aval(),
-                      self.initial_type_state.to_tangent_aval(),
-                      self.final_type_state.to_tangent_aval())
-
-  def normalize(self):
-    return TypeChange(self.aval.normalize(),
-                      self.initial_type_state.normalize(),
-                      self.final_type_state.normalize())
-
 class ClosedJaxpr:
   __slots__ = ['__weakref__', '_jaxpr', '_consts']
 
@@ -268,10 +234,13 @@ class ClosedJaxpr:
     return [v.aval for v in self.jaxpr.invars]
 
   @property
-  def in_avals_aug(self):
-    ienv = self.jaxpr.initial_typechange_env
-    fenv = self.jaxpr.final_typechange_env
-    return [TypeChange(v.aval, ienv[v], fenv[v]) if v.aval.mutable else v.aval
+  def in_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
+    return [v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd)
+            for v in self.jaxpr.invars]
+
+  @property
+  def final_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
+    return [v.aval if v.final_qdd is None else AvalQDD(v.aval, v.final_qdd)
             for v in self.jaxpr.invars]
 
   @property
@@ -464,16 +433,22 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
 _var_counter = it.count()
 
 class Var:
-  __slots__ = ["count", "suffix", "aval"]
+  __slots__ = ["count", "suffix", "aval", "initial_qdd", "final_qdd"]
 
   count: int
   suffix: str
   aval: AbstractValue
+  # these are only useful for jaxpr binders but rather than create a separate
+  # type for those, breaking existing interpreters, we add fields here.
+  initial_qdd : QuasiDynamicData | None
+  final_qdd : QuasiDynamicData | None
 
-  def __init__(self, suffix: str, aval: AbstractValue):
+  def __init__(self, suffix: str, aval: AbstractValue, initial_qdd = None, final_qdd = None):
     self.count = next(_var_counter)
     self.suffix = suffix
     self.aval = aval
+    self.initial_qdd = initial_qdd
+    self.final_qdd = final_qdd
 
   def __repr__(self):
     return f'Var(id={id(self)}){self.suffix}:{self.aval.str_short()}'
@@ -483,7 +458,7 @@ class Var:
     return f"{context.var_names[self]}{self.suffix}"
 
 
-def gensym(suffix: str = '') -> Callable[[AbstractValue], Var]:
+def gensym(suffix: str = '') -> Callable:
   """Produce distinct variables, printed with the optional suffix."""
   return partial(Var, suffix)
 
@@ -1114,6 +1089,8 @@ class EvalTrace(Trace):
     del primitive, fwd, bwd, _  # Unused.
     return fun.call_wrapped(*tracers)
 
+  def cur_qdd(self, x):
+    return x.cur_qdd()
 
 class TraceTag:
   # TODO: this works for surprisingly subtle reasons. Function transformations
@@ -1505,7 +1482,7 @@ def definitely_equal(x, y):
 class AbstractValue:
   __slots__: list[str] = []
   is_high = False
-  mutable = False
+  has_qdd = False
 
   def to_tangent_aval(self):
     raise NotImplementedError("must override")
@@ -1532,6 +1509,12 @@ class AbstractValue:
 
   def update(self, **kwargs):
     raise NotImplementedError("must override")
+
+  def lo_ty(self):
+    raise NotImplementedError("must override")
+
+  def lo_ty_qdd(self, qdd):
+    raise NotImplementedError("avals with qdd must override")
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str(self)
@@ -1703,6 +1686,54 @@ def concrete_dim_or_error(val: Any, context=""):
     return val
   else:
     return concrete_or_error(operator.index, val, context=context)
+
+### Quasi-dynamic data
+
+# Quasi-dynamic data includes things like liveness bits and the content type of
+# a type-changeable box. These change throughout the program but at a given
+# point in the program they have a single statically known value.
+
+class MutableQuasiDynamicData:
+  def __init__(self, val : QuasiDynamicData | None):
+    self.init_val = val
+    self.cur_val = val  # immutable payload
+
+  def update(self, val):
+    self.cur_val = val
+
+class QuasiDynamicData:
+  pass
+
+@dataclass(frozen=True)
+class AvalQDD:
+  aval: AbstractValue
+  qdd: QuasiDynamicData | None # immutable
+
+  has_qdd = True
+  def lo_ty(self):
+    return self.aval.lo_ty_qdd(self.qdd)  # type: ignore
+
+  def read_loval(self, val):
+    return self.aval.read_loval(self.qdd, val)  # type: ignore
+
+  def new_from_loval(self, *lovals):
+    return self.aval.new_from_loval(self.qdd, *lovals)  # type: ignore
+
+  def to_tangent_aval(self):
+    return AvalQDD(self.aval.to_tangent_aval(), self.qdd.to_tangent_qdd())
+
+@dataclass(frozen=True)
+class AvalMutableQDD:
+  aval: AbstractValue
+  mutable_qdd: MutableQuasiDynamicData
+
+def cur_qdd(x):
+  prev_trace = trace_ctx.trace
+  trace_ctx.set_trace(eval_trace)
+  try:
+    return prev_trace.cur_qdd(x)
+  finally:
+    trace_ctx.set_trace(prev_trace)
 
 ### Extended dtypes
 #
@@ -2917,15 +2948,19 @@ def check_jaxpr(jaxpr: Jaxpr):
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
     check_key_reuse_jaxpr(jaxpr)
 
+# A place to track the quasi-dynamic data associated with a variable during typechecking
+@dataclass(frozen=True)
+class MutableTypecheckVal:
+  aval : AbstractValue
+  mutable_qdd : MutableQuasiDynamicData
 
 def _check_jaxpr(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
     jaxpr: Jaxpr
   ) -> None:
-  # Use set of variables to types to check that variables are in scope.
-  env: set[Var] = set()
+  env: dict[Var, Atom | MutableTypecheckVal] = {}
 
-  def read(x: Atom) -> Atom:
+  def read(x: Atom) -> Atom | MutableTypecheckVal:
     # Check the type annotation is itself well-typed.
     check_type(ctx_factory, env, x.aval)
     if isinstance(x, Var):
@@ -2933,7 +2968,7 @@ def _check_jaxpr(
       if x not in env:
         ctx, _ = ctx_factory()
         raise JaxprTypeError(f"Variable '{pp_var(x, ctx)}' not defined")
-      return x
+      return env[x]
     elif isinstance(x, Literal):
       # Check that the literal matches its type annotation.
       if not typecheck(x.aval, x.val):
@@ -2945,7 +2980,8 @@ def _check_jaxpr(
     else:
       assert False, "syntactically invalid jaxpr"
 
-  def write(v: Var, a: AbstractValue) -> None:
+  def write(v: Var, a: AvalQDD) -> None:
+    aval, qdd = a.aval, a.qdd
     assert isinstance(v, Var), "syntactically invalid jaxpr"
     # Check the type annotation of the binder is itself well-typed.
     check_type(ctx_factory, env, v.aval)
@@ -2954,19 +2990,23 @@ def _check_jaxpr(
       ctx, _ = ctx_factory()
       raise JaxprTypeError(f"Variable '{pp_var(v, ctx)}' already bound")
     # Check that the computed type is consistent with the binder annotation.
-    if not typematch(v.aval, a):
+    if not typematch(v.aval, aval):
       ctx, _ = ctx_factory()
       raise JaxprTypeError(
           f"Value for variable '{pp_var(v, ctx)}' inconsistently typed "
-          f"as {pp_aval(a, ctx)} for let-binder of type {pp_aval(v.aval, ctx)}")
+          f"as {pp_aval(aval, ctx)} for let-binder of type {pp_aval(v.aval, ctx)}")
+
     # If the variable is not a DropVar, add it to the environment.
     if not isinstance(v, DropVar):
-      env.add(v)
+      if qdd is None:
+        env[v] = v
+      else:
+        env[v] = MutableTypecheckVal(aval, MutableQuasiDynamicData(qdd))
 
   # Check type annotations on lambda binders.
   for v in it.chain(jaxpr.constvars, jaxpr.invars):
     check_type(ctx_factory, env, v.aval)
-    write(v, v.aval)
+    write(v, AvalQDD(v.aval, v.initial_qdd))
 
   # Check each eqn.
   sentinel = object()
@@ -2976,7 +3016,8 @@ def _check_jaxpr(
     prim = eqn.primitive
     try:
       in_atoms = map(read, eqn.invars)
-      in_avals = [x.aval for x in in_atoms]  # use in_atoms for dyn shapes
+      in_avals = [AvalMutableQDD(x.aval, x.mutable_qdd) if isinstance(x, MutableTypecheckVal)
+                  else x.aval for x in in_atoms]  # use in_atoms for dyn shapes
 
       # Compute the type of the primitive application.
       with eqn.ctx.manager:
@@ -3026,6 +3067,7 @@ def _check_jaxpr(
 
       # Check out_type matches the let-binders' annotation (after substitution).
       out_type = substitute_vars_in_output_ty(out_type, eqn.invars, eqn.outvars)
+      out_type = [t if isinstance(t, AvalQDD) else AvalQDD(t, None) for t in out_type]
       foreach(write, eqn.outvars, out_type)
 
     except JaxprTypeError as e:
@@ -3041,7 +3083,7 @@ def _check_jaxpr(
 
 def check_type(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
-    env: set[Var],
+    env: dict[Var, Atom | MutableTypecheckVal],
     ty: AbstractValue,
   ) -> None:
   if isinstance(ty, DShapedArray):
@@ -3111,7 +3153,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
                          f"{len(call_jaxpr.invars)} inputs")
 
   # Check `call_jaxpr` can be applied to in_atoms.
-  env: dict[Var, Atom] = {}
+  env: dict[Var, Atom | MutableTypecheckVal] = {}
   def substitute(aval: AbstractValue):
     if isinstance(aval, DShapedArray):
       aval = aval.update(shape=tuple(env.get(d, d) for d in aval.shape))  # type: ignore
@@ -3122,7 +3164,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
       raise JaxprTypeError(f"Call primitive {prim} passes operand {x} of type "
                            f"{x.aval} to jaxpr expecting type "
                            f"{substitute(v.aval)}")
-    env[v] = x if type(x) is Var else x.val
+    env[v] = x.val if type(x) is Literal else x
 
   _check_jaxpr(ctx_factory, call_jaxpr)
 
