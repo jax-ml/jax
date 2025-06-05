@@ -21,9 +21,10 @@ import numpy as np
 
 from jax._src import config
 from jax._src import core
+from jax._src.numpy.array import array
 from jax._src.numpy.util import promote_dtypes
 from jax._src.numpy.lax_numpy import (
-  arange, array, concatenate, expand_dims, linspace, meshgrid, stack, transpose
+  arange, concatenate, expand_dims, linspace, meshgrid, stack, transpose
 )
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import set_module

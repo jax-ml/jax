@@ -24,6 +24,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
+from jax._src.numpy.array import asarray
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.sharding import Sharding
@@ -203,8 +204,6 @@ def full(shape: Any, fill_value: ArrayLike,
     Array([[0, 1, 2],
            [0, 1, 2]], dtype=int32)
   """
-  from jax._src.numpy.lax_numpy import asarray  # pytype: disable=import-error
-
   dtypes.check_user_dtype_supported(dtype, "full")
   util.check_arraylike("full", fill_value)
 
@@ -394,8 +393,6 @@ def full_like(a: ArrayLike | DuckTypedArray,
     Array([[1, 1, 1],
            [2, 2, 2]], dtype=int32)
   """
-  from jax._src.numpy.lax_numpy import asarray  # pytype: disable=import-error
-
   if hasattr(a, 'dtype') and hasattr(a, 'shape'):  # support duck typing
     util.check_arraylike("full_like", 0, fill_value)
   else:
@@ -512,8 +509,6 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               axis: int = 0,
               *, device: xc.Device | Sharding | None = None) -> Array | tuple[Array, Array]:
   """Implementation of linspace differentiable in start and stop args."""
-  from jax._src.numpy.lax_numpy import asarray  # pytype: disable=import-error
-
   dtypes.check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError(f"Number of samples, {num}, must be non-negative.")
