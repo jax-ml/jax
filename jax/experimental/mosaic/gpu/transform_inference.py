@@ -375,16 +375,6 @@ def _infer_memref_cast_transforms(
   return [transforms], [transforms]
 
 
-def _should_have_transforms(op: ir.OpView) -> bool:
-  """Returns 'True' if the operation should be assigned in/out transforms."""
-  return any(
-      map(
-          inference_utils.is_transformable_smem_memref,
-          itertools.chain(op.operands, op.results),
-      )
-  )
-
-
 def infer_transforms(module: ir.Module):
   """Infers transforms for the given module.
 
@@ -398,7 +388,7 @@ def infer_transforms(module: ir.Module):
   annotate the same memref.
   """
   def inference_step(op: ir.Operation):
-    if not _should_have_transforms(op):
+    if not inference_utils.should_have_transforms(op):
       return
     elif inference_rule := _transform_inference_rules.get(op.OPERATION_NAME, None):  # pytype: disable=attribute-error
       pass
