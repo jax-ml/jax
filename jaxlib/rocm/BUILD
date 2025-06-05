@@ -356,6 +356,7 @@ nanobind_extension(
         ":hip_vendor",
         "//jaxlib:kernel_nanobind_helpers",
         "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:hip_runtime",
         "@nanobind",
     ],
 )
@@ -398,6 +399,7 @@ nanobind_extension(
         "//jaxlib/cpu:lapack_kernels",
         "@com_google_absl//absl/base",
         "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:hip_runtime",
         "@nanobind",
         "@xla//xla/ffi/api:ffi",
     ],
@@ -466,6 +468,7 @@ nanobind_extension(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@local_config_rocm//rocm:hip_runtime",
         "@nanobind",
     ],
 )
@@ -532,7 +535,7 @@ nanobind_extension(
         "//jaxlib/gpu:gpu_plugin_extension",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
-        "@local_config_rocm//rocm:hip",
+        "@local_config_rocm//rocm:hip_runtime",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
     ],

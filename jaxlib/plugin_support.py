@@ -23,7 +23,7 @@ from .version import __version__ as jaxlib_version
 
 _PLUGIN_MODULE_NAMES = {
     "cuda": ["jax_cuda13_plugin", "jax_cuda12_plugin"],
-    "rocm": ["jax_rocm60_plugin"],
+    "rocm": ["jax_rocm7_plugin", "jax_rocm60_plugin"],
 }
 
 
