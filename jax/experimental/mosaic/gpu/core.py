@@ -57,6 +57,9 @@ from . import utils
 # TODO(apaszke): Unify with jax._src.lib.cuda_path
 CUDA_ROOT = "/usr/local/cuda"
 if os.environ.get("CUDA_ROOT") is None:
+  cuda_nvcc_root = os.path.join(os.getcwd(), "..", "cuda_nvcc")
+  if os.path.exists(cuda_nvcc_root):
+    CUDA_ROOT = cuda_nvcc_root
   os.environ["CUDA_ROOT"] = CUDA_ROOT
 else:
   CUDA_ROOT = os.environ["CUDA_ROOT"]
