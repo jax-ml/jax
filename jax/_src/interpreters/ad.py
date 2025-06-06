@@ -33,7 +33,7 @@ from jax._src import source_info_util
 from jax._src.ad_util import (
     add_jaxvals, replace_internal_symbolic_zeros,
     replace_rule_output_symbolic_zeros, Zero, zeros_like_aval, SymbolicZero)
-from jax._src.ad_util import zeros_like_p, add_jaxvals_p  # noqa: F401
+from jax._src.ad_util import zeros_like_p, add_jaxvals_p, raise_custom_vjp_error_on_jvp  # noqa: F401
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs, debug_info
 from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal)
 from jax._src.dtypes import dtype, float0
@@ -563,22 +563,22 @@ class JVPTrace(Trace):
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace,
                                   (fun, fwd, bwd, *primals_in),
-                                  dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
-    fwd_in = [(p, type(t) is not Zero) for p, t in zip(primals_in, tangents_in)]
-    fwd_in = [x for pair in fwd_in for x in pair]   # flatten
-    with core.set_current_trace(self.parent_trace):
-      res_and_primals_out = fwd.call_wrapped(*fwd_in)
+                                  dict(out_trees=out_trees,
+                                       symbolic_zeros=symbolic_zeros))
 
-    _, res_tree = out_trees()
-    res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-    avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
     in_zeros = [type(t) is Zero for t in tangents_in]
     nz_tangents_in = [t for z, t in zip(in_zeros, tangents_in) if not z]
-    with core.set_current_trace(self.parent_trace):
-      tangents_out = custom_lin_p.bind(
-          *res, *nz_tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
-          out_avals=avals_out, symbolic_zeros=symbolic_zeros, in_zeros=in_zeros)
+    out = prim.jvp_primitive.bind_with_trace(
+        self.parent_trace, (fwd, bwd, *primals_in, *nz_tangents_in),
+        dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros,
+             in_zeros=in_zeros))
+    primals_out, tangents_out = split_list(out, [len(out) // 2])
+    tangents_out = map(replace_rule_output_symbolic_zeros, tangents_out)
     return map(partial(maybe_jvp_tracer, self), primals_out, tangents_out)
+
+  def process_jvp_of_custom_vjp_call(self, prim, fwd, bwd, tracers, out_trees,
+                                     symbolic_zeros, in_zeros):
+    assert False
 
   def process_custom_transpose(self, prim, call, tracers, **params):
     ps_in, ts_in = unzip2(map(self.to_primal_tangent_pair, tracers))
@@ -1231,10 +1231,6 @@ def _interleave(xs, ys):
 custom_lin_p: core.Primitive = core.Primitive('custom_lin')
 custom_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
 custom_lin_p.multiple_results = True
-
-def raise_custom_vjp_error_on_jvp(*_, **__):
-  raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "
-                  "function.")
 custom_lin_p.def_impl(raise_custom_vjp_error_on_jvp)
 
 def _custom_lin_transpose(cts_out, *invals, num_res,

@@ -452,13 +452,17 @@ class JaxprTrace(Trace['JaxprTracer']):
       for t in out_tracers: t.recipe = eqn
       return out_tracers
 
-  def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, out_trees, symbolic_zeros):
+  def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, out_trees,
+                              symbolic_zeros):
     tracers = map(self.to_jaxpr_tracer, tracers)
     if all(t.is_known() for t in tracers):
       vals = [t.pval[1] for t in tracers]
       with core.set_current_trace(self.parent_trace):
         return prim.bind(f, fwd, bwd, *vals, out_trees=out_trees,
                          symbolic_zeros=symbolic_zeros)
+
+    name_stack = self._current_truncated_name_stack()
+    source = source_info_util.current().replace(name_stack=name_stack)
 
     tracers = map(self.instantiate_const, tracers)
     in_knowns = (False,) * len(tracers)
@@ -482,20 +486,53 @@ class JaxprTrace(Trace['JaxprTracer']):
       fwd_jaxpr, _, consts, () = trace_to_jaxpr_dynamic(fwd_, in_avals)
       return fwd_jaxpr, consts
 
-    name_stack = self._current_truncated_name_stack()
-    source = source_info_util.current().replace(name_stack=name_stack)
     params = dict(
         call_jaxpr=closed_jaxpr,
         fwd_jaxpr_thunk=fwd_jaxpr_thunk,
         num_consts=len(res) + len(env),
         bwd=bwd,
         out_trees=out_trees,
-        symbolic_zeros=symbolic_zeros
+        symbolic_zeros=symbolic_zeros,
     )
     eqn = new_eqn_recipe(self, (*res_tracers, *env_tracers, *tracers),
                          out_tracers, prim, params, jaxpr.effects, source)
     for t in out_tracers: t.recipe = eqn
     return out_tracers
+
+  def process_jvp_of_custom_vjp_call(self, prim, fwd, bwd, tracers, out_trees,
+                                     in_zeros, symbolic_zeros):
+    tracers = map(self.to_jaxpr_tracer, tracers)
+    if all(t.is_known() for t in tracers):
+      vals = [t.pval[1] for t in tracers]
+      with core.set_current_trace(self.parent_trace):
+        return prim.bind(fwd, bwd, *vals, out_trees=out_trees,
+                         symbolic_zeros=symbolic_zeros,
+                         in_zeros=in_zeros)
+
+    name_stack = self._current_truncated_name_stack()
+    source = source_info_util.current().replace(name_stack=name_stack)
+
+    primal_tracers, nz_tangent_tracers = split_list(tracers, [len(in_zeros)])
+    assert all(p.is_known() for p in primal_tracers)
+    primal_tracers = [p.pval[1] for p in primal_tracers]
+    fwd_ = _interleave_fun(fwd, [not z for z in in_zeros])
+    with core.set_current_trace(self.parent_trace):
+      res_and_primals_out = fwd_.call_wrapped(*primal_tracers)
+    _, res_tree = out_trees()
+    res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+    in_tracers = map(self.instantiate_const, nz_tangent_tracers)
+    out_avals = [core.get_aval(x).to_tangent_aval() for x in primals_out]
+    out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
+                  for a in out_avals]
+    res_tracers = map(self.instantiate_const, map(self.new_const, res))
+    params = dict(
+        num_res=res_tree.num_leaves, bwd=bwd, out_avals=out_avals,
+        in_zeros=in_zeros, symbolic_zeros=symbolic_zeros)
+    from jax._src.interpreters import ad
+    eqn = new_eqn_recipe(self, (*res_tracers, *in_tracers), out_tracers,
+                          ad.custom_lin_p, params, core.no_effects, source)
+    for t in out_tracers: t.recipe = eqn
+    return (*primals_out, *out_tracers)
 
 def partition_pvals(
     pvals: list[PartialVal]
@@ -2193,6 +2230,40 @@ class DynamicJaxprTrace(core.Trace):
                              bwd=bwd, out_trees=out_trees,
                              symbolic_zeros=symbolic_zeros),
                         fun_jaxpr.effects,
+                        source_info)
+    self.frame.add_eqn(eqn)
+    return out_tracers
+
+  def process_jvp_of_custom_vjp_call(self, prim: core.Primitive,
+                                     fwd: lu.WrappedFun, bwd: lu.WrappedFun,
+                                     tracers,
+                                     out_trees: Callable[[], Sequence[PyTreeDef]],
+                                     symbolic_zeros: bool,
+                                     in_zeros: Sequence[bool]):
+    source_info = source_info_util.current()
+    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
+    tracers = map(to_jaxpr_tracer, tracers)
+    in_avals = [t.aval for t in tracers]
+    primal_in_avals, _ = split_list(in_avals, [len(in_zeros)])
+    fwd_ = _interleave_fun(fwd, [not z for z in in_zeros])
+    jaxpr, out_avals, consts, () = trace_to_jaxpr_dynamic(fwd_, primal_in_avals)
+    jaxpr = close_jaxpr(convert_constvars_jaxpr(jaxpr))
+
+    _, res_tree = out_trees()
+    _, primal_out_avals = split_list(out_avals, [res_tree.num_leaves])
+    out_avals = [*primal_out_avals, *(v.to_tangent_aval() for v in primal_out_avals)]
+    out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
+    invars = map(self.getvar, tracers)
+    constvars = map(self.getvar, map(to_jaxpr_tracer, consts))
+    outvars = map(self.makevar, out_tracers)
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
+                        dict(fwd_jaxpr=jaxpr,
+                             num_consts=len(consts),
+                             bwd=bwd, out_trees=out_trees,
+                             symbolic_zeros=symbolic_zeros,
+                             in_zeros=(True,)*len(consts) + (*in_zeros,),
+                             out_avals=out_avals),
+                        jaxpr.effects,
                         source_info)
     self.frame.add_eqn(eqn)
     return out_tracers

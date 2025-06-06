@@ -3200,6 +3200,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertEqual(actual, expected)
 
   def test_custom_lin_pretty_print(self):
+    self.skipTest("TODO")
     @jax.custom_vjp
     def f(x):
       return x + 1

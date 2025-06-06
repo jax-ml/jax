@@ -21,6 +21,7 @@ from typing import Any, Union
 
 import numpy as np
 
+from jax._src import ad_util
 from jax._src import config
 from jax._src import core
 from jax._src import source_info_util
@@ -588,13 +589,18 @@ class BatchTrace(Trace):
     bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, out_dims2, in_dims)
     out_vals = prim.bind_with_trace(self.parent_trace,
                                     (fun, fwd, bwd) + tuple(in_vals),
-                                    dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
+                                    dict(out_trees=out_trees,
+                                         symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
       _, res_tree = out_trees()
       _, out_dims = split_list(out_dims, [res_tree.num_leaves])
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
+
+  def process_jvp_of_custom_vjp_call(
+      self, prim, fwd, bwd, tracers, *, out_trees, symbolic_zeros, in_zeros):  # pytype: disable=signature-mismatch
+    ad_util.raise_custom_vjp_error_on_jvp()
 
 ### API for batching callables with vmappable inputs and outputs
 

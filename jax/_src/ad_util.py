@@ -139,6 +139,9 @@ def replace_rule_output_symbolic_zeros(
     x: JaxTypeOrTracer | SymbolicZero) -> JaxTypeOrTracer | Zero:
   return Zero(x.aval) if type(x) is SymbolicZero else x
 
+def raise_custom_vjp_error_on_jvp(*_, **__):
+  raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "
+                  "function.")
 
 # TODO(mattjj): remove these after fixing downstream users relying on them
 zeros_like_p: Primitive = Primitive('zeros_like')
