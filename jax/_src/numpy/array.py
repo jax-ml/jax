@@ -248,7 +248,15 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   elif isinstance(object, (list, tuple)):
     if object:
       arrs = (array(elt, dtype=dtype, copy=False) for elt in object)
-      out = lax.concatenate([lax.expand_dims(arr, [0]) for arr in arrs], 0)
+      arrays_out = [lax.expand_dims(arr, [0]) for arr in arrs]
+      # lax.concatenate can be slow to compile for wide concatenations, so form a
+      # tree of concatenations as a workaround especially for op-by-op mode.
+      # (https://github.com/jax-ml/jax/issues/653).
+      k = 16
+      while len(arrays_out) > k:
+        arrays_out = [lax.concatenate(arrays_out[i:i+k], 0)
+                      for i in range(0, len(arrays_out), k)]
+      out = lax.concatenate(arrays_out, 0)
     else:
       out = np.array([], dtype=dtype)
   elif _supports_buffer_protocol(object):
