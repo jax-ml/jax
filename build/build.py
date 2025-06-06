@@ -644,8 +644,6 @@ async def main():
     cuda_major_version = args.cuda_version.split(".")[0]
   else:
     cuda_major_version = args.cuda_major_version
-  if "cuda" in args.wheels:
-    wheel_build_command_base.append(f"--//jax:cuda_major_version={cuda_major_version}")
 
   with open(".jax_configure.bazelrc", "w") as f:
     jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command_base.get_command_as_list(), args.use_new_wheel_build_rule)

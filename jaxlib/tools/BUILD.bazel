@@ -36,6 +36,7 @@ load(
     "pytype_test",
     "wheel_sources",
 )
+load("@cuda_cudart//:version.bzl", cuda_major_version = "VERSION")
 
 licenses(["notice"])  # Apache 2
 
@@ -502,32 +503,18 @@ jax_wheel(
 # Py_import targets.
 filegroup(
     name = "nvidia_wheel_deps",
-    srcs = select({
-        "//jax:config_cuda_major_version_12": [
-            "@pypi_nvidia_cublas_cu12//:whl",
-            "@pypi_nvidia_cuda_cupti_cu12//:whl",
-            "@pypi_nvidia_cuda_nvcc_cu12//:whl",
-            "@pypi_nvidia_cuda_runtime_cu12//:whl",
-            "@pypi_nvidia_cudnn_cu12//:whl",
-            "@pypi_nvidia_cufft_cu12//:whl",
-            "@pypi_nvidia_cusolver_cu12//:whl",
-            "@pypi_nvidia_cusparse_cu12//:whl",
-            "@pypi_nvidia_nccl_cu12//:whl",
-            "@pypi_nvidia_nvjitlink_cu12//:whl",
-        ],
-        "//jax:config_cuda_major_version_13": [
-            "@pypi_nvidia_cublas_cu13//:whl",
-            "@pypi_nvidia_cuda_cupti_cu13//:whl",
-            "@pypi_nvidia_cuda_nvcc_cu13//:whl",
-            "@pypi_nvidia_cuda_runtime_cu13//:whl",
-            "@pypi_nvidia_cudnn_cu13//:whl",
-            "@pypi_nvidia_cufft_cu13//:whl",
-            "@pypi_nvidia_cusolver_cu13//:whl",
-            "@pypi_nvidia_cusparse_cu13//:whl",
-            "@pypi_nvidia_nccl_cu13//:whl",
-            "@pypi_nvidia_nvjitlink_cu13//:whl",
-        ],
-    }),
+    srcs = [
+        "@pypi_nvidia_cublas_cu{cuda}//:whl".format(cuda=cuda_major_version),
+        "@pypi_nvidia_cuda_cupti_cu{cuda}//:whl".format(cuda=cuda_major_version),
+        "@pypi_nvidia_cuda_nvcc_cu{cuda}//:whl".format(cuda=cuda_major_version),
+        "@pypi_nvidia_cuda_runtime_cu{cuda}//:whl".format(cuda=cuda_major_version),
+        "@pypi_nvidia_cudnn_cu{cuda}//:whl".format(cuda=cuda_major_version),
+        "@pypi_nvidia_cufft_cu{cuda}//:whl".format(cuda=cuda_major_version),
+        "@pypi_nvidia_cusolver_cu{cuda}//:whl".format(cuda=cuda_major_version),
+        "@pypi_nvidia_cusparse_cu{cuda}//:whl".format(cuda=cuda_major_version),
+        "@pypi_nvidia_nccl_cu{cuda}//:whl".format(cuda=cuda_major_version),
+        "@pypi_nvidia_nvjitlink_cu{cuda}//:whl".format(cuda=cuda_major_version),
+    ],
 )
 
 # The flag configures whether to add the pypi NVIDIA CUDA deps to py_import.
@@ -564,19 +551,13 @@ py_import(
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
 py_import(
     name = "pypi_jax_cuda_plugin_with_cuda_deps",
-    wheel = select({
-        "//jax:config_cuda_major_version_12": "@pypi_jax_cuda12_plugin//:whl",
-        "//jax:config_cuda_major_version_13": "@pypi_jax_cuda13_plugin//:whl",
-    }),
+    wheel = "@pypi_jax_cuda{cuda}_plugin//:whl".format(cuda=cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
 py_import(
     name = "pypi_jax_cuda_pjrt_with_cuda_deps",
-    wheel = select({
-        "//jax:config_cuda_major_version_12": "@pypi_jax_cuda12_pjrt//:whl",
-        "//jax:config_cuda_major_version_13": "@pypi_jax_cuda13_pjrt//:whl",
-    }),
+    wheel = "@pypi_jax_cuda{cuda}_pjrt//:whl".format(cuda=cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
