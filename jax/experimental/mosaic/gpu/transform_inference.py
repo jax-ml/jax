@@ -411,3 +411,29 @@ def infer_transforms(module: ir.Module):
     inference_utils.traverse_op(
         op, inference_step, inference_utils.TraversalOrder.FORWARD
     )
+
+  # All ops that should have transforms but have no transforms inferred so far
+  # are assigned an empty sets of transforms. E.g., this happens in kernels with
+  # only pointwise operations.
+  def set_empty_transforms(op: ir.Operation):
+    if (
+        inference_utils.should_have_transforms(op)
+        and not inference_utils.has_in_transforms_set(op)
+        and not inference_utils.has_out_transforms_set(op)
+    ):
+      ins = [
+          ir.ArrayAttr.get([])
+          for o in op.operands
+          if inference_utils.is_transformable_smem_memref(o)
+      ]
+      outs = [
+          ir.ArrayAttr.get([])
+          for r in op.results
+          if inference_utils.is_transformable_smem_memref(r)
+      ]
+      _set_transform_attributes(op, ins, outs)
+
+  for op in module.body:
+    inference_utils.traverse_op(
+        op, set_empty_transforms, inference_utils.TraversalOrder.FORWARD
+    )
