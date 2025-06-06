@@ -3372,13 +3372,13 @@ def pp_kv_pair(k:str, v: Any, context: JaxprPpContext, settings: JaxprPpSettings
 def pp_kv_pairs(kv_pairs, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
   if not kv_pairs:
     return pp.nil()
-  return pp.group(
+  return pp.group(pp.concat([
     pp.nest(2, pp.concat([
       pp.text("["),  pp.brk(""),
       pp.join(pp.brk(), [pp_kv_pair(k, v, context, settings) for k, v in kv_pairs])
-    ]))
-    + pp.brk("") + pp.text("]")
-  )
+    ])),
+    pp.brk(""), pp.text("]")
+  ]))
 
 def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
            ) -> pp.Doc:
@@ -3494,10 +3494,10 @@ def pp_jaxpr(
 def pp_jaxprs(jaxprs: Sequence[ClosedJaxpr | Jaxpr],
               context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
   jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
-  return pp.group(pp.nest(2, pp.concat([
+  return pp.group(pp.concat([pp.nest(2, pp.concat([
       pp.text('('), pp.brk(""),
       pp.join(pp.brk(), map(lambda x: pp_jaxpr(x, context, settings), jaxprs))]
-    )) + pp.brk("") + pp.text(')')
+    )), pp.brk(""), pp.text(')')])
   )
 
 

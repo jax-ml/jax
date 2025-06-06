@@ -983,6 +983,7 @@ def primal_tangent_dtype(primal_dtype, tangent_dtype,
 
   return PrimalTangentDType()
 
+@functools.cache
 def short_dtype_name(dtype) -> str:
   if isinstance(dtype, ExtendedDType):
     return str(dtype)
