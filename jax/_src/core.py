@@ -433,31 +433,37 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
 _var_counter = it.count()
 
 class Var:
-  __slots__ = ["count", "aval", "initial_qdd", "final_qdd"]
+  __slots__ = ["count", "suffix", "aval", "initial_qdd", "final_qdd"]
 
   count: int
+  suffix: str
   aval: AbstractValue
   # these are only useful for jaxpr binders but rather than create a separate
   # type for those, breaking existing interpreters, we add fields here.
   initial_qdd : QuasiDynamicData | None
   final_qdd : QuasiDynamicData | None
 
-  def __init__(self, aval: AbstractValue, initial_qdd = None, final_qdd = None):
-    assert isinstance(aval, AbstractValue)
+  def __init__(
+      self, suffix: str, aval: AbstractValue, initial_qdd=None, final_qdd=None
+  ):
     self.count = next(_var_counter)
+    self.suffix = suffix
     self.aval = aval
     self.initial_qdd = initial_qdd
     self.final_qdd = final_qdd
 
   def __repr__(self):
-    return f'Var(id={id(self)}):{self.aval.str_short()}'
+    return f"Var(id={id(self)}){self.suffix}:{self.aval.str_short()}"
 
   def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
     del print_dtype  # unused
-    return f"{context.var_names[self]}"
+    return f"{context.var_names[self]}{self.suffix}"
 
 
-gensym = lambda: Var
+def gensym(suffix: str = "") -> Callable:
+  """Produce distinct variables, printed with the optional suffix."""
+  return partial(Var, suffix)
+
 
 # In a jaxpr, `dropvar` can appear in place of a bound variable to indicate that
 # the assignment is dropped, i.e. that an expression's output value will never
@@ -465,7 +471,7 @@ gensym = lambda: Var
 # treat it as a special case of one. Its `aval` is similarly inexact.
 class DropVar(Var):
   def __init__(self, aval: AbstractValue):
-    super().__init__(aval)
+    super().__init__("", aval)
   def __repr__(self): return '_'
   def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
     del context, print_dtype  # unused
