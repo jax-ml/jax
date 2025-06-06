@@ -235,7 +235,8 @@ def pad_jaxpr_constvars(jaxpr: jax_core.Jaxpr,
   to pad each Jaxpr with all consts from all branches so the
   signatures match, but only use the consts for this branch.
   """
-  unused_const_vars = [tuple(map(jax_core.Var, const_avals))
+  newvar = jax_core.gensym(suffix='_')
+  unused_const_vars = [tuple(map(newvar, const_avals))
                        for const_avals in all_const_avals]
   const_prefix = util.concatenate(unused_const_vars[:i])
   const_suffix = util.concatenate(unused_const_vars[i + 1:])
