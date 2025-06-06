@@ -470,6 +470,35 @@ class TransformInferenceTest(parameterized.TestCase):
         inference_utils.out_transforms(subview_op), [transforms]
     )
 
+  def test_infer_transforms_sets_default_emptry_transforms(self):
+    async_load_op = None
+    shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    def body(gmem_ref, smem_ref, barrier):
+      nonlocal async_load_op
+      zero = arith.constant(ir.IntegerType.get_signless(32), 0)
+      async_load_op = mgpu.dialect.AsyncLoadOp(
+          source=gmem_ref,
+          destination=smem_ref,
+          barrier=barrier,
+          indices=[zero, zero],
+          slice_lengths=shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+      gmem_ty = ir.MemRefType.get(shape, elt_ty)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+      func.FuncOp.from_py_func(gmem_ty, smem_ty, barrier_ty)(body).func_op
+
+    mgpu.infer_transforms(self.module)
+    [in_transform] = inference_utils.in_transforms(async_load_op)
+    self.assertSequenceEqual(in_transform, ir.ArrayAttr.get([]))
+    self.assertEmpty(inference_utils.out_transforms(async_load_op))
+
   @parameterized.parameters([False, True])
   def test_infer_transforms_for_subview_op_raises_on_disturbed_transforms(
       self, annotate_input
