@@ -614,24 +614,18 @@ def _is_memref_transposed(mem_ref_type: ir.MemRefType) -> bool:
   return False
 
 
-def reinterpret_smem_ref(
-    ref: ir.Value,
+def _transformed_smem_ref_type(
+    ref_ty: ir.MemRefType,
     transforms: tuple[launch_context.MemRefTransform, ...],
-) -> ir.Value:
-  """Applies transforms on the ref, and makes sure that their effect is
-  propagated appropriately on the strides.
-
-  This function is used any time we lower from a dialect SMEM ref (2D for wgmma)
-  with given transforms to a "physical" SMEM ref (4D for wgmma) that is fully
-  transformed and transposed as needed.
+) -> ir.MemRefType:
+  """Returns the transformed ref type for the given logical ref and transforms.
   """
-  ref_ty = ir.MemRefType(ref.type)
   transposed = _is_memref_transposed(ref_ty)
   if not transforms and not transposed:
-    return ref
+    return ref_ty
 
   if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
-    raise ValueError(f"Only workgroup memory is supported but got {ref}.")
+    raise ValueError(f"Only workgroup memory is supported but got {ref_ty}.")
 
   shape = ref_ty.shape
   if transposed:
@@ -659,23 +653,43 @@ def reinterpret_smem_ref(
       raise NotImplementedError(
           f"Expected a 2D or 4D shape after transforms, but got {shape}"
       )
-    strides = [1]*len(shape)
-    for i in minor_to_major_stride_order[1:]:
-      strides[i] = strides[i-1] * shape[i-1]
-    layout = ir.StridedLayoutAttr.get(0, strides)
   else:
-    layout = None
+    minor_to_major_stride_order = tuple(reversed(range(len(shape))))
+
+  new_strides = [1] * len(shape)
+  for i in range(1, len(shape)):
+    dim = minor_to_major_stride_order[i]
+    prev_dim = minor_to_major_stride_order[i-1]
+    new_strides[dim] = new_strides[prev_dim] * shape[prev_dim]
 
   new_ref_ty = ir.MemRefType.get(
       shape,
       ref_ty.element_type,
       memory_space=ref_ty.memory_space,
-      layout=layout,
+      layout=ir.StridedLayoutAttr.get(0, new_strides),
   )
+  return new_ref_ty
+
+
+def reinterpret_smem_ref(
+    ref: ir.Value,
+    transforms: tuple[launch_context.MemRefTransform, ...],
+) -> ir.Value:
+  """Applies transforms on the ref, and makes sure that their effect is
+  propagated appropriately on the strides.
+
+  This function is used any time we lower from a dialect SMEM ref (2D for wgmma)
+  with given transforms to a "physical" SMEM ref (4D for wgmma) that is fully
+  transformed and transposed as needed.
+  """
+  ref_ty = ir.MemRefType(ref.type)
+  new_ref_ty = _transformed_smem_ref_type(ref_ty, transforms)
+  if ref_ty == new_ref_ty:
+    return ref
   ms = utils.WORKGROUP_NVPTX_ADDRESS_SPACE
   ptr = utils.memref_ptr(ref, memory_space=ms)
-  ref = utils.ptr_as_memref(ptr, new_ref_ty, ptr_memory_space=ms)
-  return ref
+  new_ref = utils.ptr_as_memref(ptr, new_ref_ty, ptr_memory_space=ms)
+  return new_ref
 
 
 @_register_lowering(mgpu.AsyncLoadOp)
