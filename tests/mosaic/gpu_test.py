@@ -587,8 +587,11 @@ class WGMMALayoutTest(TestCase):
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, y, (x, y))
     np.testing.assert_array_equal(f(x), y)
 
-  def test_f8_conversions(self):
-    jax_dtype_from, jax_dtype_to = jnp.float32, jnp.float8_e4m3fn
+  @parameterized.parameters(
+      (jnp.float32, jnp.float8_e4m3fn),
+      (jnp.bfloat16, jnp.float8_e4m3fn)
+  )
+  def test_f8_conversions(self, jax_dtype_from, jax_dtype_to):
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
     def kernel(ctx, inp, out, smem):
       del ctx
