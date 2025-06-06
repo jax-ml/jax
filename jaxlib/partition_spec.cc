@@ -119,7 +119,7 @@ Py_ssize_t PartitionSpec::Hash() const {
 }
 
 bool PartitionSpec::Eq(const nb::object& other) const {
-  if (!other.ptr()) {
+  if (!other.ptr() || other.is_none()) {
     return false;
   }
   PartitionSpec* other_spec;
