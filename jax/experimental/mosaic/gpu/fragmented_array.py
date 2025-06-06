@@ -1574,7 +1574,7 @@ class FragmentedArray:
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
     # TODO(bchetioui): handle conversions to/from other float8 types.
-    if cur_dtype == f32 and new_dtype == f8e4m3fn:
+    if cur_dtype in {bf16, f32} and new_dtype == f8e4m3fn:
       if vector_len != 2:
         raise NotImplementedError(vector_len)
       new_registers = np.empty_like(self.registers)
@@ -1582,6 +1582,10 @@ class FragmentedArray:
       for idx, reg in np.ndenumerate(self.registers):
         e0 = vector.extractelement(reg, position=c(0, index))
         e1 = vector.extractelement(reg, position=c(1, index))
+        # TODO(bchetioui): can we do faster than this?
+        if cur_dtype == bf16:
+          e0 = arith.extf(f32, e0)
+          e1 = arith.extf(f32, e1)
         new_reg_16 = llvm.inline_asm(
             i16,
             [e1, e0],
