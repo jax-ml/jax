@@ -386,7 +386,7 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   # There is experimental support for cross-host device transfers on TFRT TPU
   # backends only.
   if (xla_bridge.process_count() == 1 or backend.platform != "tpu" or
-      "TFRT TPU" not in backend.platform_version):
+      not backend.platform_version.startswith("TFRT TPU")):
     return False
   if (src_sharding._internal_device_list.device_kind !=
       dst_sharding._internal_device_list.device_kind):
