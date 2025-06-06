@@ -155,6 +155,76 @@ def _fragmented_array_from_ir(
   ).to_layout(layouts.from_layout_attr(layout))
 
 
+def wrap_transformed_memref(
+    transformed_memref: ir.Value,
+    logical_type: ir.Type,
+    transforms: ir.ArrayAttr | None,
+) -> ir.Value:
+  """Wraps a transformed memref to an unrealized conversion cast with transforms."""
+  conversion_cast = builtin.UnrealizedConversionCastOp(
+      [logical_type], [transformed_memref]
+  )
+
+  if transforms is not None:
+    conversion_cast.attributes["transforms"] = transforms
+  return conversion_cast.result
+
+
+def unwrap_transformed_memref(
+    ref: ir.Value,
+    expected_transforms: ir.ArrayAttr | None,
+) -> ir.Value:
+  """Uwraps a memref from an unrealized cast and verifies its transforms.
+
+  If the input is not wrapped and there are no expected transforms, then it is
+  directly returned.
+  """
+
+  conversion_cast = cast(
+      builtin.UnrealizedConversionCastOp, ref.owner.opview  # pytype: disable=attribute-error
+  )
+
+  if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
+    if expected_transforms is None:
+      return ref
+    raise ValueError(f"{conversion_cast} is not a conversion_cast")
+
+  if len(conversion_cast.operands) != 1:
+    if expected_transforms is None:
+      return ref
+    raise ValueError(
+        f"Expected a single operand for {conversion_cast} but got"
+        f" {len(conversion_cast.operands)}"
+    )
+
+  result = conversion_cast.operands[0]
+  if not ir.MemRefType.isinstance(result.type):
+    if expected_transforms is None:
+      return ref
+    # If the error below is raised, this may mean that some unrealized
+    # conversion cast that returns a memref needs to be further wrapped, but
+    # isn't.
+    raise ValueError(f"{result} is not a memref")
+
+  # Check that the actual transforms match the expected ones.
+  if expected_transforms is None:
+    if "transforms" in conversion_cast.attributes:
+      raise ValueError(
+          "Expected transforms to be None but got"
+          f" {conversion_cast.attributes['transforms']}"
+      )
+  else:
+    if "transforms" not in conversion_cast.attributes:
+      raise ValueError("Expected transforms missing")
+    if expected_transforms != conversion_cast.attributes["transforms"]:
+      raise ValueError(
+          f"Expected transforms {expected_transforms} do not match actual"
+          f" transforms {conversion_cast.attributes['transforms']}"
+      )
+
+  return result
+
+
 def _register_lowering(
     op: str | Type[ir.OpView] | None
 ) -> Callable[[MlirLoweringRule], MlirLoweringRule]:
@@ -360,12 +430,14 @@ def _vector_load_op_lowering_rule(
         vec_size=strided_layout.vec_size,
     )
   elif layouts.from_layout_attr(out_layout_attr) == fa.WGMMA_LAYOUT:
+    transforms_attr = inference_utils.in_transforms(vector_load_op)[0]
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-        inference_utils.in_transforms(vector_load_op)[0]
+        transforms_attr
     )
     ref_ty = ir.MemRefType(vector_load_op.base.type)
     _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
-    transformed_ref = reinterpret_smem_ref(vector_load_op.base, transforms)
+    unwrapped_ref = unwrap_transformed_memref(vector_load_op.base, transforms_attr)
+    transformed_ref = reinterpret_smem_ref(unwrapped_ref, transforms)
     fragmented_array = fa.FragmentedArray.load_tiled(
         transformed_ref,
         swizzle=swizzle,
@@ -402,13 +474,15 @@ def _vector_store_op_lowering_rule(
 
   mgpu_utils.warpgroup_barrier()  # Make sure the reads have completed.
   if fragmented_array.layout == fa.WGMMA_LAYOUT:
+    transforms_attr = inference_utils.in_transforms(vector_store_op)[0]
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-        inference_utils.in_transforms(vector_store_op)[0]
+        transforms_attr
     )
     ref_ty = ir.MemRefType(vector_store_op.base.type)
     _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
+    unwrapped_ref = unwrap_transformed_memref(vector_store_op.base, transforms_attr)
     fragmented_array.store_tiled(
-        reinterpret_smem_ref(vector_store_op.base, transforms), swizzle
+        reinterpret_smem_ref(unwrapped_ref, transforms), swizzle
     )
   elif (fragmented_array.layout == fa.WGMMA_ROW_LAYOUT or
         fragmented_array.layout == fa.WGMMA_COL_LAYOUT or
@@ -686,13 +760,18 @@ def _mgpu_async_load_op_lowering_rule(
   barrier = utils.DialectBarrierRef.from_barrier_memref(load_op.barrier)
 
   if inference_utils.has_in_transforms_set(load_op):
-    [transforms] = inference_utils.in_transforms(load_op)
+    [transforms_attr] = inference_utils.in_transforms(load_op)
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-        transforms
+        transforms_attr
     )
   else:
+    transforms_attr = None
     swizzle = mgpu.SwizzlingMode.kNoSwizzle
     transforms = ()
+
+  unwrapped_destination = unwrap_transformed_memref(
+      load_op.destination, transforms_attr
+  )
 
   gmem_slice = []
   for idx_i32, size in zip(load_op.indices, load_op.slice_lengths):
@@ -709,7 +788,7 @@ def _mgpu_async_load_op_lowering_rule(
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
-      dst_ref=reinterpret_smem_ref(load_op.destination, transforms),
+      dst_ref=reinterpret_smem_ref(unwrapped_destination, transforms),
       gmem_slice=tuple(gmem_slice),
       barrier=barrier.barrier_ref,
       arrive=False,
@@ -727,13 +806,16 @@ def _mgpu_async_store_op_lowering_rule(
   assert ctx.launch_context is not None
 
   if inference_utils.has_in_transforms_set(store_op):
-    [transforms] = inference_utils.in_transforms(store_op)
+    [transforms_attr] = inference_utils.in_transforms(store_op)
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-        transforms
+        transforms_attr
     )
   else:
+    transforms_attr = None
     swizzle = mgpu.SwizzlingMode.kNoSwizzle
     transforms = ()
+
+  unwrapped_source = unwrap_transformed_memref(store_op.source, transforms_attr)
 
   gmem_slice = []
   for idx_i32, size in zip(store_op.indices, store_op.slice_lengths):
@@ -749,7 +831,7 @@ def _mgpu_async_store_op_lowering_rule(
 
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
-      src_ref=reinterpret_smem_ref(store_op.source, transforms),
+      src_ref=reinterpret_smem_ref(unwrapped_source, transforms),
       dst_ref=store_op.destination,
       gmem_slice=tuple(gmem_slice),
       swizzle=swizzle,
@@ -967,18 +1049,22 @@ def _mgpu_wgmma_op_lowering_rule(
   if ir.VectorType.isinstance(wgmma_op.a.type):
     a_transforms = None
     b_transforms = inference_utils.in_transforms(wgmma_op)[0]
+    unwrapped_a_ref = None
+    unwrapped_b_ref = unwrap_transformed_memref(wgmma_op.b, b_transforms)
   else:
     a_transforms, b_transforms = inference_utils.in_transforms(wgmma_op)
+    unwrapped_a_ref = unwrap_transformed_memref(wgmma_op.a, a_transforms)
+    unwrapped_b_ref = unwrap_transformed_memref(wgmma_op.b, b_transforms)
 
   b_swizzle, b_transforms = swizzle_and_transforms_from_transforms_attr(
       b_transforms
   )
   minimum_swizzle = mgpu.SwizzlingMode.k32ByteSwizzle
-  ref_ty = ir.MemRefType(wgmma_op.b.type)
+  ref_ty = ir.MemRefType(unwrapped_b_ref.type)
   _check_transforms_and_swizzle_are_supported(
       ref_ty, b_transforms, b_swizzle, minimum_swizzle
   )
-  b_operand = reinterpret_smem_ref(wgmma_op.b, b_transforms)
+  b_operand = reinterpret_smem_ref(unwrapped_b_ref, b_transforms)
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
     a_operand = _fragmented_array_from_ir(wgmma_op.a, wgmma_layout)
@@ -986,7 +1072,7 @@ def _mgpu_wgmma_op_lowering_rule(
     a_swizzle, a_transforms = swizzle_and_transforms_from_transforms_attr(
         a_transforms
     )
-    ref_ty = ir.MemRefType(wgmma_op.a.type)
+    ref_ty = ir.MemRefType(unwrapped_a_ref.type)
     _check_transforms_and_swizzle_are_supported(
         ref_ty, a_transforms, a_swizzle, minimum_swizzle
     )
@@ -995,7 +1081,7 @@ def _mgpu_wgmma_op_lowering_rule(
           f"Non-matching swizzles of operands a and b in WGMMA: {a_swizzle} !="
           f" {b_swizzle}"
       )
-    a_operand = reinterpret_smem_ref(wgmma_op.a, a_transforms)
+    a_operand = reinterpret_smem_ref(unwrapped_a_ref, a_transforms)
 
   new_acc = wgmma.wgmma(acc, a_operand, b_operand, swizzle=b_swizzle)
 
@@ -1048,7 +1134,13 @@ def _mgpu_slice_smem_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
   del ctx
-  return [_slice_smem(op.result.type, op.offset)]
+  sliced_ref = _slice_smem(op.result.type, op.offset)
+  if inference_utils.has_out_transforms_set(op):
+    [out_transforms] = inference_utils.out_transforms(op)
+  else:
+    out_transforms = None
+  wrapped_ref = wrap_transformed_memref(sliced_ref, op.result.type, out_transforms)
+  return [wrapped_ref]
 
 
 def _slice_smem(result: ir.Type, offset: ir.Value):
@@ -1059,6 +1151,116 @@ def _slice_smem(result: ir.Type, offset: ir.Value):
   )
   offset = arith.index_cast(ir.IndexType.get(), offset)
   return memref.view(result, smem_base, offset, [])
+
+
+@_register_lowering(memref.ViewOp)
+def _memref_view_op_lowering_rule(
+    ctx: LoweringContext, op: memref.ViewOp
+) -> Sequence[ir.Value]:
+  del ctx
+  clone = op.clone()
+  if inference_utils.has_out_transforms_set(op):
+    [out_transforms] = inference_utils.out_transforms(op)
+  else:
+    out_transforms = None
+  wrapped_ref = wrap_transformed_memref(
+      clone.result, clone.result.type, out_transforms
+  )
+  return [wrapped_ref]
+
+
+@_register_lowering(memref.SubViewOp)
+def _memref_subview_op_lowering_rule(
+    ctx: LoweringContext, op: memref.SubViewOp
+) -> Sequence[ir.Value]:
+  del ctx
+
+  [in_transforms] = (
+      inference_utils.in_transforms(op)
+      if inference_utils.has_in_transforms_set(op)
+      else [None]
+  )
+  unwrapped_source_ref = unwrap_transformed_memref(op.source, in_transforms)
+  new_subview_op = memref.SubViewOp(
+      op.result.type,
+      unwrapped_source_ref,
+      op.offsets,
+      op.sizes,
+      op.strides,
+      static_offsets=op.static_offsets,
+      static_sizes=op.static_sizes,
+      static_strides=op.static_strides,
+  )
+  for attr in op.attributes:
+    new_subview_op.attributes[attr.name] = attr.attr
+
+  if inference_utils.has_out_transforms_set(op):
+    [out_transforms] = inference_utils.out_transforms(op)
+  else:
+    out_transforms = None
+  wrapped_ref = wrap_transformed_memref(
+      new_subview_op.result, new_subview_op.result.type, out_transforms
+  )
+  return [wrapped_ref]
+
+
+@_register_lowering(memref.CastOp)
+def _memref_cast_op_lowering_rule(
+    ctx: LoweringContext, op: memref.CastOp
+) -> Sequence[ir.Value]:
+  del ctx
+
+  if inference_utils.has_in_transforms_set(op):
+    [in_transforms] = inference_utils.in_transforms(op)
+  else:
+    in_transforms = None
+  unwrapped_source_ref = unwrap_transformed_memref(op.source, in_transforms)
+
+  new_cast_op = memref.CastOp(
+      op.result.type,
+      unwrapped_source_ref,
+  )
+  for attr in op.attributes:
+    new_cast_op.attributes[attr.name] = attr.attr
+
+  if inference_utils.has_out_transforms_set(op):
+    [out_transforms] = inference_utils.out_transforms(op)
+  else:
+    out_transforms = None
+  wrapped_ref = wrap_transformed_memref(
+      new_cast_op.result, new_cast_op.result.type, out_transforms
+  )
+  return [wrapped_ref]
+
+
+@_register_lowering(memref.TransposeOp)
+def _memref_transpose_op_lowering_rule(
+    ctx: LoweringContext, op: memref.TransposeOp
+) -> Sequence[ir.Value]:
+  del ctx
+
+  if inference_utils.has_in_transforms_set(op):
+    [in_transforms] = inference_utils.in_transforms(op)
+  else:
+    in_transforms = None
+  unwrapped_in_ref = unwrap_transformed_memref(op.in_, in_transforms)
+
+  new_transpose_op = memref.TransposeOp(
+      op.result.type,
+      unwrapped_in_ref,
+      op.permutation,
+  )
+  for attr in op.attributes:
+    new_transpose_op.attributes[attr.name] = attr.attr
+
+  if inference_utils.has_out_transforms_set(op):
+    [out_transforms] = inference_utils.out_transforms(op)
+  else:
+    out_transforms = None
+  wrapped_ref = wrap_transformed_memref(
+      new_transpose_op.result, new_transpose_op.result.type, out_transforms
+  )
+  return [wrapped_ref]
 
 
 # The metadata needed to recostruct a vector from its flattened representation.
@@ -1369,6 +1571,10 @@ def _should_lower(op: ir.OpView) -> bool:
       op.OPERATION_NAME.startswith("mosaic_gpu.")  # pytype: disable=attribute-error
       or inference_utils.should_have_layout(op)
       or any(bool(b) for r in op.regions for b in r)  # Does it have subblocks?
+      or op.OPERATION_NAME == "memref.view"
+      or op.OPERATION_NAME == "memref.subview"
+      or op.OPERATION_NAME == "memref.cast"
+      or op.OPERATION_NAME == "memref.transpose"
   )
 
 
