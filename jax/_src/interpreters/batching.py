@@ -111,7 +111,7 @@ def _jumble_unflatten(aval, x):
 register_pytree_node(Jumble, _jumble_flatten, _jumble_unflatten)
 
 def _jumble_result(axis_size, stacked_axis, ragged_axes, x):
-  binder = core.Var('', core.ShapedArray((), np.dtype('int32')))
+  binder = core.Var(core.ShapedArray((), np.dtype('int32')))
   if stacked_axis != 0:
     raise NotImplementedError  # TODO Transpose x so the stacked axis is axis 0
   shape = list(x.shape)
@@ -175,7 +175,7 @@ def bdim_as_shape(
     bdim: int | RaggedAxis, data_shape: core.Shape) -> core.Shape:
   if isinstance(bdim, RaggedAxis):
     result = list(data_shape)
-    binder = core.Var('', core.ShapedArray((), np.dtype('int32')))
+    binder = core.Var(core.ShapedArray((), np.dtype('int32')))
     for ragged_axis, segment_lens in bdim.ragged_axes:
       result[ragged_axis] = IndexedAxisSize(binder, segment_lens)
     return tuple(result)
@@ -1138,7 +1138,7 @@ def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   if dst == jumble_axis:
     x = bdim_at_front(x, src, sz)
     elt_ty = x.aval.update(shape=x.shape[1:])
-    aval = JumbleTy(core.Var('', core.ShapedArray((), np.dtype('int32'))),
+    aval = JumbleTy(core.Var(core.ShapedArray((), np.dtype('int32'))),
                     x.shape[0], elt_ty)
     return Jumble(aval, x)
   try:

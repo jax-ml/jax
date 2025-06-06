@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
+
 # pytype: skip-file
 from __future__ import annotations
 
@@ -1135,7 +1135,6 @@ def _partial_eval_jaxpr_custom_cached(
   def has_effects(effects) -> bool:
     return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
 
-  newvar = core.gensym(suffix='_offload')
   known_eqns, staged_eqns = [], []
   foreach(write, in_unknowns, in_inst, jaxpr.invars)
   foreach(partial(write, False, True), jaxpr.constvars)
@@ -1165,7 +1164,7 @@ def _partial_eval_jaxpr_custom_cached(
       elif isinstance(policy, Offloadable):
         # TODO(slebedev): This is a legit error which requires a BUILD fix.
         from jax._src.dispatch import device_put_p, TransferToMemoryKind, CopySemantics  # pytype: disable=import-error
-        resvars = [newvar(v.aval) for v in eqn.outvars]
+        resvars = [Var(v.aval) for v in eqn.outvars]
         outvars_copy = list[Atom](eqn.outvars)
         offload_eqn = core.JaxprEqn(
             outvars_copy, resvars, device_put_p,
@@ -1301,13 +1300,12 @@ def call_partial_eval_custom_rule(
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   _, ins_staged = partition_list(inst_in, eqn.invars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
-  newvar = core.gensym()
   params_known = {**eqn.params, jaxpr_param_name: jaxpr_known}
   params_staged = {**eqn.params, jaxpr_param_name: jaxpr_staged}
   params_known, params_staged = params_updater(
       unks_in, inst_in, map(op.not_, unks_out), inst_out, num_res, params_known,
       params_staged)
-  residuals = [newvar(res_aval(params_known, var.aval))
+  residuals = [Var(res_aval(params_known, var.aval))
                for var in jaxpr_staged.invars[:num_res]]
   eqn_known = new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
                             eqn.primitive, params_known, jaxpr_known.effects,
@@ -1340,14 +1338,13 @@ def closed_call_partial_eval_custom_rule(
   ins_known, _ = partition_list(unks_in, eqn.invars)
   _, ins_staged = partition_list(inst_in, eqn.invars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
-  newvar = core.gensym()
   params_known = {**eqn.params, jaxpr_param_name: jaxpr_known}
   params_staged = {**eqn.params, jaxpr_param_name: jaxpr_staged}
   params_known, params_staged = params_updater(
       unks_in, inst_in, map(op.not_, unks_out), inst_out,
       sum(f is None for f in out_fwd), num_res, params_known, params_staged)
   res_val_binders, res_ref_binders = split_list(
-      [newvar(res_aval(params_known, v))
+      [Var(res_aval(params_known, v))
        for v in jaxpr_staged.in_avals[:num_res]], [num_res_val])
   res_val_binders = [v for v, f in zip(res_val_binders, out_fwd) if f is None]
   res_val_vars = subs_list(out_fwd, out_binders_known, res_val_binders)
@@ -2722,7 +2719,7 @@ def inline_jaxpr_into_trace(
   for eqn in jaxpr.eqns:
     invars = [x if isinstance(x, Literal) else env[x] for x in eqn.invars]
     orig_outvars = eqn.outvars
-    outvars = [Var('', v.aval) for v in orig_outvars]
+    outvars = [Var(v.aval) for v in orig_outvars]
     src_ = (src if not eqn.source_info.name_stack else
             src.replace(name_stack=src.name_stack + eqn.source_info.name_stack))
     eqn = eqn.replace(invars, outvars, source_info=src_)

@@ -184,9 +184,8 @@ def _pad_jaxpr_constvars(jaxpr, i, canonical_ref_avals, canonical_ref_indices,
                          canonical_non_ref_avals, canonical_non_ref_indices):
   is_ref = [isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars]
   nonref_constvars, ref_constvars = partition_list(is_ref, jaxpr.constvars)
-  newvar = core.gensym(suffix='_')
-  padded_ref_constvars  = map(newvar, canonical_ref_avals)
-  padded_non_ref_constvars  = map(newvar, canonical_non_ref_avals)
+  padded_ref_constvars  = map(core.Var, canonical_ref_avals)
+  padded_non_ref_constvars  = map(core.Var, canonical_non_ref_avals)
   for canonical_id, ref_var in zip(canonical_ref_indices[i], ref_constvars):
     padded_ref_constvars[canonical_id] = ref_var
   for canonical_id, non_ref_var in zip(canonical_non_ref_indices[i], nonref_constvars):

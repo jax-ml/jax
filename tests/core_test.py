@@ -551,16 +551,6 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     assert isinstance(jaxpr.eqns[-1].outvars[0], core.DropVar)
     core.check_jaxpr(jaxpr)
 
-  @jtu.thread_unsafe_test()  # in-place mutation of possibly-cached jaxpr
-  def test_jaxpr_undefined_eqn_invar(self):
-    jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
-    cos = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cos')
-    cos.invars[0] = core.gensym(suffix='_test')(cos.invars[0].aval)
-    self.assertRaisesRegex(
-        core.JaxprTypeError,
-        r"Variable '.+_test' not defined\n\nin equation:",
-        lambda: core.check_jaxpr(jaxpr))
-
 
 @jtu.with_config(jax_dynamic_shapes=True)
 class DynamicShapesTest(jtu.JaxTestCase):
