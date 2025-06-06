@@ -138,6 +138,14 @@ class NamedSharding(JSharding.Sharding):
              '_logical_device_ids': self._logical_device_ids})
 
   @property
+  def replicated_axes(self):
+    other_axes = {ax for entry in self.spec
+                  for ax in (entry if isinstance(entry, tuple) else (entry,))
+                  if ax is not None}
+    other_axes |= set(self.spec.unreduced)
+    return tuple(n for n in self.mesh.axis_names if n not in other_axes)
+
+  @property
   def memory_kind(self) -> str | None:
     return self._memory_kind
 

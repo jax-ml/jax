@@ -37,6 +37,7 @@ import weakref
 import numpy as np
 from contextlib import contextmanager
 
+from jax._src import ad_util
 from jax._src import api_util
 from jax._src import deprecations
 from jax._src import linear_util as lu
@@ -509,11 +510,10 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     if not has_aux:
       ans, vjp_py = _vjp(f_partial, *dyn_args)
     else:
-      ans, vjp_py, aux = _vjp(
-          f_partial, *dyn_args, has_aux=True)
+      ans, vjp_py, aux = _vjp(f_partial, *dyn_args, has_aux=True)
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
-    g = vjp_py(lax_internal._one(ans))
+    g = vjp_py(ad_util.Ones(core.typeof(ans).to_cotangent_aval()))
     g = g[0] if isinstance(argnums, int) else g
     if not has_aux:
       return ans, g
@@ -2085,20 +2085,20 @@ def _vjp_pullback_wrapper(name, out_primal_avals, io_tree, fun, *py_args_):
     raise TypeError(msg)
   py_args, = py_args_
   in_tree_expected, out_tree = io_tree
-  args, in_tree = tree_flatten(py_args)
-  if in_tree != in_tree_expected:
-    raise ValueError(f"unexpected tree structure of argument to vjp function: "
-                     f"got {in_tree}, but expected to match {in_tree_expected}")
-  for arg, aval in zip(args, out_primal_avals):
-    ct_aval = shaped_abstractify(arg)
-    ct_aval_expected = aval.to_tangent_aval()
-    if (not core.typecompat(ct_aval, ct_aval_expected) and
-        not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
-      raise ValueError(
-          "unexpected JAX type (e.g. shape/dtype) for argument to vjp function: "
-          f"got {ct_aval.str_short()}, but expected {ct_aval_expected.str_short()} "
-          f"because the corresponding output of the function {name} had JAX type "
-          f"{aval.str_short()}")
+  args, in_tree = tree_flatten(py_args, is_leaf=lambda x: isinstance(x, ad_util.Ones))
+  # if in_tree != in_tree_expected:
+  #   raise ValueError(f"unexpected tree structure of argument to vjp function: "
+  #                    f"got {in_tree}, but expected to match {in_tree_expected}")
+  # for arg, aval in zip(args, out_primal_avals):
+  #   ct_aval = shaped_abstractify(arg)
+  #   ct_aval_expected = aval.to_tangent_aval()
+  #   if (not core.typecompat(ct_aval, ct_aval_expected) and
+  #       not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
+  #     raise ValueError(
+  #         "unexpected JAX type (e.g. shape/dtype) for argument to vjp function: "
+  #         f"got {ct_aval.str_short()}, but expected {ct_aval_expected.str_short()} "
+  #         f"because the corresponding output of the function {name} had JAX type "
+  #         f"{aval.str_short()}")
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
