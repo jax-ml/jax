@@ -1113,6 +1113,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "partition_spec",
     srcs = ["_src/partition_spec.py"],
+    deps = [
+        ":util",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(

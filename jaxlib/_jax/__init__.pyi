@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import builtins
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence, Set
 import enum
 import inspect
 import types
@@ -552,7 +552,6 @@ class Client:
   ) -> PjRtLayout: ...
   def __getattr__(self, name: str) -> Any: ...
 
-
 class CompileOnlyPyClient(Client):
   def compile(
       self,
@@ -560,7 +559,6 @@ class CompileOnlyPyClient(Client):
       executable_devices: DeviceList | Sequence[Device],
       compile_options: CompileOptions = ...,
   ) -> Executable: ...
-
 
 class CpuCollectives: ...
 
@@ -1004,5 +1002,18 @@ def approx_top_k_reduction_output_size(
     aggregate_to_topk: bool | None = ...,
     input_size_override: int | None = ...,
 ) -> tuple[int, int]: ...
-
 def get_internal_device_put_info() -> dict[str, int]: ...
+
+class UnconstrainedSingleton:
+  def __repr__(self) -> str: ...
+  def __reduce__(self) -> Any: ...
+
+UNCONSTRAINED_PARTITION: UnconstrainedSingleton
+
+class PartitionSpec:
+  def __init__(self, *partitions, unreduced: Set[Any] | None = None): ...
+  def __hash__(self): ...
+  def __eq__(self, other): ...
+  _HAS_DYNAMIC_ATTRIBUTES: bool = ...
+
+def canonicalize_partition(partition: Any) -> Any: ...

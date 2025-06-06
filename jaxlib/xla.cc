@@ -95,6 +95,7 @@ limitations under the License.
 #include "jaxlib/jax_jit.h"
 #include "jaxlib/mlir.h"
 #include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/partition_spec.h"
 #include "jaxlib/pjit.h"
 #include "jaxlib/pmap_lib.h"
 #include "jaxlib/py_array.h"
@@ -963,6 +964,7 @@ NB_MODULE(_jax, m) {
   m.def("get_internal_device_put_info",
         []() { return DevicePutInfo::GetInfo(); });
 
+  jax::PartitionSpec::Register(m);
 }  // NOLINT(readability/fn_size)
 
 }  // namespace xla

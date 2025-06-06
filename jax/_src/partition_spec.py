@@ -14,49 +14,61 @@
 
 from __future__ import annotations
 from collections.abc import Set
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-class UnconstrainedSingleton:
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import _jax
+from jax._src.util import use_cpp_class, use_cpp_method, set_module
 
-  def __repr__(self):
-    return "UNCONSTRAINED"
+export = set_module('jax.sharding')
 
-  def __reduce__(self):
-    return (_get_default_unconstrained, ())
+# TODO(phawkins): the union confuses pytype. Just use the Python branch for now
+# until the C++ version is the minimum version.
+if not TYPE_CHECKING and jaxlib_extension_version >= 349:
+  _UNCONSTRAINED_PARTITION = _jax.UNCONSTRAINED_PARTITION
+  _canonicalize_partition = _jax.canonicalize_partition
+else:
+  class UnconstrainedSingleton:
+
+    def __repr__(self):
+      return "UNCONSTRAINED"
+
+    def __reduce__(self):
+      return (_get_default_unconstrained, ())
 
 
-# Unconstrained sentinel value for PartitionSpec, representing a dimension for
-# which the user wants XLA to assign the best partitioning.
-# TODO(yashkatariya): May rename to AUTO.
-_UNCONSTRAINED_PARTITION = UnconstrainedSingleton()
+  # Unconstrained sentinel value for PartitionSpec, representing a dimension for
+  # which the user wants XLA to assign the best partitioning.
+  # TODO(yashkatariya): May rename to AUTO.
+  _UNCONSTRAINED_PARTITION = UnconstrainedSingleton()
 
-def _get_default_unconstrained():
-  return _UNCONSTRAINED_PARTITION
-
-def _canonicalize_partition(partition):
-  if not partition:
-    return None
-  if partition is _UNCONSTRAINED_PARTITION:
+  def _get_default_unconstrained():
     return _UNCONSTRAINED_PARTITION
-  if isinstance(partition, (tuple, list)):
-    if len(partition) == 1:
-      return partition[0]
-    return tuple(partition)
-  return partition
 
-def _check(partitions, unreduced):
-  for p in partitions:
-    p = p if isinstance(p, tuple) else (p,)
-    for r in p:
-      if r in unreduced:
-        raise ValueError(
-            "partitions cannot overlap with unreduced axes passed to"
-            f" PartitionSpec. Got partitions: {partitions} and unreduced axes:"
-            f" {unreduced}")
-  if None in unreduced:
-    raise ValueError(
-        "unreduced cannot contain None. All elements in unreduced should refer"
-        " to the mesh axes.")
+  def _canonicalize_partition(partition):
+    if not partition:
+      return None
+    if partition is _UNCONSTRAINED_PARTITION:
+      return _UNCONSTRAINED_PARTITION
+    if isinstance(partition, (tuple, list)):
+      if len(partition) == 1:
+        return partition[0]
+      return tuple(partition)
+    return partition
+
+  def _check(partitions, unreduced):
+    for p in partitions:
+      p = p if isinstance(p, tuple) else (p,)
+      for r in p:
+        if r in unreduced:
+          raise ValueError(
+              "partitions cannot overlap with unreduced axes passed to"
+              f" PartitionSpec. Got partitions: {partitions} and unreduced axes:"
+              f" {unreduced}")
+    if None in unreduced:
+      raise ValueError(
+          "unreduced cannot contain None. All elements in unreduced should refer"
+          " to the mesh axes.")
 
 def unpickle_pspec(partitions, unreduced):
   return PartitionSpec(*partitions, unreduced=unreduced)
@@ -72,12 +84,14 @@ class PartitionSpec:
   This class exists so JAX's pytree utilities can distinguish a partition
   specifications from tuples that should be treated as pytrees.
   """
-  __slots__ = ("_partitions", "unreduced")
+  if jaxlib_extension_version < 349:
+    __slots__ = ("_partitions", "unreduced")
   __match_args__ = ("_partitions",)
 
   # A sentinel value representing a dim is unconstrained.
   UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
+  @use_cpp_method()
   def __init__(self, *partitions,
                unreduced: Set[AxisName] | None = None):
     self._partitions = tuple(_canonicalize_partition(p) for p in partitions)
@@ -108,6 +122,7 @@ class PartitionSpec:
   def __len__(self):
     return len(self._partitions)
 
+  @use_cpp_method()
   def __eq__(self, other):
     if isinstance(other, PartitionSpec):
       return (self._partitions == other._partitions and
@@ -122,6 +137,7 @@ class PartitionSpec:
     else:
       return False
 
+  @use_cpp_method()
   def __hash__(self):
     return hash((self._partitions, self.unreduced))
 
@@ -167,3 +183,11 @@ class PartitionSpec:
     if len(out) < ndim:
       out.extend([None] * (ndim - len(out)))
     return self.with_partitions(out)
+
+# TODO(phawkins): make this a decorator after the next jaxlib release.
+if not TYPE_CHECKING and jaxlib_extension_version >= 349:
+  PartitionSpec = use_cpp_class(_jax.PartitionSpec)(PartitionSpec)
+
+# TODO(phawkins): make this a decorator after the next jaxlib release.
+if not TYPE_CHECKING:
+  PartitionSpec = export(PartitionSpec)
