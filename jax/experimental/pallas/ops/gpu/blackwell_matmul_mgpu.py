@@ -83,71 +83,78 @@ def matmul_kernel(a, b, config: TuningConfig):
   def kernel(a_gmem, b_gmem, out_gmem,
              a_smem, b_smem, acc_tmem, acc_smem,
              a_tma_barrier, b_tma_barrier, consumed_barrier):
-    m_index = lax.axis_index("m")
-    n_index = lax.axis_index("n")
-    slice_m = pl.ds(m_index * block_m, block_m)
-    slice_n = pl.ds(n_index * block_n, block_n)
-    acc_slice_m = pl.ds(m_index * block_m, block_m)
-    acc_slice_n = pl.ds(n_index * block_n, block_n)
+    grid = (m_iters, n_iters)
+    @plgpu.nd_loop(grid, collective_axes="sm")
+    def mn_loop(idx):  # pylint: disable=unused-variable
+      m_index, n_index = idx
+      slice_m = pl.ds(m_index * block_m, block_m)
+      slice_n = pl.ds(n_index * block_n, block_n)
+      acc_slice_m = pl.ds(m_index * block_m, block_m)
+      acc_slice_n = pl.ds(n_index * block_n, block_n)
 
-    @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-    def _per_warp():
-      warp_id = lax.axis_index("warp")
+      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+      def _per_warp():
+        warp_id = lax.axis_index("warp")
 
-      @pl.when(warp_id == 0)
-      def _memory():
-        def _loop_body(ki, _):
-          slot = lax.rem(ki, max_concurrent_steps)
+        @pl.when(warp_id == 0)
+        def _memory():
+          def _loop_body(ki, _):
+            slot = lax.rem(ki, max_concurrent_steps)
 
-          @pl.when(ki >= max_concurrent_steps)
-          def _():
+            @pl.when(ki >= max_concurrent_steps)
+            def _():
+              plgpu.barrier_wait(consumed_barrier.at[slot])
+
+            slice_k = pl.ds(ki * block_k, block_k)
+            plgpu.copy_gmem_to_smem(
+                a_gmem.at[slice_m, slice_k],
+                a_smem.at[slot],
+                a_tma_barrier.at[slot],
+            )
+            plgpu.copy_gmem_to_smem(
+                b_gmem.at[slice_k, slice_n],
+                b_smem.at[slot],
+                b_tma_barrier.at[slot],
+            )
+          lax.fori_loop(0, k_iters, _loop_body, None)
+
+          # The memory loop will wait a total of (k_iters - 1) times,
+          # matching the arrivals in the compute loop.
+          for i in range(max_concurrent_steps - 1):
+            slot = lax.rem(k_iters + i, max_concurrent_steps)
             plgpu.barrier_wait(consumed_barrier.at[slot])
 
-          slice_k = pl.ds(ki * block_k, block_k)
-          plgpu.copy_gmem_to_smem(
-              a_gmem.at[slice_m, slice_k],
-              a_smem.at[slot],
-              a_tma_barrier.at[slot],
-          )
-          plgpu.copy_gmem_to_smem(
-              b_gmem.at[slice_k, slice_n],
-              b_smem.at[slot],
-              b_tma_barrier.at[slot],
-          )
+        @pl.when(warp_id == 1)
+        def _compute():
+          def _loop_body(ki, _):
+            slot = lax.rem(ki, max_concurrent_steps)
+            plgpu.barrier_wait(a_tma_barrier.at[slot])
+            plgpu.barrier_wait(b_tma_barrier.at[slot])
+            is_last_iter = ki >= k_iters - 1
+            barrier_slot = lax.select_n(is_last_iter,
+                                        slot, max_concurrent_steps)
+            plgpu.tcgen05_mma(
+                acc_tmem,
+                a_smem.at[slot],
+                b_smem.at[slot],
+                consumed_barrier.at[barrier_slot],
+                accumulate=(ki > 0))
+          lax.fori_loop(0, k_iters, _loop_body, None)
 
-        lax.fori_loop(0, k_iters, _loop_body, None)
+      plgpu.barrier_wait(consumed_barrier.at[max_concurrent_steps])
+      acc_smem[...] = acc_tmem[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(
+          acc_smem, out_gmem.at[acc_slice_m, acc_slice_n]
+      )
+      plgpu.wait_smem_to_gmem(0)
 
-      @pl.when(warp_id == 1)
-      def _compute():
-        def _loop_body(ki, _):
-          slot = lax.rem(ki, max_concurrent_steps)
-          plgpu.barrier_wait(a_tma_barrier.at[slot])
-          plgpu.barrier_wait(b_tma_barrier.at[slot])
-          is_last_iter = ki >= k_iters - 1
-          barrier_slot = lax.select_n(is_last_iter,
-                                      slot, max_concurrent_steps)
-          plgpu.tcgen05_mma(
-              acc_tmem,
-              a_smem.at[slot],
-              b_smem.at[slot],
-              consumed_barrier.at[barrier_slot],
-              accumulate=(ki > 0),
-          )
-        lax.fori_loop(0, k_iters, _loop_body, None)
-
-    plgpu.barrier_wait(consumed_barrier.at[max_concurrent_steps])
-    acc_smem[...] = acc_tmem[...].astype(dtype)
-    plgpu.commit_smem()
-    plgpu.copy_smem_to_gmem(
-        acc_smem, out_gmem.at[acc_slice_m, acc_slice_n]
-    )
-    plgpu.wait_smem_to_gmem(0)
-
+  num_sms = 148
   f = plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
-      grid=(m_iters, n_iters),
-      grid_names=("m", "n"),
+      grid=(num_sms,),
+      grid_names=("sm",),
       # TODO(justinfu): Add collective support.
       cluster_names=(),
       cluster=(),
