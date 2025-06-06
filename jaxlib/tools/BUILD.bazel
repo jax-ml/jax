@@ -35,7 +35,6 @@ load(
     "pytype_strict_library",
     "pytype_test",
     "wheel_sources",
-    "cuda_major_version",
 )
 
 licenses(["notice"])  # Apache 2
@@ -328,29 +327,47 @@ wheel_sources(
 )
 
 jax_wheel(
-    name = "jax_cuda_plugin_wheel",
+    name = "jax_cuda12_plugin_wheel",
     enable_cuda = True,
     no_abi = False,
-    platform_version = cuda_major_version(),
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "12",
     source_files = [":jax_plugin_sources"],
     wheel_binary = ":build_gpu_kernels_wheel_tool",
-    wheel_name = select({
-        "//jax:config_cuda_major_version_12": "jax_cuda12_plugin",
-        "//jax:config_cuda_major_version_13": "jax_cuda13_plugin",
-    }),
+    wheel_name = "jax_cuda12_plugin",
 )
 
 jax_wheel(
-    name = "jax_cuda_plugin_wheel_editable",
-    editable = True,
+    name = "jax_cuda13_plugin_wheel",
     enable_cuda = True,
-    platform_version = cuda_major_version(),
+    no_abi = False,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "13",
     source_files = [":jax_plugin_sources"],
     wheel_binary = ":build_gpu_kernels_wheel_tool",
-    wheel_name = select({
-        "//jax:config_cuda_major_version_12": "jax_cuda12_plugin",
-        "//jax:config_cuda_major_version_13": "jax_cuda13_plugin",
-    }),
+    wheel_name = "jax_cuda13_plugin",
+)
+
+jax_wheel(
+    name = "jax_cuda12_plugin_wheel_editable",
+    editable = True,
+    enable_cuda = True,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "12",
+    source_files = [":jax_plugin_sources"],
+    wheel_binary = ":build_gpu_kernels_wheel_tool",
+    wheel_name = "jax_cuda12_plugin",
+)
+
+jax_wheel(
+    name = "jax_cuda13_plugin_wheel_editable",
+    editable = True,
+    enable_cuda = True,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "13",
+    source_files = [":jax_plugin_sources"],
+    wheel_binary = ":build_gpu_kernels_wheel_tool",
+    wheel_name = "jax_cuda13_plugin",
 )
 
 jax_wheel(
@@ -419,29 +436,47 @@ wheel_sources(
 )
 
 jax_wheel(
-    name = "jax_cuda_pjrt_wheel",
+    name = "jax_cuda12_pjrt_wheel",
     enable_cuda = True,
     no_abi = True,
-    platform_version = cuda_major_version(),
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "12",
     source_files = [":jax_pjrt_sources"],
     wheel_binary = ":build_gpu_plugin_wheel_tool",
-    wheel_name = select({
-        "//jax:config_cuda_major_version_12": "jax_cuda12_pjrt",
-        "//jax:config_cuda_major_version_13": "jax_cuda13_pjrt",
-    }),
+    wheel_name = "jax_cuda12_pjrt",
 )
 
 jax_wheel(
-    name = "jax_cuda_pjrt_wheel_editable",
-    editable = True,
+    name = "jax_cuda13_pjrt_wheel",
     enable_cuda = True,
-    platform_version = cuda_major_version(),
+    no_abi = True,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "13",
     source_files = [":jax_pjrt_sources"],
     wheel_binary = ":build_gpu_plugin_wheel_tool",
-    wheel_name = select({
-        "//jax:config_cuda_major_version_12": "jax_cuda12_pjrt",
-        "//jax:config_cuda_major_version_13": "jax_cuda13_pjrt",
-    }),
+    wheel_name = "jax_cuda13_pjrt",
+)
+
+jax_wheel(
+    name = "jax_cuda12_pjrt_wheel_editable",
+    editable = True,
+    enable_cuda = True,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "12",
+    source_files = [":jax_pjrt_sources"],
+    wheel_binary = ":build_gpu_plugin_wheel_tool",
+    wheel_name = "jax_cuda12_pjrt",
+)
+
+jax_wheel(
+    name = "jax_cuda13_pjrt_wheel_editable",
+    editable = True,
+    enable_cuda = True,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "13",
+    source_files = [":jax_pjrt_sources"],
+    wheel_binary = ":build_gpu_plugin_wheel_tool",
+    wheel_name = "jax_cuda13_pjrt",
 )
 
 jax_wheel(

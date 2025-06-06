@@ -180,12 +180,6 @@ def _cpu_test_deps():
         "//jax:config_build_jaxlib_wheel": ["//jaxlib/tools:jaxlib_py_import"],
     })
 
-def cuda_major_version():
-    return select({
-        "//jax:config_cuda_major_version_12": "12",
-        "//jax:config_cuda_major_version_13": "13",
-    })
-
 def _gpu_test_deps():
     """Returns the additional dependencies needed for a GPU test."""
     return select({
