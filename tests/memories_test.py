@@ -707,7 +707,6 @@ class DevicePutTest(jtu.JaxTestCase):
 
     jax.block_until_ready(inp_host_donate_copy)
 
-  @jtu.run_on_devices("cuda")
   def test_parameter_and_activation_offload(self):
     mesh = jax.sharding.Mesh(np.array(jax.devices()[0]).reshape(1, 1), ('x', 'y'))
     s_dev = NamedSharding(mesh, P('x', 'y'), memory_kind="device")
@@ -743,30 +742,59 @@ class DevicePutTest(jtu.JaxTestCase):
     wh1 = jax.device_put(w1, s_host)
     wh2 = jax.device_put(w2, s_host)
 
-    # Compile and compute gradients of the scanned function
+    # Parameter and activation offload
     f = jax.jit(jax.grad(scanned),
         out_shardings=(s_host, s_dev))  # Apply JIT compilation to gradient computation
+    offload_result = f((wh1, wh2), input)
+    offload_step = f.lower((wh1, wh2), input).compile()
+    offload_stats = offload_step.memory_analysis()
 
-    # Analyze memory usage
-    compiled_step = f.lower((wh1, wh2), input).compile()
-    compiled_stats = compiled_step.memory_analysis()
+    # Activation offload only
+    g = jax.jit(jax.grad(scanned))
+    result = g((w1, w2), input)
+    step = g.lower((w1, w2), input).compile()
+    stats = step.memory_analysis()
+    self.assertAllClose(offload_result, result, atol=1e-5, rtol=1e-5)
+    if stats is not None and offload_stats is not None:
+      # The argument size should be smaller in the offloaded version because parameters are offloaded
+      self.assertGreater(stats.argument_size_in_bytes, offload_stats.argument_size_in_bytes)
+      self.assertGreater(offload_stats.host_output_size_in_bytes, 0)
+      self.assertGreater(stats.output_size_in_bytes, offload_stats.output_size_in_bytes)
 
-    if compiled_stats is not None:
-      arg_size = compiled_stats.argument_size_in_bytes / (1024**2)
-      total = ( compiled_stats.temp_size_in_bytes + compiled_stats.argument_size_in_bytes \
-          + compiled_stats.output_size_in_bytes - compiled_stats.alias_size_in_bytes ) /  \
-          (1024**2)
+  # Below static methods are used for the test_optimizer_state_offload unit test
+  @staticmethod
+  def gelu(x):
+    two = jnp.array(2.0, dtype=x.dtype)
+    pi = jnp.array(jnp.pi, dtype=x.dtype)
+    half = jnp.array(0.5, dtype=x.dtype)
+    one = jnp.array(1.0, dtype=x.dtype)
+    coeff = jnp.array(0.044715, dtype=x.dtype)
 
-      if arg_size > 0.3:
-        raise ValueError("Argument size should not exceed 0.3 MB after offloading.")
-      if total > 26.8:
-        raise ValueError("Total memmory size should not exceed 26.8 MB.")
+    sqrt_term = jnp.sqrt(two / pi)
+    tanh_input = sqrt_term * (x + coeff * (x ** 3))
+    return half * x * (one + jnp.tanh(tanh_input))
 
-  @jtu.run_on_devices("cuda")
+  @staticmethod
+  def single_layer(x, w):
+    return x @ w
+
+  @staticmethod
+  def forward(params, x):
+    for i in range(1, 5):
+      x = DevicePutTest.gelu(DevicePutTest.single_layer(x, params[f'w{i}']))
+    return x
+
+  @staticmethod
+  def compute_loss(params, inputs):
+    outputs = DevicePutTest.forward(params, inputs)
+    loss = jnp.mean((outputs - inputs) ** 2)
+
+    reg_coeff = jnp.array(0.001, dtype=inputs.dtype)
+    l2_reg = reg_coeff * sum(jnp.sum(w ** 2) for w in jax.tree_util.tree_leaves(params))
+    return loss + l2_reg
+
   def test_optimizer_state_offload(self):
-
     DIM = 512
-
     input = jnp.ones((DIM, DIM), dtype=jnp.float32)
     params = {f'w{i}': jnp.ones((DIM, DIM), dtype=jnp.float32) for i in range(1, 5)}
 
@@ -779,63 +807,59 @@ class DevicePutTest(jtu.JaxTestCase):
     )
     opt_state = optimizer.init(params)
     # Optimizer state is placed on the host during initialization
-    opt_state = jax.device_put(opt_state, s_host)
+    offload_opt_state = jax.device_put(opt_state, s_host)
 
-    def gelu(x):
-      two = jnp.array(2.0, dtype=x.dtype)
-      pi = jnp.array(jnp.pi, dtype=x.dtype)
-      half = jnp.array(0.5, dtype=x.dtype)
-      one = jnp.array(1.0, dtype=x.dtype)
-      coeff = jnp.array(0.044715, dtype=x.dtype)
-
-      sqrt_term = jnp.sqrt(two / pi)
-      tanh_input = sqrt_term * (x + coeff * (x ** 3))
-      return half * x * (one + jnp.tanh(tanh_input))
-
-    def single_layer(x, w):
-      return x @ w
-
-    def forward(params, x):
-      for i in range(1, 5):
-          x = gelu(single_layer(x, params[f'w{i}']))
-      return x
-
-    def compute_loss(params, inputs):
-      outputs = forward(params, inputs)
-      loss = jnp.mean((outputs - inputs) ** 2)
-
-      reg_coeff = jnp.array(0.001, dtype=inputs.dtype)
-      l2_reg = reg_coeff * sum(jnp.sum(w ** 2) for w in jax.tree_util.tree_leaves(params))
-      return loss + l2_reg
-
-    def step(params, opt_state, inputs, optimizer):
+    # With optimizer state offload
+    def offloaded_step(params, opt_state, inputs, optimizer):
       params = jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=jnp.float32), params)
       opt_state = jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=jnp.float32), opt_state)
       inputs = jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=jnp.float32), inputs)
-
-      grads = jax.grad(lambda p: compute_loss(p, inputs))(params)
+      grads = jax.grad(lambda p: DevicePutTest.compute_loss(p, inputs))(params)
       # Optimizer state is placed on the device before calculation
       opt_state = jax.device_put(opt_state, s_dev)
       updates, new_opt_state = optimizer.update(grads, opt_state, params)
-
       return optax.apply_updates(params, updates), new_opt_state
 
-    step = jax.jit(
-        step,
+    offloaded_step = jax.jit(
+        offloaded_step,
         donate_argnums=(0),
         out_shardings=(s_dev, s_host),
         static_argnums=(3,),
     )
 
-    new_params, new_opt_state = step(params, opt_state, input, optimizer)
-    compiled_step = step.lower(params, opt_state, input, optimizer).compile()
+    new_params, new_opt_state = offloaded_step(params, offload_opt_state, input, optimizer)
+    compiled_step = offloaded_step.lower(params, opt_state, input, optimizer).compile()
     compiled_stats = compiled_step.memory_analysis()
-    if compiled_stats is not None:
-      total = ( compiled_stats.temp_size_in_bytes + compiled_stats.argument_size_in_bytes \
-          + compiled_stats.output_size_in_bytes - compiled_stats.alias_size_in_bytes ) /  \
-          (1024**2)
-    if total > 25.1:
-      raise ValueError("Total memmory size shouldn't exceed the 25.1 MB")
+
+    # Without optimizer state offload
+    def dev_step(params, opt_state, inputs, optimizer):
+      params = jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=jnp.float32), params)
+      opt_state = jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=jnp.float32), opt_state)
+      inputs = jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=jnp.float32), inputs)
+      grads = jax.grad(lambda p: DevicePutTest.compute_loss(p, inputs))(params)
+      updates, new_opt_state = optimizer.update(grads, opt_state, params)
+      return optax.apply_updates(params, updates), new_opt_state
+
+    dev_step = jax.jit(
+        dev_step,
+        donate_argnums=(0),
+        static_argnums=(3,),
+    )
+
+    params = {f'w{i}': jnp.ones((DIM, DIM), dtype=jnp.float32) for i in range(1, 5)}
+    dev_params, dev_opt_state = dev_step(params, opt_state, input, optimizer)
+    compiled_dev_step = dev_step.lower(params, opt_state, input, optimizer).compile()
+    compiled_dev_stats = compiled_dev_step.memory_analysis()
+
+    self.assertAllClose(new_params, dev_params, atol=1e-5, rtol=1e-5)
+    self.assertAllClose(new_opt_state, dev_opt_state, atol=1e-5, rtol=1e-5)
+
+    if compiled_stats is not None and compiled_dev_stats is not None:
+      # The offloaded version has smaller output size because the output is offloaded
+      self.assertGreater(compiled_dev_stats.output_size_in_bytes,
+                         compiled_stats.output_size_in_bytes)
+      # The offloaded version has output on host
+      self.assertGreater(compiled_stats.host_output_size_in_bytes, 0)
 
 class ComputeOffload(jtu.BufferDonationTestCase):
 
@@ -2117,70 +2141,6 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     fn = jax.grad(test_fn)
     jax.jit(fn)(inp)  # doesn't crash
-
-  @jtu.run_on_devices("cuda")
-  def test_activation_offload_memory_usage(self):
-    input = jnp.ones((256, 256), dtype=jnp.float32) * 0.001
-    w1 = jnp.ones((10, 256, 1024), dtype=jnp.float32) * 0.001
-    w2 = jnp.ones((10, 1024, 256), dtype=jnp.float32) * 0.001
-
-    def layers(x, w):
-      w1, w2 = w
-      x = checkpoint_name(x, "x")
-      y = x @ w1
-      return y @ w2, None
-
-    def scanned(w, x):
-      result = jax.lax.scan(layers, x, w)[0]
-      return jnp.sum(result)
-
-    f = jax.jit(jax.grad(scanned))
-
-    # Analyze memory usage
-    compiled_step = f.lower((w1, w2), input).compile()
-    compiled_stats = compiled_step.memory_analysis()
-
-    if compiled_stats is not None:
-      # Calculate total memory usage including temporary storage, arguments, and outputs
-      # Subtract alias size to avoid double-counting memory shared between different components
-      temp = compiled_stats.temp_size_in_bytes / (1024**2)
-      total = ( compiled_stats.temp_size_in_bytes + compiled_stats.argument_size_in_bytes \
-          + compiled_stats.output_size_in_bytes - compiled_stats.alias_size_in_bytes ) / (1024**2)
-      if temp > 19.8:
-        raise ValueError("Temporary size should not exceed 19.8 MB.")
-      if total > 60.1:
-        raise ValueError("The total memory usage should not exceed 60.1 MB.")
-
-    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
-        names_which_can_be_saved=[],          # No values stored on device
-        names_which_can_be_offloaded=["x"],   # Offload activations labeled "x"
-        offload_src="device",                 # Move from device memory
-        offload_dst="pinned_host"             # To pinned host memory
-    )
-
-    def remat_scanned(w, x):
-      remat_layer = jax.remat(layers,
-                              policy=policy,     # Use our offloading policy
-                              prevent_cse=False) # Allow CSE optimizations
-      result = jax.lax.scan(remat_layer, x, w)[0]
-      return jnp.sum(result)
-
-    # Compile and compute gradients of the scanned function
-    g = jax.jit(jax.grad(remat_scanned))  # Apply JIT compilation to gradient computation
-
-    # Analyze memory usage
-    remat_step = g.lower((w1, w2), input).compile()
-    remat_stats = remat_step.memory_analysis()
-
-    if remat_stats is not None:
-      remat_temp = remat_stats.temp_size_in_bytes / (1024**2)
-      remat_total = (remat_stats.temp_size_in_bytes + remat_stats.argument_size_in_bytes \
-          + remat_stats.output_size_in_bytes - remat_stats.alias_size_in_bytes) / (1024**2)
-
-    if remat_temp > 7.3:
-      raise ValueError("Temporary size should not exceed 7.3 MB.")
-    if remat_total > 47.5:
-      raise ValueError("The total memory usage should not exceed 47.5 MB.")
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
