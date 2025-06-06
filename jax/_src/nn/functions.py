@@ -907,7 +907,7 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   probs = jax.nn.softmax(padded_logits, axis=-1).astype(key.dtype)
 
   encoded = jnp.einsum('BNTS,BSNH->BTNH', probs, value)
-  if q_seqlen is not None and kv_seqlen is not None:
+  if q_seqlen is not None:
     mask = _get_padding_mask_encoded(encoded.shape[1], q_seqlen)
     encoded *= mask.astype(encoded.dtype)
   return encoded
