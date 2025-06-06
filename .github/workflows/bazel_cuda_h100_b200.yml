@@ -2,7 +2,7 @@ name: CI - Bazel H100 and B200 CUDA tests
 # This runs if any of the following conditions are met
 # Workflow dispatch
 # Scheduled every two hours
-# PR to main that modifies mosaic files, see below for list
+# PR to main that modifies mosaic files or this file, see below for list
 # PR to main that has the 'CI Optional GPU Presubmit' label
 on:
   workflow_dispatch:
