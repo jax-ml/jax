@@ -71,6 +71,10 @@ struct CanonicalizeContext {
   std::array<int64_t, 2> target_shape;
 };
 
+Value create_transpose_op(const CanonicalizeContext &ctx,
+                          ImplicitLocOpBuilder &builder, VectorType input_ty,
+                          Value input, ArrayRef<int64_t> permutation);
+
 bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
                                        Operation &op);
 
@@ -239,7 +243,7 @@ LogicalResult tpu_matmul_rule(const CanonicalizeContext &ctx,
     }
   }
 
-  auto dot_dim_matmul = [&](auto lhs, auto rhs, auto acc) {
+  auto dot_dim_matmul = [&](Value lhs, auto rhs, auto acc) {
     auto precision_attr = op.getPrecisionAttr();
 
     // If we are transposing the lhs, we need to transpose the lhs before
@@ -258,13 +262,12 @@ LogicalResult tpu_matmul_rule(const CanonicalizeContext &ctx,
       std::vector<int64_t> shape(lhs_ty.getShape());
       std::swap(shape[rank - 2], shape[rank - 1]);
 
-      auto lhs_ty_transposed = VectorType::get(shape, lhs_ty.getElementType());
+      VectorType lhs_ty_transposed =
+          VectorType::get(shape, lhs_ty.getElementType());
 
       const SmallVector<int64_t> perm_vec =
           SmallVector<int64_t>(perm.begin(), perm.end());
-      lhs = builder.create<tpu::TransposeOp>(
-          lhs_ty_transposed, lhs,
-          DenseI64ArrayAttr::get(builder.getContext(), perm_vec));
+      lhs = create_transpose_op(ctx, builder, lhs_ty_transposed, lhs, perm_vec);
     }
     auto ddn = defaultDimensionNumbers(builder, /*transpose_lhs=*/false,
                                        transpose_rhs);
@@ -946,6 +949,117 @@ LogicalResult canonicalize_reshape(const CanonicalizeContext &ctx,
   return success();
 }
 
+namespace {
+// TODO(mvoz): We can refactor a lot of other canonicalization rules to use
+// these functions.
+// TODO(mvoz): I think we can eventually do direct conversion to bf16
+// without going through f32?
+Value upcastInt8ToBf16(ImplicitLocOpBuilder &builder, Value input) {
+  auto vty = cast<VectorType>(input.getType());
+  auto shape = vty.getShape();
+  auto int_ty = cast<IntegerType>(vty.getElementType());
+
+  auto i32_vty = VectorType::get(shape, builder.getI32Type());
+  auto val_i32 = int_ty.isUnsigned()
+                     ? builder.create<arith::ExtUIOp>(i32_vty, input)
+                     : builder.create<arith::ExtSIOp>(i32_vty, input);
+
+  auto f32_vty = VectorType::get(shape, builder.getF32Type());
+  auto val_f32 = builder.create<tpu::SIToFPOp>(
+      f32_vty, val_i32->getResult(0), tpu::RoundingMode::kToNearestEven);
+
+  auto bf16_vty = VectorType::get(shape, builder.getBF16Type());
+  return builder.create<arith::TruncFOp>(bf16_vty, val_f32);
+}
+
+Value downcastBf16ToInt8(ImplicitLocOpBuilder &builder, Value input_bf16,
+                         Type target_vty) {
+  auto shape = cast<VectorType>(input_bf16.getType()).getShape();
+
+  auto f32_vty = VectorType::get(shape, builder.getF32Type());
+  auto val_f32 = builder.create<arith::ExtFOp>(f32_vty, input_bf16);
+
+  auto i32_vty = VectorType::get(shape, builder.getI32Type());
+  auto val_i32 = builder.create<arith::FPToSIOp>(i32_vty, val_f32);
+
+  return builder.create<arith::TruncIOp>(target_vty, val_i32);
+}
+
+Value upcastFp8ToBf16(ImplicitLocOpBuilder &builder, Value input) {
+  auto shape = cast<VectorType>(input.getType()).getShape();
+  auto f32_vty = VectorType::get(shape, builder.getF32Type());
+  auto val_f32 = builder.create<arith::ExtFOp>(f32_vty, input);
+  auto bf16_vty = VectorType::get(shape, builder.getBF16Type());
+  return builder.create<arith::TruncFOp>(bf16_vty, val_f32);
+}
+
+Value downcastBf16ToFp8(ImplicitLocOpBuilder &builder, Value input_bf16,
+                        Type target_vty) {
+  auto shape = cast<VectorType>(input_bf16.getType()).getShape();
+  auto f32_vty = VectorType::get(shape, builder.getF32Type());
+  auto val_f32 = builder.create<arith::ExtFOp>(f32_vty, input_bf16);
+  return builder.create<arith::TruncFOp>(target_vty, val_f32);
+}
+}  // namespace
+
+// Note(mvoz): Returns optional to signal no replacement, simplifying downstream
+// .replace() and .erase() calls.
+std::optional<Value> canonicalize_transpose_impl(const CanonicalizeContext &ctx,
+                                                 ImplicitLocOpBuilder &builder,
+                                                 tpu::TransposeOp op) {
+  auto input_ty = dyn_cast<VectorType>(op.getOperand().getType());
+  auto element_type = input_ty.getElementType();
+  // TODO(mvoz): Even gen 7 support is spotty on all test targets.
+  if (element_type.getIntOrFloatBitWidth() == 8 && ctx.compatibility_mode &&
+      ctx.hardware_generation > 3) {
+    Value val_bf16;
+    if (isa<IntegerType>(element_type)) {
+      val_bf16 = upcastInt8ToBf16(builder, op.getOperand());
+    } else {
+      val_bf16 = upcastFp8ToBf16(builder, op.getOperand());
+    }
+
+    auto original_output_ty = cast<VectorType>(op.getType());
+    auto post_transpose_bf16_vty =
+        VectorType::get(original_output_ty.getShape(), builder.getBF16Type());
+
+    auto new_t = builder.create<tpu::TransposeOp>(
+        post_transpose_bf16_vty, val_bf16, op.getPermutation());
+
+    Value final_val;
+    if (isa<IntegerType>(element_type)) {
+      final_val = downcastBf16ToInt8(builder, new_t.getResult(), op.getType());
+    } else {
+      final_val = downcastBf16ToFp8(builder, new_t.getResult(), op.getType());
+    }
+    return final_val;
+  }
+  return std::nullopt;
+}
+
+Value create_transpose_op(const CanonicalizeContext &ctx,
+                          ImplicitLocOpBuilder &builder, VectorType input_ty,
+                          Value input, ArrayRef<int64_t> permutation) {
+  auto t = builder.create<tpu::TransposeOp>(input_ty, input, permutation);
+  auto new_op_opt = canonicalize_transpose_impl(ctx, builder, t);
+  if (new_op_opt.has_value()) {
+    return new_op_opt.value();
+  }
+  return t;
+}
+
+LogicalResult canonicalize_transpose(const CanonicalizeContext &ctx,
+                                     Operation &raw_op) {
+  auto op = cast<tpu::TransposeOp>(raw_op);
+  auto builder = ImplicitLocOpBuilder(op->getLoc(), op.getOperation());
+  auto new_op_opt = canonicalize_transpose_impl(ctx, builder, op);
+  if (new_op_opt.has_value()) {
+    op.replaceAllUsesWith(new_op_opt.value());
+    op.erase();
+  }
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(const CanonicalizeContext &ctx, Operation &op)>;
 
@@ -962,6 +1076,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {arith::SIToFPOp::getOperationName(), canonicalize_sitofp},
+      {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
   return *rules;
 }
@@ -1035,8 +1150,8 @@ class MosaicCanonicalizer {
     CanonicalizeContext ctx(
         {compatibility_mode_, hardware_generation_, target_shape_});
     // We must iterate over the op first, because canonicalization can cause
-    // us to .erase() an op, and accessing getRegions on it after is not sound.
-    // Invariant - top level ops with regions may never be invalidated.
+    // us to .erase() an op, and accessing getRegions on it after is not
+    // sound. Invariant - top level ops with regions may never be invalidated.
     for (Region &region : any_op.getRegions()) {
       for (Block &block : region) {
         if (canonicalizeBlock(block).failed()) {
