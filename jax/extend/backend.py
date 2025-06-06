@@ -27,3 +27,6 @@ from jax._src.xla_bridge import (
 from jax._src.interpreters.pxla import (
   get_default_device as get_default_device
 )
+from jax._src.util import (
+    cache_clearing_funs as cache_clearing_funs,
+)
