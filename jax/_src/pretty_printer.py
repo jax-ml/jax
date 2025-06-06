@@ -93,8 +93,14 @@ class Doc(util.StrictABC):
   def __add__(self, other: Doc) -> Doc:
     return concat([self, other])
 
+  def num_annotations(self) -> int:
+    raise NotImplementedError()
+
 class _NilDoc(Doc):
   def __repr__(self): return "nil"
+
+  def num_annotations(self) -> int:
+    return 0
 
 _nil = _NilDoc()
 
@@ -115,15 +121,22 @@ class _TextDoc(Doc):
     else:
       return f"text(\"{self.text}\")"
 
+  def num_annotations(self) -> int:
+    return 1 if self.annotation is not None else 0
+
 class _ConcatDoc(Doc):
-  __slots__ = ("children",)
+  __slots__ = ("children", "_num_annotations")
   children: list[Doc]
+  _num_annotations: int
 
   def __init__(self, children: Sequence[Doc]):
     self.children = list(children)
-    assert all(isinstance(doc, Doc) for doc in self.children), self.children
+    self._num_annotations = sum(child.num_annotations() for child in children)
 
   def __repr__(self): return f"concat({self.children})"
+
+  def num_annotations(self) -> int:
+    return self._num_annotations
 
 class _BreakDoc(Doc):
   __slots__ = ("text",)
@@ -135,6 +148,9 @@ class _BreakDoc(Doc):
 
   def __repr__(self): return f"break({self.text})"
 
+  def num_annotations(self) -> int:
+    return 0
+
 class _GroupDoc(Doc):
   __slots__ = ("child",)
   child: Doc
@@ -144,6 +160,9 @@ class _GroupDoc(Doc):
     self.child = child
 
   def __repr__(self): return f"group({self.child})"
+
+  def num_annotations(self) -> int:
+    return self.child.num_annotations()
 
 class _NestDoc(Doc):
   __slots__ = ("n", "child",)
@@ -157,6 +176,8 @@ class _NestDoc(Doc):
 
   def __repr__(self): return f"nest({self.n, self.child})"
 
+  def num_annotations(self) -> int:
+    return self.child.num_annotations()
 
 _NO_SOURCE = object()
 
@@ -172,6 +193,8 @@ class _SourceMapDoc(Doc):
 
   def __repr__(self): return f"source({self.child}, {self.source})"
 
+  def num_annotations(self) -> int:
+      return self.child.num_annotations()
 
 Color = enum.Enum("Color", ["BLACK", "RED", "GREEN", "YELLOW", "BLUE",
                             "MAGENTA", "CYAN", "WHITE", "RESET"])
@@ -193,6 +216,8 @@ class _ColorDoc(Doc):
     self.background = background
     self.intensity = intensity
 
+  def num_annotations(self) -> int:
+    return self.child.num_annotations()
 
 _BreakMode = enum.Enum("_BreakMode", ["FLAT", "BREAK"])
 
@@ -225,6 +250,8 @@ def _fits(doc: Doc, width: int) -> bool:
 # annotations.
 def _sparse(doc: Doc) -> bool:
   agenda = [doc]
+  if doc.num_annotations() == 0:
+    return True
   num_annotations = 0
   seen_break = False
   while len(agenda) > 0:
@@ -266,7 +293,7 @@ class _State(NamedTuple):
 class _Line(NamedTuple):
   text: str
   width: int
-  annotations: str | None | list[str]
+  annotations: list[str]
 
 
 def _update_color(use_color: bool, state: _ColorState, update: _ColorState
@@ -284,22 +311,19 @@ def _update_color(use_color: bool, state: _ColorState, update: _ColorState
   return update, color_str
 
 
-def _align_annotations(lines):
+def _align_annotations(lines: list[_Line], annotation_prefix: str) -> list[str]:
   # TODO: Hafiz also implements a local alignment mode, where groups of lines
   # with annotations are aligned together.
   maxlen = max(l.width for l in lines)
   out = []
   for l in lines:
     if len(l.annotations) == 0:
-      out.append(l._replace(annotations=None))
-    elif len(l.annotations) == 1:
-      out.append(l._replace(text=l.text + " " * (maxlen - l.width),
-                            annotations=l.annotations[0]))
+      out.append(l.text)
     else:
-      out.append(l._replace(text=l.text + " " * (maxlen - l.width),
-                            annotations=l.annotations[0]))
+      out.append(f"{l.text}{' ' * (maxlen - l.width)}"
+                 f"{annotation_prefix}{l.annotations[0]}")
       for a in l.annotations[1:]:
-        out.append(_Line(text=" " * maxlen, width=l.width, annotations=a))
+        out.append(f"{' ' * maxlen}{annotation_prefix}{a}")
   return out
 
 
@@ -366,7 +390,7 @@ def _format(
     elif isinstance(doc, _GroupDoc):
       # In Lindig's paper, _fits is passed the remainder of the document.
       # I'm pretty sure that's a bug and we care only if the current group fits!
-      if (_sparse(doc) and _fits(doc, width - k)):
+      if (_fits(doc, width - k) and _sparse(doc)):
         agenda.append(_State(i, _BreakMode.FLAT, doc.child, color, source))
       else:
         agenda.append(_State(i, _BreakMode.BREAK, doc.child, color, source))
@@ -390,11 +414,8 @@ def _format(
       line_source_map.append((source_start, pos, source))
     source_map.append(line_source_map)
   lines.append(_Line(line_text, k, line_annotations))
-  lines = _align_annotations(lines)
-  out = "\n".join(
-    l.text if l.annotations is None
-    else f"{l.text}{annotation_prefix}{l.annotations}" for l in lines)
-  color_state, color_str = _update_color(use_color, color_state,
+  out = "\n".join(_align_annotations(lines, annotation_prefix))
+  _, color_str = _update_color(use_color, color_state,
                                          default_colors)
   return out + color_str
 
