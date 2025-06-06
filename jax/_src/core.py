@@ -3404,7 +3404,7 @@ def _pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings,
   rhs = [pp.text(eqn.primitive.name, annotation=name_stack_annotation),
          pp_kv_pairs([(p, eqn.params[p]) for p in params], context, settings),
          pp.text(" ") + pp_vars(eqn.invars, context)]
-  if lhs.format():
+  if eqn.outvars:
     return pp.concat([lhs, pp.text(" = ", annotation=annotation), *rhs])
   else:
     return pp.concat(rhs)
