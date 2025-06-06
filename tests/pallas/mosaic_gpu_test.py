@@ -2762,6 +2762,70 @@ class PallasCallSm100ATest(PallasSm100ATest):
     expected = x @ y
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
+  def test_collective_partitioned_copy(self):
+    self.skip_if_wg_semantics()
+    block_size = (128, 128)
+    partitioned_block_size = (block_size[0] // 2, block_size[1])
+    a = jax.random.uniform(
+        jax.random.key(0), shape=block_size, dtype=jnp.float32)
+    b = jax.random.uniform(
+        jax.random.key(1), shape=block_size, dtype=jnp.float32)
+    def kernel(a_gmem, b_gmem, out_gmem,
+              a_smem, b_smem, out_smem,
+              a_tma_barrier, b_tma_barrier, cluster_barrier):
+      cluster_idx = lax.axis_index("x")
+      out_slice = pl.ds(cluster_idx * partitioned_block_size[0],
+                        partitioned_block_size[0])
+
+      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+      def _per_warp():
+        warp_id = lax.axis_index("warp")
+        @pl.when(warp_id == 0)
+        def _():
+          plgpu.copy_gmem_to_smem(
+              a_gmem,
+              a_smem,
+              a_tma_barrier,
+              collective_axes="x",
+              partitioned_axis=0,
+          )
+          plgpu.copy_gmem_to_smem(
+              b_gmem,
+              b_smem,
+              b_tma_barrier,
+              collective_axes="x",
+              partitioned_axis=0,
+          )
+      # TODO(justinfu): Clean up this API where we need to explicitly wait
+      # only on the first block.
+      @pl.when(cluster_idx == 0)
+      def _():
+        plgpu.barrier_wait(a_tma_barrier)
+        plgpu.barrier_wait(b_tma_barrier)
+      plgpu.barrier_arrive(cluster_barrier)
+      plgpu.barrier_wait(cluster_barrier)
+      out_smem[...] = a_smem[...] + b_smem[...]
+      plgpu.copy_smem_to_gmem(out_smem, out_gmem.at[out_slice])
+      plgpu.wait_smem_to_gmem(0)
+    f = plgpu.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(block_size, jnp.float32),
+        grid=(1,),
+        grid_names=("_"),
+        cluster_names=("x",),
+        cluster=(2,),
+        scratch_shapes=(  # type: ignore
+            plgpu.SMEM(partitioned_block_size, jnp.float32),
+            plgpu.SMEM(partitioned_block_size, jnp.float32),
+            plgpu.SMEM(partitioned_block_size, jnp.float32),
+            plgpu.Barrier(num_arrivals=1),
+            plgpu.Barrier(num_arrivals=1),
+            plgpu.ClusterBarrier(collective_axes=("x",)),
+        ),
+    )
+    result = f(a, b)
+    np.testing.assert_array_equal(result, a + b)
+
 
 class PallasCallSm100AWGTest(
     PallasCallSm100ATest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
