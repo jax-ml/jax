@@ -1426,10 +1426,10 @@ def scaled_dot_general(
 
 
     Args:
-        x (jnp.ndarray): Input tensor.
+        x (Array): Input tensor.
 
 
-        a (jnp.ndarray): Slope parameter.
+        a (Array): Slope parameter.
                              
 
     Returns:
@@ -1437,6 +1437,11 @@ def scaled_dot_general(
 
 If x>= 0 it returns x.
 Otherwise, it returns x*a.
+Examples:
+x = jnp.array([0.1,0.2,3,-2])
+a = 0.1 (Placeholder scalar value, the a is trained through backpropagation)
+output: [ 0.1  0.2  3.  -0.2]
+
   """
 
     x = jnp.asarray(x)
