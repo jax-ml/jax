@@ -3772,6 +3772,21 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertIsInstance(out3.sharding, NamedSharding)
     self.assertEqual(count(), 1)
 
+  @config.numpy_dtype_promotion('standard')
+  def test_mutable_array_closed_over_multi_device(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    key_data = jax.random.key_data(jax.random.key(42))
+    key_data_ref = core.mutable_array(key_data)
+    output_sharding = NamedSharding(mesh, P('x'))
+
+    @partial(jax.jit, out_shardings=output_sharding)
+    def generate_random_numbers():
+      key_val = key_data_ref[...]
+      outputs = jnp.arange(8, dtype=jnp.float32) + key_val[0]
+      return outputs
+
+    generate_random_numbers()  # doesn't crash
+
   @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_jit_mul_sum_sharding_preserved(self):
     if config.use_shardy_partitioner.value:
