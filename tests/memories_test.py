@@ -38,7 +38,11 @@ from jax._src.xla_metadata import set_xla_metadata
 from jax.experimental.compute_on import compute_on
 from jax._src.shard_map import shard_map
 import numpy as np
-import optax
+try:
+  import optax
+  OPTAX_AVAILABLE = True
+except ImportError:
+  OPTAX_AVAILABLE = False
 
 config.parse_flags_with_absl()
 FLAGS = flags.FLAGS
@@ -793,6 +797,7 @@ class DevicePutTest(jtu.JaxTestCase):
     l2_reg = reg_coeff * sum(jnp.sum(w ** 2) for w in jax.tree_util.tree_leaves(params))
     return loss + l2_reg
 
+  @unittest.skipIf(not OPTAX_AVAILABLE, "optax is not available")
   def test_optimizer_state_offload(self):
     DIM = 512
     input = jnp.ones((DIM, DIM), dtype=jnp.float32)
