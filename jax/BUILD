@@ -1063,6 +1063,11 @@ pytype_strict_library(
 py_library_providing_imports_info(
     name = "mosaic_gpu",
     srcs = glob(["experimental/mosaic/gpu/*.py"]),
+    data = [
+        "@cuda_nvcc//:nvdisasm",
+        "@cuda_nvcc//:nvvm",
+        "@cuda_nvcc//:ptxas",
+    ],
     visibility = [
         ":mosaic_gpu_users",
     ],
