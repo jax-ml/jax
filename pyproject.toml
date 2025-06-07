@@ -109,8 +109,6 @@ ignore = [
     "C417",
     # Unnecessary dict comprehension for iterable
     "C420",
-    # Object names too complex
-    "C901",
     # Local variable is assigned to but never used
     "F841",
     # Class could be dataclass or namedtuple
@@ -121,12 +119,10 @@ ignore = [
     "B905",
 ]
 select = [
-    "B9",
-    "C",
-    "F",
-    "W",
-    "YTT",
     "ASYNC",
+    "B9",
+    "C4",
+    "C90",
     "E101",
     "E112",
     "E113",
@@ -135,10 +131,13 @@ select = [
     "E225",
     "E227",
     "E228",
+    "F",
+    "W",
+    "YTT",
 ]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 18
+max-complexity = 76
 
 [tool.ruff.lint.per-file-ignores]
 # F811: Redefinition of unused name.
