@@ -108,10 +108,9 @@ def jit_trivial_dispatch(state):
   """Benchmarks only the duration for jitted_f to return the future."""
   f = jax.jit(swap)
   a, b = f(1, 2)
-  x = f(a, b)
+  f(a, b)
   while state:
-    x = f(a, b)
-  x[0].block_until_ready()
+    f(a, b)
 
 
 @google_benchmark.register
@@ -206,12 +205,10 @@ def jit_big_matmul(state):
 def jit_simple_many_args_dispatch(state):
   args = [jax.device_put(i) for i in range(state.range(0))]
   f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
-  x = f(args)
-  x.block_until_ready()
+  f(args)
 
   while state:
-    x = f(args)
-  x.block_until_ready()
+    f(args)
 
 @google_benchmark.register
 @google_benchmark.option.arg_names(['num_args'])
@@ -234,12 +231,10 @@ def jit_simple_many_args(state):
 def jit_simple_pruned_args_dispatch(n, state):
   args = [jax.device_put(i) for i in range(n)]
   f = jax.jit(lambda *xs: xs[0] + 1)
-  x = f(*args)
-  x.block_until_ready()
+  f(*args)
 
   while state:
-    x = f(*args)
-  x.block_until_ready()
+    f(*args)
 
 
 def jit_simple_pruned_args(n, state):
@@ -280,11 +275,10 @@ def jit_dispatch_with_transfer(state):
   imgs = np.ones((128, 224, 224), np.float32)
 
   f = jax.jit(lambda x: x+1)
-  f(imgs).block_until_ready()
+  f(imgs)
 
   while state:
-    x = f(imgs)
-  x.block_until_ready()
+    f(imgs)
 
 
 @google_benchmark.register
