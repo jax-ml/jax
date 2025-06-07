@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import importlib
 from typing import Any
 
@@ -265,12 +266,18 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     out = np.array(object) if copy else np.asarray(object)
   else:
     raise TypeError(f"Unexpected input type for array: {type(object)}")
-  out_array: Array = lax._convert_element_type(
-      out, dtype, weak_type=weak_type, sharding=sharding)
-  if ndmin > np.ndim(out_array):
-    out_array = lax.expand_dims(out_array, range(ndmin - np.ndim(out_array)))
-  return out_array
+  def out_array_func(out) -> Array:
+    out_array = lax._convert_element_type(
+        out, new_dtype=dtype, weak_type=weak_type, sharding=sharding)
+    if ndmin > np.ndim(out_array):
+      out_array = lax.expand_dims(out_array, range(ndmin - np.ndim(out_array)))
+    return out_array
+  if copy:
+    # JIT to avoid a D2D copy when a fast conversion path exists. In this case,
+    # we know that 'out' is already a copy---and therefore can safely donate it.
+    return api.jit(out_array_func, donate_argnums=(0,))(out)
 
+  return out_array_func(out)
 
 def _get_platform(
     device_or_sharding: xc.Device | Sharding | None | str) -> str:
