@@ -1498,6 +1498,9 @@ class AbstractValue:
   def update_weak_type(self, weak_type):
     return self
 
+  def update_vma(self, vma):
+    return self
+
   def strip_weak_type(self) -> AbstractValue:
     return self.update_weak_type(False)
 
@@ -2101,6 +2104,9 @@ class ShapedArray(UnshapedArray):
     except IndexError as err:
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
+  def update_vma(self, vma):
+    return self.update(vma=vma)
+
 
 def _get_shape_sharding_str(shape, spec):
   out = []
@@ -2258,6 +2264,9 @@ class DShapedArray(UnshapedArray):
   def to_tangent_aval(self):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                         self.weak_type)
+
+  def update_vma(self, vma):
+    return self
 
 
 class DArray:
