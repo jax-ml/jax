@@ -1319,12 +1319,15 @@ def _tcgen05_mma_abstract_eval(acc, a, b, barrier, accumulate,
     raise ValueError("RHS must be an SMEM Ref.")
 
   if collective_axis is not None:
-    if not acc.collective:
+    # TODO(justinfu): If under a core_map, the avals for acc/a
+    # become normal MemRefs so we cannot check if they are collective.
+    # Figure out a way to fix this.
+    if isinstance(acc, gpu_core.AbstractTMEMRef) and not acc.collective:
       raise ValueError(
           "Accumulator Ref must be collective if collective_axis is set.")
-    if a.memory_space == gpu_core.TMEM and not a.collective:
+    if isinstance(a, gpu_core.AbstractTMEMRef) and not a.collective:
       raise ValueError(
-          "LHS TMEM Ref must be collective if collective_axis is set.")
+          "LHS Ref must be collective if collective_axis is set.")
 
   for_tensor_core = getattr(
       barrier.inner_aval.dtype, "for_tensor_core", False)
