@@ -2656,6 +2656,9 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
     of ``elems`` along ``axis``. For example, given ``elems = [a, b, c, ...]``,
     the result would be ``[a, fn(a, b), fn(fn(a, b), c), ...]``.
 
+    If ``elems = [..., x, y, z]`` and ``reverse`` is true, the result is
+    ``[..., f(f(z, y), x), f(z, y), z]``.
+
   Example 1: partial sums of an array of numbers:
 
   >>> lax.associative_scan(jnp.add, jnp.arange(0, 4))
