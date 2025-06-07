@@ -419,7 +419,8 @@ class UserContextTracebackTest(jtu.JaxTestCase):
     e = None
     try:
       with jax.debug_nans(True):
-        jax.grad(jnp.linalg.norm)(jnp.zeros((3, 3), jnp.float32))
+        jax.grad(lambda x: jnp.sum(x * jnp.sqrt(x)))(
+            jnp.zeros((3, 3), jnp.float32))
     except FloatingPointError as exc:
       e = exc
     self.assertIsNot(e, None)
