@@ -76,16 +76,19 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
           kernel,
           in_specs=[pl.BlockSpec(memory_space=mem)],
           out_specs=pl.BlockSpec(memory_space=mem),
-          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32, vma=frozenset('x')),
       )(x)
 
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
-    y = jax.jit(
+    f = jax.jit(
         shard_map.shard_map(
-            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'),
         )
-    )(x)
+    )
+    jaxpr = f.trace(x).jaxpr
+    self.assertNotIn('pvary', str(jaxpr))
+    y = f(x)
     expected = jnp.concatenate([x[8:], x[:8]])
     np.testing.assert_allclose(y, expected)
 
