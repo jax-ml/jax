@@ -365,6 +365,56 @@ class MutableArrayTest(jtu.JaxTestCase):
      jax.grad(loss, (0,1))(x_top, y_top)
      self.assertAllClose(dot_op.amax_history[:], jnp.zeros((5,)).at[:i+1].set(1.0), check_dtypes=False)
 
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_grad_stats_plumbing_basic(self, jit):
+    @jax.jit
+    def primal(grads_ref, x):  # note: jit-abstracted!
+      x = jnp.sin(x)
+      x = stash_grads(grads_ref, x)
+      x = jnp.sin(x)
+      x = stash_grads(grads_ref, x)  # ignored, order-preserved
+      return x
+
+    @jax.custom_vjp
+    def stash_grads(grads_ref, x):
+      return x
+    def stash_grads_fwd(grads_ref, x):
+      return x, grads_ref
+    def stash_grads_bwd(grads_ref, g):
+      grads_ref[...] = g
+      return None, g
+    stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
+
+    grads_ref = core.mutable_array(jnp.float32(0.))
+    jax.grad(primal, 1)(grads_ref, jnp.float32(1.0))
+    self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
+
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_grad_stats_plumbing_scan(self, jit):
+    @jax.jit
+    def primal(grads_ref, x):  # note: jit-abstracted!
+      def body(x, _):
+        x = jnp.sin(x)
+        x = stash_grads(grads_ref, x)
+        x = jnp.sin(x)
+        return x, ()
+      x, () = jax.lax.scan(body, x, None, length=1)
+      return x
+
+    @jax.custom_vjp
+    def stash_grads(grads_ref, x):
+      return x
+    def stash_grads_fwd(grads_ref, x):
+      return x, grads_ref
+    def stash_grads_bwd(grads_ref, g):
+      grads_ref[...] = g
+      return None, g
+    stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
+
+    grads_ref = core.mutable_array(jnp.float32(0.))
+    jax.grad(primal, argnums=1)(grads_ref, jnp.float32(1.0))
+    self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
