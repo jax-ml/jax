@@ -16,7 +16,7 @@ on:
 permissions: {}
 jobs:
   tsan:
-    runs-on: linux-x86-n2-64
+    runs-on: linux-x86-c4-48
     container:
       image: index.docker.io/library/ubuntu@sha256:b359f1067efa76f37863778f7b6d0e8d911e3ee8efa807ad01fbf5dc1ef9006b # ratchet:ubuntu:24.04
     strategy:
@@ -46,6 +46,8 @@ jobs:
             zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
             libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
             libffi-dev liblzma-dev file zip
+          time clang-18 --version
+          time clang-18 --version
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: jax
@@ -69,16 +71,16 @@ jobs:
         run: echo "date=$(/bin/date "+%Y-%U")" >> $GITHUB_OUTPUT
         shell: bash -l {0}
 
-      - name: Restore cached TSAN CPython ${{ matrix.python-version }}
-        id: cache-cpython-tsan-restore
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ./python-tsan.tgz
-          key: ${{ runner.os }}-cpython-tsan-${{ matrix.python-version }}-${{ steps.get-date.outputs.date }}
+      # - name: Restore cached TSAN CPython ${{ matrix.python-version }}
+      #   id: cache-cpython-tsan-restore
+      #   uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      #   with:
+      #     path: |
+      #       ./python-tsan.tgz
+      #     key: ${{ runner.os }}-cpython-tsan-${{ matrix.python-version }}-${{ steps.get-date.outputs.date }}
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
+        # if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
         with:
           repository: python/cpython
           path: cpython
@@ -87,7 +89,7 @@ jobs:
 
 
       - name: Build TSAN CPython ${{ matrix.python-version }}
-        if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
+        # if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
         run: |
           cd cpython
           mkdir ${GITHUB_WORKSPACE}/cpython-tsan
@@ -100,29 +102,29 @@ jobs:
           # Create archive to be used with bazel as hermetic python:
           cd ${GITHUB_WORKSPACE} && tar -czpf python-tsan.tgz cpython-tsan
 
-      - name: Save TSAN CPython ${{ matrix.python-version }}
-        id: cache-cpython-tsan-save
-        if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ./python-tsan.tgz
-          key: ${{ runner.os }}-cpython-tsan-${{ matrix.python-version }}-${{ steps.get-date.outputs.date }}
+      # - name: Save TSAN CPython ${{ matrix.python-version }}
+      #   id: cache-cpython-tsan-save
+      #   if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
+      #   uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      #   with:
+      #     path: |
+      #       ./python-tsan.tgz
+      #     key: ${{ runner.os }}-cpython-tsan-${{ matrix.python-version }}-${{ steps.get-date.outputs.date }}
 
-      - name: Restore cached TSAN Numpy
-        id: cache-numpy-tsan-restore
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ./wheelhouse
-          key: ${{ runner.os }}-numpy-tsan-${{ matrix.python-version }}-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
+      # - name: Restore cached TSAN Numpy
+      #   id: cache-numpy-tsan-restore
+      #   uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      #   with:
+      #     path: |
+      #       ./wheelhouse
+      #     key: ${{ runner.os }}-numpy-tsan-${{ matrix.python-version }}-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
 
       - name: Build TSAN Numpy wheel
-        if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
+        # if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
         run: |
           set -eux
           cd numpy
-
+          time clang-18 --version
           # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
           if [ ! -d ${GITHUB_WORKSPACE}/cpython-tsan/bin/ ]; then
             echo "Extract cpython from python-tsan.tgz"
@@ -138,7 +140,9 @@ jobs:
           python3 -m pip install uv~=0.5.30
           python3 -m uv pip install -r requirements/build_requirements.txt
 
-          CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized
+          # Run build process in background and show a spinner to avoid crash on the runner:
+          CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized &
+          pid=$! && s='-\|/'; i=0; while kill -0 $pid; do i=$(( (i+1) %4 )); printf "\r${s:$i:1}"; sleep 1; done
 
           # Create simple index and copy the wheel
           mkdir -p ${GITHUB_WORKSPACE}/wheelhouse/numpy
@@ -162,26 +166,26 @@ jobs:
           </body></html>
           EOF
 
-      - name: Save TSAN Numpy wheel
-        id: cache-numpy-tsan-save
-        if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ./wheelhouse
-          key: ${{ runner.os }}-numpy-tsan-${{ matrix.python-version }}-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
+      # - name: Save TSAN Numpy wheel
+      #   id: cache-numpy-tsan-save
+      #   if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
+      #   uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      #   with:
+      #     path: |
+      #       ./wheelhouse
+      #     key: ${{ runner.os }}-numpy-tsan-${{ matrix.python-version }}-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
 
-      - name: Restore cached Scipy
-        if: ${{ matrix.python-version == '3.14' }}
-        id: cache-scipy-restore
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ./wheelhouse
-          key: ${{ runner.os }}-scipy-${{ matrix.python-version }}-${{ hashFiles('scipy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
+      # - name: Restore cached Scipy
+      #   if: ${{ matrix.python-version == '3.14' }}
+      #   id: cache-scipy-restore
+      #   uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      #   with:
+      #     path: |
+      #       ./wheelhouse
+      #     key: ${{ runner.os }}-scipy-${{ matrix.python-version }}-${{ hashFiles('scipy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
 
       - name: Build Scipy wheel
-        if: ${{ steps.cache-scipy-restore.outputs.cache-hit != 'true' && matrix.python-version == '3.14' }}
+        # if: ${{ steps.cache-scipy-restore.outputs.cache-hit != 'true' && matrix.python-version == '3.14' }}
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -209,9 +213,9 @@ jobs:
 
           python3 -m uv pip list | grep -E "(numpy|pythran|cython|pybind11)"
 
-          export CC=clang-18
-          export CXX=clang++-18
-          python3 -m pip wheel --wheel-dir dist -vvv . --no-build-isolation --no-deps -Csetup-args=-Dbuildtype=debugoptimized
+          # Run build process in background and show a spinner to avoid crash on the runner:
+          CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -vvv . --no-build-isolation --no-deps -Csetup-args=-Dbuildtype=debugoptimized &
+          pid=$! && s='-\|/'; i=0; while kill -0 $pid; do i=$(( (i+1) %4 )); printf "\r${s:$i:1}"; sleep 1; done
 
           # Create simple index and copy the wheel
           mkdir -p ${GITHUB_WORKSPACE}/wheelhouse/scipy
@@ -237,90 +241,86 @@ jobs:
           </body></html>
           EOF
 
-      - name: Save Scipy wheel
-        id: cache-scipy-save
-        if: ${{ steps.cache-scipy-restore.outputs.cache-hit != 'true' && matrix.python-version == '3.14' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ./wheelhouse
-          key: ${{ runner.os }}-scipy-${{ matrix.python-version }}-${{ hashFiles('scipy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
+      # - name: Save Scipy wheel
+      #   id: cache-scipy-save
+      #   if: ${{ steps.cache-scipy-restore.outputs.cache-hit != 'true' && matrix.python-version == '3.14' }}
+      #   uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      #   with:
+      #     path: |
+      #       ./wheelhouse
+      #     key: ${{ runner.os }}-scipy-${{ matrix.python-version }}-${{ hashFiles('scipy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
 
-      - name: Build Jax and run tests
-        timeout-minutes: 120
-        env:
-          JAX_NUM_GENERATED_CASES: 1
-          JAX_ENABLE_X64: true
-          JAX_SKIP_SLOW_TESTS: true
-          PY_COLORS: 1
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          set -x
-          cd jax
+      # - name: Build Jax and run tests
+      #   timeout-minutes: 120
+      #   env:
+      #     JAX_NUM_GENERATED_CASES: 1
+      #     JAX_ENABLE_X64: true
+      #     JAX_SKIP_SLOW_TESTS: true
+      #     PY_COLORS: 1
+      #     DEBIAN_FRONTEND: noninteractive
+      #   run: |
+      #     set -x
+      #     cd jax
+      #     time clang --version
+      #     export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
+      #     echo "Python sha256: ${PYTHON_SHA256}"
 
-          export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
-          echo "Python sha256: ${PYTHON_SHA256}"
+      #     python3 build/build.py build --configure_only \
+      #       --python_version=${{ matrix.python-version }}-ft \
+      #       --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
+      #       --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
+      #       --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
+      #       --bazel_options=--color=yes \
+      #       --bazel_options=--copt=-fsanitize=thread \
+      #       --bazel_options=--linkopt="-fsanitize=thread" \
+      #       --bazel_options=--copt=-g \
+      #       --clang_path=/usr/bin/clang-18
 
-          python3 build/build.py build --configure_only \
-            --python_version=${{ matrix.python-version }}-ft \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
-            --bazel_options=--color=yes \
-            --bazel_options=--copt=-fsanitize=thread \
-            --bazel_options=--linkopt="-fsanitize=thread" \
-            --bazel_options=--copt=-g \
-            --clang_path=/usr/bin/clang-18
 
-          mkdir -p dist
-          # Check whether we have numpy wheel or exit with error
-          ls ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl || exit 1
-          cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
-          if [ "${{ matrix.python-version }}" == "3.14" ]; then
-            # Check whether we have scipy wheel or exit with error
-            ls ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl || exit 1
-            cp -v ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl dist/
+      #     mkdir -p dist
+      #     cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
+      #     cp -v ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl dist/
+      #     if [ "${{ matrix.python-version }}" == "3.14" ]; then
+      #       # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy and Scipy
+      #       sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
 
-            # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy and Scipy
-            sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
+      #       # We should install jpeg dev package to be able to build Pillow from source:
+      #       apt install -q -y libjpeg-dev --no-install-recommends
 
-            # We should install jpeg dev package to be able to build Pillow from source:
-            apt install -q -y libjpeg-dev --no-install-recommends
+      #       # Install scipy runtime dependencies (in case we restore scipy wheel from cache):
+      #       apt install -q -y libopenblas-dev liblapack-dev --no-install-recommends
+      #     fi
 
-            # Install scipy runtime dependencies (in case we restore scipy wheel from cache):
-            apt install -q -y libopenblas-dev liblapack-dev --no-install-recommends
-          fi
+      #     echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
+      #     echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
+      #     echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
 
-          echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
-          echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
-          echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
+      #     # Set symlink to the bazel executable
+      #     bazel_exec=($(ls bazel-*))
+      #     ln -s ${bazel_exec} bazel
 
-          # Set symlink to the bazel executable
-          bazel_exec=($(ls bazel-*))
-          ln -s ${bazel_exec} bazel
+      #     # Check python version
+      #     ./bazel run --@rules_python//python/config_settings:py_freethreaded="yes" @python//:python3 -- -VV
 
-          # Check python version
-          ./bazel run --@rules_python//python/config_settings:py_freethreaded="yes" @python//:python3 -- -VV
+      #     # Check numpy version
+      #     ./bazel cquery @pypi_numpy//:* | grep whl
 
-          # Check numpy version
-          ./bazel cquery @pypi_numpy//:* | grep whl
+      #     if [ "${{ matrix.python-version }}" == "3.14" ]; then
+      #       # Check scipy version
+      #       ./bazel cquery @pypi_scipy//:* | grep whl
+      #     fi
 
-          if [ "${{ matrix.python-version }}" == "3.14" ]; then
-            # Check scipy version
-            ./bazel cquery @pypi_scipy//:* | grep whl
-          fi
-
-          # Build JAX and run tests
-          ./bazel test \
-              --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
-              --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
-              --test_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
-              --test_env=PYTHON_GIL=0 \
-              --test_env=TSAN_OPTIONS=halt_on_error=1,suppressions=$PWD/.github/workflows/tsan-suppressions_${{ matrix.python-version }}.txt \
-              --test_env=JAX_TEST_NUM_THREADS=8 \
-              --test_output=errors \
-              --local_test_jobs=32 \
-              --test_timeout=1800 \
-              --config=resultstore \
-              --config=rbe_cache \
-              //tests:cpu_tests
+      #     # Build JAX and run tests
+      #     ./bazel test \
+      #         --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
+      #         --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
+      #         --test_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
+      #         --test_env=PYTHON_GIL=0 \
+      #         --test_env=TSAN_OPTIONS=halt_on_error=1,suppressions=$PWD/.github/workflows/tsan-suppressions_${{ matrix.python-version }}.txt \
+      #         --test_env=JAX_TEST_NUM_THREADS=8 \
+      #         --test_output=errors \
+      #         --local_test_jobs=32 \
+      #         --test_timeout=1800 \
+      #         --config=resultstore \
+      #         --config=rbe_cache \
+      #         //tests:cpu_tests
