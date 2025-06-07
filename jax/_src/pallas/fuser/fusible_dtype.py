@@ -338,7 +338,7 @@ def _custom_vjp_call_physicalize_rule(
   new_jaxpr = physicalize_closed_jaxpr(call_jaxpr)
   fun = lu.wrap_init(core.jaxpr_as_fun(new_jaxpr),
                      debug_info=call_jaxpr.jaxpr.debug_info)
-  fwd = custom_derivatives.lift_fwd(num_consts, kwargs['out_trees'](), fwd_jaxpr_thunk)
+  fwd = custom_derivatives.lift_fwd(num_consts, fwd_jaxpr_thunk)
   fwd_physicalized = _physicalize_transform(fwd)
   const_avals, _ = util.split_list(new_jaxpr.in_avals, [num_consts])
   bwd_physicalized = _physicalize_transform_bwd(bwd, const_avals)

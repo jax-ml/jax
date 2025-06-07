@@ -992,12 +992,12 @@ class CustomVJPCallPrimitive(core.Primitive):
     fwd_jaxpr_thunk = new_params.pop('fwd_jaxpr_thunk')
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
                        debug_info=call_jaxpr.jaxpr.debug_info)
-    fwd = lift_fwd(num_consts, new_params['out_trees'], fwd_jaxpr_thunk)
+    fwd = lift_fwd(num_consts, fwd_jaxpr_thunk)
     const_avals, _ = split_list(call_jaxpr.in_avals, [num_consts])
     bwd = _handle_consts_in_bwd(new_params.pop('bwd'), const_avals)
     return [fun, fwd, bwd], new_params
 
-def lift_fwd(num_consts: int, out_trees: Callable, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
+def lift_fwd(num_consts: int, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
   def fwd(*args):
     vals, nonzeros = args[::2], args[1::2]
     assert len(vals) == len(nonzeros)
