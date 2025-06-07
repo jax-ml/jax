@@ -47,7 +47,6 @@ limitations under the License.
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/shape.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -93,8 +92,8 @@ struct PyArray_Storage {
   PyArray_Storage(nanobind::object aval, bool weak_type, nb_dtype dtype,
                   std::vector<int64_t> shape, nanobind::object sharding,
                   bool committed, nb_class_ptr<PyClient> py_client,
-                  std::optional<nb_traceback> traceback,
-                  ifrt::ArrayRef ifrt_array, xla::PjRtFuture<> result_status);
+                  std::optional<Traceback> traceback, ifrt::ArrayRef ifrt_array,
+                  xla::PjRtFuture<> result_status);
 
   ~PyArray_Storage();
   nanobind::handle AsHandle();
@@ -109,7 +108,7 @@ struct PyArray_Storage {
   bool committed = false;
 
   nb_class_ptr<PyClient> py_client;
-  std::optional<nb_traceback> traceback;
+  std::optional<Traceback> traceback;
   ifrt::ArrayRef ifrt_array;
   nanobind::object fully_replicated_array = nanobind::none();
 
@@ -151,18 +150,17 @@ class PyArray : public nanobind::object {
   // checked.
   PyArray(nanobind::object aval, bool weak_type, nb_dtype dtype,
           std::vector<int64_t> shape, nanobind::object sharding,
-          nb_class_ptr<PyClient> py_client,
-          std::optional<nb_traceback> traceback, ifrt::ArrayRef ifrt_array,
-          bool committed, bool skip_checks,
+          nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
+          ifrt::ArrayRef ifrt_array, bool committed, bool skip_checks,
           xla::PjRtFuture<> result_status = xla::PjRtFuture<>());
 
   static PyArray MakeFromSingleDeviceArray(
-      nb_class_ptr<PyClient> py_client, std::optional<nb_traceback> traceback,
+      nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
       ifrt::ArrayRef ifrt_array, bool weak_type, bool committed,
       xla::PjRtFuture<> result_status = xla::PjRtFuture<>());
 
   static PyArray MakeFromIfrtArrayAndSharding(
-      nb_class_ptr<PyClient> py_client, std::optional<nb_traceback> traceback,
+      nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
       ifrt::ArrayRef ifrt_array, nanobind::object sharding, bool weak_type,
       bool committed, bool skip_checks);
 
@@ -199,7 +197,7 @@ class PyArray : public nanobind::object {
     return GetStorage().py_client;
   }
 
-  const std::optional<nb_traceback>& traceback() const {
+  const std::optional<Traceback>& traceback() const {
     return GetStorage().traceback;
   }
 
