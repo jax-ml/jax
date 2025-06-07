@@ -34,7 +34,7 @@ class nb_class_ptr : public nanobind::object {
       : nanobind::object(h, ::nanobind::detail::steal_t{}) {}
   inline static bool check_(nanobind::handle h) {
     nanobind::handle type = nanobind::type<T>();
-    return h.type().is(type);
+    return nanobind::isinstance(h, type);
   };
 
   T* operator->() const { return nanobind::inst_ptr<T>(ptr()); }

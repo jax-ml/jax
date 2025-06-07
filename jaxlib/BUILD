@@ -53,6 +53,7 @@ pytype_strict_library(
     data = [":ffi_headers"],
     deps = [
         ":_jax",
+        ":_pretty_printer",
         ":cpu_feature_guard",
         ":jax",
         ":jaxlib_files",
@@ -150,6 +151,7 @@ pywrap_library(
     },
     deps = [
         ":_jax",
+        ":_pretty_printer",
         ":utils",
         ":weakref_lru_cache",
         "//jaxlib/mlir/_mlir_libs:_chlo",
@@ -245,6 +247,19 @@ nanobind_extension(
     module_name = "cpu_feature_guard",
     deps = [
         "@xla//third_party/python_runtime:headers",
+    ],
+)
+
+nanobind_pywrap_extension(
+    name = "_pretty_printer",
+    srcs = ["_pretty_printer.cc"],
+    deps = [
+        ":nb_class_ptr",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
     ],
 )
 
