@@ -25,7 +25,6 @@ from typing import cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
-from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
@@ -223,17 +222,6 @@ def _infer_slice_smem_transforms(op: mgpu.SliceSMEMOp) -> OptionalTransforms:
   return None if transforms is None else ([], [transforms])
 
 
-# TODO(bchetioui,apaszke): this empty rule is necessary while Mosaic doesn't use
-# the dialect in all cases.
-# The rule is necessary in order to handle the lowering of `utils.memref_ptr`
-# which is used in `_construct_smem_reftree`.
-@partial(_add_transform_inference_rule, builtin.UnrealizedConversionCastOp)
-def _infer_unrealized_conversion_cast_transforms(
-    _: builtin.UnrealizedConversionCastOp,
-) -> OptionalTransforms:
-  return None
-
-
 @partial(_add_transform_inference_rule, memref.ViewOp)
 def _infer_memref_view_transforms(op: memref.ViewOp) -> OptionalTransforms:
   if not isinstance(op.source.owner.opview, gpu.DynamicSharedMemoryOp):
@@ -251,15 +239,6 @@ def _infer_memref_view_transforms(op: memref.ViewOp) -> OptionalTransforms:
   # TODO(bchetioui): do we actually need to assign a transform to the input of
   # the view op? Presumably, it'll only be used to access scratch memory.
   return None if transforms is None else ([], [transforms])
-
-
-# TODO(bchetioui,apaszke): this empty rule is necessary while Mosaic doesn't use
-# the dialect in all cases.
-@partial(_add_transform_inference_rule, gpu.DynamicSharedMemoryOp)
-def _infer_dynamic_smem_transforms(
-    _: gpu.DynamicSharedMemoryOp,
-) -> OptionalTransforms:
-  return None
 
 
 def _get_tile_and_swizzle_transforms(

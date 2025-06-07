@@ -142,6 +142,9 @@ def should_have_transforms(op: ir.OpView) -> bool:
           is_transformable_smem_memref,
           itertools.chain(op.operands, op.results),
       )
+  ) and not (
+      op.name == "gpu.dynamic_shared_memory"
+      or op.name == "builtin.unrealized_conversion_cast"
   )
 
 def is_transformable_smem_memref(v: ir.Value) -> bool:
