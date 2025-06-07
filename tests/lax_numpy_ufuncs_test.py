@@ -87,6 +87,9 @@ UNARY_UFUNCS_WITH_DTYPES = list(itertools.chain.from_iterable(
 
 broadcast_compatible_shapes = [(), (1,), (3,), (1, 3), (4, 1), (4, 3)]
 nonscalar_shapes = [(3,), (4,), (4, 3)]
+empty_shapes  = [(0, 3), (4, 0)]
+all_shapes = nonscalar_shapes + empty_shapes
+
 
 def cast_outputs(fun):
   def wrapped(*args, **kwargs):
@@ -226,13 +229,18 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
-       for shape in nonscalar_shapes
+       for shape in all_shapes
        for axis in [None, *range(-len(shape), len(shape))]],
       dtype=jtu.dtypes.floating,
   )
   def test_frompyfunc_reduce(self, func, nin, nout, identity, shape, axis, dtype):
     if (nin, nout) != (2, 1):
       self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(nin, nout)=}")
+    if identity is None and axis is None and 0 in shape:
+      self.skipTest("reduce along zero size array for ufuncs with no identity.")
+    if identity is None and axis is not None and shape[axis] == 0:
+      self.skipTest("reduce along zero-sized axis for ufuncs with no identity.")
+
     jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduce, axis=axis)
     np_fun = cast_outputs(partial(np.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduce, axis=axis))
 
@@ -246,7 +254,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       BINARY_UFUNCS_WITH_DTYPES,
       [{'shape': shape, 'axis': axis}
-       for shape in nonscalar_shapes
+       for shape in all_shapes
        for axis in [None, *range(-len(shape), len(shape))]],
   )
   def test_binary_ufunc_reduce(self, name, shape, axis, dtype):
@@ -255,6 +263,8 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
 
     if jnp_fun.identity is None and axis is None and len(shape) > 1:
       self.skipTest("Multiple-axis reduction over non-reorderable ufunc.")
+    if jnp_fun.identity is None and axis is not None and shape[axis] == 0:
+      self.skipTest("reduce along zero-sized axis for ufuncs with no identity.")
 
     jnp_fun_reduce = partial(jnp_fun.reduce, axis=axis)
     np_fun_reduce = partial(np_fun.reduce, axis=axis)
@@ -270,7 +280,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
-       for shape in nonscalar_shapes
+       for shape in all_shapes
        for axis in [None, *range(-len(shape), len(shape))]],
       dtype=jtu.dtypes.floating,
   )
@@ -303,7 +313,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       BINARY_UFUNCS_WITH_DTYPES,
       [{'shape': shape, 'axis': axis}
-       for shape in nonscalar_shapes
+       for shape in all_shapes
        for axis in [None, *range(-len(shape), len(shape))]],
   )
   def test_binary_ufunc_reduce_where(self, name, shape, axis, dtype):
@@ -328,7 +338,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       BINARY_UFUNCS_WITH_DTYPES,
       [{'shape': shape, 'axis': axis}
-       for shape in nonscalar_shapes
+       for shape in all_shapes
        for axis in [None, *range(-len(shape), len(shape))]],
   )
   def test_binary_ufunc_reduce_initial(self, name, shape, axis, dtype):
@@ -353,7 +363,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       BINARY_UFUNCS_WITH_DTYPES,
       [{'shape': shape, 'axis': axis}
-      for shape in nonscalar_shapes
+      for shape in all_shapes
       for axis in [None, *range(-len(shape), len(shape))]],
   )
   def test_binary_ufunc_reduce_where_initial(self, name, shape, axis, dtype):
@@ -386,7 +396,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
-       for shape in nonscalar_shapes
+       for shape in all_shapes
        for axis in range(-len(shape), len(shape))],
       dtype=jtu.dtypes.floating,
   )
@@ -405,7 +415,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       BINARY_UFUNCS_WITH_DTYPES,
       [{'shape': shape, 'axis': axis}
-       for shape in nonscalar_shapes
+       for shape in all_shapes
        for axis in range(-len(shape), len(shape))]
   )
   def test_binary_ufunc_accumulate(self, name, shape, axis, dtype):
@@ -434,7 +444,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   )
   def test_frompyfunc_at(self, func, nin, nout, identity, shape, idx_shape, dtype):
     if (nin, nout) != (2, 1):
-      self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(nin, nout)=}")
+      self.skipTest(f"at requires (nin, nout)=(2, 1); got {(nin, nout)=}")
     jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).at, inplace=False)
     def np_fun(x, idx, y):
       x_copy = x.copy()
@@ -512,14 +522,15 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
-       for shape in nonscalar_shapes
-       for axis in [*range(-len(shape), len(shape))]],
+       for shape in all_shapes
+       for axis in [*range(-len(shape), len(shape))]
+       if shape[axis] != 0],
       idx_shape=[(0,), (3,), (5,)],
       dtype=jtu.dtypes.floating,
   )
   def test_frompyfunc_reduceat(self, func, nin, nout, identity, shape, axis, idx_shape, dtype):
     if (nin, nout) != (2, 1):
-      self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(nin, nout)=}")
+      self.skipTest(f"reduceat requires (nin, nout)=(2, 1); got {(nin, nout)=}")
     jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduceat, axis=axis)
     np_fun = cast_outputs(partial(np.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduceat, axis=axis))
 
@@ -533,15 +544,16 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       BINARY_UFUNCS_WITH_DTYPES,
       [{'shape': shape, 'axis': axis}
-       for shape in nonscalar_shapes
-       for axis in [*range(-len(shape), len(shape))]],
+       for shape in all_shapes
+       for axis in [*range(-len(shape), len(shape))]
+       if shape[axis] != 0],
       idx_shape=[(0,), (3,), (5,)],
   )
   def test_binary_ufunc_reduceat(self, name, shape, axis, idx_shape, dtype):
     jnp_fun = getattr(jnp, name)
     np_fun = getattr(np, name)
     if (jnp_fun.nin, jnp_fun.nout) != (2, 1):
-      self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(jnp_fun.nin, jnp_fun.nout)=}")
+      self.skipTest(f"reduceat requires (nin, nout)=(2, 1); got {(jnp_fun.nin, jnp_fun.nout)=}")
     if name in ['add', 'multiply'] and dtype == bool:
       # TODO(jakevdp): figure out how to fix test cases.
       self.skipTest(f"known failure for {name}.reduceat with {dtype=}")
@@ -550,14 +562,15 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     idx_rng = jtu.rand_int(self.rng(), low=0, high=shape[axis])
     args_maker = lambda: [rng(shape, dtype), idx_rng(idx_shape, 'int32')]
 
+    jnp_fun_reduceat = partial(jnp_fun.reduceat, axis=axis)
     def np_fun_reduceat(x, i):
       # Numpy has different casting behavior.
-      return np_fun.reduceat(x, i).astype(x.dtype)
+      return np_fun.reduceat(x, i, axis=axis).astype(x.dtype)
 
     tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
 
-    self._CheckAgainstNumpy(jnp_fun.reduceat, np_fun_reduceat, args_maker, tol=tol)
-    self._CompileAndCheck(jnp_fun.reduceat, args_maker)
+    self._CheckAgainstNumpy(jnp_fun_reduceat, np_fun_reduceat, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun_reduceat, args_maker)
 
 
 if __name__ == "__main__":
