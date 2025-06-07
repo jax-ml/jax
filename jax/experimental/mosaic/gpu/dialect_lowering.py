@@ -581,25 +581,26 @@ def swizzle_and_transforms_from_transforms_attr(
   swizzle = None
   gmem_transforms: list[launch_context.MemRefTransform] = []
 
-  for transform in transforms:
-    if swizzle is not None:
-      raise ValueError(f"{transforms} contain more transforms after swizzle.")
-    if mgpu.SwizzleTransformAttr.isinstance(transform):
-      # TODO(dasenov): Swizzling can change if the ref is sliced in certain
-      # ways. We might want to enforce some restrictions here.
-      swizzle = mgpu.SwizzleTransformAttr(transform).swizzle
-    elif mgpu.TileTransformAttr.isinstance(transform):
-      tiling = mgpu.TileTransformAttr(transform).tiling
-      tiling_transform = launch_context.TileTransform(tuple(tiling))
-      gmem_transforms.append(tiling_transform)
-    elif mgpu.TransposeTransformAttr.isinstance(transform):
-      permutation = mgpu.TransposeTransformAttr(transform).permutation
-      transpose_transform = launch_context.TransposeTransform(
-          tuple(permutation)
-      )
-      gmem_transforms.append(transpose_transform)
-    else:
-      raise ValueError("Unknown transform: {transform}")
+  if transforms:
+    for transform in transforms:
+      if swizzle is not None:
+        raise ValueError(f"{transforms} contain more transforms after swizzle.")
+      if mgpu.SwizzleTransformAttr.isinstance(transform):
+        # TODO(dasenov): Swizzling can change if the ref is sliced in certain
+        # ways. We might want to enforce some restrictions here.
+        swizzle = mgpu.SwizzleTransformAttr(transform).swizzle
+      elif mgpu.TileTransformAttr.isinstance(transform):
+        tiling = mgpu.TileTransformAttr(transform).tiling
+        tiling_transform = launch_context.TileTransform(tuple(tiling))
+        gmem_transforms.append(tiling_transform)
+      elif mgpu.TransposeTransformAttr.isinstance(transform):
+        permutation = mgpu.TransposeTransformAttr(transform).permutation
+        transpose_transform = launch_context.TransposeTransform(
+            tuple(permutation)
+        )
+        gmem_transforms.append(transpose_transform)
+      else:
+        raise ValueError("Unknown transform: {transform}")
 
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
