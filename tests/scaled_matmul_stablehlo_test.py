@@ -47,10 +47,10 @@ input_shardings = [
 c_name = "__cudnn$blockScaledDot"
 expected_hlos = [
     (c_name, "all-reduce", "f32[1,512,512]", "replica_groups={{0,1},{2,3}}"),
-    ("all-gather", "f8e4m3fn[1,512,512]", "replica_groups=[2,2]<=[4]", c_name),
-    ("all-gather", "f8e4m3fn[1,512,512]", "replica_groups=[2,2]<=[4]", c_name),
+    ("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]", c_name),
+    ("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]", c_name),
     (c_name,),
-    ("all-gather", "f8e4m3fn[1,256,1024]", "replica_groups=[2,2]<=[4]", c_name),
+    ("all-gather", "f8e4m3fn[256,1024]", "replica_groups=[2,2]<=[4]", c_name),
     (c_name, "reduce-scatter", "f32[2,256,512]", "replica_groups={{0,1},{2,3}}"),
     ("all-gather", "f8e4m3fn[2,512,1024]", "replica_groups=[2,2]<=[4]", c_name),
     ("all-gather", "f8e4m3fn[2,512,512]", "replica_groups=[2,2]<=[4]", c_name),
