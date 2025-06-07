@@ -87,7 +87,7 @@ def _flatten_fun_nokwargs(f: Callable,
   ans = f(*py_args)
   ans_flat, ans_tree = tree_flatten(ans)
   ans_avals = [core.get_aval(x) for x in ans_flat]
-  store.store((ans_tree, ans_avals))
+  store.store((ans_tree, ans_avals, ()))
   return ans_flat
 
 
@@ -301,7 +301,7 @@ class custom_jvp(Generic[ReturnValue]):
                                        in_tree, out_type1)
     out_flat = custom_jvp_call_p.bind(flat_fun, flat_jvp, *args_flat,
                                       symbolic_zeros=self.symbolic_zeros)
-    _, (out_tree, _) = lu.merge_linear_aux(out_type1, out_type2)
+    _, (out_tree, _, _) = lu.merge_linear_aux(out_type1, out_type2)
     return tree_unflatten(out_tree, out_flat)
 
 @partial(lu.transformation_with_aux2, use_eq_store=True)
@@ -328,7 +328,7 @@ def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args
   try: out_type_ = maybe_out_type()
   except lu.StoreException: out_type_ = None
   if out_type_ is not None:
-    out_tree_, primal_avals_ = out_type_
+    out_tree_, primal_avals_, () = out_type_
     ty_tree  = tree_unflatten(out_tree , [a.str_short() for a in primal_avals])
     ty_tree_ = tree_unflatten(out_tree_, [a.str_short() for a in primal_avals_])
     if out_tree_ != out_tree:
@@ -380,7 +380,7 @@ def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args
           if av_et != av_t)
 
       raise TypeError(msg.format('\n'.join(disagreements)))
-  store.store((out_tree, primal_avals))
+  store.store((out_tree, primal_avals, ()))
   return primals_out + tangents_out
 
 class CustomJVPCallPrimitive(core.Primitive):
@@ -736,7 +736,7 @@ class custom_vjp(Generic[ReturnValue]):
       out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
                                         *args_flat, out_trees=out_trees,
                                         symbolic_zeros=self.symbolic_zeros)
-      _, (out_tree, _) = lu.merge_linear_aux(out_type, out_trees)
+      _, (out_tree, _, _) = lu.merge_linear_aux(out_type, out_trees)
       return tree_unflatten(out_tree, out_flat)
 
 @lu.transformation2
@@ -744,7 +744,7 @@ def _check_primal_refs(f: Callable, nondiff_argnums: Sequence[int],
                        debug_info: core.DebugInfo, *args):
   _check_for_aliased_refs(f, nondiff_argnums, debug_info, args)
   out = f(*args)
-  _check_for_returned_refs(f, out, 'primal')
+  _check_for_returned_refs(f, out, 'primal', [], 0)
   return out
 
 def _check_for_aliased_refs(f: Callable,
@@ -763,14 +763,20 @@ def _check_for_aliased_refs(f: Callable,
           f"array reference of type {a.str_short()} at {arg_names[dup_idx]} and"
           f" {arg_names[i]}.")
 
-def _check_for_returned_refs(f, out, kind):
+def _check_for_returned_refs(f, out, kind, args, after_idx):
+  ids = {id(x) for x in args if isinstance(core.get_aval(x), AbstractRef)}
   leaves = tree_leaves_with_path(out)
-  for path, leaf in leaves:
+  for i, (path, leaf) in enumerate(leaves):
     if isinstance((a := core.get_aval(leaf)), AbstractRef):
       loc = f' at output tree path {keystr(path)}' if path else ''
-      raise ValueError(f"custom_vjp {kind} function {f} returned a mutable "
-                       f"a array reference of type {a.str_short()}{loc}, "
-                       "but mutable array references cannot be returned.")
+      if i < after_idx:
+        raise ValueError(f"custom_vjp {kind} function {f} returned a mutable "
+                         f"array reference of type {a.str_short()}{loc}, "
+                         "but mutable array references cannot be returned there.")
+      if id(leaf) not in ids:
+        raise ValueError(f"custom_vjp {kind} function {f} returned a mutable "
+                         f"array reference of type {a.str_short()}{loc} "
+                         "that was not an argument.")
 
 @dataclasses.dataclass
 class CustomVJPPrimal:
@@ -825,8 +831,6 @@ def _flatten_fwd(f: Callable, store: lu.EqualStore,
   if config.mutable_array_checks.value:
     _check_for_aliased_refs(f, nondiff_argnums, debug_primal, py_args)
   pair_out = f(*py_args)
-  if config.mutable_array_checks.value:
-    _check_for_returned_refs(f, pair_out, "fwd")
   if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
     msg = (f"Custom VJP fwd rule {fwd_name} for function {primal_name} "
            "must produce a pair (list or tuple of length two) where the first "
@@ -839,12 +843,14 @@ def _flatten_fwd(f: Callable, store: lu.EqualStore,
   py_primals_out, res = pair_out
   primals_out, out_tree = tree_flatten(py_primals_out)
   res, res_tree = tree_flatten(res)
+  if config.mutable_array_checks.value:
+    _check_for_returned_refs(f, pair_out, "fwd", args, out_tree.num_leaves)
   primal_avals = [core.get_aval(x) for x in primals_out]
   # If the primal function already ran, check out_tree agreement.
   try: out_type_ = maybe_out_type()
   except lu.StoreException: out_type_ = None
   if out_type_ is not None:
-    out_tree_, primal_avals_ = out_type_
+    out_tree_, primal_avals_, () = out_type_
     ty_tree  = tree_unflatten(out_tree , [a.str_short() for a in primal_avals])
     ty_tree_ = tree_unflatten(out_tree_, [a.str_short() for a in primal_avals_])
     if out_tree_ != out_tree:
@@ -876,15 +882,21 @@ def _flatten_fwd(f: Callable, store: lu.EqualStore,
            "shapes/dtypes of:\n"
            f"""    {str(ty_tree_).replace("'", "")}""")
       raise TypeError(m)
-  store.store((out_tree, res_tree))
-  return (*res, *primals_out)
+  pruned_res, input_forwards = _filter_forwarded_inputs(res, args)  # prune
+  store.store((out_tree, res_tree, input_forwards))
+  return (*pruned_res, *primals_out)
+
+def _filter_forwarded_inputs(outs, ins):
+  idxs: dict[int, int] = {id(x): i for i, x in enumerate(ins)}
+  return [o for o in outs if id(o) not in idxs], [idxs.get(id(o)) for o in outs]
 
 @lu.transformation2
 def _flatten_bwd(f: Callable,
                  in_tree: PyTreeDef,
                  in_avals: Sequence[core.AbstractValue],
-                 out_trees: Callable[[], Sequence[PyTreeDef]], *args):
-  out_tree, res_tree = out_trees()
+                 out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
+                 *args):
+  out_tree, res_tree, _ = out_trees()
   assert len(args) == res_tree.num_leaves + out_tree.num_leaves
   res, cts_out = split_list(args, [res_tree.num_leaves])
   py_res = tree_unflatten(res_tree, res)
@@ -980,20 +992,19 @@ class CustomVJPCallPrimitive(core.Primitive):
     fwd_jaxpr_thunk = new_params.pop('fwd_jaxpr_thunk')
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
                        debug_info=call_jaxpr.jaxpr.debug_info)
-    fwd = lift_fwd(num_consts, fwd_jaxpr_thunk)
+    fwd = lift_fwd(num_consts, new_params['out_trees'], fwd_jaxpr_thunk)
     const_avals, _ = split_list(call_jaxpr.in_avals, [num_consts])
     bwd = _handle_consts_in_bwd(new_params.pop('bwd'), const_avals)
     return [fun, fwd, bwd], new_params
 
-def lift_fwd(num_consts: int, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
+def lift_fwd(num_consts: int, out_trees: Callable, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
   def fwd(*args):
-    vals, zeros = args[::2], args[1::2]
-    assert len(vals) == len(zeros)
+    vals, nonzeros = args[::2], args[1::2]
+    assert len(vals) == len(nonzeros)
     _, primals = split_list(vals, [num_consts])
-    const_zeros, in_zeros = split_list(zeros, [num_consts])
-    if any(const_zeros):
-      raise ad.CustomVJPException()
-    fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk.call_wrapped(*in_zeros)
+    const_nonzeros, in_nonzeros = split_list(nonzeros, [num_consts])
+    if any(const_nonzeros): raise ad.CustomVJPException()
+    fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk.call_wrapped(*in_nonzeros)
     return core.eval_jaxpr(fwd_jaxpr, fwd_consts, *primals)
   return lu.wrap_init(fwd, debug_info=fwd_jaxpr_thunk.debug_info)
 
@@ -1022,7 +1033,7 @@ def _custom_vjp_call_dce(
   call_jaxpr: core.ClosedJaxpr = eqn.params["call_jaxpr"]
   fwd_jaxpr_thunk = eqn.params["fwd_jaxpr_thunk"]
   bwd: lu.WrappedFun = eqn.params["bwd"]
-  out_trees: Callable[[], Sequence[PyTreeDef]] = eqn.params["out_trees"]
+  out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]] = eqn.params["out_trees"]
   symbolic_zeros: bool = eqn.params["symbolic_zeros"]
   dce_call_jaxpr: core.ClosedJaxpr
   used_ins: Sequence[bool]
@@ -1034,14 +1045,14 @@ def _custom_vjp_call_dce(
   @pe._memoize
   def dce_fwd_jaxpr_thunk(*zeros):
     fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk.call_wrapped(*zeros))
-    _, res_tree = out_trees()
-    num_res = res_tree.num_leaves
+    _, res_tree, fwds = out_trees()
+    num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
     dce_fwd_jaxpr, _ = _cached_closed_call_dce_instantiate(
-        fwd_jaxpr, (True,) * num_res + tuple(used_outs))
+        fwd_jaxpr, (True,) * num_res_out + tuple(used_outs))
     return dce_fwd_jaxpr.jaxpr, dce_fwd_jaxpr.consts
 
   def dce_bwd(*args):
-    _, res_tree = out_trees()
+    _, res_tree, _ = out_trees()
     res, cts = split_list(args, [res_tree.num_leaves])
     cts_ = iter(cts)
     all_cts = []
@@ -1293,8 +1304,8 @@ def _maybe_perturbed(x: Any) -> bool:
 @cache()
 def _closure_convert_for_avals(fun, in_tree, in_avals,
                                debug_info: core.DebugInfo):
-  wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun, debug_info=debug_info),
-                                               in_tree)
+  wrapped_fun, out_tree = flatten_fun_nokwargs(
+      lu.wrap_init(fun, debug_info=debug_info), in_tree)
   jaxpr, out_pvals, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
   out_tree = out_tree()
 
@@ -1641,8 +1652,8 @@ def optimize_remat_of_custom_vjp_fwd(
     in_avals = [core.get_aval(x) for x in args_flat]
     fwd_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fwd, in_avals)
     fwd_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr))
-    prim_tree, res_tree = out_trees()
-    num_res = res_tree.num_leaves
+    prim_tree, res_tree, fwds = out_trees()
+    num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
 
     disallowed_effects = effects.custom_derivatives_allowed_effects.filter_not_in(fwd_jaxpr.effects)
     if disallowed_effects:
@@ -1656,9 +1667,12 @@ def optimize_remat_of_custom_vjp_fwd(
       return jaxpr, consts
 
     out_flat = remat_opt_p.bind(*consts, *args_flat, num_consts=len(consts),
-                                num_res=num_res, fwd_jaxpr=fwd_jaxpr,
+                                num_res=num_res_out, fwd_jaxpr=fwd_jaxpr,
                                 fun_jaxpr_thunk=fun_jaxpr_thunk)
-    res, out_flat = split_list(out_flat, [num_res])
+    res, out_flat = split_list(out_flat, [num_res_out])
+    res_ = iter(res)
+    res = [next(res_) if f is None else args_flat[f] for f in fwds]
+    assert next(res_, None) is None
     out_tree = treedef_tuple((prim_tree, res_tree))
     return tree_unflatten(out_tree, (*out_flat, *res))
 

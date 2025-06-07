@@ -965,8 +965,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     else:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=<lambda>, arg_names=x,y,res_ct, result_paths=result[0],result[1]",
-          # TODO(necula): result_paths
-          "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=",
+          "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=result['c']",
             # TODO(necula): arg_names
           "traced_for=jit, fun=my_g, arg_names=,,u,v, result_paths=result['c'],result['d']",
       ]
@@ -1403,7 +1402,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     else:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
-          "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
+          "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=result[0],result[1]",
           "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
           "traced_for=jit, fun=my_f, arg_names=,,x,as_, result_paths=result[0],result[1]",

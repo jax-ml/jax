@@ -569,8 +569,13 @@ class JVPTrace(Trace):
     with core.set_current_trace(self.parent_trace):
       res_and_primals_out = fwd.call_wrapped(*fwd_in)
 
-    _, res_tree = out_trees()
-    res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+    _, res_tree, input_fwds = out_trees()
+    num_res_out = res_tree.num_leaves - sum(f is not None for f in input_fwds)
+    res_out, primals_out = split_list(res_and_primals_out, [num_res_out])
+    res_out_ = iter(res_out)
+    res = [next(res_out_) if f is None else primals_in[f] for f in input_fwds]
+    assert next(res_out_, None) is None
+
     avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
     in_zeros = [type(t) is Zero for t in tangents_in]
     nz_tangents_in = [t for z, t in zip(in_zeros, tangents_in) if not z]
@@ -734,7 +739,7 @@ class LinearizeTrace(Trace):
 
   def process_custom_vjp_call(self, prim, fun, fwd,
                               bwd: lu.WrappedFun, tracers,
-                              out_trees: Callable[[], Sequence[PyTreeDef]],
+                              out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
                               symbolic_zeros: bool):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
@@ -746,8 +751,12 @@ class LinearizeTrace(Trace):
     with core.set_current_trace(self.parent_trace):
       res_and_primals_out = fwd.call_wrapped(*fwd_in_flat)
 
-    _, res_tree = out_trees()
-    res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+    _, res_tree, input_fwds = out_trees()
+    num_res_out = res_tree.num_leaves - sum(f is not None for f in input_fwds)
+    res_out, primals_out = split_list(res_and_primals_out, [num_res_out])
+    res_out_ = iter(res_out)
+    res = [next(res_out_) if f is None else primals_in[f] for f in input_fwds]
+    assert next(res_out_, None) is None
     avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
 
     in_zeros = [type(t) is Zero for t in tangents_in]

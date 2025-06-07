@@ -6104,17 +6104,17 @@ class RematTest(jtu.JaxTestCase):
 
     res = saved_residuals(f, (2., 3.), y=4.)
     self.assertLen(res, 6)
-    self.assertEqual(res[0][0].shape, ())
-    self.assertEqual(res[0][1], "from the argument x[0]")
+    self.assertEqual(res[0][0].shape, (1,))
+    self.assertEqual(res[0][1], "from a constant")
     self.assertEqual(res[1][0].shape, ())
-    self.assertEqual(res[1][1], "from the argument x[1]")
+    self.assertEqual(res[1][1], "from the argument x[0]")
     self.assertEqual(res[2][0].shape, ())
-    self.assertEqual(res[2][1], "from the argument y")
+    self.assertEqual(res[2][1], "from the argument x[1]")
     self.assertEqual(res[3][0].shape, ())
-    self.assertStartsWith(res[3][1], "output of jitted function 'f'")
+    self.assertEqual(res[3][1], "from the argument y")
     self.assertEqual(res[4][0].shape, ())
-    self.assertEqual(res[5][0].shape, (1,))
-    self.assertStartsWith(res[5][1], "output of jitted function 'f'")
+    self.assertStartsWith(res[4][1], "output of jitted function 'f'")
+    self.assertEqual(res[5][0].shape, ())
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
