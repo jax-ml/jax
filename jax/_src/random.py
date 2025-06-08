@@ -2175,7 +2175,7 @@ def orthogonal(
     m: an integer indicating the number of columns. Defaults to `n`.
 
   Returns:
-    A random array of shape `(*shape, n, n)` and specified dtype.
+    A random array of shape `(*shape, n, m)` and specified dtype.
 
   References:
     .. [1] Mezzadri, Francesco. (2007). "How to generate random matrices from
