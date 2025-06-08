@@ -2993,7 +2993,7 @@ def reshard(xs, out_shardings):
     if ds is None:
       raise ValueError(
           'Reshard should only be used with out_shardings which are non-None '
-          'and have a nonempty mesh. Got sharding {s}.'
+          f'and have a nonempty mesh. Got sharding {s}.'
       )
     ds = ds.with_spec(ds.spec._normalized_spec_for_aval(x_aval.ndim))  # pytype: disable=attribute-error
     out_flat.append(reshard_p.bind(x, dst_sharding=ds))
