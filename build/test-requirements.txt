@@ -1,6 +1,5 @@
 absl-py
 cloudpickle
-colorama>=0.4.4
 filelock
 flatbuffers
 hypothesis

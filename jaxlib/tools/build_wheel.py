@@ -205,6 +205,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/gpu_solver.py",
           f"{source_file_prefix}jaxlib/gpu_sparse.py",
           f"{source_file_prefix}jaxlib/plugin_support.py",
+          f"{source_file_prefix}jaxlib/_pretty_printer.{pyext}",
           f"{source_file_prefix}jaxlib/version.py",
           f"{source_file_prefix}jaxlib/xla_client.py",
           f"{source_file_prefix}jaxlib/weakref_lru_cache.{pyext}",

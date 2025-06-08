@@ -32,6 +32,7 @@ module = [
     "jaxlib.utils",
     "jaxlib.version",
     "jaxlib._jax.utils",
+    "jaxlib._pretty_printer",
     "jraph.*",
     "libtpu.*",
     "matplotlib.*",
