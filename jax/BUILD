@@ -1155,7 +1155,8 @@ pytype_strict_library(
     deps = [
         ":config",
         ":util",
-    ] + py_deps("colorama"),
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(
