@@ -642,15 +642,18 @@ def _validate(device_id):
   device_id = int(device_id)
 
   shared_memory = _get_shared_memory()
+  local_core_ids = tuple(range(shared_memory.num_cores_per_device))
   with shared_memory.lock:
     for sem in shared_memory.sem.values():
       with sem.cv:
-        if sem.counts[device_id] != 0:
-          # TODO(jburnim): Make this raise an error, but in a way that doesn't
-          # cause other devices to hang later in `_clean_up_shared_memory`.
-          print(
-              f'Semaphore {sem.id} has non-zero count for {device_id} at '
-              f'kernel exit: {sem.counts[device_id]}')
+        for lci in local_core_ids:
+          global_core_id = _get_global_core_id(device_id, lci)
+          if sem.counts[global_core_id] != 0:
+            # TODO(jburnim): Make this raise an error, but in a way that doesn't
+            # cause other devices to hang later in `_clean_up_shared_memory`.
+            print(
+                f'Semaphore {sem.id} has non-zero count for {device_id} '
+                f' (core {lci}) at kernel exit: {sem.counts[global_core_id]}')
 
 def _allocate_buffer(
     device_id: Array,
@@ -1354,7 +1357,15 @@ class Placeholder:
 
 
 def _interpret_jaxpr(
-    jaxpr, *args, mesh, local_core_id, compiler_params, interpret_params
+    jaxpr,
+    *args,
+    axis_sizes,
+    mesh,
+    axis_indices,
+    device_id,
+    local_core_id,
+    compiler_params,
+    interpret_params
 ):
   env = {}
 
@@ -1374,20 +1385,15 @@ def _interpret_jaxpr(
 
   jax._src.util.safe_map(write, jaxpr.constvars + jaxpr.invars, args)
 
-  # Get the device ID.
-  axis_sizes = jax_core.get_axis_env().axis_sizes
-  device_id = _device_coords_to_logical_id(
-      tuple(lax.axis_index(s) for s in axis_sizes.keys()),
-      axis_sizes)
-  # TODO(jburnim): Pass the device ID around, instead of re-fetching/computing
-  # it for each sub-jaxpr.
-
   # TODO(jburnim): Clean up and finish this evaluation loop.  For example:
   #  - Replace the big if-statement with a dictionary of rules.
   #  - Handle other higher-order primitives?
   _interpret = functools.partial(
       _interpret_jaxpr,
+      axis_sizes=axis_sizes,
       mesh=mesh,
+      axis_indices=axis_indices,
+      device_id=device_id,
       local_core_id=local_core_id,
       compiler_params=compiler_params,
       interpret_params=interpret_params,
@@ -1458,6 +1464,13 @@ def _interpret_jaxpr(
         # We are interpreting a core_map, and this lax.axis_index call is
         # querying our index along the core axis, so return our core ID.
         out = local_core_id
+
+      elif ((prim is lax.axis_index_p)
+            and (eqn.params['axis_name'] in axis_indices)):
+        # We replace lax.axis_index calls in the kernel body, so that the
+        # kernel body jaxpr can be run on other threads (via an io_callback)
+        # without having to recreate the axis environment in those threads.
+        out = axis_indices[eqn.params['axis_name']]
 
       elif prim is lax.cond_p:
         def _make_branch(jaxpr):
@@ -1705,15 +1718,19 @@ def _interpret_jaxpr(
   return jax._src.util.safe_map(read, jaxpr.outvars)
 
 def _compute_start_indices(
-    block_mapping, loop_idx, local_core_id,
-    *args, mesh, compiler_params, interpret_params):
+    block_mapping, loop_idx, *args,
+    axis_sizes, mesh, axis_indices, device_id, local_core_id,
+    compiler_params, interpret_params):
   jaxpr = block_mapping.index_map_jaxpr
   block_indices = _interpret_jaxpr(
       jaxpr.jaxpr,
       *jaxpr.consts,
       *loop_idx,
       *args,
+      axis_sizes=axis_sizes,
       mesh=mesh,
+      axis_indices=axis_indices,
+      device_id=device_id,
       local_core_id=local_core_id,
       compiler_params=compiler_params,
       interpret_params=interpret_params,
@@ -1941,16 +1958,17 @@ def _run_jaxpr(jaxpr, consts, *args):
   traced.lower().compile()(consts, *args)
   return
 
+import concurrent.futures
+
 def _thread_map_callback(jaxpr, num_threads, consts):
   num_threads = int(num_threads)
   threads = []
-  for i in range(num_threads):
-    threads.append(
-        threading.Thread(target=_run_jaxpr, args=(jaxpr, consts, jnp.int32(i))))
-  for i in range(num_threads):
-    threads[i].start()
-  for i in range(num_threads):
-    threads[i].join()
+  with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+    for i in range(num_threads):
+      threads.append(
+        executor.submit(_run_jaxpr, jaxpr, consts, jnp.int32(i)))
+    for i in range(num_threads):
+      threads[i].result()
 
 def _call_threadmap_callback(jaxpr, num_threads, *consts):
   # NOTE: At runtime, _thread_map_callback will lower and compile the
@@ -2006,9 +2024,9 @@ def interpret_pallas_call(
   axis_sizes = jax_core.get_axis_env().axis_sizes
   num_devices = functools.reduce(
       jnp.multiply, axis_sizes.values(), jnp.int32(1))
+  axis_indices = {k: lax.axis_index(k) for k in axis_sizes.keys()}
   device_id = _device_coords_to_logical_id(
-      tuple(lax.axis_index(s) for s in axis_sizes.keys()),
-      axis_sizes)
+      tuple(axis_indices.values()), axis_sizes)
   callback.io_callback(
       functools.partial(
           _initialize_shared_memory, interpret_params=interpret_params),
@@ -2271,9 +2289,12 @@ def interpret_pallas_call(
             _compute_start_indices(
                 bm,
                 next_grid_point,
-                core_index,
                 *scalar_buffer_ids,
+                axis_sizes=axis_sizes,
                 mesh=mesh,
+                axis_indices=axis_indices,
+                device_id=device_id,
+                local_core_id=core_index,
                 compiler_params=compiler_params,
                 interpret_params=interpret_params,
             )
@@ -2341,7 +2362,10 @@ def interpret_pallas_call(
         _interpret_jaxpr(
             jaxpr,
             *kernel_buffer_ids,
+            axis_sizes=axis_sizes,
             mesh=mesh,
+            axis_indices=axis_indices,
+            device_id=device_id,
             local_core_id=core_index,
             compiler_params=compiler_params,
             interpret_params=interpret_params,
@@ -2419,9 +2443,12 @@ def interpret_pallas_call(
           _compute_start_indices(
               bm,
               initial_grid_point,
-              core_index,
               *scalar_buffer_ids,
+              axis_sizes=axis_sizes,
               mesh=mesh,
+              axis_indices=axis_indices,
+              device_id=device_id,
+              local_core_id=core_index,
               compiler_params=compiler_params,
               interpret_params=interpret_params,
           )
