@@ -341,7 +341,7 @@ def combine_executable_and_time(
 
 
 def extract_executable_and_time(
-    exectuable_and_time: bytes
+    executable_and_time: bytes
 ) -> tuple[bytes, int]:
   """Given the cache entry in the format shown below, extract the serialized
   executable and the compilation time.
@@ -351,5 +351,5 @@ def extract_executable_and_time(
   Content:  compilation time    serialized executable
             (big-endian int)
   """
-  return exectuable_and_time[4:], int.from_bytes(
-      exectuable_and_time[:4], byteorder='big')
+  return executable_and_time[4:], int.from_bytes(
+      executable_and_time[:4], byteorder='big')
