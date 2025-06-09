@@ -303,7 +303,6 @@ py_library_providing_imports_info(
         "_src/debugging.py",
         "_src/dlpack.py",
         "_src/error_check.py",
-        "_src/ffi.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
         "_src/prng.py",
@@ -388,6 +387,7 @@ py_library_providing_imports_info(
         ":earray",
         ":effects",
         ":environment_info",
+        ":ffi",
         ":internal_mesh_utils",
         ":jaxpr_util",
         ":layout",
@@ -786,6 +786,24 @@ pytype_strict_library(
     srcs = ["_src/environment_info.py"],
     deps = [
         ":version",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "ffi",
+    srcs = ["_src/ffi.py"],
+    deps = [
+        ":ad",
+        ":api",
+        ":batching",
+        ":core",
+        ":effects",
+        ":layout",
+        ":mlir",
+        ":typing",
+        ":util",
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
@@ -1505,7 +1523,10 @@ pytype_library(
         exclude = ["experimental/sparse/test_util.py"],
     ),
     visibility = ["//visibility:public"],
-    deps = [":jax"],
+    deps = [
+        ":ffi",
+        ":jax",
+    ],
 )
 
 pytype_library(
