@@ -44,7 +44,7 @@ from jax._src.interpreters.batching import not_mapped
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
     register_pytree_node_class, tree_leaves, tree_flatten_with_path,
-    tree_leaves_with_path, keystr, treedef_children, PyTreeDef)
+    tree_leaves_with_path, keystr, treedef_children, tree_structure, PyTreeDef)
 from jax._src.util import (cache, safe_zip, safe_map, split_list, unzip2,
                            weakref_lru_cache)
 
@@ -740,20 +740,23 @@ class custom_vjp(Generic[ReturnValue]):
       return tree_unflatten(out_tree, out_flat)
 
 @lu.transformation2
-def _check_primal_refs(f: Callable, nondiff_argnums: Sequence[int],
-                       debug_info: core.DebugInfo, *args):
-  _check_for_aliased_refs(f, nondiff_argnums, debug_info, args)
+def _check_primal_refs(
+    f: Callable, nondiff_argnums: Sequence[int], debug: core.DebugInfo, *args):
+  _check_for_aliased_refs(f, nondiff_argnums, debug, args)
   out = f(*args)
   _check_for_returned_refs(f, out, 'primal', [], 0)
   return out
 
-def _check_for_aliased_refs(f: Callable,
-                            nondiff_argnums: Sequence[int],
-                            debug: core.DebugInfo,
-                            args):
+def _check_for_aliased_refs(
+    f: Callable, nondiff_argnums: Sequence[int], debug: core.DebugInfo, args):
+  nondiff_argnums_ = set(nondiff_argnums)
+  argnums = [x for i, arg in enumerate(args)
+             for x in [i] * tree_structure(arg).num_leaves]
   leaves = tree_leaves(args)
   refs: dict[int, int] = {}
-  for i, x in enumerate(leaves):
+  for i, (argnum, x) in enumerate(zip(argnums, leaves)):
+    if argnum in nondiff_argnums: continue
+    x = x.value if isinstance(x, CustomVJPPrimal) else x
     if (isinstance((a := core.get_aval(x)), AbstractRef) and
         (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
       arg_names = debug.safe_arg_names(len(leaves))
@@ -764,6 +767,7 @@ def _check_for_aliased_refs(f: Callable,
           f" {arg_names[i]}.")
 
 def _check_for_returned_refs(f, out, kind, args, after_idx):
+  args = [x.value if isinstance(x, CustomVJPPrimal) else x for x in args]
   ids = {id(x) for x in args if isinstance(core.get_aval(x), AbstractRef)}
   leaves = tree_leaves_with_path(out)
   for i, (path, leaf) in enumerate(leaves):
