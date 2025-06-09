@@ -302,7 +302,6 @@ py_library_providing_imports_info(
         "_src/custom_partitioning.py",
         "_src/debugging.py",
         "_src/dlpack.py",
-        "_src/earray.py",
         "_src/error_check.py",
         "_src/ffi.py",
         "_src/flatten_util.py",
@@ -386,6 +385,7 @@ py_library_providing_imports_info(
         ":custom_transpose",
         ":deprecations",
         ":dtypes",
+        ":earray",
         ":effects",
         ":environment_info",
         ":internal_mesh_utils",
@@ -759,6 +759,21 @@ pytype_strict_library(
         ":util",
         "//jax/_src/lib",
     ] + py_deps("ml_dtypes") + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "earray",
+    srcs = ["_src/earray.py"],
+    deps = [
+        ":api",
+        ":basearray",
+        ":core",
+        ":sharding_impls",
+        ":tree_util",
+        ":util",
+        ":xla",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
