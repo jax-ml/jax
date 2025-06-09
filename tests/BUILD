@@ -272,7 +272,10 @@ jax_multiplatform_test(
         "gpu_h100x2",
     ],
     # TODO(dfm): Remove after removal of jex.ffi imports.
-    deps = ["//jax:extend"] + py_deps([
+    deps = [
+        "//jax:extend",
+        "//jax:ffi",
+    ] + py_deps([
         "absl/testing",
         "numpy",
     ]),

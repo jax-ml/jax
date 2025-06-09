@@ -91,7 +91,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "ffi",
     srcs = ["ffi.py"],
-    deps = ["//jax"],
+    deps = [
+        "//jax",
+        "//jax:ffi",
+    ],
 )
 
 pytype_strict_library(

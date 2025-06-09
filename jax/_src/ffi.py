@@ -23,7 +23,6 @@ from typing import Any, overload
 
 import numpy as np
 
-import jax
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
@@ -662,6 +661,9 @@ def ffi_batching_rule(
     result_avals: Sequence[core.ShapedArray],
     **kwargs: Any,
 ):
+  from jax._src.lax import control_flow  # pytype: disable=import-error
+  from jax._src.lax import lax  # pytype: disable=import-error
+
   axis_size, = {a.shape[d] for a, d in zip(args, dims)
                 if d is not batching.not_mapped}
   new_args = [arg if dim is batching.not_mapped else
@@ -696,7 +698,7 @@ def ffi_batching_rule(
   elif vmap_method == "expand_dims" or vmap_method == "broadcast_all":
     size = axis_size if vmap_method == "broadcast_all" else 1
     bcast_args = [
-        jax.lax.broadcast(x, (size,)) if d is batching.not_mapped else x
+        lax.broadcast(x, (size,)) if d is batching.not_mapped else x
         for x, d in zip(new_args, dims)]
     if kwargs.get("input_layouts") is not None:
       kwargs["input_layouts"] = tuple(
@@ -721,7 +723,7 @@ def ffi_batching_rule(
       )
     unroll = vmap_method == "sequential_unrolled"
     g = lambda _, x: ((), _batch_fun(x))
-    _, outvals = jax.lax.scan(g, (), batched_args, unroll=unroll)
+    _, outvals = control_flow.scan(g, (), batched_args, unroll=unroll)
   else:
     raise NotImplementedError(
         f"vmap is only supported for the {prim.name} primitive when vmap_method "
