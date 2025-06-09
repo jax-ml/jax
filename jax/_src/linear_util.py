@@ -441,7 +441,8 @@ def _check_input_type(in_type: core.InputType) -> None:
 
 
 def cache(call: Callable, *,
-          explain: Callable[[WrappedFun, bool, dict, tuple, float], None] | None = None):
+          explain: Callable[[WrappedFun, bool, dict, tuple, float], None] | None = None,
+          context: Callable = config.trace_lower_compile_context):
   """Memoization decorator for functions taking a WrappedFun as first argument.
 
   Args:
@@ -460,7 +461,7 @@ def cache(call: Callable, *,
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
-    key = (fun.transforms, fun.params, fun.in_type, args, config.trace_context())
+    key = (fun.transforms, fun.params, fun.in_type, args, context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result
