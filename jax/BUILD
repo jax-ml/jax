@@ -299,7 +299,6 @@ py_library_providing_imports_info(
         "_src/buffer_callback.py",
         "_src/callback.py",
         "_src/checkify.py",
-        "_src/custom_partitioning.py",
         "_src/debugging.py",
         "_src/dlpack.py",
         "_src/error_check.py",
@@ -380,6 +379,7 @@ py_library_providing_imports_info(
         ":custom_batching",
         ":custom_dce",
         ":custom_derivatives",
+        ":custom_partitioning",
         ":custom_partitioning_sharding_rule",
         ":custom_transpose",
         ":deprecations",
@@ -713,6 +713,27 @@ pytype_strict_library(
         ":util",
         ":xla",
     ],
+)
+
+pytype_strict_library(
+    name = "custom_partitioning",
+    srcs = ["_src/custom_partitioning.py"],
+    deps = [
+        ":api",
+        ":api_util",
+        ":config",
+        ":core",
+        ":custom_api_util",
+        ":custom_partitioning_sharding_rule",
+        ":mesh",
+        ":mlir",
+        ":partial_eval",
+        ":sharding",
+        ":sharding_impls",
+        ":tree_util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
