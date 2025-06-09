@@ -35,11 +35,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
-#include "mlir/IR/Visitors.h"
 #include "mlir/Pass/PassManager.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -50,7 +48,6 @@ limitations under the License.
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "shardy/dialect/sdy/ir/dialect.h"
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
@@ -404,47 +401,6 @@ MakeIfrtDeserializeExecutableOptions(std::optional<CompileOptions> options,
       std::move(ifrt_loaded_host_callbacks));
 }
 
-// Returns true if the module has at least one GSPMD attribute or op, like an
-// `mhlo.sharding` attribute or `Sharding` custom call.
-// TODO(b/420837831): delete this once we don't fall back to GSPMD.
-bool HasGspmdAttrsOrOps(mlir::ModuleOp module) {
-  for (auto func : module.getOps<mlir::func::FuncOp>()) {
-    for (int64_t arg_index = 0; arg_index < func.getNumArguments();
-         ++arg_index) {
-      if (func.getArgAttr(arg_index, sdy::kXlaShardingAttr)) {
-        return true;
-      }
-    }
-    for (int64_t result_index = 0; result_index < func.getNumResults();
-         ++result_index) {
-      if (func.getResultAttr(result_index, sdy::kXlaShardingAttr)) {
-        return true;
-      }
-    }
-  }
-  // Check the module for a `Sharding` custom call.
-  bool has_gspmd = false;
-  module->walk([&has_gspmd](mlir::stablehlo::CustomCallOp custom_call) {
-    if (custom_call.getCallTargetName() ==
-        sdy::kShardingCustomCallTargetName &&
-       custom_call->hasAttr(sdy::kXlaShardingAttr)) {
-      has_gspmd = true;
-      return mlir::WalkResult::interrupt();
-    }
-    return mlir::WalkResult::advance();
-  });
-  return has_gspmd;
-}
-
-// Check if the module has any sort of Shardy mesh:
-// - `mesh`
-// - `maximal_mesh_{X}`
-// - `empty_mesh`
-// TODO(b/420837831): delete this once we don't fall back to GSPMD.
-bool HasShardyMesh(mlir::ModuleOp module) {
-  return !module.getOps<mlir::sdy::MeshOp>().empty();
-}
-
 }  // namespace
 
 /* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
@@ -529,19 +485,6 @@ PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, std::string mlir_module,
   mlir::MLIRContext context;
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       ParseMlirModuleString(mlir_module, context));
-  // TODO(b/420837831): Remove this once we don't need to fall back to GSPMD.
-  if (options.executable_build_options.use_shardy_partitioner() &&
-      HasGspmdAttrsOrOps(module.get())) {
-    LOG(WARNING)
-        << "Module has GSPMD attrs or ops, but Shardy is enabled. Disabling "
-           "Shardy and falling back to using GSPMD propagation.";
-    options.executable_build_options.set_use_shardy_partitioner(false);
-    if (HasShardyMesh(module.get())) {
-      // Shardy is not enabled, but the module has shardy ops. Likely due to
-      // export loading a GSPMD checkpoint. Fall back to GSPMD.
-      TF_RETURN_IF_ERROR(ExportShardyForGSPMD(*module));
-    }
-  }
   return CompileAndLoadIfrtProgram(
       client, std::make_unique<xla::ifrt::HloProgram>(module.get()),
       MakeIfrtCompileOptions(std::move(options), std::move(executable_devices),

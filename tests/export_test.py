@@ -1436,30 +1436,55 @@ class JaxExportTest(jtu.JaxTestCase):
         r"\) -> \(tensor<10x20xf32> (.*)",  # the result
         vjp_module_str).groups()
 
+    if config.use_shardy_partitioner.value:
+      attr_name = "sdy.sharding"
+    else:
+      attr_name = "mhlo.sharding"
+
     if in_shardings == "P":
-      self.assertRegex(arg0_attrs, re.escape("{devices=[1,2]<=[2]}"))
-      self.assertRegex(res_attrs, re.escape("{devices=[1,2]<=[2]}"))
-      primal_in_sharding = "{devices=[1,2]<=[2]}"
+      if config.use_shardy_partitioner.value:
+        sharding = r'#sdy.sharding<@mesh, \[{}, {"d"}\]>'
+        primal_in_sharding = '#sdy.sharding<@mesh, [{}, {"d"}]>'
+      else:
+        sharding = re.escape("{devices=[1,2]<=[2]}")
+        primal_in_sharding = "{devices=[1,2]<=[2]}"
+      self.assertRegex(arg0_attrs, sharding)
+      self.assertRegex(res_attrs, sharding)
     else:
       primal_in_sharding = "{replicated}"
       if with_mesh_context:
-        self.assertRegex(arg0_attrs, re.escape("replicated"))
-        self.assertRegex(res_attrs, re.escape("replicated"))
+        if config.use_shardy_partitioner.value:
+          sharding = r'#sdy.sharding<@mesh, \[{}, {}\]>'
+        else:
+          sharding = re.escape("replicated")
+        self.assertRegex(arg0_attrs, sharding)
+        self.assertRegex(res_attrs, sharding)
       else:
         # If there is no mesh context, we have used NamedSharding(None)
         # and then the sharding is unspecified!
-        self.assertNotIn("mhlo.sharding", arg0_attrs)
-        self.assertNotIn("mhlo.sharding", res_attrs)
+        self.assertNotIn(attr_name, arg0_attrs)
+        self.assertNotIn(attr_name, res_attrs)
 
     if out_shardings == "P":
-      self.assertRegex(arg1_attrs, re.escape("{devices=[2,1]<=[2]}"))
-      primal_out_sharding = "{devices=[2,1]<=[2]}"
-    else:
-      primal_out_sharding = "{replicated}"
-      if with_mesh_context:
-        self.assertRegex(arg1_attrs, re.escape("replicated"))
+      if config.use_shardy_partitioner.value:
+        self.assertRegex(arg1_attrs,
+                         re.escape('#sdy.sharding<@mesh, [{"d"}, {}]>'))
+        primal_out_sharding = '#sdy.sharding<@mesh, [{"d"}, {}]>'
       else:
-        self.assertNotIn("mhlo.sharding", arg1_attrs)
+        self.assertRegex(arg1_attrs, re.escape("{devices=[2,1]<=[2]}"))
+        primal_out_sharding = "{devices=[2,1]<=[2]}"
+    else:
+      if config.use_shardy_partitioner.value:
+        primal_out_sharding = '#sdy.sharding<@mesh, [{}, {}]>'
+      else:
+        primal_out_sharding = "{replicated}"
+      if with_mesh_context:
+        if config.use_shardy_partitioner.value:
+          self.assertRegex(arg1_attrs, re.escape('#sdy.sharding<@mesh, [{}, {}]>'))
+        else:
+          self.assertRegex(arg1_attrs, re.escape("replicated"))
+      else:
+        self.assertNotIn(attr_name, arg1_attrs)
 
     # Sharding custom calls for the primal input shape all match primal_in_sharding
     primal_in_sharding_calls = re.findall(
@@ -2035,11 +2060,12 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-        {"use_shardy_on_save": True, "error_msg": "Please enable Shardy"},
-        {"use_shardy_on_save": False, "error_msg": ""},
+        {"use_shardy_on_save": True, "error_msg": "Please enable Shardy", "poly_shape": False},
+        {"use_shardy_on_save": False, "error_msg": "", "poly_shape": False},
+        {"use_shardy_on_save": False, "error_msg": "", "poly_shape": True},
     ])
   def test_lower_load_with_different_partitioners(self, use_shardy_on_save,
-                                                  error_msg):
+                                                  error_msg, poly_shape):
     old_shardy = config.use_shardy_partitioner.value
     try:
       jax.config.update("jax_use_shardy_partitioner", use_shardy_on_save)
@@ -2057,6 +2083,9 @@ class JaxExportTest(jtu.JaxTestCase):
           jax.ShapeDtypeStruct(
               (32, 32), dtype=np.float32,
               sharding=NamedSharding(mesh, P("a"))))
+
+      if poly_shape:
+        args = export.symbolic_args_specs(args, shapes_specs=["32, a", "32, a"])
 
       exp = get_exported(f)(*args)
 
