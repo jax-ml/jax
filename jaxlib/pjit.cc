@@ -55,6 +55,7 @@ limitations under the License.
 #include "jaxlib/jax_jit.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
+#include "jaxlib/py_client.h"
 #include "jaxlib/py_executable.h"
 #include "jaxlib/py_values.h"
 #include "jaxlib/python_ref_manager.h"
@@ -754,8 +755,11 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   xla::ifrt::ExecuteOptions execute_options =
       cache_entry->executable->options();
   execute_options.launch_id = cache_entry->executable->GetNextLaunchId();
-  execute_options.execution_stream_id =
-      tsl::Env::Default()->GetCurrentThreadId();
+  execute_options.execution_stream_id = xla::GetExecutionStreamId();
+  if (execute_options.execution_stream_id == 0) {
+    execute_options.execution_stream_id =
+        tsl::Env::Default()->GetCurrentThreadId();
+  }
 
   // A vector of [num_outputs].
   std::vector<xla::ifrt::ArrayRef> output_arrays;
