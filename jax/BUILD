@@ -295,8 +295,6 @@ py_library_providing_imports_info(
     srcs = [
         "_src/__init__.py",
         "_src/ad_checkpoint.py",
-        "_src/api.py",  # TODO(vanderplas): remove this and depend on :api instead
-        "_src/array.py",  # TODO(vanderplas): remove this and depend on :api instead
         "_src/blocked_sampler.py",
         "_src/buffer_callback.py",
         "_src/callback.py",
@@ -304,15 +302,12 @@ py_library_providing_imports_info(
         "_src/custom_batching.py",
         "_src/custom_partitioning.py",
         "_src/debugging.py",
-        "_src/dispatch.py",  # TODO(vanderplas): remove this and depend on :api instead
         "_src/dlpack.py",
         "_src/earray.py",
         "_src/error_check.py",
         "_src/ffi.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
-        "_src/interpreters/pxla.py",  # TODO(vanderplas): remove this and depend on :api instead
-        "_src/pjit.py",  # TODO(vanderplas): remove this and depend on :api instead
         "_src/prng.py",
         "_src/public_test_util.py",
         "_src/random.py",
@@ -373,7 +368,7 @@ py_library_providing_imports_info(
         ":abstract_arrays",
         ":ad",
         ":ad_util",
-        # ":api",   # TODO(vanderplas): add this dependency once downstream targets are fixed
+        ":api",
         ":api_util",
         ":attrs",
         ":basearray",
