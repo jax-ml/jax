@@ -1131,10 +1131,10 @@ def pallas_call_checkify_rule(error: checkify.Error,
   retrace_in_avals = [*shaped_scalar_avals, *error_memref_aval, *input_aval,
                       *error_memref_aval, *output_aval, *scratch_aval]
   jaxpr_flat_avals, jaxpr_in_tree = tree_util.tree_flatten(retrace_in_avals)
-  debug = api_util.debug_info("checkify_pallas", checked_kernel_fn,
+  debug_info = api_util.debug_info("checkify_pallas", checked_kernel_fn,
                               retrace_in_avals, {})
   wrapped_kernel_with_err, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(checked_kernel_fn, debug_info=debug), jaxpr_in_tree)
+      lu.wrap_init(checked_kernel_fn, debug_info=debug_info), jaxpr_in_tree)
 
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     final_jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
@@ -1146,13 +1146,18 @@ def pallas_call_checkify_rule(error: checkify.Error,
   error_paths, _ = unzip2(tree_util.tree_flatten_with_path(error_block_specs)[0])
   error_origins = tuple(f"errors[{tree_util.keystr(p)}" for p in error_paths)
   error_block_mappings = map(
-        partial(
-            pallas_core._convert_block_spec_to_block_mapping,
-            index_map_avals=grid_mapping.index_map_avals,
-            index_map_tree=grid_mapping.index_map_tree,
-            grid=grid_mapping.grid,
-            mapped_dims=grid_mapping.vmapped_dims),
-        error_block_specs, error_origins, shaped_err_avals)
+      partial(
+          pallas_core._convert_block_spec_to_block_mapping,
+          index_map_avals=grid_mapping.index_map_avals,
+          index_map_tree=grid_mapping.index_map_tree,
+          grid=grid_mapping.grid,
+          mapped_dims=grid_mapping.vmapped_dims,
+          debug=True,
+      ),
+      error_block_specs,
+      error_origins,
+      shaped_err_avals,
+  )
   input_block_mappings, output_block_mappings = split_list(
       grid_mapping.block_mappings, [num_kernel_inputs,])
   grid_mapping_with_error = grid_mapping.replace(
@@ -1396,7 +1401,9 @@ def _pallas_call_state_discharge_rule(
           index_map_tree=grid_mapping.index_map_tree,
           grid=grid_mapping.grid,
           mapped_dims=grid_mapping.mapped_dims,
-          ) for ref_aval, block_spec in zip(ref_avals, ref_block_specs)
+          debug=debug,
+      )
+      for ref_aval, block_spec in zip(ref_avals, ref_block_specs)
   ]
   in_block_mappings, out_block_mappings = split_list(
       grid_mapping.block_mappings, [grid_mapping.num_inputs]
@@ -1665,8 +1672,14 @@ def _pallas_call(
     # TODO(necula): check that input_output_aliases is well-formed: no duplicates, etc.
     kernel_args, grid_mapping = pallas_core.get_grid_mapping(
         grid_spec,
-        flat_in_avals, in_tree, in_origins,
-        flat_out_avals, out_tree, out_origins)
+        flat_in_avals,
+        in_tree,
+        in_origins,
+        flat_out_avals,
+        out_tree,
+        out_origins,
+        debug,
+    )
     flat_kernel_args, kernel_in_tree = tree_util.tree_flatten(kernel_args)
     flat_kernel_avals = tuple(
         x.ref if isinstance(x, state_types.TransformedRef) else x
