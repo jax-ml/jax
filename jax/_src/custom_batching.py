@@ -19,7 +19,6 @@ from typing import Any
 import functools
 import operator
 
-from jax import lax
 from jax._src import api
 from jax._src import core
 from jax._src import custom_api_util
@@ -394,6 +393,8 @@ def sequential_vmap(f):
   See the documentation for :py:class:`~jax.custom_batching.custom_vmap` for
   more details.
   """
+  from jax._src.lax import control_flow  # pytype: disable=import-error
+
   f = custom_vmap(f)
 
   @f.def_vmap
@@ -405,7 +406,7 @@ def sequential_vmap(f):
       return f(*args)
 
     mapped_args, bcast_args = tree_split(in_batched, list(args))
-    out = lax.map(to_map, mapped_args)
+    out = control_flow.map(to_map, mapped_args)
     out_batched = tree_map(lambda _: True, out)
     return out, out_batched
 
