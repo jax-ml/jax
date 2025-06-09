@@ -808,6 +808,7 @@ class BlockSpec(pallas_core.BlockSpec):
       index_map_tree: tree_util.PyTreeDef,
       grid: pallas_core.GridMappingGrid,
       mapped_dims: tuple[int, ...],
+      debug: bool = False,
   ) -> pallas_core.BlockMapping:
     bm = super().to_block_mapping(
         origin,
@@ -816,6 +817,7 @@ class BlockSpec(pallas_core.BlockSpec):
         index_map_tree=index_map_tree,
         grid=grid,
         mapped_dims=mapped_dims,
+        debug=debug,
     )
     block_inner_aval = bm.block_aval.inner_aval
     for t in self.transforms:
