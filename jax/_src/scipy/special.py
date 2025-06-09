@@ -26,9 +26,12 @@ from jax import jvp
 from jax import vmap
 from jax import lax
 
+from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import deprecations
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
@@ -1048,10 +1051,17 @@ def _ndtri(p: ArrayLike) -> Array:
                 jnp.where(z >= dtype(8.0), x_for_small_p, x_otherwise))
 
   x = jnp.where(p > dtype(1. - np.exp(-2.)), x, -x)
-  infinity = jnp.full(shape, dtype(np.inf))
-  x_fix_boundaries = jnp.where(
-      p == dtype(0.0), -infinity, jnp.where(p == dtype(1.0), infinity, x))
-  return x_fix_boundaries
+  with config.debug_infs(False):
+    infinity = jnp.full(shape, dtype(np.inf))
+    x = jnp.where(
+        p == dtype(0.0), -infinity, jnp.where(p == dtype(1.0), infinity, x))
+  if not isinstance(x, core.Tracer):
+    try:
+      dispatch.check_special("ndtri", [x])
+    except api_util.InternalFloatingPointError as e:
+      raise FloatingPointError(
+          f"invalid value ({e.ty}) encountered in ndtri.") from None
+  return x
 
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
