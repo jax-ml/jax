@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from absl.testing import absltest
 from absl.testing import parameterized
+from functools import partial
 import numpy as np
 import jax
 from jax._src import core
@@ -455,6 +456,19 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "custom_vjp primal function"):
       f(x_ref)
+
+  @parameterized.parameters([False, True])
+  def test_return_from_custom_vjp_primal_nondiff_argnum(self, jit):
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def f(_, ref):
+      return ref
+    f.defvjp(lambda _, ref: ..., lambda *_: ...)
+    if jit:
+      f = jax.jit(f, static_argnums=0)
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(
+        ValueError, "custom_vjp primal function"):
+      f('hi', x_ref)
 
   @parameterized.parameters([False, True])
   def test_return_from_custom_vjp_fwd(self, jit):
