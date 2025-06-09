@@ -303,10 +303,6 @@ def take_along_axis(
     lst[axis_int] = val
     return tuple(lst)
 
-  use_64bit_index = any(not core.is_constant_dim(d) or d >= (1 << 31) for d in a.shape)
-  index_dtype = np.dtype('int64' if use_64bit_index else 'int32')
-  indices = lax.convert_element_type(indices, index_dtype)
-
   axis_size = a.shape[axis_int]
   arr_shape = replace(a.shape, 1)
   out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
