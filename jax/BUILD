@@ -296,7 +296,6 @@ py_library_providing_imports_info(
         "_src/__init__.py",
         "_src/ad_checkpoint.py",
         "_src/blocked_sampler.py",
-        "_src/buffer_callback.py",
         "_src/callback.py",
         "_src/checkify.py",
         "_src/debugging.py",
@@ -369,6 +368,7 @@ py_library_providing_imports_info(
         ":attrs",
         ":basearray",
         ":batching",
+        ":buffer_callback",
         ":cloud_tpu_init",
         ":compilation_cache_internal",
         ":compiler",
@@ -531,6 +531,23 @@ pytype_strict_library(
         ":named_sharding",
         ":partition_spec",
         ":sharding",
+        ":util",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "buffer_callback",
+    srcs = ["_src/buffer_callback.py"],
+    deps = [
+        ":ad",
+        ":api",
+        ":batching",
+        ":core",
+        ":effects",
+        ":ffi",
+        ":mlir",
+        ":tree_util",
         ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
@@ -1516,6 +1533,7 @@ py_library_providing_imports_info(
     ),
     visibility = ["//visibility:public"],
     deps = [
+        ":buffer_callback",
         ":jax",
     ] + py_deps("absl/logging") + py_deps("numpy"),
 )
