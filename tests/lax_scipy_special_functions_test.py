@@ -260,6 +260,17 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.ndtri, lsp_special.ndtri, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.ndtri, args_maker, rtol=rtol)
 
+  @parameterized.parameters([True, False])
+  def testNdtriDebugInfs(self, with_jit):
+    # ref: https://github.com/jax-ml/jax/issues/29328
+    f = jax.jit(lsp_special.ndtri) if with_jit else lsp_special.ndtri
+    with jax.debug_infs(True):
+      f(0.5)  # Doesn't crash
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(1.0)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(0.0)
+
   def testRelEntrExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
     dtype = jnp.zeros(0).dtype  # default float dtype.
