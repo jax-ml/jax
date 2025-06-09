@@ -1029,6 +1029,7 @@ pytype_strict_library(
         ":pallas",
         ":pallas_mosaic_gpu",
         ":test_util",  # This is only to make them runnable as jax_multiplatform_test...
+        "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
 
