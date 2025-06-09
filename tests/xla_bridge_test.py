@@ -17,7 +17,6 @@ import platform
 
 from absl import logging
 from absl.testing import absltest
-
 from jax import version
 from jax._src import compiler
 from jax._src import config
@@ -35,26 +34,35 @@ class XlaBridgeTest(jtu.JaxTestCase):
 
   def test_set_device_assignment_no_partition(self):
     compile_options = compiler.get_compile_options(
-        num_replicas=4, num_partitions=1, device_assignment=[0, 1, 2, 3])
-    expected_device_assignment = ("Computations: 1 Replicas: 4\nComputation 0: "
-                                  "0 1 2 3 \n")
-    self.assertEqual(compile_options.device_assignment.__repr__(),
-                     expected_device_assignment)
+        num_replicas=4, num_partitions=1, device_assignment=[0, 1, 2, 3]
+    )
+    expected_device_assignment = (
+        "DeviceAssignment{ replica_count=4, computation_count=1, Computation0{0"
+        " 1 2 3} }"
+    )
+    self.assertEqual(
+        compile_options.device_assignment.__repr__(), expected_device_assignment
+    )
 
   def test_set_device_assignment_with_partition(self):
     compile_options = compiler.get_compile_options(
-        num_replicas=2, num_partitions=2, device_assignment=[[0, 1], [2, 3]])
-    expected_device_assignment = ("Computations: 2 Replicas: 2\nComputation 0: "
-                                  "0 2 \nComputation 1: 1 3 \n")
-    self.assertEqual(compile_options.device_assignment.__repr__(),
-                     expected_device_assignment)
+        num_replicas=2, num_partitions=2, device_assignment=[[0, 1], [2, 3]]
+    )
+    expected_device_assignment = (
+        "DeviceAssignment{ replica_count=2, computation_count=2, Computation0{0"
+        " 2} Computation1{1 3} }"
+    )
+    self.assertEqual(
+        compile_options.device_assignment.__repr__(), expected_device_assignment
+    )
 
   def test_set_fdo_profile(self):
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1, fdo_profile=b"test_profile"
     )
     self.assertEqual(
-        compile_options.executable_build_options.fdo_profile, b"test_profile")
+        compile_options.executable_build_options.fdo_profile, b"test_profile"
+    )
 
   def test_autofdo_profile(self):
 
@@ -65,11 +73,16 @@ class XlaBridgeTest(jtu.JaxTestCase):
     jax_flag_profile = 1
     another_profile = 2
     with config.jax_xla_profile_version(jax_flag_profile):
-      with mock.patch.object(compiler, "get_latest_profile_version",
-                             side_effect=lambda _: another_profile):
+      with mock.patch.object(
+          compiler,
+          "get_latest_profile_version",
+          side_effect=lambda _: another_profile,
+      ):
         self.assertEqual(
             compiler.get_compile_options(
-                num_replicas=3, num_partitions=4, backend=_DummyBackend(),
+                num_replicas=3,
+                num_partitions=4,
+                backend=_DummyBackend(),
             ).profile_version,
             jax_flag_profile,
         )
@@ -77,11 +90,16 @@ class XlaBridgeTest(jtu.JaxTestCase):
     # Use whatever non-zero value the function get_latest_profile_version
     # returns if --jax_xla_profile_version is not set.
     profile_version = 1
-    with mock.patch.object(compiler, "get_latest_profile_version",
-                           side_effect=lambda _: profile_version):
+    with mock.patch.object(
+        compiler,
+        "get_latest_profile_version",
+        side_effect=lambda _: profile_version,
+    ):
       self.assertEqual(
           compiler.get_compile_options(
-              num_replicas=3, num_partitions=4, backend=_DummyBackend(),
+              num_replicas=3,
+              num_partitions=4,
+              backend=_DummyBackend(),
           ).profile_version,
           profile_version,
       )
@@ -91,11 +109,16 @@ class XlaBridgeTest(jtu.JaxTestCase):
     # retrieve the latest profile later.
     error_return = 0
     no_profile_dont_retrieve = -1
-    with mock.patch.object(compiler, "get_latest_profile_version",
-                           side_effect=lambda _: error_return):
+    with mock.patch.object(
+        compiler,
+        "get_latest_profile_version",
+        side_effect=lambda _: error_return,
+    ):
       self.assertEqual(
           compiler.get_compile_options(
-              num_replicas=3, num_partitions=4, backend=_DummyBackend(),
+              num_replicas=3,
+              num_partitions=4,
+              backend=_DummyBackend(),
           ).profile_version,
           no_profile_dont_retrieve,
       )
@@ -161,7 +184,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertTrue(registration.experimental)
 
     options = {}
-    if xb.get_backend().platform == 'tpu':
+    if xb.get_backend().platform == "tpu":
       options["ml_framework_name"] = "JAX"
       options["ml_framework_version"] = version.__version__
     mock_make.assert_called_once_with("name1", options, None)
@@ -200,8 +223,8 @@ class XlaBridgeTest(jtu.JaxTestCase):
         "int_list_option": [32, 64],
         "string_option": "string",
         "float_option": 1.0,
-        }
-    if xb.get_backend().platform == 'tpu':
+    }
+    if xb.get_backend().platform == "tpu":
       options["ml_framework_name"] = "JAX"
       options["ml_framework_version"] = version.__version__
 
@@ -253,23 +276,36 @@ class GetBackendTest(jtu.JaxTestCase):
     def _get_all_devices(self):
       return self.devices()
 
-  def _register_factory(self, platform: str, priority, device_count=1,
-                        assert_used_at_most_once=False, experimental=False):
+  def _register_factory(
+      self,
+      platform: str,
+      priority,
+      device_count=1,
+      assert_used_at_most_once=False,
+      experimental=False,
+  ):
     if assert_used_at_most_once:
       used = []
+
     def factory():
       if assert_used_at_most_once:
         if used:
           # We need to fail aggressively here since exceptions are caught by
           # the caller and suppressed.
-          logging.fatal("Backend factory for %s was called more than once",
-                        platform)
+          logging.fatal(
+              "Backend factory for %s was called more than once", platform
+          )
         else:
           used.append(True)
       return self._DummyBackend(platform, device_count)
 
-    xb.register_backend_factory(platform, factory, priority=priority,
-                                fail_quietly=False, experimental=experimental)
+    xb.register_backend_factory(
+        platform,
+        factory,
+        priority=priority,
+        fail_quietly=False,
+        experimental=experimental,
+    )
 
   def setUp(self):
     super().setUp()
@@ -330,12 +366,13 @@ class GetBackendTest(jtu.JaxTestCase):
     def factory():
       raise RuntimeError("I'm not a real backend")
 
-    xb.register_backend_factory("error", factory, priority=10,
-                                fail_quietly=False)
+    xb.register_backend_factory(
+        "error", factory, priority=10, fail_quietly=False
+    )
 
     with self.assertRaisesRegex(
-      RuntimeError,
-      "Unable to initialize backend 'error': I'm not a real backend"
+        RuntimeError,
+        "Unable to initialize backend 'error': I'm not a real backend",
     ):
       xb.get_backend("error")
 
@@ -344,20 +381,25 @@ class GetBackendTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         RuntimeError,
         "Unable to initialize backend 'no_devices': "
-        "Backend 'no_devices' provides no devices."):
+        "Backend 'no_devices' provides no devices.",
+    ):
       xb.get_backend("no_devices")
 
   def test_factory_returns_none(self):
-    xb.register_backend_factory("none", lambda: None, priority=10,
-                                fail_quietly=False)
+    xb.register_backend_factory(
+        "none", lambda: None, priority=10, fail_quietly=False
+    )
     with self.assertRaisesRegex(
         RuntimeError,
         "Unable to initialize backend 'none': "
-        "Could not initialize backend 'none'"):
+        "Could not initialize backend 'none'",
+    ):
       xb.get_backend("none")
 
   def cpu_fallback_warning(self):
-    with self.assertWarnsRegex(UserWarning, "No GPU/TPU found, falling back to CPU"):
+    with self.assertWarnsRegex(
+        UserWarning, "No GPU/TPU found, falling back to CPU"
+    ):
       xb.get_backend()
 
   def test_jax_platforms_flag(self):
@@ -382,9 +424,9 @@ class GetBackendTest(jtu.JaxTestCase):
     with self.assertLogs("jax._src.xla_bridge", level="WARNING") as logs:
       _ = xb.get_backend()
     self.assertIn(
-      "WARNING:jax._src.xla_bridge:Platform 'platform_A' is experimental and "
-      "not all JAX functionality may be correctly supported!",
-      logs.output
+        "WARNING:jax._src.xla_bridge:Platform 'platform_A' is experimental and "
+        "not all JAX functionality may be correctly supported!",
+        logs.output,
     )
 
 
