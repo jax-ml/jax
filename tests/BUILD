@@ -1608,6 +1608,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:cache_key",
         "//jax:compiler",
+        "//jax:custom_partitioning",
     ] + py_deps("absl/testing"),
 )
 

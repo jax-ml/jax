@@ -25,16 +25,18 @@ from typing import Any, Callable
 import weakref
 
 import numpy as np
-import jax
-from jax import tree_util
+
+from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import custom_api_util
 from jax._src import dispatch
+from jax._src import errors
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import sharding_impls
+from jax._src import tree_util
 from jax._src import xla_bridge as xb
 from jax._src.custom_partitioning_sharding_rule import sdy_sharding_rule_to_mlir, SdyShardingRule, str_to_sdy_sharding_rule
 from jax._src.interpreters import mlir
@@ -42,7 +44,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax.errors import UnexpectedTracerError
+from jax._src.sharding import Sharding
 
 
 def _resolve_kwargs(fun, args, kwargs):
@@ -93,7 +95,7 @@ def _to_jax_shape(s):
 
 
 def _to_jax_sharded_shape(s, sharding):
-  return jax.ShapeDtypeStruct(
+  return api.ShapeDtypeStruct(
       s.dimensions(), s.numpy_dtype(), sharding=sharding
   )
 
@@ -140,7 +142,7 @@ def _custom_partitioning_propagate_user_sharding(user_sharding, shape,
 
 
 def _to_hlo_sharding(sharding, num_dimensions):
-  if not isinstance(sharding, jax.sharding.Sharding):
+  if not isinstance(sharding, Sharding):
     raise ValueError("Custom Partitioning rules must return Sharding.")
   return sharding._to_xla_hlo_sharding(num_dimensions)
 
@@ -178,7 +180,7 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
       _to_jax_shape(sharding.tile(s))
       for sharding, s in zip(result_shardings, result_shapes)
   ]
-  closed_jaxpr = jax.make_jaxpr(lower_fn, axis_env=list(mesh.shape.items()))(
+  closed_jaxpr = api.make_jaxpr(lower_fn, axis_env=list(mesh.shape.items()))(
       *info.in_tree.unflatten(tiled_args)
   )
   if ([(o.shape, o.dtype) for o in closed_jaxpr.out_avals] !=
@@ -251,7 +253,7 @@ custom_partitioning_p.def_impl(_custom_partitioning_impl)
 
 def _check_for_tracers(x):
   if any(isinstance(leaf, core.Tracer) for leaf in tree_util.tree_leaves(x)):
-    raise UnexpectedTracerError(
+    raise errors.UnexpectedTracerError(
         "Found a JAX Tracer object passed as an argument to a"
         "custom_partitioning function in a position indicated as static by"
         "static_argnums. "
@@ -568,8 +570,8 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       return sharding_impls._op_sharding_to_pos_sharding(hlo_sharding, devices)
     pspec = sharding_impls.parse_flatten_op_sharding(
         hlo_sharding, mesh)[0]
-    pspec = jax.sharding.PartitionSpec(*pspec, *((None,) * (ndim - len(pspec))))
-    return jax.sharding.NamedSharding(mesh, pspec)
+    pspec = sharding_impls.PartitionSpec(*pspec, *((None,) * (ndim - len(pspec))))
+    return sharding_impls.NamedSharding(mesh, pspec)
 
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding,
       partition, to_mesh_pspec_sharding, in_tree, out_tree,
