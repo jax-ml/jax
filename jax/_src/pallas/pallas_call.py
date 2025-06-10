@@ -1205,7 +1205,7 @@ def _trace_kernel_to_jaxpr(
   wrapped_kernel_fun = primitives.wrap_with_transforms(
       wrapped_kernel_fun, kernel_in_transforms
   )
-  with grid_mapping.trace_env():
+  with grid_mapping.trace_env(), config._check_vma(False):
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
                                                      kernel_avals)
     if consts:
@@ -1350,6 +1350,16 @@ jax_core.custom_typechecks[pallas_call_p] = _pallas_call_typecheck_rule
 def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
   match out_shape:
     case jax.ShapeDtypeStruct():
+      if config._check_vma.value:
+        if out_shape.vma is None:
+          raise ValueError(
+              "When `check_vma=True` on `jax.shard_map`, `vma` on"
+              " `jax.ShapeDtypeStruct` must not be `None`. Please specify how the"
+              " output should be varying across mesh axes using the `vma`"
+              " argument of `jax.ShapeDtypeStruct` or set `check_vma=False` on"
+              " `jax.shard_map`.")
+        return jax_core.ShapedArray(
+            shape=out_shape.shape, dtype=out_shape.dtype, vma=out_shape.vma)
       return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
     case pallas_core.MemoryRef():
       return out_shape.get_array_aval()
@@ -1685,6 +1695,8 @@ def _pallas_call(
         x.ref if isinstance(x, state_types.TransformedRef) else x
         for x in flat_kernel_args
     )
+    flat_kernel_avals = tuple(a.update_vma(frozenset())
+                              for a in flat_kernel_avals)
     # Note that only a subset of all transforms can be found here, and they are
     # never expected to contain any arrays.
     kernel_arg_transforms = tuple(
@@ -1696,7 +1708,7 @@ def _pallas_call(
     if name is not None:
       kernel_dbg = kernel_dbg.replace_func_name(mlir.sanitize_name(name))
     jaxpr, consts = _trace_kernel_to_jaxpr(
-        kernel, kernel_dbg, grid_mapping, tuple(flat_kernel_avals),
+        kernel, kernel_dbg, grid_mapping, flat_kernel_avals,
         kernel_in_tree, kernel_arg_transforms)
     for i_idx, o_idx in input_output_aliases.items():
       if i_idx not in range(len(flat_in_avals)):

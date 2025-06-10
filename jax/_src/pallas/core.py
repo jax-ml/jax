@@ -143,34 +143,27 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
   __slots__ = ["memory_space"]
 
   def __init__(self, shape, dtype, weak_type=False, sharding=None,
-               memory_space=None):
-    super().__init__(shape, dtype, weak_type=weak_type, sharding=sharding)
+               vma=frozenset(), memory_space=None):
+    super().__init__(shape, dtype, weak_type=weak_type, sharding=sharding,
+                     vma=vma)
     self.memory_space = memory_space
 
   def __eq__(self, other):
     return super().__eq__(other) and self.memory_space == other.memory_space
 
   def __hash__(self):
-    return hash((
-        self.shape,
-        self.dtype,
-        self.weak_type,
-        getattr(self, "sharding", None),
-        self.memory_space,
-    ))
+    return hash((self.shape, self.dtype, self.weak_type, self.sharding,
+                 self.vma, self.memory_space))
 
   def str_short(self, short_dtypes=False):
-    dt_str = \
-        dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
+    dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
+              self.dtype.name)
     dt_str = dt_str.replace("void", "float0")
     shapestr = ",".join(map(str, self.shape))
-    if hasattr(self, "sharding"):
-      sharding_str = f"{dt_str}[{shapestr}]({self.sharding})"
-    else:
-      sharding_str = ""
-    memoryspace_str = (
-        "" if self.memory_space is None else f"<{self.memory_space}>"
-    )
+    sharding_str = (f"{dt_str}[{shapestr}]({self.sharding})"
+                    if self.sharding else "")
+    memoryspace_str = ("" if self.memory_space is None
+                       else f"<{self.memory_space}>")
     return f"{dt_str}{memoryspace_str}[{shapestr}]{sharding_str}"
 
   def update(
@@ -179,6 +172,7 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
       dtype=None,
       weak_type=None,
       sharding=None,
+      vma=None,
       memory_space=None,
   ):
     if shape is None:
@@ -188,11 +182,14 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
     if weak_type is None:
       weak_type = self.weak_type
     if sharding is None:
-      sharding = getattr(self, "sharding", None)
+      sharding = self.sharding
+    if vma is None:
+      vma = self.vma
     if memory_space is None:
       memory_space = self.memory_space
     return ShapedArrayWithMemorySpace(
-        shape, dtype, weak_type, sharding=sharding, memory_space=memory_space
+        shape, dtype, weak_type, sharding=sharding, vma=vma,
+        memory_space=memory_space
     )
 mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
 
@@ -241,6 +238,10 @@ class AbstractMemoryRef(state.AbstractRef):
   def update_weak_type(self, weak_type):
     return AbstractMemoryRef(
         self.inner_aval.update_weak_type(weak_type), self.memory_space)
+
+  def update_vma(self, vma):
+    return AbstractMemoryRef(
+        self.inner_aval.update_vma(vma), self.memory_space)
 
   def update(self, inner_aval=None, memory_space=None):
     inner_aval = self.inner_aval if inner_aval is None else inner_aval
