@@ -17,7 +17,6 @@ import struct
 import tempfile
 import threading
 import time
-from typing import Sequence
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -38,25 +37,6 @@ try:
   HAS_CLOUDPICKLE = True
 except (ModuleNotFoundError, ImportError):
   HAS_CLOUDPICKLE = False
-
-
-def _colocated_cpu_devices(
-    devices: Sequence[jax.Device],
-) -> Sequence[jax.Device]:
-  """Returns CPU devices colocated with the given devices."""
-  try:
-    return colocated_python.colocated_cpu_devices(devices)
-  except (ValueError, AttributeError):
-    # PjRt-IFRT prepares CPU devices by its own.
-    # TODO(hyeontaek): Remove this fallback path once PjRt-IFRT prepares CPU
-    # devices by its own.
-    cpu_backend_devices = jax.local_devices(backend="cpu")
-    device_index_map = {device.id: i for i, device in enumerate(jax.devices())}
-
-    available_devices = devices[: min(len(cpu_backend_devices), len(devices))]
-    return [
-        cpu_backend_devices[device_index_map[d.id]] for d in available_devices
-    ]
 
 
 _count_colocated_python_specialization_cache_miss = jtu.count_events(
@@ -82,7 +62,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     def add_one(x):
       return x + 1
 
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
     sds = jax.ShapeDtypeStruct((), jnp.int32, sharding=sharding)
 
@@ -97,7 +77,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     def add_one(x):
       return x + 1
 
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = np.array(1)
     x = jax.device_put(x, cpu_devices[0])
 
@@ -117,7 +97,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     def add_one(x):
       return jax.tree.map(lambda x: x + 1, x)
 
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = [np.array(1), (np.array(2), {"v": np.array(3)})]
     x = jax.device_put(x, jax.sharding.SingleDeviceSharding(cpu_devices[0]))
 
@@ -149,7 +129,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     def make_zero():
       return jnp.array(0)
 
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
 
     with _count_colocated_python_specialization_cache_miss() as count:
       make_zero = make_zero.specialize(devices=cpu_devices[:1])
@@ -168,7 +148,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     def add_one(x):
       return jax.tree.map(lambda x: x + 1, x)
 
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = np.array(1)
     x = jax.device_put(x, cpu_devices[0])
 
@@ -202,7 +182,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     def add_one(x):
       return jax.tree.map(lambda x: x + 1, x)
 
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = np.array(1)
     x = jax.device_put(x, cpu_devices[0])
 
@@ -237,7 +217,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       ("on_non_main_thread", False),
   )
   def testSequentialExecution(self, on_main_thread: bool):
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = np.array(1)
     x = jax.device_put(x, cpu_devices[0])
     # Make sure that this input array is ready for use by the colocated Python
@@ -274,7 +254,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     self.assertGreaterEqual(elapsed_time, 10)
 
   def testConcurrentExecution(self):
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = np.array(1)
     x = jax.device_put(x, cpu_devices[0])
     # Make sure that this input array is ready for use by the colocated Python
@@ -311,7 +291,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     self.assertLess(elapsed_time, 10)
 
   def testInputsWithDifferentDeviceOrders(self):
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())[:2]
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())[:2]
     if len(cpu_devices) < 2:
       self.skipTest("Not enough CPU devices")
 
@@ -376,7 +356,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         del x
         return colocated_python._testing_global_state
 
-      cpu_devices = _colocated_cpu_devices(jax.local_devices())
+      cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
       x = np.array(1)
       x = jax.device_put(x, cpu_devices[0])
       y = np.array(2)
@@ -394,7 +374,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         del colocated_python._testing_global_state
 
   def testStringProcessing(self):
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     if len(cpu_devices) < 2:
       self.skipTest(f"Need at least two CPU devices, got: {len(cpu_devices)}")
 
@@ -435,7 +415,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     )
 
   def testBinaryDataProcessing(self):
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     if len(cpu_devices) < 1:
       self.skipTest("Need at least one CPU devices")
 
@@ -477,7 +457,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     self.assertEqual(out_ints[1], 1003)
 
   def testDetectInvalidMeshDevice(self):
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     if jax.local_devices()[0].id == cpu_devices[0].id:
       self.skipTest(
           "This test only works in a setup where accelerator and CPU devices"
@@ -498,7 +478,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       jax.block_until_ready(make_zero())
 
   def testObjectLifecycle(self):
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
 
     @colocated_python.colocated_python_class
@@ -570,7 +550,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       cleanup()
 
   def testStatefulObject(self):
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
 
     @colocated_python.colocated_python_class
     class Value:
@@ -602,7 +582,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     self.assertEqual(out, np.array(7))
 
   def testObjectWithCapturedSharding(self):
-    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     if len(cpu_devices) < 2:
       self.skipTest(f"Need at least two CPU devices, got: {len(cpu_devices)}")
 
