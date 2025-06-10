@@ -192,10 +192,11 @@ class CustomCallBackendConfig:
             config.write(b",")
           else:
             config.write(b', "output_memory_space_colors": [')
-          config.write(
-              f'{{"shape_index":[{i}],"color":{output_memory_space.color}}}'
-              .encode("ascii")
-          )
+          config.write(b'{"color": ')
+          config.write(str(output_memory_space.color).encode("ascii"))
+          config.write(b', "shape_index": ["')
+          config.write(str(i).encode("ascii"))
+          config.write(b'"]}')
           comma = True
         if comma:
           config.write(b"]")
