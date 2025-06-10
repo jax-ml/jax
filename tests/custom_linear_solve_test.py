@@ -502,6 +502,21 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
     self.assertEqual(output(), "mat_vec\n")
     self.assertAllClose(computed, expected)
 
+  def test_symbolic_zero_cotangents(self):
+    # https://github.com/jax-ml/jax/issues/29342
+    def g(x):
+      def p(z):
+        return jnp.linalg.solve(z.sum()*jnp.eye(3), jnp.array([1., 0., 0.]))[0]
+      h = lambda y: jax.jvp(jax.vmap(p), (x,), (y,))[1]
+      return h
+
+    def f(x):
+      return jax.vjp(g(x), jnp.ones_like(x))[1](x)[0]
+
+    x = jnp.array([200.0])
+    f_x = f(x)
+    grad_f_x = jax.jacrev(f)(x)  # don't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
