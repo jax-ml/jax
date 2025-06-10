@@ -772,7 +772,7 @@ inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
 #define GPU_STREAM_NON_BLOCKING hipStreamNonBlocking
 
 #define gpuMalloc hipMalloc
-#define gpuGetLastError hipGetLastError
+#define gpuGetLastError hipExtGetLastError
 #define gpuGetErrorString hipGetErrorString
 #define gpuMemcpyAsync hipMemcpyAsync
 #define gpuMemcpyDeviceToDevice hipMemcpyDeviceToDevice
