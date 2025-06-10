@@ -1542,15 +1542,16 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
     slice_sizes=slice_sizes, unique_indices=True, indices_are_sorted=True,
     mode=GatherScatterMode.PROMISE_IN_BOUNDS, fill_value=None)
 
-def _dynamic_slice_staging_rule(trace, x, *starts_and_dyn_sizes, slice_sizes):
+def _dynamic_slice_staging_rule(trace, source_info, x, *starts_and_dyn_sizes,
+                                slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x.ndim])
   if not dyn:
     return trace.default_process_primitive(dynamic_slice_p, (x, *start_indices),
                                            dict(slice_sizes=slice_sizes))
   shape = lax._merge_dyn_shape(slice_sizes, dyn)
   aval = core.DShapedArray(shape, x.dtype, False)
-  return lax._dyn_shape_staging_rule(trace, dynamic_slice_p, aval, x,
-                                     *starts_and_dyn_sizes,
+  return lax._dyn_shape_staging_rule(trace, source_info, dynamic_slice_p, aval,
+                                     x, *starts_and_dyn_sizes,
                                      slice_sizes=slice_sizes)
 
 def _dynamic_slice_typecheck_rule(_, x, *starts_and_dyn_sizes, slice_sizes):

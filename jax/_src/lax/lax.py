@@ -266,8 +266,8 @@ def _merge_dyn_shape(
   assert next(dyn_shape_it, None) is None
   return shape
 
-def _dyn_shape_staging_rule(trace, prim, out_aval, *args, **params):
-  source_info = source_info_util.current()
+def _dyn_shape_staging_rule(trace, source_info, prim, out_aval, *args,
+                            **params):
   out_tracer = pe.DynamicJaxprTracer(trace, out_aval, source_info)
   eqn = pe.new_jaxpr_eqn([trace.getvar(x) for x in args],
                          [trace.makevar(out_tracer)],
@@ -6520,14 +6520,14 @@ def _broadcast_in_dim_fwd_rule(eqn):
     return [None], eqn
 
 def _broadcast_in_dim_staging_rule(
-    trace, x, *dyn, shape, broadcast_dimensions, sharding):
+    trace, source_info, x, *dyn, shape, broadcast_dimensions, sharding):
   params = dict(shape=shape, broadcast_dimensions=broadcast_dimensions,
                 sharding=sharding)
   if not dyn:
     return trace.default_process_primitive(broadcast_in_dim_p, (x,), params)
   aval = core.DShapedArray(_merge_dyn_shape(shape, dyn), x.dtype, x.weak_type)
-  return _dyn_shape_staging_rule(trace, broadcast_in_dim_p, aval, x, *dyn,
-                                 **params)
+  return _dyn_shape_staging_rule(trace, source_info, broadcast_in_dim_p, aval,
+                                 x, *dyn, **params)
 
 def _broadcast_in_dim_padding_rule(in_avals, out_avals, x, *dyn_shape,
                                    shape, broadcast_dimensions):
@@ -7241,12 +7241,13 @@ def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions, sharding):
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 def _reshape_staging_rule(
-    trace, x, *dyn, new_sizes, dimensions, sharding):
+    trace, source_info, x, *dyn, new_sizes, dimensions, sharding):
   params = dict(new_sizes=new_sizes, dimensions=dimensions, sharding=sharding)
   if not dyn:
     return trace.default_process_primitive(reshape_p, (x,), params)
   av = core.DShapedArray(_merge_dyn_shape(new_sizes, dyn), x.dtype, x.weak_type)
-  return _dyn_shape_staging_rule(trace, reshape_p, av, x, *dyn, **params)
+  return _dyn_shape_staging_rule(trace, source_info, reshape_p, av, x, *dyn,
+                                 **params)
 
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', sharding_rule=_reshape_sharding_rule,
@@ -8594,13 +8595,15 @@ iota_p.def_impl(partial(dispatch.apply_primitive, iota_p))
 iota_p.def_abstract_eval(_iota_abstract_eval)
 batching.ragged_prop_rules[iota_p] = batching.ragged_mask_no_op_rule
 
-def _iota_staging_rule(trace, *dyn_shape, dtype, shape, dimension, sharding):
+def _iota_staging_rule(trace, source_info, *dyn_shape, dtype, shape, dimension,
+                       sharding):
   params = dict(dtype=dtype, shape=shape, dimension=dimension,
                 sharding=sharding)
   if not dyn_shape:
     return trace.default_process_primitive(iota_p, (), params)
   aval = core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), dtype, False)
-  return _dyn_shape_staging_rule(trace, iota_p, aval, *dyn_shape, **params)
+  return _dyn_shape_staging_rule(trace, source_info, iota_p, aval, *dyn_shape,
+                                 **params)
 pe.custom_staging_rules[iota_p] = _iota_staging_rule
 
 def _iota_typecheck_rule(_, *dyn_shape, dtype, shape, dimension, sharding):

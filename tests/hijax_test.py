@@ -49,7 +49,8 @@ class HiPrimitive(core.Primitive):
     ad.primitive_transposes[self] = self.transpose
     pe.custom_staging_rules[self] = self.staging
 
-  def staging(self, trace, *args, **kwargs):
+  def staging(self, trace, source_info, *args, **kwargs):
+    del source_info
     trace.frame.is_high = True
     return trace.default_process_primitive(self, args, kwargs)
 

@@ -2002,7 +2002,8 @@ class DynamicJaxprTrace(core.Trace):
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
     jaxpr_tracers = map(to_jaxpr_tracer, tracers)
     if primitive in custom_staging_rules:
-      return custom_staging_rules[primitive](self, *jaxpr_tracers, **params)
+      return custom_staging_rules[primitive](self, source_info, *jaxpr_tracers,
+                                             **params)
     return self.default_process_primitive(
         primitive, jaxpr_tracers, params, source_info)
 
@@ -2705,10 +2706,9 @@ def instantiate_const_at(trace: JaxprTrace, instantiate: bool, tracer):
     return tracer
 
 def inline_jaxpr_into_trace(
-    trace: DynamicJaxprTrace, jaxpr: Jaxpr, consts: Sequence[Any],
-    *arg_tracers: DynamicJaxprTracer) -> list[Any]:
+    trace: DynamicJaxprTrace, src: SourceInfo, jaxpr: Jaxpr,
+    consts: Sequence[Any], *arg_tracers: DynamicJaxprTracer) -> list[Any]:
   # This function is conceptually the same thing as just calling eval_jaxpr,
-  src = source_info_util.current()
   const_tracers = map(partial(trace.new_const, source_info=src), consts)
   constvars = map(trace.getvar, const_tracers)
   argvars = map(trace.getvar, arg_tracers)

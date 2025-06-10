@@ -1958,7 +1958,7 @@ def _pjit_lower_cached(
       pgle_profiler=pgle_profiler)
 
 
-def pjit_staging_rule(trace, *args, **params):
+def pjit_staging_rule(trace, source_info, *args, **params):
   # If we're inlining, no need to compute forwarding information; the inlined
   # computation will in effect forward things.
   if (params["inline"] and
@@ -1976,13 +1976,10 @@ def pjit_staging_rule(trace, *args, **params):
                               propagate_source_info=False)
     else:
       out = pe.inline_jaxpr_into_trace(
-          trace, jaxpr.jaxpr, jaxpr.consts, *args)
-    source_info = source_info_util.current()
+          trace, source_info, jaxpr.jaxpr, jaxpr.consts, *args)
     return [trace.to_jaxpr_tracer(x, source_info) for x in out]
 
   jaxpr = params['jaxpr']
-  source_info = source_info_util.current()
-  consts = []
   if config.dynamic_shapes.value:
     jaxpr, in_fwd, out_shardings, out_layouts = _pjit_forwarding(
         jaxpr, params['out_shardings'], params['out_layouts'])
