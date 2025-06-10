@@ -3358,9 +3358,7 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   else:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
   out = broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
-  out = core.pvary(out, tuple(aval.vma))
-  return out
-
+  return core.pvary(out, tuple(aval.vma))
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 def zeros_like_abstract_ref(aval: state.AbstractRef) -> core.MutableArray:
@@ -4594,7 +4592,7 @@ def _add_unreduced(out_sharding, x, y):
         ' not allow this because there will be implicit communication. Please'
         f' reduce {lhs_str} via `reshard` before calling `add`.')
   else:
-    res_unreduced = None
+    res_unreduced = frozenset()
   return out_sharding.with_spec(out_sharding.spec.with_unreduced(res_unreduced))
 
 add_p: Primitive = naryop(_input_dtype, [_num, _num], 'add',

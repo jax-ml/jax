@@ -79,10 +79,16 @@ nb::object CanonicalizePartition(nb::object unconstrained_singleton,
   return partition;
 }
 
-void CheckPartitionSpec(nb::tuple partitions, nb_frozenset unreduced) {
+void CheckPartitionSpec(nb::tuple partitions, nb_frozenset unreduced,
+                        nb_frozenset reduced) {
   if (unreduced.contains(nb::none())) {
     throw nb::value_error(
         "unreduced cannot contain None. All elements in unreduced should "
+        "refer to the mesh axes.");
+  }
+  if (reduced.contains(nb::none())) {
+    throw nb::value_error(
+        "reduced cannot contain None. All elements in reduced should "
         "refer to the mesh axes.");
   }
   auto check_overlap = [&](nb::handle partition) {
@@ -95,6 +101,15 @@ void CheckPartitionSpec(nb::tuple partitions, nb_frozenset unreduced) {
               nb::cast<std::string>(nb::str(unreduced)))
               .c_str());
     }
+    if (reduced.contains(partition)) {
+      throw nb::value_error(
+          absl::StrFormat(
+              "partitions cannot overlap with reduced axes passed to "
+              "PartitionSpec. Got partitions: %s and reduced axes: %s",
+              nb::cast<std::string>(nb::str(partitions)),
+              nb::cast<std::string>(nb::str(reduced)))
+              .c_str());
+    }
   };
   for (nb::handle partition : partitions) {
     if (nb::isinstance<nb::tuple>(partition)) {
@@ -105,15 +120,30 @@ void CheckPartitionSpec(nb::tuple partitions, nb_frozenset unreduced) {
       check_overlap(partition);
     }
   }
+  // TODO(yashkatariya, phawkins): Update this to `!(unreduced &
+  // reduced).empty()` after nanobind's version > 2.7.0
+  if (nb::len((unreduced & reduced)) != 0) {
+    throw nb::value_error(
+        absl::StrFormat("`unreduced` and `reduced` argument to PartitionSpec "
+                        "cannot overlap. "
+                        "Got unreduced: %s and reduced: %s",
+                        nb::cast<std::string>(nb::str(unreduced)),
+                        nb::cast<std::string>(nb::str(reduced)))
+            .c_str());
+  }
 }
 
 }  // namespace
 
-PartitionSpec::PartitionSpec(nb::tuple partitions, nb_frozenset unreduced)
-    : partitions_(std::move(partitions)), unreduced_(std::move(unreduced)) {}
+PartitionSpec::PartitionSpec(nb::tuple partitions, nb_frozenset unreduced,
+                             nb_frozenset reduced)
+    : partitions_(std::move(partitions)),
+      unreduced_(std::move(unreduced)),
+      reduced_(std::move(reduced)) {}
 
 Py_ssize_t PartitionSpec::Hash() const {
-  size_t h = absl::HashOf(nb::hash(partitions_), nb::hash(unreduced_));
+  size_t h = absl::HashOf(nb::hash(partitions_), nb::hash(unreduced_),
+                          nb::hash(reduced_));
   Py_hash_t s = absl::bit_cast<Py_hash_t>(h);  // Python hashes are signed.
   return s == -1 ? -2 : s;  // -1 must not be used as a Python hash value.
 }
@@ -125,11 +155,13 @@ bool PartitionSpec::Eq(const nb::object& other) const {
   PartitionSpec* other_spec;
   if (nb::try_cast<PartitionSpec*>(other, other_spec)) {
     return partitions().equal(other_spec->partitions()) &&
-           unreduced().equal(other_spec->unreduced());
+           unreduced().equal(other_spec->unreduced()) &&
+           reduced().equal(other_spec->reduced());
   }
   nb::tuple other_tuple;
   if (nb::try_cast<nb::tuple>(other, other_tuple)) {
-    if (unreduced().size() > 0 || partitions().size() != other_tuple.size()) {
+    if (unreduced().size() > 0 || reduced().size() > 0 ||
+        partitions().size() != other_tuple.size()) {
       return false;
     }
     for (size_t i = 0; i < partitions().size(); ++i) {
@@ -162,7 +194,7 @@ void PartitionSpec::Register(nb::module_& m) {
       .def(
           "__init__",
           [](PartitionSpec* self, nb::args partition_args,
-             nb::object unreduced_arg) {
+             nb::object unreduced_arg, nb::object reduced_arg) {
             nb::tuple partitions =
                 nb::steal<nb::tuple>(PyTuple_New(partition_args.size()));
             for (size_t i = 0; i < partition_args.size(); ++i) {
@@ -174,26 +206,34 @@ void PartitionSpec::Register(nb::module_& m) {
                                    .ptr());
             }
             nb_frozenset unreduced;
-            if (unreduced_arg.is_none()) {
-              unreduced = nb_frozenset();
-            } else {
-              if (!PyAnySet_Check(unreduced_arg.ptr())) {
-                throw nb::type_error(
-                    absl::StrFormat(
-                        "unreduced argument of PartitionSpec should be `None` "
-                        "or of type `frozenset` or `set`. Got type %s",
-                        nb::cast<std::string>(nb::repr(unreduced_arg.type())))
-                        .c_str());
-              }
-              unreduced = nb_frozenset(unreduced_arg);
+            nb_frozenset reduced;
+            if (!PyAnySet_Check(unreduced_arg.ptr())) {
+              throw nb::type_error(
+                  absl::StrFormat(
+                      "unreduced argument of PartitionSpec should "
+                      "of type `frozenset` or `set`. Got type %s",
+                      nb::cast<std::string>(nb::repr(unreduced_arg.type())))
+                      .c_str());
             }
-            CheckPartitionSpec(partitions, unreduced);
-            new (self)
-                PartitionSpec(std::move(partitions), std::move(unreduced));
+            if (!PyAnySet_Check(reduced_arg.ptr())) {
+              throw nb::type_error(
+                  absl::StrFormat(
+                      "reduced argument of PartitionSpec should "
+                      "of type `frozenset` or `set`. Got type %s",
+                      nb::cast<std::string>(nb::repr(reduced_arg.type())))
+                      .c_str());
+            }
+            unreduced = nb_frozenset(unreduced_arg);
+            reduced = nb_frozenset(reduced_arg);
+            CheckPartitionSpec(partitions, unreduced, reduced);
+            new (self) PartitionSpec(std::move(partitions),
+                                     std::move(unreduced), std::move(reduced));
           },
-          nb::arg("partitions"), nb::arg("unreduced").none() = nb::none())
+          nb::arg("partitions"), nb::arg("unreduced") = nb_frozenset(),
+          nb::arg("reduced") = nb_frozenset())
       .def_prop_ro("_partitions", &PartitionSpec::partitions)
       .def_prop_ro("unreduced", &PartitionSpec::unreduced)
+      .def_prop_ro("reduced", &PartitionSpec::reduced)
       .def("__eq__", &PartitionSpec::Eq, nb::arg().none())
       .def("__hash__", &PartitionSpec::Hash);
 }

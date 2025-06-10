@@ -40,10 +40,12 @@ class nb_frozenset : public nanobind::object {
 
 class PartitionSpec {
  public:
-  PartitionSpec(nanobind::tuple partitions, nb_frozenset unreduced);
+  PartitionSpec(nanobind::tuple partitions, nb_frozenset unreduced,
+                nb_frozenset reduced);
 
   nanobind::tuple partitions() const { return partitions_; }
   nb_frozenset unreduced() const { return unreduced_; }
+  nb_frozenset reduced() const { return reduced_; }
 
   bool Eq(const nanobind::object& other) const;
   Py_ssize_t Hash() const;
@@ -53,6 +55,7 @@ class PartitionSpec {
  private:
   nanobind::tuple partitions_;
   nb_frozenset unreduced_;
+  nb_frozenset reduced_;
 
   static nanobind::object* unconstrained_singleton_;
 };

@@ -3014,7 +3014,7 @@ def _reshard_impl(x, dst_sharding):
 reshard_p.def_impl(_reshard_impl)
 
 def _reshard_transpose_rule(ct, x, dst_sharding):
-  return [reshard_p.bind(ct, dst_sharding=x.aval.sharding)]
+  return [reshard_p.bind(ct, dst_sharding=x.aval.to_cotangent_aval().sharding)]
 ad.deflinear2(reshard_p, _reshard_transpose_rule)
 
 def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
