@@ -65,6 +65,7 @@ from jax._src.attrs import jax_setattr, jax_getattr, jax_extendattr
 from jax._src.util import (
     merge_lists, partition_list, safe_map, safe_zip, split_list,
     split_list_checked, unzip2, weakref_lru_cache,)
+from jax._src import xla_bridge as xb
 from jax.tree_util import (
     keystr, tree_flatten, tree_flatten_with_path, tree_map, tree_unflatten,
     treedef_is_leaf)
@@ -845,12 +846,14 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   # iterations, but we need one last iteration to prepare the jaxpr based on the
   # final carry_uk.
   carry_uk = init_uk
+  fwd = [(i < num_consts or i >= num_consts + num_carry) and
+         (not t.pval.is_known() or isinstance(t.pval.get_known(), Array))
+         for i, t in enumerate(tracers)]
   for _ in range(1 + len(carry_uk)):
     unknowns = const_uk + carry_uk + xs_uk
     jaxpr_known, jaxpr_unknown, out_uk, res_avals, in_fwd_res = \
         pe.partial_eval_jaxpr_nounits_fwd(
-            jaxpr, unknowns, instantiate=carry_uk + [False] * num_ys,
-            fwd=[True] * num_consts + [False] * num_carry + [True] * num_xs)
+            jaxpr, unknowns, instantiate=carry_uk + [False] * num_ys, fwd=fwd)
     carry_uk_out, ys_uk = split_list(out_uk, [num_carry])
     if carry_uk_out == carry_uk:
       break
@@ -908,8 +911,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   # Complete non_fwd_res and then res, then split to match binders.
   non_fwd_res = merge_lists(which_hoisted, ext_res, hoisted_res)
   non_fwd_res_ = iter(non_fwd_res)
-  res = [next(non_fwd_res_) if f is None else _maybe_put(orig_inputs[f])
-         for f in in_fwd_res]
+  res = [next(non_fwd_res_) if f is None else orig_inputs[f] for f in in_fwd_res]
   assert next(non_fwd_res_, None) is None
   int_res, ext_res = partition_list(res_to_move, res)
 
@@ -947,7 +949,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
 def _maybe_put(x):
   if isinstance(x, np.ndarray):
     aval = core.shaped_abstractify(x)
-    s = sharding.SingleDeviceSharding(pxla.get_default_device())
+    s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
     return result_handler(pxla.shard_args([s], [None], [None], [x]))
   else:
