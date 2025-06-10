@@ -45,7 +45,7 @@ class PyTreeRegistry:
   def flatten_with_path(
       self,
       tree: Any,
-      leaf_predicate: Callable[[Any], bool] | None = ...,
+      leaf_predicate: Callable[[Any, Any], bool] | None = ...,
   ) -> Tuple[list[Tuple[_KeyPath, Any]], PyTreeDef]: ...
   def register_node(
       self,

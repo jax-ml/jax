@@ -287,7 +287,8 @@ def unflatten(treedef: tree_util.PyTreeDef,
 
 
 def flatten_with_path(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+    tree: Any, is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
 ) -> tuple[list[tuple[tree_util.KeyPath, Any]], tree_util.PyTreeDef]:
   """Flattens a pytree like ``tree_flatten``, but also returns each leaf's key path.
 
@@ -313,11 +314,12 @@ def flatten_with_path(
     - :func:`jax.tree.map_with_path`
     - :func:`jax.tree_util.register_pytree_with_keys`
   """
-  return tree_util.tree_flatten_with_path(tree, is_leaf)
+  return tree_util.tree_flatten_with_path(tree, is_leaf, is_leaf_takes_path)
 
 
 def leaves_with_path(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+    tree: Any, is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
 ) -> list[tuple[tree_util.KeyPath, Any]]:
   """Gets the leaves of a pytree like ``tree_leaves`` and returns each leaf's key path.
 
@@ -338,14 +340,15 @@ def leaves_with_path(
     - :func:`jax.tree.flatten_with_path`
     - :func:`jax.tree_util.register_pytree_with_keys`
   """
-  return tree_util.tree_leaves_with_path(tree, is_leaf)
+  return tree_util.tree_leaves_with_path(tree, is_leaf, is_leaf_takes_path)
 
 
 def map_with_path(
     f: Callable[..., Any],
     tree: Any,
     *rest: Any,
-    is_leaf: Callable[[Any], bool] | None = None,
+    is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
 ) -> Any:
   """Maps a multi-input function over pytree key path and args to produce a new pytree.
 
@@ -377,7 +380,9 @@ def map_with_path(
     - :func:`jax.tree.leaves_with_path`
     - :func:`jax.tree_util.register_pytree_with_keys`
   """
-  return tree_util.tree_map_with_path(f, tree, *rest, is_leaf=is_leaf)
+  return tree_util.tree_map_with_path(
+      f, tree, *rest, is_leaf=is_leaf, is_leaf_takes_path=is_leaf_takes_path
+  )
 
 
 def broadcast(prefix_tree: Any, full_tree: Any,

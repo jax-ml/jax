@@ -545,16 +545,33 @@ nanobind::tuple FlattenedIndexKey::MatchArgs(nanobind::handle unused) {
   return nanobind::make_tuple("key");
 };
 
+/* static */ nb::object MakeKeyPathTuple(std::vector<nb::object>& keypath) {
+  const std::vector<nb::object>& frozen_keypath = keypath;
+  nb::object kp_tuple = nb::steal(PyTuple_New(frozen_keypath.size()));
+  for (int i = 0; i < frozen_keypath.size(); ++i) {
+    PyTuple_SET_ITEM(kp_tuple.ptr(), i,
+                      nb::object(frozen_keypath[i]).release().ptr());
+  }
+  return kp_tuple;
+}
+
 template <typename T>
-void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
-                            const std::optional<nb::callable>& leaf_predicate,
-                            std::optional<std::vector<nb::object>>& keypath) {
+void PyTreeDef::FlattenImpl(
+    nb::handle handle, T& leaves,
+    std::optional<std::vector<nb::object>>& keypath,
+    const std::optional<nb::callable>& leaf_predicate) {
   Node node;
   const int start_num_nodes = traversal_.size();
   const int start_num_leaves = leaves.size();
   bool is_known_leaf = false;
   if (leaf_predicate) {
-    nb::object o = (*leaf_predicate)(handle);
+    nb::object o;
+    if (keypath.has_value()) {
+      auto kp_tuple = MakeKeyPathTuple(keypath.value());
+      o = (*leaf_predicate)(kp_tuple, handle);
+    } else {
+      o = (*leaf_predicate)(handle);
+    }
     // Historically we accepted "truthy" values from leaf predicates. Accept
     // None here to keep existing clients happy.
     if (o.is_none()) {
@@ -568,12 +585,7 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
   if (is_known_leaf) {
     nb::object value = nb::borrow<nb::object>(handle);
     if (keypath.has_value()) {
-      const std::vector<nb::object>& frozen_keypath = keypath.value();
-      nb::object kp_tuple = nb::steal(PyTuple_New(frozen_keypath.size()));
-      for (int i = 0; i < frozen_keypath.size(); ++i) {
-        PyTuple_SET_ITEM(kp_tuple.ptr(), i,
-                         nb::object(frozen_keypath[i]).release().ptr());
-      }
+      auto kp_tuple = MakeKeyPathTuple(keypath.value());
       value = nb::make_tuple(std::move(kp_tuple), std::move(value));
     }
     if constexpr (std::is_same_v<T, nb::list>) {
@@ -590,7 +602,7 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
               " in flatten; PyTree may have cyclical node references.")) {
         return;
       }
-      FlattenImpl(child, leaves, leaf_predicate, keypath);
+      FlattenImpl(child, leaves, keypath, leaf_predicate);
       Py_LeaveRecursiveCall();
     };
     switch (node.kind) {
@@ -718,12 +730,7 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         DCHECK(node.kind == PyTreeKind::kLeaf);
         auto value = nb::borrow<nb::object>(handle);
         if (keypath.has_value()) {
-          const std::vector<nb::object>& frozen_keypath = keypath.value();
-          nb::object kp_tuple = nb::steal(PyTuple_New(frozen_keypath.size()));
-          for (int i = 0; i < frozen_keypath.size(); ++i) {
-            PyTuple_SET_ITEM(kp_tuple.ptr(), i,
-                             nb::object(frozen_keypath[i]).release().ptr());
-          }
+          auto kp_tuple = MakeKeyPathTuple(keypath.value());
           value = nb::make_tuple(std::move(kp_tuple), std::move(value));
         }
         if constexpr (std::is_same_v<T, nb::list>) {
@@ -742,19 +749,19 @@ void PyTreeDef::Flatten(nb::handle handle,
                         absl::InlinedVector<nb::object, 2>& leaves,
                         std::optional<nb::callable> leaf_predicate) {
   std::optional<std::vector<nb::object>> keypath = std::nullopt;
-  FlattenImpl(handle, leaves, leaf_predicate, keypath);
+  FlattenImpl(handle, leaves, keypath, leaf_predicate);
 }
 
 void PyTreeDef::Flatten(nb::handle handle, std::vector<nb::object>& leaves,
                         std::optional<nb::callable> leaf_predicate) {
   std::optional<std::vector<nb::object>> keypath = std::nullopt;
-  FlattenImpl(handle, leaves, leaf_predicate, keypath);
+  FlattenImpl(handle, leaves, keypath, leaf_predicate);
 }
 
 void PyTreeDef::Flatten(nb::handle handle, nb::list& leaves,
                         std::optional<nb::callable> leaf_predicate) {
   std::optional<std::vector<nb::object>> keypath = std::nullopt;
-  FlattenImpl(handle, leaves, leaf_predicate, keypath);
+  FlattenImpl(handle, leaves, keypath, leaf_predicate);
 }
 
 /*static*/ std::pair<std::vector<nb::object>, nb_class_ptr<PyTreeDef>>
@@ -766,10 +773,11 @@ PyTreeDef::Flatten(nb::handle x, nb_class_ptr<PyTreeRegistry> registry,
   return std::make_pair(std::move(leaves), std::move(def));
 }
 
-void PyTreeDef::FlattenWithPath(nb::handle handle, nanobind::list& leaves,
-                                std::optional<nb::callable> leaf_predicate) {
+void PyTreeDef::FlattenWithPath(
+    nb::handle handle, nanobind::list& leaves,
+    std::optional<nb::callable> leaf_predicate) {
   std::optional<std::vector<nb::object>> keypath = std::vector<nb::object>();
-  FlattenImpl(handle, leaves, leaf_predicate, keypath);
+  FlattenImpl(handle, leaves, keypath, leaf_predicate);
 }
 
 /*static*/ bool PyTreeDef::AllLeaves(PyTreeRegistry* registry,
