@@ -22,6 +22,7 @@ import operator
 from typing import Any, Protocol, TypeVar
 
 from jax._src import ad_util
+from jax._src import ad_checkpoint
 from jax._src import api_util
 from jax._src import core
 from jax._src import linear_util as lu
@@ -1178,4 +1179,18 @@ def _pjit_state_discharge_rule(
                      else None for aval in in_avals)
   sentinel = object()
   assert next(ref_vals_iter, sentinel) is sentinel
+  return new_invals, out_vals
+
+
+@register_discharge_rule(ad_checkpoint.remat_p)
+def _remat_state_discharge_rule(
+    in_avals, out_avals, *args, jaxpr, **params):
+  discharged_jaxpr, () = discharge_state(jaxpr, [])
+  out_vals_ref_vals = ad_checkpoint.remat_p.bind(
+      *args, jaxpr=discharged_jaxpr, **params)
+  out_vals, ref_vals = split_list(out_vals_ref_vals, [len(jaxpr.outvars)])
+  ref_vals_ = iter(ref_vals)
+  new_invals = [next(ref_vals_) if isinstance(a, AbstractRef) else None
+                for a in in_avals]
+  assert next(ref_vals_, None) is None
   return new_invals, out_vals
