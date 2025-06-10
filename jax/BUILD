@@ -210,6 +210,7 @@ py_library(
     deps = [
         ":compilation_cache_internal",
         ":jax",
+        ":public_test_util",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
@@ -304,7 +305,6 @@ py_library_providing_imports_info(
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
         "_src/prng.py",
-        "_src/public_test_util.py",
         "_src/random.py",
         "_src/shard_map.py",
     ] + glob(
@@ -402,6 +402,7 @@ py_library_providing_imports_info(
         ":pickle_util",
         ":pretty_printer",
         ":profiler",
+        ":public_test_util",
         ":shard_alike",
         ":sharding",
         ":sharding_impls",
@@ -1254,6 +1255,19 @@ pytype_strict_library(
         ":xla_bridge",
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "public_test_util",
+    srcs = [
+        "_src/public_test_util.py",
+    ],
+    deps = [
+        ":api",
+        ":config",
+        ":dtypes",
+        ":tree_util",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
