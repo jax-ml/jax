@@ -800,6 +800,22 @@ def _prev_index(
   return _filter_indices(tuple(reversed(out)), grid)
 
 
+class _HashById:
+  __slots__ = ["val"]
+  val: Any
+
+  def __init__(self, val):
+    self.val = val
+
+  def __hash__(self):
+    return id(self.val)
+
+  def __eq__(self, other):
+    if isinstance(other, _HashById):
+      return self.val == other.val
+    return False
+
+
 class Scheduler:
   """Sequences input and output copies and waits for a pipeline."""
 
@@ -859,6 +875,9 @@ class Scheduler:
         for i, j in zip(_next_index(indices, grid), grid_offsets, strict=True)
     )
 
+    self._has_changed_cache: dict[_HashById, bool | jax.Array] = {}
+    self._will_change_cache: dict[_HashById, bool | jax.Array] = {}
+
   @contextmanager
   def _named_scope(self, name):
     if self.trace_scopes:
@@ -871,15 +890,33 @@ class Scheduler:
     return pallas_core.grid_env(
         list(map(pallas_core.GridAxis, self.indices, self.grid)))
 
-  def has_changed(self, buffered_ref):
-    indices = buffered_ref.compute_index(*self.indices)
-    prev_indices = buffered_ref.compute_index(*self.prev_indices)
-    return _tuples_differ(indices, prev_indices)
+  def precompute_changes(self, buffered_ref):
+    """Precomputes and caches has_changed and will_change for a given ref.
 
-  def will_change(self, buffered_ref):
+    Avoids redundant emissions of compute_indices and _tuples_differ.
+    """
+    h = _HashById(buffered_ref)
+    prev_indices = buffered_ref.compute_index(*self.prev_indices)
     indices = buffered_ref.compute_index(*self.indices)
     next_indices = buffered_ref.compute_index(*self.next_indices)
-    return _tuples_differ(indices, next_indices)
+    self._has_changed_cache[h] = _tuples_differ(indices, prev_indices)
+    self._will_change_cache[h] = _tuples_differ(indices, next_indices)
+
+  def has_changed(self, buffered_ref):
+    changed = self._has_changed_cache.get(_HashById(buffered_ref), None)
+    if changed is None:
+      indices = buffered_ref.compute_index(*self.indices)
+      prev_indices = buffered_ref.compute_index(*self.prev_indices)
+      changed = _tuples_differ(indices, prev_indices)
+    return changed
+
+  def will_change(self, buffered_ref):
+    changes = self._will_change_cache.get(_HashById(buffered_ref), None)
+    if changes is None:
+      indices = buffered_ref.compute_index(*self.indices)
+      next_indices = buffered_ref.compute_index(*self.next_indices)
+      changes = _tuples_differ(indices, next_indices)
+    return changes
 
   def alias_local_refs(self, buffered_ref, ref):
     return buffered_ref.bind_existing_ref(ref, self.indices)
@@ -1417,6 +1454,8 @@ def emit_pipeline(
 
         # prepare any local VMEM aliases
         brefs = map_brefs(scheduler.alias_local_refs, unaliased_brefs, refs)
+
+        map_brefs(scheduler.precompute_changes, brefs)
 
         # loop input handling phase
         map_brefs(scheduler.copy_in, brefs, refs, schedule)
