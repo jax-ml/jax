@@ -27,6 +27,7 @@ from jax._src import traceback_util
 from jax._src.lib import pytree
 from jax._src.util import safe_zip, set_module
 from jax._src.util import unzip2
+from jax._src.lib import jaxlib_extension_version
 
 
 export = set_module('jax.tree_util')
@@ -1126,34 +1127,40 @@ def register_static(cls: type[H]) -> type[H]:
 
 @export
 def tree_flatten_with_path(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+    tree: Any, is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
 ) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]:
   """Alias of :func:`jax.tree.flatten_with_path`."""
-  return default_registry.flatten_with_path(tree, is_leaf)
+  if jaxlib_extension_version < 351:
+    return default_registry.flatten_with_path(tree, is_leaf)
+  is_leaf_with_kp: Callable[[Any, Any], bool] | None = is_leaf
+  if not is_leaf_takes_path and is_leaf is not None:
+    is_leaf_with_kp = lambda _, x: is_leaf(x)
+  return default_registry.flatten_with_path(tree, is_leaf_with_kp)
 
 
 @export
 def tree_leaves_with_path(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+    tree: Any, is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
 ) -> list[tuple[KeyPath, Any]]:
   """Alias of :func:`jax.tree.leaves_with_path`."""
-  return tree_flatten_with_path(tree, is_leaf)[0]
-
-
-# generate_key_paths is not exported.
-def generate_key_paths(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
-) -> list[tuple[KeyPath, Any]]:
-  return tree_leaves_with_path(tree, is_leaf)
-_generate_key_paths = generate_key_paths  # alias for backward compat
+  return tree_flatten_with_path(tree, is_leaf, is_leaf_takes_path)[0]
+generate_key_paths = tree_leaves_with_path
 
 
 @export
-def tree_map_with_path(f: Callable[..., Any],
-                       tree: Any, *rest: Any,
-                       is_leaf: Callable[[Any], bool] | None = None) -> Any:
+def tree_map_with_path(
+    f: Callable[..., Any],
+    tree: Any,
+    *rest: Any,
+    is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
+) -> Any:
   """Alias of :func:`jax.tree.map_with_path`."""
-  keypath_leaves, treedef = tree_flatten_with_path(tree, is_leaf)
+  keypath_leaves, treedef = tree_flatten_with_path(
+      tree, is_leaf, is_leaf_takes_path
+  )
   keypath_leaves = list(zip(*keypath_leaves))
   all_keypath_leaves = keypath_leaves + [treedef.flatten_up_to(r) for r in rest]
   return treedef.unflatten(f(*xs) for xs in zip(*all_keypath_leaves))

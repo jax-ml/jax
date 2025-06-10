@@ -1438,6 +1438,7 @@ pytype_strict_library(
     srcs = ["_src/tree.py"],
     deps = [
         ":tree_util",
+        "//jax/_src/lib",
     ],
 )
 

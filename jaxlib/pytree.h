@@ -367,9 +367,10 @@ class PyTreeDef {
       const;
 
   template <typename T>
-  void FlattenImpl(nanobind::handle handle, T& leaves,
-                   const std::optional<nanobind::callable>& leaf_predicate,
-                   std::optional<std::vector<nanobind::object>>& keypath);
+  void FlattenImpl(
+      nanobind::handle handle, T& leaves,
+      std::optional<std::vector<nanobind::object>>& keypath,
+      const std::optional<nanobind::callable>& leaf_predicate);
 
   template <typename T>
   nanobind::object UnflattenImpl(T leaves) const;
