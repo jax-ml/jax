@@ -17,6 +17,7 @@ limitations under the License.
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <ostream>
@@ -295,6 +296,37 @@ bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size);
 // `tpu.bitcast` and unary element-wise operations are excluded from the
 // results.
 SmallVector<Operation *> getNontrivialTransitiveUsers(Value v);
+
+// Performs the tree-based reduction on a sequence of values using the given
+// binary operation. For example, suppose the binary operation is "+", then
+// this function will reduce the sequence {a, b, c, d, e} into the order of
+// (((a + b) + (c + d)) + e), where the reduction is performed on consecutive
+// pairs of values.
+template <typename T, typename BinaryOp>
+T treeReduce(ArrayRef<T> values, BinaryOp binary_op) {
+  if (values.empty()) {
+    return T{};
+  }
+  if (values.size() == 1) {
+    return values.front();
+  }
+  size_t size = values.size();
+  SmallVector<T> partial(values);
+  while (size > 1) {
+    size_t curr = 0;
+    // Reduce consecutive pairs of values.
+    for (; curr < size / 2; ++curr) {
+      partial[curr] = binary_op(partial[2 * curr], partial[2 * curr + 1]);
+    }
+    // Move the last value forwards if it's not reduced yet.
+    if (size % 2) {
+      partial[curr] = partial[size - 1];
+      ++curr;
+    }
+    size = curr;
+  }
+  return partial.front();
+}
 
 }  // namespace mlir::tpu
 
