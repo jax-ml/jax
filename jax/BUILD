@@ -306,7 +306,6 @@ py_library_providing_imports_info(
         "_src/prng.py",
         "_src/public_test_util.py",
         "_src/random.py",
-        "_src/shard_alike.py",
         "_src/shard_map.py",
     ] + glob(
         [
@@ -403,6 +402,7 @@ py_library_providing_imports_info(
         ":pickle_util",
         ":pretty_printer",
         ":profiler",
+        ":shard_alike",
         ":sharding",
         ":sharding_impls",
         ":sharding_specs",
@@ -1263,6 +1263,24 @@ pytype_strict_library(
         ":op_shardings",
         ":util",
         ":xla_bridge",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "shard_alike",
+    srcs = [
+        "_src/shard_alike.py",
+    ],
+    deps = [
+        ":ad",
+        ":api",
+        ":batching",
+        ":config",
+        ":core",
+        ":mlir",
+        ":tree_util",
+        ":util",
         "//jax/_src/lib",
     ],
 )
