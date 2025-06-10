@@ -233,10 +233,10 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
         jax2tf.convert(f_jax), [x],
         checks=[
             # The argument
-            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*devices=\[1,2\]",
+            (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*devices=\[1,2\]",
              count_in_P),
             # The result
-            (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]",
+            (r"f32\[20,10\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]",
              count_out_P),
         ])
     # TODO(b/326476605): Change the condition below if required.
@@ -244,11 +244,11 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       self.check_sharding(
         jax2tf.convert(f_jax), [x],
         checks=[
-            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*replicated",
+            (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*replicated",
              count_in_replicated),
-            (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*replicated",
+            (r"f32\[20,10\].*custom_call_target.*\"Sharding.*sharding.*replicated",
              count_out_replicated),
-            (r"custom_call_target.*Sharding",
+            (r"custom_call_target.*\"Sharding",
              count_in_P + count_in_replicated + count_out_P + count_out_replicated),
         ])
 
@@ -278,13 +278,13 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
         f_tf, [y],
         checks=[
             # The variable argument
-            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*devices=\[1,2\]", 1),
+            (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*devices=\[1,2\]", 1),
             # The y argument
-            (r"f32\[20,30\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]", 1),
+            (r"f32\[20,30\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]", 1),
             # The output sharding
-            (r"f32\[10,30\].*custom_call_target.*Sharding.*sharding.*replicated", 1),
+            (r"f32\[10,30\].*custom_call_target.*\"Sharding.*sharding.*replicated", 1),
             # No other annotations
-            (r"custom_call_target.*Sharding", 3)
+            (r"custom_call_target.*\"Sharding", 3)
         ])
 
   @jtu.with_mesh([("x", 2)])
@@ -312,10 +312,10 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
         jax2tf.convert(f_jax), [x],
         checks=[
             # x
-            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]",
+            (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]",
              1),
             # The result
-            (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*replicated",
+            (r"f32\[20,10\].*custom_call_target.*\"Sharding.*sharding.*replicated",
              self.GEQ(1)),
         ])
 
@@ -359,16 +359,16 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
         f_tf, [x],
         checks=[
             # The input argument
-            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*replicated", 1),
+            (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*replicated", 1),
             # The y argument
-            (r"f32\[10,40\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]",
+            (r"f32\[10,40\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]",
              count_inner_sharding),
-            (r"f32\[10,40\].*custom_call_target.*Sharding.*sharding.*replicated",
+            (r"f32\[10,40\].*custom_call_target.*\"Sharding.*sharding.*replicated",
              count_inner_replicated),
             # The output sharding
-            (r"f32\[10,80\].*custom_call_target.*Sharding.*sharding.*replicated", 1),
+            (r"f32\[10,80\].*custom_call_target.*\"Sharding.*sharding.*replicated", 1),
             # No other annotations
-            (r"custom_call_target.*Sharding", 2 + count_inner_sharding + count_inner_replicated)
+            (r"custom_call_target.*\"Sharding", 2 + count_inner_sharding + count_inner_replicated)
         ])
 
   @jtu.parameterized_filterable(
@@ -429,17 +429,17 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     self.check_sharding(f_grad_tf, [x, x.T],
         checks=[
             # The input primal argument, and the output grad
-            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*devices=\[1,2\]", count_in_P),
+            (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*devices=\[1,2\]", count_in_P),
             # The primal result, and the input cotangent
-            (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]", count_out_P),
+            (r"f32\[20,10\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]", count_out_P),
         ])
     # TODO(b/326476605): Change the condition below if required.
     if out_shardings not in [None, "missing"] and in_shardings not in [None, "missing"]:
       self.check_sharding(f_grad_tf, [x, x.T],
         checks=[
-            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*replicated", count_in_replicated),
+            (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*replicated", count_in_replicated),
             # The primal result, and the input cotangent
-            (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]", count_out_P),
+            (r"f32\[20,10\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]", count_out_P),
         ])
 
   def test_grad_sharding_different_mesh(self):
