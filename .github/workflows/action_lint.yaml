@@ -3,10 +3,10 @@ on:
   workflow_dispatch:
   push:
     branches: 
-        - main
+      - main
   pull_request:
     branches: 
-        - main
+      - main
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   # Don't cancel in-progress jobs for main/release branches.
