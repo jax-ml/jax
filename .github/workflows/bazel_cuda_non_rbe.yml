@@ -83,15 +83,15 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p $(pwd)/dist
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+          gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*py3*none*any.whl" "$(pwd)/dist/"
 
           if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" "$(pwd)/dist/" &&
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" "$(pwd)/dist/" &&
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" "$(pwd)/dist/"
           elif [[ ${{ inputs.jaxlib-version }} == "pypi_latest" ]]; then
             PYTHON=python${{ inputs.python }}
-            $PYTHON -m pip download jaxlib jax-cuda12-pjrt jax-cuda12-plugin --dest $(pwd)/dist/
+            $PYTHON -m pip download jaxlib jax-cuda12-pjrt jax-cuda12-plugin --dest "$(pwd)/dist/"
           else
             echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}"
             exit 1

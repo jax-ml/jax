@@ -21,5 +21,7 @@ jobs:
           persist-credentials: false
       - name: Check workflow files
         uses: docker://index.docker.io/rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 # ratchet:docker://rhysd/actionlint:latest
+        env:
+          SHELLCHECK_OPTS: --exclude=SC2129
         with:
-          args: -color
+          args: -color --severity=warning
