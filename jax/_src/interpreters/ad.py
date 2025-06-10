@@ -277,7 +277,7 @@ def linearize(traceable: lu.WrappedFun,
     raise ValueError(
         "Linearization failed to produce known values for all output primals. "
         "This is typically caused by attempting to differentiate a function "
-        "uses an operation that does not support reverse-mode autodiff.")
+        "using an operation that does not support reverse-mode autodiff.")
   out_primals_consts = [pval.get_known() for pval in out_primals_pvals]
   if not has_aux:
     return out_primals_consts, out_tangents_pvals, jaxpr, consts
