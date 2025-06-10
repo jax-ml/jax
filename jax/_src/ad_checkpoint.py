@@ -40,6 +40,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.state import discharge
+from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import PyTreeDef, tree_flatten, tree_unflatten, tree_structure
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
@@ -700,8 +702,10 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
                 for aval, lin in zip(jaxpr.in_avals, in_lin)]
     assert next(ins_iter, None) is None
 
-    jaxpr_rematted, lin_jaxpr, out_uk, res_avals = \
-        pe.partial_eval_jaxpr_nounits(jaxpr, in_lin, False)
+    # TODO(mattjj): revise not to require disabling checks
+    with config.mutable_array_checks(False):
+      jaxpr_rematted, lin_jaxpr, out_uk, res_avals = \
+          pe.partial_eval_jaxpr_nounits(jaxpr, in_lin, False)
     with source_info_util.extend_name_stack('rematted_computation'):
       consts = core.jaxpr_as_fun(jaxpr_rematted)(*ins_flat)
 
@@ -882,3 +886,16 @@ def checkpoint_wrapper(
     raise NotImplementedError(msg)
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
                     static_argnums=static_argnums)
+
+
+@discharge.register_discharge_rule(remat_p)
+def _remat_state_discharge_rule(
+    in_avals, out_avals, *args, jaxpr, **params):
+  discharged_jaxpr, () = discharge.discharge_state(jaxpr, [])
+  out_vals_ref_vals = remat_p.bind(*args, jaxpr=discharged_jaxpr, **params)
+  out_vals, ref_vals = split_list(out_vals_ref_vals, [len(jaxpr.outvars)])
+  ref_vals_ = iter(ref_vals)
+  new_invals = [next(ref_vals_) if isinstance(a, AbstractRef) else None
+                for a in in_avals]
+  assert next(ref_vals_, None) is None
+  return new_invals, out_vals
