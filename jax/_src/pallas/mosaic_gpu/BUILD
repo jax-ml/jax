@@ -62,6 +62,7 @@ pytype_strict_library(
         "//jax",
         "//jax:api",
         "//jax:core",
+        "//jax:dtypes",
         "//jax:mesh",
         "//jax:mlir",
         "//jax:mosaic_gpu",

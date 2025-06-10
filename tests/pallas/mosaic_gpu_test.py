@@ -1739,6 +1739,31 @@ class PallasCallTest(PallasTest):
     with self.assertRaisesRegex(ValueError, "can't be assigned to"):
       kernel(jnp.arange(128).astype(jnp.float32))
 
+  def test_loading_from_ref_union_works(self):
+    # `load_p` does not have a defined lowering for warpgroup semantics.
+    self.skip_if_wg_semantics()
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
+        in_specs=[pl.BlockSpec((128,))] * 2,
+        out_specs=pl.BlockSpec((128,), memory_space=plgpu.GMEM),
+        scratch_shapes=[plgpu.RefUnion(plgpu.SMEM((128,), jnp.float32)),
+                        plgpu.SMEM((128,), jnp.float32)],
+    )
+    def kernel(x_ref, y_ref, o_ref128, ref_union, o_smem):
+      [aliased_ref] = ref_union
+      aliased_ref[...] = x_ref[...]
+      plgpu.commit_smem()
+      load_ref = lambda r: plgpu.load(r, (), layout=plgpu.Layout.TCGEN05_ROW)
+      # This is a regression test for b/423697560, where we used to fail to
+      # transform the dtype correctly when processing an aliased ref.
+      o_smem[...] = load_ref(aliased_ref) + load_ref(y_ref)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(o_smem, o_ref128)
+
+    x, y = [jnp.arange(128).astype(jnp.float32) for _ in range(2)]
+    np.testing.assert_array_equal(kernel(x, y), x + y)
+
   @parameterized.parameters(1, 2, 3)
   def test_nd_loop(self, sm_steps):
     @functools.partial(

@@ -75,8 +75,9 @@ load_p = jax_core.Primitive("load")
 def _load_abstract_eval(src, *avals_flat, args_tree, layout, optimized):
   del layout, optimized  # Unused.
   transforms = args_tree.unflatten(avals_flat)
+  dtype = lowering._transform_dtype(src.dtype, transforms)
   return (
-      jax_core.ShapedArray(transforms[-1].get_indexer_shape(), src.dtype),
+      jax_core.ShapedArray(transforms[-1].get_indexer_shape(), dtype),
       {state.ReadEffect(0)},
   )
 
