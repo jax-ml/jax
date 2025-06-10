@@ -43,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 351
+_version = 352
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -68,6 +68,8 @@ def make_cpu_client(
     num_nodes=1,
     collectives=None,
     num_devices=None,
+    get_local_topology_timeout_minutes=None,
+    get_global_topology_timeout_minutes=None,
 ) -> Client:
   register_custom_call_handler('cpu', _xla.register_custom_call_target)
   register_custom_type_id_handler('cpu', _xla.register_custom_type_id)
@@ -78,6 +80,8 @@ def make_cpu_client(
       num_nodes=num_nodes,
       collectives=collectives,
       num_devices=num_devices,
+      get_local_topology_timeout_minutes=get_local_topology_timeout_minutes,
+      get_global_topology_timeout_minutes=get_global_topology_timeout_minutes,
   )
 
 
