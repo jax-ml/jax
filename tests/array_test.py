@@ -1412,6 +1412,11 @@ class ShardingTest(jtu.JaxTestCase):
       NamedSharding(abstract_mesh, P(), memory_kind='weird_device')
 
   def test_pspec_unreduced(self):
+    pspec = P('a', 'b', None, unreduced={'c'}, reduced={'d'})
+    self.assertEqual(
+        repr(pspec),
+        "PartitionSpec('a', 'b', None, unreduced={'c'}, reduced={'d'})")
+
     pspec1 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(repr(pspec1),
                      "PartitionSpec('a', 'b', None, unreduced={'c'})")

@@ -7789,7 +7789,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @config.use_shardy_partitioner(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_basic(self, mesh):
-    np_inp = np.arange(16).reshape(8, 2)
+    np_inp = np.arange(16.).reshape(8, 2)
     x = jax.device_put(np_inp, P('x', 'y'))
     y = jax.device_put(np_inp.T, P('y', None))
     a = jax.device_put(np_inp, P('x', 'y'))
@@ -7813,7 +7813,16 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     traced = f.trace(x, y, a, b)
     lowered_text = traced.lower().as_text()
     self.assertIn('unreduced={"y"}', lowered_text)
-    self.assertTrue(lowered_text.count('unreduced={"y"}') == 3)
+    self.assertEqual(lowered_text.count('unreduced={"y"}'), 3)
+
+    # TODO(yashkatariya): Execute this too
+    grad_jaxpr = jax.jit(jax.grad(lambda x, y, a, b: f(x, y, a, b).sum(),
+                                  argnums=(0, 1, 2, 3))).trace(x, y, a, b).jaxpr
+    reshard_eqn = grad_jaxpr.eqns[4].params['jaxpr'].eqns[0]
+    self.assertEqual(reshard_eqn.params['dst_sharding'].spec.reduced,
+                     frozenset('y'))
+    self.assertEqual(reshard_eqn.params['dst_sharding'].spec.unreduced,
+                     frozenset())
 
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_dot_general_unreduced_error(self, mesh):
