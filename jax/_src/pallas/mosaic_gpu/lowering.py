@@ -31,6 +31,7 @@ from jax import api_util
 from jax import lax
 from jax._src import checkify
 from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
@@ -1299,15 +1300,25 @@ def _extract_aliased_ref(
       return ref, transforms
 
 
+def _transform_dtype(
+    dtype: dtypes.DType,
+    transforms: Sequence[state_types.Transform],
+) -> dtypes.DType:
+  """Applies `t.transform_dtype` for `t` in `transforms` sequentially on `dtype`."""
+  for transform in transforms:
+    dtype = transform.transform_dtype(dtype)
+  return dtype
+
+
 def _handle_transforms(
     ctx: LoweringRuleContext,
     ref: RefOrTmemType,
-    transforms: Sequence[gpu_core.Transform],
+    transforms: Sequence[state_types.Transform],
     *,
     handle_transposes=True,
     handle_reshapes=True,
     allow_peer_refs=False,
-) -> tuple[RefOrTmemType, Sequence[gpu_core.Transform]]:
+) -> tuple[RefOrTmemType, Sequence[state_types.Transform]]:
   if isinstance(ref, tcgen05.TMEMRef):
     mlir_dtype = ref.dtype
   else:
