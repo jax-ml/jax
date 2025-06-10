@@ -96,8 +96,8 @@ jobs:
         # informative error message.
         continue-on-error: true
         run: |
-          mkdir -p $(pwd)/dist
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+          mkdir -p "$(pwd)/dist"
+          gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*py3*none*any.whl" "$(pwd)/dist/"
 
           # Do not download the jaxlib and CUDA plugin artifacts if we are testing a jax only
           # release.
@@ -113,9 +113,9 @@ jobs:
               echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> $GITHUB_ENV
             fi
           else
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" "$(pwd)/dist/" &&
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" "$(pwd)/dist/" &&
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" "$(pwd)/dist/"
 
              if [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]]; then
               # Install the Nvidia CUDA packages from PyPI. The wheels downloaded in the previous
