@@ -1,0 +1,25 @@
+name: Lint GitHub Actions workflows
+on:
+  workflow_dispatch:
+  push:
+    branches: 
+        - main
+  pull_request:
+    branches: 
+        - main
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main/release branches.
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+permissions: {}
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check workflow files
+        uses: docker://index.docker.io/rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 # ratchet:docker://rhysd/actionlint:latest
+        with:
+          args: -color
