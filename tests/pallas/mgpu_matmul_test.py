@@ -76,7 +76,7 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
         a,
         b,
         blackwell_matmul_mgpu.TuningConfig(
-            block_m=128, block_n=128, block_k=128,
+            tile_m=128, tile_n=128, tile_k=128,
             max_concurrent_steps=2,
             collective=False,
         ),
