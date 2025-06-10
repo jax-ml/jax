@@ -362,6 +362,10 @@ class AbstractRefUnion(pallas_core.AbstractMemoryRef):
     del tracer, index, value  # Unused.
     raise ValueError("Ref unions can't be assigned to.")
 
+  def update_vma(self, vma):
+    return AbstractRefUnion(self.inner_aval.update_vma(vma), self.refs,
+                            self.memory_space)
+
 
 @dataclasses.dataclass(init=False, frozen=True)
 class RefUnion(GPUMemoryRef):
@@ -940,6 +944,9 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
 
   def update_weak_type(self, weak_type):
     return _as_accum(super().update_weak_type(weak_type))
+
+  def update_vma(self, vma):
+    return _as_accum(super().update_vma(vma))
 
   def update(self, inner_aval=None, memory_space=None):
     return _as_accum(super().update(inner_aval=None, memory_space=None))

@@ -76,18 +76,65 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
           kernel,
           in_specs=[pl.BlockSpec(memory_space=mem)],
           out_specs=pl.BlockSpec(memory_space=mem),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32, vma=frozenset('x')),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    f = jax.jit(
+        shard_map.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'),
+        )
+    )
+    jaxpr = f.trace(x).jaxpr
+    self.assertNotIn('pvary', str(jaxpr))
+    y = f(x)
+    expected = jnp.concatenate([x[8:], x[:8]])
+    np.testing.assert_allclose(y, expected)
+
+  def test_vma_error(self):
+    def kernel(x_ref, y_ref):
+      def body(ready_sem, send_sem, recv_sem):
+        other_dev_id = 1 - lax.axis_index('x')
+        pltpu.semaphore_signal(ready_sem, device_id=other_dev_id,
+                               device_id_type=pltpu.DeviceIdType.LOGICAL)
+        pltpu.semaphore_wait(ready_sem)
+        copy_done = pltpu.async_remote_copy(
+            x_ref, y_ref, send_sem, recv_sem, other_dev_id,
+            device_id_type=pltpu.DeviceIdType.LOGICAL,
+        )
+        copy_done.wait_send()
+        copy_done.wait_recv()
+
+      pl.run_scoped(
+          body,
+          pltpu.SemaphoreType.REGULAR,
+          pltpu.SemaphoreType.DMA,
+          pltpu.SemaphoreType.DMA,
+      )
+
+    x = jnp.arange(2 * 8 * 128.0).reshape((2 * 8, 128))
+
+    def body(x):
+      return pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
           out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
       )(x)
 
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
-    y = jax.jit(
+    f = jax.jit(
         shard_map.shard_map(
-            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'),
         )
-    )(x)
-    expected = jnp.concatenate([x[8:], x[:8]])
-    np.testing.assert_allclose(y, expected)
+    )
+    with self.assertRaisesRegex(
+        ValueError,
+        'When `check_vma=True` on `jax.shard_map`, `vma` on'
+        ' `jax.ShapeDtypeStruct` must not be `None`'):
+      f(x)
 
   @parameterized.named_parameters(
       ('left', 'left'),
