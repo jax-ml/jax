@@ -20,6 +20,7 @@ from typing import Any, Callable, Sequence, Type
 
 import jax
 from jax._src import api_util
+from jax._src import util
 from jax.experimental.colocated_python.func import make_callable
 from jax.experimental.colocated_python.obj import wrap_class
 
@@ -30,10 +31,13 @@ def colocated_cpu_devices(
   """Finds CPU devices colocated with the given devices."""
   if not isinstance(devices, tuple):
     devices = tuple(devices)
-  return _colocated_cpu_devices_cached(devices)
+  try:
+    return _colocated_cpu_devices_cached(devices)
+  except (ValueError, AttributeError):
+    return _colocated_cpu_devices_cached_fallback_to_cpu_backend(devices)
 
 
-@jax._src.util.cache(max_size=1024, trace_context_in_key=False)
+@util.cache(max_size=1024, trace_context_in_key=False)
 def _colocated_cpu_devices_cached(
     devices: tuple[jax.Device, ...],
 ) -> Sequence[jax.Device]:
@@ -56,6 +60,22 @@ def _colocated_cpu_devices_cached(
       )
     colocated_cpu_devices.append(matches[0])
   return colocated_cpu_devices
+
+
+@util.cache(max_size=1024, trace_context_in_key=False)
+def _colocated_cpu_devices_cached_fallback_to_cpu_backend(
+    devices: tuple[jax.Device, ...],
+) -> Sequence[jax.Device]:
+  # PjRt-IFRT currently defines CPU devices by using a CPU backend.
+  # TODO(hyeontaek): Remove this fallback path once a PjRt-IFRT backend defines
+  # CPU devices by its own instead of using a separate CPU backend.
+  cpu_backend_devices = jax.local_devices(backend="cpu")
+  device_index_map = {device.id: i for i, device in enumerate(jax.devices())}
+
+  available_devices = devices[: min(len(cpu_backend_devices), len(devices))]
+  return [
+      cpu_backend_devices[device_index_map[d.id]] for d in available_devices
+  ]
 
 
 def colocated_python(fun: Callable[..., Any]) -> Callable[..., Any]:
