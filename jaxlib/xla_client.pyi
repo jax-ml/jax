@@ -64,6 +64,8 @@ def make_cpu_client(
     num_nodes: int = ...,
     collectives: _xla.CpuCollectives | None = ...,
     num_devices: int | None = ...,
+    get_local_topology_timeout_minutes: int | None = ...,
+    get_global_topology_timeout_minutes: int | None = ...,
 ) -> Client: ...
 def make_gpu_client(
     distributed_client: DistributedRuntimeClient | None = ...,
