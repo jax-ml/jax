@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import itertools as it
 import math
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar, cast
 
 import jax
 from jax import api_util
@@ -226,7 +226,7 @@ def emit_pipeline(
   # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
   # reduce the size of the refs allocated in SMEM.
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
-    max_concurrent_steps = num_steps
+    max_concurrent_steps = cast(int, num_steps)
 
   def pipeline(*gmem_refs: pallas_core.AbstractMemoryRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
@@ -523,7 +523,7 @@ def emit_pipeline_warp_specialized(
   # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
   # reduce the size of the refs allocated in SMEM.
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
-    max_concurrent_steps = num_steps
+    max_concurrent_steps = cast(int, num_steps)
 
   def pipeline(*gmem_refs: pallas_core.AbstractMemoryRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
