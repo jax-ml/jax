@@ -55,14 +55,19 @@ from . import utils
 
 # MLIR can't find libdevice unless we point it to the CUDA path
 # TODO(apaszke): Unify with jax._src.lib.cuda_path
-CUDA_ROOT = "/usr/local/cuda"
+cuda_root = "/usr/local/cuda"
+PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
 if os.environ.get("CUDA_ROOT") is None:
-  os.environ["CUDA_ROOT"] = CUDA_ROOT
+  if PYTHON_RUNFILES:
+    cuda_nvcc_root = os.path.join(PYTHON_RUNFILES, "cuda_nvcc")
+    if os.path.exists(cuda_nvcc_root):
+      cuda_root = cuda_nvcc_root
+  os.environ["CUDA_ROOT"] = cuda_root
 else:
-  CUDA_ROOT = os.environ["CUDA_ROOT"]
+  cuda_root = os.environ["CUDA_ROOT"]
 
-PTXAS_PATH = os.path.join(CUDA_ROOT, "bin/ptxas")
-NVDISASM_PATH = os.path.join(CUDA_ROOT, "bin/nvdisasm")
+PTXAS_PATH = os.path.join(cuda_root, "bin/ptxas")
+NVDISASM_PATH = os.path.join(cuda_root, "bin/nvdisasm")
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
 FWD_COMPAT_IR_VERSION = 1
