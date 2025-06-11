@@ -338,8 +338,8 @@ def _construct_smem_reftree(
     dynamic_smem_offset: int = 0,
 ) -> Callable[[], RefTree]:
   index = ir.IndexType.get()
-  i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
+  i64 = ir.IntegerType.get_signless(64)
   smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   flat_ref_tys, smem_buffer_tree = jax.tree.flatten(
       smem_buffers, is_leaf=lambda x: isinstance(x, Union)
@@ -347,21 +347,23 @@ def _construct_smem_reftree(
   smem_refs = []
 
   for ref_ty in flat_ref_tys:
-    def get_barrier_ptr(num_barriers: int) -> ir.Value:
+    def barrier_memref(num_barriers: int) -> ir.Value:
       nonlocal dynamic_smem_offset
-      workgroup_nvptx_address_space = (
-          utils.gpu_address_space_to_nvptx(gpu.AddressSpace.Workgroup)
+      barrier_ty = ir.MemRefType.get(
+          (num_barriers,),
+          ir.Type.parse("!mosaic_gpu.barrier")
+          if lowering_semantics == LoweringSemantics.Warpgroup
+          else i64,
+          memory_space=smem,
       )
-      smem_base_ptr = utils.memref_ptr(
-          dynamic_smem, memory_space=workgroup_nvptx_address_space
-      )
-      smem_ptr_ty = ir.Type.parse(f"!llvm.ptr<{workgroup_nvptx_address_space}>")
-      barrier_base_ptr = llvm.getelementptr(
-          smem_ptr_ty, smem_base_ptr, [], [dynamic_smem_offset], i8,
-          llvm.GEPNoWrapFlags.none
-      )
+      barrier_memref = _slice_smem(
+            barrier_ty,
+            dynamic_smem,
+            c(dynamic_smem_offset, index),
+            lowering_semantics,
+        )
       dynamic_smem_offset += num_barriers * utils.MBARRIER_BYTES
-      return barrier_base_ptr
+      return barrier_memref
     match ref_ty:
       case Union(members):
         member_thunks = [
@@ -385,22 +387,15 @@ def _construct_smem_reftree(
         init_fn = utils.DialectBarrierRef.initialize if (
             lowering_semantics == LoweringSemantics.Warpgroup
         ) else utils.BarrierRef.initialize
-        ref = init_fn(
-            get_barrier_ptr(num_barriers), num_barriers, arrival_count=1
-        )
+        ref = init_fn(barrier_memref(num_barriers), arrival_count=1)
       case Barrier(arrival_count, num_barriers):
         init_fn = utils.DialectBarrierRef.initialize if (
             lowering_semantics == LoweringSemantics.Warpgroup
         ) else utils.BarrierRef.initialize
-        ref = init_fn(
-            get_barrier_ptr(num_barriers),
-            num_barriers,
-            arrival_count=arrival_count,
-        )
+        ref = init_fn(barrier_memref(num_barriers), arrival_count=arrival_count)
       case ClusterBarrier(collective_dims, num_barriers):
         ref = utils.CollectiveBarrierRef.initialize(
-            get_barrier_ptr(num_barriers),
-            num_barriers,
+            barrier_memref(num_barriers),
             collective_dims,
             cluster_shape,
         )
