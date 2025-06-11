@@ -24,7 +24,6 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
-from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
@@ -444,9 +443,7 @@ class TransformInferenceTest(parameterized.TestCase):
           static_sizes=[1, 64, 64],
           static_strides=[1, 1, 1],
       )
-      user_op = builtin.UnrealizedConversionCastOp(
-          [out_ref_ty], [subview_op.result]
-      )
+      user_op = memref.CastOp(out_ref_ty, subview_op.result)
 
     with ir.InsertionPoint(self.module.body):
       f = func.FuncOp.from_py_func(in_ref_ty)(body).func_op
@@ -523,9 +520,7 @@ class TransformInferenceTest(parameterized.TestCase):
           static_sizes = [2, 64, 32],
           static_strides = [1, 1, 1]
       )
-      user_op = builtin.UnrealizedConversionCastOp(
-          [out_ref_ty], [subview_op.result]
-      )
+      user_op = memref.CastOp(out_ref_ty, subview_op.result)
 
     with ir.InsertionPoint(self.module.body):
       f = func.FuncOp.from_py_func(in_ref_ty)(body).func_op
