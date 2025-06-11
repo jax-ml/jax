@@ -2250,7 +2250,7 @@ def _reshape_lowering_rule(ctx: LoweringRuleContext, x, new_sizes, dimensions,
   )
 
 
-@register_lowering_rule(lax.squeeze_p)
+@register_lowering_rule(lax.squeeze_p, kernel_types=[*tpu_core.KernelType])
 def _squeeze_lowering_rule(ctx: LoweringRuleContext, x, dimensions):
   del dimensions  # Unused.
   (aval_in,) = ctx.avals_in
@@ -2517,7 +2517,9 @@ def _sub_lowering_rule(ctx: LoweringRuleContext, x, y):
   raise NotImplementedError(aval_out.dtype)
 
 
-@register_lowering_rule(lax.mul_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.mul_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
+)
 def _mul_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
@@ -2528,7 +2530,9 @@ def _mul_lowering_rule(ctx: LoweringRuleContext, x, y):
   raise NotImplementedError(aval_out.dtype)
 
 
-@register_lowering_rule(lax.div_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.div_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
+)
 def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
@@ -2541,7 +2545,9 @@ def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   raise NotImplementedError(aval_out.dtype)
 
 
-@register_lowering_rule(lax.rem_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.rem_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
+)
 def _rem_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
@@ -2574,7 +2580,7 @@ def _neg_lowering_rule(ctx: LoweringRuleContext, x):
   return _sub_lowering_rule(new_ctx, np.array(0, dtype=x_aval.dtype), x)
 
 
-@register_lowering_rule(lax.sign_p)
+@register_lowering_rule(lax.sign_p, kernel_types=[*tpu_core.KernelType])
 def _sign_lowering_rule(ctx: LoweringRuleContext, x):
   return lower_fun(
       pallas_utils.sign_lowering_helper, multiple_results=False,
@@ -2852,7 +2858,9 @@ for prim in [lax.eq_p, lax.ne_p, lax.lt_p, lax.le_p, lax.gt_p, lax.ge_p]:
   )
 
 
-@register_lowering_rule(lax.and_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.and_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
+)
 def _and_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
   return arith.andi(x, y)
@@ -2867,7 +2875,9 @@ def _is_finite_lowering_rule(ctx: LoweringRuleContext, x):
   return _not_lowering_rule(ctx, tpu.weird(out_type, x))
 
 
-@register_lowering_rule(lax.or_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.or_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
+)
 def _or_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
   return arith.ori(x, y)
@@ -2898,7 +2908,7 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
   return arith.xori(x, minus_one)
 
 
-@register_lowering_rule(lax.select_n_p)
+@register_lowering_rule(lax.select_n_p, kernel_types=[*tpu_core.KernelType])
 def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, *args):
   if len(args) > 1:
     raise NotImplementedError("select_n only supported with <= 2 arguments")
@@ -3007,7 +3017,9 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   return for_op.results
 
 
-@register_lowering_rule(lax.scan_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.scan_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
+)
 def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -3181,7 +3193,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
   return if_op.results
 
 
-@register_lowering_rule(pjit.pjit_p)
+@register_lowering_rule(pjit.pjit_p, kernel_types=[*tpu_core.KernelType])
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
   return jaxpr_subcomp(lowering_context, jaxpr.jaxpr, *args)
@@ -3297,7 +3309,7 @@ def _roll_lowering_rule(
   )
 
 
-@register_lowering_rule(lax.slice_p)
+@register_lowering_rule(lax.slice_p, kernel_types=[*tpu_core.KernelType])
 def _slice_lowering_rule(
     ctx: LoweringRuleContext, x, limit_indices, start_indices, strides
 ):
@@ -3314,13 +3326,19 @@ def _slice_lowering_rule(
   )
 
 
-@register_lowering_rule(lax.xor_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.xor_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
+)
 def _xor_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
   return arith.xori(x, y)
 
 
-@register_lowering_rule(lax.shift_left_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.shift_left_p,
+    kernel_types=[*tpu_core.KernelType],
+    ensure_mlir_values=False,
+)
 def _shift_left_lowering_rule(ctx: LoweringRuleContext, x, d):
   x, d = _bcast(x, d, *ctx.avals_in, *ctx.avals_out)
   return arith.shli(x, d)
@@ -3332,7 +3350,11 @@ def _shift_right_arithmetic_lowering_rule(ctx: LoweringRuleContext, x, d):
   return arith.shrsi(x, d)
 
 
-@register_lowering_rule(lax.shift_right_logical_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.shift_right_logical_p,
+    kernel_types=[*tpu_core.KernelType],
+    ensure_mlir_values=False,
+)
 def _shift_right_logical_lowering_rule(ctx: LoweringRuleContext, x, d):
   x, d = _bcast(x, d, *ctx.avals_in, *ctx.avals_out)
   return arith.shrui(x, d)
