@@ -313,7 +313,6 @@ py_library_providing_imports_info(
             "_src/cudnn/**/*.py",
             "_src/debugger/**/*.py",
             "_src/image/**/*.py",
-            "_src/export/**/*.py",
             "_src/lax/**/*.py",
             "_src/nn/**/*.py",
             "_src/numpy/**/*.py",
@@ -386,6 +385,7 @@ py_library_providing_imports_info(
         ":earray",
         ":effects",
         ":environment_info",
+        ":export",
         ":ffi",
         ":internal_mesh_utils",
         ":jaxpr_util",
@@ -828,6 +828,34 @@ pytype_strict_library(
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "export",
+    srcs = glob([
+        "_src/export/**/*.py",
+    ]),
+    visibility = [":internal"] + jax_visibility("export"),
+    deps = [
+        ":ad_util",
+        ":api",
+        ":config",
+        ":core",
+        ":custom_derivatives",
+        ":dtypes",
+        ":effects",
+        ":mesh",
+        ":mlir",
+        ":sharding",
+        ":sharding_impls",
+        ":source_info_util",
+        ":stages",
+        ":tree_util",
+        ":typing",
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("flatbuffers") + py_deps("numpy") + py_deps("opt_einsum"),
 )
 
 pytype_strict_library(

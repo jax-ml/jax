@@ -22,6 +22,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src.api import jit, named_call
+from jax._src.export import shape_poly
 from jax._src.lax import lax
 from jax._src.lax.lax import PrecisionLike
 from jax._src.numpy import util
@@ -581,3 +582,5 @@ def _einsum(
 
   return lax._convert_element_type(operands[0], preferred_element_type,
                                    output_weak_type)
+
+_poly_einsum_handlers[shape_poly._DimExpr] = shape_poly._einsum_contract_path

@@ -19,7 +19,7 @@ from __future__ import annotations
 import types
 from collections.abc import Callable, Sequence
 from functools import partial
-from typing import TypeVar
+from typing import Any, TypeVar
 
 try:
   import flatbuffers
@@ -31,7 +31,6 @@ except ImportError as e:
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import prng
 from jax._src import tree_util
 from jax._src.export import serialization_generated as ser_flatbuf
 from jax._src.export import _export
@@ -364,15 +363,16 @@ _dtype_to_dtype_kind = {
     dtypes._float8_e4m3_dtype: ser_flatbuf.DType.f8_e4m3,
     dtypes._float8_e8m0fnu_dtype: ser_flatbuf.DType.f8_e8m0fnu,
     dtypes._float4_e2m1fn_dtype: ser_flatbuf.DType.f4_e2m1fn,
-
-    prng.KeyTy(prng.prngs["threefry2x32"]): ser_flatbuf.DType.key_fry,
-    prng.KeyTy(prng.prngs["rbg"]): ser_flatbuf.DType.key_rbg,
-    prng.KeyTy(prng.prngs["unsafe_rbg"]): ser_flatbuf.DType.key_unsafe_rbg,
 }
 
 _dtype_kind_to_dtype = {
     kind: dtype for dtype, kind in _dtype_to_dtype_kind.items()
 }
+
+
+def register_dtype_kind(dtype: Any, kind: int):
+  _dtype_to_dtype_kind[dtype] = kind
+  _dtype_kind_to_dtype[kind] = dtype
 
 
 def _serialize_aval(
