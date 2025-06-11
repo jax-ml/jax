@@ -44,7 +44,7 @@ def cdiv(a: jax.Array, b: jax.Array) -> jax.Array:
 def cdiv(a: int | jax.Array, b: int | jax.Array) -> int | jax.Array:
   if isinstance(a, int) and isinstance(b, int):
     return (a + b - 1) // b
-  return lax.div(a + b - 1, b)
+  return lax.div(a + (b - 1), b)
 
 
 def strides_from_shape(shape: tuple[int, ...]) -> tuple[int, ...]:
