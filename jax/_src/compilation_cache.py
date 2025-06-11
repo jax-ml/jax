@@ -23,7 +23,7 @@ import numpy as np
 
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
 try:
-  import zstandard
+  import zstandard  # pytype: disable=import-error
 except ImportError:
   zstandard = None
 
