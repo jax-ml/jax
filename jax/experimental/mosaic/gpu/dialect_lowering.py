@@ -1072,7 +1072,17 @@ def _slice_smem(result: ir.Type, offset: ir.Value):
       ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
   )
   offset = arith.index_cast(ir.IndexType.get(), offset)
-  return memref.view(result, smem_base, offset, [])
+  lowered_result_type = result
+  if ir.MemRefType.isinstance(result):
+    memref_ty = ir.MemRefType(result)
+    if memref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
+      lowered_result_type = ir.MemRefType.get(
+          memref_ty.shape, _lowered_barrier_type(), memory_space=smem
+      )
+  view = memref.view(lowered_result_type, smem_base, offset, [])
+  if result == lowered_result_type:
+    return view
+  return builtin.unrealized_conversion_cast([result], [view])
 
 
 # The metadata needed to recostruct a vector from its flattened representation.
