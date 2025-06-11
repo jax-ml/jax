@@ -1690,8 +1690,6 @@ def _convert_element_type(
       return to_edtype_p.bind(operand, edtype=new_dtype)
     return from_edtype_p.bind(operand, dtype=np.dtype(new_dtype))
 
-  new_dtype = type_cast(DTypeLike | None, new_dtype)
-
   old_weak_type = dtypes.is_weakly_typed(operand)
   if new_dtype is None:
     new_dtype = old_dtype
