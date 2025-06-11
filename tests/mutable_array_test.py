@@ -29,6 +29,9 @@ from jax._src.state.types import (RefEffect)
 
 config.parse_flags_with_absl()
 
+jtu.request_cpu_devices(8)
+
+
 class MutableArrayTest(jtu.JaxTestCase):
 
   @parameterized.parameters([True, False])
@@ -49,6 +52,35 @@ class MutableArrayTest(jtu.JaxTestCase):
 
     jaxpr = jax.make_jaxpr(f)(x_mut)
     self.assertTrue(any(isinstance(e, RefEffect) for e in jaxpr.effects))
+
+  def test_basic_aot(self):
+    @jax.jit
+    def f(x_mut):
+      x_mut[...] += 1.
+      x_mut[0] += 1
+      x_mut[1] += 5
+
+    x_mut = core.mutable_array(jnp.zeros(3))
+    f.lower(x_mut).compile()(x_mut)
+    self.assertAllClose(x_mut[...], jnp.array([2., 6., 1.]),
+                        check_dtypes=False)
+
+  def test_basic_sharded_aot(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    arr = jax.device_put(np.arange(8.), NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def f(x_mut):
+      x_mut[...] += 1.
+      x_mut[0] += 1
+      x_mut[1] += 5
+
+    x_mut = core.mutable_array(arr)
+    f.lower(x_mut).compile()(x_mut)
+    expected = np.arange(8.) + 1
+    expected[0] += 1
+    expected[1] += 5
+    self.assertAllClose(x_mut[...], expected)
 
   @parameterized.parameters([True, False])
   def test_multiple_inputs_and_outputs(self, jit):
