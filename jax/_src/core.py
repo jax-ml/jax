@@ -2045,6 +2045,8 @@ class ShapedArray(UnshapedArray):
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     self.sharding = get_sharding(sharding, self.shape)
+    # short for varying_manual_axes. See docs at
+    # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
     self.vma = get_vma(vma, self.sharding.mesh)
 
   def lower_val(self, val): return [val]
