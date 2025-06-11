@@ -25,8 +25,6 @@ import operator as op
 from typing import Any, NamedTuple, Union
 from weakref import ref
 
-import numpy as np
-
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
@@ -215,14 +213,6 @@ class JaxprTrace(Trace['JaxprTracer']):
         return self.new_instantiated_literal(const)
       else:
         return self.new_instantiated_const(const)
-
-  def instantiate_const_abstracted(self, tracer) -> JaxprTracer:
-    const = tracer.pval.get_known()
-    if const is None:
-      return tracer
-    else:
-      aval = get_aval(const).update_weak_type(np.isscalar(const))
-      return JaxprTracer(self, PartialVal.unknown(aval), ConstVar(const))
 
   def cur_qdd(self, x):
     const = self.to_jaxpr_tracer(x).pval.get_known()
