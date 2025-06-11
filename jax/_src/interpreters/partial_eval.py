@@ -1931,8 +1931,6 @@ class DynamicJaxprTrace(core.Trace):
       if aval.has_qdd:
         with core.set_current_trace(self.parent_trace):
           aval = core.AvalQDD(aval, core.cur_qdd(c))
-      if hasattr(aval, "weak_type"):
-        aval = aval.update_weak_type(dtypes.is_weakly_typed(c))
       aval = self._lift_tracers_in_aval(aval, source_info)
       tracer = self._new_const(aval, c, source_info)
     return tracer
