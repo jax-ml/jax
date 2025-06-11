@@ -1204,7 +1204,12 @@ class SparseSolverTest(sptu.SparseTestCase):
       return sparse.linalg.spsolve(data, indices, indptr, b, tol, reorder)
     x = sparse_solve(data, indices, indptr, b)
 
-    self.assertAllClose(a @ x, b, rtol=1e-2, atol=1e-3)
+    self.assertAllClose(
+        jnp.matmul(a, x, precision=jax.lax.Precision.HIGHEST),
+        b,
+        rtol=1e-2,
+        atol=1e-3,
+    )
     self._CompileAndCheck(sparse_solve, args_maker)
 
   @jtu.sample_product(
