@@ -622,11 +622,11 @@ def _empty_array(prefix, length_spec, aval):
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
-def _stage_jaxpr(trace: pe.JaxprTrace, source_info, *tracers,
+def _stage_jaxpr(trace: pe.DynamicJaxprTrace, source_info, *tracers,
                  jaxpr: core.ClosedJaxpr):
-  del source_info
   params = dict(call_jaxpr=jaxpr)
-  return trace.default_process_primitive(core.closed_call_p, tracers, params)
+  return trace.default_process_primitive(core.closed_call_p, tracers, params,
+                                         source_info=source_info)
 pe.custom_staging_rules[eval_jaxpr_p] = _stage_jaxpr
 
 @eval_jaxpr_p.def_effectful_abstract_eval  # abstract eval only used for jax2tf

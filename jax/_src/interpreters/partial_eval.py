@@ -1789,6 +1789,7 @@ class JaxprStackFrame:
       self, trace: DynamicJaxprTrace,
       out_tracers: Sequence[Tracer],
       debug_info: core.DebugInfo,
+      source_info: SourceInfo,
     ) -> tuple[Jaxpr, list[Any], list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str, AttrKind]]]]:
     # It's not necessary, but we keep the tracer-to-var mapping injective:
     vars = [v for v in self.tracer_to_var.values() if not isinstance(v, Literal)]
@@ -1796,7 +1797,6 @@ class JaxprStackFrame:
     invars = self.attrs_vars + self.invars
     state_ans, end_trees = unzip2(
         tree_flatten(t) for t in get_states(self.attrs_tracked))
-    source_info = source_info_util.current()
     state_outvars = [self.tracer_to_var[id(trace.to_jaxpr_tracer(x, source_info))]
                      for xs in state_ans for x in xs]
     explicit_outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
@@ -2239,8 +2239,8 @@ class DynamicJaxprTrace(core.Trace):
     return out_tracers
 
   def to_jaxpr(self, out_tracers: Sequence[Tracer],
-               debug_info: core.DebugInfo):
-    return self.frame.to_jaxpr(self, out_tracers, debug_info)
+               debug_info: core.DebugInfo, source_info: SourceInfo):
+    return self.frame.to_jaxpr(self, out_tracers, debug_info, source_info)
 
 
 custom_staging_rules: dict[Primitive, Callable] = {}
@@ -2301,7 +2301,8 @@ def trace_to_jaxpr_dynamic(
       _check_returned_jaxtypes(fun.debug_info, ans)
       out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans)
       _check_no_returned_refs(fun.debug_info, out_tracers)
-      jaxpr, consts, attrs_tracked = trace.frame.to_jaxpr(trace, out_tracers, fun.debug_info)
+      jaxpr, consts, attrs_tracked = trace.frame.to_jaxpr(
+          trace, out_tracers, fun.debug_info, source_info)
       del fun, in_tracers, out_tracers, ans
     finally:
       trace.frame.reset_states(trace)

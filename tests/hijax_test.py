@@ -50,9 +50,9 @@ class HiPrimitive(core.Primitive):
     pe.custom_staging_rules[self] = self.staging
 
   def staging(self, trace, source_info, *args, **kwargs):
-    del source_info
     trace.frame.is_high = True
-    return trace.default_process_primitive(self, args, kwargs)
+    return trace.default_process_primitive(self, args, kwargs,
+                                           source_info=source_info)
 
   def is_high(self, **params):
     return True
