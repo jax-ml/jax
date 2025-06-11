@@ -2010,9 +2010,10 @@ def pjit_staging_rule(trace, source_info, *args, **params):
     new_params = dict(params, jaxpr=jaxpr, in_shardings=in_shardings,
                       in_layouts=in_layouts, donated_invars=donated_invars)
     out_tracers = trace.default_process_primitive(
-        pjit_p, (*args, *consts), new_params)
+        pjit_p, (*args, *consts), new_params, source_info=source_info)
   else:
-    out_tracers = trace.default_process_primitive(pjit_p, args, params)
+    out_tracers = trace.default_process_primitive(
+        pjit_p, args, params, source_info=source_info)
 
   return out_tracers
 pe.custom_staging_rules[pjit_p] = pjit_staging_rule
