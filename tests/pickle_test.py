@@ -190,8 +190,23 @@ class PickleTest(jtu.JaxTestCase):
   def test_pickle_named_sharding(self):
     s = jax.sharding.NamedSharding(
         mesh=jax.sharding.Mesh(np.array(jax.devices()), 'd'),
-        spec=jax.sharding.PartitionSpec('d'))
+        spec=jax.sharding.PartitionSpec('d'),
+    )
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
+
+  @unittest.skipIf(cloudpickle is None, 'Requires cloudpickle')
+  def test_pickle_named_sharding_with_memory_kind(self):
+    for memory_kind in (
+        *[memory.kind for memory in jax.devices()[0].addressable_memories()],
+        None,
+    ):
+      with self.subTest(memory_kind=memory_kind):
+        s = jax.sharding.NamedSharding(
+            mesh=jax.sharding.Mesh(np.array(jax.devices()), 'd'),
+            spec=jax.sharding.PartitionSpec('d'),
+            memory_kind=memory_kind,
+        )
+        self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
 
 if __name__ == "__main__":

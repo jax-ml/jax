@@ -74,6 +74,11 @@ ArrayMapping = collections.OrderedDict[MeshAxisName, int]
 ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTO, UnspecifiedValue]
 
 
+def _unpickle_named_sharding(mesh, spec, memory_kind, logical_device_ids):
+  return NamedSharding(mesh, spec, memory_kind=memory_kind,
+                       _logical_device_ids=logical_device_ids)
+
+
 @use_cpp_class(xc.NamedSharding)
 class NamedSharding(JSharding.Sharding):
   r"""A :class:`NamedSharding` expresses sharding using named axes.
@@ -133,9 +138,8 @@ class NamedSharding(JSharding.Sharding):
     return f'NamedSharding(mesh={mesh_repr}, spec={self.spec}{mem}{ldi})'
 
   def __reduce__(self):
-    return (type(self), (self.mesh, self.spec),
-            {'memory_kind': self.memory_kind,
-             '_logical_device_ids': self._logical_device_ids})
+    return (_unpickle_named_sharding,
+            (self.mesh, self.spec, self.memory_kind, self._logical_device_ids))
 
   @property
   def memory_kind(self) -> str | None:
