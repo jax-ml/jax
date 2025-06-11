@@ -105,6 +105,11 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
+#include "xla/stream_executor/cuda/compilation_provider_options.h"
+#include "xla/stream_executor/cuda/subprocess_compilation.h"
+#include "tsl/platform/cuda_root_path.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/path.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace {
@@ -134,16 +139,35 @@ class TemporaryDirectory {
   std::string path;
 };
 
+absl::StatusOr<std::string> GetPtxasPath() {
+  return stream_executor::FindPtxAsExecutable(
+      stream_executor::cuda::CompilationProviderOptions().cuda_data_dir());
+}
+
+absl::StatusOr<std::string> GetNvdisasmPath() {
+  return stream_executor::FindNvdisasmExecutable(
+      stream_executor::cuda::CompilationProviderOptions().cuda_data_dir());
+}
+
 absl::StatusOr<std::string> RunCUDATool(const char* tool,
                                         const std::vector<const char*>& args,
                                         bool stderr_to_stdout = true) {
   CHECK(!args.empty() && args.back() == nullptr);
-  const char* cuda_path_ptr = mosaic::gpu::GetCUDARoot();
-  if (!cuda_path_ptr)
-    return absl::InternalError("Failed to get the CUDA toolkit path");
-  std::string tool_path(cuda_path_ptr);
-  tool_path += "/bin/";
-  tool_path += tool;
+  std::string tool_path;
+  if (strcmp(tool, "nvdisasm") == 0) {
+    absl::StatusOr<std::string> nvdisasm_path = GetNvdisasmPath();
+    if (!nvdisasm_path.ok()) {
+      return absl::InternalError("Failed to get the NVDISASM path");
+    }
+    tool_path = nvdisasm_path.value();
+  }
+  if (strcmp(tool, "ptxas") == 0) {
+    absl::StatusOr<std::string> ptxas_path = GetPtxasPath();
+    if (!ptxas_path.ok()) {
+      return absl::InternalError("Failed to get the PTXAS path");
+    }
+    tool_path = ptxas_path.value();
+  }
   int stdout_pipe[2] = {-1, -1};
   pid_t child_pid;
   posix_spawn_file_actions_t file_actions;
@@ -342,10 +366,6 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
     return true;
   });
-  const char *cuda_root = mosaic::gpu::GetCUDARoot();
-  if (!cuda_root) {
-    return mlir::failure();
-  }
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
@@ -377,8 +397,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly},
         gpu-module-to-binary{format=)",
       mlir::gpu::stringifyCompilationTarget(target).str(),
-      (!nvshmem_path.empty() ? " l=" + nvshmem_path : ""),
-      "  opts=-lineinfo toolkit=", cuda_root,
+      (!nvshmem_path.empty() ? " l=" + nvshmem_path : ""), "  opts=-lineinfo ",
       R"(},
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
