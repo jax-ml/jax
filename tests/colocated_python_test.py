@@ -58,6 +58,20 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         " requires NumPy 2.0.0 or later"
       )
 
+  def testColocatedCpuDevices(self):
+    mesh = jax.sharding.Mesh(
+        np.array(jax.local_devices()[:1]).reshape((1, 1)), ("x", "y")
+    )
+    cpu_mesh1 = colocated_python.colocated_cpu_devices(mesh)
+
+    cpu_devices = colocated_python.colocated_cpu_devices(
+        jax.local_devices()[:1]
+    )
+    cpu_mesh2 = jax.sharding.Mesh(
+        np.array(cpu_devices).reshape((1, 1)), ("x", "y")
+    )
+    self.assertEqual(cpu_mesh1, cpu_mesh2)
+
   def testMakeColocatedPythonProgram(self):
     def add_one(x):
       return x + 1
