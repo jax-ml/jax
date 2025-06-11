@@ -34,6 +34,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "jaxlib/mosaic/gpu/library_paths.h"
 #include "absl/base/call_once.h"
 #include "absl/base/optimization.h"
 #include "absl/cleanup/cleanup.h"
@@ -48,7 +49,6 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-// Leave this comment here. Internal Google business.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/TargetSelect.h"
@@ -134,15 +134,11 @@ class TemporaryDirectory {
   std::string path;
 };
 
-const char *GetCUDARoot() {
-  return getenv("CUDA_ROOT");
-}
-
 absl::StatusOr<std::string> RunCUDATool(const char* tool,
                                         const std::vector<const char*>& args,
                                         bool stderr_to_stdout = true) {
   CHECK(!args.empty() && args.back() == nullptr);
-  const char* cuda_path_ptr = GetCUDARoot();
+  const char* cuda_path_ptr = mosaic::gpu::GetCUDARoot();
   if (!cuda_path_ptr)
     return absl::InternalError("Failed to get the CUDA toolkit path");
   std::string tool_path(cuda_path_ptr);
@@ -346,7 +342,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
     return true;
   });
-  const char *cuda_root = GetCUDARoot();
+  const char *cuda_root = mosaic::gpu::GetCUDARoot();
   if (!cuda_root) {
     return mlir::failure();
   }
