@@ -1095,6 +1095,7 @@ def process_count(
     backend: str | xla_client.Client | None = None
 ) -> int:
   """Returns the number of JAX processes associated with the backend."""
+  print("!!!!!devices %s", devices(backend))
   return max(d.process_index for d in devices(backend)) + 1
 
 
