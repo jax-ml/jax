@@ -1771,3 +1771,16 @@ pytype_library(
         ":jax",
     ],
 )
+
+pytype_library(
+    name = "experimental_mutable_rng",
+    srcs = [
+        "experimental/mutable_rng.py",
+    ],
+    deps = [
+        ":core",
+        ":jax",
+        ":tree_util",
+        ":typing",
+    ] + py_deps("numpy"),
+)
