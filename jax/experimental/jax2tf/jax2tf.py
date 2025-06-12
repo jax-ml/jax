@@ -1534,6 +1534,7 @@ tf_not_yet_impl = [
     "reduce_scatter",
     "axis_index",
     "all_gather",
+    "all_gather_invariant",
     "lu_pivots_to_permutation",
     "xla_pmap",
     "geqrf",
