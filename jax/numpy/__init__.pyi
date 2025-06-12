@@ -456,12 +456,16 @@ def fliplr(m: ArrayLike) -> Array: ...
 def flipud(m: ArrayLike) -> Array: ...
 float16: Any
 float32: Any
+float4_e2m1fn: Any
 float64: Any
+float8_e3m4: Any
+float8_e4m3: Any
 float8_e4m3b11fnuz: Any
 float8_e4m3fn: Any
 float8_e4m3fnuz: Any
 float8_e5m2: Any
 float8_e5m2fnuz: Any
+float8_e8m0fnu: Any
 float_: Any
 def float_power(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 floating = _np.floating
@@ -562,6 +566,7 @@ def inner(
 def insert(arr: ArrayLike, obj: ArrayLike | slice, values: ArrayLike,
            axis: int | None = ...) -> Array: ...
 int16: Any
+int2: Any
 int32: Any
 int4: Any
 int64: Any
@@ -944,6 +949,7 @@ def true_divide(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def trunc(x: ArrayLike, /) -> Array: ...
 uint: Any
 uint16: Any
+uint2: Any
 uint32: Any
 uint4: Any
 uint64: Any
