@@ -17,7 +17,10 @@
 from typing import Any
 
 from jax._src.profiler import (
+    ProfileData as ProfileData,
+    ProfileEvent as ProfileEvent,
     ProfileOptions as ProfileOptions,
+    ProfilePlane as ProfilePlane,
     StepTraceAnnotation as StepTraceAnnotation,
     TraceAnnotation as TraceAnnotation,
     annotate_function as annotate_function,
@@ -29,9 +32,3 @@ from jax._src.profiler import (
     stop_trace as stop_trace,
     trace as trace,
 )
-
-# this is a temporary shim to please pytype in the meantime before the migration
-# is complete for cl/760646494
-ProfileData: Any = None
-ProfileEvent: Any = None
-ProfilePlane: Any = None
