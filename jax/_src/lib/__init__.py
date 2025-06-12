@@ -92,6 +92,7 @@ from jaxlib._jax import pmap_lib as pmap_lib  # noqa: F401
 from jaxlib._jax import pytree as pytree  # noqa: F401
 from jaxlib._jax import Device as Device  # noqa: F401
 from jaxlib import _profiler as _profiler  # noqa: F401
+from jaxlib import _profile_data as _profile_data  # noqa: F401
 
 import jaxlib.xla_client as xla_client  # noqa: F401
 
