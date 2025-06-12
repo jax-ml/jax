@@ -488,6 +488,10 @@ nvidia-nvshmem-cu12==3.2.5 ; sys_platform == "linux" \
     # via
     #   -r build/requirements.in
     #   jax-cuda12-plugin
+nvidia-nvshmem-cu13==0.0.0a0 \
+    --hash=sha256:84d265d7b97dae6ee74139f8f7e37fc65a63e4ebb7287b987a4dca0c0625673d \
+    --hash=sha256:b6900e44e6be1e0e7be6059c5b7a397fb3cb84914784571ab7e20a35bb2b140d
+    # via -r build/requirements.in
 opt-einsum==3.3.0 \
     --hash=sha256:2455e59e3947d3c275477df7f5205b30635e266fe6dc300e3d9f9646bfcea147 \
     --hash=sha256:59f6475f77bbc37dcf7cd748519c0ec60722e91e63ca114e68821c0c54a46549

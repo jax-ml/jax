@@ -72,15 +72,13 @@ WHEEL_BUILD_TARGET_DICT_NEW = {
     "jax_source_package": "//:jax_source_package",
     "jaxlib": "//jaxlib/tools:jaxlib_wheel",
     "jaxlib_editable": "//jaxlib/tools:jaxlib_wheel_editable",
-    "jax-cuda-plugin": "//jaxlib/tools:jax_cuda_plugin_wheel",
-    "jax-cuda-plugin_editable": "//jaxlib/tools:jax_cuda_plugin_wheel_editable",
-    "jax-cuda-pjrt": "//jaxlib/tools:jax_cuda_pjrt_wheel",
-    "jax-cuda-pjrt_editable": "//jaxlib/tools:jax_cuda_pjrt_wheel_editable",
+    "jax-cuda-plugin": "//jaxlib/tools:jax_cuda{cuda_major_version}_plugin_wheel",
+    "jax-cuda-plugin_editable": "//jaxlib/tools:jax_cuda{cuda_major_version}_plugin_wheel_editable",
+    "jax-cuda-pjrt": "//jaxlib/tools:jax_cuda{cuda_major_version}_pjrt_wheel",
+    "jax-cuda-pjrt_editable": "//jaxlib/tools:jax_cuda{cuda_major_version}_pjrt_wheel_editable",
     "jax-rocm-plugin": "//jaxlib/tools:jax_rocm_plugin_wheel",
     "jax-rocm-pjrt": "//jaxlib/tools:jax_rocm_pjrt_wheel",
 }
-
-_JAX_CUDA_VERSION = "12"
 
 def add_global_arguments(parser: argparse.ArgumentParser):
   """Adds all the global arguments that applies to all the CLI subcommands."""
@@ -642,6 +640,11 @@ async def main():
         # https://peps.python.org/pep-0440/
         wheel_git_hash = option.split("=")[-1].lstrip('0')[:9]
 
+  if args.cuda_version:
+    cuda_major_version = args.cuda_version.split(".")[0]
+  else:
+    cuda_major_version = args.cuda_major_version
+
   with open(".jax_configure.bazelrc", "w") as f:
     jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command_base.get_command_as_list(), args.use_new_wheel_build_rule)
     if not jax_configure_options:
@@ -692,6 +695,7 @@ async def main():
         build_target = wheel_build_targets[wheel + "_editable"]
       else:
         build_target = wheel_build_targets[wheel]
+      build_target = build_target.format(cuda_major_version=cuda_major_version)
       wheel_build_command.append(build_target)
       if args.use_new_wheel_build_rule and wheel == "jax" and not args.editable:
         wheel_build_command.append(wheel_build_targets["jax_source_package"])
@@ -709,10 +713,6 @@ async def main():
 
         if "cuda" in wheel:
           wheel_build_command.append("--enable-cuda=True")
-          if args.cuda_version:
-            cuda_major_version = args.cuda_version.split(".")[0]
-          else:
-            cuda_major_version = args.cuda_major_version
           wheel_build_command.append(f"--platform_version={cuda_major_version}")
 
         if "rocm" in wheel:
@@ -738,7 +738,7 @@ async def main():
       else:
         bazel_dir = jaxlib_and_plugins_bazel_dir
       if "cuda" in wheel:
-        wheel_dir = wheel.replace("cuda", f"cuda{_JAX_CUDA_VERSION}").replace(
+        wheel_dir = wheel.replace("cuda", f"cuda{cuda_major_version}").replace(
             "-", "_"
         )
       else:
