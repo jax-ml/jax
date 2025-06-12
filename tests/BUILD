@@ -932,6 +932,10 @@ jax_multiplatform_test(
             "notsan",  # Times out.
         ],
     },
+    env = {
+        # TODO(b/424430576): something is going wrong with AVX512 code generation.
+        "XLA_FLAGS": "--xla_cpu_max_isa=AVX2",
+    },
     shard_count = {
         "cpu": 40,
         "gpu": 40,
