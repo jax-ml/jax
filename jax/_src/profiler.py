@@ -33,6 +33,11 @@ traceback_util.register_exclusion(__file__)
 
 from jax._src import xla_bridge
 from jax._src.lib import _profiler
+from jax._src.lib import _profile_data
+
+ProfileData = _profile_data.ProfileData
+ProfileEvent = _profile_data.ProfileEvent
+ProfilePlane = _profile_data.ProfilePlane
 
 _profiler_server: _profiler.ProfilerServer | None = None
 
