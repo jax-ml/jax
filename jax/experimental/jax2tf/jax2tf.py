@@ -1556,6 +1556,7 @@ tf_not_yet_impl = [
     "bitcast",
     "repeat",
     "roll",
+    "with_memory_space_constraint",
     # temporary pending cudnn fix, see https://github.com/jax-ml/jax/pull/23740
     "bias_fwd",
     "bias_bwd",

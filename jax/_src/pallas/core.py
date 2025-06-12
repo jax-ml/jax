@@ -519,14 +519,20 @@ class BlockSpec:
         )
 
     ref_block_shape = _get_ref_block_shape(block_shape)
-    block_array_aval = array_aval.update(shape=ref_block_shape)
     if isinstance(array_aval, jax_core.DShapedArray):
       # Get the "max" shape for the ragged array.
+      block_array_aval = array_aval.update(shape=ref_block_shape)
       block_array_aval = jax_core.ShapedArray(
           block_array_aval.shape,
           block_array_aval.dtype,
           block_array_aval.weak_type,
       )
+    elif isinstance(array_aval, ShapedArrayWithMemorySpace):
+      block_array_aval = jax_core.ShapedArray(
+          ref_block_shape, array_aval.dtype, array_aval.weak_type
+      )
+    else:
+      block_array_aval = array_aval.update(shape=ref_block_shape)
     block_aval = AbstractMemoryRef(block_array_aval, self.memory_space)
 
     if (

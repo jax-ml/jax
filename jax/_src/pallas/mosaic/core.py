@@ -108,6 +108,7 @@ class MemorySpace(enum.Enum):
   SMEM = "smem"
   CMEM = "cmem"
   SEMAPHORE = "semaphore_mem"
+  HBM = "hbm"
 
   def __str__(self) -> str:
     return self.value
