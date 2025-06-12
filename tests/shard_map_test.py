@@ -58,14 +58,14 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 # Helper for some tests.
-def create_inputs(a_sharding, b_sharding):
+def create_inputs(a_sharding, b_sharding, dtype=None):
   mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
   b, e, f = 8, 8, 8  # pylint: disable=invalid-name
   m1 = jax.device_put(
-      jnp.arange(b * e).reshape((b, e)),
+      jnp.arange(b * e, dtype=dtype).reshape((b, e)),
       jax.sharding.NamedSharding(mesh, a_sharding))
   m2 = jax.device_put(
-      jnp.arange(e * f).reshape((e, f)),
+      jnp.arange(e * f, dtype=dtype).reshape((e, f)),
       jax.sharding.NamedSharding(mesh, b_sharding))
   return mesh, m1, m2
 
@@ -95,17 +95,13 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh, a, _ = create_inputs(P('z', ('x', 'y')), P(None, None))
     assert a.addressable_data(0).shape == (4, 2)
 
-    # NOTE(mattjj): to use out_specs=P(None, ('x', 'y')), we need to use
-    # all_gather_invariant primitive, which differs in its output replication
-    # type compared to all_gather.
     @jax.jit
     @partial(shard_map, mesh=mesh,
              in_specs=(P('z', ('x', 'y')),), out_specs=P('z', ('x', 'y')))
     def fwd(a):
-      return (
-          lax.all_gather(a, 'z', axis=0, tiled=True),
-          lax.all_gather(a, ('x', 'y'), axis=-1, tiled=True),
-      )
+      return (lax.all_gather(a, 'z', axis=0, tiled=True),
+              lax.all_gather(a, ('x', 'y'), axis=-1, tiled=True))
+
     c, d = fwd(a)
     self.assertEqual(c.addressable_data(0).shape, (8, 2))
     for i, a_shard in enumerate(np.split(a, 4, axis=1)):
@@ -113,6 +109,64 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(d.addressable_data(0).shape, (4, 8))
     for i, a_shard in enumerate(np.split(a, 2, axis=0)):
       self.assertAllClose(d.addressable_data(i), a_shard)
+
+  def test_all_gather_invariant_basic(self):
+    mesh = jtu.create_mesh((4,), 'x')
+    arr = jnp.arange(8.)
+
+    @jax.jit
+    @shard_map(mesh=mesh, in_specs=P('x'), out_specs=P())
+    def f(a):
+      out = lax.all_gather_invariant(a, 'x', tiled=True)
+      self.assertEqual(out.aval.vma, set())
+      return out
+
+    out = f(arr)
+    self.assertArraysEqual(out, arr)
+
+    jtu.check_grads(f, (arr,), order=2)
+
+    def g(x):
+      return f(x).sum()
+    out = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out.shape, (8,))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+  def test_all_gather_invariant_complex(self):
+    mesh, a, _ = create_inputs(P('z', ('x', 'y')), P(None, None),
+                               dtype=np.float32)
+    assert a.addressable_data(0).shape == (4, 2)
+
+    @jax.jit
+    @shard_map(mesh=mesh, in_specs=(P('z', ('x', 'y')),),
+               out_specs=(P(None, ('x', 'y')), P('z')))
+    def f(a):
+      c = lax.all_gather_invariant(a, 'z', axis=0, tiled=True)
+      self.assertEqual(jax.typeof(c).vma, {'x', 'y'})
+      d = lax.all_gather_invariant(a, ('x', 'y'), axis=-1, tiled=True)
+      self.assertEqual(jax.typeof(d).vma, {'z'})
+      return c, d
+
+    c, d = f(a)
+
+    self.assertEqual(c.addressable_data(0).shape, (8, 2))
+    for i, a_shard in enumerate(np.split(a, 4, axis=1)):
+      self.assertAllClose(c.addressable_data(2 * i), a_shard)
+
+    self.assertEqual(d.addressable_data(0).shape, (4, 8))
+    for i, a_shard in enumerate(np.split(a, 2, axis=0)):
+      self.assertAllClose(d.addressable_data(i), a_shard)
+
+    def g(x):
+      return f(x)[0].sum()
+
+    out1 = jax.jit(jax.grad(g))(a)
+    self.assertEqual(out1.shape, (8, 8))
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P('z', ('x', 'y'))))
+
+    out2 = jax.grad(g)(a)
+    self.assertEqual(out2.shape, (8, 8))
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P('z', ('x', 'y'))))
 
   def test_all_gather_with_axis_index_groups(self):
     mesh, a, _ = create_inputs(P('x', ('y', 'z')), P(None, None))
