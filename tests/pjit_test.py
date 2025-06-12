@@ -8245,7 +8245,8 @@ class PJitErrorTest(jtu.JaxTestCase):
 
   def test_named_sharding_of_none(self):
     mesh = jtu.create_mesh((2,), ('x',))
-    with self.assertRaisesRegex(TypeError, 'Unexpected None'):
+    with self.assertRaisesRegex(
+        TypeError, '(Unexpected None|incompatible function arguments)'):
       jax.NamedSharding(mesh, None)
 
 

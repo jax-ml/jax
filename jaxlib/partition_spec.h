@@ -47,8 +47,10 @@ class PartitionSpec {
   nb_frozenset unreduced() const { return unreduced_; }
   nb_frozenset reduced() const { return reduced_; }
 
-  bool Eq(const nanobind::object& other) const;
-  Py_ssize_t Hash() const;
+  bool operator==(const PartitionSpec& other) const;
+
+  bool Eq(const nanobind::object& other) const;  // Python __eq__
+  Py_hash_t Hash() const;  // Python __hash__
 
   static void Register(nanobind::module_& m);
 

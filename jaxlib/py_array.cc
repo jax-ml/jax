@@ -1173,7 +1173,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
 
     if (*src_devices == *dst_devices && src_memory_kind == dst_memory_kind &&
         array_cs == ifrt::ArrayCopySemantics::kReuseInput) {
-      if (jax::ShardingEqual(py_array.sharding(), dst_sharding)) {
+      if (py_array.sharding().equal(dst_sharding)) {
         results[i] = py_arrays[i];
       } else {
         absl::Span<const int64_t> shape_span = py_array.shape();
