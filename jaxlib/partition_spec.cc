@@ -141,11 +141,17 @@ PartitionSpec::PartitionSpec(nb::tuple partitions, nb_frozenset unreduced,
       unreduced_(std::move(unreduced)),
       reduced_(std::move(reduced)) {}
 
-Py_ssize_t PartitionSpec::Hash() const {
+Py_hash_t PartitionSpec::Hash() const {
   size_t h = absl::HashOf(nb::hash(partitions_), nb::hash(unreduced_),
                           nb::hash(reduced_));
   Py_hash_t s = absl::bit_cast<Py_hash_t>(h);  // Python hashes are signed.
   return s == -1 ? -2 : s;  // -1 must not be used as a Python hash value.
+}
+
+bool PartitionSpec::operator==(const PartitionSpec& other) const {
+  return partitions().equal(other.partitions()) &&
+         unreduced().equal(other.unreduced()) &&
+         reduced().equal(other.reduced());
 }
 
 bool PartitionSpec::Eq(const nb::object& other) const {
@@ -154,9 +160,7 @@ bool PartitionSpec::Eq(const nb::object& other) const {
   }
   PartitionSpec* other_spec;
   if (nb::try_cast<PartitionSpec*>(other, other_spec)) {
-    return partitions().equal(other_spec->partitions()) &&
-           unreduced().equal(other_spec->unreduced()) &&
-           reduced().equal(other_spec->reduced());
+    return *this == *other_spec;
   }
   nb::tuple other_tuple;
   if (nb::try_cast<nb::tuple>(other, other_tuple)) {

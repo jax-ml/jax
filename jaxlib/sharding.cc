@@ -25,6 +25,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/base/casts.h"
 #include "absl/hash/hash.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/partition_spec.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device_list.h"
 #include "jaxlib/sharded_device_array.h"
@@ -130,69 +132,6 @@ int Sharding::SafeNumDevices(nb::handle sharding) {
   return device_set.size();
 }
 
-size_t ShardingHash(nb::handle sharding) {
-  auto type = sharding.type();
-
-  if (type.is(NamedSharding::type())) {
-    const auto* named_sharding = nb::inst_ptr<jax::NamedSharding>(sharding);
-    return absl::Hash<void*>()(named_sharding->mesh().ptr());
-  }
-
-  if (type.is(GSPMDSharding::type())) {
-    auto* gspmd_sharding = nb::inst_ptr<GSPMDSharding>(sharding);
-    return gspmd_sharding->Hash();
-  }
-
-  if (type.is(SingleDeviceSharding::type())) {
-    auto* single_device_sharding = nb::inst_ptr<SingleDeviceSharding>(sharding);
-    return absl::Hash<void*>()(single_device_sharding->device().ptr());
-  }
-
-  return nb::hash(sharding);
-}
-
-bool ShardingEqual(nb::handle a, nb::handle b) {
-  if (a.ptr() == b.ptr()) return true;
-
-  auto a_type = a.type();
-  auto b_type = b.type();
-
-  if (!a_type.is(b_type)) return false;
-
-  if (a_type.is(NamedSharding::type())) {
-    auto* a_named_sharding = nb::inst_ptr<const NamedSharding>(a);
-    auto* b_named_sharding = nb::inst_ptr<const NamedSharding>(b);
-
-    return a_named_sharding->mesh().ptr() == b_named_sharding->mesh().ptr() &&
-           a_named_sharding->spec().equal(b_named_sharding->spec()) &&
-           a_named_sharding->memory_kind().equal(
-               b_named_sharding->memory_kind()) &&
-           a_named_sharding->logical_device_ids().equal(
-               b_named_sharding->logical_device_ids());
-  }
-
-  if (a_type.is(GSPMDSharding::type())) {
-    auto* a_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(a);
-    auto* b_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(b);
-
-    return a_gspmd_sharding == b_gspmd_sharding;
-  }
-
-  if (a_type.is(SingleDeviceSharding::type())) {
-    auto* a_single_device_sharding =
-        nb::inst_ptr<const SingleDeviceSharding>(a);
-    auto* b_single_device_sharding =
-        nb::inst_ptr<const SingleDeviceSharding>(b);
-
-    return a_single_device_sharding->device().ptr() ==
-               b_single_device_sharding->device().ptr() &&
-           a_single_device_sharding->memory_kind().equal(
-               b_single_device_sharding->memory_kind());
-  }
-
-  return a.equal(b);
-}
-
 // This list is to check for valid memory kinds when an AbstractMesh is passed
 // to NamedSharding.
 static const std::array<absl::string_view, 3> valid_memory_kinds = {
@@ -201,7 +140,8 @@ static const std::array<absl::string_view, 3> valid_memory_kinds = {
     "unpinned_host",
 };
 
-NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
+NamedSharding::NamedSharding(nb::object mesh,
+                             xla::nb_class_ptr<PartitionSpec> spec,
                              nb::object memory_kind,
                              nb::object logical_device_ids)
     : Sharding(/*num_devices=*/[&mesh]() {
@@ -211,10 +151,6 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
       spec_(std::move(spec)),
       memory_kind_(std::move(memory_kind)),
       logical_device_ids_(std::move(logical_device_ids)) {
-  if (spec_.is_none()) {
-    throw nb::type_error(
-        "Unexpected None passed as spec for NamedSharding. Did you mean P()?");
-  }
   nb::object idl = nb::object(mesh_.attr("_internal_device_list"));
   if (idl.is_none()) {
     internal_device_list_ = std::nullopt;
@@ -241,7 +177,7 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
   // TODO(phawkins): this leaks a reference to the check_pspec function.
   // A better way to fix this would be to move PartitionSpec and this check into
   // C++.
-  auto init_fn = [](){
+  auto init_fn = []() {
     nb::module_ si = nb::module_::import_("jax._src.named_sharding");
     return std::make_unique<nb::object>(si.attr("check_pspec"));
   };
@@ -254,6 +190,36 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
 /*static*/ void NamedSharding::InitializeType() {
   // Intentionally leaks a reference.
   type_ = nanobind::type<NamedSharding>().inc_ref().ptr();
+}
+
+bool NamedSharding::operator==(const NamedSharding& other) const {
+  // Caution: you may need to update EqualShardingsForJit in jax_jit.cc as well.
+  return mesh().equal(other.mesh()) && *spec() == *other.spec() &&
+         memory_kind().equal(other.memory_kind()) &&
+         logical_device_ids().equal(other.logical_device_ids());
+}
+
+bool NamedSharding::Eq(const nanobind::object& other) const {
+  if (!other.ptr() || other.is_none()) {
+    return false;
+  }
+  const NamedSharding* other_sharding;
+  if (!nb::try_cast<const NamedSharding*>(other, other_sharding)) {
+    return false;
+  }
+  return this == other_sharding || *this == *other_sharding;
+}
+
+nb::object NamedSharding::Hash() const {
+  // Caution: you may need to update HashShardingForJit in jax_jit.cc as well.
+  return hash_.Get([&]() {
+    size_t h =
+        absl::HashOf(nb::hash(mesh_), spec_->Hash(), nb::hash(memory_kind_),
+                     nb::hash(logical_device_ids_));
+    Py_hash_t s = absl::bit_cast<Py_hash_t>(h);  // Python hashes are signed.
+    return nb::cast(
+        s == -1 ? -2 : s);  // -1 must not be used as a Python hash value.
+  });
 }
 
 SingleDeviceSharding::SingleDeviceSharding(nb::object device,
@@ -337,17 +303,21 @@ void RegisterSharding(nb::module_& m) {
   nb::class_<Sharding>(m, "Sharding").def(nb::init<>());
 
   nb::class_<NamedSharding, Sharding>(m, "NamedSharding", nb::dynamic_attr())
-      .def(nb::init<nb::object, nb::object, nb::object, nb::object>(),
-           nb::arg("mesh"), nb::arg("spec").none(),
+      .def(nb::init<nb::object, xla::nb_class_ptr<PartitionSpec>, nb::object,
+                    nb::object>(),
+           nb::arg("mesh"), nb::arg("spec"),
            nb::arg("memory_kind").none() = nb::none(),
            nb::arg("_logical_device_ids").none() = nb::none())
       .def_prop_ro("mesh", &NamedSharding::mesh)
       .def_prop_ro("spec", &NamedSharding::spec)
       .def_prop_ro("_memory_kind", &NamedSharding::memory_kind)
       .def_prop_ro("_logical_device_ids", &NamedSharding::logical_device_ids)
-      .def_prop_ro("_internal_device_list", [](const NamedSharding& s) {
-        return xla::ValueOrThrow(s.internal_device_list());
-      });
+      .def_prop_ro("_internal_device_list",
+                   [](const NamedSharding& s) {
+                     return xla::ValueOrThrow(s.internal_device_list());
+                   })
+      .def("__eq__", &NamedSharding::Eq, nb::arg().none())
+      .def("__hash__", &NamedSharding::Hash);
   NamedSharding::InitializeType();
 
   nb::class_<SingleDeviceSharding, Sharding>(m, "SingleDeviceSharding",

@@ -22,6 +22,7 @@ from typing import Any, Union
 
 from jax._src import config
 from jax._src.util import use_cpp_class, cache, use_cpp_method
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
@@ -145,12 +146,14 @@ class NamedSharding(JSharding.Sharding):
   def memory_kind(self) -> str | None:
     return self._memory_kind
 
+  @use_cpp_method(jaxlib_extension_version >= 353)
   def __hash__(self):
     if not hasattr(self, '_hash'):
       self._hash = hash(
           (self.mesh, self.memory_kind, self.spec, self._logical_device_ids))
     return self._hash
 
+  @use_cpp_method(jaxlib_extension_version >= 353)
   def __eq__(self, other):
     if not isinstance(other, NamedSharding):
       return False
