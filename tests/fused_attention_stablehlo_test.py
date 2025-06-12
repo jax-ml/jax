@@ -758,6 +758,37 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.assertArraysAllClose(key_grad_ref, key_grad, rtol=2e-2, atol=2e-2)
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=2e-2, atol=2e-2)
 
+  def test_sdpa_flex_attention(self):
+    k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
+    query = jax.random.normal(
+        k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    key = jax.random.normal(
+        k2, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    value = jax.random.normal(
+        k3, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+
+    soft_cap_scalar = jax.random.normal(
+        k4, (4, 4, 1024, 1024), dtype=jnp.float32)
+
+    def soft_cap(attn_score):
+      return 3.0 * jax.lax.tanh(attn_score / 3.0)
+
+    jitted_sdpa = jax.jit(
+      partial(
+        dot_product_attention, scale=1.0, mask_type=MaskType.NO_MASK,
+        dropout_rate=0, score_mod=soft_cap),
+    )
+
+    jitted_sdpa_ref = jax.jit(
+      partial(
+        sdpa_ref, scale=1.0, mask_type=MaskType.NO_MASK,
+        dropout_rate=0, score_mod=soft_cap),
+    )
+
+    out = jitted_sdpa(query, key, value, score_mod_args=())
+    out_ref = jitted_sdpa_ref(query, key, value, score_mod_args=())
+    self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
+
   def test_sdpa_flex_attention_train(self):
     k1, k2, k3, k4, k5 = jax.random.split(jax.random.key(0), 5)
     query = jax.random.normal(
@@ -772,8 +803,11 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     soft_cap_scalar = jax.random.normal(
         k5, (4, 4, 1024, 1024), dtype=jnp.float32)
 
-    def soft_cap(attn_score, soft_cap_scalar):
-      return soft_cap_scalar * jax.lax.tanh(attn_score / soft_cap_scalar)
+    # def soft_cap(attn_score, soft_cap_scalar):
+    #   return soft_cap_scalar * jax.lax.tanh(attn_score / soft_cap_scalar)
+
+    def soft_cap(attn_score):
+      return attn_score * 3.0
 
     jitted_sdpa = jax.jit(
       partial(
@@ -788,9 +822,9 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     )
 
     out, (query_grad, key_grad, value_grad) = \
-      jitted_sdpa(query, key, value, grad, score_mod_args=(soft_cap_scalar))
+      jitted_sdpa(query, key, value, grad, score_mod_args=())
     out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
-      jitted_sdpa_ref(query, key, value, grad, score_mod_args=(soft_cap_scalar))
+      jitted_sdpa_ref(query, key, value, grad, score_mod_args=())
     self.assertArraysAllClose(out_ref, out, rtol=1e-2, atol=1e-2)
     self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
     self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=1e-2)

@@ -473,7 +473,8 @@ def _dot_product_attention_fwd_rule(
 
 def _dot_product_attention_bwd_rule(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, score_mod, is_training, res, grad_output):
+    sliding_window_length, score_mod, cudnn_version, return_residual, res,
+    grad_output):
   (query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
    page_table_k, page_table_v, score_mod_args, activation, fwd_output) = res
   if return_residual:
