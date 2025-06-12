@@ -3072,6 +3072,26 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(expect_a_dot, " dot(" in hlo)
     self.assertEqual(not expect_a_dot, " while(" in hlo)
 
+  def test_issue_29329(self):
+
+    def outer_fn(x):
+      def inner_fn(x):
+        return jax.jit(
+            lambda x: lax.platform_dependent(x,
+                                             default=jnp.sin,
+                                             other=jnp.cos))(x)
+
+      _, lin_fn = jax.linearize(inner_fn, x)
+
+      def with_transpose(x):
+        grad = jax.linear_transpose(lin_fn, x)(x)
+        del grad
+        return x
+
+      return jax.lax.cond(x[0][0] > 0., with_transpose, lambda x: x, x)
+
+    jax.vmap(outer_fn)(jnp.ones((5, 10, 10)))
+
   def test_scan_lowering_doesnt_introduce_singleton(self):
     b = 4
     i = 2
