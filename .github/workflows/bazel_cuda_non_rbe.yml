@@ -82,7 +82,7 @@ jobs:
         # informative error message.
         continue-on-error: true
         run: |
-          mkdir -p $(pwd)/dist
+          mkdir -p "$(pwd)/dist"
           gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*py3*none*any.whl" "$(pwd)/dist/"
 
           if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
