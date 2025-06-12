@@ -568,22 +568,42 @@ class WGMMALayoutTest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
-  @parameterized.parameters(jnp.int8, jnp.int16, jnp.int32)
-  def test_sub_byte_conversion(self, jax_dtype_to):
+  @parameterized.product(
+      jax_dtype_to=(
+          jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float8_e4m3fn,
+      ),
+      # Use different layouts to vary the size of the vector dimension.
+      layout=(
+          fa.WGMMA_LAYOUT,
+          fa.WGMMA_LAYOUT_UPCAST_2X,
+          fa.WGMMA_LAYOUT_UPCAST_4X,
+      ),
+  )
+  def test_sub_byte_conversion(self, jax_dtype_to, layout: fa.TiledLayout):
+    if jax_dtype_to == jnp.int32 and layout.vector_length == 8:
+      self.skipTest(
+          "Raises: failed to prove that vector transfers don't cross swizzle"
+          " tile boundaries.")
     jax_dtype_from = jnp.int4
+    if jnp.issubdtype(jax_dtype_to, jnp.integer):
+      is_signed = jnp.issubdtype(jax_dtype_to, jnp.signedinteger)
+    else:
+      is_signed = None
     def kernel(ctx, inp, out, smem):
       del ctx  # Unused.
       smem_inp, smem_out = smem
       copy(inp, smem_inp, swizzle=16)
-      t = mgpu.FragmentedArray.load_tiled(smem_inp, is_signed=True, swizzle=16)
-      t = t.astype(utils.dtype_to_ir_type(jax_dtype_to), is_signed=True)
+      t = mgpu.FragmentedArray.load_tiled(
+          smem_inp, is_signed=True, swizzle=16, layout=layout
+      )
+      t = t.astype(utils.dtype_to_ir_type(jax_dtype_to), is_signed=is_signed)
       t.store_tiled(smem_out, swizzle=32 * jnp.dtype(jax_dtype_to).itemsize)
       copy(smem_out, out, swizzle=32 * jnp.dtype(jax_dtype_to).itemsize)
 
     x = self.prng.integers(
         low=-8, high=7, size=(1, 1, 64, 64), dtype=np.int32
     ).astype(jax_dtype_from)
-    y = x.astype(jax_dtype_to)
+    y = jax.lax.convert_element_type(x, jax_dtype_to)
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, y, (x, y))
     np.testing.assert_array_equal(f(x), y)
 
