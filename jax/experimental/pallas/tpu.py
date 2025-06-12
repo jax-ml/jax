@@ -41,12 +41,14 @@ from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
 from jax._src.pallas.mosaic.primitives import delay as delay
 from jax._src.pallas.mosaic.primitives import get_barrier_semaphore as get_barrier_semaphore
+from jax._src.pallas.mosaic.primitives import get_memory_space as get_memory_space
 from jax._src.pallas.mosaic.primitives import make_async_copy as make_async_copy
 from jax._src.pallas.mosaic.primitives import make_async_remote_copy as make_async_remote_copy
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
 from jax._src.pallas.mosaic.primitives import repeat as repeat
 from jax._src.pallas.mosaic.primitives import roll as roll
+from jax._src.pallas.mosaic.primitives import with_memory_space_constraint as with_memory_space_constraint
 from jax._src.pallas.mosaic.random import sample_block as sample_block
 from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
 
@@ -72,6 +74,7 @@ ANY = MemorySpace.ANY
 CMEM = MemorySpace.CMEM
 SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
+HBM = MemorySpace.HBM
 SEMAPHORE = MemorySpace.SEMAPHORE
 
 import typing as _typing  # pylint: disable=g-import-not-at-top

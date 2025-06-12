@@ -755,3 +755,62 @@ def wrap_pallas_seed(*seeds, impl):
   """Joins scalar into a single PRNG key."""
   impl = jax_random.resolve_prng_impl(impl)
   return join_key_p.bind(*seeds, impl=impl)
+
+
+with_memory_space_constraint_p = jax_core.Primitive(
+    'with_memory_space_constraint')
+
+@with_memory_space_constraint_p.def_impl
+def with_memory_space_constraint_impl(x, *, memory_space):
+  del x, memory_space
+  raise ValueError("Cannot eagerly run with_memory_space_constraint.")
+
+
+@with_memory_space_constraint_p.def_abstract_eval
+def with_memory_space_constraint_abstract_eval(x, *, memory_space):
+  if not isinstance(x, jax_core.ShapedArray):
+    raise NotImplementedError("with_memory_space_constraint only supports "
+                              "arrays.")
+  return pl_core.ShapedArrayWithMemorySpace(
+      x.shape, x.dtype, memory_space=memory_space
+  )
+
+def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
+  del ctx, memory_space
+  return [x]
+mlir.register_lowering(
+    with_memory_space_constraint_p, with_memory_space_constraint_lowering_rule
+)
+
+def with_memory_space_constraint(
+    x: jax.Array, memory_space: Any
+) -> jax.Array:
+  """Constrains the memory space of an array.
+
+  This primitive does not change the value of `x`, but it constrains the
+  memory space where it should be allocated. This is useful to force
+  Pallas to allocate an array in a specific memory space.
+
+  As of now, this only operates on the inputs pallas_calls, as in you can
+  apply this to the arguments of a pallas_call and it will constrain them, but
+  other operations will not respect this constraint.
+
+  Args:
+    x: The array to constrain.
+    memory_space: The memory space to constrain to.
+
+  Returns:
+    The array `x` with the memory space constraint.
+  """
+  if memory_space not in {tpu_core.HBM, tpu_core.VMEM}:
+    raise NotImplementedError(
+        "with_memory_space_constraint only supports HBM and VMEM."
+    )
+  return with_memory_space_constraint_p.bind(x, memory_space=memory_space)
+
+def get_memory_space(x: jax.Array) -> Any:
+  """Queries the memory space of an array."""
+  aval = jax_core.get_aval(x)
+  if isinstance(aval, pl_core.ShapedArrayWithMemorySpace):
+    return aval.memory_space
+  return None
