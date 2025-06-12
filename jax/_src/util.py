@@ -28,6 +28,7 @@ import weakref
 import numpy as np
 
 from jax._src import config
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import weakref_lru_cache as _weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
 
@@ -43,32 +44,36 @@ T1 = TypeVar("T1")
 T2 = TypeVar("T2")
 T3 = TypeVar("T3")
 
-# safe_zip cannot yet be fully annotated, so we use a strategy similar
-# to that used for builtins.zip in python/typeshed. This supports
-# return types matching input types for up to three arguments.
-@overload
-def safe_zip(__arg1: Iterable[T1], /) -> list[tuple[T1]]: ...
-@overload
-def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[tuple[T1, T2]]: ...
-@overload
-def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[tuple[T1, T2, T3]]: ...
-@overload
-def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> list[tuple[Any, ...]]: ...
 
-def safe_zip(*args):
-  """
-  Like builtin :func:`zip`, but with additional safety checks.
+if TYPE_CHECKING or jaxlib_extension_version < 354:
+  # safe_zip cannot yet be fully annotated, so we use a strategy similar
+  # to that used for builtins.zip in python/typeshed. This supports
+  # return types matching input types for up to three arguments.
+  @overload
+  def safe_zip(__arg1: Iterable[T1]) -> list[tuple[T1]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2]) -> list[tuple[T1, T2]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> list[tuple[T1, T2, T3]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> list[tuple[Any, ...]]: ...
 
-  The differences from :func:`zip` are:
+  def safe_zip(*args):
+    """
+    Like builtin :func:`zip`, but with additional safety checks.
 
-  - :func:`safe_zip` checks that at least one argument is provided.
-  - :func:`safe_zip` checks that all arguments have the same length.
-  - :func:`safe_zip` returns an eagerly-evaluated list instead of a
-    lazily-evaluated iterator.
-  """
-  if not args:
-    raise TypeError("safe_zip requires at least 1 argument.")
-  return list(zip(*args, strict=True))
+    The differences from :func:`zip` are:
+
+    - :func:`safe_zip` checks that at least one argument is provided.
+    - :func:`safe_zip` checks that all arguments have the same length.
+    - :func:`safe_zip` returns an eagerly-evaluated list instead of a
+      lazily-evaluated iterator.
+    """
+    if not args:
+      raise TypeError("safe_zip requires at least 1 argument.")
+    return list(zip(*args, strict=True))
+else:
+  safe_zip = jaxlib_utils.safe_zip
 
 
 if TYPE_CHECKING:
