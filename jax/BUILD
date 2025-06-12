@@ -1183,6 +1183,7 @@ py_library_providing_imports_info(
         "@cuda_nvcc//:nvdisasm",
         "@cuda_nvcc//:nvvm",
         "@cuda_nvcc//:ptxas",
+        "@nvidia_nvshmem//:libnvshmem_device",
     ],
     visibility = [
         ":mosaic_gpu_users",

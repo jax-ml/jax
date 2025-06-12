@@ -469,6 +469,7 @@ filegroup(
         "@pypi_nvidia_cusparse_cu12//:whl",
         "@pypi_nvidia_nccl_cu12//:whl",
         "@pypi_nvidia_nvjitlink_cu12//:whl",
+        "@pypi_nvidia_nvshmem_cu12//:whl",
     ],
 )
 

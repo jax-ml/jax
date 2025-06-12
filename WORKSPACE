@@ -145,3 +145,30 @@ load(
 )
 
 nccl_configure(name = "local_config_nccl")
+
+load(
+    "@xla//third_party/nvshmem/hermetic:nvshmem_json_init_repository.bzl",
+    "nvshmem_json_init_repository",
+)
+
+nvshmem_json_init_repository()
+
+load(
+    "@nvshmem_redist_json//:distributions.bzl",
+    "NVSHMEM_REDISTRIBUTIONS",
+)
+load(
+    "@xla//third_party/nvshmem/hermetic:nvshmem_redist_init_repository.bzl",
+    "nvshmem_redist_init_repository",
+)
+
+nvshmem_redist_init_repository(
+    nvshmem_redistributions = NVSHMEM_REDISTRIBUTIONS,
+)
+
+load(
+    "@xla//third_party/nvshmem/hermetic:nvshmem_configure.bzl",
+    "nvshmem_configure",
+)
+
+nvshmem_configure(name = "local_config_nvshmem")
