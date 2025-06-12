@@ -179,7 +179,7 @@ class PagedAttentionKernelTest(PallasBaseTest):
       attn_logits_soft_cap=(None,),
       quantize_k=(True, False),
       quantize_v=(True, False),
-      quant_dtype=(jnp.float8_e4m3fn, jnp.int8),
+      quant_dtype=(jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.int8),
   )
   def test_quantized_paged_attention(
       self,
@@ -198,6 +198,9 @@ class PagedAttentionKernelTest(PallasBaseTest):
   ):
     if not quantize_k and not quantize_v:
       self.skipTest("Skipping since neither (k, v) quantization requested.")
+    if (quant_dtype == jnp.float8_e4m3fn
+        and not jtu.is_cuda_compute_capability_at_least("8.9")):
+      self.skipTest("Skipping since float8_e4m3fn is not supported on < sm89")
     max_kv_len = 2048
     seq_lens = np.asarray([3, 256, 513, 1023, 2048], dtype=jnp.int32)
     q, k_pages, v_pages, block_tables = _generate_qkv(
