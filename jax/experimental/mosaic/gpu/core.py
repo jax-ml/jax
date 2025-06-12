@@ -94,7 +94,21 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
 try:
   from nvidia import nvshmem
 except ImportError:
-  pass
+  # Try to find the nvshmem library in Bazel runfiles.
+  if PYTHON_RUNFILES:
+    libdevice_path = os.path.join(
+        PYTHON_RUNFILES, "nvidia_nvshmem", "lib", "libnvshmem_device.bc"
+    )
+    if os.path.exists(libdevice_path):
+      os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = libdevice_path
+    for root, _, files in os.walk(os.path.join(os.getcwd(), "_solib_local")):
+      if "libnvshmem_host.so.3" in files:
+        os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
+            root, "libnvshmem_host.so.3"
+        )
+        break
+  else:
+    pass
 else:
   if os.environ.get("MOSAIC_GPU_NVSHMEM_BC_PATH") is None:
     os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = os.path.join(

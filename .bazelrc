@@ -146,13 +146,15 @@ build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_8
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
 
-# Default hermetic CUDA and CUDNN versions.
+# Default hermetic CUDA, CUDNN and NVSHMEM versions.
 build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.8.0"
 build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
+build:cuda --repo_env=HERMETIC_NVSHMEM_VERSION="3.2.5"
 build:cuda --@local_config_cuda//cuda:include_cuda_libs=true
 
-# This config is used for building targets with CUDA libraries from stubs.
+# This config is used for building targets with CUDA/NVSHMEM libraries from stubs.
 build:cuda_libraries_from_stubs --@local_config_cuda//cuda:include_cuda_libs=false
+build:cuda_libraries_from_stubs --@local_config_nvshmem//:include_nvshmem_libs=false
 
 # Force the linker to set RPATH, not RUNPATH. When resolving dynamic libraries,
 # ld.so prefers in order: RPATH, LD_LIBRARY_PATH, RUNPATH. JAX sets RPATH to
@@ -332,6 +334,7 @@ build:rbe_linux_x86_64_cuda --config=ci_linux_x86_64_cuda
 build:rbe_linux_x86_64_cuda --repo_env=REMOTE_GPU_TESTING=1
 # Speed up CUDA repos creation by downloading ".tar" dists from the mirror.
 build:rbe_linux_x86_64_cuda --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
+build:rbe_linux_x86_64_cuda --repo_env=USE_NVSHMEM_TAR_ARCHIVE_FILES=1
 
 # RBE configs for Windows
 # Set the remote worker pool
