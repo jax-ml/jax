@@ -37,7 +37,7 @@ jobs:
           persist-credentials: false
       - name: Build JAX
         run: |
-          pushd $WORKSPACE_DIR
+          pushd "$WORKSPACE_DIR"
           python3 build/rocm/ci_build \
             --rocm-version $ROCM_VERSION \
             --base-docker $BASE_IMAGE \
@@ -53,6 +53,5 @@ jobs:
           retention-days: 2
       - name: Run tests
         run: |
-          cd $WORKSPACE_DIR
+          cd "$WORKSPACE_DIR"
           python3 build/rocm/ci_build test $TEST_IMAGE --test-cmd "pytest tests/core_test.py"
-
