@@ -1002,6 +1002,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":hashable_array",
         ":jaxpr_util",
         ":layout",
         ":mesh",
