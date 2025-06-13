@@ -51,6 +51,7 @@ from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray,
                            abstract_token, canonicalize_shape)
 from jax._src.errors import UnexpectedTracerError
+from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -1880,7 +1881,10 @@ def composite(
     out_flat = composite_p.bind(
         *flat_args,
         name=name,
-        attributes=tuple((k, v) for k, v in kwargs.items()),
+        attributes=tuple(
+            (k, HashableArray(v) if isinstance(v, np.ndarray) else v)
+            for k, v in kwargs.items()
+        ),
         version=version,
         jaxpr=closed_jaxpr,
     )

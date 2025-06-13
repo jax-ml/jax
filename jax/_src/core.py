@@ -2277,7 +2277,8 @@ class DShapedArray(UnshapedArray):
             and self.weak_type == other.weak_type)
 
   def __hash__(self):
-    return hash((self.shape, self.dtype, self.weak_type))
+    # We don't hash the contents of the shape because it may contain tracers.
+    return hash((len(self.shape), self.dtype, self.weak_type))
 
   def to_tangent_aval(self):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),

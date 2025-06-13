@@ -579,7 +579,7 @@ class EffectOrderingTest(jtu.JaxTestCase):
       # Runs in a thread.
       res = jax.jit(
           lambda x: callback_p.bind(
-              x, callback=_noop, effect=log_effect, out_avals=[])
+              x, callback=_noop, effect=log_effect, out_avals=())
       )(x)
       tokens.append(dispatch.runtime_tokens.current_tokens[log_effect])
       return res
@@ -635,7 +635,7 @@ class ParallelEffectsTest(jtu.JaxTestCase):
     @jax.pmap
     def f(x):
       callback_p.bind(
-          x, callback=log_value, effect=unordered_log_effect, out_avals=[])
+          x, callback=log_value, effect=unordered_log_effect, out_avals=())
       return x + 1
     f(jnp.arange(2)).block_until_ready()
     jax.effects_barrier()
