@@ -4595,7 +4595,7 @@ def _add_unreduced(out_sharding, x, y):
         f' reduce {lhs_str} via `reshard` before calling `add`.')
   else:
     res_unreduced = frozenset()
-  return out_sharding.with_spec(out_sharding.spec.with_unreduced(res_unreduced))
+  return out_sharding.with_spec(out_sharding.spec.update(unreduced=res_unreduced))
 
 add_p: Primitive = naryop(_input_dtype, [_num, _num], 'add',
                           unreduced_rule=_add_unreduced)
