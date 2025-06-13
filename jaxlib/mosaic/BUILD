@@ -15,6 +15,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 # See the License for the specific language governing permissions and
 # limitations under the License.
 load("//jaxlib:jax.bzl", "mosaic_extension_deps")
+load("//third_party/bazel_rules/rules_cc/cc:cc_test.bzl", "cc_test")
 
 licenses(["notice"])
 
@@ -244,6 +245,17 @@ cc_test(
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Support",
         "@xla//xla/mlir/utils:error_util",
+    ],
+)
+
+cc_test(
+    name = "util_test",
+    srcs = ["dialect/tpu/util_test.cc"],
+    deps = [
+        ":tpu_dialect",
+        "//testing/base/public:gunit_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:Support",
     ],
 )
 
