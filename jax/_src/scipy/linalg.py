@@ -26,10 +26,10 @@ from jax import jit, vmap, jvp
 from jax import lax
 from jax._src import dtypes
 from jax._src.lax import linalg as lax_linalg
-from jax._src.lax import qdwh
 from jax._src.numpy.util import (
     check_arraylike, promote_dtypes, promote_dtypes_inexact,
     promote_dtypes_complex)
+from jax._src.tpu.linalg import qdwh
 from jax._src.typing import Array, ArrayLike
 
 
