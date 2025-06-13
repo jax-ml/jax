@@ -559,7 +559,7 @@ def _einsum(
           spec = out_sharding.spec
           inverse_spec = tuple(spec[result_names.index(name)] for name in names)
           dot_general_out_sharding = NamedSharding(
-              out_sharding.mesh, spec.with_partitions(inverse_spec))
+              out_sharding.mesh, spec.update(partitions=inverse_spec))
         else:
           dot_general_out_sharding = out_sharding  # type: ignore
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))

@@ -210,20 +210,17 @@ class PartitionSpec:
   def count(self, value):
     return self._partitions.count(_canonicalize_partition(value))
 
-  def with_partitions(self, new_partitions):
-    return PartitionSpec(*new_partitions, unreduced=self.unreduced,
-                         reduced=self.reduced)
-
-  def with_unreduced(self, new_unreduced):
-    return PartitionSpec(*self._partitions, unreduced=new_unreduced,
-                         reduced=self.reduced)
+  def update(self, **kwargs):
+    return PartitionSpec(*kwargs.pop("partitions", self._partitions),
+                         unreduced=kwargs.pop("unreduced", self.unreduced),
+                         reduced=kwargs.pop("reduced", self.reduced))
 
   def _normalized_spec_for_aval(self, ndim: int) -> PartitionSpec:
     out = [None if p is _UNCONSTRAINED_PARTITION else p
            for p in self._partitions]
     if len(out) < ndim:
       out.extend([None] * (ndim - len(out)))
-    return self.with_partitions(out)
+    return self.update(partitions=out)
 
 # TODO(phawkins): make this a decorator after the next jaxlib release.
 if not TYPE_CHECKING and jaxlib_extension_version >= 352:
