@@ -385,8 +385,11 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   backend = xla_bridge.get_backend()
   # There is experimental support for cross-host device transfers on TFRT TPU
   # backends only.
-  if (xla_bridge.process_count() == 1 or backend.platform != "tpu" or
-      not backend.platform_version.startswith("TFRT TPU")):
+  # TODO: https://github.com/jax-ml/jax/issues/26645 - Allow backends to be
+  # queried for their cross-host transfer support.
+  if (xla_bridge.process_count() == 1 or backend.platform not in {"gpu", "tpu"}
+      or (backend.platform == "gpu" and not backend.platform_version.startswith("cuda"))
+      or (backend.platform == "tpu" and not backend.platform_version.startswith("TFRT TPU"))):
     return False
   if (src_sharding._internal_device_list.device_kind !=
       dst_sharding._internal_device_list.device_kind):
