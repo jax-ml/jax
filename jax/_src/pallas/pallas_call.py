@@ -32,6 +32,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
+from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -1483,7 +1484,7 @@ def _pallas_call_state_discharge_rule(
       *ref_args,
       *rest_args,
       jaxpr=new_jaxpr,
-      input_output_aliases=new_input_output_aliases,
+      input_output_aliases=tuple(new_input_output_aliases),
       grid_mapping=new_grid_mapping,
       mesh=mesh,
       debug=debug,
@@ -1608,11 +1609,12 @@ def pallas_call(
   )
 
 
+
 def _normalize_compiler_params(
     compiler_params: Mapping[Backend, CompilerParams] | CompilerParams | None,
 ) -> Mapping[Backend, CompilerParams]:
   if compiler_params is None:
-    return {}
+    return FrozenDict({})
   if isinstance(compiler_params, CompilerParams):
     compiler_params = {compiler_params.BACKEND: compiler_params}
   assert isinstance(compiler_params, Mapping)
@@ -1628,6 +1630,8 @@ def _normalize_compiler_params(
           f"Inconsistent backend in compiler_params: {params.BACKEND} !="
           f" {backend}"
       )
+  if not isinstance(compiler_params, FrozenDict):
+    compiler_params = FrozenDict(compiler_params)
   return compiler_params
 
 

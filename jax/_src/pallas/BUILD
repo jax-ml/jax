@@ -45,6 +45,7 @@ py_library(
         "//jax:core",
         "//jax:dtypes",
         "//jax:effects",
+        "//jax:frozen_dict",
         "//jax:mlir",
         "//jax:partial_eval",
         "//jax:pretty_printer",

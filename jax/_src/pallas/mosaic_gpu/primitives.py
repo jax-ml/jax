@@ -1808,7 +1808,7 @@ def _jaxpr_call_discharge(
   outs = jaxpr_call_p.bind(
       *flat_args,
       jaxpr=discharged_jaxpr,
-      ref_treedefs=ref_treedefs,
+      ref_treedefs=tuple(ref_treedefs),
       program_ids_treedef=program_ids_treedef,
   )
   discharged_outs_it = iter(outs[len(jaxpr.outvars) :])
@@ -1861,7 +1861,7 @@ def jaxpr_call(
       *flat_refs,
       *flat_program_ids,
       jaxpr=jaxpr,
-      ref_treedefs=ref_treedefs,
+      ref_treedefs=tuple(ref_treedefs),
       program_ids_treedef=program_ids_treedef,
   )
 

@@ -20,7 +20,7 @@ import enum
 import functools
 import string
 from collections.abc import Hashable
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import jax
 from jax import lax
@@ -346,9 +346,9 @@ max_contiguous_p.def_impl(lambda x, **_: x)
 mlir.register_lowering(max_contiguous_p, lambda _, x, **__: [x])
 
 def max_contiguous(x, values):
-  if not isinstance(values, list):
-    values = [values]
-  return max_contiguous_p.bind(x, values=values)
+  if not isinstance(values, (list, tuple)):
+    values = (values,)
+  return max_contiguous_p.bind(x, values=tuple(values))
 
 @max_contiguous_p.def_abstract_eval
 def _max_contiguous_abstract_eval(aval, **_):
@@ -359,9 +359,8 @@ multiple_of_p = jax_core.Primitive("multiple_of")
 multiple_of_p.def_impl(lambda x, **_: x)
 mlir.register_lowering(multiple_of_p, lambda _, x, **__: [x])
 
-def multiple_of(x: jax.Array, values: list[int] | int) -> jax.Array:
-  if not isinstance(values, list):
-    values = [values]
+def multiple_of(x: jax.Array, values: Sequence[int] | int) -> jax.Array:
+  values = (values,) if isinstance(values, int) else tuple(values)
   return multiple_of_p.bind(x, values=values)
 
 @multiple_of_p.def_abstract_eval
