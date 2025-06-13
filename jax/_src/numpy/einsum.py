@@ -554,7 +554,7 @@ def _einsum(
           dot_general_out_sharding = None
         elif out_sharding is not None and names != result_names:
           if len(result_names) > len(out_sharding.spec):
-            out_sharding = out_sharding.with_spec(
+            out_sharding = out_sharding.update(spec=
                 out_sharding.spec._normalized_spec_for_aval(len(result_names)))
           spec = out_sharding.spec
           inverse_spec = tuple(spec[result_names.index(name)] for name in names)

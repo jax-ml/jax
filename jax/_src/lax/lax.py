@@ -239,7 +239,7 @@ def broadcast_shardings(*avals):
     new_spec = P(*(None,) * (ndim - a.ndim) + a.sharding.spec)
     new_shape = (1,) * (ndim - a.ndim) + a.shape
     aval_list.append(a.update(shape=new_shape,
-                              sharding=a.sharding.with_spec(new_spec)))
+                              sharding=a.sharding.update(spec=new_spec)))
   return broadcasting_sharding_rule('broadcast_shardings', *aval_list)
 
 def _identity(x, **_): return x
@@ -4595,7 +4595,7 @@ def _add_unreduced(out_sharding, x, y):
         f' reduce {lhs_str} via `reshard` before calling `add`.')
   else:
     res_unreduced = frozenset()
-  return out_sharding.with_spec(out_sharding.spec.update(unreduced=res_unreduced))
+  return out_sharding.update(spec=out_sharding.spec.update(unreduced=res_unreduced))
 
 add_p: Primitive = naryop(_input_dtype, [_num, _num], 'add',
                           unreduced_rule=_add_unreduced)
@@ -4995,7 +4995,7 @@ def _to_edtype_abstract_eval(x, *, edtype):
           f"{x.str_short(short_dtypes=True)} to an extended dtype with element "
           f"shape {rep_aval.shape}")
     return x.update(shape=shape_prefix, dtype=edtype,
-                    sharding=x.sharding.with_spec(spec_prefix))
+                    sharding=x.sharding.update(spec=spec_prefix))
   elif isinstance(x, core.DShapedArray):
     return x.update(shape=shape_prefix, dtype=edtype)
   else:
@@ -5088,9 +5088,9 @@ def _bitcast_convert_type_sharding_rule(operand, *, new_dtype):
   if old_nbits == new_nbits:
     return operand.sharding
   elif old_nbits > new_nbits:
-    return operand.sharding.with_spec((*operand.sharding.spec, None))
+    return operand.sharding.update(spec=(*operand.sharding.spec, None))
   else:
-    return operand.sharding.with_spec(operand.sharding.spec[:-1])
+    return operand.sharding.update(spec=operand.sharding.spec[:-1])
 
 def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):
   old_dtype = dtypes.canonicalize_dtype(operand.dtype)
@@ -5364,7 +5364,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   out_axes = np.argsort(unsorted_axes)
   xs = x.aval.sharding
   inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
-  ds = xs.with_spec(inverse_spec)
+  ds = xs.update(spec=inverse_spec)
   dot_general_out = dot_general(g, y, dims, precision=precision,
                                 preferred_element_type=preferred_element_type,
                                 out_sharding=ds)
@@ -6426,7 +6426,7 @@ def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions,
   orig_spec = iter(operand.sharding.spec)
   new_spec = [next(orig_spec) if i in bds else None for i in range(len(shape))]
   assert next(orig_spec, None) is None
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 def _broadcast_in_dim_typecheck_rule(
     _, operand, *dyn_shape, shape, broadcast_dimensions, sharding):
@@ -6764,7 +6764,7 @@ def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
               for op, bdim in zip(batched_args, batch_dims) if bdim is not None)
   operands = [batching.moveaxis(op, bdim, 0) if bdim is not None
               else broadcast(
-                  op, (size,), out_sharding=core.get_aval(op).sharding.with_spec(
+                  op, (size,), out_sharding=core.get_aval(op).sharding.update(spec=
                       (spec, *core.get_aval(op).sharding.spec)))
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
@@ -6978,7 +6978,7 @@ def _squeeze_sharding_rule(operand, *, dimensions):
   dims_set = set(dimensions)
   new_spec = tuple(s for i, s in enumerate(operand.sharding.spec)
                    if i not in dims_set)
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 def _compute_squeeze_shape(shape, dimensions):
   dims_set = set(dimensions)
@@ -7131,7 +7131,7 @@ def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
     else:
       sp = next(fs)
       new_spec.append(sp)
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 def _get_spec_size(sp, mesh):
   tup_sp = sp if isinstance(sp, tuple) else (sp,)
@@ -7154,7 +7154,7 @@ def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
     else:
       new_spec.append(sp)
   assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 
 def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
@@ -7179,7 +7179,7 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
       new_spec.append(next(op_spec))
   assert next(op_spec, None) is None
   assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 
 def _reshape_typecheck_rule(_, operand, *dyn_shape, new_sizes, dimensions,
@@ -7206,7 +7206,7 @@ def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
   if dimensions is None:
     return [reshape(t, operand.aval.shape, out_sharding=operand.aval.sharding)]
   else:
-    t_s = operand.aval.sharding.with_spec(
+    t_s = operand.aval.sharding.update(spec=
         tuple(map(lambda s: s if s is None else str(s),
                   np.take(operand.aval.sharding.spec, dimensions))))
     return [transpose(reshape(t, np.take(operand.aval.shape, dimensions),
@@ -7307,7 +7307,7 @@ def _transpose_shape_rule(operand, *, permutation):
 def _transpose_sharding_rule(operand, *, permutation):
   o_spec = operand.sharding.spec
   new_spec = [o_spec[old_idx] for old_idx in permutation]
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
@@ -7534,7 +7534,7 @@ def _reduce_shape_rule(*avals, computation, jaxpr, dimensions):
 
 def _reduce_sharding_rule(*avals, computation, jaxpr, dimensions):
   operand_avals, _ = split_list(avals, [len(avals) // 2])
-  return [op.sharding.with_spec(tuple_delete(op.sharding.spec, dimensions))
+  return [op.sharding.update(spec=tuple_delete(op.sharding.spec, dimensions))
           for op in operand_avals]
 
 def _reduce_vma_rule(*avals, computation, jaxpr, dimensions):
@@ -7699,7 +7699,7 @@ def _reduce_op_sharding_rule(operand, *, axes):
   axes = frozenset(axes)
   new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec)
                       if i not in axes))
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 reduce_sum_p = standard_primitive(
   _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
@@ -7770,7 +7770,7 @@ def _argminmax_shape_rule(operand, *, axes, index_dtype):
 
 def _argminmax_sharding_rule(operand, *, axes, index_dtype):
   axis, = axes
-  return operand.sharding.with_spec(
+  return operand.sharding.update(spec=
       util.tuple_delete(operand.sharding.spec, axis))
 
 def _argminmax_dtype_rule(operand, *, axes, index_dtype):
@@ -7846,7 +7846,7 @@ def _reduce_logical_shape_rule(operand, *, axes):
   return tuple(np.delete(operand.shape, axes))
 
 def _reduce_logical_sharding_rule(operand, *, axes):
-  return operand.sharding.with_spec(tuple_delete(operand.sharding.spec, axes))
+  return operand.sharding.update(spec=tuple_delete(operand.sharding.spec, axes))
 
 reduce_or_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_or',
@@ -8062,7 +8062,7 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
                     mlir.flatten_ir_values(operands),
                     dimension=mlir.i64_attr(dimension),
                     is_stable=ir.BoolAttr.get(is_stable))
-  scalar_s = lambda a: a.sharding.with_spec(P())
+  scalar_s = lambda a: a.sharding.update(spec=P())
   scalar_avals = [aval.update(shape=(), sharding=scalar_s(aval))
                   for aval in ctx.avals_in]
   scalar_types = safe_map(mlir.aval_to_ir_type, scalar_avals)
@@ -8834,7 +8834,7 @@ _zeros: Callable = partial(full_like, fill_value=0)
 def _zero(x):
   x_aval = core.get_aval(x)
   out = full_like(x, shape=(), fill_value=0,
-                  sharding=x_aval.sharding.with_spec(P()))
+                  sharding=x_aval.sharding.update(spec=P()))
   out = core.pvary(out, tuple(x_aval.vma))
   return out
 
@@ -8843,7 +8843,7 @@ _ones: Callable = partial(full_like, fill_value=1)
 def _one(x):
   x_aval = core.get_aval(x)
   out = full_like(x, shape=(), fill_value=1,
-                  sharding=x_aval.sharding.with_spec(P()))
+                  sharding=x_aval.sharding.update(spec=P()))
   out = core.pvary(out, tuple(x_aval.vma))
   return out
 
