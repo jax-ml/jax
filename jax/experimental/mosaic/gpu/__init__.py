@@ -86,6 +86,7 @@ from .utils import (
     debug_print as debug_print,
     ds as ds,
     fori as fori,
+    is_known_divisible as is_known_divisible,
     memref_fold as memref_fold,
     memref_slice as memref_slice,
     memref_reshape as memref_reshape,
