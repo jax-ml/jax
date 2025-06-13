@@ -2766,7 +2766,7 @@ def with_sharding_constraint(x, shardings):
   # TODO(bartchr): remove `unconstrained_dims` after migrating to Shardy. It's
   # already part of the shardings.
   unconstrained_dims = [get_unconstrained_dims(s)
-                        if isinstance(s, NamedSharding) else {}
+                        if isinstance(s, NamedSharding) else frozenset()
                         for s in shardings_flat]
 
   pjit_check_aval_sharding(
@@ -3190,8 +3190,8 @@ batching.skippable_batchers[layout_constraint_p] = lambda _: ()
 
 def get_unconstrained_dims(sharding: NamedSharding):
   assert sharding.spec is not None
-  return {i for i, axes in enumerate(sharding.spec)
-          if axes is PartitionSpec.UNCONSTRAINED}
+  return frozenset(i for i, axes in enumerate(sharding.spec)
+                   if axes is PartitionSpec.UNCONSTRAINED)
 
 # -------------------- attrs etc --------------------
 
