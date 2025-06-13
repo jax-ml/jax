@@ -387,7 +387,7 @@ def map_with_path(
 
 def broadcast(prefix_tree: Any, full_tree: Any,
               is_leaf: Callable[[Any], bool] | None = None
-              ) -> list[Any]:
+              ) -> Any:
   """Broadcasts a tree prefix into the full structure of a given tree.
 
     Args:
