@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ctypes
 import functools
 import importlib
 import logging
@@ -24,21 +25,28 @@ from jax._src.lib import triton
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
 
-# cuda_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
-# preinstalled jax cuda plugin packages.
-for pkg_name in ['jax_cuda12_plugin', 'jaxlib.cuda']:
-  try:
-    cuda_plugin_extension = importlib.import_module(
-        f'{pkg_name}.cuda_plugin_extension'
-    )
-    cuda_versions = importlib.import_module(
-        f'{pkg_name}._versions'
-    )
-  except ImportError:
-    cuda_plugin_extension = None
-    cuda_versions = None
-  else:
-    break
+cuda_plugin_extension = None
+cuda_versions = None
+
+def _import_extensions():
+  global cuda_plugin_extension
+  global cuda_versions
+
+  # cuda_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
+  # preinstalled jax cuda plugin packages.
+  for pkg_name in ['jax_cuda12_plugin', 'jaxlib.cuda']:
+    try:
+      cuda_plugin_extension = importlib.import_module(
+          f'{pkg_name}.cuda_plugin_extension'
+      )
+      cuda_versions = importlib.import_module(
+          f'{pkg_name}._versions'
+      )
+    except ImportError:
+      cuda_plugin_extension = None
+      cuda_versions = None
+    else:
+      break
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +90,57 @@ def _get_library_path():
   return None
 
 
+def _load(module, libraries):
+  try:
+    m = importlib.import_module(f"nvidia.{module}")
+  except ImportError:
+    m = None
+
+  for lib in libraries:
+    excs = []
+    if m is not None:
+      path = pathlib.Path(m.__path__[0]) / "lib" / lib
+      try:
+        ctypes.cdll.LoadLibrary(path)
+        continue
+      except OSError as e:
+        excs.append(e)
+
+    # TODO(phawkins): check the non-Python path here and error if not found.
+    # # Try again, without the Python module path.
+    # try:
+    #   ctypes.cdll.LoadLibrary(lib)
+    #   continue
+    # except OSError as e:
+    #   excs.append(e)
+    #
+    # if sys.version_info >= (3, 11):
+    #   raise ExceptionGroup(f"Unable to load CUDA library {lib}", excs)  # noqa: F821
+    # else:
+    #   raise RuntimeError(f"Unable to load CUDA library {lib}") from excs[-1]
+
+
+def _load_nvidia_libraries():
+  """Attempts to load NVIDIA's libraries.
+
+  We prefer the Python packages, if present. If not, we fall back to loading
+  them from LD_LIBRARY_PATH. By loading the libraries here, later lookups will
+  find these copies."""
+  _load("cuda_runtime", ["libcudart.so.12"])
+  # cuda_nvrtc isn't directly a dependency of JAX, but CUDNN appears to need it
+  # and at least in CUDA 12.9 has RUNPATHs misconfigured to refer to
+  # nvidia/nvrtc instead of nvidia/cuda_nvrtc.
+  _load("cuda_nvrtc", ["libnvrtc.so.12"])
+  _load("cublas", ["libcublas.so.12", "libcublasLt.so.12"])
+  _load("nccl", ["libnccl.so.2"])
+  _load("cuda_cupti", ["libcupti.so.12"])
+  _load("cusparse", ["libcusparse.so.12"])
+  _load("cusolver", ["libcusolver.so.11"])
+  _load("cufft", ["libcufft.so.11"])
+  _load("nvshmem", ["libnvshmem_host.so.3"])
+  _load("cudnn", ["libcudnn.so.9"])
+
+
 def _check_cuda_versions(raise_on_first_error: bool = False,
                          debug: bool = False):
   assert cuda_versions is not None
@@ -109,6 +168,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
            f"Installed version: {runtime_version}\n"
            f"{req_str}")
     return msg
+
 
   def _version_check(name: str,
                      get_version,
@@ -254,6 +314,8 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
 
 
 def initialize():
+  _load_nvidia_libraries()
+  _import_extensions()
   path = _get_library_path()
   if path is None:
     return
