@@ -319,6 +319,7 @@ py_library_providing_imports_info(
             "_src/scipy/**/*.py",
             "_src/state/**/*.py",
             "_src/third_party/**/*.py",
+            "_src/tpu/**/*.py",
             "experimental/key_reuse/**/*.py",
             "experimental/roofline/**/*.py",
             "image/**/*.py",

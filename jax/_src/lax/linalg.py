@@ -38,10 +38,7 @@ from jax._src import ffi
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lax import control_flow
-from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
-from jax._src.lax import svd as lax_svd
 from jax._src.lax import utils as lax_utils
 from jax._src.lax.lax import _float, _complex, _int
 from jax._src.lib import gpu_linalg
@@ -1160,57 +1157,6 @@ def _eigh_cpu_gpu_lowering(
   return [v, w]
 
 
-def _eigh_tpu_impl(x, *, lower, sort_eigenvalues, subset_by_index):
-  *_, m, n = x.shape
-  assert m == n, (m, n)
-
-  termination_size = 256
-  if not is_constant_dim(m):
-    # TODO: maybe we can relax the check below for shape polymorphism?
-    raise NotImplementedError(
-        "Shape polymorphism for native lowering for eigh is implemented "
-        f"only for the batch dimensions: {x.shape}")
-  if m <= termination_size and (
-      subset_by_index is None or subset_by_index == (0, n)
-  ):
-    eig_vals, eig_vecs = eigh_jacobi(x, lower=lower,
-                                     sort_eigenvalues=sort_eigenvalues)
-    return eig_vecs, eig_vals
-
-  def eigh_qdwh(x):
-    if len(x.shape) > 2:
-      return control_flow.map(eigh_qdwh, x)
-
-    # We should only look at elements from the lower/upper triangle. Reflects
-    # that triangle into the other triangle to form a Hermitian matrix.
-    if lower:
-      mask = lax_internal._tri(bool, (n, n), 0)
-    else:
-      mask = lax.bitwise_not(lax_internal._tri(bool, (n, n), -1))
-    if dtypes.issubdtype(x.dtype, np.complexfloating):
-      re = lax.select(mask, lax.real(x), _T(lax.real(x)))
-      if lower:
-        im_mask = lax_internal._tri(bool, (n, n), -1)
-      else:
-        im_mask = lax.bitwise_not(lax_internal._tri(bool, (n, n), 0))
-      im = lax.imag(x)
-      im = lax.select(im_mask, im, lax.full_like(im, 0))
-      im = lax.select(mask, im, -_T(im))
-      x = lax.complex(re, im)
-    else:
-      x = lax.select(mask, x, _T(x))
-
-    return lax_eigh.eigh(
-        x,
-        sort_eigenvalues=sort_eigenvalues,
-        termination_size=termination_size,
-        subset_by_index=subset_by_index,
-    )
-
-  eig_vals, eig_vecs = eigh_qdwh(x)
-  return eig_vecs, eig_vals
-
-
 def _eigh_jvp_rule(
     primals, tangents, *, lower, sort_eigenvalues, subset_by_index
 ):
@@ -1256,9 +1202,6 @@ eigh_p = linalg_primitive(
     _eigh_dtype_rule, (_float | _complex,), (2,), _eigh_shape_rule, "eigh",
     multiple_results=True)
 ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
-mlir.register_lowering(
-    eigh_p, mlir.lower_fun(_eigh_tpu_impl, multiple_results=True),
-    platform='tpu')
 register_cpu_gpu_lowering(eigh_p, _eigh_cpu_gpu_lowering)
 
 
@@ -2212,57 +2155,12 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
   else:
     return s, u, vt, info
 
-def _svd_tpu(a, *, full_matrices, compute_uv, subset_by_index, algorithm=None):
-  if algorithm is not None and algorithm != SvdAlgorithm.DEFAULT:
-    raise NotImplementedError(
-        "The SVD algorithm parameter is not implemented on TPU.")
-
-  batch_dims = a.shape[:-2]
-  fn = partial(
-      lax_svd.svd,
-      full_matrices=full_matrices,
-      compute_uv=compute_uv,
-      subset_by_index=subset_by_index,
-  )
-  for _ in range(len(batch_dims)):
-    fn = api.vmap(fn)
-
-  if compute_uv:
-    u, s, vh = fn(a)
-    return [s, u, vh]
-  else:
-    s = fn(a)
-    return [s]
-
-def _svd_tpu_lowering_rule(
-    ctx, operand, *, full_matrices, compute_uv, subset_by_index, algorithm=None
-):
-  del algorithm  # unused
-  operand_aval, = ctx.avals_in
-  m, n = operand_aval.shape[-2:]
-
-  if m == 0 or n == 0:
-    return mlir.lower_fun(_empty_svd, multiple_results=True)(
-        ctx,
-        operand,
-        full_matrices=full_matrices,
-        compute_uv=compute_uv,
-    )
-
-  return mlir.lower_fun(_svd_tpu, multiple_results=True)(
-      ctx,
-      operand,
-      full_matrices=full_matrices,
-      compute_uv=compute_uv,
-      subset_by_index=subset_by_index,
-  )
 
 svd_p = linalg_primitive(
     _svd_dtype_rule, (_float | _complex,), (2,), _svd_shape_rule, "svd",
     multiple_results=True)
 ad.primitive_jvps[svd_p] = _svd_jvp_rule
 register_cpu_gpu_lowering(svd_p, _svd_cpu_gpu_lowering)
-mlir.register_lowering(svd_p, _svd_tpu_lowering_rule)
 
 
 # Symmetric product

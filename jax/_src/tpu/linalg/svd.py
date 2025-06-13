@@ -43,6 +43,8 @@ from typing import Any
 import jax
 from jax import lax
 from jax._src import core
+from jax._src.interpreters import mlir
+from jax._src.lax import linalg as lax_linalg
 import jax.numpy as jnp
 
 
@@ -109,6 +111,7 @@ def _svd_tall_and_square_input(
   body_f = lambda args: (correct_rank_deficiency(args[0]), False)
   u_out, _ = lax.while_loop(cond_f, body_f, (u_out, do_correction))
   return (u_out, s_out, v_out)
+
 
 @functools.partial(jax.jit, static_argnums=(1, 2, 3, 4, 5))
 def svd(
@@ -241,3 +244,52 @@ def svd(
     return (v_out, s_out, u_out.T.conj())
 
   return (u_out, s_out, v_out.T.conj())
+
+
+def _svd_tpu(a, *, full_matrices, compute_uv, subset_by_index, algorithm=None):
+  if algorithm is not None and algorithm != lax_linalg.SvdAlgorithm.DEFAULT:
+    raise NotImplementedError(
+        "The SVD algorithm parameter is not implemented on TPU.")
+
+  batch_dims = a.shape[:-2]
+  fn = functools.partial(
+      svd,
+      full_matrices=full_matrices,
+      compute_uv=compute_uv,
+      subset_by_index=subset_by_index,
+  )
+  for _ in range(len(batch_dims)):
+    fn = jax.vmap(fn)
+
+  if compute_uv:
+    u, s, vh = fn(a)
+    return [s, u, vh]
+  else:
+    s = fn(a)
+    return [s]
+
+
+def _svd_tpu_lowering_rule(
+    ctx, operand, *, full_matrices, compute_uv, subset_by_index, algorithm=None
+):
+  del algorithm  # unused
+  operand_aval, = ctx.avals_in
+  m, n = operand_aval.shape[-2:]
+
+  if m == 0 or n == 0:
+    return mlir.lower_fun(lax_linalg._empty_svd, multiple_results=True)(
+        ctx,
+        operand,
+        full_matrices=full_matrices,
+        compute_uv=compute_uv,
+    )
+
+  return mlir.lower_fun(_svd_tpu, multiple_results=True)(
+      ctx,
+      operand,
+      full_matrices=full_matrices,
+      compute_uv=compute_uv,
+      subset_by_index=subset_by_index,
+  )
+
+mlir.register_lowering(lax_linalg.svd_p, _svd_tpu_lowering_rule)
