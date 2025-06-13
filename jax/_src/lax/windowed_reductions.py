@@ -18,13 +18,14 @@ from collections.abc import Callable, Sequence
 from functools import partial
 import warnings
 
-from jax import tree_util
+from jax._src import ad_util
 from jax._src import api_util
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import tree_util
 from jax._src import util
-from jax._src.core import ShapedArray
+from jax._src.core import ClosedJaxpr, ShapedArray, jaxpr_as_fun
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -35,11 +36,8 @@ from jax._src.lax.other import logaddexp
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array
+
 import numpy as np
-from jax._src.core import ClosedJaxpr
-from jax._src.core import jaxpr_as_fun
-from jax._src.interpreters.ad import jvp_jaxpr
-from jax._src import ad_util
 
 map = util.safe_map
 zip = util.safe_zip
@@ -404,7 +402,7 @@ def reduce_window_jvp(
 
   init_value_tangent = map(ad_util.instantiate, init_value_tangent)
   c_reduction_jaxpr = ClosedJaxpr(reduction_jaxpr, consts)
-  jvp_reduction = jvp_jaxpr(c_reduction_jaxpr, (True,) * len(tangents), [False] * len(init_value_tangent))[0]
+  jvp_reduction = ad.jvp_jaxpr(c_reduction_jaxpr, (True,) * len(tangents), [False] * len(init_value_tangent))[0]
 
   def wrapper(left, right):
     pl, tl = util.split_list(left, [n])
