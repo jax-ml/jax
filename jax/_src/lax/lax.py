@@ -7114,8 +7114,7 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   raise core.ShardingTypeError(
       'This reshape is not supported. Please specify the sharding of'
       ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
-      f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
-      f' operand spec: {operand.sharding.spec}')
+      f' operand shape: {operand}, new sizes: {new_sizes}')
 
 def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
   filtered_spec = [sp for sh, sp in zip(operand.shape, operand.sharding.spec)
@@ -7147,8 +7146,7 @@ def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
         raise core.ShardingTypeError(
             'This reshape is not supported. Please specify the sharding of the'
             ' output via the `sharding` argument of jax.lax.reshape. Got'
-            f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
-            f' operand spec: {operand.sharding.spec}')
+            f' operand shape: {operand}, new sizes: {new_sizes}')
     else:
       new_spec.append(sp)
   assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
@@ -7172,8 +7170,7 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
         raise core.ShardingTypeError(
             'This reshape is not supported. Please specify the sharding of the'
             ' output via the `sharding` argument of jax.lax.reshape. Got'
-            f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
-            f' operand spec: {operand.sharding.spec}')
+            f' operand shape: {operand}, new sizes: {new_sizes}')
     else:
       new_spec.append(next(op_spec))
   assert next(op_spec, None) is None
