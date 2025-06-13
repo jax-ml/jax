@@ -879,6 +879,3 @@ def checkpoint_wrapper(
     raise NotImplementedError(msg)
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
                     static_argnums=static_argnums)
-
-# TODO(phawkins): update users to refer to the public name.
-_optimization_barrier = lax_internal.optimization_barrier
