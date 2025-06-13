@@ -256,6 +256,12 @@ class PyClient {
       memory_spaces_;
 };
 
+// Returns the execution stream id set for the current thread.
+inline int64_t& GetExecutionStreamId() {
+  thread_local int64_t execution_stream_id = 0;
+  return execution_stream_id;
+}
+
 }  // namespace xla
 
 #endif  // JAXLIB_PY_CLIENT_H_

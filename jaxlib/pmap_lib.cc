@@ -632,8 +632,11 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
 
   xla::ifrt::ExecuteOptions execute_options = cache_entry.executable->options();
   execute_options.launch_id = cache_entry.executable->GetNextLaunchId();
-  execute_options.execution_stream_id =
-      tsl::Env::Default()->GetCurrentThreadId();
+  execute_options.execution_stream_id = xla::GetExecutionStreamId();
+  if (execute_options.execution_stream_id == 0) {
+    execute_options.execution_stream_id =
+        tsl::Env::Default()->GetCurrentThreadId();
+  }
 
   // A vector of [num_outputs].
   std::vector<xla::ifrt::ArrayRef> output_arrays;
