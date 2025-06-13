@@ -792,6 +792,9 @@ NB_MODULE(_jax, m) {
           -> std::unique_ptr<DistributedRuntimeService> {
         CoordinationServiceImpl::Options options;
         options.num_nodes = num_nodes;
+        options.heartbeat_timeout =
+            max_missing_heartbeats.value_or(10) *
+            absl::Seconds(heartbeat_interval.value_or(10));
         if (heartbeat_interval.has_value()) {
           options.heartbeat_interval = absl::Seconds(*heartbeat_interval);
         }
@@ -838,6 +841,9 @@ NB_MODULE(_jax, m) {
         if (shutdown_timeout.has_value()) {
           options.shutdown_timeout = absl::Seconds(*shutdown_timeout);
         }
+        options.heartbeat_timeout =
+            max_missing_heartbeats.value_or(10) *
+            absl::Seconds(heartbeat_interval.value_or(10));
         if (heartbeat_interval.has_value()) {
           options.heartbeat_interval = absl::Seconds(*heartbeat_interval);
         }
