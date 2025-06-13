@@ -2892,7 +2892,7 @@ def _sharding_constraint_batcher(
       sharding=vmapped_sharding,
       layout=layout,
       context_mesh=context_mesh,
-      unconstrained_dims=unconstrained_dims)
+      unconstrained_dims=frozenset(unconstrained_dims))
   return y, d
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 batching.skippable_batchers[sharding_constraint_p] = lambda _: ()

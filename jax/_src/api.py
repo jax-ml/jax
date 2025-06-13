@@ -2611,8 +2611,8 @@ def device_put(
     for xf, d in zip(x_flat, device_flat):
       _check_sharding(shaped_abstractify(xf), d)
     out_flat = dispatch.device_put_p.bind(
-        *x_flat, devices=device_flat, srcs=src_flat,
-        copy_semantics=copy_semantics)
+        *x_flat, devices=tuple(device_flat), srcs=tuple(src_flat),
+        copy_semantics=tuple(copy_semantics))
     return tree_unflatten(treedef, out_flat)
 
 

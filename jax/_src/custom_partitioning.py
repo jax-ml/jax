@@ -484,10 +484,10 @@ class custom_partitioning:
           args,
           require_static_args_hashable=False,
       )
-      static_args = [args[i] for i in self.static_argnums]
+      static_args = tuple(args[i] for i in self.static_argnums)
       _check_for_tracers(static_args)
     else:
-      static_args = []
+      static_args = ()
       f_, dyn_args = lu.wrap_init(self.fun, debug_info=debug), args
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
