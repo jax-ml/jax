@@ -212,30 +212,6 @@ def kernel(
   return wrapper
 
 
-def _is_known_divisible(value, divisor, fuel=10) -> bool:
-  """Returns True if the value is statically known to be divisible by the divisor."""
-  if divisor == 1:
-    return True
-  if fuel < 0:
-    return False
-  if not isinstance(value.owner, ir.Operation):
-    return False
-  def_op = value.owner.opview
-  match def_op:
-    case arith_dialect.IndexCastOp():
-      return _is_known_divisible(value.owner.operands[0], divisor, fuel - 1)
-    case arith_dialect.ConstantOp():
-      return ir.IntegerAttr(def_op.value).value % divisor == 0
-    case arith_dialect.MulIOp():
-      return (_is_known_divisible(value.owner.operands[0], divisor, fuel // 2) or
-              _is_known_divisible(value.owner.operands[1], divisor, (fuel + 1)// 2))
-    case arith_dialect.SelectOp():
-      return (_is_known_divisible(value.owner.operands[1], divisor, fuel // 2) and
-              _is_known_divisible(value.owner.operands[2], divisor, (fuel + 1)// 2))
-
-  return False
-
-
 @dataclasses.dataclass(frozen=True)
 class GPUMemoryRef(pallas_core.MemoryRef):
   transforms: Sequence[MemoryRefTransform] = ()
@@ -503,7 +479,7 @@ class UntileRef(state_types.Transform):
               f" tiling ({tile})"
           )
         if isinstance(idx.base, ir.Value):
-          if not _is_known_divisible(idx.base, tile):
+          if not mgpu_utils.is_known_divisible(idx.base, tile):
             raise ValueError(
                 "Dynamic slice base index (which is a dynamic value) cannot be"
                 f" statically proven to be divisible by the tiling ({tile})"
