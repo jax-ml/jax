@@ -19,6 +19,7 @@ import numpy as np
 
 from jax._src import ad_util
 from jax._src import core, util
+from jax._src import custom_derivatives
 from jax._src import ops
 from jax._src import prng
 from jax._src import random
@@ -43,6 +44,7 @@ for prim in it.chain(
   ad_util.__dict__.values(),
   ann.__dict__.values(),
   convolution.__dict__.values(),
+  custom_derivatives.__dict__.values(),
   fft.__dict__.values(),
   lax.__dict__.values(),
   linalg.__dict__.values(),
@@ -601,4 +603,19 @@ def _reduce_sum_p_roofline(
       # Size of input, plus output. (We assume that the output is also used
       # as accumulator.)
       unfused_hbm_bytes=int(x.dtype.itemsize * (x.size + result_size)),
+  )
+
+
+@roofline.register_roofline(custom_derivatives.custom_jvp_call_p)
+def _custom_jvp_call_p_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  # Since we have no information about the custom-call, we cannot estimate
+  # the flops or memory usage. Instead, return zeros. This allows us to still
+  # estimate the flops and memory usage of the surrounding computation.
+  return roofline.RooflineResult(
+      unfused_flops=0,
+      unfused_hbm_bytes=0,
   )
