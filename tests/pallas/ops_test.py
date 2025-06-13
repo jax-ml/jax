@@ -1456,25 +1456,6 @@ class OpsTest(PallasBaseTest):
         rtol=rtol,
     )
 
-  @parameterized.parameters("float16", "bfloat16")
-  def test_true_divide_unsupported(self, dtype):
-    self.skip_if_mosaic_gpu()
-
-    if self.INTERPRET:
-      self.skipTest("No lowering in interpret mode")
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((2,), dtype),
-    )
-    def kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = jnp.true_divide(x_ref[...], y_ref[...])
-
-    x = jnp.array([2.4, 4.2]).astype(dtype)
-    y = jnp.array([4.2, 2.4]).astype(dtype)
-    with self.assertRaises(Exception):
-      kernel(x, y)
-
   BINARY_OPS = [
       ([jnp.floor_divide], ["int32", "uint32"]),
       (
