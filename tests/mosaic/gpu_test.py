@@ -27,6 +27,7 @@ import unittest
 from absl.testing import absltest, parameterized
 import jax
 from jax._src import config
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -3430,10 +3431,38 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     x = np.full(shape, element_value, dtype=dtype)
     self.assertArraysEqual(jax.jit(kernel)(), x)
 
-  def test_subview(self):
-    full_shape = (2, 3, 128, 64)
-    offsets = [1, 0, 96, 0]
-    sub_shape = (32, 64)
+  @parameterized.parameters(
+      # Positive offsets will be passsed as static offsets.
+      # Negative offsets will be converted to positive dynamic offsets.
+      ((2, 3, 128, 64), (32, 64), [-1, 0, -96, 0], None, None, None),
+      (
+          (3, 128, 64),
+          (32, 64),
+          [-2, -96, 0],
+          [32, 64],
+          mgpu_dialect.SwizzlingMode.k128ByteSwizzle,
+          None,
+      ),
+      (
+          (128, 128),
+          (64,),
+          [-1, 64],
+          [64],
+          mgpu_dialect.SwizzlingMode.k128ByteSwizzle,
+          "Swizzle transforms .* if the minor dimension is unchanged.",
+      ),
+  )
+  def test_subview(
+      self,
+      full_shape,
+      sub_shape,
+      offsets,
+      tiling,
+      swizzle,
+      error_regex,
+  ):
+    assert len(sub_shape) <= 2
+    sizes = [1] * (len(full_shape) - len(sub_shape)) + list(sub_shape)
 
     def body(
         ctx: launch_context.LaunchContext,
@@ -3441,9 +3470,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         sub_gmem_ref: ir.Value,
         smem: list[ir.Value],
     ):
-      # TODO(dasenov): Add a parametrization to also test subview of transformed
-      # refs.
-
       del ctx
       full_smem_ref, tma_barrier = smem
       dialect_barrier = tma_barrier.as_barrier_memref()
@@ -3471,17 +3497,17 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       # SubView
       dynamic_offsets = [
-          arith.constant(ir.IndexType.get(), offsets[0]),
-          # offsets[1] is a static offset.
-          arith.constant(ir.IndexType.get(), offsets[2]),
+          arith.constant(ir.IndexType.get(), -o) for o in offsets if o < 0
       ]
 
       full_ref_type = ir.MemRefType(full_smem_ref.type)
-      dynamic = ir.ShapedType.get_dynamic_size()
+      dynamic = ir.ShapedType.get_dynamic_stride_or_offset()
       rhs_subview_ref_type = ir.MemRefType.get(
           shape=sub_shape,
           element_type=full_ref_type.element_type,
-          layout=ir.StridedLayoutAttr.get(dynamic, [full_shape[-1], 1]),
+          layout=ir.StridedLayoutAttr.get(
+              dynamic, [full_shape[-1], 1] if len(sub_shape) == 2 else [1]
+          ),
           memory_space=full_ref_type.memory_space,
       )
       sub_smem_ref = memref.SubViewOp(
@@ -3490,16 +3516,32 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           offsets=dynamic_offsets,
           sizes=None,
           strides=None,
-          static_offsets=[dynamic, offsets[1], dynamic, offsets[3]],
-          static_sizes=[1, 1] + list(sub_shape),
-          static_strides=[1, 1, 1, 1],
+          static_offsets=[(dynamic if o < 0 else o) for o in offsets],
+          static_sizes=sizes,
+          static_strides=[1] * len(sizes),
       ).result
+
+      transforms = []
+      if tiling is not None:
+        transforms.append(mgpu_dialect.TileTransformAttr.get(tiling))
+      if swizzle is not None:
+        transforms.append(mgpu_dialect.SwizzleTransformAttr.get(swizzle))
+
+      if transforms:
+        # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.2.
+        if jaxlib.version < (0, 6, 2):
+          self.skipTest("Test requires jaxlib version >= 0.6.2")
+
+        sub_smem_ref = mgpu_dialect.with_transforms(
+            sub_smem_ref,
+            transforms=ir.ArrayAttr.get(transforms),
+        )
 
       # SMEM -> GMEM
       mgpu_dialect.async_store(
           source=sub_smem_ref,
           destination=sub_gmem_ref,
-          indices=[zero_i32, zero_i32],
+          indices=[zero_i32] * len(sub_shape),
           slice_lengths=sub_shape,
       )
       nvvm.cp_async_bulk_wait_group(0)
@@ -3507,23 +3549,34 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     el_type = jnp.bfloat16
     full_jax_shape = jax.ShapeDtypeStruct(full_shape, el_type)
     result_jax_shape = jax.ShapeDtypeStruct(sub_shape, el_type)
-    kernel = mgpu.as_gpu_kernel(
-        body,
-        grid=(1, 1, 1),
-        block=(128, 1, 1),
-        in_shape=(full_jax_shape),
-        out_shape=result_jax_shape,
-        smem_scratch_shape=[full_jax_shape, core.TMABarrier(1)],
-        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
-    )
 
-    prng_key = jax.random.key(1234)
-    x = jax.random.randint(prng_key, full_shape, 0, 10).astype(el_type)
+    def create_kernel():
+      return mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=(full_jax_shape),
+          out_shape=result_jax_shape,
+          smem_scratch_shape=[full_jax_shape, core.TMABarrier(1)],
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )
 
-    self.assertArraysEqual(
-        jax.jit(kernel)(x),
-        x[offsets[0], offsets[1], offsets[2] :, offsets[3] :],
-    )
+    if error_regex:
+      with self.assertRaisesRegex(NotImplementedError, error_regex):
+        # While we expect NotImplementedError here, the test is actually
+        # checking a restricted behaviour that should be a ValueError. However,
+        # our code cannot yet figure out the difference and raise the correct
+        # type.
+        create_kernel()
+    else:
+      prng_key = jax.random.key(1234)
+      x = jax.random.randint(prng_key, full_shape, 0, 10).astype(el_type)
+
+      slicing = tuple(slice(abs(o), abs(o) + s) for o, s in zip(offsets, sizes))
+      self.assertArraysEqual(
+          jax.jit(create_kernel())(x),
+          x[slicing].reshape(sub_shape),
+      )
 
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
