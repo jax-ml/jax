@@ -867,6 +867,12 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
   ]
   return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
+def _psum_sharding(arg, pos_axes, named_axes):
+  sharding = lax._reduce_op_sharding_rule(arg, axes=pos_axes)
+  new_spec = sharding.spec.update(
+      unreduced={u for u in arg.sharding.spec.unreduced if u not in named_axes})
+  return sharding.update(spec=new_spec)
+
 def _psum_invariant_abstract_eval(name, *args, axes, axis_index_groups):
   if not config._check_vma.value:
     return psum_p.abstract_eval(
@@ -895,7 +901,7 @@ def _psum_invariant_abstract_eval(name, *args, axes, axis_index_groups):
   out_avals = [
       core.ShapedArray(
           lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
-          sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes),
+          sharding=_psum_sharding(arg, pos_axes, named_axes),
           vma=frozenset(a for a in arg.vma if a not in named_axes))
       for arg in args
   ]
@@ -1860,7 +1866,13 @@ def _reduce_scatter_effectful_abstract_eval(
                        f"{axis_size}")
     del new_shape[scatter_dimension]
   vma = collective_vma_rule('reduce_scatter', axis_name, x_aval)
-  return (x_aval.update(shape=new_shape, vma=vma),
+  sharding = x_aval.sharding
+  spec = sharding.spec
+  if spec.unreduced:
+    new_spec = spec.update(unreduced={u for u in spec.unreduced
+                                      if u not in axis_name})
+    sharding = sharding.update(spec=new_spec)
+  return (x_aval.update(shape=new_shape, sharding=sharding, vma=vma),
           {*map(core.NamedAxisEffect, axis_name)})
 
 
