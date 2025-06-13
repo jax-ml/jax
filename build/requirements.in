@@ -26,6 +26,7 @@ jax-cuda12-pjrt==0.6.1 ; sys_platform == "linux"
 libtpu ; sys_platform == "linux" and platform_machine == "x86_64"
 
 # For Mosaic GPU collectives
+nvidia-cuda-nvrtc-cu12>=12.1.55 ; sys_platform == "linux"
 nvidia-nvshmem-cu12>=3.2.5 ; sys_platform == "linux"
 
 # Platform-specific dependencies that are being ignored by pip-compile
