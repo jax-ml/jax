@@ -597,7 +597,7 @@ def random_split_abstract_eval(keys_aval, *, shape):
   # don't choose None here?
   new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
   return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
-                           keys_aval.sharding.with_spec(new_spec), keys_aval.vma)
+                           keys_aval.sharding.update(spec=new_spec), keys_aval.vma)
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):

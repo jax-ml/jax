@@ -732,14 +732,14 @@ def linalg_sharding_rule(
   sharding = avals[0].sharding
   if multiple_results:
     return [
-        sharding.with_spec(
+        sharding.update(spec=
             P(*(tuple(batch_spec) + (None,) * (len(s) - len(batch_spec))))
         )
         for s in output_shapes
     ]
   else:
     ndim = len(output_shapes) - len(batch_spec)
-    return sharding.with_spec(P(*(tuple(batch_spec) + (None,) * ndim)))
+    return sharding.update(spec=P(*(tuple(batch_spec) + (None,) * ndim)))
 
 def linalg_vma_rule(multiple_results, shape_rule, name, *avals, **kwargs):
   output_shapes = shape_rule(*avals, **kwargs)

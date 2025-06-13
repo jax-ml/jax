@@ -1938,10 +1938,10 @@ def get_cur_mesh_sharding(spec=None):
 def _make_lengths_same(sharding, ndim):
   pspec = sharding.spec
   if ndim > len(pspec):
-    return sharding.with_spec(pspec._normalized_spec_for_aval(ndim))
+    return sharding.update(spec=pspec._normalized_spec_for_aval(ndim))
   if ndim < len(pspec):
     assert all(s is None for s in pspec[ndim:]), (ndim, pspec)
-    return sharding.with_spec(P(*pspec[:ndim], unreduced=pspec.unreduced))
+    return sharding.update(spec=P(*pspec[:ndim], unreduced=pspec.unreduced))
   assert False, "unreachable"
 
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
@@ -1965,7 +1965,7 @@ def _maybe_modify_sharding(sharding, ndim):
   elif sharding.mesh._are_all_axes_explicit:
     out = sharding
   else:
-    out = sharding.with_spec(modify_spec_for_auto_manual(
+    out = sharding.update(spec=modify_spec_for_auto_manual(
         sharding.spec, sharding.mesh))
   if len(out.spec) != ndim:
     out = _make_lengths_same(out, ndim)
@@ -2152,7 +2152,7 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
 def primal_sharding_to_cotangent_sharding(sharding):
   new_spec = P(*sharding.spec, unreduced=sharding.spec.reduced,
                reduced=sharding.spec.unreduced)
-  return sharding.with_spec(new_spec)
+  return sharding.update(spec=new_spec)
 
 def pvary(x, axis_name):
   if not axis_name:
@@ -2774,7 +2774,7 @@ def _map_shaped_array(
   # assert axis is None or aval.shape[axis] == size
   if axis is None:
     return aval
-  sharding = aval.sharding.with_spec(tuple_delete(aval.sharding.spec, axis))
+  sharding = aval.sharding.update(spec=tuple_delete(aval.sharding.spec, axis))
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                      weak_type=aval.weak_type, sharding=sharding, vma=aval.vma)
 
@@ -2783,7 +2783,7 @@ def _unmap_shaped_array(
     ) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
-    sharding = aval.sharding.with_spec(tuple_insert(
+    sharding = aval.sharding.update(spec=tuple_insert(
         aval.sharding.spec, axis, explicit_mesh_axis))
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding,

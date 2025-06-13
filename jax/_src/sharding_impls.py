@@ -1185,7 +1185,7 @@ def make_key_array_phys_sharding(aval, sharding):
   elif isinstance(sharding, NamedSharding):
     elt_aval = core.physical_element_aval(aval.dtype)
     trailing_spec = [None] * elt_aval.ndim
-    return sharding.with_spec(PartitionSpec(*sharding.spec, *trailing_spec))
+    return sharding.update(spec=PartitionSpec(*sharding.spec, *trailing_spec))
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
     return GSPMDSharding(
@@ -1248,7 +1248,7 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
                    *[None] * (len(phys_shape) - len(phys_sharding.spec)))
     else:
       phys_spec = phys_sharding.spec  # type: ignore
-    return phys_sharding.with_spec(phys_spec[:-elt_aval.ndim])
+    return phys_sharding.update(spec=phys_spec[:-elt_aval.ndim])
   else:
     return get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding)
 

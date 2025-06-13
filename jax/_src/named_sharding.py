@@ -230,12 +230,18 @@ class NamedSharding(JSharding.Sharding):
     return num_partitions == 1
 
   def with_memory_kind(self, kind: str) -> NamedSharding:
-    return NamedSharding(self.mesh, self.spec, memory_kind=kind)
+    return self.update(memory_kind=kind)
 
-  def with_spec(self, spec: PartitionSpec | Sequence[Any]) -> NamedSharding:
+  def update(self, **kwargs) -> NamedSharding:
+    spec = kwargs.pop("spec", self.spec)
     if not isinstance(spec, PartitionSpec):
       spec = PartitionSpec(*spec)
-    return NamedSharding(self.mesh, spec, memory_kind=self.memory_kind)
+    return NamedSharding(
+        mesh=kwargs.pop("mesh", self.mesh),
+        spec=spec,
+        memory_kind=kwargs.pop("memory_kind", self.memory_kind),
+        _logical_device_ids=kwargs.pop("_logical_device_ids",
+                                       self._logical_device_ids))
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
