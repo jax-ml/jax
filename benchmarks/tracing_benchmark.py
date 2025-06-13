@@ -13,12 +13,14 @@
 # limitations under the License.
 
 """Benchmarks for Jax tracing."""
+import functools
 
 import google_benchmark
 import jax
 from jax import random
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -69,6 +71,37 @@ def test_pallas_mqa_splash_attention_lower(state):
 
   while state:
     _ = traced.lower(lowering_platforms=("tpu",))
+    jax.clear_caches()
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def test_jnp_dot_trace(state):
+  fn = jax.jit(jnp.dot)
+  while state:
+    _ = fn.trace(jnp.arange(1024), jnp.arange(1024))
+    jax.clear_caches()
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def test_jnp_concat_trace(state):
+  fn = jax.jit(functools.partial(jnp.concat, axis=0))
+  while state:
+    _ = fn.trace((jnp.ones((1024, 1)), jnp.ones((1024, 1))))
+    jax.clear_caches()
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+# NOTE(dsuo): Linear spacing so it's easier to eyeball historical plots.
+@google_benchmark.option.arg(1)
+@google_benchmark.option.dense_range(128, 896, 128)
+def test_num_multiply_eqns_trace(state):
+  fns = [lambda x: x * x for _ in range(state.range(0))]
+  fn = jax.jit(functools.reduce(lambda a, b: (lambda x: a(b(x))), fns))
+  while state:
+    _ = fn.trace(jnp.ones((1024,)))
     jax.clear_caches()
 
 
