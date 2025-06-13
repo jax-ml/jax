@@ -66,7 +66,7 @@ from jax._src.util import (
     merge_lists, partition_list, safe_map, safe_zip, split_list,
     split_list_checked, unzip2, weakref_lru_cache,)
 from jax._src import xla_bridge as xb
-from jax.tree_util import (
+from jax._src.tree_util import (
     keystr, tree_flatten, tree_flatten_with_path, tree_map, tree_unflatten,
     treedef_is_leaf)
 import numpy as np
