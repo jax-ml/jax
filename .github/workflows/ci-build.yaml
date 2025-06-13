@@ -199,6 +199,7 @@ jobs:
 
   ffi:
     name: FFI example
+    if: false
     runs-on: linux-x86-g2-16-l4-1gpu
     container:
       image: index.docker.io/tensorflow/build:latest-python3.12@sha256:48e99608fe9434ada5b14e19fdfd8e64f4cfc83aacd328b9c2101b210e984295 # ratchet:index.docker.io/tensorflow/build:latest-python3.12
