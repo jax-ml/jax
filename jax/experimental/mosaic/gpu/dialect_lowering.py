@@ -22,6 +22,7 @@ import math
 import operator
 from typing import Any, Sequence, Type, cast
 
+from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -1141,6 +1142,26 @@ def _slice_smem(result: ir.Type, offset: ir.Value):
   if result == lowered_result_type:
     return view
   return builtin.unrealized_conversion_cast([result], [view])
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.2.
+if jaxlib.version >= (0, 6, 2):
+  @_register_lowering(mgpu.WithTransformsOp)
+  def _mgpu_with_transforms_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.WithTransformsOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.WithTransformsOp.
+    This is a noop that simply returns its input.
+    """
+    del ctx
+
+    [in_transforms] = inference_utils.in_transforms(op)
+    unwrapped_source_ref = unwrap_transformed_memref(op.ref, in_transforms)
+    out_transforms = inference_utils.out_transforms(op)[0]
+    wrapped_ref = wrap_transformed_memref(
+        unwrapped_source_ref, op.result.type, out_transforms
+    )
+    return [wrapped_ref]
 
 
 def _tile_transform_offsets(

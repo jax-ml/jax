@@ -22,6 +22,7 @@ from collections.abc import Callable
 from functools import partial
 from typing import cast
 
+from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -342,6 +343,16 @@ def _infer_memref_cast_transforms(
   if transforms is None:
     return None
   return [transforms], [transforms]
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.2.
+if jaxlib.version >= (0, 6, 2):
+  @partial(_add_transform_inference_rule, mgpu.WithTransformsOp)
+  def _infer_mgpu_with_transforms_transforms(
+      op: mgpu.WithTransformsOp,
+  ) -> OptionalTransforms:
+    # Do not change the manually provided transforms.
+    return [op.transforms], [op.transforms]
 
 
 def infer_transforms(module: ir.Module):

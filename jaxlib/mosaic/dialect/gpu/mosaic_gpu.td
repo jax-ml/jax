@@ -532,4 +532,20 @@ def MosaicGPU_CustomPrimitiveOp : Op<MosaicGPU_Dialect, "custom_primitive", []> 
   let hasVerifier = 1;
 }
 
+def MosaicGPU_WithTransformsOp : Op<MosaicGPU_Dialect, "with_transforms",
+    [SameOperandsAndResultType]> {
+  let summary = "A noop that allows manually setting transforms on a memref.";
+  let description = [{
+    This op enforces the provided transforms on the parameter memref.
+  }];
+
+  let arguments = (
+    ins MemRefOf<[AnyType]>:$ref,
+    // Attributes
+    ArrayAttr:$transforms
+  );
+
+  let results = (outs MemRefOf<[AnyType]>);
+}
+
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_
