@@ -55,7 +55,10 @@ class TPUPallasMemorySpaceTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       x = pltpu.with_memory_space_constraint(x, memory_space=memory_space)
-      self.assertEqual(pltpu.get_memory_space(x), memory_space)
+      if color is None:
+        self.assertIsNone(pltpu.get_memory_space(x))
+      else:
+        self.assertEqual(pltpu.get_memory_space(x), memory_space)
       x = g(x)
       return x
 

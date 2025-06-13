@@ -83,6 +83,8 @@ def _get_memory_space_from_aval(
       return None
     case tpu_core.MemorySpace.ANY:
       return None
+    case tpu_core.MemorySpace.HBM:
+      return tpu_custom_call.MemorySpace.HBM
     case tpu_core.MemorySpace.VMEM:
       return tpu_custom_call.MemorySpace.VMEM
     case tpu_core.MemorySpace.SMEM:
