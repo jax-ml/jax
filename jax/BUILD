@@ -902,6 +902,11 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "frozen_dict",
+    srcs = ["_src/frozen_dict.py"],
+)
+
+pytype_strict_library(
     name = "hardware_utils",
     srcs = ["_src/hardware_utils.py"],
 )

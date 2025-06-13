@@ -83,7 +83,7 @@ def elementwise_inline_asm(
       asm=asm,
       constraints=constraints,
       pack=pack,
-      result_shape_dtypes=result_shape_dtypes,
+      result_shape_dtypes=tuple(result_shape_dtypes),
   )
 
 
