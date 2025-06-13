@@ -35,6 +35,7 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src.ad_checkpoint import remat_p
 from jax._src.debugging import debug_callback_p
+from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import partial_eval as pe
 from jax._src.util import weakref_lru_cache
 
@@ -257,16 +258,16 @@ mlir.register_lowering(
 
 def assert_unconsumed(key):
   """Assert that a key is unconsumed"""
-  assert_consumed_value_p.bind(key, value=False)
+  assert_consumed_value_p.bind(key, value=HashableArray(False))
 
 def assert_consumed(key, value=True):
   """Assert that a key is consumed"""
-  assert_consumed_value_p.bind(key, value=value)
+  assert_consumed_value_p.bind(key, value=HashableArray(value))
 
 
 def _check_consumed_value(eqn, consumed):
   """Extra check for use with assert_consumed_value_p"""
-  expected =  eqn.params['value']
+  expected = eqn.params['value'].val
   if not np.all(consumed == expected):
     if np.all(expected):
       raise AssertionError(f"Expected key to be consumed in {eqn}")
@@ -415,7 +416,7 @@ def check_key_reuse(fun: Callable[..., Any], /, *args: Any) -> None:
   function_type_signature(fun, *args)
 
 
-#----------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------
 # key reuse rules for particular primitives:
 
 @dynamic_key_reuse_signature

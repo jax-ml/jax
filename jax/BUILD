@@ -387,6 +387,7 @@ py_library_providing_imports_info(
         ":environment_info",
         ":export",
         ":ffi",
+        ":hashable_array",
         ":internal_mesh_utils",
         ":jaxpr_util",
         ":layout",
@@ -892,6 +893,7 @@ pytype_strict_library(
         ":batching",
         ":core",
         ":effects",
+        ":hashable_array",
         ":layout",
         ":mlir",
         ":typing",
@@ -909,6 +911,12 @@ pytype_strict_library(
 pytype_strict_library(
     name = "hardware_utils",
     srcs = ["_src/hardware_utils.py"],
+)
+
+pytype_strict_library(
+    name = "hashable_array",
+    srcs = ["_src/hashable_array.py"],
+    deps = py_deps("numpy"),
 )
 
 pytype_library(
