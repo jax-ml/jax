@@ -333,7 +333,7 @@ extern "C" int PyArray_tp_clear(PyObject* self) {
       if (obj->initialized) {
         auto traceback = GetPyArrayStorageFromObject(obj)->traceback;
         if (traceback.has_value()) {
-          traceback_str = traceback.value()->ToString();
+          traceback_str = traceback.value().ToString();
         }
       }
       auto error_msg = absl::StrCat(
@@ -458,7 +458,7 @@ struct BatchedCopyToDeviceWithShardingKey {
 PyArray_Storage::PyArray_Storage(
     nb::object aval, bool weak_type, xla::nb_dtype dtype,
     std::vector<int64_t> shape, nb::object sharding, bool committed,
-    nb_class_ptr<PyClient> py_client, std::optional<nb_traceback> traceback,
+    nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
     ifrt::ArrayRef ifrt_array, xla::PjRtFuture<> result_status)
     : aval(std::move(aval)),
       weak_type(weak_type),
@@ -514,10 +514,11 @@ void PyArray::PyInit(PyArray self, nb::object aval, nb::object sharding,
   }
 }
 
-PyArray PyArray::MakeFromSingleDeviceArray(
-    nb_class_ptr<PyClient> py_client, std::optional<nb_traceback> traceback,
-    ifrt::ArrayRef ifrt_array, bool weak_type, bool committed,
-    xla::PjRtFuture<> result_status) {
+PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
+                                           std::optional<Traceback> traceback,
+                                           ifrt::ArrayRef ifrt_array,
+                                           bool weak_type, bool committed,
+                                           xla::PjRtFuture<> result_status) {
   if (!llvm::isa<ifrt::SingleDeviceSharding>(ifrt_array->sharding())) {
     throw XlaRuntimeError(
         InvalidArgument("Constructing single device jax.Array from non-single "
@@ -547,7 +548,7 @@ PyArray PyArray::MakeFromSingleDeviceArray(
 }
 
 PyArray PyArray::MakeFromIfrtArrayAndSharding(
-    nb_class_ptr<PyClient> py_client, std::optional<nb_traceback> traceback,
+    nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
     ifrt::ArrayRef ifrt_array, nb::object sharding, bool weak_type,
     bool committed, bool skip_checks) {
   auto shape_span = ifrt_array->shape().dims();
@@ -606,8 +607,8 @@ PyArray PyArrayResultHandler::Call(PyArray py_array) const {
 PyArray::PyArray(nb::object aval, bool weak_type, nb_dtype dtype,
                  std::vector<int64_t> shape, nb::object sharding,
                  nb_class_ptr<PyClient> py_client,
-                 std::optional<nb_traceback> traceback,
-                 ifrt::ArrayRef ifrt_array, bool committed, bool skip_checks,
+                 std::optional<Traceback> traceback, ifrt::ArrayRef ifrt_array,
+                 bool committed, bool skip_checks,
                  xla::PjRtFuture<> result_status) {
   auto* self =
       PyArray_tp_new(reinterpret_cast<PyTypeObject*>(type_), nullptr, nullptr);
