@@ -3547,11 +3547,6 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     if swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle:
       self.skipTest("No swizzle is not supported by wgmma")
 
-    # TODO(dasenov): This condition is wrong, remove it after we support
-    # reconciling the siwzzle of the a and b operands of wgmma.
-    if transpose_lhs and swizzle != mgpu_dialect.SwizzlingMode.k128ByteSwizzle:
-      self.skipTest("If A is transposed, its swizzle must be 128 bytes.")
-
     if transpose_lhs and load_a_in_registers:
       self.skipTest("The A operand can only be transposed if it is in SMEM.")
 
