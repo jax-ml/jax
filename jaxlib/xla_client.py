@@ -511,12 +511,12 @@ Frame = _xla.Frame
 @contextlib.contextmanager
 def tracebacks(enabled=True):
   """Context manager that enables or disables traceback collection."""
-  saved = Traceback.enabled
-  Traceback.enabled = enabled
+  saved = _xla.tracebacks_enabled()
+  _xla.set_tracebacks_enabled(enabled)
   try:
     yield
   finally:
-    Traceback.enabled = saved
+    _xla.set_tracebacks_enabled(saved)
 
 
 XlaRuntimeError = _xla.XlaRuntimeError

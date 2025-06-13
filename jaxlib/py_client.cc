@@ -552,7 +552,7 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
 namespace {
 
 struct HeapProfileKey {
-  Traceback* traceback;
+  std::optional<Traceback> traceback;
   int64_t size;
   xla::PjRtDevice* device;
   bool operator==(const HeapProfileKey& other) const;
@@ -562,10 +562,10 @@ bool HeapProfileKey::operator==(const HeapProfileKey& other) const {
   if (size != other.size || device != other.device) {
     return false;
   }
-  if ((traceback == nullptr) != (other.traceback == nullptr)) {
+  if ((traceback.has_value()) != (other.traceback.has_value())) {
     return false;
   }
-  if (traceback && traceback->raw_frames() != other.traceback->raw_frames()) {
+  if (traceback.has_value() && traceback->not_equal(*other.traceback)) {
     return false;
   }
   return true;
@@ -574,7 +574,7 @@ bool HeapProfileKey::operator==(const HeapProfileKey& other) const {
 template <typename H>
 H AbslHashValue(H h, const HeapProfileKey& key) {
   if (key.traceback) {
-    h = H::combine(std::move(h), key.traceback->raw_frames());
+    h = H::combine(std::move(h), nb::hash(*key.traceback));
   }
   h = H::combine(std::move(h), key.size, key.device);
   return h;
@@ -587,7 +587,8 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
   absl::flat_hash_set<PjRtBuffer*> buffer_set;
   absl::flat_hash_map<HeapProfileKey, int64_t> entries;
 
-  auto add_buffer_to_profile = [&](PjRtBuffer* buffer, Traceback* traceback) {
+  auto add_buffer_to_profile = [&](PjRtBuffer* buffer,
+                                   std::optional<Traceback> traceback) {
     // We only wish to count each PjRtBuffer once, even though they may be
     // shared by multiple PyArrays.
     if (!buffer->IsDeleted() && buffer_set.insert(buffer).second) {
@@ -613,17 +614,15 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
           "only.");
     }
     for (const auto& buffer : arr->pjrt_buffers()) {
-      TF_RETURN_IF_ERROR(add_buffer_to_profile(
-          buffer.get(),
-          array.traceback() ? array.traceback()->get() : nullptr));
+      TF_RETURN_IF_ERROR(
+          add_buffer_to_profile(buffer.get(), array.traceback()));
     }
   }
 
   for (PyLoadedExecutable* executable = executables_; executable;
        executable = executable->next_) {
-    HeapProfileKey key{
-        executable->traceback() ? executable->traceback()->get() : nullptr,
-        executable->SizeOfGeneratedCodeInBytes(), nullptr};
+    HeapProfileKey key{executable->traceback(),
+                       executable->SizeOfGeneratedCodeInBytes(), nullptr};
     ++entries[key];
   }
 
@@ -642,7 +641,7 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
   for (const auto& entry : entries) {
     auto* sample = builder.profile().add_sample();
     if (entry.first.traceback) {
-      for (const auto& frame : entry.first.traceback->raw_frames()) {
+      for (const auto& frame : entry.first.traceback->RawFrames()) {
         sample->add_location_id(builder.LocationId(frame.first, frame.second));
       }
     }

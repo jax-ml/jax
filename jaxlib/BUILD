@@ -1196,6 +1196,7 @@ cc_library(
         "@tsl//tsl/platform",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla/pjrt:exceptions",
+        "@xla//xla/python:nb_helpers",
         "@xla//xla/tsl/platform:logging",
     ],
 )
