@@ -46,6 +46,6 @@ from jax._src.lax.linalg import (
   tridiagonal_solve_p as tridiagonal_solve_p,
 )
 
-from jax._src.lax.qdwh import (
+from jax._src.tpu.linalg.qdwh import (
   qdwh as qdwh
 )
