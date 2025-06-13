@@ -175,6 +175,17 @@ class PickleTest(jtu.JaxTestCase):
     s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
+  def test_pickle_single_device_sharding_with_memory_kind(self):
+    for memory_kind in (
+        *[memory.kind for memory in jax.devices()[0].addressable_memories()],
+        None,
+    ):
+      with self.subTest(memory_kind=memory_kind):
+        s = jax.sharding.SingleDeviceSharding(
+            jax.devices()[0], memory_kind=memory_kind
+        )
+        self.assertEqual(s, pickle.loads(pickle.dumps(s)))
+
   def test_pickle_pmap_sharding(self):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),
@@ -185,6 +196,15 @@ class PickleTest(jtu.JaxTestCase):
   def test_pickle_gspmd_sharding(self):
     s = GSPMDSharding.get_replicated(jax.devices())
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
+
+  def test_pickle_gspmd_sharding_with_memory_kind(self):
+    for memory_kind in (
+        *[memory.kind for memory in jax.devices()[0].addressable_memories()],
+        None,
+    ):
+      with self.subTest(memory_kind=memory_kind):
+        s = GSPMDSharding.get_replicated(jax.devices(), memory_kind=memory_kind)
+        self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
   def test_pickle_named_sharding(self):

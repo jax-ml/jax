@@ -1498,3 +1498,43 @@ def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
       result = vector.insertelement(elem, result, position=c(offset + i, index))
     offset += vty.shape[0]
   return result
+
+
+def is_known_divisible(value, divisor, max_depth=10) -> bool:
+  """Returns True if the value is statically known to be divisible by the divisor."""
+  if divisor == 1:
+    return True
+  if max_depth < 0 or not isinstance(value.owner, ir.Operation):
+    return False
+
+  new_depth = max_depth - 1
+  def_op = value.owner.opview
+
+  match def_op:
+    case arith.IndexCastOp():
+      return is_known_divisible(value.owner.operands[0], divisor, max_depth - 1)
+    case arith.ConstantOp():
+      return ir.IntegerAttr(def_op.value).value % divisor == 0
+    case arith.MulIOp():
+      # Only cover the case where one operand is divisible. It's still possible
+      # that the final product is divisible, but we don't check that here.
+      return (is_known_divisible(value.owner.operands[0], divisor, new_depth) or
+              is_known_divisible(value.owner.operands[1], divisor, new_depth))
+    case arith.SelectOp():
+      return (is_known_divisible(value.owner.operands[1], divisor, new_depth) and
+              is_known_divisible(value.owner.operands[2], divisor, new_depth))
+    case arith.MaxSIOp() | arith.MinSIOp() | arith.MaxUIOp() | arith.MinUIOp():
+      return (is_known_divisible(value.owner.operands[0], divisor, new_depth) and
+              is_known_divisible(value.owner.operands[1], divisor, new_depth))
+    case arith.AddIOp() | arith.SubIOp():
+      # Only cover the common case where both operads are divisible.
+      return (is_known_divisible(value.owner.operands[0], divisor, new_depth) and
+              is_known_divisible(value.owner.operands[1], divisor, new_depth))
+    case arith.AndIOp():
+      # Only cover the specific case where the divisor is a power of two.
+      return divisor.bit_count() == 1 and (
+          is_known_divisible(value.owner.operands[0], divisor, new_depth)
+          or is_known_divisible(value.owner.operands[1], divisor, new_depth)
+      )
+
+  return False

@@ -2010,9 +2010,10 @@ def pjit_staging_rule(trace, source_info, *args, **params):
     new_params = dict(params, jaxpr=jaxpr, in_shardings=in_shardings,
                       in_layouts=in_layouts, donated_invars=donated_invars)
     out_tracers = trace.default_process_primitive(
-        pjit_p, (*args, *consts), new_params)
+        pjit_p, (*args, *consts), new_params, source_info=source_info)
   else:
-    out_tracers = trace.default_process_primitive(pjit_p, args, params)
+    out_tracers = trace.default_process_primitive(
+        pjit_p, args, params, source_info=source_info)
 
   return out_tracers
 pe.custom_staging_rules[pjit_p] = pjit_staging_rule
@@ -2765,7 +2766,7 @@ def with_sharding_constraint(x, shardings):
   # TODO(bartchr): remove `unconstrained_dims` after migrating to Shardy. It's
   # already part of the shardings.
   unconstrained_dims = [get_unconstrained_dims(s)
-                        if isinstance(s, NamedSharding) else {}
+                        if isinstance(s, NamedSharding) else frozenset()
                         for s in shardings_flat]
 
   pjit_check_aval_sharding(
@@ -2891,7 +2892,7 @@ def _sharding_constraint_batcher(
       sharding=vmapped_sharding,
       layout=layout,
       context_mesh=context_mesh,
-      unconstrained_dims=unconstrained_dims)
+      unconstrained_dims=frozenset(unconstrained_dims))
   return y, d
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
@@ -3189,8 +3190,8 @@ batching.skippable_batchers[layout_constraint_p] = lambda _: ()
 
 def get_unconstrained_dims(sharding: NamedSharding):
   assert sharding.spec is not None
-  return {i for i, axes in enumerate(sharding.spec)
-          if axes is PartitionSpec.UNCONSTRAINED}
+  return frozenset(i for i, axes in enumerate(sharding.spec)
+                   if axes is PartitionSpec.UNCONSTRAINED)
 
 # -------------------- attrs etc --------------------
 

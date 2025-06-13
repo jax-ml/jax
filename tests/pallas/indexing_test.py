@@ -99,12 +99,12 @@ def indexer_strategy(draw, dim, int_indexer_shape
 
 
 @hps.composite
-def nd_indexer_strategy(draw, shape) -> NDIndexer:
+def nd_indices_strategy(draw, shape) -> tuple[int | Slice | jax.Array, ...]:
   num_indices = draw(hps.integers(min_value=0, max_value=len(shape)))
   int_indexer_shape = draw(hnp.array_shapes())
   indices = tuple(draw(indexer_strategy(dim, int_indexer_shape))
                   for dim in shape[:num_indices])
-  return NDIndexer.from_indices_shape(indices, shape)
+  return indices
 
 
 class PallasBaseTest(jtu.JaxTestCase):
@@ -218,7 +218,8 @@ class IndexerTest(jtu.JaxTestCase):
   @hp.given(hps.data())
   def test_ndindexer(self, data):
     shape = data.draw(hnp.array_shapes())
-    indexer = data.draw(nd_indexer_strategy(shape))
+    indices = data.draw(nd_indices_strategy(shape))
+    indexer = NDIndexer.from_indices_shape(indices, shape)
 
     is_int_indexer = [not isinstance(idx, Slice) for idx in indexer.indices]
     rest_indexers, int_indexers = util.partition_list(
@@ -371,7 +372,9 @@ class IndexerOpsTest(PallasBaseTest):
     el_shape = data.draw(hnp.array_shapes(min_dims=2), label="el_shape")
     # TODO(sharadmv,apaszke): enable rank 0 and rank 1 Refs
     # hp.assume(len(el_shape) >= 2)
-    nd_indexer = data.draw(nd_indexer_strategy(el_shape), label="nd_indexer")
+    nd_indexer = NDIndexer.from_indices_shape(
+        data.draw(nd_indices_strategy(el_shape), label="nd_indexer"),
+        el_shape)
     expected_shape = jax.eval_shape(lambda x: x[nd_indexer],
                                     jax.ShapeDtypeStruct(el_shape, jnp.float32))
 

@@ -527,7 +527,7 @@ class EffectOrderingTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
+      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=())
 
     f(2.)
     jax.effects_barrier()
@@ -552,11 +552,11 @@ class EffectOrderingTest(jtu.JaxTestCase):
       # Expensive computation
       x = x.dot(x)
       x = jnp.log(x.sum())
-      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
+      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=())
 
     @jax.jit
     def g(x):
-      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
+      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=())
 
     x = jax.device_put(jnp.ones((500, 500)), jax.devices()[0])
     y = jax.device_put(3., jax.devices()[1])

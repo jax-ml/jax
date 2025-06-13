@@ -1534,6 +1534,7 @@ tf_not_yet_impl = [
     "reduce_scatter",
     "axis_index",
     "all_gather",
+    "all_gather_invariant",
     "lu_pivots_to_permutation",
     "xla_pmap",
     "geqrf",
@@ -1556,6 +1557,7 @@ tf_not_yet_impl = [
     "bitcast",
     "repeat",
     "roll",
+    "with_memory_space_constraint",
     # temporary pending cudnn fix, see https://github.com/jax-ml/jax/pull/23740
     "bias_fwd",
     "bias_bwd",

@@ -1082,6 +1082,67 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     run(jnp.array([[0, 1], [1, 2], [3, 2], [3, 0]], jnp.int32)).block_until_ready()
     self.assertTrue(mosaic_interpret.races.races_found)
 
+  @parameterized.parameters(1, 2, 4)
+  def test_shard_map_of_core_map(self, num_cores):
+    num_devices = jax.device_count()
+    partition = P('x', None)
+    mesh = jax.make_mesh((num_devices,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+
+    core_mesh = pltpu.create_tensorcore_mesh('core', num_cores=num_cores)
+    interpret = pltpu.InterpretParams(detect_races=True)
+
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+      def inner(refs):
+        x_ref, y_ref = refs
+        @pl.core_map(core_mesh, interpret=interpret)
+        def _():
+          num_cores = jax.lax.axis_size('core')
+          slc_size = 16 // num_cores
+          def alloc(x_vmem_ref, y_vmem_ref, dma_sem, sem):
+            # Barrier so we deadlock unless the core_map is actually parallel.
+            for i in range(num_cores):
+              pl.semaphore_signal(sem, 1, core_index=i)
+            pl.semaphore_wait(sem, num_cores)
+
+            core_index = jax.lax.axis_index('core')
+            slc = pl.ds(core_index * slc_size, slc_size)
+            pltpu.async_copy(
+                x_ref.at[slc],
+                x_vmem_ref,
+                dma_sem,
+            ).wait()
+            y = (x_vmem_ref[...] + num_cores * jax.lax.axis_index('x')
+                 + core_index + 1)
+            y_vmem_ref[...] = y
+            pltpu.async_copy(y_vmem_ref, y_ref.at[slc], dma_sem).wait()
+          pl.run_scoped(
+              alloc,
+              pltpu.VMEM((slc_size, 128), x_ref.dtype),
+              pltpu.VMEM((slc_size, 128), y_ref.dtype),
+              pltpu.SemaphoreType.DMA,
+              pltpu.SemaphoreType.REGULAR,
+          )
+      _, y = pl.run_state(inner)((x, y))
+      return y
+
+    x = jnp.arange(num_devices * 16 * 128, dtype=jnp.int32).reshape((-1, 128))
+    y = jax.jit(
+        shard_map.shard_map(f,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )(x).block_until_ready()
+    expected_out = (
+        x.reshape((num_devices, num_cores, -1, 128)) + 1
+        + jnp.arange(num_devices, dtype=jnp.int32)[..., None, None, None] * num_cores
+        + jnp.arange(num_cores, dtype=jnp.int32)[None, ..., None, None]
+    ).reshape(x.shape)
+    np.testing.assert_array_equal(y, expected_out)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

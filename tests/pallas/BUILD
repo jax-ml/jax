@@ -513,6 +513,21 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_pallas_memory_space_test",
+    srcs = ["tpu_pallas_memory_space_test.py"],
+    enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_v5p",
+    ],
+    deps = [
+        "//jax:pallas_tpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "tpu_pallas_state_test",
     srcs = ["tpu_pallas_state_test.py"],
     enable_backends = ["tpu"],

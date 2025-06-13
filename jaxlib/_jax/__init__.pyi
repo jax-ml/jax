@@ -580,6 +580,8 @@ def get_tfrt_cpu_client(
     num_nodes: int = ...,
     collectives: CpuCollectives | None = ...,
     num_devices: int | None = ...,
+    get_local_topology_timeout_minutes: int | None = ...,
+    get_global_topology_timeout_minutes: int | None = ...,
 ) -> Client: ...
 def get_mock_gpu_client(
     asynchronous: bool = ...,
@@ -790,6 +792,8 @@ class Traceback:
       code: types.CodeType, lasti: int
   ) -> tuple[int, int, int, int]: ...
 
+def tracebacks_enabled() -> bool: ...
+def set_tracebacks_enabled(enabled: bool) -> None: ...
 def replace_thread_exc_traceback(traceback: Any): ...
 
 # === END py_traceback.cc

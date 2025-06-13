@@ -829,6 +829,20 @@ cc_library(
 )
 
 cc_library(
+    name = "cached_py_object",
+    hdrs = ["cached_py_object.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/functional:function_ref",
+        "@nanobind",
+    ],
+)
+
+cc_library(
     name = "py_client",
     srcs = [
         "partition_spec.cc",
@@ -867,6 +881,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/py_client"),
     deps = [
+        ":cached_py_object",
         ":guard_lib",
         ":nb_class_ptr",
         ":py_client_cpu",
@@ -1181,6 +1196,7 @@ cc_library(
         "@tsl//tsl/platform",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla/pjrt:exceptions",
+        "@xla//xla/python:nb_helpers",
         "@xla//xla/tsl/platform:logging",
     ],
 )

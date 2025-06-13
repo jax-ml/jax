@@ -490,11 +490,13 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
     raise NotImplementedError(
         "IO effect not supported in vmap-of-cond.")
 
+  if "branches_platforms" in params and (index_dim is not batching.not_mapped):
+    # If we end up with a mapped index for a platform_dependent cond, we can
+    # replace the index with a fresh call to platform_index. See #29329.
+    index = platform_index_p.bind(platforms=params["branches_platforms"])
+    index_dim = batching.not_mapped
 
   if index_dim is not batching.not_mapped:
-    assert "branches_platforms" not in params, (
-        "The index of a cond with branches_platforms should be a "
-        "platform_index and should never be mapped")
     # Convert to a lax.select. While we could get away with not broadcasting
     # some operands yet, because all outputs must be broadcast together anyway
     # for the select we broadcast the input operands for simplicity and leave
@@ -563,7 +565,7 @@ def _cond_jvp(primals, tangents, *, branches, **params):
   return out_primals, out_tangents
 
 def _cond_partial_eval(trace, *tracers, branches, **params):
-  in_unknowns = [t.pval[0] is not None for t in tracers]
+  in_unknowns = [not t.pval.is_known() for t in tracers]
   index_uk, *ops_uk = in_unknowns
   if any(isinstance(eff, RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):

@@ -55,14 +55,19 @@ from . import utils
 
 # MLIR can't find libdevice unless we point it to the CUDA path
 # TODO(apaszke): Unify with jax._src.lib.cuda_path
-CUDA_ROOT = "/usr/local/cuda"
+cuda_root = "/usr/local/cuda"
+PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
 if os.environ.get("CUDA_ROOT") is None:
-  os.environ["CUDA_ROOT"] = CUDA_ROOT
+  if PYTHON_RUNFILES:
+    cuda_nvcc_root = os.path.join(PYTHON_RUNFILES, "cuda_nvcc")
+    if os.path.exists(cuda_nvcc_root):
+      cuda_root = cuda_nvcc_root
+  os.environ["CUDA_ROOT"] = cuda_root
 else:
-  CUDA_ROOT = os.environ["CUDA_ROOT"]
+  cuda_root = os.environ["CUDA_ROOT"]
 
-PTXAS_PATH = os.path.join(CUDA_ROOT, "bin/ptxas")
-NVDISASM_PATH = os.path.join(CUDA_ROOT, "bin/nvdisasm")
+PTXAS_PATH = os.path.join(cuda_root, "bin/ptxas")
+NVDISASM_PATH = os.path.join(cuda_root, "bin/nvdisasm")
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
 FWD_COMPAT_IR_VERSION = 1
@@ -89,7 +94,21 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
 try:
   from nvidia import nvshmem
 except ImportError:
-  pass
+  # Try to find the nvshmem library in Bazel runfiles.
+  if PYTHON_RUNFILES:
+    libdevice_path = os.path.join(
+        PYTHON_RUNFILES, "nvidia_nvshmem", "lib", "libnvshmem_device.bc"
+    )
+    if os.path.exists(libdevice_path):
+      os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = libdevice_path
+    for root, _, files in os.walk(os.path.join(os.getcwd(), "_solib_local")):
+      if "libnvshmem_host.so.3" in files:
+        os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
+            root, "libnvshmem_host.so.3"
+        )
+        break
+  else:
+    pass
 else:
   if os.environ.get("MOSAIC_GPU_NVSHMEM_BC_PATH") is None:
     os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = os.path.join(

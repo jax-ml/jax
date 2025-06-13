@@ -20,7 +20,7 @@ import functools
 import logging
 from typing import Any
 
-import jax
+from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -36,12 +36,11 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
-from jax._src.lax.control_flow.loops import map as lax_map
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
-from jax._src.typing import DeprecatedArg
+from jax._src.typing import Array, DeprecatedArg
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -67,7 +66,7 @@ class _FlatCallback:
   callback_func: Callable[..., Any]
   in_tree: tree_util.PyTreeDef  # (args, kwargs) pytree for `callback_func`.
 
-  def __call__(self, *flat_args: jax.Array) -> Sequence[jax.Array]:
+  def __call__(self, *flat_args: Array) -> Sequence[Array]:
     args, kwargs = tree_util.tree_unflatten(self.in_tree, flat_args)
     return tree_util.tree_leaves(self.callback_func(*args, **kwargs))
 
@@ -81,15 +80,15 @@ def pure_callback_impl(
 ):
   del sharding, vmap_method, result_avals
   try:
-    cpu_device, *_ = jax.local_devices(backend="cpu")
+    cpu_device, *_ = xb.local_devices(backend="cpu")
   except RuntimeError as e:
     raise RuntimeError(
         "jax.pure_callback failed to find a local CPU device to place the"
         " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
         " JAX_PLATFORMS environment variable."
     ) from e
-  args = jax.device_put(args, cpu_device)
-  with jax.default_device(cpu_device):
+  args = api.device_put(args, cpu_device)
+  with config.default_device(cpu_device):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
     except BaseException:
@@ -424,15 +423,15 @@ def io_callback_impl(
 ):
   del result_avals, sharding, ordered
   try:
-    cpu_device, *_ = jax.local_devices(backend="cpu")
+    cpu_device, *_ = xb.local_devices(backend="cpu")
   except RuntimeError as e:
     raise RuntimeError(
         "jax.io_callback failed to find a local CPU device to place the"
         " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
         " JAX_PLATFORMS environment variable."
     ) from e
-  args = jax.device_put(args, cpu_device)
-  with jax.default_device(cpu_device):
+  args = api.device_put(args, cpu_device)
+  with config.default_device(cpu_device):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
     except BaseException:
@@ -472,6 +471,7 @@ ad.primitive_transposes[io_callback_p] = io_callback_transpose_rule
 def io_callback_batching_rule(
     args, dims, callback, result_avals, sharding, ordered
 ):
+  from jax._src.lax.control_flow.loops import map as lax_map  # pytype: disable=import-error
   if ordered:
     raise ValueError("Cannot `vmap` ordered IO callback.")
   is_batched = [d is not batching.not_mapped for d in dims]

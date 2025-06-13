@@ -107,7 +107,7 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _tag: core.TraceTag,
   nzs_out = tuple(type(t) is not Zero for t in out_tangents)
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
   out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_tangents)  # type: ignore[assignment]
-  jaxpr, consts, attrs_tracked = tangent_trace.to_jaxpr(out_tangents, debug_info)
+  jaxpr, consts, attrs_tracked = tangent_trace.to_jaxpr(out_tangents, debug_info, source_info)
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
@@ -194,7 +194,8 @@ def _linearize_jaxpr(
   nzs_out = [type(t) is not Zero for t in out_tangents]
   out_tangents = tuple(tangent_trace.to_jaxpr_tracer(t, source_info)
                        for (nz, t) in zip(nzs_out, out_tangents) if nz)
-  tangent_jaxpr, tangent_consts, attrs_tracked = tangent_trace.to_jaxpr(out_tangents, debug_info)
+  tangent_jaxpr, tangent_consts, attrs_tracked = tangent_trace.to_jaxpr(
+      out_tangents, debug_info, source_info)
   tangent_trace.invalidate()
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
@@ -205,7 +206,8 @@ def _linearize_jaxpr(
 
   residuals_and_primals = (*tangent_consts, *out_primals)
   residuals_and_primals = map(partial(primal_trace.to_jaxpr_tracer, source_info=source_info), residuals_and_primals)
-  primal_jaxpr, primal_consts, attrs_tracked = primal_trace.to_jaxpr(residuals_and_primals, debug_info)
+  primal_jaxpr, primal_consts, attrs_tracked = primal_trace.to_jaxpr(
+      residuals_and_primals, debug_info, source_info)
   primal_trace.invalidate()
   num_residuals = len(tangent_consts)
   tangent_jaxpr = pe.close_jaxpr(convert_constvars_jaxpr_constvars_at_end(tangent_jaxpr))
@@ -240,7 +242,8 @@ def direct_linearize(traceable: lu.WrappedFun,
   out_nzs = [type(t) is not Zero for t in out_tangents]
   out_nz_tangents = [t for t, nz in zip(out_tangents, out_nzs) if nz]
   out_nz_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_nz_tangents)
-  jaxpr, consts, attrs_tracked = tangent_trace.to_jaxpr(out_nz_tangents, traceable.debug_info)
+  jaxpr, consts, attrs_tracked = tangent_trace.to_jaxpr(
+      out_nz_tangents, traceable.debug_info, source_info)
   tangent_trace.invalidate()
   jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
       jaxpr, [True] * len(jaxpr.outvars),
@@ -277,7 +280,7 @@ def linearize(traceable: lu.WrappedFun,
     raise ValueError(
         "Linearization failed to produce known values for all output primals. "
         "This is typically caused by attempting to differentiate a function "
-        "uses an operation that does not support reverse-mode autodiff.")
+        "using an operation that does not support reverse-mode autodiff.")
   out_primals_consts = [pval.get_known() for pval in out_primals_pvals]
   if not has_aux:
     return out_primals_consts, out_tangents_pvals, jaxpr, consts

@@ -25,8 +25,6 @@ import operator as op
 from typing import Any, NamedTuple, Union
 from weakref import ref
 
-import numpy as np
-
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
@@ -215,14 +213,6 @@ class JaxprTrace(Trace['JaxprTracer']):
         return self.new_instantiated_literal(const)
       else:
         return self.new_instantiated_const(const)
-
-  def instantiate_const_abstracted(self, tracer) -> JaxprTracer:
-    const = tracer.pval.get_known()
-    if const is None:
-      return tracer
-    else:
-      aval = get_aval(const).update_weak_type(np.isscalar(const))
-      return JaxprTracer(self, PartialVal.unknown(aval), ConstVar(const))
 
   def cur_qdd(self, x):
     const = self.to_jaxpr_tracer(x).pval.get_known()
@@ -1789,6 +1779,7 @@ class JaxprStackFrame:
       self, trace: DynamicJaxprTrace,
       out_tracers: Sequence[Tracer],
       debug_info: core.DebugInfo,
+      source_info: SourceInfo,
     ) -> tuple[Jaxpr, list[Any], list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str, AttrKind]]]]:
     # It's not necessary, but we keep the tracer-to-var mapping injective:
     vars = [v for v in self.tracer_to_var.values() if not isinstance(v, Literal)]
@@ -1796,7 +1787,6 @@ class JaxprStackFrame:
     invars = self.attrs_vars + self.invars
     state_ans, end_trees = unzip2(
         tree_flatten(t) for t in get_states(self.attrs_tracked))
-    source_info = source_info_util.current()
     state_outvars = [self.tracer_to_var[id(trace.to_jaxpr_tracer(x, source_info))]
                      for xs in state_ans for x in xs]
     explicit_outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
@@ -1941,8 +1931,6 @@ class DynamicJaxprTrace(core.Trace):
       if aval.has_qdd:
         with core.set_current_trace(self.parent_trace):
           aval = core.AvalQDD(aval, core.cur_qdd(c))
-      if hasattr(aval, "weak_type"):
-        aval = aval.update_weak_type(dtypes.is_weakly_typed(c))
       aval = self._lift_tracers_in_aval(aval, source_info)
       tracer = self._new_const(aval, c, source_info)
     return tracer
@@ -2239,8 +2227,8 @@ class DynamicJaxprTrace(core.Trace):
     return out_tracers
 
   def to_jaxpr(self, out_tracers: Sequence[Tracer],
-               debug_info: core.DebugInfo):
-    return self.frame.to_jaxpr(self, out_tracers, debug_info)
+               debug_info: core.DebugInfo, source_info: SourceInfo):
+    return self.frame.to_jaxpr(self, out_tracers, debug_info, source_info)
 
 
 custom_staging_rules: dict[Primitive, Callable] = {}
@@ -2301,7 +2289,8 @@ def trace_to_jaxpr_dynamic(
       _check_returned_jaxtypes(fun.debug_info, ans)
       out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans)
       _check_no_returned_refs(fun.debug_info, out_tracers)
-      jaxpr, consts, attrs_tracked = trace.frame.to_jaxpr(trace, out_tracers, fun.debug_info)
+      jaxpr, consts, attrs_tracked = trace.frame.to_jaxpr(
+          trace, out_tracers, fun.debug_info, source_info)
       del fun, in_tracers, out_tracers, ans
     finally:
       trace.frame.reset_states(trace)

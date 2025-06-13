@@ -26,7 +26,9 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/cached_py_object.h"
 #include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/partition_spec.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device_list.h"
 #include "jaxlib/sharded_device_array.h"
@@ -65,21 +67,14 @@ nanobind::object CheckAndCanonicalizeMemoryKind(
     nanobind::object memory_kind,
     const xla::nb_class_ptr<PyDeviceList>& device_list);
 
-// Returns a hash that may sometimes return different hashes for equal values.
-// It is not a correct implementation of `__hash__` in python, but it's fine
-// for jit/pjit dispatch since it only causes spurious cache misses.
-size_t ShardingHash(nanobind::handle sharding);
-
-bool ShardingEqual(nanobind::handle a, nanobind::handle b);
-
 class NamedSharding : public Sharding {
  public:
-  NamedSharding(nanobind::object mesh, nanobind::object spec,
+  NamedSharding(nanobind::object mesh, xla::nb_class_ptr<PartitionSpec> spec,
                 nanobind::object memory_kind,
                 nanobind::object logical_device_ids);
 
   const nanobind::object& mesh() const { return mesh_; }
-  const nanobind::object& spec() const { return spec_; }
+  const xla::nb_class_ptr<PartitionSpec>& spec() const { return spec_; }
   const nanobind::object& memory_kind() const { return memory_kind_; }
   const nanobind::object& logical_device_ids() const {
     return logical_device_ids_;
@@ -97,12 +92,18 @@ class NamedSharding : public Sharding {
         "`jax.sharding.AbstractMesh`");
   }
 
+  bool operator==(const NamedSharding& other) const;
+
+  bool Eq(const nanobind::object& other) const;   // Python __eq__
+  nanobind::object Hash() const;  // Python __hash__
+
  private:
   nanobind::object mesh_;
-  nanobind::object spec_;
+  xla::nb_class_ptr<PartitionSpec> spec_;
   nanobind::object memory_kind_;
   nanobind::object logical_device_ids_;
   std::optional<xla::nb_class_ptr<PyDeviceList>> internal_device_list_;
+  mutable CachedPyObject hash_;
   static PyObject* type_;
 };
 

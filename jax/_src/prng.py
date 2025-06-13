@@ -1307,3 +1307,20 @@ unsafe_rbg_prng_impl = PRNGImpl(
     tag='urbg')
 
 register_prng(unsafe_rbg_prng_impl)
+
+
+# Register export serialization for PRNG key types.
+try:
+  from jax._src.export import serialization  # pytype: disable=import-error
+  from jax._src.export import serialization_generated as ser_flatbuf  # pytype: disable=import-error
+except ImportError:
+  # This can happen if flatbuffers is not installed, in which case export
+  # serialization is not supported and it is safe to skip the registration.
+  pass
+else:
+  serialization.register_dtype_kind(
+      KeyTy(prngs["threefry2x32"]), ser_flatbuf.DType.key_fry)
+  serialization.register_dtype_kind(
+      KeyTy(prngs["rbg"]), ser_flatbuf.DType.key_rbg)
+  serialization.register_dtype_kind(
+      KeyTy(prngs["unsafe_rbg"]), ser_flatbuf.DType.key_unsafe_rbg)

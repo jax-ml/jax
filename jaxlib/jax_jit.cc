@@ -29,6 +29,7 @@ limitations under the License.
 #include <Python.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -232,6 +233,69 @@ std::string CallSignature::DebugString() const {
       absl::StrJoin(configs, ", ", py_object_formatter));
 }
 
+
+size_t HashShardingForJit(nb::handle sharding) {
+  auto type = sharding.type();
+
+  if (type.is(NamedSharding::type())) {
+    const auto* named_sharding = nb::inst_ptr<jax::NamedSharding>(sharding);
+    return absl::Hash<void*>()(named_sharding->mesh().ptr());
+  }
+
+  if (type.is(GSPMDSharding::type())) {
+    auto* gspmd_sharding = nb::inst_ptr<GSPMDSharding>(sharding);
+    return gspmd_sharding->Hash();
+  }
+
+  if (type.is(SingleDeviceSharding::type())) {
+    auto* single_device_sharding = nb::inst_ptr<SingleDeviceSharding>(sharding);
+    return absl::Hash<void*>()(single_device_sharding->device().ptr());
+  }
+
+  return nb::hash(sharding);
+}
+
+bool EqualShardingsForJit(nb::handle a, nb::handle b) {
+  if (a.ptr() == b.ptr()) return true;
+
+  auto a_type = a.type();
+  auto b_type = b.type();
+
+  if (!a_type.is(b_type)) return false;
+
+  if (a_type.is(NamedSharding::type())) {
+    auto* a_named_sharding = nb::inst_ptr<const NamedSharding>(a);
+    auto* b_named_sharding = nb::inst_ptr<const NamedSharding>(b);
+    return a_named_sharding->mesh().ptr() == b_named_sharding->mesh().ptr() &&
+           *a_named_sharding->spec() == *b_named_sharding->spec() &&
+           a_named_sharding->memory_kind().equal(
+               b_named_sharding->memory_kind()) &&
+           a_named_sharding->logical_device_ids().equal(
+               b_named_sharding->logical_device_ids());
+  }
+
+  if (a_type.is(GSPMDSharding::type())) {
+    auto* a_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(a);
+    auto* b_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(b);
+
+    return a_gspmd_sharding == b_gspmd_sharding;
+  }
+
+  if (a_type.is(SingleDeviceSharding::type())) {
+    auto* a_single_device_sharding =
+        nb::inst_ptr<const SingleDeviceSharding>(a);
+    auto* b_single_device_sharding =
+        nb::inst_ptr<const SingleDeviceSharding>(b);
+
+    return a_single_device_sharding->device().ptr() ==
+               b_single_device_sharding->device().ptr() &&
+           a_single_device_sharding->memory_kind().equal(
+               b_single_device_sharding->memory_kind());
+  }
+
+  return a.equal(b);
+}
+
 bool CallSignature::operator==(const CallSignature& other) const {
   if (arg_signature != other.arg_signature) {
     return false;
@@ -251,7 +315,7 @@ bool CallSignature::operator==(const CallSignature& other) const {
   return
       // `==` on py:objects is the Python `is`. We need equal.
       absl::c_equal(dynamic_arg_shardings, other.dynamic_arg_shardings,
-                    ShardingEqual) &&
+                    EqualShardingsForJit) &&
       absl::c_equal(dynamic_arg_layouts, other.dynamic_arg_layouts,
                     [](const std::shared_ptr<const xla::PjRtLayout>& a,
                        const std::shared_ptr<const xla::PjRtLayout>& b) {

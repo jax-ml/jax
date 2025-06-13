@@ -50,9 +50,9 @@ class HiPrimitive(core.Primitive):
     pe.custom_staging_rules[self] = self.staging
 
   def staging(self, trace, source_info, *args, **kwargs):
-    del source_info
     trace.frame.is_high = True
-    return trace.default_process_primitive(self, args, kwargs)
+    return trace.default_process_primitive(self, args, kwargs,
+                                           source_info=source_info)
 
   def is_high(self, **params):
     return True
@@ -215,7 +215,7 @@ def new_box():
 
 def box_get(box):
   tys = core.cur_qdd(box)
-  leaf_vals = box_get_p.bind(box, avals=tys.leaf_avals)
+  leaf_vals = box_get_p.bind(box, avals=tuple(tys.leaf_avals))
   return jax.tree.unflatten(tys.treedef, leaf_vals)
 
 def box_set(box, val):
@@ -358,8 +358,10 @@ class BoxGet(HiPrimitive):
 
   def jvp(_, primals, tangents, *, avals):
     (box,), (box_dot,) = primals, tangents
-    return (box_get_p.bind(box, avals=avals),
-            box_get_p.bind(box_dot, avals=[a.to_tangent_aval() for a in avals]))
+    return (
+      box_get_p.bind(box, avals=avals),
+      box_get_p.bind(box_dot, avals=tuple(a.to_tangent_aval() for a in avals))
+    )
 
   def transpose(_, *args):
     assert False  # TODO

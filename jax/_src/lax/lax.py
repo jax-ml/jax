@@ -1690,8 +1690,6 @@ def _convert_element_type(
       return to_edtype_p.bind(operand, edtype=new_dtype)
     return from_edtype_p.bind(operand, dtype=np.dtype(new_dtype))
 
-  new_dtype = type_cast(DTypeLike | None, new_dtype)
-
   old_weak_type = dtypes.is_weakly_typed(operand)
   if new_dtype is None:
     new_dtype = old_dtype
@@ -6522,7 +6520,8 @@ def _broadcast_in_dim_staging_rule(
   params = dict(shape=shape, broadcast_dimensions=broadcast_dimensions,
                 sharding=sharding)
   if not dyn:
-    return trace.default_process_primitive(broadcast_in_dim_p, (x,), params)
+    return trace.default_process_primitive(broadcast_in_dim_p, (x,), params,
+                                           source_info=source_info)
   aval = core.DShapedArray(_merge_dyn_shape(shape, dyn), x.dtype, x.weak_type)
   return _dyn_shape_staging_rule(trace, source_info, broadcast_in_dim_p, aval,
                                  x, *dyn, **params)
@@ -7242,7 +7241,8 @@ def _reshape_staging_rule(
     trace, source_info, x, *dyn, new_sizes, dimensions, sharding):
   params = dict(new_sizes=new_sizes, dimensions=dimensions, sharding=sharding)
   if not dyn:
-    return trace.default_process_primitive(reshape_p, (x,), params)
+    return trace.default_process_primitive(reshape_p, (x,), params,
+                                           source_info=source_info)
   av = core.DShapedArray(_merge_dyn_shape(new_sizes, dyn), x.dtype, x.weak_type)
   return _dyn_shape_staging_rule(trace, source_info, reshape_p, av, x, *dyn,
                                  **params)
@@ -8598,7 +8598,8 @@ def _iota_staging_rule(trace, source_info, *dyn_shape, dtype, shape, dimension,
   params = dict(dtype=dtype, shape=shape, dimension=dimension,
                 sharding=sharding)
   if not dyn_shape:
-    return trace.default_process_primitive(iota_p, (), params)
+    return trace.default_process_primitive(iota_p, (), params,
+                                           source_info=source_info)
   aval = core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), dtype, False)
   return _dyn_shape_staging_rule(trace, source_info, iota_p, aval, *dyn_shape,
                                  **params)

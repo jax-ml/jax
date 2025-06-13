@@ -227,6 +227,14 @@ struct CallSignature {
   std::string DebugString() const;
 };
 
+// A hash and equality for shardings that may sometimes return different hashes
+// for equal values, and may sometimes return "not equal" for equal values.
+// These are not correct implementations of `__hash__` and `__eq__` in python,
+// but they are fine for jit/pjit dispatch since they only causes spurious cache
+// misses.
+size_t HashShardingForJit(nanobind::handle sharding);
+bool EqualShardingsForJit(nanobind::handle a, nanobind::handle b);
+
 template <typename H>
 H AbslHashValue(H h, const CallSignature& s) {
   h = H::combine(std::move(h), s.arg_signature, s.dynamic_arg_signatures);
@@ -241,7 +249,7 @@ H AbslHashValue(H h, const CallSignature& s) {
   // slow python hashing function. Consider implementing hashing function and
   // equality checks in C++ in jax::Sharding and use those here.
   for (const auto& sharding : s.dynamic_arg_shardings) {
-    h = H::combine(std::move(h), ShardingHash(sharding));
+    h = H::combine(std::move(h), HashShardingForJit(sharding));
   }
 
   for (const auto& layout : s.dynamic_arg_layouts) {

@@ -568,22 +568,42 @@ class WGMMALayoutTest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
-  @parameterized.parameters(jnp.int8, jnp.int16, jnp.int32)
-  def test_sub_byte_conversion(self, jax_dtype_to):
+  @parameterized.product(
+      jax_dtype_to=(
+          jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float8_e4m3fn,
+      ),
+      # Use different layouts to vary the size of the vector dimension.
+      layout=(
+          fa.WGMMA_LAYOUT,
+          fa.WGMMA_LAYOUT_UPCAST_2X,
+          fa.WGMMA_LAYOUT_UPCAST_4X,
+      ),
+  )
+  def test_sub_byte_conversion(self, jax_dtype_to, layout: fa.TiledLayout):
+    if jax_dtype_to == jnp.int32 and layout.vector_length == 8:
+      self.skipTest(
+          "Raises: failed to prove that vector transfers don't cross swizzle"
+          " tile boundaries.")
     jax_dtype_from = jnp.int4
+    if jnp.issubdtype(jax_dtype_to, jnp.integer):
+      is_signed = jnp.issubdtype(jax_dtype_to, jnp.signedinteger)
+    else:
+      is_signed = None
     def kernel(ctx, inp, out, smem):
       del ctx  # Unused.
       smem_inp, smem_out = smem
       copy(inp, smem_inp, swizzle=16)
-      t = mgpu.FragmentedArray.load_tiled(smem_inp, is_signed=True, swizzle=16)
-      t = t.astype(utils.dtype_to_ir_type(jax_dtype_to), is_signed=True)
+      t = mgpu.FragmentedArray.load_tiled(
+          smem_inp, is_signed=True, swizzle=16, layout=layout
+      )
+      t = t.astype(utils.dtype_to_ir_type(jax_dtype_to), is_signed=is_signed)
       t.store_tiled(smem_out, swizzle=32 * jnp.dtype(jax_dtype_to).itemsize)
       copy(smem_out, out, swizzle=32 * jnp.dtype(jax_dtype_to).itemsize)
 
     x = self.prng.integers(
         low=-8, high=7, size=(1, 1, 64, 64), dtype=np.int32
     ).astype(jax_dtype_from)
-    y = x.astype(jax_dtype_to)
+    y = jax.lax.convert_element_type(x, jax_dtype_to)
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, y, (x, y))
     np.testing.assert_array_equal(f(x), y)
 
@@ -3410,6 +3430,101 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     x = np.full(shape, element_value, dtype=dtype)
     self.assertArraysEqual(jax.jit(kernel)(), x)
 
+  def test_subview(self):
+    full_shape = (2, 3, 128, 64)
+    offsets = [1, 0, 96, 0]
+    sub_shape = (32, 64)
+
+    def body(
+        ctx: launch_context.LaunchContext,
+        full_gmem_ref: ir.Value,
+        sub_gmem_ref: ir.Value,
+        smem: list[ir.Value],
+    ):
+      # TODO(dasenov): Add a parametrization to also test subview of transformed
+      # refs.
+
+      del ctx
+      full_smem_ref, tma_barrier = smem
+      dialect_barrier = tma_barrier.as_barrier_memref()
+
+      operand_elt_type = ir.MemRefType(full_gmem_ref.type).element_type
+      mgpu_dialect.arrive_expect_tx(
+          barrier=dialect_barrier,
+          expect_tx=utils.bytewidth(operand_elt_type) * math.prod(full_shape),
+      )
+
+      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      # GMEM -> SMEM
+      mgpu_dialect.async_load(
+          source=full_gmem_ref,
+          destination=full_smem_ref,
+          barrier=dialect_barrier,
+          indices=[zero_i32] * len(full_shape),
+          slice_lengths=full_shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+
+      parities = memref.load(tma_barrier.barrier_ref.phases, [])
+      parity, _ = tma_barrier.update_parities(parities)
+      mgpu_dialect.wait(dialect_barrier, parity)
+
+      # SubView
+      dynamic_offsets = [
+          arith.constant(ir.IndexType.get(), offsets[0]),
+          # offsets[1] is a static offset.
+          arith.constant(ir.IndexType.get(), offsets[2]),
+      ]
+
+      full_ref_type = ir.MemRefType(full_smem_ref.type)
+      dynamic = ir.ShapedType.get_dynamic_size()
+      rhs_subview_ref_type = ir.MemRefType.get(
+          shape=sub_shape,
+          element_type=full_ref_type.element_type,
+          layout=ir.StridedLayoutAttr.get(dynamic, [full_shape[-1], 1]),
+          memory_space=full_ref_type.memory_space,
+      )
+      sub_smem_ref = memref.SubViewOp(
+          result=rhs_subview_ref_type,
+          source=full_smem_ref,
+          offsets=dynamic_offsets,
+          sizes=None,
+          strides=None,
+          static_offsets=[dynamic, offsets[1], dynamic, offsets[3]],
+          static_sizes=[1, 1] + list(sub_shape),
+          static_strides=[1, 1, 1, 1],
+      ).result
+
+      # SMEM -> GMEM
+      mgpu_dialect.async_store(
+          source=sub_smem_ref,
+          destination=sub_gmem_ref,
+          indices=[zero_i32, zero_i32],
+          slice_lengths=sub_shape,
+      )
+      nvvm.cp_async_bulk_wait_group(0)
+
+    el_type = jnp.bfloat16
+    full_jax_shape = jax.ShapeDtypeStruct(full_shape, el_type)
+    result_jax_shape = jax.ShapeDtypeStruct(sub_shape, el_type)
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(full_jax_shape),
+        out_shape=result_jax_shape,
+        smem_scratch_shape=[full_jax_shape, core.TMABarrier(1)],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    prng_key = jax.random.key(1234)
+    x = jax.random.randint(prng_key, full_shape, 0, 10).astype(el_type)
+
+    self.assertArraysEqual(
+        jax.jit(kernel)(x),
+        x[offsets[0], offsets[1], offsets[2] :, offsets[3] :],
+    )
+
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 
@@ -3432,8 +3547,13 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     if swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle:
       self.skipTest("No swizzle is not supported by wgmma")
 
-    if transpose_lhs or transpose_rhs:
-      self.skipTest("Transposes are not supported by transform inference yet.")
+    # TODO(dasenov): This condition is wrong, remove it after we support
+    # reconciling the siwzzle of the a and b operands of wgmma.
+    if transpose_lhs and swizzle != mgpu_dialect.SwizzlingMode.k128ByteSwizzle:
+      self.skipTest("If A is transposed, its swizzle must be 128 bytes.")
+
+    if transpose_lhs and load_a_in_registers:
+      self.skipTest("The A operand can only be transposed if it is in SMEM.")
 
     swizzle_elems = swizzle // np.dtype(jnp.bfloat16).itemsize
     tiling_m, tiling_n, tiling_k = 64, swizzle_elems, swizzle_elems

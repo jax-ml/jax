@@ -2903,7 +2903,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
 
   JAX implementation of :func:`numpy.bincount`.
 
-  For an array of positive integers ``x``, this function returns an array ``counts``
+  For an array of non-negative integers ``x``, this function returns an array ``counts``
   of size ``x.max() + 1``, such that ``counts[i]`` contains the number of occurrences
   of the value ``i`` in ``x``.
 
@@ -2916,7 +2916,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     like :func:`jax.jit`. In this case, items larger than `length + 1` will be dropped.
 
   Args:
-    x : N-dimensional array of positive integers
+    x : 1-dimensional array of non-negative integers
     weights: optional array of weights associated with ``x``. If not specified, the
       weight for each entry will be ``1``.
     minlength: the minimum length of the output counts array.

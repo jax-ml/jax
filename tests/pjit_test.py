@@ -7810,14 +7810,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(out.aval.sharding.spec, P('x', None))
       return out
 
+    out = f(x, y, a, b)
+    self.assertArraysEqual(out, (np_inp @ np_inp.T) + (np_inp @ np_inp.T))
+
     traced = f.trace(x, y, a, b)
     lowered_text = traced.lower().as_text()
     self.assertIn('unreduced={"y"}', lowered_text)
     self.assertEqual(lowered_text.count('unreduced={"y"}'), 3)
 
-    # TODO(yashkatariya): Execute this too
-    grad_jaxpr = jax.jit(jax.grad(lambda x, y, a, b: f(x, y, a, b).sum(),
-                                  argnums=(0, 1, 2, 3))).trace(x, y, a, b).jaxpr
+    f_bar = jax.jit(jax.grad(lambda x, y, a, b: f(x, y, a, b).sum(),
+                             argnums=(0, 1, 2, 3)))
+    f_bar(x, y, a, b)  # doesn't crash
+
+    grad_jaxpr = f_bar.trace(x, y, a, b).jaxpr
     reshard_eqn = grad_jaxpr.eqns[4].params['jaxpr'].eqns[0]
     self.assertEqual(reshard_eqn.params['dst_sharding'].spec.reduced,
                      frozenset('y'))
@@ -8240,7 +8245,8 @@ class PJitErrorTest(jtu.JaxTestCase):
 
   def test_named_sharding_of_none(self):
     mesh = jtu.create_mesh((2,), ('x',))
-    with self.assertRaisesRegex(TypeError, 'Unexpected None'):
+    with self.assertRaisesRegex(
+        TypeError, '(Unexpected None|incompatible function arguments)'):
       jax.NamedSharding(mesh, None)
 
 

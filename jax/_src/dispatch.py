@@ -614,7 +614,7 @@ def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):
         assert cp == CopySemantics.COPY
         new_copy_semantics.append(CopySemantics.COPY)
     ys = device_put_p.bind(*args, devices=srcs, srcs=devices,
-                           copy_semantics=new_copy_semantics)
+                           copy_semantics=tuple(new_copy_semantics))
     for i, y in zip(indices, ys):
       results[i] = y
   return results
