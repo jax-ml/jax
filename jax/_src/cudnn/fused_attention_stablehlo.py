@@ -121,6 +121,9 @@ def default_layouts(*shapes):
 def get_max_seg_per_batch(q_offsets):
   return q_offsets.shape[1] - 1 if len(q_offsets.shape) == 2 else 1
 
+def is_paged_attention(page_table_k):
+  return len(page_table_k.shape) == 4
+
 def create_dot_product_attention_backend_config_base(
     batch, num_heads, seq_q, seq_kv, dtype, fmha_scale, mask_type, layout, is_bwd
 ):
@@ -228,6 +231,7 @@ def create_dot_product_attention_backend_config(
     layout,
     sliding_window_length,
     max_seg_per_batch,
+    is_paged_attention,
     is_bwd
 ):
   backend_config = create_dot_product_attention_backend_config_base(
@@ -240,6 +244,7 @@ def create_dot_product_attention_backend_config(
   backend_config['cudnn_fmha_backend_config']["seed"] = seed
   backend_config['cudnn_fmha_backend_config']["sliding_window_length"] = sliding_window_length
   backend_config['cudnn_fmha_backend_config']["max_seg_per_batch"] = max_seg_per_batch
+  backend_config['cudnn_fmha_backend_config']["is_paged_attention"] = is_paged_attention
   return json.dumps(backend_config)
 
 def create_dot_product_attention_fp8_backend_config(
@@ -272,7 +277,7 @@ get_fp8_custom_call_name = functools.partial(
 )
 
 def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
-  q_offsets, kv_offsets, layout):
+  q_offsets, kv_offsets, page_table_k, page_table_v, layout):
   def check_eq(a, b, c, msg):
     if not (a == b == c):
       raise ValueError(f"{msg} must be same, got {a}, {b}, {b}")
@@ -296,6 +301,22 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
     qB, qT, qN, qH = query.shape
     kB, kS, kN, kH = key.shape
     vB, vS, vN, vH = value.shape
+
+  if page_table_k is not None and page_table_v is not None:
+    k_blocks, k_block_size = kB, kS
+    v_blocks, v_block_size = vB, vS
+    kB, _, k_blocks_per_batch, _ = page_table_k.shape
+    vB, _, v_blocks_per_batch, _ = page_table_v.shape
+    kS = k_blocks_per_batch * k_block_size
+    vS = v_blocks_per_batch * v_block_size
+    if kB * k_blocks_per_batch != k_blocks:
+      raise ValueError(
+        f"Key and page_table_k must have same number of blocks, "
+        f"got {k_blocks} vs {kB * k_blocks_per_batch}")
+    if vB * v_blocks_per_batch != v_blocks:
+      raise ValueError(
+        f"Value and page_table_v must have same number of blocks, "
+        f"got {v_blocks} vs {vB * v_blocks_per_batch}")
 
   check_eq(qB, kB, vB, "QKV batch")
   check_eq(qH, kH, vH, "QKV dim_per_head")
@@ -333,7 +354,7 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
 
 def check_is_flash_attention(
     query, key, layout: int, cudnn_version, has_bias, is_training, is_packed=False,
-    is_fp8=False):
+    is_paged_attention=False, is_fp8=False):
     # Extract sequence length (T) and head dim (H) based on layout
     if layout == AttentionLayout.BNTH.value:
         _, _, T, H = query.shape
@@ -370,6 +391,8 @@ def check_is_flash_attention(
         if is_packed and (cudnn_version < 90600 or not check_compute_capability("9.0")):
           raise NotImplementedError(
             "Packed layout requires cudnn version >= 9.6 and at least hopper arch.")
+        if is_paged_attention and cudnn_version < 90500:
+          raise NotImplementedError("Page attention requires cudnn version >= 9.5.")
 
 def check_cudnn_version():
   # check if cuDNN is installed
@@ -395,15 +418,16 @@ def is_cuda_compute_capability_equal(capability):
 
 def _dot_product_attention_fwd(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
+    page_table_k, page_table_v,
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
     sliding_window_length, cudnn_version, return_residual):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, layout, cudnn_version, bias is not None, False,
-      get_max_seg_per_batch(q_offsets) > 1)
+      get_max_seg_per_batch(q_offsets) > 1, is_paged_attention(page_table_k))
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      scale=scale, seed=seed, dropout_rate=dropout_rate,
+      page_table_k, page_table_v, scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length, is_training=False or return_residual)
   if return_residual:
@@ -413,19 +437,20 @@ def _dot_product_attention_fwd(
 
 def _dot_product_attention_fwd_rule(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, cudnn_version, return_residual):
+    page_table_k, page_table_v, scale, seed, dropout_rate, variadic_args,
+    mask_type, layout, sliding_window_length, cudnn_version,
+    return_residual):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, layout, cudnn_version, bias is not None, True,
       get_max_seg_per_batch(q_offsets) > 1)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      scale=scale, seed=seed, dropout_rate=dropout_rate,
+      page_table_k, page_table_v, scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length, is_training=True)
   res = (query, key, value, bias, q_seqlen, kv_seqlen, q_offsets,
-         kv_offsets, outputs[1], outputs[0])
+         kv_offsets, page_table_k, page_table_v, outputs[1], outputs[0])
   if return_residual:
     return tuple(outputs), res
   else:
@@ -435,17 +460,17 @@ def _dot_product_attention_bwd_rule(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
     sliding_window_length, is_training, return_residual, res, grad_output):
   (query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-   activation, fwd_output) = res
+   page_table_k, page_table_v, activation, fwd_output) = res
   if return_residual:
     grad_output = grad_output[0]
   grads = _dot_product_attention_bwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      activation, fwd_output, grad_output, scale=scale, seed=seed,
-      dropout_rate=dropout_rate, variadic_args=variadic_args,
+      page_table_k, page_table_v, activation, fwd_output, grad_output,
+      scale=scale, seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length
   )
-  grads = (*grads,) + (None,) * (8 - len(grads))
+  grads = (*grads,) + (None,) * (10 - len(grads))
   return grads
 
 def _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key):
@@ -508,27 +533,28 @@ def _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key):
 
 def _dot_product_attention_fwd_impl(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, is_training):
+    page_table_k, page_table_v, scale, seed, dropout_rate, variadic_args,
+    mask_type, layout, sliding_window_length, is_training):
   # args: {Q, K, V, mask*, bias*}
   q_seqlen, kv_seqlen, q_offsets, kv_offsets = \
       _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key)
   outputs = _dot_product_attention_fwd_p.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      scale=scale, seed=seed, dropout_rate=dropout_rate,
+      page_table_k, page_table_v, scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length, is_training=is_training)
   return outputs
 
 def _dot_product_attention_bwd_impl(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    activation, fwd_output, grad_output, scale, seed, dropout_rate,
-    variadic_args, mask_type, layout, sliding_window_length):
+    page_table_k, page_table_v, activation, fwd_output, grad_output, scale,
+    seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length):
   q_seqlen, kv_seqlen, q_offsets, kv_offsets = \
       _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key)
   grads = _dot_product_attention_bwd_p.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      activation, fwd_output, grad_output, scale=scale, seed=seed,
+      page_table_k, page_table_v, activation, fwd_output, grad_output,
+      scale=scale, seed=seed,
       dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length)
@@ -536,8 +562,8 @@ def _dot_product_attention_bwd_impl(
 
 def _dot_product_attention_fwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    *, scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, is_training):
+    page_table_k, page_table_v, *, scale, seed, dropout_rate, variadic_args,
+    mask_type, layout, sliding_window_length, is_training):
   query_dtype = dtypes.canonicalize_dtype(query.dtype)
   if layout == AttentionLayout.BNTH.value:
     B, N, T, _ = query.shape
@@ -562,8 +588,8 @@ def _dot_product_attention_fwd_abstract(
 
 def _dot_product_attention_bwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    activation, fwd_output, grad_output, *, scale, seed, dropout_rate,
-    variadic_args, mask_type, layout, sliding_window_length):
+    page_table_k, page_table_v, activation, fwd_output, grad_output, *,
+    scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length):
   query_dtype = dtypes.canonicalize_dtype(query.dtype)
   key_dtype = dtypes.canonicalize_dtype(key.dtype)
   value_dtype = dtypes.canonicalize_dtype(value.dtype)
@@ -601,8 +627,8 @@ def _dot_product_attention_bwd_abstract(
 
 def _dot_product_attention_fwd_cuda_lowering(
     ctx, query, key, value, bias, q_seqlen, kv_seqlen, q_offsets,
-    kv_offsets, scale, seed, dropout_rate, variadic_args, mask_type,
-    layout, sliding_window_length, is_training):
+    kv_offsets, page_table_k, page_table_v, scale, seed, dropout_rate,
+    variadic_args, mask_type, layout, sliding_window_length, is_training):
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
   key_type = ir.RankedTensorType(key.type)
@@ -620,6 +646,8 @@ def _dot_product_attention_fwd_cuda_lowering(
     output_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
 
   max_seg_per_batch = get_max_seg_per_batch(ir.RankedTensorType(q_offsets.type))
+  is_paged_attention = is_paged_attention(ir.RankedTensorType(page_table_k.type))
+
   output_shape = (B, N, T, H)
   softmax_stat_shape = (B * max_seg_per_batch, N, T)
   workspace_shape = (0,)
@@ -629,19 +657,22 @@ def _dot_product_attention_fwd_cuda_lowering(
   backend_config = create_dot_product_attention_backend_config(
       B, N, T, S, query_type.element_type, scale, seed, dropout_rate,
       mask_type, layout, sliding_window_length, max_seg_per_batch,
-      is_bwd=False)
+      is_paged_attention, is_bwd=False)
   # {Q, K, V, bias*, q_seqlen*, kv_seqlen*,  q_offsets*, kv_offsets*}}
   # {output, activation*, workspace}
   has_dropout = dropout_rate > 0
   operands = [query, key, value]
   if has_bias:
     operands.append(bias)
-  if has_padding(mask_type) or max_seg_per_batch > 1:
+  if has_padding(mask_type) or max_seg_per_batch > 1 or is_paged_attention:
     operands.append(q_seqlen)
     operands.append(kv_seqlen)
   if max_seg_per_batch > 1:
     operands.append(q_offsets)
     operands.append(kv_offsets)
+  if is_paged_attention:
+    operands.append(page_table_k)
+    operands.append(page_table_v)
 
   custom_call_name = get_custom_call_name(has_bias, has_dropout, False)
 
@@ -677,8 +708,8 @@ def _dot_product_attention_fwd_cuda_lowering(
 
 def _dot_product_attention_bwd_cuda_lowering(
     ctx, query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    activation, fwd_output, grad_output, scale, seed, dropout_rate,
-    variadic_args, mask_type, layout, sliding_window_length):
+    page_table_k, page_table_v, activation, fwd_output, grad_output,
+    scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length):
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
   key_type = ir.RankedTensorType(key.type)
@@ -708,7 +739,7 @@ def _dot_product_attention_bwd_cuda_lowering(
   backend_config = create_dot_product_attention_backend_config(
       B, q_N, T, S, query_type.element_type, scale, seed, dropout_rate,
       mask_type, layout, sliding_window_length, max_seg_per_batch,
-      is_bwd=True)
+      False, is_bwd=True)
   # {Q, K, V, activation, dO, bias*, O, q_seqlen*, kv_seqlen*,
   #  q_offsets*, kv_offsets*}
   # {dQ, dK, dV, dbias*, workspace}
@@ -776,7 +807,7 @@ def _dot_product_attention_fwd_batcher(
     mask_type, layout, sliding_window_length, is_training):
   _check_valid_batch_dims(batch_dims)
   query, key, value, bias, q_seqlen, kv_seqlen, \
-    q_offsets, kv_offsets = batched_args
+    q_offsets, kv_offsets, page_table_k, page_table_v = batched_args
   query_bdim = batch_dims[0]
   if is_training:
     out_bdims = query_bdim, query_bdim
@@ -804,7 +835,7 @@ def _dot_product_attention_fwd_batcher(
 
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      scale=scale, seed=seed, dropout_rate=dropout_rate,
+      page_table_k, page_table_v, scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length, is_training=is_training)
 
@@ -823,7 +854,7 @@ def _dot_product_attention_bwd_batcher(
      mask_type, layout, sliding_window_length):
   _check_valid_batch_dims(batch_dims)
   query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets, \
-    activation, fwd_output, grad_output = batched_args
+    page_table_k, page_table_v, activation, fwd_output, grad_output = batched_args
   query_bdim = batch_dims[0]
   out_bdims = query_bdim, query_bdim, query_bdim
 
@@ -860,8 +891,8 @@ def _dot_product_attention_bwd_batcher(
 
   grads = _dot_product_attention_bwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      activation, fwd_output, grad_output, scale=scale, seed=seed,
-      dropout_rate=dropout_rate, variadic_args=variadic_args,
+      page_table_k, page_table_v, activation, fwd_output, grad_output,
+      scale=scale, seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
   )
@@ -936,7 +967,7 @@ def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args,is_training, layo
   return [out_sharding]
 
 _dot_product_attention_fwd_lower = custom_partitioning(
-    _dot_product_attention_fwd_impl, static_argnums=(8, 9, 10, 11, 12, 13, 14, 15))
+    _dot_product_attention_fwd_impl, static_argnums=(10, 11, 12, 13, 14, 15, 16, 17))
 
 def _dot_product_attention_fwd_infer_sharding_from_operands(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
@@ -985,7 +1016,7 @@ def _infer_bwd_output_sharding(mesh, arg_shapes, layout, variadic_args):
   return out_shardings
 
 _dot_product_attention_bwd_lower = custom_partitioning(
-    _dot_product_attention_bwd_impl, static_argnums=(11, 12, 13, 14, 15, 16, 17)
+    _dot_product_attention_bwd_impl, static_argnums=(13, 14, 15, 16, 17, 18, 19)
 )
 
 def _dot_product_attention_bwd_infer_sharding_from_operands(
@@ -1110,7 +1141,7 @@ dispatch.prim_requires_devices_during_lowering.add(
   _dot_product_attention_bwd_p_wrapper
 )
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(8, 9, 10, 11, 12, 13, 14, 15, 16))
+@functools.partial(jax.custom_vjp, nondiff_argnums=(10, 11, 12, 13, 14, 15, 16, 17, 18))
 def _dot_product_attention(query: Array,
                            key: Array,
                            value: Array,
@@ -1119,6 +1150,8 @@ def _dot_product_attention(query: Array,
                            kv_seqlen: Array,
                            q_offsets: Array,
                            kv_offsets: Array,
+                           page_table_k: Array,
+                           page_table_v: Array,
                            scale: float,
                            seed: int,
                            dropout_rate: float,
@@ -1130,7 +1163,7 @@ def _dot_product_attention(query: Array,
                            return_residual: bool):
   output = _dot_product_attention_fwd(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      scale=scale, seed=seed, dropout_rate=dropout_rate,
+      page_table_k, page_table_v, scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
       cudnn_version=cudnn_version, return_residual=return_residual)
@@ -1714,7 +1747,118 @@ def _dot_product_attention_fp8(query: Array,
 
 _dot_product_attention_fp8.defvjp(_dot_product_attention_fp8_fwd_rule, _dot_product_attention_fp8_bwd_rule)
 
+def combine_bias_and_mask(bias, mask, dtype):
+  if bias is not None:
+    # reshape bias to have 4D shape
+    bias = bias.reshape((1,) * (4 - len(bias.shape)) + bias.shape)
+
+  if mask is not None:
+    if mask.dtype == jnp.bool:
+      large_negative_number = get_large_negative_number(dtype)
+      mask = jnp.where(mask, jnp.asarray(0, dtype), large_negative_number)
+    # reshape mask to have 4D shape
+    mask = mask.reshape((1,) * (4 - len(mask.shape)) + mask.shape)  # type: ignore[union-attr]
+
+  # combine bias and mask
+  if bias is None:
+    bias = mask
+  elif mask is not None:
+    # should be broadcast to same shape
+    bias = bias + mask
+  return bias
+
 # User interface
+def paged_attention(
+    query: Array,
+    key: Array,
+    value: Array,
+    q_seqlen: Array,
+    kv_seqlen: Array,
+    page_table_k: Array,
+    page_table_v: Array,
+    bias: Array | None = None,
+    mask: Array | None = None,
+    fp8_params: FP8Params | None = None,
+    *,
+    scale: float = 1.0,
+    mask_type: MaskType = MaskType.NO_MASK,
+    seed: int = 42,
+    dropout_rate: float = 0.,
+    qkv_layout: str = "BTNH",
+    sliding_window_length: int | None = None,
+    use_fp8: bool = False,
+    return_residual: bool = False
+):
+  """Computes paged attention described in https://arxiv.org/pdf/2309.06180.
+
+    B = batch size
+    S = length of the key/value (source)
+    T = length of the query (target)
+    N = number of attention heads
+    H = dimensions of each attention head.
+
+  Args:
+    query: Queries for attention calculation with a shape of BTNH or BNTH.
+    key: Keys for attention calculation with a shape of
+      [num_blocks, block_size, N, H] or [num_blocks, N, block_size, H] where
+      num_blocks = B * Ceil(S / block_size).
+    value: Values to be used in attention with a shape of
+      [num_blocks, block_size, N, H] or [num_blocks, N, block_size, H] where
+      num_blocks = B * Ceil(S / block_size).
+    q_seqlen: Non padded sequence length of query with a shape of B.
+    kv_seqlen: Non padded sequence length of key and value with a shape of B.
+    page_table_k: page table for key of shape [B, 1, num_blocks_per_batch, 1]
+      where num_blocks_per_batch = Ceil(S / block_size).
+    page_table_v: page table for value of shape [B, 1, num_blocks_per_batch, 1]
+      where num_blocks_per_batch = Ceil(S / block_size).
+    bias: Bias to be added to logits with a shape of BNTS.
+    mask: Mask used to filter out logits with a shape of BNTS.
+    scale: Scale for the query.
+    qkv_layout: Layout string, with supported formats being BTNH, BNTH, BSNH,
+      BNSH.
+    sliding_window_length: Window size to make attention only attend to each
+      token's left local window (pos - sliding_window_length, pos] where `pos`
+      is the index of each token. E.g., if sliding_window_length == 3 and the
+      sequence is [0, 1, 2, 3, c, 4, 5], token `c` can attend to [4, 5, c].
+    use_fp8: Whether to use FP8 attention mechanism.
+    return_residual: Whether to return the logsumexp tensor of shape BTN
+      or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
+      https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
+  Returns:
+    Output array of attention. Additional logsumexp array will be returned if
+    return_residual=True and use_fp8=False.
+  """
+  cudnn_version = check_cudnn_version()
+  layout = _normalize_layout(qkv_layout)
+  if use_fp8:
+    raise ValueError("Paged attention doesn't support fp8 for now.")
+  if has_padding(mask_type) and (q_seqlen is None or kv_seqlen is None):
+    raise ValueError("Require q_seqlen and kv_seqlen to generate padding mask.")
+  if sliding_window_length is not None and sliding_window_length <= 0:
+    raise ValueError(
+      f"Require sliding_window_length > 0, got {sliding_window_length}.")
+
+  bias = combine_bias_and_mask(bias, mask, query.dtype)
+  # check if input shape and data type is compatiable
+  check_layout(query, key, value, bias, q_seqlen, kv_seqlen, None, None,
+    page_table_k, page_table_v, layout)
+  has_bias = bias is not None
+  has_dbias = has_bias and \
+    should_export_dbias(bias.shape, query.shape, layout)  # type: ignore[union-attr]
+  variadic_args = (has_bias, has_dbias)
+
+  _not_used = jnp.zeros(0, dtype=query.dtype)
+  if bias is None:
+    bias = _not_used
+
+  output = _dot_product_attention(
+      query, key, value, bias, q_seqlen, kv_seqlen, _not_used, _not_used,
+      page_table_k, page_table_v, scale, seed, dropout_rate, variadic_args,
+      mask_type, layout.value, sliding_window_length, cudnn_version,
+      return_residual)
+  return output
+
+
 def dot_product_attention(
     query: Array,
     key: Array,
@@ -1794,10 +1938,9 @@ def dot_product_attention(
       or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
       https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
   Returns:
-    output: the same shape as the query.
-    residual: the logsumexp tensor if return_residual=True. (non fp8)
-    amax_s: amax of state. (fp8 only)
-    amax_o: amax of output. (fp8 only)
+    Output array of attention. Additional logsumexp array will be returned if
+    return_residual=True and use_fp8=False. Two additional arrays for amax of
+    state and amax of output will be returned if use_fp8=True.
   """
   # TODO(b/380898464): Check the compute capability, e.g., require GPU device,
   # in the kernel implementation (c++) code.
@@ -1815,7 +1958,8 @@ def dot_product_attention(
           f"but got: bias={bias}, mask={mask}, q_seqlen={q_seqlen}, kv_seqlen={kv_seqlen}"
       )
     check_fp8_params(fp8_params)
-    check_layout(query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets, layout)
+    check_layout(query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
+      None, None, layout)
     output, amax_s, amax_o = _dot_product_attention_fp8(
         query, key, value, fp8_params,
         scale, mask_type == MaskType.CAUSAL, layout.value, cudnn_version
@@ -1830,44 +1974,30 @@ def dot_product_attention(
     if q_offsets is not None and (q_seqlen is None or kv_seqlen is None):
       raise ValueError("Require q_seqlen and kv_seqlen to use packed layout")
 
-    if bias is not None:
-      # reshape bias to have 4D shape
-      bias = bias.reshape((1,) * (4 - len(bias.shape)) + bias.shape)
-
-    if mask is not None:
-      if mask.dtype == jnp.bool:
-        large_negative_number = get_large_negative_number(query.dtype)
-        mask = jnp.where(mask, jnp.asarray(0, query.dtype), large_negative_number)
-      # reshape mask to have 4D shape
-      mask = mask.reshape((1,) * (4 - len(mask.shape)) + mask.shape)  # type: ignore[union-attr]
-
-    # combine bias and mask
-    if bias is None:
-      bias = mask
-    else:
-      if mask is not None:
-        # should be broadcast to same shape
-        bias = bias + mask
-
-    # check if input shape and data type is compatible
-    check_layout(query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets, layout)
+    bias = combine_bias_and_mask(bias, mask, query.dtype)
+    # check if input shape and data type is compatiable
+    check_layout(query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
+      None, None, layout)
     has_bias = bias is not None
     has_dbias = has_bias and \
       should_export_dbias(bias.shape, query.shape, layout)  # type: ignore[union-attr]
     variadic_args = (has_bias, has_dbias)
 
+    _not_used = jnp.zeros(0, dtype=query.dtype)
     if bias is None:
-      bias = jnp.zeros(0, dtype=query.dtype)
+      bias = _not_used
     if q_seqlen is None:
-      q_seqlen = jnp.zeros(0, dtype=query.dtype)
+      q_seqlen = _not_used
     if kv_seqlen is None:
-      kv_seqlen = jnp.zeros(0, dtype=query.dtype)
+      kv_seqlen = _not_used
     if q_offsets is None:
-      q_offsets = jnp.zeros(0, dtype=query.dtype)
+      q_offsets = _not_used
     if kv_offsets is None:
-      kv_offsets = jnp.zeros(0, dtype=query.dtype)
+      kv_offsets = _not_used
+
     output = _dot_product_attention(
         query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-        scale, seed, dropout_rate, variadic_args, mask_type, layout.value,
-        sliding_window_length, cudnn_version, return_residual)
+        _not_used, _not_used, scale, seed, dropout_rate, variadic_args,
+        mask_type, layout.value, sliding_window_length, cudnn_version,
+        return_residual)
     return output
