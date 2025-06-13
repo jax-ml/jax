@@ -139,7 +139,7 @@ def _choose_representative_layout(
 def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
 
   def is_array(v: ir.Value) -> bool:
-    return ir.VectorType.isinstance(v.type)
+    return isinstance(v.type, ir.VectorType)
 
   num_vector_operands = len([o for o in op.operands if is_array(o)])
   num_vector_results = len([r for r in op.results if is_array(r)])
@@ -166,7 +166,7 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   # further down before requiring a relayout in that way.
   all_inputs_have_layout = True
   for operand in op.operands:
-    if not ir.VectorType.isinstance(operand.type):
+    if not isinstance(operand.type, ir.VectorType):
       continue
     if (layout := inference_utils.value_layout(operand)) is not None:
       layouts.add(layout)
@@ -178,7 +178,7 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   # layouts as far down as possible.
   if not layouts:
     for op_result in op.results:
-      if not ir.VectorType.isinstance(op_result.type):
+      if not isinstance(op_result.type, ir.VectorType):
         continue
       for op_operand_use in cast(ir.OpResult, op_result).uses:
         consumer = op_operand_use.owner
@@ -258,7 +258,7 @@ def _infer_optimization_barrier_op_layout(
     op: OptimizationBarrierOp,
 ) -> OptionalLayouts:
   def is_array(v: ir.Value) -> bool:
-    return ir.VectorType.isinstance(v.type)
+    return isinstance(v.type, ir.VectorType)
 
   if inference_utils.has_in_layouts_set(op):
     op_in_layouts = list(inference_utils.in_layouts(op))
@@ -296,14 +296,14 @@ def _infer_optimization_barrier_op_layout(
 
 @partial(_add_layout_inference_rule, arith.ConstantOp)
 def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
-  if not ir.VectorType.isinstance(constant_op.result.type):
+  if not isinstance(constant_op.result.type, ir.VectorType):
     return None
 
   shaped_ty = cast(ir.ShapedType, constant_op.result.type)
   value = constant_op.value
   layout = None
   if (
-      ir.DenseElementsAttr.isinstance(value)
+      isinstance(value, ir.DenseElementsAttr)
       and ir.DenseElementsAttr(value).is_splat
   ):
     layout = layouts_lib.to_splat_fragmented_layout_attr(
@@ -339,7 +339,7 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
 def _layouts_from_values(values: Sequence[ir.Value]) -> list[ir.Attribute] | None:
   layouts = []
   for value in values:
-    if not ir.VectorType.isinstance(value.type):
+    if not isinstance(value.type, ir.VectorType):
       continue
     if (layout := inference_utils.value_layout(value)) is not None:
       if layouts_lib.is_splat_fragmented_layout(layout):
@@ -649,7 +649,7 @@ if hasattr(mgpu, "BroadcastInDimOp"):
 def _infer_wgmma_op_layout(wgmma_op: mgpu.WGMMAOp) -> OptionalLayouts:
   layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
 
-  if ir.VectorType.isinstance(wgmma_op.a.type):
+  if isinstance(wgmma_op.a.type, ir.VectorType):
     return [layout, layout], [layout]
 
   return [layout], [layout]
@@ -762,13 +762,13 @@ def infer_layout(module: ir.Module):
 
   def update_default_vector_size_from_op(op: ir.OpView):
     for i, v in enumerate(
-        filter(lambda v: ir.VectorType.isinstance(v.type), op.operands)
+        filter(lambda v: isinstance(v.type, ir.VectorType), op.operands)
     ):
       if inference_utils.attr_element("in_layouts", op, i) is None:
         update_default_vector_size_from_vector(v)
 
     for i, v in enumerate(
-        filter(lambda v: ir.VectorType.isinstance(v.type), op.results)
+        filter(lambda v: isinstance(v.type, ir.VectorType), op.results)
     ):
       if inference_utils.attr_element("out_layouts", op, i) is None:
         update_default_vector_size_from_vector(v)
@@ -780,7 +780,7 @@ def infer_layout(module: ir.Module):
     return
 
   def to_default_layout(ty: ir.Type) -> ir.Attribute | None:
-    if not ir.VectorType.isinstance(ty):
+    if not isinstance(ty, ir.VectorType):
       return None
     layout = fa.WGStridedFragLayout(
         shape=cast(ir.ShapedType, ty).shape, vec_size=default_vector_size
