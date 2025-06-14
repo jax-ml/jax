@@ -977,6 +977,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "batching",
     srcs = ["_src/interpreters/batching.py"],
+    visibility = [":internal"] + jax_visibility("batching"),
     deps = [
         ":ad_util",
         ":config",
