@@ -23,8 +23,6 @@ from typing import Any, Literal, overload
 
 import numpy as np
 
-from jax import lax
-
 from jax._src import ad_util
 from jax._src import api
 from jax._src import config
@@ -38,7 +36,8 @@ from jax._src import ffi
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import control_flow
+from jax._src.lax import lax
 from jax._src.lax import utils as lax_utils
 from jax._src.lax.lax import _float, _complex, _int
 from jax._src.lib import gpu_linalg
@@ -635,7 +634,7 @@ def tridiagonal(
     superdiagonal. ``taus`` contains the scalar factors of the elementary
     Householder reflectors.
   """
-  return tridiagonal_p.bind(lax_internal.asarray(a), lower=lower)
+  return tridiagonal_p.bind(lax.asarray(a), lower=lower)
 
 
 def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array) -> Array:
@@ -753,7 +752,7 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
                      multiple_results=False, supports_batching=True,
                      require_same=True):
   dtype_rule = partial(
-      lax_internal.naryop_dtype_rule, result_dtype, accepted_dtypes, name,
+      lax.naryop_dtype_rule, result_dtype, accepted_dtypes, name,
       require_same=require_same)
   shape_rule = partial(
       linalg_shape_rule, multiple_results, supports_batching, ranks,
@@ -783,7 +782,7 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
         batching.expand_dims_batcher, prim)
   return prim
 
-standard_linalg_primitive = partial(linalg_primitive, lax_internal._input_dtype)
+standard_linalg_primitive = partial(linalg_primitive, lax._input_dtype)
 
 
 # Primitive implementations
@@ -806,7 +805,7 @@ def _cholesky_jvp_rule(primals, tangents):
   def phi(X):
     l = _tril(X)
     return l / lax.expand_dims(
-        lax_internal._const(X, 1) + lax_internal._eye(X.dtype, (X.shape[-1], X.shape[-1])),
+        lax._const(X, 1) + lax._eye(X.dtype, (X.shape[-1], X.shape[-1])),
         range(l.ndim - 2))
 
   tmp = triangular_solve(L, sigma_dot, left_side=False, transpose_a=True,
@@ -869,7 +868,8 @@ def _cholesky_update_jax_fn(R, z):
         np.array(1., dtype=x.dtype),
         np.array(0., dtype=x.dtype),
     )
-    return lax.cond(y == 0, lambda x, y: one_and_zero, _drotg_nonzero, x, y)
+    return control_flow.cond(
+        y == 0, lambda x, y: one_and_zero, _drotg_nonzero, x, y)
 
   def _drot(
       first_vector: Array, second_vector: Array,
@@ -1063,7 +1063,7 @@ def _eigh_jacobi_shape_rule(shape, **_):
 
 def _eigh_jacobi_dtype_rule(dtype, **_):
   dtype = dtypes.canonicalize_dtype(dtype)
-  return lax_internal._complex_basetype(dtype), dtype
+  return lax._complex_basetype(dtype), dtype
 
 def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
   operand_aval, = ctx.avals_in
@@ -1118,7 +1118,7 @@ def _eigh_shape_rule(shape, *, subset_by_index, **_):
 
 def _eigh_dtype_rule(dtype, **_):
   dtype = dtypes.canonicalize_dtype(dtype)
-  return dtype, lax_internal._complex_basetype(dtype)
+  return dtype, lax._complex_basetype(dtype)
 
 def _eigh_cpu_gpu_lowering(
     ctx, operand, *, lower, sort_eigenvalues, subset_by_index,
@@ -1185,7 +1185,7 @@ def _eigh_jvp_rule(
 
   # for complex numbers we need eigenvalues to be full dtype of v, a:
   w = w_real.astype(a.dtype)
-  eye_n = lax_internal._eye(a.dtype, (n, n))
+  eye_n = lax._eye(a.dtype, (n, n))
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
   with config.numpy_rank_promotion("allow"):
     Fmat = lax.integer_pow(eye_n + w[..., np.newaxis, :] - w[..., np.newaxis], -1) - eye_n
@@ -1332,7 +1332,7 @@ def _lu_unblocked(a):
     # a[k+1:, k+1:] -= jnp.outer(a[k+1:, k], a[k, k+1:])
     a_outer = a[:, k, None] * a[k, None]
     a = a - lax.select((m_idx[:, None] > k) & (n_idx[None, :] > k),
-                       a_outer, lax_internal._zeros(a_outer))
+                       a_outer, lax._zeros(a_outer))
     return pivot, perm, a
 
   pivot = lax.full((min(m, n),), 0, dtype=np.int32)
@@ -1341,7 +1341,7 @@ def _lu_unblocked(a):
     # If the array is empty, the loop body never executes but tracing it to a
     # jaxpr fails because the indexing cannot succeed.
     return (pivot, perm, a)
-  return lax.fori_loop(0, min(m, n), body, (pivot, perm, a))
+  return control_flow.fori_loop(0, min(m, n), body, (pivot, perm, a))
 
 
 def _lu_blocked(a, block_size=128):
@@ -1405,10 +1405,10 @@ def _lu_jvp_inner(lu, a_dot, permutation):
 
   l_padding = [(0, 0, 0)] * 2
   l_padding[-1] = (0, m - k, 0)
-  zero = lax_internal._const(lu, 0)
+  zero = lax._const(lu, 0)
   l = lax.pad(_tril(lu[:, :k], -1), zero, l_padding)
-  l = l + lax_internal._eye(dtype, (m, m))
-  u_eye = lax.pad(lax_internal._eye(dtype, (n - k, n - k)), zero,
+  l = l + lax._eye(dtype, (m, m))
+  u_eye = lax.pad(lax._eye(dtype, (n - k, n - k)), zero,
                   ((k, 0, 0), (k, 0, 0)))
   u_padding = [(0, 0, 0)] * 2
   u_padding[-2] = (0, n - k, 0)
@@ -1602,8 +1602,8 @@ def _generic_lu_pivots_to_permutation(swaps, permutation_size):
     return permutation
   upper = np.array(k, np.int32) if is_constant_dim(k) else k
   permutation, swaps = core.standard_insert_pvary(permutation, swaps)
-  result, _ = lax.fori_loop(np.array(0, np.int32), upper, _lu_pivots_body_fn,
-                            (permutation, swaps))
+  result, _ = control_flow.fori_loop(np.array(0, np.int32), upper,
+                                     _lu_pivots_body_fn, (permutation, swaps))
   return result
 
 
@@ -1776,7 +1776,7 @@ def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
   qt_dx_rinv_lower = _tril(qt_dx_rinv, -1)
   do = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
   # The following correction is necessary for complex inputs
-  I = lax.expand_dims(lax_internal._eye(do.dtype, (n, n)), range(qt_dx_rinv.ndim - 2))
+  I = lax.expand_dims(lax._eye(do.dtype, (n, n)), range(qt_dx_rinv.ndim - 2))
   do = do + I * (qt_dx_rinv - qt_dx_rinv.real.astype(qt_dx_rinv.dtype))
   dq = q @ (do - qt_dx_rinv) + dx_rinv
   dr = (qt_dx_rinv - do) @ r
@@ -1789,7 +1789,7 @@ def _qr_lowering(a, *, pivoting, full_matrices, use_magma):
   *batch_dims, m, n = a.shape
   if m == 0 or n == 0:
     k = m if full_matrices else core.min_dim(m, n)
-    q = lax.broadcast_in_dim(lax_internal._eye(a.dtype, (m, k)),
+    q = lax.broadcast_in_dim(lax._eye(a.dtype, (m, k)),
                              (*batch_dims, m, k),
                              (len(batch_dims), len(batch_dims) + 1))
     r = lax.full((*batch_dims, k, n), 0, dtype=a.dtype)
@@ -1809,7 +1809,7 @@ def _qr_lowering(a, *, pivoting, full_matrices, use_magma):
     q = householder_product(r[..., :m, :m], taus)
   elif full_matrices:
     pads = [(0, 0, 0)] * (len(batch_dims) + 1) + [(0, m - n, 0)]
-    q = lax.pad(r, lax_internal._zero(r), pads)
+    q = lax.pad(r, lax._zero(r), pads)
     q = householder_product(q, taus)
   else:
     q = householder_product(r, taus)
@@ -1909,7 +1909,7 @@ def _svd_shape_rule(shape, *, full_matrices, compute_uv, subset_by_index, **_):
 
 def _svd_dtype_rule(dtype, *, compute_uv, **_):
   dtype = dtypes.canonicalize_dtype(dtype)
-  real_dtype = lax_internal._complex_basetype(dtype)
+  real_dtype = lax._complex_basetype(dtype)
   if compute_uv:
     return real_dtype, dtype, dtype
   else:
@@ -1941,7 +1941,7 @@ def _svd_jvp_rule(
     return (s,), (ds,)
 
   s_diffs = (s_dim + _T(s_dim)) * (s_dim - _T(s_dim))
-  s_diffs_zeros = lax_internal._eye(s.dtype, (s.shape[-1], s.shape[-1]))  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
+  s_diffs_zeros = lax._eye(s.dtype, (s.shape[-1], s.shape[-1]))  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
   s_diffs_zeros = lax.expand_dims(s_diffs_zeros, range(s_diffs.ndim - 2))
   F = 1 / (s_diffs + s_diffs_zeros) - s_diffs_zeros
   dSS = s_dim.astype(A.dtype) * dS  # dS.dot(jnp.diag(s))
@@ -1967,12 +1967,12 @@ def _svd_jvp_rule(
 def _empty_svd(a, *, full_matrices, compute_uv):
   batch_shape = a.shape[:-2]
   m, n = a.shape[-2:]
-  s = lax.full(batch_shape + (0,), 0, dtype=lax_internal._complex_basetype(a.dtype))
+  s = lax.full(batch_shape + (0,), 0, dtype=lax._complex_basetype(a.dtype))
   if not compute_uv:
     return (s,)
   if full_matrices:
     size = max(m, n)
-    u = lax.broadcast_in_dim(lax_internal._eye(a.dtype, (size, size)),
+    u = lax.broadcast_in_dim(lax._eye(a.dtype, (size, size)),
                              (*batch_shape, size, size),
                              (len(batch_shape), len(batch_shape) + 1))
   else:
@@ -2371,7 +2371,7 @@ def _tridiagonal_shape_rule(shape, **_):
 
 def _tridiagonal_dtype_rule(dtype, **_):
   dtype = dtypes.canonicalize_dtype(dtype)
-  real_dtype = lax_internal._complex_basetype(dtype)
+  real_dtype = lax._complex_basetype(dtype)
   return dtype, real_dtype, real_dtype, dtype
 
 def _tridiagonal_cpu_gpu_lowering(ctx, a, *, lower, target_name_prefix):
@@ -2499,7 +2499,7 @@ def _tridiagonal_solve_jax_impl(dl, d, du, b):
     dp_next = (d - a * dp) / (b - a * cp)
     return (cp_next, dp_next), (cp, dp)
 
-  (_, final), (cp, dp) = lax.scan(
+  (_, final), (cp, dp) = control_flow.scan(
       fwd, (du[0] / d[0], b[0] / d[0]), (dl[1:], d[1:], du[1:], b[1:, :]),
       unroll=32)
 
@@ -2508,7 +2508,7 @@ def _tridiagonal_solve_jax_impl(dl, d, du, b):
     x = dp - cp * xn
     return x, xn
 
-  end, ans = lax.scan(bwd, final, (cp, dp), unroll=32, reverse=True)
+  end, ans = control_flow.scan(bwd, final, (cp, dp), unroll=32, reverse=True)
   return lax.concatenate((end[None], ans), 0)
 
 def _tridiagonal_solve_jax(dl, d, du, b, **_):
@@ -2573,7 +2573,7 @@ def _solve(a: Array, b: Array) -> Array:
   # computing sensitivities. This is considerably faster.
   lu_, _, permutation = lu(lax.stop_gradient(a))
   custom_solve = partial(
-      lax.custom_linear_solve,
+      control_flow.custom_linear_solve,
       lambda x: _broadcasted_matvec(a, x),
       solve=lambda _, x: lu_solve(lu_, permutation, x, trans=0),
       transpose_solve=lambda _, x: lu_solve(lu_, permutation, x, trans=1))
@@ -2594,12 +2594,12 @@ def symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
 
 def _tril(m: Array, k:int = 0) -> Array:
   *_, N, M = m.shape
-  mask = lax_internal._tri(bool, (N, M), k)
+  mask = lax._tri(bool, (N, M), k)
   return lax.select(lax.broadcast(mask, m.shape[:-2]), m, lax.zeros_like_array(m))
 
 def _triu(m: Array, k:int = 0) -> Array:
   *_, N, M = m.shape
-  mask = lax_internal._tri(bool, (N, M), k - 1)
+  mask = lax._tri(bool, (N, M), k - 1)
   return lax.select(lax.broadcast(mask, m.shape[:-2]), lax.zeros_like_array(m), m)
 
 def _construct_diagonal(s: Array) -> Array:
@@ -2624,7 +2624,7 @@ def _nan_like_hlo(ctx: mlir.LoweringRuleContext, aval) -> ir.Value:
 
 def _broadcasting_select_hlo(ctx, which, which_aval, x, x_aval, y, y_aval) -> ir.Value:
   """Wrapper around XLA `Select` that broadcasts its arguments."""
-  out_shapes = list(lax_internal.broadcast_shapes(
+  out_shapes = list(lax.broadcast_shapes(
       tuple(which_aval.shape), tuple(x_aval.shape), tuple(y_aval.shape)))
   which, x, y = mlir.multi_broadcast_in_dim(ctx, (which, x, y),
                                             (which_aval, x_aval, y_aval),
