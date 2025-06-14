@@ -1390,7 +1390,8 @@ def explain_tracing_cache_miss(
   done()
 
 
-@partial(lu.cache, explain=explain_tracing_cache_miss)
+@partial(lu.cache, explain=explain_tracing_cache_miss,
+         context=config.jit_trace_cache_context)
 def _create_pjit_jaxpr(
     fun: lu.WrappedFun,
     in_type: core.InputType | Sequence[core.AbstractValue],
