@@ -279,6 +279,250 @@ class ShardMapTest(jtu.JaxTestCase):
     c = fwd(a)
     self.assertAllClose(c[1, :], a[0, :])
 
+  def test_psend_precv_basic(self):
+    mesh = jtu.create_mesh((8,), 'x')
+    a = jax.device_put(
+        jnp.arange(8 * 8).reshape((8, 8)),
+        jax.sharding.NamedSharding(mesh, P('x', None)))
+
+    @jax.jit
+    @partial(
+        shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
+    )
+    def fwd(a):
+      axis_size = lax.axis_size('x')
+      perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
+      token = lax.psend(a, 'x', perm=perm)
+      return lax.precv(token, out_shape=jax.ShapeDtypeStruct(a.shape, a.dtype),
+                       axis_name='x', perm=perm)
+
+    c = fwd(a)
+    self.assertAllClose(c[1, :], a[0, :])
+
+  def test_psend_precv_reverse(self):
+    mesh = jtu.create_mesh((8,), 'x')
+    a = jax.device_put(
+        jnp.arange(8 * 8).reshape((8, 8)),
+        jax.sharding.NamedSharding(mesh, P('x', None)))
+    @jax.jit
+    @partial(
+        jax.shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
+    )
+    def fwd(a):
+      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      dummy_data = jax.lax.precv(jax.lax.create_token(),
+                                out_shape=return_dtype_and_shape,
+                                axis_name="x",
+                                perm=[(0, 1), (1, 2), (2, 3), (3, 6)])
+      tok1 = jax.lax.psend(
+          dummy_data,
+          axis_name="x",
+          perm=[(0, 1), (1, 2), (2, 3), (3, 6)],
+      )
+      return dummy_data
+
+    c = fwd(a)
+    self.assertAllClose(c, jnp.zeros_like(a))
+
+  def test_psend_precv_partially_pipelined(self):
+
+    # useful constants
+    NUM_DEVICES = 8
+    NUM_MICROBATCHES = 5
+    NUM_CIRC_REPEATS = 2
+    CONTRACTING_DIM_SIZE = 2
+    NON_CONTRACTING_DIM_SIZE = 2
+    COMPUTE_INTENSITY = 32
+
+    expected_output_on_last_device = jax.numpy.array(
+        [[[[0.63997924,0.72362417],[0.63997924,0.72362417]]]])
+
+    def select_on_first_device(then_value, else_value):
+      assert then_value.shape == else_value.shape
+      is_first_device = jax.lax.axis_index("the_one_and_only_axis") == 0
+      return jnp.where(is_first_device, then_value, else_value)
+
+    def select_on_first_cycle(i, then_value, else_value):
+      assert then_value.shape == else_value.shape
+      is_first_cycle = i < NUM_MICROBATCHES
+      return jnp.where(is_first_cycle, then_value, else_value)
+
+    def while_body(carry, i):
+      (
+          weights,
+          input_buffer,
+          output_buffer,
+          prev_compute_res,
+          prev_stage_slice_fwd,
+          prev_stage_slice_bwd,
+      ) = carry
+
+      # Read input data from input buffer.
+      input_slice = jax.lax.dynamic_slice(
+          input_buffer,
+          (0, (i + 0) % NUM_MICROBATCHES, 0, 0),
+          (1, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE),
+      )
+
+      # send_fwd
+      fwd_send_token = jax.lax.psend(
+          prev_compute_res,
+          axis_name="the_one_and_only_axis",
+          perm=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)],
+      )
+
+      # Select compute argument based on device and pipeline cycle
+      compute_argument = select_on_first_device(
+          select_on_first_cycle(i, input_slice, prev_stage_slice_bwd),
+          prev_stage_slice_fwd,
+      ).reshape((1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE))
+
+      tmp = compute_argument
+      for _ in range(COMPUTE_INTENSITY):
+        tmp = jax.lax.dot_general(weights, tmp, (((2,), (1,)), ((0,), (0,))))
+      compute_result = tmp.reshape(
+          (1, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE)
+      )
+
+      buffer_slice_for_bwd_ppermute = jax.lax.dynamic_slice(
+          output_buffer,
+          (0, (i + 1) % NUM_MICROBATCHES, 0, 0),
+          (1, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE),
+      )
+
+      # make sure ppermute is scheduled after send_fwd
+      buffer_slice_for_bwd_ppermute_after_send_fwd, _ = (
+          jax.lax.optimization_barrier(
+              (buffer_slice_for_bwd_ppermute, fwd_send_token)
+          )
+      )
+      # ppermute_bwd
+      ppermute_bwd_data = jax.lax.ppermute(
+          buffer_slice_for_bwd_ppermute_after_send_fwd,
+          axis_name="the_one_and_only_axis",
+          perm=[(7, 0)],
+      )
+
+      # make sure recv is scheduled after ppermute
+      precv_token, _ = jax.lax.optimization_barrier(
+          (jax.lax.create_token(), ppermute_bwd_data)
+      )
+
+      # recv_fwd, matches the send_fwd in the next iteration
+      fwd_recv_data = jax.lax.precv(
+          precv_token,
+          out_shape=jax.ShapeDtypeStruct(
+              input_slice.shape, input_slice.dtype
+          ),
+          axis_name="the_one_and_only_axis",
+          perm=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)],
+      )
+      update_output_buffer = jax.lax.dynamic_update_slice(
+          output_buffer,
+          compute_result,
+          (0, (i + 2) % NUM_MICROBATCHES, 0, 0),
+      )
+      carry = (
+          weights,
+          input_buffer,
+          update_output_buffer,
+          compute_result,
+          fwd_recv_data,
+          ppermute_bwd_data,
+      )
+      return carry, i
+
+    mesh = jtu.create_mesh((NUM_DEVICES,), 'the_one_and_only_axis')
+    # Init weights.
+    weights = 1.0 / CONTRACTING_DIM_SIZE
+    weights = jax.lax.broadcast_in_dim(
+        weights,
+        shape=(NUM_DEVICES, CONTRACTING_DIM_SIZE, CONTRACTING_DIM_SIZE),
+        broadcast_dimensions=(),
+    )
+    weights = jax.device_put(
+        weights, NamedSharding(mesh, P('the_one_and_only_axis'))
+    )
+    # Init input.
+    random_key = jax.random.key(0)
+    input_buffer = jax.random.uniform(
+        random_key,
+        shape=(
+            NUM_MICROBATCHES,
+            CONTRACTING_DIM_SIZE,
+            NON_CONTRACTING_DIM_SIZE,
+        ),
+    )
+    input_buffer = jax.lax.broadcast_in_dim(
+        input_buffer,
+        shape=(
+            NUM_DEVICES,
+            NUM_MICROBATCHES,
+            CONTRACTING_DIM_SIZE,
+            NON_CONTRACTING_DIM_SIZE,
+        ),
+        broadcast_dimensions=[1, 2, 3],
+    )
+
+    input_buffer = jax.device_put(
+        input_buffer,
+        NamedSharding(mesh, P("the_one_and_only_axis")),
+    )
+    # Init dummy data for forward and backward edge passed through the while
+    # loop.
+    dummy_slice = jnp.zeros(
+        shape=(NUM_DEVICES, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE)
+    ).astype(jnp.float32)
+    dummy_data = jax.device_put(
+        dummy_slice,
+        NamedSharding(mesh, P("the_one_and_only_axis")),
+    )
+
+    @jax.jit
+    @partial(
+        jax.shard_map, mesh=mesh, in_specs=P('the_one_and_only_axis'),
+        out_specs=P('the_one_and_only_axis'), check_vma=False
+    )
+    def fwd(weights, input_buffer, dummy_data):
+      # Init output buffer.
+      output_buffer = jnp.zeros_like(input_buffer)
+
+      # Start pipeline.
+      dummy_slice_fwd = jax.lax.precv(
+          jax.lax.create_token(),
+          jax.ShapeDtypeStruct(dummy_data.shape, dummy_data.dtype),
+          axis_name='the_one_and_only_axis',
+          perm=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)],
+      )
+
+      carry = (
+          weights,
+          input_buffer,
+          output_buffer,
+          dummy_slice_fwd,
+          dummy_data,
+          dummy_data,
+      )
+
+      num_iterations = NUM_CIRC_REPEATS * NUM_MICROBATCHES + NUM_DEVICES - 1
+      carry, _ = jax.lax.scan(while_body, carry, xs=jnp.arange(num_iterations))
+
+      _ = jax.lax.psend(
+          carry[3],
+          axis_name='the_one_and_only_axis',
+          perm=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)],
+      )
+
+      _, _, output_buffer, _, _, _ = carry
+      return output_buffer
+
+    c = fwd(weights, input_buffer, dummy_data)
+    last_device_output = jax.lax.dynamic_slice(
+        c, (-1, -2, 0, 0),
+        (1, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE))
+    self.assertAllClose(
+        last_device_output, expected_output_on_last_device)
+
   def test_collective_permute_with_multiple_axis_names(self):
     mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
     a = jax.device_put(
