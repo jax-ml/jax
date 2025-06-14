@@ -113,6 +113,10 @@ class CompilerParams(pallas_core.CompilerParams):
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Lane
 
   def __post_init__(self):
+    if self.dimension_semantics is not None:
+      object.__setattr__(
+          self, "dimension_semantics", tuple(self.dimension_semantics)
+      )
     if bool(self.profile_space) ^ bool(self.profile_dir):
       raise ValueError(
           "Either both profile_space and profile_dir must be set, or neither."
@@ -988,6 +992,10 @@ class Mesh:
           "Requested too many CUDA threads per block. Each Mosaic thread"
           " corresponds to 128 CUDA threads."
       )
+    object.__setattr__(self, "grid", tuple(self.grid))
+    object.__setattr__(self, "grid_names", tuple(self.grid_names))
+    object.__setattr__(self, "cluster", tuple(self.cluster))
+    object.__setattr__(self, "cluster_names", tuple(self.cluster_names))
 
   @property
   def backend(self) -> str:
