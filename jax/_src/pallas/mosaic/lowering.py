@@ -2378,7 +2378,11 @@ def _gather_lowering_rule(
         operand_batching_dims=(1,),
         start_indices_batching_dims=(1,),
     ):
-      return tpu.dynamic_gather(x, recovered_indices, 0)
+      if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 6, 13):
+        # TODO: b/423649694 - Remove on 2025-07-13
+        return tpu.dynamic_gather(x, recovered_indices, 0)
+      else:
+        return tpu.dynamic_gather(x, recovered_indices, [0])
     if dimension_numbers == lax.GatherDimensionNumbers(
         offset_dims=(),
         collapsed_slice_dims=(1,),
@@ -2386,7 +2390,11 @@ def _gather_lowering_rule(
         operand_batching_dims=(0,),
         start_indices_batching_dims=(0,),
     ):
-      return tpu.dynamic_gather(x, recovered_indices, 1)
+      if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 6, 13):
+        # TODO: b/423649694 - Remove on 2025-07-13
+        return tpu.dynamic_gather(x, recovered_indices, 1)
+      else:
+        return tpu.dynamic_gather(x, recovered_indices, [1])
   raise NotImplementedError("Unsupported gather")
 
 
