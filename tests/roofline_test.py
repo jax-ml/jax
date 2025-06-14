@@ -24,7 +24,6 @@ import jax.lax as lax
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 
-
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
 
@@ -44,6 +43,24 @@ def create_inputs(
     )
     arrays.append(array)
   return mesh, tuple(arrays)
+
+
+@jax.custom_jvp
+def example_custom_function(x):
+  """Example custom function.
+  
+  This function is very simple and exists only so we can test custom functions.
+  """
+  return x
+
+
+@example_custom_function.defjvp
+def example_custom_function_jvp(primals, tangents):
+  """Example custom function jvp.
+  
+  This function is very simple and exists only so we can test custom functions.
+  """
+  return example_custom_function(primals), tangents
 
 
 class RooflineTest(jtu.JaxTestCase):
@@ -801,6 +818,22 @@ class RooflineTest(jtu.JaxTestCase):
       self.assertEqual(
           result.unfused_hbm_bytes, self._bytes_per_word * expected_memory
       )
+
+  def test_custom_jvp_call_p_roofline(self):
+    _, result = roofline.roofline(example_custom_function)(jnp.ones((1, 1)))
+
+    self.assertEqual(result.hbm_bytes, 0)
+    self.assertEqual(result.unfused_hbm_bytes, 0)
+
+  def test_custom_jvp_call_p_roofline_with_neg(self):
+    f = lambda x: jax.lax.neg(example_custom_function(x))
+
+    _, result = roofline.roofline(f)(jnp.ones((1, 1)))
+
+    # We expect that `neg` contributes some flops, but don't want to test the
+    # exact number in this test.
+    self.assertGreater(result.unfused_flops, 0)
+    self.assertGreater(result.unfused_hbm_bytes, 0)
 
 
 if __name__ == "__main__":
