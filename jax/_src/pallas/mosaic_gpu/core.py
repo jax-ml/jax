@@ -40,6 +40,7 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
+from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 from jaxlib.mlir import ir
@@ -54,6 +55,7 @@ DimensionSemantics = Literal["parallel", "sequential"]
 # sensitive to alignment and while this is quite conservative, it gets the job
 # done. We should make this more refined in the future.
 SMEM_ALIGNMENT = 1024
+TMEM_COL_ALIGNMENT = 8
 
 
 def is_trivial_index(idx, shape) -> bool:
@@ -279,53 +281,114 @@ def _ref_group_size(refs: _GPUMemoryRefTree) -> int:
   return size
 
 
+def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
+  """Returns the total number of TMEM columns used by a group of alised Refs."""
+  if isinstance(refs, GPUMemoryRef):
+    refs = (refs,)
+  ncols = 0
+  for ref in jax.tree.leaves(refs):
+    ncols = align_to(ncols, TMEM_COL_ALIGNMENT)
+    ncols += infer_tmem_cols_layout(ref.shape, ref.dtype, packed=ref.packed)[0]
+  return ncols
+
+
+def infer_tmem_cols_layout(
+    shape: tuple[int, int],
+    dtype: jnp.dtype,
+    packed: bool,
+    layout: tcgen05.TMEMLayout | None = None,
+    exact_cols: bool = False) -> tuple[int, tcgen05.TMEMLayout]:
+  """Infers the number of columns used and layout for allocating TMEM Refs."""
+  if packed:
+    packing = 4 // jnp.dtype(dtype).itemsize
+  else:
+    packing = 1
+  if layout is None:
+    layout = tcgen05._infer_tmem_layout(shape, packing=packing)
+  unpadded_cols_used = layout.cols_in_shape(shape)
+  cols_used = tcgen05._alloc_ncols(unpadded_cols_used, exact=exact_cols)
+  return cols_used, layout
+
+
 def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
   """Flattens a union of trees of references into a tuple of references.
 
   This is the moral equivalent of `jax.tree.leaves` for aliased references.
   """
   flat_refs = []
-  union_bytes = 0
-  for ref_group in ref_union.refs:
-    byte_offset = 0
-    for ref in jax.tree.leaves(ref_group):
-      byte_offset = align_to(byte_offset, SMEM_ALIGNMENT)
-      assert isinstance(ref, pallas_core.AbstractMemoryRef) or isinstance(
-          ref, pallas_core.TransformedRef
-      )
-      if not isinstance(ref, pallas_core.TransformedRef):
-        ref = pallas_core.TransformedRef(ref, transforms=())
-      transform = ExtractAliasedRef.from_transformed_ref(ref, byte_offset)
-      flat_refs.append(
-          pallas_core.TransformedRef(
-              ref_union, transforms=(transform, *ref.transforms)
-          )
-      )
-      if jnp.issubdtype(ref.dtype, jnp.integer):
-        nbits = jnp.iinfo(ref.dtype).bits
-      elif jnp.issubdtype(ref.dtype, jnp.floating):
-        nbits = jnp.finfo(ref.dtype).bits
-      else:
-        raise NotImplementedError(f"Unsupported dtype: {ref.dtype}")
-      ref_bits = math.prod(ref.shape) * nbits
-      if ref_bits % 8:
-        raise ValueError("Only byte-aligned shapes are supported.")
-      byte_offset += ref_bits // 8
-    union_bytes = max(union_bytes, byte_offset)
-  assert union_bytes == ref_union.shape[0]
+  if ref_union.memory_space == SMEM:
+    union_bytes = 0
+    for ref_group in ref_union.refs:
+      byte_offset = 0
+      for ref in jax.tree.leaves(ref_group):
+        byte_offset = align_to(byte_offset, SMEM_ALIGNMENT)
+        assert isinstance(ref, pallas_core.AbstractMemoryRef) or isinstance(
+            ref, pallas_core.TransformedRef
+        )
+        if not isinstance(ref, pallas_core.TransformedRef):
+          ref = pallas_core.TransformedRef(ref, transforms=())
+        transform = ExtractAliasedRef.from_transformed_ref(ref, byte_offset)
+        flat_refs.append(
+            pallas_core.TransformedRef(
+                ref_union, transforms=(transform, *ref.transforms)
+            )
+        )
+        if jnp.issubdtype(ref.dtype, jnp.integer):
+          nbits = jnp.iinfo(ref.dtype).bits
+        elif jnp.issubdtype(ref.dtype, jnp.floating):
+          nbits = jnp.finfo(ref.dtype).bits
+        else:
+          raise NotImplementedError(f"Unsupported dtype: {ref.dtype}")
+        ref_bits = math.prod(ref.shape) * nbits
+        if ref_bits % 8:
+          raise ValueError("Only byte-aligned shapes are supported.")
+        byte_offset += ref_bits // 8
+      union_bytes = max(union_bytes, byte_offset)
+    assert union_bytes == ref_union.shape[0]
+  elif ref_union.memory_space == TMEM:
+    union_cols = 0
+    for ref_group in ref_union.refs:
+      col_offset = 0
+      for ref in jax.tree.leaves(ref_group):
+        col_offset = align_to(col_offset, TMEM_COL_ALIGNMENT)
+        if not isinstance(ref, pallas_core.TransformedRef):
+          ref = pallas_core.TransformedRef(ref, transforms=())
+        ncols, layout = infer_tmem_cols_layout(
+            ref.shape, ref.dtype, ref.packed)
+        transform = ExtractAliasedRef.from_transformed_ref(
+            ref, col_offset, tmem_layout=layout)
+        flat_refs.append(
+            pallas_core.TransformedRef(
+                ref_union, transforms=(transform, *ref.transforms)
+            )
+        )
+        col_offset += ncols
+      union_cols = max(union_cols, col_offset)
+    assert union_cols == ref_union.shape[1], (union_cols, ref_union.shape[1])
+  else:
+    raise NotImplementedError("Only SMEM and TMEM refs are supported.")
   return tuple(flat_refs)
 
 
 class AbstractRefUnion(pallas_core.AbstractMemoryRef):
   refs: Sequence[_GPUMemoryRefTree]
+  # TMEM-specific parameters. This should contain the same fields as
+  # AbstractTMEMRef.
+  # We default to packed=False which is an overestimate on the total size.
+  packed: bool = False
+  collective: bool | None = None
 
   def __init__(
       self,
       aval,
       refs: Sequence[_GPUMemoryRefTree],
       memory_space,
+      collective: bool | None = None,
   ):
+    if memory_space == TMEM and collective is not None:
+      raise ValueError("Collective can only be specified for TMEM refs.")
     self.refs = refs
+    self.collective = collective
     super().__init__(aval, memory_space=memory_space)
 
   def _iter(self, tracer):
@@ -340,7 +403,8 @@ class AbstractRefUnion(pallas_core.AbstractMemoryRef):
 
   def update_vma(self, vma):
     return AbstractRefUnion(self.inner_aval.update_vma(vma), self.refs,
-                            self.memory_space)
+                            self.memory_space,
+                            collective=self.collective)
 
 
 @dataclasses.dataclass(init=False, frozen=True)
@@ -356,23 +420,49 @@ class RefUnion(GPUMemoryRef):
   data using a different ref than the one that was used to write the data).
   """
   refs: Sequence[_GPUMemoryRefTree] = ()
+  # TMEM-specific parameters.
+  collective: bool | None = None
 
   def __init__(self, *refs: _GPUMemoryRefTree):
-    if any(ref.memory_space != SMEM for ref in jax.tree.leaves(refs)):
-      raise NotImplementedError("Only SMEM refs can be aliased.")
-    object.__setattr__(self, "refs", refs)
-    num_bytes = max(map(_ref_group_size, self.refs))
-    super().__init__(
-        shape=(num_bytes,),
-        dtype=jnp.int8,
-        memory_space=SMEM,
-        transforms=(),
-    )
+    ref_leaves = jax.tree.leaves(refs)
+    if all(ref.memory_space == SMEM for ref in ref_leaves):
+      object.__setattr__(self, "refs", refs)
+      num_bytes = max(map(_ref_group_size, self.refs))
+      super().__init__(
+          shape=(num_bytes,),
+          dtype=jnp.int8,
+          memory_space=SMEM,
+          transforms=(),
+      )
+    elif all(ref.memory_space == TMEM for ref in ref_leaves):
+      object.__setattr__(self, "refs", refs)
+      first_ref = ref_leaves[0]
+      # For simplicity around layouts we will be strict and require
+      # all aliased Refs to have the same first dimension.
+      if not all(ref.shape[0] == first_ref.shape[0] for ref in ref_leaves):
+        raise ValueError("All Refs must have the same first dimension."
+                         f" Got: {[ref.shape[0] for ref in ref_leaves]}")
+      if not all(ref.collective == first_ref.collective for ref in ref_leaves):
+        raise ValueError(f"All Refs must be either collective/not collective."
+          f" Got: {[ref.collective for ref in ref_leaves]}")
+      num_rows = first_ref.shape[0]
+      max_cols = max(map(_ref_group_tmem_col_size, self.refs))
+      super().__init__(
+          shape=(num_rows, max_cols,),
+          dtype=jnp.int32,
+          memory_space=TMEM,
+          transforms=(),
+          collective=first_ref.collective,
+      )
+    else:
+      raise NotImplementedError("Only SMEM and TMEM refs can be aliased.")
 
   def get_ref_aval(self) -> AbstractRefUnion:
     inner_aval = jax.core.ShapedArray(self.shape, self.dtype)
     refs_aval = jax.tree.map(lambda ref: ref.get_ref_aval(), self.refs)
-    return AbstractRefUnion(inner_aval, refs_aval, memory_space=SMEM)
+    return AbstractRefUnion(inner_aval, refs_aval,
+                            memory_space=self.memory_space,
+                            collective=self.collective)
 
 
 class MemoryRefTransform(pallas_core.MemoryRefTransform, abc.ABC):
@@ -658,13 +748,17 @@ class ExtractAliasedRef(state_types.Transform):
   dtype: dtypes.DType
   shape: tuple[int, ...]
   offset: int
+  # TMEM-specific params
+  tmem_layout: tcgen05.TMEMLayout | None = None
 
   @classmethod
   def from_transformed_ref(
-      cls, ref: pallas_core.TransformedRef, byte_offset: int
+      cls, ref: pallas_core.TransformedRef, byte_offset: int,
+      tmem_layout: tcgen05.TMEMLayout | None = None
   ):
     return cls(
-        dtypes.dtype(ref.dtype), ref.ref.shape, byte_offset
+        dtypes.dtype(ref.dtype), ref.ref.shape, byte_offset,
+        tmem_layout=tmem_layout,
     )
 
   def transform_shape(self, shape):
@@ -677,7 +771,7 @@ class ExtractAliasedRef(state_types.Transform):
     return self.dtype
 
   def tree_flatten(self):
-    return (), (self.dtype, self.shape, self.offset)
+    return (), (self.dtype, self.shape, self.offset, self.tmem_layout)
 
   @classmethod
   def tree_unflatten(cls, metadata, arrays):

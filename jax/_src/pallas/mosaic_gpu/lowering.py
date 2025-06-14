@@ -122,12 +122,13 @@ class Resources:
     object.__setattr__(
         self,
         "tmem_scratch_cols",
-        gpu_core.align_to(self.tmem_scratch_cols, 8),
+        gpu_core.align_to(self.tmem_scratch_cols, gpu_core.TMEM_COL_ALIGNMENT),
     )
     object.__setattr__(
         self,
         "tmem_collective_scratch_cols",
-        gpu_core.align_to(self.tmem_collective_scratch_cols, 8),
+        gpu_core.align_to(self.tmem_collective_scratch_cols,
+                          gpu_core.TMEM_COL_ALIGNMENT),
     )
 
   @property
@@ -309,13 +310,8 @@ def _run_scoped_resource_estimator(
       if aval.shape[0] % tcgen05.TMEM_ROWS != 0:
         raise ValueError(
             f"TMEM shape[0] must be a multiple of 128. Got {aval.shape[0]}.")
-      if aval.packed:
-        packing = 4 // aval.dtype.itemsize
-      else:
-        packing = 1
-      layout = tcgen05._infer_tmem_layout(aval.shape, packing=packing)
-      cols_used = layout.cols_in_shape(aval.shape)
-      cols_used = tcgen05._alloc_ncols(cols_used, exact=False)
+      cols_used, _ = gpu_core.infer_tmem_cols_layout(
+          aval.shape, aval.dtype, aval.packed)
       if aval.collective:
         rs += Resources(tmem_collective_scratch_cols=cols_used)
       else:
@@ -446,14 +442,8 @@ class ModuleContext:
       packed: bool = False,
       exact_cols: bool = False
   ) -> ir.Value:
-    if packed:
-      packing = 4 // struct.dtype.itemsize
-    else:
-      packing = 1
-    if layout is None:
-      layout = tcgen05._infer_tmem_layout(struct.shape, packing=packing)
-    unpadded_cols_used = layout.cols_in_shape(struct.shape)
-    cols_used = tcgen05._alloc_ncols(unpadded_cols_used, exact_cols)
+    cols_used, layout = gpu_core.infer_tmem_cols_layout(
+        struct.shape, struct.dtype, packed, layout, exact_cols=exact_cols)
     if collective:
       off = arith_dialect.addi(
           self.tmem_collective_base_ptr,
@@ -1275,26 +1265,41 @@ def _handle_dtype_bitcast(
 
 
 def _extract_aliased_ref(
-    ref: ir.Value, transforms: Sequence[gpu_core.Transform]
-) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
+    ref: RefOrTmemType, transforms: Sequence[gpu_core.Transform]
+) -> tuple[RefOrTmemType, Sequence[gpu_core.Transform]]:
   match transforms:
     case (
-        gpu_core.ExtractAliasedRef(dtype, transformed_shape, offset),
+        gpu_core.ExtractAliasedRef(
+            dtype, transformed_shape, offset, tmem_layout),
         *other_transforms,
     ):
       mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
-      ref_bits = math.prod(transformed_shape) * mgpu_utils.bitwidth(mlir_dtype)
-      if ref_bits % 8:
-        raise NotImplementedError("Only byte-aligned bitcasts are supported.")
-      assert offset % gpu_core.SMEM_ALIGNMENT == 0
-      ref_bytes = ref_bits // 8
-      ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))
-      ref = _handle_dtype_bitcast(
-          ref,
-          ir.MemRefType(ref.type).element_type,
-          mgpu_utils.dtype_to_ir_type(dtype),
-      )
-      ref = mgpu.memref_reshape(ref, transformed_shape)
+      if isinstance(ref, tcgen05.TMEMRef):
+        assert tmem_layout is not None
+        if ref.shape[0] != transformed_shape[0]:
+          raise ValueError(
+              "TMEM aliasing only supported for Refs with the same first"
+              f" dimension, got {ref.shape[0]} != {transformed_shape[0]}."
+          )
+        address = arith_dialect.addi(ref.address, _i32_constant(offset))
+        ref = tcgen05.TMEMRef(
+          address=address,
+          shape=transformed_shape,
+          dtype=mgpu_utils.dtype_to_ir_type(dtype),
+          layout=tmem_layout)
+      else:
+        ref_bits = math.prod(transformed_shape) * mgpu_utils.bitwidth(mlir_dtype)
+        if ref_bits % 8:
+          raise NotImplementedError("Only byte-aligned bitcasts are supported.")
+        assert offset % gpu_core.SMEM_ALIGNMENT == 0
+        ref_bytes = ref_bits // 8
+        ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))
+        ref = _handle_dtype_bitcast(
+            ref,
+            ir.MemRefType(ref.type).element_type,
+            mgpu_utils.dtype_to_ir_type(dtype),
+        )
+        ref = mgpu.memref_reshape(ref, transformed_shape)
       return ref, tuple(other_transforms)
     case _:
       return ref, transforms
@@ -1319,12 +1324,12 @@ def _handle_transforms(
     handle_reshapes=True,
     allow_peer_refs=False,
 ) -> tuple[RefOrTmemType, Sequence[state_types.Transform]]:
+  # Before we handle other transforms, we resolve any possible leading
+  # aliasing transform.
+  ref, transforms = _extract_aliased_ref(ref, transforms)
   if isinstance(ref, tcgen05.TMEMRef):
     mlir_dtype = ref.dtype
   else:
-    # Before we handle other transforms, we resolve any possible leading
-    # aliasing transform.
-    ref, transforms = _extract_aliased_ref(ref, transforms)
     mlir_dtype = ir.MemRefType(ref.type).element_type
   transformed_ref = ref
   new_transforms = []
