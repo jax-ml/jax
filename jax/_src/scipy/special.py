@@ -404,6 +404,32 @@ def erfc(x: ArrayLike) -> Array:
   return lax.erfc(x)
 
 
+def erfcx(x: ArrayLike) -> Array:
+  r"""The scaled complementary error function
+
+  JAX implementation of :obj:`scipy.special.erfcx`.
+
+  .. math::
+
+     \mathrm{erfcx}(x) = e^{x^2} \, \mathrm{erfc}(x)
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the scaled complementary error function.
+
+  Notes:
+     The JAX version only supports real-valued inputs.
+
+  See also:
+    - :func:`jax.scipy.special.erf`
+    - :func:`jax.scipy.special.erfc`
+  """
+  x, = promote_args_inexact("erfcx", x)
+  return lax.mul(lax.exp(lax.square(x)), lax.erfc(x))
+
+
 def erfinv(x: ArrayLike) -> Array:
   """The inverse of the error function
 
