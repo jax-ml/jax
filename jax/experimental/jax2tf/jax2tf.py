@@ -3547,6 +3547,16 @@ def _shard_value(val: TfVal,
       op_shardings.is_op_sharding_replicated(sharding_proto)):
     return val
 
+  xla_sharding_v2_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
+      type=int(sharding_proto.type),
+      tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
+      tile_assignment_devices=sharding_proto.tile_assignment_devices,
+      iota_reshape_dims=sharding_proto.iota_reshape_dims,
+      iota_transpose_perm=sharding_proto.iota_transpose_perm,
+      replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
+      last_tile_dims=sharding_proto.last_tile_dims,
+  )
+
   # Tensorflow heavily relies on tile_assignment_devices proto fields specific
   # to V1 sharding format, falling back to this format.
   if (
@@ -3561,9 +3571,8 @@ def _shard_value(val: TfVal,
     )
   else:
     tad = sharding_proto.tile_assignment_devices  # type: ignore
-
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
-  xla_sharding_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
+  xla_sharding_v1_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
       type=int(sharding_proto.type),
       tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
       tile_assignment_devices=tad,
@@ -3575,8 +3584,9 @@ def _shard_value(val: TfVal,
         "A jit function with sharded arguments or results must be used under a `tf.function` context. "
         "See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning for a discussion")
 
-  return xla_sharding.Sharding(proto=xla_sharding_proto).apply_to_tensor(
-      val, use_sharding_op=True)
+  return xla_sharding.Sharding(proto=xla_sharding_v1_proto).apply_to_tensor(
+      val, use_sharding_op=True, sharding_v2_proto=xla_sharding_v2_proto
+  )
 
 
 def _pjit(*args: TfVal,
