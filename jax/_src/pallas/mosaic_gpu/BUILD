@@ -102,6 +102,7 @@ pytype_strict_library(
         ":lowering",
         "//jax",
         "//jax:core",
+        "//jax:frozen_dict",
         "//jax:mosaic_gpu",
         "//jax:pretty_printer",
         "//jax:tree_util",

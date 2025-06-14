@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
@@ -1558,6 +1559,10 @@ class ParameterizedLayout:
   args: Sequence[Any]
   kwargs: Any
 
+  def __post_init__(self):
+    object.__setattr__(self, "args", tuple(self.args))
+    object.__setattr__(self, "kwargs", frozen_dict.FrozenDict(self.kwargs))
+
   def to_mgpu(self) -> mgpu.FragmentedLayout:
     return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
 
@@ -1963,8 +1968,8 @@ def inline_mgpu(*, arg_types=(), return_type=None):
       flat_ret = inline_mgpu_p.bind(
           *raw_flat_args,
           *flat_ref_transforms,
-          flat_arg_types=flat_arg_types,
-          flat_ret_ty=flat_ret_ty,
+          flat_arg_types=tuple(flat_arg_types),
+          flat_ret_ty=tuple(flat_ret_ty),
           pytree_ret_ty=pytree_ret_ty,
           pytree_args=treedef,
           pytree_ref_transforms=pytree_ref_transforms,

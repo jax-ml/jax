@@ -740,6 +740,10 @@ def as_gpu_kernel(
   elif not isinstance(inout_shape, tuple):
     inout_shape = (inout_shape,)
 
+  inout_shape = jax.tree.map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype),
+                             inout_shape)
+  out_shape = jax.tree.map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype),
+                           out_shape)
   module, out_shape, unwrap_output_tuple, launch_ctx = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, inout_shape,
