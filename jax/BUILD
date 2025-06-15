@@ -1796,6 +1796,7 @@ pytype_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":api",
         ":api_util",
         ":jax",
         ":traceback_util",
