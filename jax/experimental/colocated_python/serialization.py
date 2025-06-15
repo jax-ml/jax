@@ -127,6 +127,15 @@ def _reduce_device_list(
   return make_device_list, (device_ids,)
 
 
+def _reduce_device(
+    device: jax.Device,
+) -> tuple[Callable[..., jax.Device], Any]:
+  def make_device(device_id: int) -> jax.Device:
+    return _lookup_cpu_device(_get_cpu_device_map(), device_id)
+
+  return make_device, (device.id,)
+
+
 def _reduce_single_device_sharding(
     sharding: jax.sharding.SingleDeviceSharding,
 ) -> tuple[Callable[..., jax.sharding.SingleDeviceSharding], Any]:
@@ -166,6 +175,7 @@ def _serialize(obj: Any) -> bytes:
         {jax.sharding.NamedSharding: _reduce_named_sharding},
         {DeviceList: _reduce_device_list},
         {jax.sharding.SingleDeviceSharding: _reduce_single_device_sharding},
+        {jax.Device: _reduce_device},
         cloudpickle.CloudPickler.dispatch_table,  # pylint: disable=attribute-error
     )
     dispatch = dispatch_table
