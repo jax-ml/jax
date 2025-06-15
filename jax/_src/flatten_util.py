@@ -12,20 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterable
 import numpy as np
 
 from jax import lax
 import jax.numpy as jnp
+from typing import Any, Callable
 
 from jax._src.lax import lax as lax_internal
 from jax._src import dtypes
-from jax._src.tree_util import tree_flatten, tree_unflatten
+from jax._src.tree_util import tree_flatten, tree_unflatten, PyTreeDef, Leaf
 from jax._src.util import safe_zip, unzip2, HashablePartial
+from jax._src.typing import Array
 
 zip = safe_zip
 
 
-def ravel_pytree(pytree):
+def ravel_pytree(pytree: Any) -> tuple[Array, HashablePartial]:
   """Ravel (flatten) a pytree of arrays down to a 1D array.
 
   Args:
@@ -48,7 +51,7 @@ def ravel_pytree(pytree):
   flat, unravel_list = _ravel_list(leaves)
   return flat, HashablePartial(unravel_pytree, treedef, unravel_list)
 
-def unravel_pytree(treedef, unravel_list, flat):
+def unravel_pytree(treedef: PyTreeDef, unravel_list: Callable[[Array], Iterable[Leaf]], flat: Array) -> Any:
   return tree_unflatten(treedef, unravel_list(flat))
 
 def _ravel_list(lst):
