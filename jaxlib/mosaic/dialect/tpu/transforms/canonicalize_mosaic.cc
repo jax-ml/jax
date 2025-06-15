@@ -1082,7 +1082,6 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
 }
 
 const llvm::StringMap<int> &bf16_ops_min_supported_versions() {
-  constexpr int kAlwaysUpcast = std::numeric_limits<int>::max();
   static const auto m = new llvm::StringMap<int>{
       {arith::DivFOp::getOperationName(), 4},
       {arith::SelectOp::getOperationName(), 5},
@@ -1092,7 +1091,7 @@ const llvm::StringMap<int> &bf16_ops_min_supported_versions() {
       {arith::SubFOp::getOperationName(), 6},
       {arith::MaximumFOp::getOperationName(), 6},
       {arith::MinimumFOp::getOperationName(), 6},
-      {math::PowFOp::getOperationName(), kAlwaysUpcast},
+      {math::PowFOp::getOperationName(), 6},
       {math::TanhOp::getOperationName(), 6},
       {math::ExpOp::getOperationName(), 6},
       {math::Exp2Op::getOperationName(), 6},
