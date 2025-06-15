@@ -1823,6 +1823,17 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "mutable_rng_test",
+    srcs = ["mutable_rng_test.py"],
+    deps = [
+        "//jax:experimental_mutable_rng",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "for_loop_test",
     srcs = ["for_loop_test.py"],
     shard_count = {
