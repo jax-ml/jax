@@ -746,6 +746,15 @@ LogicalResult DynamicRotateOp::verify() {
   return verifyRotateOp<DynamicRotateOp>(*this);
 }
 
+LogicalResult IotaOp::verify() {
+  for (const int32_t dim : getDimensions()) {
+    if (dim < 0 || dim >= getType().getRank()) {
+      return emitOpError("Invalid dimension: ") << dim;
+    }
+  }
+  return success();
+}
+
 // a + matmul(l, r, 0) == matmul(l, r, a)
 template <typename AddOp>
 class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {

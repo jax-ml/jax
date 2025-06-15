@@ -372,9 +372,16 @@ def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure]> {
 }
 
 def TPU_IotaOp : TPU_Op<"iota", [Pure]> {
-  let arguments = (ins OptionalAttr<I32Attr>:$dimension);
-  let results = (outs AnyVectorOfNonZeroRank:$output);
+  let description = [{
+    Creates a vector that with values that start at 0 and increase along a
+    dimension resulting from collapsing the given `dimensions` together.
+
+    Note that the ordering of `dimensions` is relevant.
+  }];
+  let arguments = (ins DenseI32ArrayAttr:$dimensions);
+  let results = (outs VectorOfNonZeroRankOf<[AnyInteger]>:$output);
   let assemblyFormat = [{ attr-dict `:` type($output) }];
+  let hasVerifier = 1;
 }
 
 // TODO(mvoz): deprecated - use concat. Canonicalization will do so automatically.
