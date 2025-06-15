@@ -17,8 +17,6 @@ from functools import partial
 import operator
 from typing import Any, Callable
 
-from jax.tree_util import (tree_flatten, treedef_children, tree_leaves,
-                           tree_unflatten, treedef_tuple)
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
@@ -30,6 +28,8 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.traceback_util import api_boundary
+from jax._src.tree_util import (tree_flatten, treedef_children, tree_leaves,
+                                tree_unflatten, treedef_tuple)
 from jax._src.util import split_list, safe_map
 import numpy as np
 

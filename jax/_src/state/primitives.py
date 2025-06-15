@@ -751,7 +751,7 @@ batching.primitive_batchers[addupdate_p] = _addupdate_vmap
 broadcast_to_p = core.Primitive('broadcast_to')
 
 def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
-  import jax.numpy as jnp
+  import jax.numpy as jnp  # pytype: disable=import-error
   a = jnp.asarray(a)
   if a.shape == shape:
     return a
@@ -759,7 +759,7 @@ def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
 
 @broadcast_to_p.def_impl
 def _broadcast_to_impl(a, *, shape):
-  import jax.numpy as jnp
+  import jax.numpy as jnp  # pytype: disable=import-error
   return jnp.broadcast_to(a, shape)
 
 @broadcast_to_p.def_abstract_eval
