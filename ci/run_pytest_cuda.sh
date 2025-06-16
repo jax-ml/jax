@@ -71,7 +71,7 @@ if [[ $num_cpu_cores -lt $num_processes ]]; then
 fi
 
 if [[ $host_memory_limit -lt $num_processes ]]; then
-  num_processes=$host_memory_limit
+  num_processes=$(($host_memory_limit - 2))
 fi
 
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
