@@ -128,6 +128,11 @@ class CustomCallBackendConfig:
   active_core_count: int | None
   input_memory_spaces: tuple[MemorySpace | None, ...] | None
 
+  def __post_init__(self):
+    if self.allow_input_fusion is not None:
+      object.__setattr__(self, "allow_input_fusion",
+                         tuple(self.allow_input_fusion))
+
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
   def __repr__(self):

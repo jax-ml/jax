@@ -1877,14 +1877,18 @@ def composite(
     closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
         partial(decomposition, **kwargs), in_tree, in_avals, name, debug_info
     )
+    attributes = []
+    for k, v in kwargs.items():
+      leaves, treedef = tree_util.tree_flatten(v)
+      leaves = tuple(
+          HashableArray(v) if isinstance(v, np.ndarray) else v for v in leaves
+      )
+      attributes.append((k, leaves, treedef))
     flat_args = core.standard_insert_pvary(*flat_args)
     out_flat = composite_p.bind(
         *flat_args,
         name=name,
-        attributes=tuple(
-            (k, HashableArray(v) if isinstance(v, np.ndarray) else v)
-            for k, v in kwargs.items()
-        ),
+        attributes=tuple(attributes),
         version=version,
         jaxpr=closed_jaxpr,
     )
@@ -1897,7 +1901,7 @@ def _composite_lowering(
     ctx: mlir.LoweringRuleContext,
     *args: Any,
     name: str,
-    attributes: Sequence[tuple[str, Any]],
+    attributes: Sequence[tuple[str, tuple[Any, ...], tree_util.PyTreeDef]],
     version: int,
     jaxpr: core.ClosedJaxpr,
 ):
@@ -1924,11 +1928,11 @@ def _composite_lowering(
       ctx.avals_out,
       ctx.tokens_in,
   )
-  composite_attrs = {
-      k : mlir.ir_attribute(v)
-      for k, v in attributes
-      if v is not None
-  }
+  composite_attrs = {}
+  for k, leaves, treedef in attributes:
+    v = treedef.unflatten(leaves)
+    if v is not None:
+      composite_attrs[k] = mlir.ir_attribute(v)
   symbol_name = func_op.name.value
   composite = hlo.CompositeOp(
       func_op.type.results,
