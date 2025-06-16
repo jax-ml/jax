@@ -280,7 +280,7 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
 // Feel free to turn this on if you like, but it might break at any time!
 #if PY_VERSION_HEX < 0x030d0000
   for (_PyInterpreterFrame* f = thread_state->cframe->current_frame;
-       f != nullptr; f = f->previous) {
+       f != nullptr && count < kMaxFrames; f = f->previous) {
     if (_PyFrame_IsIncomplete(f)) continue;
     Py_INCREF(f->f_code);
     frames[count] = {f->f_code, static_cast<int>(_PyInterpreterFrame_LASTI(f) *
@@ -288,12 +288,13 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
     ++count;
   }
 #else   // PY_VERSION_HEX < 0x030d0000
-  for (_PyInterpreterFrame* f = thread_state->current_frame; f != nullptr;
-       f = f->previous) {
+  for (_PyInterpreterFrame* f = thread_state->current_frame;
+       f != nullptr && count < kMaxFrames; f = f->previous) {
     if (_PyFrame_IsIncomplete(f)) continue;
     Py_INCREF(f->f_executable);
-    frames[count] = {reinterpret_cast<PyCodeObject*>(f->f_executable),
-                     _PyInterpreterFrame_LASTI(f) * sizeof(_Py_CODEUNIT)};
+    frames[count] = {
+        reinterpret_cast<PyCodeObject*>(f->f_executable),
+        static_cast<int>(_PyInterpreterFrame_LASTI(f) * sizeof(_Py_CODEUNIT))};
     ++count;
   }
 #endif  // PY_VERSION_HEX < 0x030d0000
@@ -301,7 +302,7 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
 #else   // PLATFORM_GOOGLE
   PyFrameObject* next;
   for (PyFrameObject* py_frame = PyThreadState_GetFrame(thread_state);
-       py_frame != nullptr; py_frame = next) {
+       py_frame != nullptr && count < kMaxFrames; py_frame = next) {
     frames[count] = {PyFrame_GetCode(py_frame), PyFrame_GetLasti(py_frame)};
     ++count;
     next = PyFrame_GetBack(py_frame);
