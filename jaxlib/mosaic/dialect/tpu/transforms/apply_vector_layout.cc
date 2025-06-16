@@ -6393,8 +6393,6 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeOffsets(
                                    {dst_offsets[0], src.offsets()[1]},
                                    src.tiling(), src.implicit_dim());
   if (row_diff != 0) {
-    const SmallVector<int64_t> implicit_shape =
-        src.implicitShape(vty.getShape());
     FAILUREOR_ASSIGN_OR_RETURN(
         vregs, doRowShiftRelayout(builder, loc, vty.getShape(), vregs, src,
                                   *dst_offsets[0], ctx.target_shape));
