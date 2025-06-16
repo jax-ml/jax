@@ -141,6 +141,7 @@ jobs:
 
             # Install build requirements for scipy
             apt update && apt upgrade -y && apt-get install -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
+            $JAXCI_PYTHON -m uv pip install "git+https://github.com/scipy/scipy@main"
 
             # Install build requirements for pillow
             apt install -q -y libjpeg-dev --no-install-recommends
