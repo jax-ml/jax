@@ -2123,10 +2123,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     shape=[(2, 3), (4, 6), (5, 7), (100, 300)],
-    dtype = float_types + complex_types
+    dtype = float_types + complex_types,
+    method = ["schur", "eigen"]
   )
   @jtu.run_on_devices("cpu", "gpu")
-  def test_solve_sylvester_eigen(self, shape, dtype):
+  def test_solve_sylvester(self, shape, dtype, method):
 
     tol = {np.float32: 3e-2, np.complex64: 3e-2}
 
@@ -2141,43 +2142,24 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       C = A @ X_true + X_true @ B
       return [A, B, C]
 
-    self._CheckAgainstNumpy(osp.linalg.solve_sylvester, jsp.linalg.solve_sylvester_eigen, args_maker, tol=tol)
-    self._CompileAndCheck(jsp.linalg.solve_sylvester_eigen, args_maker)
+    jnp_fun = partial(jsp.linalg.solve_sylvester, method=method)
 
-  @jtu.sample_product(
-    shape=[(2, 3), (4, 6), (5, 7), (100, 300)],
-    dtype = float_types + complex_types
-  )
-  @jtu.run_on_devices("cpu", "gpu")
-  def test_solve_sylvester_schur(self, shape, dtype):
+    self._CheckAgainstNumpy(osp.linalg.solve_sylvester, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
-    tol = {np.float32: 3e-2, np.complex64: 3e-2}
-
-    def args_maker():
-      rng = jtu.rand_default(self.rng())
-      m, n = shape
-
-      A = rng(shape=(m, m), dtype=dtype)
-      B = rng(shape=(n, n), dtype=dtype)
-      X_true = rng(shape=(m, n), dtype=dtype)
-
-      C = A @ X_true + X_true @ B
-      return [A, B, C]
-
-    self._CheckAgainstNumpy(osp.linalg.solve_sylvester, jsp.linalg.solve_sylvester_schur, args_maker, tol=tol)
-    self._CompileAndCheck(jsp.linalg.solve_sylvester_schur, args_maker)
 
   @jtu.sample_product(
     n=[3, 6, 7, 100],
-    dtype = float_types + complex_types
+    dtype = float_types + complex_types,
+    method = ["schur", "eigen"]
   )
   @jtu.run_on_devices("cpu", "gpu")
-  def test_no_solution_sylvester_eigen(self, n, dtype):
+  def test_ill_conditioned_sylvester(self, n, dtype, method):
     """
     Test no solution case to AX + XB = C using the eigen decomposition method.
     When the sum of the eigenvalues of A and B are zero there is no solution.
     We simulate this case below by randomly selecting the eigenvalues of A and then assign the
-    eigenvalues of B as negative eigenvalues of A.
+    eigenvalues of B as negative eigenvalues of A. We say that A and B are ill-conditioned.
     """
     rng = jtu.rand_default(self.rng())
 
@@ -2194,37 +2176,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     B = P @ D_B @ P_inv
 
     C = rng(shape=(n, n), dtype=dtype)
-    sylv_solution = jsp.linalg.solve_sylvester_eigen(A, B, C, tol=1e-6)
-    self.assertArraysEqual(sylv_solution, np.full((n, n), np.nan, dtype))
-
-  @jtu.sample_product(
-    n=[3, 6, 7, 100],
-    dtype = float_types + complex_types
-  )
-  @jtu.run_on_devices("cpu", "gpu")
-  def test_no_solution_sylvester_schur(self, n, dtype):
-    """
-    Test no solution case to AX + XB = C using the Bartel-Stewart algorithm
-    When the sum of the eigenvalues of A and B are zero there is no solution.
-    We simulate this case below by randomly selecting the eigenvalues of A and then assign the
-    eigenvalues of B as negative eigenvalues of A.
-    """
-    rng = jtu.rand_default(self.rng())
-
-    # Define eigenvalues that sum to zero
-    eigenvalues_A = rng(shape=(n,), dtype=dtype)
-    eigenvalues_B = -eigenvalues_A
-    P = _random_invertible(rng=rng, shape=(n, n), dtype=dtype)
-
-    # Construct A and B matrices using selected eigenvalues that positionally sum to zero
-    D_A = np.diag(eigenvalues_A)
-    D_B = np.diag(eigenvalues_B)
-    P_inv = np.linalg.inv(P)
-    A = P @ D_A @ P_inv
-    B = P @ D_B @ P_inv
-
-    C = rng(shape=(n, n), dtype=dtype)
-    sylv_solution = jsp.linalg.solve_sylvester_schur(A, B, C, tol=1e-6)
+    sylv_solution = jsp.linalg.solve_sylvester(A, B, C, method=method, tol=1e-6)
     self.assertArraysEqual(sylv_solution, np.full((n, n), np.nan, dtype))
 
 

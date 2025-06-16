@@ -2300,13 +2300,18 @@ def _solve_sylvester_triangular_scan(R: ArrayLike, S: ArrayLike, F: ArrayLike) -
     Y_flat_final, _ = lax.scan(scan_fn, Y0, flat_indices)
     return Y_flat_final.reshape((m, n))
 
-@partial(jit, static_argnums=3)
-def solve_sylvester_schur(A: ArrayLike, B: ArrayLike, C: ArrayLike, tol: float = 1e-8) -> Array:
+
+@partial(jit, static_argnums=[3, 4])
+def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, method: Literal["eigen", "schur"] = "schur", tol: float = 1e-8) -> Array:
     """
-    Solves the Sylvester equation using the Bartel-Stewart algorithm:
+    Solves the Sylvester equation
     .. math::
 
       AX + XB = C
+
+    Using one of two methods.
+
+    (1) Bartell-Stewart (schur) algorithm (default):
 
     Where A and B are first decomposed using Schur decomposition to construct and alternate sylvester equation:
     .. math::
@@ -2321,61 +2326,7 @@ def solve_sylvester_schur(A: ArrayLike, B: ArrayLike, C: ArrayLike, tol: float =
     the eigen decomposition method because you need to perform a Schur decomposition and then scan the entire solution matrix.
     Second, it requires more system memory compared to the eigen decomposition method.
 
-    Args:
-      A: Matrix of shape m x m
-      B: Matrix of shape n x n
-      C: Matrix of shape m x n
-      tol: How close the sum of the eigenvalues from A and B can be to zero before returning matrix of NaNs
-
-    Returns:
-      X: Matrix of shape m x n
-
-    Examples:
-      >>> A = jax.numpy.array([[1, 2], [3, 4]])
-      >>> B = jax.numpy.array([[5, 6], [7, 8]])
-      >>> C = jax.numpy.array([[6, 8], [10, 12]])
-      >>> X = jax.scipy.linalg.solve_sylvester(A, B, C)
-      >>> with jax.numpy.printoptions(precision=0):
-      ...   print(X)
-      [[ 1.e+00 -4.e-07]
-       [-3.e-07  1.e+00]]
-
-    Notes:
-      This function returns NaNs in the event that the eigenvalues of the A and B matrices sum to zero elementwise.
-    """
-    A, B, C = promote_args_inexact("solve_sylvester_schur", jnp.asarray(A), jnp.asarray(B), jnp.asarray(C))
-
-    m, n = C.shape
-
-    if A.shape != (m, m) or B.shape != (n, n) or C.shape != (m, n):
-      raise ValueError(f"Incompatible shapes for Sylvester equation:\nA: {A.shape}\nB: {B.shape}\nC: {C.shape}")
-
-    # Schur decomposition
-    R, U = schur(A, output='complex')
-    S, V = schur(B.conj().T, output='complex')
-
-    # Transform right-hand side
-    F = U.conj().T @ C.astype(R.dtype) @ V
-
-    # Solve triangular Sylvester system
-    Y = _solve_sylvester_triangular_scan(R, S.conj().T, F)
-
-    # Transform back
-    X = U @ Y @ V.conj().T
-    X = jnp.real(X) if jnp.isrealobj(C) else X
-    return jax.lax.cond(
-        jnp.any(jnp.abs(jnp.add.outer(jnp.linalg.eigvals(A), jnp.linalg.eigvals(B))) < tol),
-        lambda: jnp.zeros_like(X) * jnp.nan,
-        lambda: X,
-    )
-
-@partial(jit, static_argnums=3)
-def solve_sylvester_eigen(A, B, C, tol = 1e-8):
-    """
-    Solves the Sylvester equation using eigen decomposition:
-    .. math::
-
-      AX + XB = C
+    (2) The Eigen decomposition algorithm:
 
     The eigen decomposition method is the fastest method to solve a sylvester equation. However, this speed brings with it a couple of drawbacks.
     First, A and B must be diagonalizable otherwise the eigenvectors will be linearly dependent and ill-conditioned leading to accuracy issues.
@@ -2403,20 +2354,36 @@ def solve_sylvester_eigen(A, B, C, tol = 1e-8):
     Notes:
       This function returns NaNs in the event that the eigenvalues of the A and B matrices sum to zero elementwise.
     """
-    A, B, C = promote_args_inexact("solve_sylvester_eigen", jnp.asarray(A), jnp.asarray(B), jnp.asarray(C))
+    A, B, C = promote_args_inexact("solve_sylvester", jnp.asarray(A), jnp.asarray(B), jnp.asarray(C))
 
     m, n = C.shape
 
     if A.shape != (m, m) or B.shape != (n, n) or C.shape != (m, n):
       raise ValueError(f"Incompatible shapes for Sylvester equation:\nA: {A.shape}\nB: {B.shape}\nC: {C.shape}")
 
-    RA, UA = jnp.linalg.eig(A)
-    RB, UB = jnp.linalg.eig(B)
-    F = solve(UA, C.astype(RA.dtype) @ UB)
-    W = RA[:, None] + RB[None, :]
-    Y = F / W
-    X = UA[:m,:m] @ Y[:m,:n] @ inv(UB)[:n,:n]
+    if method == "schur":
+      # Schur decomposition
+      R, U = schur(A, output='complex')
+      S, V = schur(B.conj().T, output='complex')
+
+      # Transform right-hand side
+      F = U.conj().T @ C.astype(R.dtype) @ V
+
+      # Solve triangular Sylvester system
+      Y = _solve_sylvester_triangular_scan(R, S.conj().T, F)
+
+      # Transform back
+      X = U @ Y @ V.conj().T
+    else:
+      RA, UA = jnp.linalg.eig(A)
+      RB, UB = jnp.linalg.eig(B)
+      F = solve(UA, C.astype(RA.dtype) @ UB)
+      W = RA[:, None] + RB[None, :]
+      Y = F / W
+      X = UA[:m,:m] @ Y[:m,:n] @ inv(UB)[:n,:n]
+
     X = jnp.real(X) if jnp.isrealobj(C) else X
+
     return jax.lax.cond(
         jnp.any(jnp.abs(jnp.add.outer(jnp.linalg.eigvals(A), jnp.linalg.eigvals(B))) < tol),
         lambda: jnp.zeros_like(X) * jnp.nan,
