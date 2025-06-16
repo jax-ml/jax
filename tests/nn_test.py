@@ -451,6 +451,31 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testMishZero(self, dtype):
     self.assertEqual(dtype(0), nn.mish(dtype(0)))
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  def testLogSigmoidGrad(self):
+    check_grads(nn.log_sigmoid, (1e-8,), order=4,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testLogSigmoidGradZero(self):
+    check_grads(nn.log_sigmoid, (0.,), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testLogSigmoidGradInf(self):
+    self.assertAllClose(
+        0., jax.grad(nn.log_sigmoid)(float('inf')))
+
+  def testLogSigmoidGradNegInf(self):
+    self.assertAllClose(
+        1., jax.grad(nn.log_sigmoid)(float('-inf')))
+
+  def testLogSigmoidGradNan(self):
+    check_grads(nn.log_sigmoid, (float('nan'),), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  @parameterized.parameters([int, float] + jtu.dtypes.floating + jtu.dtypes.integer)
+  def testLogSigmoidZero(self, dtype):
+    self.assertEqual(-jnp.log(dtype(2)), nn.log_sigmoid(dtype(0)))
+
   def testReluGrad(self):
     rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
@@ -490,6 +515,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testMishValue(self):
     val = nn.mish(1e3)
     self.assertAllClose(val, 1e3, check_dtypes=False, atol=1e-3)
+
+  def testLogSigmoidValue(self):
+    self.assertAllClose(nn.log_sigmoid(89.), 0., check_dtypes=False, atol=1e-3)
+    self.assertAllClose(nn.log_sigmoid(-89.), -89., check_dtypes=False, atol=1e-3)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testEluGrad(self):

@@ -128,6 +128,7 @@ def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
   y = x + jnp.sqrt(jnp.square(x) + b)
   return y / 2
 
+@custom_jvp
 @jax.jit
 def softplus(x: ArrayLike) -> Array:
   r"""Softplus activation function.
@@ -141,6 +142,7 @@ def softplus(x: ArrayLike) -> Array:
     x : input array
   """
   return jnp.logaddexp(x, 0)
+softplus.defjvps(lambda g, ans, x: g * lax.logistic(x))
 
 @jax.jit
 def sparse_plus(x: ArrayLike) -> Array:
@@ -286,6 +288,7 @@ def mish(x: ArrayLike) -> Array:
   x_arr = jnp.asarray(x)
   return x_arr * jnp.tanh(softplus(x_arr))
 
+@custom_jvp
 @jax.jit
 def log_sigmoid(x: ArrayLike) -> Array:
   r"""Log-sigmoid activation function.
@@ -307,6 +310,7 @@ def log_sigmoid(x: ArrayLike) -> Array:
   numpy_util.check_arraylike("log_sigmoid", x)
   x_arr = jnp.asarray(x)
   return -softplus(-x_arr)
+log_sigmoid.defjvps(lambda g, ans, x:  g * lax.logistic(-x))
 
 @jax.jit
 def elu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
