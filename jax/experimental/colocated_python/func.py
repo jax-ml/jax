@@ -65,7 +65,7 @@ class Specialization:
       out_specs_treedef: tree_util.PyTreeDef | None = None,
       out_specs_leaves: tuple[api.ShapeDtypeStruct, ...] | None = None,
       devices: Sequence[jax.Device] | xc.DeviceList | None = None,
-  ) -> Any:
+  ):
     """Creates a new specialization with overrides."""
     if in_specs_treedef is None:
       in_specs_treedef = self.in_specs_treedef
@@ -234,7 +234,7 @@ def _make_pop_result_fun(
 
   out_specs_treedef = specialization.out_specs_treedef
 
-  def lowered_fun() -> Any:
+  def lowered_fun():
     result_leaves = func_backend.SINGLETON_RESULT_STORE.pop(uid)
     return tree_util.tree_unflatten(out_specs_treedef, result_leaves)
 
@@ -294,7 +294,7 @@ def _get_specialized_func(
   # Asynchronous execution function that has known output_specs.
   async_execution_func = None
 
-  def specialized_func(*args, **kwargs) -> Any:
+  def specialized_func(*args, **kwargs):
     """Specialized function to be executed with given args and kwargs."""
     nonlocal specialization, async_execution_func
     with mutex:
@@ -356,24 +356,21 @@ def make_callable(
     fun: Callable[..., Any],
     fun_sourceinfo: str | None,
     fun_signature: inspect.Signature | None,
-) -> Callable[..., Any]:
+):
   """Makes a colocated Python callable."""
   return _make_callable(
       FunctionInfo(fun, fun_sourceinfo, fun_signature), Specialization()
   )
 
 
-def _make_callable(
-    info: FunctionInfo,
-    specialization: Specialization,
-) -> Callable[..., Any]:
+def _make_callable(info: FunctionInfo, specialization: Specialization):
   """Internal implementation of make_callable."""
 
   def specialize(
       in_specs: ShapeDtypeStructTree | None = None,
       out_specs_fn: Callable[..., ShapeDtypeStructTree] | None = None,
       devices: Sequence[jax.Device] | None = None,
-  ) -> Callable[..., Any]:
+  ):
     """Returns a colocated Python callable with extra specialization.
 
     Args:
@@ -410,7 +407,7 @@ def _make_callable(
     )
 
   @api_boundary
-  def __call__(*args, **kwargs) -> Any:
+  def __call__(*args, **kwargs):
     """Executes the function.
 
     If the output specs are not known, the very first execution will be

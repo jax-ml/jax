@@ -110,7 +110,7 @@ def _colocated_cpu_mesh_cached(mesh: jax.sharding.Mesh) -> jax.sharding.Mesh:
   )
 
 
-def colocated_python(fun: Callable[..., Any]) -> Callable[..., Any]:
+def colocated_python(fun: Callable[..., Any]):
   """Executes the given Python function on the same devices as the arguments."""
   return make_callable(
       fun, api_util.fun_sourceinfo(fun), api_util.fun_signature(fun)
