@@ -1699,8 +1699,9 @@ def _pallas_call(
         x.ref if isinstance(x, state_types.TransformedRef) else x
         for x in flat_kernel_args
     )
-    flat_kernel_avals = tuple(a.update_vma(frozenset())
-                              for a in flat_kernel_avals)
+    if config._check_vma.value:
+      flat_kernel_avals = tuple(a.update_vma(frozenset())
+                                for a in flat_kernel_avals)
     # Note that only a subset of all transforms can be found here, and they are
     # never expected to contain any arrays.
     kernel_arg_transforms = tuple(

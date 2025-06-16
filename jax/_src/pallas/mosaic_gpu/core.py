@@ -958,6 +958,16 @@ class AbstractTMEMRef(AbstractMemoryRef):
   def __repr__(self) -> str:
     return f'TMEM({self.inner_aval.str_short()},packed={self.packed})'
 
+  def update_vma(self, vma):
+    return AbstractTMEMRef(
+        self.inner_aval.update_vma(vma), self.memory_space, self.packed,
+        self.collective)
+
+  def update_weak_type(self, weak_type):
+    return AbstractTMEMRef(
+        self.inner_aval.update_weak_type(weak_type), self.memory_space,
+        self.packed, self.collective)
+
 
 _WARPGROUP_AXIS_NAME = object()
 
