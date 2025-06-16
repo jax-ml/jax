@@ -1088,6 +1088,8 @@ _GPU_FFI_KERNELS = [
     "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
     # tridiagonal on GPU
     "cusolver_sytrd_ffi",
+    # tridiagonal_solve on GPU
+    "cusparse_gtsv2_ffi",
 ]
 # These are the JAX custom call target names that are guaranteed to be stable.
 # Their backwards compatibility is tested by back_compat_test.py.
