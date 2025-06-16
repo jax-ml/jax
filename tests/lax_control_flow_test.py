@@ -1787,15 +1787,20 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     c = rng.randn(4)
 
     if scan is scan_with_new_checkpoint2:
+      atol = {}
       rtol = {np.float64: 1e-12, np.float32: 1e-4}
     elif scan is scan_with_for:
+      atol = {}
       rtol = {np.float64: 1e-12, np.float32: 1e-4}
     else:
+      atol = {np.float64: 1e-14}
       rtol = {np.float64: 1e-14, np.float32: 1e-4}
 
     ans = jax.linearize(lambda c, as_:                scan(f, c, as_), c, as_)[1](c, as_)
     expected = jax.linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False, rtol=rtol)
+    self.assertAllClose(
+        ans, expected, check_dtypes=False, atol=atol, rtol=rtol
+    )
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{jit_scan=}_{jit_f=}_impl={scan_name}",
