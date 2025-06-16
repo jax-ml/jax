@@ -230,6 +230,8 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
     axis_names: A sequence of resource axis names to be assigned to the
       dimensions of the ``devices`` argument. Its length should match the
       rank of ``devices``.
+    axis_types: and optional tuple of :class:`jax.sharding.AxisType` entries corresponding to
+      the ``axis_names``. See `Explicit Sharding`_ for more information.
 
   Examples:
 
@@ -244,6 +246,8 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
     >>> arr = jax.device_put(inp, NamedSharding(mesh, P('x', 'y')))
     >>> out = jax.jit(lambda x: x * 2)(arr)
     >>> assert out.sharding == NamedSharding(mesh, P('x', 'y'))
+
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
 
   devices: np.ndarray
@@ -440,6 +444,16 @@ class AbstractMesh(_BaseMesh):
   your mesh shape and axis names stay the same but the devices change.
   See the description of https://github.com/jax-ml/jax/pull/23022 for more
   details.
+
+  Args:
+    axis_sizes: A tuple of integers specifying the size of each resource axis.
+    axis_names: A tuple of resource axis names to be assigned to the
+      dimensions of the ``devices`` argument. Its length should match the
+      rank of ``devices``.
+    axis_types: and optional tuple of :class:`jax.sharding.AxisType` entries corresponding to
+      the ``axis_names``. See `Explicit Sharding`_ for more information.
+
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
 
   def __init__(self, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
