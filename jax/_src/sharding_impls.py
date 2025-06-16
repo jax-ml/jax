@@ -1366,9 +1366,14 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
     axis_names: Names of the mesh axes. For example, axis_names=('x', 'y')
     devices: Optional keyword only argument, that allows you to specify the
       devices you want to create a mesh with.
+    axis_types: and optional tuple of :class:`jax.sharding.AxisType` entries
+      corresponding to the ``axis_names``. See `Explicit Sharding`_ for more
+      information.
 
   Returns:
-    A `jax.sharding.Mesh` object.
+    A :class:`jax.sharding.Mesh` object.
+
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   if devices is None:
     devices = xb.devices()
