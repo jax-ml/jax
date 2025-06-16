@@ -143,9 +143,6 @@ class CompatTest(bctu.CompatTestBase):
         cpu_tridiagonal_solve_lapack_gtsv.data_2025_01_09,
         cuda_tridiagonal_cusolver_sytrd.data_2025_01_09,
         rocm_eigh_hipsolver_syev.data_2024_08_05,
-        cpu_schur_lapack_gees.data_2023_07_16,
-        cpu_triangular_solve_blas_trsm.data_2023_07_16,
-        cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03,
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
         tpu_ApproxTopK.data_2023_05_16,
@@ -565,10 +562,6 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_schur_results)
-    data = self.load_testdata(cpu_schur_lapack_gees.data_2023_07_16[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=check_schur_results,
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -652,11 +645,6 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_triangular_solve_results)
 
-    data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2023_07_16[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=check_triangular_solve_results,
-                      expect_current_custom_calls=info["custom_call_targets"])
-
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
@@ -702,12 +690,6 @@ class CompatTest(bctu.CompatTestBase):
     info = cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01[dtype_name]
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
-
-    data = self.load_testdata(
-        cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03[dtype_name]
-    )
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
