@@ -75,8 +75,7 @@ jax.scipy.linalg
    rsf2csf
    schur
    solve
-   solve_sylvester_eigen
-   solve_sylvester_schur
+   solve_sylvester
    solve_triangular
    sqrtm
    svd
