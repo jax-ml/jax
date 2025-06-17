@@ -129,8 +129,9 @@ class PallasCallPipelineTest(parameterized.TestCase):
 
   @parameterized.product(
       no_pipelining=[False, True],
+      use_sreg_for_state=[False, True],
   )
-  def test_pipeline_matmul(self, no_pipelining):
+  def test_pipeline_matmul(self, no_pipelining, use_sreg_for_state):
     k1, k2 = jax.random.split(jax.random.key(0))
     x = jax.random.uniform(k1, (512, 512))
     y = jax.random.uniform(k2, (512, 512))
@@ -152,6 +153,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
           ],
           out_specs=pl.BlockSpec((128, 128), lambda i, j, k: (i, j)),
           no_pipelining=no_pipelining,
+          use_sreg_for_state=use_sreg_for_state,
       )(x_ref, y_ref, z_ref)
 
     z = pl.pallas_call(
