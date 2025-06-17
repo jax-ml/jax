@@ -43,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 354
+_version = 355
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -517,6 +517,17 @@ def tracebacks(enabled=True):
     yield
   finally:
     _xla.set_tracebacks_enabled(saved)
+
+
+@contextlib.contextmanager
+def execution_stream_id(new_id: int):
+  """Context manager that overwrites and restores the current thread's execution_stream_id."""
+  saved = _xla.get_execution_stream_id()
+  _xla.set_execution_stream_id(new_id)
+  try:
+    yield
+  finally:
+    _xla.set_execution_stream_id(saved)
 
 
 XlaRuntimeError = _xla.XlaRuntimeError

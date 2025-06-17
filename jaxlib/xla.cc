@@ -518,6 +518,10 @@ NB_MODULE(_jax, m) {
       .def("consume_with_handlers", &PyExecuteResults::ConsumeWithHandlers)
       .def("consume_token", &PyExecuteResults::ConsumeToken);
 
+  m.def("get_execution_stream_id", []() { return GetExecutionStreamId(); });
+  m.def("set_execution_stream_id",
+        [](int64_t id) { GetExecutionStreamId() = id; });
+
   nb::class_<PyLoadedExecutable>(m, "LoadedExecutable")
       .def_prop_ro("client", &PyLoadedExecutable::client)
       .def("local_devices", &PyLoadedExecutable::AddressableDevices)
