@@ -109,6 +109,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
           num_partitions=num_partitions,
           device_assignment=device_assignment,
           use_spmd_partitioning=use_spmd_partitioning,
+          use_shardy_partitioner=jax.config.jax_use_shardy_partitioner,
       )
       executable = backend.compile_and_load(
           jax_hlo, xc.DeviceList(tuple(self.devices.flat)), compile_options)  # type: ignore
