@@ -63,7 +63,7 @@ def _initial_style_open_jaxpr(fun: Callable,
 def _initial_style_jaxpr(fun: Callable,
                          in_tree: PyTreeDef,
                          in_avals: Sequence[core.AbstractValue],
-                         debug_info: core.DebugInfo):
+                         debug_info: core.DebugInfo) -> tuple[core.ClosedJaxpr, Sequence[Any], PyTreeDef]:
   jaxpr, consts, out_tree = _initial_style_open_jaxpr(
       fun, in_tree, in_avals, debug_info)
   closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))

@@ -2292,20 +2292,28 @@ def _fori_cond_fun(loop_carry):
   return lax.lt(i, upper)
 
 @weakref_lru_cache
-def _fori_body_fun(body_fun):
+def _fori_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Callable:
   body_fun_ref = weakref.ref(body_fun)
 
   def while_body_fun(loop_carry):
     i, upper, x = loop_carry
     return lax.add(i, lax._const(i, 1)), upper, body_fun_ref()(i, x)
+  api_util.save_wrapped_fun_debug_info(
+      while_body_fun,
+      body_fun_dbg._replace(arg_names=(body_fun_dbg.arg_names[0],
+                                       "",  # upper,
+                                       * body_fun_dbg.arg_names[1:])))
   return while_body_fun
 
 @weakref_lru_cache
-def _fori_scan_body_fun(body_fun):
+def _fori_scan_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Callable:
   body_fun_ref = weakref.ref(body_fun)
   def scanned_fun(loop_carry, _):
     i, x = loop_carry
     return (i + 1, body_fun_ref()(i, x)), None
+  api_util.save_wrapped_fun_debug_info(
+      scanned_fun,
+      body_fun_dbg._replace(arg_names=body_fun_dbg.arg_names + ("",)))
   return scanned_fun
 
 @api_boundary
@@ -2406,6 +2414,9 @@ def fori_loop(lower, upper, body_fun, init_val,
   else:
     use_scan = False
 
+  body_fun_dbg = api_util.debug_info("fori_loop", body_fun,
+                                     (0, init_val), {})
+
   if use_scan:
     if unroll is None:
       unroll = False
@@ -2413,9 +2424,7 @@ def fori_loop(lower, upper, body_fun, init_val,
     if config.disable_jit.value and length == 0:
       # non-jit implementation of scan does not support length=0
       return init_val
-
-    scan_body = _fori_scan_body_fun(body_fun)
-    api_util.save_wrapped_fun_sourceinfo(scan_body, body_fun)
+    scan_body = _fori_scan_body_fun(body_fun, body_fun_dbg)
     (_, result), _ = scan(
         scan_body,
         (lower_, init_val),
@@ -2432,8 +2441,7 @@ def fori_loop(lower, upper, body_fun, init_val,
     lower = lax.convert_element_type(lower, dtype)  # type: ignore
   if upper_dtype != dtype:
     upper = lax.convert_element_type(upper, dtype)  # type: ignore
-  while_body_fun = _fori_body_fun(body_fun)
-  api_util.save_wrapped_fun_sourceinfo(while_body_fun, body_fun)
+  while_body_fun = _fori_body_fun(body_fun, body_fun_dbg)
   _, _, result = while_loop(_fori_cond_fun, while_body_fun,
                             (lower, upper, init_val))
   return result
