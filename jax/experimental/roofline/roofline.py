@@ -188,6 +188,16 @@ def _roofline_interpreter(
           pin_lhs_in_vmem=pin_lhs_in_vmem,
           pin_rhs_in_vmem=pin_rhs_in_vmem,
         )
+      elif "call_jaxpr" in eqn.params:
+        # Used for custom_jvp_call_p. Recursively calculates roofline result for
+        # all primitives in the custom function.
+        result += _roofline_interpreter(
+          util.wrap_name(f_name, eqn.primitive.name),
+          eqn.params['call_jaxpr'],
+          mesh,
+          pin_lhs_in_vmem=pin_lhs_in_vmem,
+          pin_rhs_in_vmem=pin_rhs_in_vmem,
+        )
       else:
         if eqn.primitive not in _rooflines:
           msg = f"No roofline rule for {eqn.primitive}."
