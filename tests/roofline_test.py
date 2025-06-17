@@ -567,6 +567,37 @@ class RooflineTest(jtu.JaxTestCase):
     )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
     self.assertEqual(result.unfused_flops, 3 * 8)
 
+  @jtu.parameterized.product(
+      cumulative_function=[lax.cummax, lax.cummin, lax.cumprod, lax.cumsum],
+      axis=[0, 1, 2],
+  )
+  def test_cumulative_ops(self, cumulative_function: int, axis: int):
+    f = lambda x: cumulative_function(operand=x, axis=axis)
+    x = jnp.zeros((3, 8, 15), dtype=int)
+
+    _, result = roofline.roofline(f)(x)
+
+    self.assertEqual(result.unfused_flops, x.shape[axis])
+    self.assertEqual(
+        result.unfused_hbm_bytes, 2 * self._bytes_per_word * 3 * 8 * 15
+    )
+
+  @jtu.parameterized.named_parameters(
+      dict(testcase_name="axis_0", axis=0),
+      dict(testcase_name="axis_1", axis=1),
+      dict(testcase_name="axis_2", axis=2),
+  )
+  def test_cumlogsumexp_p_roofline(self, axis: int):
+    f = lambda x: lax.cumlogsumexp(operand=x, axis=axis)
+    x = jnp.zeros((3, 8, 15), dtype=int)
+
+    _, result = roofline.roofline(f)(x)
+
+    self.assertEqual(result.unfused_flops, 2 * x.shape[axis])
+    self.assertEqual(
+        result.unfused_hbm_bytes, 2 * self._bytes_per_word * 3 * 8 * 15
+    )
+
   def test_dot_general(self):
     _, result = roofline.roofline(lambda a, b: a @ b)(
         jnp.zeros((3, 7), dtype=int), jnp.ones((7, 5), dtype=int)
@@ -733,7 +764,6 @@ class RooflineTest(jtu.JaxTestCase):
     self.assertEqual(
         result.unfused_flops, 2 * expected_output_size * 3 * 3
     )
-
 
   @jtu.parameterized.named_parameters(
       dict(
