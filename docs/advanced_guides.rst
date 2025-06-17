@@ -49,19 +49,21 @@ operations.
    :maxdepth: 1
    :caption: Pytrees
 
-   pytrees
+   custom_pytrees
 
 .. toctree::
    :maxdepth: 1
    :caption: Performance optimizations
 
    persistent_compilation_cache
+   buffer_donation
    gpu_performance_tips
 
 .. toctree::
    :maxdepth: 1
    :caption: Performance benchmarking and profiling
 
+   benchmarking
    profiling
    device_memory_profiling
 
