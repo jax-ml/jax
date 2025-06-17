@@ -16,6 +16,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+
+## JAX 0.6.2 (June 17, 2025)
+
 * New features:
   * Added {func}`jax.tree.broadcast` which implements a pytree prefix broadcasting helper.
 
