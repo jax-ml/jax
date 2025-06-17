@@ -50,6 +50,7 @@ operations.
    :caption: Pytrees
 
    pytrees
+   custom_pytrees
 
 .. toctree::
    :maxdepth: 1

@@ -32,5 +32,4 @@ Arrays and data types:
    concurrency
    gpu_memory_allocation
    rank_promotion_warning
-   type_promotion
    default_dtypes
