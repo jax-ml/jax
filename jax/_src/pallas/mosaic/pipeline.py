@@ -561,7 +561,8 @@ class BufferedRef(BufferedRefBase):
   @property
   def current_slot_index(self):
     """Index in double buffer corresponding to the current slot."""
-    # TODO(ramiroleal): Fix race condition when returning register value for current_slot.
+    if self._current_slot_reg is not None:
+      return self._current_slot_reg
     return self.current_slot[0]
 
   @property
@@ -620,10 +621,11 @@ class BufferedRef(BufferedRefBase):
     new_current_slot = lax.select(
         predicate, self.next_slot_index, self.current_slot_index
     )
-    result = self.with_slot_index(new_current_slot)
-    # TODO(ramiroleal): Fix race condition when using register value for current_slot.
-    result.save_slots()
-    return result
+    if self._current_slot_reg is not None:
+      return self.with_slot_index(new_current_slot)
+    assert isinstance(self.current_slot, jax.Array)
+    self.current_slot[0] = new_current_slot
+    return self
 
   def load_slots(self) -> "BufferedRef":
     """Load slot information into registers."""
@@ -830,6 +832,7 @@ class Scheduler:
       last_cycle=None,
       init_accumulators=None,
       trace_scopes=True,
+      use_sreg_for_state: bool = False,
   ):
     """Initializes scheduler.
 
@@ -843,6 +846,8 @@ class Scheduler:
       init_accumulators: do we zero-initialize accumulator state for this
         invocation of the pipeline.
       trace_scopes: whether to use named_scope to trace blocks in the pipeline.
+      use_sreg_for_state: optional bool, indicates whether to use sregs for
+        current_slot state.
     """
     self.step = step
     self.grid = grid
@@ -850,6 +855,7 @@ class Scheduler:
     self.last_cycle = last_cycle
     self.init_accumulators = init_accumulators
     self.trace_scopes = trace_scopes
+    self.use_sreg_for_state = use_sreg_for_state
 
     # Total number of linear steps.
     self.num_steps = _grid_size(grid)
@@ -916,7 +922,8 @@ class Scheduler:
       def _init_slots():
         buffered_ref.init_slots()
 
-      buffered_ref = buffered_ref.load_slots()
+      if self.use_sreg_for_state:
+        buffered_ref = buffered_ref.load_slots()
 
       @pl.when(do_copy & buffered_ref.is_input)
       def _copy_in():
@@ -1029,7 +1036,9 @@ class Scheduler:
     def _end():
       if buffered_ref.is_output:
         buffered_ref.wait_out(dst_ref, self.indices)
-    buffered_ref.save_slots()
+
+    if self.use_sreg_for_state:
+      buffered_ref.save_slots()
 
   def swap_slots(
       self, buffered_ref, hbm_ref, schedule=None
@@ -1318,6 +1327,7 @@ def emit_pipeline(
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
+    use_sreg_for_state: bool = False,
 ):
   """Creates a function to emit a manual pallas pipeline.
 
@@ -1347,6 +1357,8 @@ def emit_pipeline(
     no_pipelining: If True, turns off pipelining and all copies will be
       made synchronous. This is useful for debugging multiple-buffering
       related bugs.
+    use_sreg_for_state: optional bool, indicates whether to use sregs for
+      current_slot state.
   """
   if any(not isinstance(d, (int, jax.Array)) for d in grid):
     grid_types = tuple(type(d) for d in grid)
@@ -1459,6 +1471,7 @@ def emit_pipeline(
           last_cycle=last_cycle,
           init_accumulators=init_accumulators,
           trace_scopes=trace_scopes,
+          use_sreg_for_state=use_sreg_for_state,
       )
 
     def loop_body(step, carry):
