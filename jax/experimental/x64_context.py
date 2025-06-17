@@ -30,6 +30,13 @@ from jax._src import config
 def enable_x64(new_val: bool = True):
   """Experimental context manager to temporarily enable X64 mode.
 
+  .. warning::
+
+    This context manager remains experimental because it is fundamentally broken
+    and can result in unexpected behavior, particularly when used in conjunction
+    with JAX transformations like :func:`jax.jit`, :func:`jax.vmap`, :func:`jax.grad`,
+    and others. See https://github.com/jax-ml/jax/issues/5982 for details.
+
   Usage::
 
     >>> x = np.arange(5, dtype='float64')
@@ -40,7 +47,7 @@ def enable_x64(new_val: bool = True):
 
   See Also
   --------
-  jax.experimental.enable_x64 : temporarily enable X64 mode.
+  jax.experimental.disable_x64 : temporarily disable X64 mode.
   """
   with config.enable_x64(new_val):
     yield
@@ -48,6 +55,13 @@ def enable_x64(new_val: bool = True):
 @contextmanager
 def disable_x64():
   """Experimental context manager to temporarily disable X64 mode.
+
+  .. warning::
+
+    This context manager remains experimental because it is fundamentally broken
+    and can result in unexpected behavior, particularly when used in conjunction
+    with JAX transformations like :func:`jax.jit`, :func:`jax.vmap`, :func:`jax.grad`,
+    and others. See https://github.com/jax-ml/jax/issues/5982 for details.
 
   Usage::
 
