@@ -145,8 +145,8 @@ def mma(
   if isinstance(a, TMEMRef):
     m, k2 = a.shape
     element_type2 = a.dtype
-    if collective:
-      raise NotImplementedError("Collective not supported for TMEMRef")
+    if collective and n * num_cta == 512:
+      raise NotImplementedError("Collective MMA with N=512 is not supported")
     if a.layout != (expected_layout := _infer_tmem_layout(a.shape, packing=2)):
       raise ValueError(
           f"A layout mismatch: expected {expected_layout}, got {a.layout}"
