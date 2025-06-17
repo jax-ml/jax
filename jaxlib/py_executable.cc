@@ -367,7 +367,10 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   xla::ifrt::ExecuteOptions options = options_;
   options.launch_id = GetNextLaunchId();
   options.fill_status = with_tokens;
-  options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
+  options.execution_stream_id = GetExecutionStreamId();
+  if (options.execution_stream_id == 0) {
+    options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
+  }
   std::optional<std::vector<PjRtFuture<>>> returned_futures;
   if (with_tokens) {
     returned_futures.emplace();
