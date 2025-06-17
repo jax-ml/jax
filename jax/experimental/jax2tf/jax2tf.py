@@ -1314,7 +1314,7 @@ def _make_op_metadata(primitive: core.Primitive,
                       ) -> xla_data_pb2.OpMetadata:
   eqn_str = (str(source_info.name_stack) + '/'
              + core.str_eqn_compact(primitive, params))
-  frame = source_info_util.user_frame(source_info)
+  frame = source_info_util.user_frame(source_info.traceback)
   return xla_data_pb2.OpMetadata(
         op_type=primitive.name,
         op_name=eqn_str,

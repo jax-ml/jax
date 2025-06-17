@@ -1920,7 +1920,6 @@ def _composite_lowering(
   """
   func_op, _, _ = mlir.lower_called_computation(
       name,
-      ctx.name_stack,
       jaxpr,
       ctx.module_context,
       ctx.avals_out,

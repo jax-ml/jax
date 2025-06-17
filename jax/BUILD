@@ -1081,6 +1081,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":frozen_dict",
         ":hashable_array",
         ":jaxpr_util",
         ":layout",
