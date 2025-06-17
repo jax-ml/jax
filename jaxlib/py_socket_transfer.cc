@@ -176,21 +176,29 @@ class PyTransferServer {
                      bool supports_pinned_allocator, bool use_raw_buffers) {
     use_raw_buffers_ = use_raw_buffers;
     std::shared_ptr<BulkTransportFactory> factory;
+#if JAX_IFRT_VERSION_NUMBER > 10
+    std::shared_ptr<xla::PjRtClient> pjrt_client =
+        tensorflow::down_cast<xla::ifrt::PjRtClient*>(client)
+            ->shared_ptr_pjrt_client();
+#else
+    xla::ifrt::Client* pjrt_client = client;
+#endif
     if (transport_addresses.empty()) {
       factory = BulkTransportFactory::CreateLocal();
     } else {
       auto tmp = xla::ValueOrThrow(
           AllocateAlignedMemory(xfer_size * max_num_parallel_copies));
       SlabAllocator uallocator(xla::ValueOrThrow(MapPjrtMemory(
-                                   client, tmp->data(), tmp->size(), tmp)),
+                                   pjrt_client, tmp->data(), tmp->size(), tmp)),
                                xfer_size);
       std::optional<SlabAllocator> pinned_allocator;
       if (supports_pinned_allocator) {
         auto tmp = xla::ValueOrThrow(
             AllocateNetworkPinnedMemory(xfer_size * max_num_parallel_copies));
-        pinned_allocator.emplace(xla::ValueOrThrow(MapPjrtMemory(
-                                     client, tmp->data(), tmp->size(), tmp)),
-                                 xfer_size);
+        pinned_allocator.emplace(
+            xla::ValueOrThrow(
+                MapPjrtMemory(pjrt_client, tmp->data(), tmp->size(), tmp)),
+            xfer_size);
       }
       factory = xla::ValueOrThrow(CreateSocketBulkTransportFactory(
           transport_addresses, pinned_allocator, uallocator));
@@ -198,9 +206,9 @@ class PyTransferServer {
 
     server_ = std::make_shared<SocketServer>();
 
-    TF_ASSIGN_OR_RETURN(auto mem,
-                        AllocateAndMapPjrtMemory(
-                            client, max_num_parallel_copies * xfer_size * 2));
+    TF_ASSIGN_OR_RETURN(
+        auto mem, AllocateAndMapPjrtMemory(
+                      pjrt_client, max_num_parallel_copies * xfer_size * 2));
     premapped_copier_ = std::make_shared<PremappedCopierState>(
         mem, max_num_parallel_copies, xfer_size);
     xfer_size_ = xfer_size;
