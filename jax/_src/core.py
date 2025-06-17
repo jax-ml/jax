@@ -947,7 +947,12 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
       else:
         return attr
 
+  def _short_repr(self):
+    return f'{self.__class__.__name__}<{self.aval}>'
+
   def _pretty_print(self):
+    if not config.dev_mode.value:
+      return pp.text(self._short_repr())
     base = pp.text(f'Traced<{self.aval}>with<{self._trace}>')
     contents = [(name, attr._pretty_print() if isinstance(attr, Tracer)
                  else pp.text(repr(attr))) for name, attr in self._contents()]

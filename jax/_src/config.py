@@ -248,7 +248,8 @@ def trace_context():
           use_high_dynamic_range_gumbel.value,
           error_checking_behavior_nan.value,
           error_checking_behavior_divide.value,
-          error_checking_behavior_oob.value)
+          error_checking_behavior_oob.value,
+          dev_mode.value)
 
 config = Config()
 
@@ -1013,6 +1014,15 @@ debug_infs = bool_state(
           'output of a jit-compiled computation, call into the un-compiled '
           'version in an attempt to more precisely identify the operation '
           'which produced the inf.'))
+
+dev_mode = bool_state(
+    name='jax_dev_mode',
+    default=False,
+    help=('Enable developer mode. This flag includes extra information in reprs for '
+          'traced values. It also enables verbose tracebacks similar to setting '
+          'jax_traceback_filtering="off"'),
+    include_in_jit_key=True,
+)
 
 log_compiles = bool_state(
     name='jax_log_compiles',

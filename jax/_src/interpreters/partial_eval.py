@@ -1644,6 +1644,9 @@ class DynamicJaxprTracer(core.Tracer):
     self.aval = aval  # type: ignore[misc]
     self.mutable_qdd = core.MutableQuasiDynamicData(qdd)
 
+  def _short_repr(self):
+    return f"JitTracer<{self.aval}>"
+
   @property
   def aval_mutable_qdd(self):
     aval = self.aval
