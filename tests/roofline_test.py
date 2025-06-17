@@ -46,6 +46,31 @@ def create_inputs(
   return mesh, tuple(arrays)
 
 
+def example_function(x):
+  return jnp.sin(x) + x**2
+
+
+@jax.custom_jvp
+def example_custom_function(x):
+  """Example custom function.
+
+  Small wrapper around `example_function`. We define `example_custom_function`
+  separately since we add the `@jax.custom_jvp` decorator and want to compare
+  its behavior to `example_function`'s in tests.
+  """
+  return example_function(x)
+
+
+@example_custom_function.defjvp
+def example_custom_function_jvp(primals, tangents):
+  """Example custom function jvp.
+
+  Normally this function would define a mathematically correct JVP, but its
+  definition has 0 effect on the roofline result, so we keep it very simple.
+  """
+  return example_custom_function(primals), tangents
+
+
 class RooflineTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -801,6 +826,33 @@ class RooflineTest(jtu.JaxTestCase):
       self.assertEqual(
           result.unfused_hbm_bytes, self._bytes_per_word * expected_memory
       )
+
+  def test_custom_jvp_call_p_roofline(self):
+    dummy_input = jnp.ones((3, 8))
+
+    _, base_result = roofline.roofline(example_function)(dummy_input)
+    _, custom_result = roofline.roofline(example_custom_function)(dummy_input)
+
+    self.assertEqual(custom_result.unfused_flops, base_result.unfused_flops)
+    self.assertEqual(
+        custom_result.unfused_hbm_bytes, base_result.unfused_hbm_bytes
+    )
+
+  def test_custom_jvp_call_p_roofline_with_neg(self):
+    dummy_input = jnp.ones((3, 8))
+
+    def with_neg(f):
+      return lambda x: jax.lax.neg(f(x))
+
+    _, base_result = roofline.roofline(with_neg(example_function))(dummy_input)
+    _, custom_result = roofline.roofline(with_neg(example_custom_function))(
+        dummy_input
+    )
+
+    self.assertEqual(custom_result.unfused_flops, base_result.unfused_flops)
+    self.assertEqual(
+        custom_result.unfused_hbm_bytes, base_result.unfused_hbm_bytes
+    )
 
 
 if __name__ == "__main__":
