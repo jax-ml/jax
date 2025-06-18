@@ -567,7 +567,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       return hlo_sharding
     if mesh.empty or not decode_shardings:
       assert devices is not None
-      return sharding_impls._op_sharding_to_pos_sharding(hlo_sharding, devices)
+      return sharding_impls.GSPMDSharding(devices, hlo_sharding)
     pspec = sharding_impls.parse_flatten_op_sharding(
         hlo_sharding, mesh)[0]
     pspec = sharding_impls.PartitionSpec(*pspec, *((None,) * (ndim - len(pspec))))
