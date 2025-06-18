@@ -28,7 +28,7 @@ Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 
 from functools import partial
 import operator as op
-from typing import Callable
+from collections.abc import Callable
 
 import jax
 from jax import api_util

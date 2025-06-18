@@ -26,7 +26,8 @@ __all__ = ['register_jax_array_methods']
 import abc
 from functools import partial, wraps
 import math
-from typing import Any, Callable, Sequence
+from typing import Any
+from collections.abc import Callable, Sequence
 
 import numpy as np
 

@@ -17,7 +17,8 @@ import contextlib
 import itertools
 import json
 import math
-from typing import Callable, ParamSpec, TypeAlias, TypeVar
+from typing import ParamSpec, TypeAlias, TypeVar
+from collections.abc import Callable
 import warnings
 
 import jax

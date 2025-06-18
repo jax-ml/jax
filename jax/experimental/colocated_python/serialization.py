@@ -19,7 +19,8 @@ import base64
 import collections
 import functools
 import io
-from typing import Any, Callable, Sequence
+from typing import Any
+from collections.abc import Callable, Sequence
 
 try:
   import cloudpickle  # type: ignore[import-not-found]

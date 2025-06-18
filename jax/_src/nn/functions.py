@@ -21,7 +21,7 @@ from functools import partial
 import operator
 import math
 import numpy as np
-from typing import Any, List, Literal
+from typing import Any, Literal
 import warnings
 
 import jax
@@ -1364,7 +1364,7 @@ def scaled_dot_general(
     lhs, rhs,
     dimension_numbers,
     preferred_element_type=jnp.float32,
-    configs: List[BlockScaleConfig] | None = None,
+    configs: list[BlockScaleConfig] | None = None,
     implementation: Literal['cudnn'] | None = None,
   ):
   r"""Scaled dot general operation.

@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
 import logging
 import os
 import re
@@ -55,7 +54,7 @@ def get_metadata(key):
     raise RuntimeError(f"Getting metadata['{key}'] failed for 6 tries")
   return api_resp.text, api_resp.status_code
 
-def get_tpu_env_value_from_metadata(key) -> Optional[str]:
+def get_tpu_env_value_from_metadata(key) -> str | None:
   metadata_value = None
   tpu_env_data = get_metadata('tpu-env')[0]
   key_value_pairs = tpu_env_data.split('\n')
@@ -68,7 +67,7 @@ def get_tpu_env_value_from_metadata(key) -> Optional[str]:
         metadata_value = value.strip().strip("'")
   return metadata_value
 
-def get_tpu_env_value(key) -> Optional[str]:
+def get_tpu_env_value(key) -> str | None:
   # First try to get the value from the environment.
   value = os.environ.get(key, None)
   if value is None:

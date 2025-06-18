@@ -22,7 +22,7 @@ import io
 import math
 import re
 import sys
-from typing import Callable
+from collections.abc import Callable
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax

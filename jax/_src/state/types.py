@@ -18,7 +18,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Callable, Protocol, Union
+from typing import Any, Protocol, Union
+from collections.abc import Callable
 
 from jax._src import core
 from jax._src import dtypes

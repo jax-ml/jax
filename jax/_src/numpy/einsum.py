@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import collections
-from typing import overload, Any, Callable, Sequence
+from typing import overload, Any
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import opt_einsum

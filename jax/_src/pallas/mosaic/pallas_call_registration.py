@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import os
 import tempfile
-from typing import List, cast
+from typing import cast
 
 import jax
 from jax import dtypes
@@ -240,7 +240,7 @@ def pallas_call_tpu_lowering_rule(
   else:
     mosaic_cost_estimate = None
   if input_memory_spaces is None and output_memory_spaces is not None:
-    input_memory_spaces_list: List[tpu_custom_call.MemorySpace | None] = [
+    input_memory_spaces_list: list[tpu_custom_call.MemorySpace | None] = [
         None,
     ] * len(ctx.avals_in)
     for input_output_alias in input_output_aliases:

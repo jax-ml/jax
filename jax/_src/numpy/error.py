@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import contextlib
-from typing import Literal, Sequence
+from typing import Literal
+from collections.abc import Sequence
 
 import numpy as np
 

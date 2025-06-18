@@ -38,7 +38,7 @@ jax.config.parse_flags_with_absl()
 jax.config.update('jax_threefry_partitionable', True)
 
 
-class CountStoreCallbacksContext(object):
+class CountStoreCallbacksContext:
   """Wraps the I/O callback `store` into a callback that counts the number of calls to `store`."""
 
   def __init__(self):
@@ -69,7 +69,7 @@ class ProcessedGridPoint():
   core_id: int
 
 
-class GridPointRecorderContext(object):
+class GridPointRecorderContext:
   """Records grid points in the order in which they are procsessed."""
 
   def __init__(self):

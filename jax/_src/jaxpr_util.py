@@ -22,7 +22,8 @@ import gzip
 import itertools
 import json
 import types
-from typing import Any, Iterator, Union
+from typing import Any, Union
+from collections.abc import Iterator
 
 from jax._src import core
 from jax._src import util

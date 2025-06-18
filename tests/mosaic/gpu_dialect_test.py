@@ -14,7 +14,7 @@
 # ==============================================================================
 """(Deviceless) tests for the Mosaic GPU MLIR dialect."""
 
-from typing import Callable
+from collections.abc import Callable
 
 from absl.testing import parameterized
 import jax

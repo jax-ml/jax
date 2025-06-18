@@ -504,7 +504,7 @@ class BatchTrace(Trace):
       with core.set_current_trace(self.parent_trace):
         val_out, dim_out = primitive_batchers[p](vals_in, dims_in, **params)
     else:
-      raise NotImplementedError("Batching rule for '{}' not implemented".format(p))
+      raise NotImplementedError(f"Batching rule for '{p}' not implemented")
     src = source_info_util.current()
     if p.multiple_results:
       with core.set_current_trace(self.parent_trace):  # val_out may be lazy map

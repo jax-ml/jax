@@ -15,7 +15,8 @@
 import collections
 from functools import partial
 import operator
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from jax.tree_util import (tree_flatten, treedef_children, tree_leaves,
                            tree_unflatten, treedef_tuple)

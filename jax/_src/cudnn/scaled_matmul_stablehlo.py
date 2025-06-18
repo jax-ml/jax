@@ -16,7 +16,6 @@ from dataclasses import dataclass
 import json
 import operator
 from functools import partial, reduce
-from typing import List
 
 # Third-party imports
 import jax
@@ -591,7 +590,7 @@ def scaled_dot_general_transpose_lhs(
 
 def scaled_dot_general_transpose_rhs(
     g, x, y, *, dimension_numbers, preferred_element_type: DTypeLike,
-    configs: List[BlockScaleConfig]
+    configs: list[BlockScaleConfig]
   ):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
@@ -686,7 +685,7 @@ def _ensure_batch_dim(lhs, rhs, dimension_numbers):
 def scaled_dot_general_wrapper(
     lhs, rhs, dimension_numbers,
     preferred_element_type=jnp.float32,
-    configs: List[BlockScaleConfig] | None=None,
+    configs: list[BlockScaleConfig] | None=None,
   ):
   if preferred_element_type not in (jnp.float32, jnp.bfloat16, jnp.float16):
     msg = ('Only support preferred_element_type in (f32, bf16, f16), but got '

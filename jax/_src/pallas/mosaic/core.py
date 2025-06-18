@@ -20,7 +20,8 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any, ClassVar, Literal, Mapping
+from typing import Any, ClassVar, Literal
+from collections.abc import Mapping
 
 import jax
 from jax._src import core as jax_core

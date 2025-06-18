@@ -20,7 +20,8 @@ import enum
 import functools
 import string
 from collections.abc import Hashable
-from typing import Any, Callable, Sequence
+from typing import Any
+from collections.abc import Callable, Sequence
 
 import jax
 from jax import lax
