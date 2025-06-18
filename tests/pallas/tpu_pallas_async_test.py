@@ -205,7 +205,7 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs only guaranteed to work ou TPU v4+')
     # TODO(subhankarshah): Remove after all required changes are in.
-    if not jtu.if_cloud_tpu_at_least(2025, 6, 20):
+    if not jtu.if_cloud_tpu_at_least(2025, 6, 30):
       self.skipTest('Requires libtpu built after 2025-06-20')
 
   def test_basic_async_copy(self):
@@ -834,7 +834,7 @@ class PallasCallStatefulAsyncTest(parameterized.TestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs only guaranteed to work ou TPU v4+')
     # TODO(subhankarshah): Remove after all required changes are in.
-    if not jtu.if_cloud_tpu_at_least(2025, 6, 20):
+    if not jtu.if_cloud_tpu_at_least(2025, 6, 30):
       self.skipTest('Requires libtpu built after 2025-06-20')
 
   def test_basic_stateful_async_copy(self):
