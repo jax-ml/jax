@@ -69,17 +69,17 @@ def _axis_for_ndim(ndim: int) -> Iterator[None | int | tuple[int, ...]]:
 
 
 def _random_invertible(rng, shape, dtype):
-    """
-    Generate a random invertible matrix was specified shape and dtype
-    """
-    while True:
-      a = rng(shape, dtype)
-      try:
-        np.linalg.inv(a)
-      except np.linalg.LinAlgError:
-        pass
-      else:
-        return a
+  """
+  Generate a random invertible matrix was specified shape and dtype
+  """
+  while True:
+    a = rng(shape, dtype)
+    try:
+      np.linalg.inv(a)
+    except np.linalg.LinAlgError:
+      pass
+    else:
+      return a
 
 
 def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
@@ -2128,6 +2128,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cpu", "gpu")
   def test_solve_sylvester(self, shape, dtype, method):
+    if jtu.test_device_matches(["gpu"]) and method == "schur":
+        self.skipTest("Schur not supported on GPU.")
 
     tol = {np.float32: 3e-2, np.complex64: 3e-2}
 
@@ -2161,6 +2163,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     We simulate this case below by randomly selecting the eigenvalues of A and then assign the
     eigenvalues of B as negative eigenvalues of A. We say that A and B are ill-conditioned.
     """
+    if jtu.test_device_matches(["gpu"]) and method == "schur":
+        self.skipTest("Schur not supported on GPU.")
+
     rng = jtu.rand_default(self.rng())
 
     # Define eigenvalues that sum to zero

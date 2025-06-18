@@ -2245,7 +2245,7 @@ def _binom(n, k):
   return lax.exp(a - b - c)
 
 
-def _solve_sylvester_triangular_scan(R: ArrayLike, S: ArrayLike, F: ArrayLike) -> Array:
+def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
     """
     Solves the Sylvester equation using Bartels-Stewart algorithm
     .. math::
@@ -2262,7 +2262,7 @@ def _solve_sylvester_triangular_scan(R: ArrayLike, S: ArrayLike, F: ArrayLike) -
     Returns:
       Y: Matrix of shape m x n
     """
-    R, S, F = promote_args_inexact("_solve_sylvester_triangular_scan", jnp.asarray(R), jnp.asarray(S), jnp.asarray(F))
+    R, S, F = promote_args_inexact("_solve_sylvester_triangular_scan", R, S, F)
 
     m, n = F.shape
     total = m * n
@@ -2311,7 +2311,7 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, method: Literal["e
 
     Using one of two methods.
 
-    (1) Bartell-Stewart (schur) algorithm (default):
+    (1) Bartell-Stewart (schur) algorithm (default) [CPU ONLY]:
 
     Where A and B are first decomposed using Schur decomposition to construct and alternate sylvester equation:
     .. math::
@@ -2320,22 +2320,13 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, method: Literal["e
 
     Where R and S are in quasitriangular form when A and B are real valued and triangular when A and B are complex.
 
-    The Bartel-Stewart algorithm is robust because a Schur decomposition always exists even for defective matrices,
-    and it handles complex and ill-conditioned problems better than the eigen decomposition method.
-    However, there are a couple of drawbacks. First, It is computationally more expensive than
-    the eigen decomposition method because you need to perform a Schur decomposition and then scan the entire solution matrix.
-    Second, it requires more system memory compared to the eigen decomposition method.
-
-    (2) The Eigen decomposition algorithm:
-
-    The eigen decomposition method is the fastest method to solve a sylvester equation. However, this speed brings with it a couple of drawbacks.
-    First, A and B must be diagonalizable otherwise the eigenvectors will be linearly dependent and ill-conditioned leading to accuracy issues.
-    Second, when the eigenvectors are not orthogonal roundoff errors are amplified.
+    (2) The Eigen decomposition algorithm [CPU and GPU]
 
     Args:
       A: Matrix of shape m x m
       B: Matrix of shape n x n
       C: Matrix of shape m x n
+      method: "schur" is the default and is accurate but slow, and "eigen" is an alternative that is faster but less accurate for ill-conditioned matrices.
       tol: How close the sum of the eigenvalues from A and B can be to zero before returning matrix of NaNs
 
     Returns:
@@ -2352,9 +2343,22 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, method: Literal["e
        [-3.e-07  1.e+00]]
 
     Notes:
-      This function returns NaNs in the event that the eigenvalues of the A and B matrices sum to zero elementwise.
+      The Bartel-Stewart algorithm is robust because a Schur decomposition always exists even for defective matrices,
+      and it handles complex and ill-conditioned problems better than the eigen decomposition method.
+      However, there are a couple of drawbacks. First, It is computationally more expensive than
+      the eigen decomposition method because you need to perform a Schur decomposition and then scan the entire solution matrix.
+      Second, it requires more system memory compared to the eigen decomposition method.
+
+      The eigen decomposition method is the fastest method to solve a sylvester equation. However, this speed brings with it a couple of drawbacks.
+      First, A and B must be diagonalizable otherwise the eigenvectors will be linearly dependent and ill-conditioned leading to accuracy issues.
+      Second, when the eigenvectors are not orthogonal roundoff errors are amplified.
+
+      The tol argument allows you to specify how ill-conditioned a matrix can be and still estimate a solution.
+      For matrices that are ill-conditioned we recommend using float64 instead of the default float32 dtype. The solver
+      can still return good estimates for ill-conditioned matrices depending on how close to zero the sums of the eigenvalues of A and B
+      are.
     """
-    A, B, C = promote_args_inexact("solve_sylvester", jnp.asarray(A), jnp.asarray(B), jnp.asarray(C))
+    A, B, C = promote_args_inexact("solve_sylvester", A, B, C)
 
     m, n = C.shape
 
