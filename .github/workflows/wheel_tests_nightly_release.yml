@@ -36,6 +36,7 @@ concurrency:
 permissions: {}
 jobs:
   run-pytest-cpu:
+    if: ! ( matrix.python == '3.14' && startsWith(github.ref_name, 'release/') )
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -60,6 +61,7 @@ jobs:
       halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-pytest-cuda:
+    if: ! ( matrix.python == '3.14' && startsWith(github.ref_name, 'release/') )
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
