@@ -841,6 +841,7 @@ register_binop_rule(lax.xor_p)
 register_binop_rule(lax.and_p)
 register_binop_rule(lax.shift_right_logical_p)
 register_binop_rule(ad_util.add_any_p)
+register_binop_rule(lax.pow_p)
 
 
 @register_eval_rule(lax.select_n_p)
@@ -1968,6 +1969,7 @@ register_binop_push_rule(lax.lt_p)
 register_binop_push_rule(lax.eq_p)
 register_binop_push_rule(lax.gt_p)
 register_binop_push_rule(lax.and_p)
+register_binop_push_rule(lax.pow_p)
 register_binop_push_rule(ad_util.add_any_p)
 
 
