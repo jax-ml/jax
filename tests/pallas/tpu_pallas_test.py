@@ -1225,7 +1225,7 @@ class PallasCallDMATest(PallasBaseTest):
       self.skipTest('TODO(sharadmv, justinfu): Add interpret support for DMA.')
 
     # TODO(subhankarshah): Remove after all required changes are in.
-    if not jtu.if_cloud_tpu_at_least(2025, 6, 20):
+    if not jtu.if_cloud_tpu_at_least(2025, 6, 30):
       self.skipTest('Requires libtpu built after 2025-06-20')
 
     def kernel(x_hbm_ref, y_hbm_ref, sem_out):
