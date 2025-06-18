@@ -2462,12 +2462,7 @@ class FragmentedArrayTest(TestCase):
       ("tcgen05_col", tcgen05.LAYOUT, tcgen05.COL_LAYOUT, 0),
   )
   def test_layout_reduction_definition(self, layout, expected_reduced_layout, axis):
-    def squeeze_shape(shape):
-      return tuple(s for s in shape if s != 1)
-    reduced_layout = layout.reduce((axis,))
-    tiled_shape = squeeze_shape(reduced_layout.tiled_tiling_shape)
-    expected_tiled_shape = squeeze_shape(expected_reduced_layout.tiled_tiling_shape)
-    self.assertEqual(tiled_shape, expected_tiled_shape)
+    self.assertEqual(layout.reduce((axis,)), expected_reduced_layout)
 
   @parameterized.product(
       op=(arith.addf, arith.maximumf),
@@ -2843,7 +2838,7 @@ class LayoutTest(TestCase):
       # Note that WGMMA layouts are always (shape[0] // 64, shape[1] // 8, 2, 1)
       self.assertEqual(
           tiled.registers.shape,
-          (shape[0] // 64, shape[1] // 8, 1, 1, 2, 1, 1, 1, 1, 1),
+          (shape[0] // 64, shape[1] // 8, 1, 1, 2, 1, 1, 1, 1),
       )
       self.assertEqual(tiled.shape, shape)
       self.assertEqual(tiled.mlir_dtype, iota.mlir_dtype)
@@ -4034,7 +4029,8 @@ if hp is not None:
         warp_dim=warp_dim,
         lane_dims=lane_dims,
         vector_dim=vector_dim,
-    )
+        _check_canonical=False,
+    ).canonicalize()
 
   @hps.composite
   def shape_and_tiled_layout(

@@ -110,6 +110,43 @@ class Tiling:
       shape = (*untiled_dims, *(d * t for d, t in zip(tiled_dims, tile)))
     return shape
 
+  def canonicalize(self) -> Tiling:
+    """Returns a canonicalized version of the tiling.
+
+    We define a tiling to be canonical if, at each step (except the first one,
+    which defines the base tile shape):
+
+    1. The tiling partitions at least one dimension in more than 1 tile. For
+       example, the tiling `(8, 8)(8, 8)` is not canonical, as applying it
+       yields a shape `(1, 1, 8, 8)`. We canonicalize it to `(8, 8)`, which
+       allows getting rid of the unnecessary `1` dimensions.
+    2. The leading dimensions of each tile are not `1`. If canonicalizing a
+       tile in this way leads to an empty tile, then the tile is given shape
+       `(1,)`---which is still a meaningful (final) tile. For example, the
+       tiling `(8, 8)(1, 4)` is not canonical, as applying it yields a shape
+       `(8, 2, 1, 4)`. We canonicalize it to `(8, 8)(4,)`, which allows
+       getting rid of the unnecessary `1` dimension, and yields a shape
+       `(8, 2, 4)`.
+    """
+    if len(self.tiles) <= 1:
+      return self
+
+    shape = self.tiles[0]
+    new_tiling = [self.tiles[0]]
+    for tile in self.tiles[1:]:
+      for i, d in enumerate(tile):
+        if d != 1:
+          canonical_tile = tile[i:]
+          break
+      else:
+        canonical_tile = (1,)
+      tiled_dims = shape[-len(canonical_tile):]
+      if tiled_dims == canonical_tile:
+        continue
+      shape = canonical_tile
+      new_tiling.append(canonical_tile)
+    return Tiling(tuple(new_tiling))
+
   def tile_strides(self, strides: tuple[int, ...]) -> tuple[int, ...]:
     """Computes the strides of an array after tiling."""
     for tile in self.tiles:
@@ -281,8 +318,13 @@ class TiledLayout:
   warp_dim: int | Replicated
   lane_dims: tuple[int | Replicated, ...]  # major-to-minor
   vector_dim: int
+  # Whether to enforce that the layout is canonical. Users of `TiledLayout`
+  # should not set this to `False`, but it is helpful to be able to construct
+  # non-canonical layouts as an intermediate state when implementing layout
+  # transformations.
+  _check_canonical: dataclasses.InitVar[bool] = True
 
-  def __post_init__(self):
+  def __post_init__(self, _check_canonical: bool):
     if not self.tiling.tiles:
       raise ValueError("Tiling must have at least one tile")
     min_shape = self.tiling.tiles[0]
@@ -308,6 +350,10 @@ class TiledLayout:
     )
     if lane_dims_prod != WARP_SIZE:
       raise ValueError("The product of lane dims does not equal the warp size")
+    if _check_canonical:
+      canonical_layout = self.canonicalize()
+      if self != canonical_layout:
+        raise ValueError(f"{self} is not canonical.")
 
   @functools.cached_property
   def partitioned_lane_dims(self) -> tuple[int, ...]:
@@ -459,13 +505,67 @@ class TiledLayout:
             for d in self.lane_dims
         ),
         new_vector_dim,
-    )
+        _check_canonical=False,
+    ).canonicalize()
 
   def reduce(self, axes: Sequence[int]) -> TiledLayout:
     reduced_layout = self
     for a in sorted(axes, reverse=True):
       reduced_layout = reduced_layout.remove_dimension(a)
     return reduced_layout
+
+  def canonicalize(self) -> TiledLayout:
+    """Returns a version of this layout where tiling is canonical."""
+    canonical_tiling = self.tiling.canonicalize()
+    if canonical_tiling == self.tiling:
+      return self
+
+    s = self.base_tile_shape
+    canonical_tiled_tiling_shape = canonical_tiling.tile_shape(s)[len(s):]
+    offset = len(canonical_tiled_tiling_shape) - 1
+
+    rev_removed_dims = []
+    # Iterate starting from the end in order to eliminate leading dimensions,
+    # whenever possible. For instance, say we have
+    #
+    #   shape=(4, 32, 1, 1, 1, 1, 1)
+    #   warp_dim=-7,
+    #   lane_dims=(-6,)
+    #   vector_dim=-1
+    #
+    # and we want to canonicalize this to
+    #
+    #   shape=(4, 32, 1)
+    #   warp_dim=-3,
+    #   lane_dims=(-2,)
+    #   vector_dim=-1.
+    #
+    # After the loop below, we end up with
+    #
+    #   rev_removed_dims=[False, True, True, True, True, False, False]
+    #
+    # which will yield offsets `4` for `warp_dim`, `4` for `lane_dims[0]`, and
+    # `0` for `vector_dim`.
+    for d in reversed(self.tiled_tiling_shape):
+      if offset >= 0 and d == canonical_tiled_tiling_shape[offset]:
+        rev_removed_dims.append(False)
+        offset -= 1
+      else:
+        rev_removed_dims.append(True)
+    assert offset == -1
+
+    dim_offsets = np.cumsum(rev_removed_dims)[::-1].tolist()
+
+    def replace_tiled_dim(d: int | Replicated):
+      return d if isinstance(d, Replicated) else d + dim_offsets[d]
+
+    return TiledLayout(
+        canonical_tiling,
+        replace_tiled_dim(self.warp_dim),
+        tuple(replace_tiled_dim(d) for d in self.lane_dims),
+        replace_tiled_dim(self.vector_dim),
+        _check_canonical=True
+    )
 
 
 def _tiled_wgmma_layout(shape: tuple[int, ...]):
@@ -601,9 +701,9 @@ WGMMA_COL_LAYOUT = TiledLayout(
     vector_dim=-1,
 )
 WGMMA_ROW_LAYOUT = TiledLayout(
-    Tiling(((64,), (16,), (8,), (1,), (1,))),
-    warp_dim=-5,
-    lane_dims=(-3, Replicated(4)),
+    Tiling(((64,), (16,), (8,), (1,))),
+    warp_dim=-4,
+    lane_dims=(-2, Replicated(4)),
     vector_dim=-1,
 )
 
@@ -621,9 +721,9 @@ WGMMA_ROW_LAYOUT = TiledLayout(
 #  12 12 13 13 14 14 15 15
 #          ...
 WGMMA_LAYOUT = TiledLayout(
-    Tiling(((64, 8), (16, 8), (8, 8), (1, 2))),
-    warp_dim=-8,
-    lane_dims=(-4, -3),
+    Tiling(((64, 8), (16, 8), (8, 8), (2,))),
+    warp_dim=-7,
+    lane_dims=(-3, -2),
     vector_dim=-1,
 )
 # This tiled layout is similar to the WGMMA layout, only the unit at which we
@@ -687,23 +787,23 @@ WGMMA_TRANSPOSED_LAYOUT = TiledLayout(
 
 # Like WGMMA_LAYOUT, only each warp holds a 32xN strip instead of 16xN.
 TCGEN05_LAYOUT = TiledLayout(
-    Tiling(((128, 8), (32, 8), (8, 8), (1, 2))),
-    warp_dim=-8,
-    lane_dims=(-4, -3),
+    Tiling(((128, 8), (32, 8), (8, 8), (2,))),
+    warp_dim=-7,
+    lane_dims=(-3, -2),
     vector_dim=-1,
 )
 # TCGEN05_ROW_LAYOUT is to TCGEN05_LAYOUT as WGMMA_ROW_LAYOUT is to
 # WGMMA_LAYOUT.
 TCGEN05_ROW_LAYOUT = TiledLayout(
-    Tiling(tiles=((128,), (32,), (8,), (1,), (1,))),
-    warp_dim=-5,
-    lane_dims=(-3, Replicated(times=4)),
+    Tiling(tiles=((128,), (32,), (8,), (1,))),
+    warp_dim=-4,
+    lane_dims=(-2, Replicated(times=4)),
     vector_dim=-1,
 )
 # TCGEN05_COL_LAYOUT is to TCGEN05_LAYOUT as WGMMA_COL_LAYOUT is to
 # WGMMA_LAYOUT.
 TCGEN05_COL_LAYOUT = TiledLayout(
-    Tiling(tiles=((8,), (8,), (8,), (2,))),
+    Tiling(tiles=((8,), (2,))),
     warp_dim=Replicated(times=4),
     lane_dims=(Replicated(times=8), -2),
     vector_dim=-1,
