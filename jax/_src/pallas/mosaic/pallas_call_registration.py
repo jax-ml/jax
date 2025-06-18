@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import os
 import tempfile
-from typing import List, cast
+from typing import Any, List, cast
 
 import jax
 from jax import dtypes
@@ -117,6 +117,7 @@ def pallas_call_tpu_lowering_rule(
     compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    kernel_info: dict[str, Any] | None,
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   del mesh, interpret  # Unused.
@@ -269,6 +270,7 @@ def pallas_call_tpu_lowering_rule(
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=mosaic_params.disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
+      kernel_info=kernel_info,
   )
   _maybe_cast_to_bool = lambda x, aval: x.astype(
       jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x

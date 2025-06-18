@@ -55,8 +55,10 @@ def pallas_call_lowering(
     compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    kernel_info: dict[str, Any] | None,
 ):
   del interpret, out_avals, cost_estimate
+  del kernel_info  # TODO(sharadmv): Use kernel_info somehow.
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(

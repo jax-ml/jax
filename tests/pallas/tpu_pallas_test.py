@@ -16,9 +16,10 @@
 
 import contextlib
 import functools
-import itertools
 import gc
 import io
+import itertools
+import json
 import math
 import re
 import sys
@@ -3287,6 +3288,34 @@ class MiscellaneousTest(PallasBaseTest):
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
+
+
+class PallasKernelInfoTest(jtu.JaxTestCase):
+
+  @parameterized.parameters(
+      (dict(foo='bar'),),
+      (dict(foo=dict(bar='baz')),),
+      (dict(foo=3),),
+      (dict(problem_info=dict(tiling_info=dict(bm=128, bk=128))),),
+  )
+  def test_kernel_info_is_preserved(self, info):
+
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = x_ref[...] + y_ref[...]
+
+    x = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+    y = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+
+    @jax.jit
+    def f(x, y):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          kernel_info=info,
+      )(x, y)
+
+    hlo = f.lower(x, y).compile().as_text()
+    self.assertIn(json.dumps(info), hlo)
 
 
 if __name__ == '__main__':
