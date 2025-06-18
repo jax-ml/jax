@@ -48,6 +48,7 @@ py_library_providing_imports_info(
         "//jax:api",
         "//jax:core",
         "//jax:custom_derivatives",
+        "//jax:lax",
     ],
 )
 

@@ -295,7 +295,7 @@ py_library_providing_imports_info(
     name = "jax",
     srcs = [
         "_src/__init__.py",
-        "_src/ad_checkpoint.py",
+        "_src/ad_checkpoint.py",  # TODO(vanderplas): remove once downstream users depend on :lax
         "_src/blocked_sampler.py",
         "_src/checkify.py",
         "_src/debugging.py",
@@ -312,12 +312,12 @@ py_library_providing_imports_info(
             "_src/cudnn/**/*.py",
             "_src/debugger/**/*.py",
             "_src/image/**/*.py",
-            "_src/lax/**/*.py",
+            "_src/lax/**/*.py",  # TODO(vanderplas): remove once downstream users depend on :lax
             "_src/nn/**/*.py",
             "_src/numpy/**/*.py",
             "_src/ops/**/*.py",
             "_src/scipy/**/*.py",
-            "_src/state/**/*.py",
+            "_src/state/**/*.py",  # TODO(vanderplas): remove once downstream users depend on :lax and :state_types
             "_src/third_party/**/*.py",
             "_src/tpu/**/*.py",
             "experimental/key_reuse/**/*.py",
@@ -391,6 +391,7 @@ py_library_providing_imports_info(
         ":hashable_array",
         ":internal_mesh_utils",
         ":jaxpr_util",
+        ":lax",
         ":layout",
         ":lazy_loader",
         ":mesh",
@@ -623,6 +624,59 @@ pytype_strict_library(
         ":path",
         ":util",
     ],
+)
+
+py_library_providing_imports_info(
+    name = "lax",
+    srcs = glob(
+        [
+            "_src/lax/**/*.py",
+            "_src/state/**/*.py",
+        ],
+        exclude = [
+            # These are included in :state_types.
+            "_src/state/__init__.py",
+            "_src/state/indexing.py",
+            "_src/state/types.py",
+        ],
+    ) + [
+        "_src/ad_checkpoint.py",
+    ],
+    visibility = [":internal"] + jax_visibility("lax"),
+    deps = [
+        ":abstract_arrays",
+        ":ad",
+        ":ad_util",
+        ":api",
+        ":api_util",
+        ":attrs",
+        ":batching",
+        ":callback",
+        ":config",
+        ":core",
+        ":custom_derivatives",
+        ":custom_partitioning_sharding_rule",
+        ":dtypes",
+        ":effects",
+        ":ffi",
+        ":mesh",
+        ":mlir",
+        ":named_sharding",
+        ":partial_eval",
+        ":partition_spec",
+        ":pretty_printer",
+        ":sharding",
+        ":sharding_impls",
+        ":source_info_util",
+        ":state_types",
+        ":traceback_util",
+        ":tree_util",
+        ":typing",
+        ":util",
+        ":xla",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -1086,7 +1140,9 @@ pytype_strict_library(
     deps = [
         ":deprecations",
         ":jax",
+        ":lax",
         ":source_info_util",
+        ":state_types",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
 )
@@ -1495,6 +1551,7 @@ pytype_strict_library(
         "_src/state/indexing.py",
         "_src/state/types.py",
     ],
+    visibility = [":internal"] + jax_visibility("state_types"),
     deps = [
         ":core",
         ":dtypes",
