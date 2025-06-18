@@ -42,7 +42,7 @@ jobs:
     with:
         runner: "linux-x86-n2-16"
         artifact: ${{ matrix.artifact }}
-        python: "3.10"
+        python: "3.11"
         clone_main_xla: 1
         upload_artifacts_to_gcs: true
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
@@ -57,7 +57,7 @@ jobs:
       runner: "linux-x86-ct5lp-224-8tpu"
       cores: "8"
       tpu-type: "v5e-8"
-      python: "3.10"
+      python: "3.11"
       libtpu-version-type: "nightly"
       gcs_download_uri: ${{ needs.build-jax-artifacts.outputs.gcs_upload_uri }}
       halt-for-connection: ${{ inputs.halt-for-connection || false }}

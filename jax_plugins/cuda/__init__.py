@@ -114,10 +114,7 @@ def _load(module, libraries):
     # except OSError as e:
     #   excs.append(e)
     #
-    # if sys.version_info >= (3, 11):
-    #   raise ExceptionGroup(f"Unable to load CUDA library {lib}", excs)  # noqa: F821
-    # else:
-    #   raise RuntimeError(f"Unable to load CUDA library {lib}") from excs[-1]
+    # raise ExceptionGroup(f"Unable to load CUDA library {lib}", excs)  # noqa: F821
 
 
 def _load_nvidia_libraries():

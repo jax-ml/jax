@@ -1277,14 +1277,7 @@ void BuildPjitSubmodule(nb::module_& m) {
   std::string name =
       absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".PjitFunction");
   PyType_Spec PjitFunction_spec = {
-#if PY_VERSION_HEX < 0x030B0000
-      // Work around for https://github.com/python/cpython/issues/89478
-      // CPython 3.10 and earlier assume that the .name value remains alive
-      // forever.
-      /*.name=*/strdup(name.c_str()),
-#else
       /*.name=*/name.c_str(),
-#endif  // PY_VERSION_HEX < 0x030B0000
       /*.basicsize=*/static_cast<int>(sizeof(PjitFunctionObject)),
       /*.itemsize=*/0,
 #if PY_VERSION_HEX < 0x030C0000

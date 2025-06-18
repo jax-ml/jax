@@ -21,7 +21,6 @@ import functools
 import itertools
 import os.path
 import re
-import sys
 import sysconfig
 import threading
 import types
@@ -159,21 +158,15 @@ def is_user_filename(filename: str) -> bool:
   return (_include_path_regex().search(filename) is not None
           or _exclude_path_regex().search(filename) is None)
 
-if sys.version_info >= (3, 11):
-  def raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
-    loc = xla_client.Traceback.code_addr2location(code, lasti)
-    start_line, start_column, end_line, end_column = loc
-    return Frame(file_name=code.co_filename,
-                function_name=code.co_qualname,
-                start_line=start_line, start_column=start_column,
-                end_line=end_line, end_column=end_column)
-else:
-  def raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
-    # pre-3.11 co_qualname does not exist, use co_name
-    return Frame(file_name=code.co_filename,
-                function_name=code.co_name,
-                start_line=xla_client.Traceback.code_addr2line(code, lasti),
-                start_column=0, end_line=0, end_column=0)
+
+def raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
+  loc = xla_client.Traceback.code_addr2location(code, lasti)
+  start_line, start_column, end_line, end_column = loc
+  return Frame(file_name=code.co_filename,
+              function_name=code.co_qualname,
+              start_line=start_line, start_column=start_column,
+              end_line=end_line, end_column=end_column)
+
 
 def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   """Iterator over the user's frames, filtering jax-internal frames."""

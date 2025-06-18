@@ -49,7 +49,7 @@ setup(
     author="JAX team",
     author_email="jax-dev@google.com",
     packages=[package_name],
-    python_requires=">=3.10",
+    python_requires=">=3.11",
     install_requires=[f"jax-cuda{cuda_version}-pjrt=={__version__}"],
     extras_require={
       'with-cuda': [
@@ -81,7 +81,6 @@ setup(
     license="Apache-2.0",
     classifiers=[
         "Development Status :: 5 - Production/Stable",
-        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",

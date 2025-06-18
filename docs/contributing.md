@@ -36,7 +36,7 @@ Follow these steps to contribute code:
    [repository page](http://www.github.com/jax-ml/jax). This creates
    a copy of the JAX repository in your own account.
 
-3. Install Python >= 3.10 locally in order to run tests.
+3. Install Python >= 3.11 locally in order to run tests.
 
 4. `pip` installing your fork from source. This allows you to modify the code
    and immediately test it out:
