@@ -34,7 +34,6 @@ from jax._src import path as pathlib
 from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
@@ -355,10 +354,7 @@ def backend_compile_and_load(
     # we use a separate function call to ensure that XLA compilation appears
     # separately in Python profiling results
     # TODO(dsuo): Simplify this logic once we delete _jax.CompileOnlyPyClient.
-    if jaxlib_extension_version < 345 or (
-        jaxlib_extension_version >= 345
-        and isinstance(backend, _jax.CompileOnlyPyClient)
-    ):
+    if isinstance(backend, _jax.CompileOnlyPyClient):
       if host_callbacks:
         return backend.compile(
             built_c,

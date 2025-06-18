@@ -30,7 +30,6 @@ from jax._src import monitoring
 from jax._src import pjit
 from jax._src import profiler
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax.experimental import profiler as exp_profiler
 from jax.experimental.serialize_executable import (
     deserialize_and_load,
@@ -134,8 +133,6 @@ class PgleTest(jtu.JaxTestCase):
     return jit_f_fdo_profiles
 
   def testAutoPgle(self):
-    if jaxlib_extension_version < 354:
-      self.skipTest('Requires jaxlib_extension_version >= 354')
     mesh = jtu.create_mesh((2,), ('x',))
 
     with tempfile.TemporaryDirectory() as dump_dir:

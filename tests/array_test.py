@@ -28,7 +28,6 @@ from jax._src import dispatch
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir
 from jax._src.util import safe_zip
@@ -1476,9 +1475,6 @@ class ShardingTest(jtu.JaxTestCase):
       NamedSharding(mesh, P('x', unreduced={'y', None}))
 
   def test_hlo_sharding_get_axis_sizes(self):
-    if jaxlib_extension_version < 343:
-      self.skipTest('Requires jaxlib_extension_version >= 343')
-
     op = xc.OpSharding()
     op.type = xc.OpSharding.Type.OTHER
     op.tile_assignment_dimensions = [6, 35]
@@ -1516,9 +1512,6 @@ class ShardingTest(jtu.JaxTestCase):
       ('3d_mesh_x_none_none', (2, 1, 1), P('x', None, None)),
   )
   def test_gspmd_sharding_shardy_lowering(self, mesh_shape, pspec):
-    if jaxlib_extension_version < 344:
-      self.skipTest('Requires jaxlib_extension_version >= 344')
-
     ndim = len(mesh_shape)
     mesh = jtu.create_mesh(
         mesh_shape, ('x', 'y') if ndim == 2 else ('x', 'y', 'z')
