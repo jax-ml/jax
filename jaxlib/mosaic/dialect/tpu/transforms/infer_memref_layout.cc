@@ -245,7 +245,7 @@ FailureOr<MemRefType> inferMemref(MemRefType memref,
                            semaphore_mem);
   }
   const Attribute vmem =
-      tpu::MemorySpaceAttr::get(memref.getContext(), MemorySpace::vmem);
+      tpu::MemorySpaceAttr::get(memref.getContext(), MemorySpace::kVmem);
   const Attribute memory_space =
       memref.getMemorySpace() == nullptr ? vmem : memref.getMemorySpace();
   FAILUREOR_ASSIGN_OR_RETURN(
