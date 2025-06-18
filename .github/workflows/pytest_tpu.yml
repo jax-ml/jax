@@ -88,7 +88,7 @@ jobs:
           arch=$(uname -m)
 
           # Get the major and minor version of Python.
-          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
+          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.11, then python_major_minor=311
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
           python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
 

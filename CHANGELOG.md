@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Breaking changes:
+  * The minimum Python version is now 3.11. 3.11 will remain the minimum
+    supported version until July 2026.
+
 
 ## JAX 0.6.2 (June 17, 2025)
 
