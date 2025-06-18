@@ -238,7 +238,7 @@ def wgmma_m64(
 
   assert len(imms) == num_imm_regs + 1  # +1 for the use_out_reg in setp.ne.b32
 
-  if acc.ndim != 10 or acc.shape[0] != 1 or math.prod(acc.shape[2:]) != 2:
+  if acc.ndim != 9 or acc.shape[0] != 1 or math.prod(acc.shape[2:]) != 2:
     raise ValueError(acc.shape)
   acc_struct_type = ir.Type.parse(
       f"!llvm.struct<({','.join(str(out_ty_field) for _ in acc_regs)})>"
