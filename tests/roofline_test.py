@@ -940,6 +940,22 @@ class RooflineTest(jtu.JaxTestCase):
     # total = 140
     self.assertEqual(result.unfused_hbm_bytes, 140)
 
+  def test_select_n_roofline(self):
+    which = jnp.zeros((4, 8), dtype=int)
+    cases = (
+        jnp.zeros((4, 8), dtype=int),
+        jnp.zeros((4, 8), dtype=int),
+        jnp.zeros((4, 8), dtype=int),
+    )
+
+    out, result = roofline.roofline(lax.select_n)(which, *cases)
+
+    self.assertEqual(result.unfused_flops, 4 * 8)
+    self.assertEqual(
+        result.unfused_hbm_bytes,
+        which.dtype.itemsize * 4 * 8 + out.dtype.itemsize * 4 * 8,
+    )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
