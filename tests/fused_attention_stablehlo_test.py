@@ -265,6 +265,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       return
     if cudnn_version < 8904:
       self.skipTest("Requires >= cuDNN 8.9.4")
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      self.skipTest("Cudnn doesn't support compute_cap 10.3.")
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Requires at least Ampere arch")
 
@@ -922,6 +924,8 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
       return
     if cudnn_version < 90100:
       self.skipTest("Requires >= cuDNN 9.1.0")
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      self.skipTest("Cudnn doesn't support compute_cap 10.3.")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
 
