@@ -48,7 +48,6 @@ from jax._src.tree_util import (
     PyTreeDef as PyTreeDef,
     SequenceKey as SequenceKey,
     all_leaves as all_leaves,
-    build_tree as _deprecated_build_tree,
     default_registry as default_registry,
     keystr as keystr,
     register_dataclass as register_dataclass,
@@ -78,10 +77,10 @@ _deprecations = {
     # Added March 21, 2025:
     "build_tree": (
         (
-            "jax.tree_util.build_tree is deprecated. Use jax.tree.unflatten"
-            " instead."
+            "jax.tree_util.build_tree was deprecated in JAX v0.6.0 and removed in"
+            " JAX v0.7.0. Use jax.tree.unflatten instead."
         ),
-        _deprecated_build_tree,
+        None
     ),
 }
 

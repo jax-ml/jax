@@ -20,107 +20,83 @@ import jax._src.util
 
 
 _deprecations = {
+    # Finalized in JAX v0.7.0; remove entries in JAX v0.8.0
     "to_dlpack": (
         (
-            "jax.dlpack.to_dlpack was deprecated in JAX v0.6.0 and will be"
+            "jax.dlpack.to_dlpack was deprecated in JAX v0.6.0 and"
             " removed in JAX v0.7.0. Please use the newer DLPack API based on"
             " __dlpack__ and __dlpack_device__ instead. Typically, you can pass"
             " a JAX array directly to the `from_dlpack` function of another"
             " framework without using `to_dlpack`."
         ),
-        jax._src.dlpack.to_dlpack,
+        None,
     ),
     "HashableFunction": (
         (
-            "HashableFunction was deprecated in JAX v0.6.0 and will be removed"
+            "HashableFunction was deprecated in JAX v0.6.0 and removed"
             " in JAX v0.7.0."
         ),
-        jax._src.util.HashableFunction,
+        None,
     ),
     "as_hashable_function": (
         (
-            "as_hashable_function was deprecated in JAX v0.6.0 and will be"
+            "as_hashable_function was deprecated in JAX v0.6.0 and"
             " removed in JAX v0.7.0."
         ),
-        jax._src.util.as_hashable_function,
+        None,
     ),
     "cache": (
-        "cache was deprecated in JAX v0.6.0 and will be removed in JAX v0.7.0.",
-        jax._src.util.cache,
+        "cache was deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
+        None,
     ),
     "safe_map": (
-        (
-            "safe_map was deprecated in JAX v0.6.0 and will be removed in JAX"
-            " v0.7.0."
-        ),
-        jax._src.util.safe_map,
+        "safe_map was deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
+        None,
     ),
     "safe_zip": (
         (
-            "safe_zip was deprecated in JAX v0.6.0 and will be removed in JAX"
-            " v0.7.0."
+            "safe_zip was deprecated in JAX v0.6.0 and removed in JAX v0.7.0."
         ),
-        jax._src.util.safe_zip,
+        None,
     ),
     "split_dict": (
-        (
-            "split_dict was deprecated in JAX v0.6.0 and will be removed in JAX"
-            " v0.7.0."
-        ),
-        jax._src.util.split_dict,
+        "split_dict was deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
+        None,
     ),
     "split_list": (
-        (
-            "split_list was deprecated in JAX v0.6.0 and will be removed in JAX"
-            " v0.7.0."
-        ),
-        jax._src.util.split_list,
+        "split_list was deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
+        None,
     ),
     "split_list_checked": (
         (
-            "split_list_checked was deprecated in JAX v0.6.0 and will be"
+            "split_list_checked was deprecated in JAX v0.6.0 and"
             " removed in JAX v0.7.0."
         ),
-        jax._src.util.split_list_checked,
+        None,
     ),
     "split_merge": (
-        (
-            "split_merge was deprecated in JAX v0.6.0 and will be removed in"
-            " JAX v0.7.0."
-        ),
-        jax._src.util.split_merge,
+        "split_merge was deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
+        None,
     ),
     "subvals": (
-        (
-            "subvals was deprecated in JAX v0.6.0 and will be removed in JAX"
-            " v0.7.0."
-        ),
-        jax._src.util.subvals,
+        "subvals was deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
+        None,
     ),
     "toposort": (
-        (
-            "toposort was deprecated in JAX v0.6.0 and will be removed in JAX"
-            " v0.7.0."
-        ),
-        jax._src.util.toposort,
+        "toposort was deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
+        None,
     ),
     "unzip2": (
-        (
-            "unzip2 was deprecated in JAX v0.6.0 and will be removed in JAX"
-            " v0.7.0."
-        ),
-        jax._src.util.unzip2,
+        "unzip2 was deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
+        None,
     ),
     "wrap_name": (
-        (
-            "wrap_name was deprecated in JAX v0.6.0 and will be removed in JAX"
-            " v0.7.0."
-        ),
-        jax._src.util.wrap_name,
+        "wrap_name was deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
+        None,
     ),
     "wraps": (
-        "wraps was deprecated in JAX v0.6.0 and will be removed in JAX v0.7.0.",
-        jax._src.util.wraps,
+        "wraps was deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
+        None,
     ),
 }
 
