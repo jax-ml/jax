@@ -25,7 +25,6 @@ python_init_repositories(
     ],
     local_wheel_workspaces = ["//jaxlib:jax.bzl"],
     requirements = {
-        "3.10": "//build:requirements_lock_3_10.txt",
         "3.11": "//build:requirements_lock_3_11.txt",
         "3.12": "//build:requirements_lock_3_12.txt",
         "3.13": "//build:requirements_lock_3_13.txt",

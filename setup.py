@@ -59,7 +59,7 @@ setup(
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples"]),
     package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
-    python_requires='>=3.10',
+    python_requires='>=3.11',
     install_requires=[
         f'jaxlib >={_minimum_jaxlib_version}, <={_jax_version}',
         'ml_dtypes>=0.5.0',
@@ -123,7 +123,6 @@ setup(
     license='Apache-2.0',
     classifiers=[
         "Development Status :: 5 - Production/Stable",
-        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
