@@ -620,17 +620,19 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
 
 
 def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
-                   mode=None, fill_value=None, out_sharding=None):
+                   mode=None, fill_value=None, normalize_indices=True,
+                   out_sharding=None):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
 
-  # For simplicity of generated primitives, we call lax.dynamic_slice in the
-  # simplest cases: i.e. non-dynamic arrays indexed with integers and slices.
-
-  result = _attempt_rewriting_take_via_slice(arr, idx, mode, out_sharding)
-  if result is not None:
-    return result
+  # For simplicity of generated primitives, we call lax.slice or lax.dynamic_slice
+  # in the simplest cases: i.e. non-dynamic arrays indexed with integers and slices.
+  # TODO(jakevdp): lower to slice even when normalize_indices is False
+  if normalize_indices:
+    result = _attempt_rewriting_take_via_slice(arr, idx, mode, out_sharding)
+    if result is not None:
+      return result
 
   # TODO(mattjj,dougalm): expand dynamic shape indexing support
   if config.dynamic_shapes.value and arr.ndim > 0:
@@ -647,7 +649,7 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   internal_gather = partial(
       _gather, treedef=treedef, static_idx=static_idx,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode, fill_value=fill_value)
+      mode=mode, fill_value=fill_value, normalize_indices=normalize_indices)
   if out_sharding is not None:
     return auto_axes(internal_gather, out_sharding=out_sharding
                      )(arr, dynamic_idx)
@@ -658,9 +660,9 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(1, 2))
 def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
-            unique_indices, mode, fill_value):
+            unique_indices, mode, fill_value, normalize_indices):
   idx = merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = index_to_gather(np.shape(arr), idx)  # shared with _scatter_update
+  indexer = index_to_gather(np.shape(arr), idx, normalize_indices=normalize_indices)  # shared with _scatter_update
   jnp_error._check_precondition_oob_gather(arr.shape, indexer.gather_indices)
   y = arr
 
