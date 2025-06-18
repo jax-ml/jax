@@ -34,7 +34,7 @@ def _import_extensions():
 
   # cuda_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
   # preinstalled jax cuda plugin packages.
-  for pkg_name in ['jax_cuda12_plugin', 'jaxlib.cuda']:
+  for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
     try:
       cuda_plugin_extension = importlib.import_module(
           f'{pkg_name}.cuda_plugin_extension'
