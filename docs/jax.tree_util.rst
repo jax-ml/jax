@@ -13,7 +13,6 @@ List of Functions
 
    Partial
    all_leaves
-   build_tree
    register_dataclass
    register_pytree_node
    register_pytree_node_class
