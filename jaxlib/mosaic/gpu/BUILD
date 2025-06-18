@@ -148,6 +148,7 @@ cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     deps = [
+        ":library_paths",
         ":nvshmem",
         ":passes",
         ":target",
@@ -246,4 +247,9 @@ cc_binary(
         "@xla//xla/tsl/cuda:cudart",
         "//jaxlib/mosaic/gpu:mosaic_gpu_comm",
     ],
+)
+
+cc_library(
+    name = "library_paths",
+    hdrs = ["library_paths.h"],
 )

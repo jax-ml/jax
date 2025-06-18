@@ -59,9 +59,6 @@ cuda_root = lib.cuda_path or "/usr/local/cuda"
 os.environ["CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
 
-PTXAS_PATH = os.path.join(cuda_root, "bin/ptxas")
-NVDISASM_PATH = os.path.join(cuda_root, "bin/nvdisasm")
-
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
 FWD_COMPAT_IR_VERSION = 1
 
