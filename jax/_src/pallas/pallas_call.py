@@ -1513,7 +1513,7 @@ def pallas_call(
     interpret: Any = False,
     name: str | None = None,
     compiler_params: (
-        Mapping[Backend, CompilerParams] | CompilerParams | None
+        Mapping[Backend, pallas_core.CompilerParams] | pallas_core.CompilerParams | None
     ) = None,
     cost_estimate: CostEstimate | None = None,
     backend: Backend | None = None,
@@ -1611,8 +1611,8 @@ def pallas_call(
 
 
 def _normalize_compiler_params(
-    compiler_params: Mapping[Backend, CompilerParams] | CompilerParams | None,
-) -> Mapping[Backend, CompilerParams]:
+    compiler_params: Mapping[Backend, pallas_core.CompilerParams] | pallas_core.CompilerParams | None,
+) -> Mapping[Backend, pallas_core.CompilerParams]:
   if compiler_params is None:
     return FrozenDict({})
   if isinstance(compiler_params, CompilerParams):
