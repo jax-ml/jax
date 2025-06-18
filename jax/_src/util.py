@@ -28,7 +28,6 @@ import weakref
 import numpy as np
 
 from jax._src import config
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import weakref_lru_cache as _weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
 
@@ -45,7 +44,7 @@ T2 = TypeVar("T2")
 T3 = TypeVar("T3")
 
 
-if TYPE_CHECKING or jaxlib_extension_version < 354:
+if TYPE_CHECKING:
   # safe_zip cannot yet be fully annotated, so we use a strategy similar
   # to that used for builtins.zip in python/typeshed. This supports
   # return types matching input types for up to three arguments.

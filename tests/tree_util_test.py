@@ -26,7 +26,6 @@ from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
 from jax._src.tree_util import flatten_one_level, prefix_errors
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 
 # Easier to read.
@@ -790,14 +789,9 @@ class TreeTest(jtu.JaxTestCase):
   def testTreeMapWithPathWithIsLeafArgument(self):
     x = ((1, 2), [3, 4, 5])
     y = (([3], jnp.array(0)), ([0], 7, [5, 6]))
-    if jaxlib_extension_version < 351:
-      out = tree_util.tree_map_with_path(
-          lambda kp, *xs: (kp[0].idx, *xs), x, y,
-          is_leaf=lambda n: isinstance(n, list))
-    else:
-      out = tree_util.tree_map_with_path(
-          lambda kp, *xs: (kp[0].idx, *xs), x, y,
-          is_leaf=lambda _, n: isinstance(n, list), is_leaf_takes_path=True)
+    out = tree_util.tree_map_with_path(
+        lambda kp, *xs: (kp[0].idx, *xs), x, y,
+        is_leaf=lambda _, n: isinstance(n, list), is_leaf_takes_path=True)
     self.assertEqual(out, (((0, 1, [3]),
                             (0, 2, jnp.array(0))),
                            (1, [3, 4, 5], ([0], 7, [5, 6]))))
@@ -814,13 +808,11 @@ class TreeTest(jtu.JaxTestCase):
     tree1 = {'a': 1,
              'sub': [jnp.array((1, 2)), ATuple(foo=(), bar=[None])],
              'obj': AnObject2(x=EmptyTuple(), y=0, z='constantdef')}
-    if jaxlib_extension_version < 351:
-      flattened, _ = tree_util.tree_flatten_with_path(tree1, is_empty)
-    else:
-      is_empty_new = lambda kp, x: is_empty(x)
-      flattened, _ = tree_util.tree_flatten_with_path(
-          tree1, is_empty_new, is_leaf_takes_path=True
-      )
+
+    is_empty_new = lambda kp, x: is_empty(x)
+    flattened, _ = tree_util.tree_flatten_with_path(
+        tree1, is_empty_new, is_leaf_takes_path=True
+    )
     strs = [f"{tree_util.keystr(kp)}: {x}" for kp, x in flattened]
     self.assertEqual(
         strs,
@@ -835,8 +827,6 @@ class TreeTest(jtu.JaxTestCase):
     )
 
   def testTreeFlattenWithPathWithIsLeafWithPathArgument(self):
-    if jaxlib_extension_version < 351:
-      self.skipTest("Requires jaxlib version >= 351")
     x = ((1, 2), [3, {4: 4, 5: 5}])
     check_max_depth = lambda kp, _: len(kp) >= 2
     flattened, _ = tree_util.tree_flatten_with_path(
@@ -853,8 +843,6 @@ class TreeTest(jtu.JaxTestCase):
     )
 
   def testTreeMapWithPathWithIsLeafWithPathArgument(self):
-    if jaxlib_extension_version < 351:
-      self.skipTest("Requires jaxlib version >= 351")
     x = ((1, 2), [3, 4, 5])
     y = (([3], jnp.array(0)), ([0], 7, [5, 6]))
     out = tree_util.tree_map_with_path(
@@ -1101,10 +1089,7 @@ class TreeKeyTest(absltest.TestCase):
 
     f = jax.jit(lambda x: x)
 
-    if jax._src.lib.jaxlib_extension_version < 346:
-      msg = "The truth value of an array with more than one element is ambiguous."
-    else:
-      msg = "Exception raised while checking equality of metadata fields of pytree."
+    msg = "Exception raised while checking equality of metadata fields of pytree."
 
     # First call succeeds, because there is no equality check.
     f(Tree(jnp.arange(4)))
@@ -1564,12 +1549,6 @@ class TreeAliasTest(jtu.JaxTestCase):
   def test_tree_flatten_with_path_is_leaf(self):
     obj = [1, 2, (3, 4)]
     is_leaf = lambda x: isinstance(x, tuple)
-    if jaxlib_extension_version < 351:
-      self.assertEqual(
-          jax.tree.flatten_with_path(obj, is_leaf=is_leaf),
-          tree_util.tree_flatten_with_path(obj, is_leaf=is_leaf),
-      )
-      return
     is_leaf = lambda kp, x: isinstance(x, tuple)
     self.assertEqual(
         jax.tree.flatten_with_path(obj, is_leaf, is_leaf_takes_path=True),
@@ -1586,12 +1565,6 @@ class TreeAliasTest(jtu.JaxTestCase):
   def test_tree_leaves_with_path_is_leaf(self):
     obj = [1, 2, (3, 4)]
     is_leaf = lambda x: isinstance(x, tuple)
-    if jaxlib_extension_version < 351:
-      self.assertEqual(
-          jax.tree.leaves_with_path(obj, is_leaf=is_leaf),
-          tree_util.tree_leaves_with_path(obj, is_leaf=is_leaf),
-      )
-      return
     is_leaf = lambda kp, x: isinstance(x, tuple)
     self.assertEqual(
         jax.tree.leaves_with_path(
@@ -1616,12 +1589,6 @@ class TreeAliasTest(jtu.JaxTestCase):
     obj = [1, 2, (3, 4)]
     obj2 = [5, 6, (7, 8)]
     is_leaf = lambda x: isinstance(x, tuple)
-    if jaxlib_extension_version < 351:
-      self.assertEqual(
-          jax.tree.map_with_path(func, obj, obj2, is_leaf=is_leaf),
-          tree_util.tree_map_with_path(func, obj, obj2, is_leaf=is_leaf),
-      )
-      return
     is_leaf = lambda kp, x: isinstance(x, tuple)
     self.assertEqual(
         jax.tree.map_with_path(

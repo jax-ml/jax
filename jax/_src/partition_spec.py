@@ -13,74 +13,14 @@
 # limitations under the License.
 
 from __future__ import annotations
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import _jax
-from jax._src.util import use_cpp_class, use_cpp_method, set_module
+from jax._src.util import use_cpp_class, use_cpp_method
 
-export = set_module('jax.sharding')
+_UNCONSTRAINED_PARTITION = _jax.UNCONSTRAINED_PARTITION
+_canonicalize_partition = _jax.canonicalize_partition
 
-# TODO(phawkins): the union confuses pytype. Just use the Python branch for now
-# until the C++ version is the minimum version.
-if not TYPE_CHECKING and jaxlib_extension_version >= 352:
-  _UNCONSTRAINED_PARTITION = _jax.UNCONSTRAINED_PARTITION
-  _canonicalize_partition = _jax.canonicalize_partition
-else:
-  class UnconstrainedSingleton:
-
-    def __repr__(self):
-      return "UNCONSTRAINED"
-
-    def __reduce__(self):
-      return (_get_default_unconstrained, ())
-
-
-  # Unconstrained sentinel value for PartitionSpec, representing a dimension for
-  # which the user wants XLA to assign the best partitioning.
-  # TODO(yashkatariya): May rename to AUTO.
-  _UNCONSTRAINED_PARTITION = UnconstrainedSingleton()
-
-  def _get_default_unconstrained():
-    return _UNCONSTRAINED_PARTITION
-
-  def _canonicalize_partition(partition):
-    if not partition:
-      return None
-    if partition is _UNCONSTRAINED_PARTITION:
-      return _UNCONSTRAINED_PARTITION
-    if isinstance(partition, (tuple, list)):
-      if len(partition) == 1:
-        return partition[0]
-      return tuple(partition)
-    return partition
-
-  def _check(partitions, unreduced, reduced):
-    for p in partitions:
-      p = p if isinstance(p, tuple) else (p,)
-      for r in p:
-        if r in unreduced:
-          raise ValueError(
-              "partitions cannot overlap with unreduced axes passed to"
-              f" PartitionSpec. Got partitions: {partitions} and unreduced axes:"
-              f" {unreduced}")
-        if r in reduced:
-          raise ValueError(
-              "partitions cannot overlap with reduced axes passed to"
-              f" PartitionSpec. Got partitions: {partitions} and reduced axes:"
-              f" {reduced}")
-    if unreduced & reduced:
-      raise ValueError(
-          "`unreduced` and `reduced` argument to PartitionSpec cannot overlap. "
-          f"Got {unreduced=}, {reduced=}")
-    if None in unreduced:
-      raise ValueError(
-          "unreduced cannot contain None. All elements in unreduced should refer"
-          " to the mesh axes.")
-    if None in reduced:
-      raise ValueError(
-          "reduced cannot contain None. All elements in reduced should refer"
-          " to the mesh axes.")
 
 def unpickle_pspec(partitions, unreduced, reduced):
   return PartitionSpec(*partitions, unreduced=unreduced, reduced=reduced)
@@ -96,6 +36,7 @@ def _get_ur_str(unreduced, reduced):
 
 AxisName = Any
 
+@use_cpp_class(_jax.PartitionSpec)
 class PartitionSpec:
   """Tuple describing how to partition an array across a mesh of devices.
 
@@ -105,8 +46,6 @@ class PartitionSpec:
   This class exists so JAX's pytree utilities can distinguish a partition
   specifications from tuples that should be treated as pytrees.
   """
-  if jaxlib_extension_version < 352:
-    __slots__ = ("_partitions", "unreduced", "reduced")
   __match_args__ = ("_partitions",)
 
   # A sentinel value representing a dim is unconstrained.
@@ -125,7 +64,8 @@ class PartitionSpec:
           f" `frozenset` or `set`. Got type {type(reduced)}")
     self.unreduced = frozenset(unreduced)
     self.reduced = frozenset(reduced)
-    _check(self._partitions, self.unreduced, self.reduced)
+    # `__init__` is implemented in C++ so this check happens in C++
+    # _check(self._partitions, self.unreduced, self.reduced)
 
   def __repr__(self):
     pr = repr(self._partitions)[1:-1]
@@ -222,10 +162,4 @@ class PartitionSpec:
       out.extend([None] * (ndim - len(out)))
     return self.update(partitions=out)
 
-# TODO(phawkins): make this a decorator after the next jaxlib release.
-if not TYPE_CHECKING and jaxlib_extension_version >= 352:
-  PartitionSpec = use_cpp_class(_jax.PartitionSpec)(PartitionSpec)
-
-# TODO(phawkins): make this a decorator after the next jaxlib release.
-if not TYPE_CHECKING:
-  PartitionSpec = export(PartitionSpec)
+PartitionSpec.__module__ = 'jax.sharding'
