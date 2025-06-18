@@ -2689,7 +2689,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
     )
 
     def kernel(a_gmem, b_gmem, out_gmem, a_smem, b_smem,
-               acc_tmem, scratch_smem, tma_barrier, mma_barrier,
+               scratch_smem, acc_tmem, tma_barrier, mma_barrier,
                cluster_barrier, lhs_tmem_ref):
       cluster_idx = lax.axis_index("x")
       slice_lhs = pl.ds(cluster_idx * block_lhs_shape[0], block_lhs_shape[0])
