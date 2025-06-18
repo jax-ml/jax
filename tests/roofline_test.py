@@ -884,6 +884,62 @@ class RooflineTest(jtu.JaxTestCase):
         custom_result.unfused_hbm_bytes, base_result.unfused_hbm_bytes
     )
 
+  def test_gather_roofline(self):
+    operand = jnp.zeros((3, 3), dtype=jnp.int32)
+    indices = jnp.zeros((2, 1), dtype=jnp.int32)
+
+    dimension_numbers = jax.lax.GatherDimensionNumbers(
+        offset_dims=(1,),
+        collapsed_slice_dims=(0,),
+        start_index_map=(0,),
+    )
+
+    f = lambda x, y: jax.lax.gather(
+        x,
+        y,
+        dimension_numbers=dimension_numbers,
+        slice_sizes=(1, 3),
+    )
+
+    _, result = roofline.roofline(f)(operand, indices)
+
+    self.assertEqual(result.unfused_flops, 0)
+    # Expected bytes:
+    # operand: 2 * 3 * sizeof(int32) = 24
+    # indices: 2 * 1 * sizeof(int32) = 8
+    # output: 2 * 3 * sizeof(int32) = 24
+    # total = 56
+    self.assertEqual(result.unfused_hbm_bytes, 56)
+
+  def test_gather_batching_dims_roofline(self):
+    operand = jnp.zeros((5, 3, 3), dtype=jnp.int32)
+    indices = jnp.zeros((5, 1), dtype=jnp.int32)
+
+    dimension_numbers = jax.lax.GatherDimensionNumbers(
+        offset_dims=(1,),
+        collapsed_slice_dims=(1,),
+        start_index_map=(1,),
+        operand_batching_dims=(0,),
+        start_indices_batching_dims=(0,),
+    )
+
+    f = lambda x, y: jax.lax.gather(
+        x,
+        y,
+        dimension_numbers=dimension_numbers,
+        slice_sizes=(1, 1, 3),
+    )
+
+    _, result = roofline.roofline(f)(operand, indices)
+
+    self.assertEqual(result.unfused_flops, 0)
+    # Expected bytes:
+    # operand: 5 * 3 * sizeof(int32) = 60
+    # indices: 5 * 1 * sizeof(int32) = 20
+    # output: 5 * 3 * sizeof(int32) = 60
+    # total = 140
+    self.assertEqual(result.unfused_hbm_bytes, 140)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

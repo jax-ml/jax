@@ -500,11 +500,33 @@ roofline.register_roofline(lax_parallel.all_gather_p)(
 )
 
 
+@roofline.register_roofline(slicing.gather_p)
+def _gather_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  _, indices = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
+
+  # Gather doesn't read the whole input buffer, it's equivalent to a copy the
+  # size of the output shape and a read of the gather indices.
+  bytes = (
+      out.dtype.itemsize * out.size * 2 + indices.dtype.itemsize * indices.size
+  )
+
+  return roofline.RooflineResult(
+      # Gather does not issue any flops.
+      unfused_flops=0,
+      unfused_hbm_bytes=bytes,
+  )
+
+
 def _scalar_collective_roofline(
-  ctx: roofline.RooflineRuleContext,
-  *args,
-  axes: tuple[str, ...],
-  **kw,
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    axes: tuple[str, ...],
+    **kw,
 ) -> roofline.RooflineResult:
   shapes = [roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in]
   ctx = replace(ctx, avals_in=[core.ShapedArray((1,), shape.dtype) for shape in shapes])
