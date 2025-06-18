@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Iterator, Mapping, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Iterator, Mapping
 
 K = TypeVar("K")
 V = TypeVar("V")

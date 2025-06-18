@@ -17,7 +17,8 @@ import functools
 import itertools
 import math
 import sys
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 import unittest
 
 from absl.testing import absltest

@@ -14,7 +14,7 @@
 """Utilities for tracing stateful functions."""
 
 from functools import partial
-from typing import Callable
+from collections.abc import Callable
 
 from jax._src import api
 from jax._src import core

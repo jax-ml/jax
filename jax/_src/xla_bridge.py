@@ -31,7 +31,8 @@ import os
 import pkgutil
 import platform as py_platform
 import threading
-from typing import Any, Sequence, Union
+from typing import Any, Union
+from collections.abc import Sequence
 import warnings
 
 from jax._src import config

@@ -21,7 +21,8 @@ import copy
 from functools import partial
 import logging
 import time
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 import warnings
 
 from jax._src import cache_key as cache_key_type

@@ -15,7 +15,8 @@
 
 from dataclasses import dataclass
 from functools import cached_property, partial
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import numpy as np
 

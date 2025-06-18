@@ -675,7 +675,7 @@ class Trace(Generic[TracerType]):
     return not self._invalidated
 
   def __repr__(self):
-    return '{}'.format(self.__class__.__name__)
+    return f'{self.__class__.__name__}'
 
   def process_call(self, call_primitive, f, tracers, params):
     msg = (f"{type(self)} must override process_call to handle call-like "
@@ -2214,7 +2214,7 @@ def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
   avals = tuple(a for a in avals if a is not abstract_token)
   if not avals:
     return frozenset()
-  vma, *vmas = [a.vma for a in avals]
+  vma, *vmas = (a.vma for a in avals)
   if not all(vma == vma_ for vma_ in vmas):
     raise ValueError(
         f'Primitive {prim_name} requires varying manual axes '

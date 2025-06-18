@@ -18,7 +18,8 @@
 from functools import partial
 import operator
 import string
-from typing import Any, NamedTuple, Sequence
+from typing import Any, NamedTuple
+from collections.abc import Sequence
 
 import numpy as np
 

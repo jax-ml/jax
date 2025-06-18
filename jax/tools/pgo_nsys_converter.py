@@ -64,7 +64,7 @@ if __name__ == '__main__':
         m = thunk_re.search(name)
         if m is not None:
           if args.post_process:
-            cost_dictionary.setdefault(m.group(1), []).append((time_ns/1000.0))
+            cost_dictionary.setdefault(m.group(1), []).append(time_ns/1000.0)
           else:
             protofile.write(f'costs {{ name: "{m.group(1)}" cost_us: {time_ns / 1000.0} }}\n')
     if args.post_process:

@@ -1514,7 +1514,7 @@ class PallasCallTest(PallasTest):
       jax.block_until_ready(y)
       jax.effects_barrier()
       [name] = os.listdir(tmpdir)
-      with open(os.path.join(tmpdir, name), "r") as f:
+      with open(os.path.join(tmpdir, name)) as f:
         data = f.read()
         self.assertEqual(data.count('"name": "add"'), 2)
         self.assertEqual(data.count('"name": "load"'), 2)
@@ -1761,7 +1761,7 @@ class PallasCallTest(PallasTest):
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(o_smem, o_ref128)
 
-    x, y = [jnp.arange(128).astype(jnp.float32) for _ in range(2)]
+    x, y = (jnp.arange(128).astype(jnp.float32) for _ in range(2))
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
   @parameterized.parameters(1, 2, 3)

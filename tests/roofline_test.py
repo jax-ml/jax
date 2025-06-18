@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Sequence
+from collections.abc import Sequence
 
 from absl.testing import absltest
 import jax
@@ -680,7 +680,7 @@ class RooflineTest(jtu.JaxTestCase):
     expected_output_shape = jnp.array(
         (batch / batch_group_count, num_output_channels, ow, oh)
     )
-    expected_output_size = jnp.prod((expected_output_shape))
+    expected_output_size = jnp.prod(expected_output_shape)
     # Bytes accessed is sum of inputs and output.
     expected_unfused_hbm_bytes = self._bytes_per_word * (
         expected_input_size + expected_kernel_size + expected_output_size

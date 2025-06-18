@@ -21,7 +21,8 @@ import dataclasses
 import enum
 import functools
 import threading
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Protocol
+from collections.abc import Callable, Sequence
 
 import jax
 from jax import lax

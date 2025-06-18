@@ -21,7 +21,8 @@ import dataclasses
 import functools
 import math
 import operator
-from typing import Any, Hashable, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Hashable
 
 import jax
 from jax import lax

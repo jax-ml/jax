@@ -287,11 +287,11 @@ class BufferedRefBase:
     """Initialize slot indices."""
     raise NotImplementedError()
 
-  def swap_slots(self, predicate: bool = True) -> "BufferedRefBase":
+  def swap_slots(self, predicate: bool = True) -> BufferedRefBase:
     """Switch to the next slot."""
     raise NotImplementedError()
 
-  def load_slots(self) -> "BufferedRefBase":
+  def load_slots(self) -> BufferedRefBase:
     """Load slot information into registers."""
     raise NotImplementedError()
 
@@ -371,7 +371,7 @@ class BufferedRefBase:
     del window_ref, indices
     return self
 
-  def with_spec(self, spec: pl.BlockSpec) -> 'BufferedRefBase':
+  def with_spec(self, spec: pl.BlockSpec) -> BufferedRefBase:
     """Returns a new BufferedRefBase with the given block spec."""
     raise NotImplementedError()
 
@@ -535,13 +535,13 @@ class BufferedRef(BufferedRefBase):
   def memory_space(self):
     return self.spec.memory_space
 
-  def with_spec(self, spec: pl.BlockSpec) -> 'BufferedRef':
+  def with_spec(self, spec: pl.BlockSpec) -> BufferedRef:
     """Returns a new BufferedRef with the given block spec."""
     return dataclasses.replace(self, _spec=spec)
 
   def with_slot_index(
       self, slot_index: int | jax.Array | None
-  ) -> "BufferedRef":
+  ) -> BufferedRef:
     """Returns a new BufferedRef with the given slot index."""
     return dataclasses.replace(self, _current_slot_reg=slot_index)
 
@@ -611,7 +611,7 @@ class BufferedRef(BufferedRefBase):
     if self.swap is not None:
       self.swap[0] = False
 
-  def swap_slots(self, predicate: bool | jax.Array = True) -> "BufferedRef":
+  def swap_slots(self, predicate: bool | jax.Array = True) -> BufferedRef:
     if self.memory_space == VMEM:
       return self
     if self.swap is not None:
@@ -627,7 +627,7 @@ class BufferedRef(BufferedRefBase):
     self.current_slot[0] = new_current_slot
     return self
 
-  def load_slots(self) -> "BufferedRef":
+  def load_slots(self) -> BufferedRef:
     """Load slot information into registers."""
     if self.memory_space == VMEM:
       return self
@@ -1042,7 +1042,7 @@ class Scheduler:
 
   def swap_slots(
       self, buffered_ref, hbm_ref, schedule=None
-  ) -> "BufferedRefBase":
+  ) -> BufferedRefBase:
     # All the copies into and out of BufferedRefs are done by direct
     # calls to the `copy_in` and `copy_out` methods in the pipeline
     # loop. To determine if the BufferedRef needs a swap of slots, we

@@ -24,7 +24,8 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Hashable, Literal, Protocol, TypeAlias, Union, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, TypeAlias, Union, runtime_checkable
+from collections.abc import Hashable
 
 import jax
 from jax._src import api_util

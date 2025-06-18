@@ -14,7 +14,7 @@
 from collections import defaultdict
 from dataclasses import replace
 import itertools as it
-from typing import Sequence
+from collections.abc import Sequence
 import numpy as np
 
 from jax._src import ad_util

@@ -68,7 +68,8 @@ from collections.abc import Callable, Sequence
 from functools import partial
 import re
 import time
-from typing import Any, Hashable, NamedTuple
+from typing import Any, NamedTuple
+from collections.abc import Hashable
 import warnings
 import weakref
 
