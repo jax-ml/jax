@@ -21,7 +21,7 @@ ml-dtypes==0.5.1
 opt-einsum==3.4.0
 
 build==1.2.2.post1
-setuptools==80.0.0
+setuptools==78.1.1
 wheel==0.45.1
 pyproject-hooks==1.2.0
 packaging==25.0
