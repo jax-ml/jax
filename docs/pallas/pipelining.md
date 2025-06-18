@@ -211,7 +211,7 @@ Once the loop has been unrolled, the pipelining transformation simply involves i
   # Itr 4 - No copy-in
   copy_in_wait(X[1])
   Y[1] = X[1] + 1
-  copy_out_start(Y[1], A[2])
+  copy_out_start(Y[1], A[3])
   copy_out_wait(Y[1])
 </pre>
 
@@ -244,7 +244,7 @@ Next, we can push the `copy_out_wait` as late as possible, right before we need 
   # Itr 4 - No copy-in
   copy_in_wait(X[1])
   Y[1] = X[1] + 1
-  copy_out_start(Y[1], A[2])
+  copy_out_start(Y[1], A[3])
   <b>copy_out_wait(Y[0])</b>
 
   # Epilogue
@@ -297,18 +297,19 @@ def double_buffered_pipeline(
   for i in range(grid_size):
     cur_slot = i % 2
     next_slot = (i + 1) % 2
-    if i < grid_size:
-      copy_in_start(in_hbm[data_slices(i+1)], in_sram[next_slot])
+    if (i + 1) < grid_size:
+      copy_in_start(in_hbm[in_slices(i+1)], in_sram[next_slot])
     copy_in_wait(in_sram[cur_slot])
 
-    kernel(inputs, outputs)
+    kernel(in_sram[cur_slot], out_ram[cur_slot])
 
     copy_out_start(out_sram[cur_slot], out_hbm[out_slices(i)])
     if i > 0:
       copy_out_wait(out_sram[next_slot])
 
   # Epilogue
-  copy_out_wait(out_sram[1])
+  last_slot = (grid_size - 1) % 2
+  copy_out_wait(out_sram[last_slot])
 ```
 <!-- #endregion -->
 
