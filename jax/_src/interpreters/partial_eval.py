@@ -1655,6 +1655,8 @@ class DynamicJaxprTracer(core.Tracer):
   def full_lower(self):
     var = self._trace.frame.tracer_to_var.get(id(self))
     if var is None: return self
+    if isinstance(var, Literal):
+      return var.val
     val = self._trace.frame.constvar_to_val.get(var)
     if val is None: return self
     return core.full_lower(val)
