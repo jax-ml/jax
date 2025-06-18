@@ -150,7 +150,7 @@ std::string ArgumentSignature::DebugString() const {
   return absl::StrFormat(
       "static args (positional + keyword): [%s], "
       "static arg keyword names: [%s], "
-      "dynamic arg signatures (positional + keyword): [%s]"
+      "dynamic arg signatures (positional + keyword): [%s], "
       "dynamic arg shardings: [%s]",
       absl::StrJoin(static_args, ",", py_object_formatter),
       absl::StrJoin(static_arg_names, ",", py_object_formatter),
@@ -256,12 +256,16 @@ size_t HashShardingForJit(nb::handle sharding) {
 }
 
 bool EqualShardingsForJit(nb::handle a, nb::handle b) {
-  if (a.ptr() == b.ptr()) return true;
+  if (a.ptr() == b.ptr()){
+    return true;
+  }
 
   auto a_type = a.type();
   auto b_type = b.type();
 
-  if (!a_type.is(b_type)) return false;
+  if (!a_type.is(b_type)) {
+    return false;
+  }
 
   if (a_type.is(NamedSharding::type())) {
     auto* a_named_sharding = nb::inst_ptr<const NamedSharding>(a);
@@ -277,8 +281,7 @@ bool EqualShardingsForJit(nb::handle a, nb::handle b) {
   if (a_type.is(GSPMDSharding::type())) {
     auto* a_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(a);
     auto* b_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(b);
-
-    return a_gspmd_sharding == b_gspmd_sharding;
+    return *a_gspmd_sharding == *b_gspmd_sharding;
   }
 
   if (a_type.is(SingleDeviceSharding::type())) {
@@ -286,7 +289,6 @@ bool EqualShardingsForJit(nb::handle a, nb::handle b) {
         nb::inst_ptr<const SingleDeviceSharding>(a);
     auto* b_single_device_sharding =
         nb::inst_ptr<const SingleDeviceSharding>(b);
-
     return a_single_device_sharding->device().ptr() ==
                b_single_device_sharding->device().ptr() &&
            a_single_device_sharding->memory_kind().equal(
