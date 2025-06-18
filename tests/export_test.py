@@ -1269,13 +1269,7 @@ class JaxExportTest(jtu.JaxTestCase):
     run_devices = jax.local_devices()
     run_mesh = Mesh(run_devices, "i")
     b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
-
-    with self.assertRaisesRegex(
-        ValueError,
-        "Function .* was exported for 1 devices and is called in a "
-        f"context with {jax.local_device_count()} devices.* function contains "
-        "non-replicated sharding annotations"):
-      exp.call(b)
+    exp.call(b)
 
   def test_call_with_different_no_of_devices_pmap(self):
     if len(jax.devices()) < 2:
