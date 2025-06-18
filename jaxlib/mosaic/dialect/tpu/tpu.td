@@ -469,26 +469,20 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, SameOperandsAndResultS
   let description = [{
     Gathers elements from `source` using `indices`.
 
-    The specified `dimensions` of `source` are collapsed together and indexed by
-    `indices`.
+    Given a shape `N0 x N1 x ...`, `output[i0, i1, ...]` is given by
+    `input[j0, j1, ...]` where `jn = indices[i0, i1, ...] mod Ni` for
+    `n = dimension` and `jn = in` otherwise.
 
-    Given a shape `N0 x N1 x ...`,  the `output[i0, i1, ...]` is given by
-    `collapsed_source[j0, j1, ..., indices[i0, i1, ...] mod M]` where
-    - `collapsed_source` is the result of collapsing `dimensions` of `source`
-      into a new trailing dimension of size `M`.
-    - `jk` is the subsequence of `in` for `n` not in `dimensions`.
-
-    When a single dimension is specified, this is similar to
-    `np.take_along_axis`, except that OOB indices wrap.
+    Similar to `np.take_along_axis`, except that OOB indices wrap.
   }];
   let arguments = (ins
     AnyVectorOfNonZeroRank:$source,
     VectorOfNonZeroRankOf<[AnyInteger]>:$indices,
-    DenseI32ArrayAttr:$dimensions
+    I32Attr:$dimension
   );
   let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
-    $source `[` $indices `]` `in` $dimensions attr-dict
+    $source `[` $indices `]` `in` $dimension attr-dict
     `:` type($source) `,` type($indices) `->` type($output)
   }];
   let hasVerifier = 1;

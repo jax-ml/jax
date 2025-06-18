@@ -63,9 +63,9 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 #
 # We should also add a TODO to remove the conditional one month later.
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
-  # TODO: b/423649694 - remove the forward compatibility check after 2025-07-18
-  if ctx.is_forward_compat() or is_cloud_tpu_older_than(2025, 6, 18):
-    return 4
+  # TODO(jevinjiang): remove the forward compatibility check after 2025-05-05.
+  if ctx.is_forward_compat() or is_cloud_tpu_older_than(2025, 4, 5):
+    return 3
   return None
 
 

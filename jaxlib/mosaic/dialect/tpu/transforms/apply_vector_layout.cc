@@ -3146,18 +3146,11 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
   OpBuilder builder(&op);
   auto dy_gather_op = cast<tpu::DynamicGatherOp>(op);
 
-  // TODO: b/423658138 - we need to think harder for general vector shape.
-  const bool is_8bit_vreg =
-      dy_gather_op.getType().getElementTypeBitWidth() == 8 &&
-      dy_gather_op.getType().getShape() ==
-          ArrayRef<int64_t>{4 * ctx.target_shape[0], ctx.target_shape[1]};
-  const bool is_32bit_vreg =
-      dy_gather_op.getType().getElementTypeBitWidth() == 32 &&
-      dy_gather_op.getType().getShape() == ArrayRef<int64_t>(ctx.target_shape);
-  if (!is_32bit_vreg && !is_8bit_vreg) {
+  // TODO(jevinjiang): we need to think harder for general vector shape.
+  if (dy_gather_op.getType().getShape() !=
+      ArrayRef<int64_t>(ctx.target_shape)) {
     return op.emitOpError(
-        "Not implemented: DynamicGatherOp only supports 8- or 32-bit VREG "
-        "shape");
+        "Not implemented: DynamicGatherOp only supports 32-bit VREG shape");
   }
 
   if (src_layout != out_layout || idx_layout != out_layout) {
@@ -3166,7 +3159,7 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
         "result");
   }
 
-  if (!out_layout.hasNativeTiling(ctx.target_shape)) {
+  if (!out_layout.hasNaturalTopology(ctx.target_shape)) {
     return op.emitOpError(
         "Not implemented: unsupported layout for DynamicGatherOp");
   }
@@ -3184,75 +3177,11 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(src_vregs.dimensions(), idx_vregs.dimensions());
   TPU_ASSERT_EQ_OP(src_vregs.num_elements(), 1);
 
-  Location loc = dy_gather_op.getLoc();
-  SmallVector<int32_t> dimensions(dy_gather_op.getDimensions());
-  if (dy_gather_op.getType().getElementTypeBitWidth() == 8) {
-    if (dy_gather_op.getDimensions() != ArrayRef<int32_t>{0}) {
-      return dy_gather_op.emitOpError(
-          "Not implemented: 8-bit dynamic gather only supported along "
-          "dimension 0");
-    }
-    // Vreg shape is 8x128x4, and lowering only supports dimensions == {2, 0},
-    // i.e. byte index is in the upper bits and sublane index in the lower bits.
-    // However, the input indices effectively have sublane index in the upper
-    // bits and byte index in the lower bits.
-    VectorType i32_vreg_ty =
-        getNativeVregType(builder.getI32Type(), ctx.target_shape);
-    VectorType i8_vreg_ty =
-        getNativeVregType(builder.getI8Type(), ctx.target_shape);
-    auto i8_const_vreg = [&](const int8_t value) {
-      return getFullVector(builder, loc, i8_vreg_ty,
-                           builder.getI8IntegerAttr(value));
-    };
-    idx_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-      const int sublane_bits = llvm::Log2_64(ctx.target_shape[0]);
-      const int byte_bits = 2;
-      // This check ensures that e.g. when right shifting below, the bits from
-      // the higher bytes don't influence the indices of the lower bytes. Lets
-      // us mask just once.
-      const bool mask_once =
-          sublane_bits + byte_bits + std::max(byte_bits, sublane_bits) <= 8;
-      if (mask_once) {
-        // Zero out the high bits that specify neither byte nor index (they
-        // might not be zero since op semantics allow wrapping).
-        Value mask = i8_const_vreg((1 << (byte_bits + sublane_bits)) - 1);
-        *v = builder.create<arith::AndIOp>(loc, mask, *v);
-      }
-      Value shifted_byte = *v;
-      if (!mask_once) {
-        Value mask = i8_const_vreg((1 << byte_bits) - 1);
-        shifted_byte = builder.create<arith::AndIOp>(loc, mask, shifted_byte);
-      }
-      shifted_byte =
-          builder.create<tpu::BitcastVregOp>(loc, i32_vreg_ty, shifted_byte);
-      shifted_byte = builder.create<arith::ShLIOp>(
-          loc, shifted_byte,
-          getFullVector(builder, loc, i32_vreg_ty,
-                        builder.getI32IntegerAttr(sublane_bits)));
-      Value shifted_sublane = *v;
-      if (!mask_once) {
-        Value mask =
-            i8_const_vreg((1 << (byte_bits + sublane_bits)) - (1 << byte_bits));
-        shifted_sublane =
-            builder.create<arith::AndIOp>(loc, mask, shifted_sublane);
-      }
-      shifted_sublane =
-          builder.create<tpu::BitcastVregOp>(loc, i32_vreg_ty, shifted_sublane);
-      shifted_sublane = builder.create<arith::ShRUIOp>(
-          loc, shifted_sublane,
-          getFullVector(builder, loc, i32_vreg_ty,
-                        builder.getI32IntegerAttr(byte_bits)));
-      *v = builder.create<arith::OrIOp>(loc, shifted_byte, shifted_sublane);
-      *v = builder.create<tpu::BitcastVregOp>(loc, i8_vreg_ty, *v);
-    });
-    dimensions = SmallVector<int32_t>{2, 0};
-  }
-
   xla::Array<Value> out_vregs(src_vregs.dimensions());
   out_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-    *v = builder.create<tpu::DynamicGatherOp>(loc, src_vregs(idxs).getType(),
-                                              src_vregs(idxs), idx_vregs(idxs),
-                                              dimensions);
+    *v = builder.create<tpu::DynamicGatherOp>(
+        op.getLoc(), src_vregs(idxs).getType(), src_vregs(idxs),
+        idx_vregs(idxs), dy_gather_op.getDimension());
   });
 
   dy_gather_op.replaceAllUsesWith(
