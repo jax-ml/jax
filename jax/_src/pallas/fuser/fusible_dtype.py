@@ -18,7 +18,8 @@ import abc
 import dataclasses
 import functools
 import itertools as it
-from typing import Any, Sequence, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Sequence
 
 import jax
 from jax._src import api_util

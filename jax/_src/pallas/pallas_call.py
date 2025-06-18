@@ -1513,7 +1513,7 @@ def pallas_call(
     interpret: Any = False,
     name: str | None = None,
     compiler_params: (
-        Mapping[Backend, "CompilerParams"] | "CompilerParams" | None
+        Mapping[Backend, CompilerParams] | CompilerParams | None
     ) = None,
     cost_estimate: CostEstimate | None = None,
     backend: Backend | None = None,

@@ -14,7 +14,7 @@
 
 from functools import partial
 import itertools
-from typing import Iterator
+from collections.abc import Iterator
 from unittest import skipIf
 
 import numpy as np

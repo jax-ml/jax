@@ -23,7 +23,8 @@ import math
 import os
 import pathlib
 import time
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
+from collections.abc import Callable
 import weakref
 
 import itertools

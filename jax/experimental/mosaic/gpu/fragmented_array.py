@@ -21,7 +21,8 @@ import dataclasses
 import functools
 import itertools
 import math
-from typing import Generator, Iterable, Protocol, Sequence, TypeVar
+from typing import Protocol, TypeVar
+from collections.abc import Generator, Iterable, Sequence
 
 import jax
 import jax.experimental.mosaic.gpu as mgpu
@@ -163,7 +164,7 @@ class Tiling:
     strides[dim] = 0
     return tuple(s == 0 for s in self.tile_strides(tuple(strides)))
 
-  def remove_dimension(self, dim: int) -> "Tiling":
+  def remove_dimension(self, dim: int) -> Tiling:
     """Returns a tiling with the given dimension removed."""
     tiling_rank = len(self.tiles[0])
     if dim < 0 or dim >= tiling_rank:

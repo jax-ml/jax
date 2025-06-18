@@ -19,7 +19,8 @@ import dataclasses
 import inspect
 import random
 import threading
-from typing import Any, Callable, Sequence
+from typing import Any
+from collections.abc import Callable, Sequence
 
 import jax
 from jax._src import api

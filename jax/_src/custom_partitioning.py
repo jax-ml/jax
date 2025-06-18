@@ -21,7 +21,8 @@ from __future__ import annotations
 
 from functools import partial
 import inspect
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 import weakref
 
 import numpy as np

@@ -27,7 +27,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from functools import reduce, partial
 import itertools
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import jax
 from jax import lax

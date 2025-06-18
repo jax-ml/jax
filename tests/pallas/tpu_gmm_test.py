@@ -203,10 +203,10 @@ class GroupedMatmulTest(jtu.JaxTestCase):
   ):
     seed = data.draw(seed_strategy())
     num_groups, _ = data.draw(group_strategy(max_stride=1))
-    lhs_dtype, rhs_dtype, out_dtype = [
+    lhs_dtype, rhs_dtype, out_dtype = (
         data.draw(hps.sampled_from([jnp.float32, jnp.bfloat16]))
         for _ in range(3)
-    ]
+    )
     transpose_rhs = data.draw(hps.booleans())
 
     key = jax.random.key(seed)
@@ -293,10 +293,10 @@ class GroupedMatmulTest(jtu.JaxTestCase):
   ):
     seed = data.draw(seed_strategy())
     num_groups, group_stride = data.draw(group_strategy())
-    lhs_dtype, rhs_dtype, out_dtype = [
+    lhs_dtype, rhs_dtype, out_dtype = (
         data.draw(hps.sampled_from([jnp.float32, jnp.bfloat16]))
         for _ in range(3)
-    ]
+    )
 
     key = jax.random.key(seed)
     k1, k2 = jax.random.split(key, 2)

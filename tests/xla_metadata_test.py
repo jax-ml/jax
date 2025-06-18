@@ -200,8 +200,8 @@ class XlaMetadataTest(jtu.JaxTestCase):
         return jax.lax.cond(x < 0., sin, cos, x)
 
     hlo_lines = f.lower(1.).as_text().split("\n")
-    sin_hlo, = [line for line in hlo_lines if "stablehlo.sine"   in line]
-    cos_hlo, = [line for line in hlo_lines if "stablehlo.cosine" in line]
+    sin_hlo, = (line for line in hlo_lines if "stablehlo.sine"   in line)
+    cos_hlo, = (line for line in hlo_lines if "stablehlo.cosine" in line)
     self.assertIn('mhlo.frontend_attributes = {a = "b"}', sin_hlo)
     self.assertIn('mhlo.frontend_attributes = {a = "b"}', cos_hlo)
 
@@ -218,8 +218,8 @@ class XlaMetadataTest(jtu.JaxTestCase):
         return jax.lax.cond(x < 0., sin, cos, x)
 
     hlo_lines = f.lower(1.).as_text().split("\n")
-    sin_hlo, = [line for line in hlo_lines if "stablehlo.sine"   in line]
-    cos_hlo, = [line for line in hlo_lines if "stablehlo.cosine" in line]
+    sin_hlo, = (line for line in hlo_lines if "stablehlo.sine"   in line)
+    cos_hlo, = (line for line in hlo_lines if "stablehlo.cosine" in line)
     self.assertIn(   'mhlo.frontend_attributes = {a = "b"}', sin_hlo)
     self.assertNotIn('mhlo.frontend_attributes = {a = "b"}', cos_hlo)
 

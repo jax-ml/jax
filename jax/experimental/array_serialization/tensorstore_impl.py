@@ -18,7 +18,8 @@ import functools
 import os
 from os import PathLike
 import re
-from typing import Any, Awaitable, Callable, Sequence
+from typing import Any
+from collections.abc import Awaitable, Callable, Sequence
 import math
 import logging
 
