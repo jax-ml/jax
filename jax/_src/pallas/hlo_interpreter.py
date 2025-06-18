@@ -348,8 +348,10 @@ def pallas_call_hlo_interpret(
     compiler_params: Any,
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    kernel_info: dict[str, Any] | None,
 ):
   del mesh, compiler_params, cost_estimate, out_avals
+  del kernel_info  # TODO(sharadmv): Use kernel_info somehow.
   debug_info = jaxpr.debug_info
   # If we're in interpret mode, we *scan* over the grid and eval the
   # discharged jaxpr.

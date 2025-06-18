@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import cast
+from typing import Any, cast
 import warnings
 
 import jax
@@ -47,7 +47,9 @@ def pallas_call_lowering(
     compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    kernel_info: dict[str, Any] | None,
 ):
+  del kernel_info  # TODO(sharadmv): Use kernel_info somehow.
   debug_info = jaxpr.debug_info
   del interpret, out_avals
   if grid_mapping.num_dynamic_grid_bounds:

@@ -1997,8 +1997,10 @@ def interpret_pallas_call(
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: InterpretParams,
+    kernel_info: dict[str, Any] | None,
 ):
   del debug, cost_estimate, out_avals
+  del kernel_info  # TODO(sharadmv): Use kernel_info somehow.
 
   if isinstance(mesh, mosaic_core.TensorCoreMesh):
     # As a convenience for users, if we are interpreting a pl.core_map over a
