@@ -28,10 +28,6 @@ import warnings
 
 import numpy as np
 
-from jax import tree_util
-from jax.sharding import Sharding
-from jax.tree_util import tree_map
-
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
@@ -46,6 +42,7 @@ from jax._src import pjit
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import state
+from jax._src import tree_util
 from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray,
@@ -67,6 +64,7 @@ from jax._src.lax.utils import (
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      ShardingContext, SPMDAxisContext,
                                      PartitionSpec as P, canonicalize_sharding)
@@ -3487,7 +3485,7 @@ def stop_gradient(x: T) -> T:
       return ad_util.stop_gradient_p.bind(x)
     else:
       return x
-  return tree_map(stop, x)
+  return tree_util.tree_map(stop, x)
 
 def reduce_precision(operand: float | ArrayLike,
                      exponent_bits: int,

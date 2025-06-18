@@ -22,12 +22,11 @@ from functools import partial
 import itertools
 import math
 
-import jax
-from jax import tree_util
 from jax._src import core
 from jax._src import config
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import tree_util
 from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
                                      NamedSharding, PartitionSpec as P)
 from jax._src.core import AxisName, ShapedArray
@@ -37,14 +36,15 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.mesh import get_abstract_mesh
 from jax._src.core import abstract_token, pvary
+from jax._src.lax import control_flow
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client as xc
+from jax._src.typing import Array
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
-import jax.numpy as jnp
 import numpy as np
 
 unsafe_map, map = map, safe_map  # type: ignore
@@ -714,7 +714,7 @@ def ragged_all_to_all(
                                   axis_index_groups=axis_index_groups)
 
 
-def axis_index(axis_name: AxisName) -> jax.Array:
+def axis_index(axis_name: AxisName) -> Array:
   """Return the index along the mapped axis ``axis_name``.
 
   Args:
@@ -755,7 +755,7 @@ def axis_index(axis_name: AxisName) -> jax.Array:
     return axis_index_p.bind(axis_name=axis_name)
   else:
     inner_size = 1
-    index = jnp.asarray(0)
+    index = lax.asarray(0)
     for name in reversed(axis_name):
       index += axis_index(name) * inner_size
       inner_size *= axis_size(name)
@@ -1600,11 +1600,11 @@ def _ragged_all_to_all_transpose(
     operand_t = ragged_all_to_all_p.bind(
         t, zero, output_offsets_, recv_sizes, input_offsets_, send_sizes,
         axis_name=axis_name, axis_index_groups=axis_index_groups)
-    mask = jax.numpy.cumsum(
-        jax.numpy.zeros(t.shape[0], dtype='int32').at[output_offsets_].set(1)\
+    mask = control_flow.cumsum(
+        lax.full(t.shape[0], 0, dtype='int32').at[output_offsets_].set(1)
         .at[output_offsets_ + recv_sizes].add(-1))
-    mask = jax.numpy.expand_dims(mask, (*range(1, t.ndim),))
-    output_t = jax.numpy.where(mask, 0, t)
+    mask = lax.expand_dims(mask, (*range(1, t.ndim),))
+    output_t = lax.select(mask, lax._zeros(t), t)
   return [operand_t, output_t] + [None] * 4
 
 def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
@@ -2187,6 +2187,8 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
 
 
 def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
+  from jax._src.shard_map import shard_map  # pytype: disable=import-error
+
   if isinstance(axis_name, tuple):
     assert axis_name, 'empty axis name'
     if len(axis_name) > 1:
@@ -2207,8 +2209,8 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
     def f():
       return axis_index_p.bind(axis_name=axis_name)
     return mlir.lower_fun(
-        lambda: [jax.shard_map(f, check_vma=False, in_specs=(),
-                               out_specs=P())()])(ctx)[0]
+        lambda: [shard_map(f, check_vma=False, in_specs=(),
+                           out_specs=P())()])(ctx)[0]
 
   nreplicas = axis_env.nreps // math.prod(axis_env.sizes)
   div = mlir.ir_constant(

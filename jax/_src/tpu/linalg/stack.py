@@ -22,9 +22,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import jax
 from jax import lax
 import jax.numpy as jnp
+
+from jax._src import tree_util
+
 
 class Stack:
   """A bounded functional stack implementation. Elements may be pytrees."""
@@ -45,7 +47,7 @@ class Stack:
     """
     return Stack(
       jnp.array(0, jnp.int32),
-      jax.tree_util.tree_map(
+      tree_util.tree_map(
         lambda x: jnp.zeros((capacity,) + tuple(x.shape), x.dtype), prototype))
 
   def empty(self) -> Any:
@@ -56,23 +58,23 @@ class Stack:
     """Pushes `elem` onto the stack, returning the updated stack."""
     return Stack(
       self._size + 1,
-      jax.tree_util.tree_map(
+      tree_util.tree_map(
         lambda x, y: lax.dynamic_update_index_in_dim(x, y, self._size, 0),
         self._data, elem))
 
   def pop(self) -> tuple[Any, Stack]:
     """Pops from the stack, returning an (elem, updated stack) pair."""
-    elem = jax.tree_util.tree_map(
+    elem = tree_util.tree_map(
       lambda x: lax.dynamic_index_in_dim(x, self._size - 1, 0, keepdims=False),
       self._data)
     return elem, Stack(self._size - 1, self._data)
 
   def flatten(self):
-    leaves, treedef = jax.tree_util.tree_flatten(self._data)
+    leaves, treedef = tree_util.tree_flatten(self._data)
     return ([self._size] + leaves), treedef
 
   @staticmethod
   def unflatten(treedef, leaves):
-    return Stack(leaves[0], jax.tree_util.tree_unflatten(treedef, leaves[1:]))
+    return Stack(leaves[0], tree_util.tree_unflatten(treedef, leaves[1:]))
 
-jax.tree_util.register_pytree_node(Stack, Stack.flatten, Stack.unflatten)
+tree_util.register_pytree_node(Stack, Stack.flatten, Stack.unflatten)
