@@ -15,19 +15,67 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
-from jax._src.ad_util import stop_gradient_p as stop_gradient_p
+from jax._src.ad_util import (
+  stop_gradient_p as stop_gradient_p,
+  add_jaxvals_p as add_jaxvals_p,
+)
+
+from jax._src.buffer_callback import buffer_callback_p as buffer_callback_p
+
+from jax._src.callback import (
+  pure_callback_p as pure_callback_p,
+  io_callback_p as io_callback_p,
+)
+
+from jax._src.checkify import check_p as check_p
 
 from jax._src.core import (
   call_p as call_p,
-  closed_call_p as closed_call_p
+  closed_call_p as closed_call_p,
+  freeze_p as freeze_p,
+  mutable_array_p as mutable_array_p,
+  pvary_p as pvary_p,
+)
+
+from jax._src.custom_batching import custom_vmap_p as custom_vmap_p
+
+from jax._src.custom_dce import (
+  custom_dce_p as custom_dce_p,
+  dce_sential_p as dce_sential_p,
 )
 
 from jax._src.custom_derivatives import (
   custom_jvp_call_p as custom_jvp_call_p,
   custom_vjp_call_p as custom_vjp_call_p,
+  remat_opt_p as remat_opt_p,
+)
+
+from jax._src.custom_partitioning import (
+  custom_partitioning_p as custom_partitioning_p,
+)
+
+from jax._src.custom_transpose import (
+  custom_transpose_p as custom_transpose_p,
+)
+
+from jax._src.tpu_custom_call import tpu_custom_call_p as tpu_custom_call_p
+
+from jax._src.debugging import (
+  debug_callback_p as debug_callback_p,
+  inspect_sharding_p as inspect_sharding_p,
 )
 
 from jax._src.dispatch import device_put_p as device_put_p
+
+from jax._src.export.shape_poly import (
+  shape_assertion_p as shape_assertion_p,
+  dim_as_value_p as dim_as_value_p,
+  dimension_size_p as dimension_size_p,
+)
+
+from jax._src.export._export import call_exported_p as call_exported_p
+
+from jax._src.ffi import ffi_call_p as ffi_call_p
 
 from jax._src.interpreters.ad import (
   add_jaxvals_p as add_jaxvals_p,
@@ -35,7 +83,16 @@ from jax._src.interpreters.ad import (
   zeros_like_p as zeros_like_p,
 )
 
-from jax._src.interpreters.pxla import xla_pmap_p as xla_pmap_p
+from jax._src.ad_checkpoint import (
+  name_p as name_p,
+  remat_p as remat_p,
+)
+
+from jax._src.interpreters.pxla import (
+  xla_pmap_p as xla_pmap_p,
+  full_to_shard_p as full_to_shard_p,
+  shard_to_full_p as shard_to_full_p,
+)
 
 from jax._src.lax.lax import (
   abs_p as abs_p,
@@ -58,6 +115,7 @@ from jax._src.lax.lax import (
   clamp_p as clamp_p,
   clz_p as clz_p,
   complex_p as complex_p,
+  composite_p as composite_p,
   concatenate_p as concatenate_p,
   conj_p as conj_p,
   convert_element_type_p as convert_element_type_p,
@@ -73,6 +131,7 @@ from jax._src.lax.lax import (
   exp2_p as exp2_p,
   expm1_p as expm1_p,
   floor_p as floor_p,
+  from_edtype_p as from_edtype_p,
   ge_p as ge_p,
   gt_p as gt_p,
   imag_p as imag_p,
@@ -130,6 +189,8 @@ from jax._src.lax.lax import (
   sub_p as sub_p,
   tan_p as tan_p,
   tanh_p as tanh_p,
+  tie_p as tie_p,
+  to_edtype_p as to_edtype_p,
   top_k_p as top_k_p,
   transpose_p as transpose_p,
   xor_p as xor_p,
@@ -160,6 +221,7 @@ from jax._src.lax.slicing import (
   scatter_min_p as scatter_min_p,
   scatter_mul_p as scatter_mul_p,
   scatter_p as scatter_p,
+  scatter_sub_p as scatter_sub_p,
   slice_p as slice_p,
 )
 
@@ -185,55 +247,100 @@ from jax._src.lax.control_flow import (
   cumprod_p as cumprod_p,
   cumsum_p as cumsum_p,
   linear_solve_p as linear_solve_p,
+  platform_index_p as platform_index_p,
   scan_p as scan_p,
   while_p as while_p,
 )
+
+from jax._src.lax.control_flow.for_loop import for_p as for_p
+
+from jax._src.lax.control_flow.loops import eval_jaxpr_p as eval_jaxpr_p
 
 from jax._src.lax.fft import (
   fft_p as fft_p,
 )
 
 from jax._src.lax.parallel import (
+  all_gather_invariant_p as all_gather_invariant_p,
   all_gather_p as all_gather_p,
   all_to_all_p as all_to_all_p,
   axis_index_p as axis_index_p,
+  pbroadcast_p as pbroadcast_p,
+  pgather_p as pgather_p,
   pmax_p as pmax_p,
   pmin_p as pmin_p,
   ppermute_p as ppermute_p,
+  precv_p as precv_p,
+  psend_p as psend_p,
+  psum_invariant_p as psum_invariant_p,
   psum_p as psum_p,
   ragged_all_to_all_p as ragged_all_to_all_p,
+  reduce_scatter_p as reduce_scatter_p,
 )
 
 from jax._src.lax.ann import (
   approx_top_k_p as approx_top_k_p
 )
 
+from jax._src.nn.functions import (
+  bias_bwd_p as bias_bwd_p,
+  bias_fwd_p as bias_fwd_p,
+)
+
 from jax._src.lax.linalg import (
   cholesky_p as cholesky_p,
+  cholesky_update_p as cholesky_update_p,
   eig_p as eig_p,
+  eigh_jacobi_p as eigh_jacobi_p,
   eigh_p as eigh_p,
+  geqp3_p as geqp3_p,
+  geqrf_p as geqrf_p,
   hessenberg_p as hessenberg_p,
-  lu_p as lu_p,
   householder_product_p as householder_product_p,
+  lu_p as lu_p,
+  lu_pivots_to_permutation_p as lu_pivots_to_permutation_p,
   qr_p as qr_p,
+  schur_p as schur_p,
   svd_p as svd_p,
+  symmetric_product_p as symmetric_product_p,
   triangular_solve_p as triangular_solve_p,
   tridiagonal_p as tridiagonal_p,
   tridiagonal_solve_p as tridiagonal_solve_p,
-  schur_p as schur_p,
 )
 
 from jax._src.pjit import (
-    pjit_p as pjit_p,
-    sharding_constraint_p as sharding_constraint_p,
+  layout_constraint_p as layout_constraint_p,
+  mesh_cast_p as mesh_cast_p,
+  pjit_p as pjit_p,
+  reshard_p as reshard_p,
+  sharding_constraint_p as sharding_constraint_p,
+)
+
+from jax._src.shard_alike import shard_alike_p as shard_alike_p
+
+from jax._src.shard_map import shard_map_p as shard_map_p
+
+from jax._src.state.discharge import run_state_p as run_state_p
+
+from jax._src.state.primitives import (
+  addupdate_p as addupdate_p,
+  broadcast_to_p as broadcast_to_p,
+  get_p as get_p,
+  swap_p as swap_p,
 )
 
 from jax._src.prng import (
+  iota_2x32_shape_p as iota_2x32_shape_p,
   random_bits_p as random_bits_p,
   random_fold_in_p as random_fold_in_p,
   random_seed_p as random_seed_p,
   random_split_p as random_split_p,
+  random_unwrap_p as random_unwrap_p,
+  random_wrap_p as random_wrap_p,
   threefry2x32_p as threefry2x32_p,
 )
 
-from jax._src.random import random_gamma_p as random_gamma_p
+from jax._src.random import (
+  random_clone_p as random_clone_p,
+  random_gamma_p as random_gamma_p,
+)
