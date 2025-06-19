@@ -30,6 +30,11 @@ package(
 
 jax_generate_backend_suites()
 
+test_suite(
+    name = "mosaic_gpu_tests",
+    tags = ["mosaic_gpu_test"],
+)
+
 jax_multiplatform_test(
     name = "pallas_test",
     srcs = [
@@ -165,6 +170,7 @@ jax_multiplatform_test(
     },
     shard_count = 16,
     tags = [
+        "mosaic_gpu_test",
         "noasan",  # Times out.
         "nomsan",  # Times out.
         "notsan",  # Times out.
@@ -237,6 +243,9 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100_x32",
         "gpu_h100",
+    ],
+    tags = [
+        "mosaic_gpu_test",
     ],
     deps = [
         "//jax:pallas",
@@ -418,7 +427,10 @@ jax_multiplatform_test(
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
         "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
     },
-    tags = ["multiaccelerator"],
+    tags = [
+        "mosaic_gpu_test",
+        "multiaccelerator",
+    ],
     deps = [
         "//jax:extend",
         "//jax:pallas_mosaic_gpu",
@@ -811,6 +823,9 @@ jax_multiplatform_test(
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 8,
+    tags = [
+        "mosaic_gpu_test",
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_experimental_gpu_ops",
@@ -829,6 +844,7 @@ jax_multiplatform_test(
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 8,
     tags = [
+        "mosaic_gpu_test",
         # TODO(b/330364373): Remove when B200 is fully supported.
         "notap",
     ],
@@ -889,6 +905,7 @@ jax_multiplatform_test(
     ],
     shard_count = 12,
     tags = [
+        "mosaic_gpu_test",
         "noasan",  # Times out.
     ],
     deps = [
