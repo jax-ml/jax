@@ -319,7 +319,8 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
         f"got {v_blocks} vs {vB * v_blocks_per_batch}")
 
   check_eq(qB, kB, vB, "QKV batch")
-  check_eq(qH, kH, vH, "QKV dim_per_head")
+  if qH != kH:
+    raise ValueError(f"QK must have same head dim, got {qH} vs {kH}")
   if kN != vN:
     raise ValueError(f"KV must have same number of heads, got {kN} vs {vN}")
   if kS != vS:
@@ -353,33 +354,35 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
 
 
 def check_is_flash_attention(
-    query, key, layout: int, cudnn_version, has_bias, is_training, is_packed=False,
-    is_paged_attention=False, is_fp8=False):
+    query, key, value, layout: int, cudnn_version, has_bias, is_training,
+    is_packed=False, is_paged_attention=False, is_fp8=False):
     # Extract sequence length (T) and head dim (H) based on layout
     if layout == AttentionLayout.BNTH.value:
-        _, _, T, H = query.shape
-        _, _, S, _ = key.shape
+        _, _, T, qH = query.shape
+        _, _, S, vH = value.shape
     else:
-        _, T, _, H = query.shape
-        _, S, _, _ = key.shape
+        _, T, _, qH = query.shape
+        _, S, _, vH = value.shape
 
     # Flash attention conditions
     if is_fp8:
         # FP8 specific conditions
-        if not ((is_training and H == 128 and T % 128 == 0 and S % 128 == 0) or
-                (not is_training and H <= 256 and H % 16 == 0)):
+        if not ((is_training and qH == 128 and T % 128 == 0 and S % 128 == 0) or
+                (not is_training and qH <= 256 and qH % 16 == 0)):
             raise NotImplementedError(
-                f"Unsupported sequence length Q {T}, KV {S} and head dim {H} for FP8."
+                f"Unsupported sequence length Q {T}, KV {S} and head dim {qH} for FP8."
             )
     else:
         # bf16/fp16 attention conditions
         # Check the head dim.
         is_on_hopper = is_cuda_compute_capability_equal("9.0")
         H_max = 256 if cudnn_version >= 90500 and is_on_hopper else 128
-        if not (H <= H_max and H % 8 == 0):
+        # check if multi-head latent attention is needed
+        is_mla = qH != vH
+        if not (qH <= H_max and qH % 8 == 0):
           raise NotImplementedError(
               f"The head dim must be <= {H_max} and a multiple of 8, "
-              f"but got {H}."
+              f"but got {qH}."
           )
 
         # Check patterns with bias, seqlen should be divisible by 2
@@ -393,6 +396,9 @@ def check_is_flash_attention(
             "Packed layout requires cudnn version >= 9.6 and at least hopper arch.")
         if is_paged_attention and cudnn_version < 90500:
           raise NotImplementedError("Page attention requires cudnn version >= 9.5.")
+        if is_mla and (cudnn_version < 91000 or not check_compute_capability("9.0")):
+          raise NotImplementedError(
+            "mla requires cudnn version >= 9.10 and at least hopper arch.")
 
 def check_cudnn_version():
   # check if cuDNN is installed
@@ -423,7 +429,7 @@ def _dot_product_attention_fwd(
     sliding_window_length, cudnn_version, return_residual):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
-      query, key, layout, cudnn_version, bias is not None, False,
+      query, key, value, layout, cudnn_version, bias is not None, False,
       get_max_seg_per_batch(q_offsets) > 1, check_is_paged_attention(page_table_k))
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
@@ -442,7 +448,7 @@ def _dot_product_attention_fwd_rule(
     return_residual):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
-      query, key, layout, cudnn_version, bias is not None, True,
+      query, key, value, layout, cudnn_version, bias is not None, True,
       get_max_seg_per_batch(q_offsets) > 1)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
@@ -567,11 +573,12 @@ def _dot_product_attention_fwd_abstract(
   query_dtype = dtypes.canonicalize_dtype(query.dtype)
   if layout == AttentionLayout.BNTH.value:
     B, N, T, _ = query.shape
-    _, _, S, _ = key.shape
+    _, _, S, H = value.shape
+    output_shape = (B, N, T, H)
   else:
     B, T, N, _ = query.shape
-    _, S, _, _ = key.shape
-  output_shape = query.shape
+    _, S, _, H = value.shape
+    output_shape = (B, T, N, H)
 
   max_seg_per_batch = get_max_seg_per_batch(q_offsets)
   softmax_stat_shape = (B * max_seg_per_batch, N, T)
@@ -631,24 +638,24 @@ def _dot_product_attention_fwd_cuda_lowering(
     variadic_args, mask_type, layout, sliding_window_length, is_training):
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
-  key_type = ir.RankedTensorType(key.type)
-  key_shape = key_type.shape
+  value_type = ir.RankedTensorType(value.type)
+  value_shape = value_type.shape
 
   if layout == AttentionLayout.BNTH.value:
-    B, N, T, H = query_shape
-    _, _, S, _ = key_shape
+    B, N, T, qk_H = query_shape
+    _, _, S, v_H = value_shape
     output_layout = (3, 2, 1, 0)
     output_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
   else:
-    B, T, N, H = query_shape
-    _, S, _, _ = key_shape
+    B, T, N, qk_H = query_shape
+    _, S, _, v_H = value_shape
     output_layout = (3, 1, 2, 0)
     output_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
 
   max_seg_per_batch = get_max_seg_per_batch(ir.RankedTensorType(q_offsets.type))
   is_paged_attention = check_is_paged_attention(ir.RankedTensorType(page_table_k.type))
 
-  output_shape = (B, N, T, H)
+  output_shape = (B, N, T, v_H)
   softmax_stat_shape = (B * max_seg_per_batch, N, T)
   workspace_shape = (0,)
   workspace_type = ir.IntegerType.get_unsigned(8)
@@ -713,26 +720,26 @@ def _dot_product_attention_bwd_cuda_lowering(
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
   key_type = ir.RankedTensorType(key.type)
-  key_shape = key_type.shape
   value_type = ir.RankedTensorType(value.type)
+  value_shape = value_type.shape
 
   if layout == AttentionLayout.BNTH.value:
-    B, q_N, T, H = query_shape
-    _, k_N, S, _ = key_shape
+    B, q_N, T, qk_H = query_shape
+    _, v_N, S, v_H = value_shape
     grad_layout = (3, 2, 1, 0)
     grad_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
   else:
-    B, T, q_N, H = query_shape
-    _, S, k_N, _ = key_shape
+    B, T, q_N, qk_H = query_shape
+    _, S, v_N, v_H = value_shape
     grad_layout = (3, 1, 2, 0)
     grad_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
 
   workspace_shape = (0,)
   workspace_type = ir.IntegerType.get_unsigned(8)
 
-  grad_query_shape = (B, q_N, T, H)
-  grad_key_shape = (B, k_N, S, H)
-  grad_value_shape = (B, k_N, S, H)
+  grad_query_shape = (B, q_N, T, qk_H)
+  grad_key_shape = (B, v_N, S, qk_H)
+  grad_value_shape = (B, v_N, S, v_H)
 
   has_bias, has_dbias = variadic_args
   max_seg_per_batch = get_max_seg_per_batch(ir.RankedTensorType(q_offsets.type))
@@ -1207,7 +1214,7 @@ def _dot_product_attention_fp8_fwd(
     fp8_params_fwd,
     scale, use_causal_mask, layout, cudnn_version):
   check_is_flash_attention_fp8(
-      query, key, layout, cudnn_version, is_training=False)
+      query, key, value, layout, cudnn_version, is_training=False)
   descale_q, descale_k, descale_v, descale_s, scale_s, scale_o = fp8_params_fwd
   outputs = _dot_product_attention_fp8_fwd_p_wrapper.bind(
       query, key, value,
@@ -1221,7 +1228,7 @@ def _dot_product_attention_fp8_fwd_rule(
     fp8_params,
     scale, use_causal_mask, layout, cudnn_version):
   check_is_flash_attention_fp8(
-      query, key, layout, cudnn_version, is_training=True)
+      query, key, value, layout, cudnn_version, is_training=True)
 
   outputs = _dot_product_attention_fp8_fwd_p_wrapper.bind(
       query, key, value, *params_from_keys(fp8_params, fp8_params_keys_fwd),

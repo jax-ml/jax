@@ -854,6 +854,58 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     self.assertArraysAllClose(out_ref, out_ref, rtol=1e-2, atol=1e-2)
 
   @jtu.run_on_devices("cuda")
+  def test_sdpa_mla(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
+    if cudnn_version < 91000:
+      self.skipTest("Requires >= cuDNN 9.10.0")
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Requires at least Hopper arch")
+    k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
+    query = jax.random.normal(
+        k1, (4, 1024, 4, 128), dtype=jnp.bfloat16)
+    key = jax.random.normal(
+        k2, (4, 1024, 4, 128), dtype=jnp.bfloat16)
+    value = jax.random.normal(
+        k3, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+
+    devices = np.array(jax.local_devices()[:4])
+    devices = devices.reshape((2, 2))
+    with Mesh(devices, ("dp", "tp")) as mesh:
+      qkv_spec = PartitionSpec("dp", None, "tp", None)
+      qkv_sharding = NamedSharding(mesh, qkv_spec)
+      in_shardings = (
+        qkv_sharding, qkv_sharding, qkv_sharding)
+      out_shardings = qkv_sharding
+      query = jax.device_put(query, qkv_sharding)
+      key = jax.device_put(key, qkv_sharding)
+      value = jax.device_put(value, qkv_sharding)
+
+      jitted_sdpa_inference = jax.jit(
+        partial(
+          dot_product_attention, scale=1.0, mask_type=MaskType.NO_MASK,
+          dropout_rate=0),
+        in_shardings=in_shardings,
+        out_shardings=out_shardings
+      )
+
+      jitted_sdpa_inference_ref = jax.jit(
+        partial(
+          sdpa_ref, scale=1.0, mask_type=MaskType.NO_MASK, dropout_rate=0),
+        in_shardings=in_shardings,
+        out_shardings=out_shardings
+      )
+
+      out = jitted_sdpa_inference(query, key, value)
+      out_ref = jitted_sdpa_inference_ref(query, key, value)
+      self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
+
+  @jtu.run_on_devices("cuda")
   def test_layouts(self):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
@@ -899,15 +951,16 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         expected_pass = k
       query = jnp.empty((4, sql_q, 4, head_dim))
       key = jnp.empty((4, sql_v, 4, head_dim))
+      value = jnp.empty((4, sql_v, 4, head_dim))
       if expected_pass:
         check_is_flash_attention(
-          query, key, AttentionLayout.BNTH.value, cudnn_version, has_bias,
-          is_training)
+          query, key, value, AttentionLayout.BNTH.value, cudnn_version,
+          has_bias, is_training)
       else:
         with self.assertRaises(NotImplementedError):
           check_is_flash_attention(
-            query, key, AttentionLayout.BNTH.value, cudnn_version, has_bias,
-            is_training)
+            query, key, value, AttentionLayout.BNTH.value, cudnn_version,
+            has_bias, is_training)
 
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
