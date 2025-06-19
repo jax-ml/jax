@@ -651,6 +651,50 @@ def _infer_params_impl(
                     attrs_tracked, box_data), args_flat
 
 
+def log_infer_params_cache_hit(
+    fun: Callable,
+    jit_info: PjitInfo,
+    signature: jax_jit.ArgumentSignature,
+    in_avals: tuple[core.AbstractValue, ...],
+    ctx_mesh: mesh_lib.Mesh | None,
+) -> None:
+  hit_log_priority = (
+      logging.WARNING if config.log_compiles.value else logging.DEBUG
+  )
+  logger.log(
+      hit_log_priority,
+      'Pjit infer_params cache hit for fun %s with jit_info %s, signature %s,'
+      ' in_avals %s, ctx_mesh %s',
+      fun,
+      jit_info,
+      signature,
+      in_avals,
+      ctx_mesh,
+  )
+
+
+def log_infer_params_cache_miss(
+    fun: Callable,
+    jit_info: PjitInfo,
+    signature: jax_jit.ArgumentSignature | None,
+    in_avals: tuple[core.AbstractValue, ...] | None,
+    ctx_mesh: mesh_lib.Mesh | None,
+) -> None:
+  miss_log_priority = (
+      logging.WARNING if config.explain_cache_misses.value else logging.DEBUG
+  )
+  logger.log(
+      miss_log_priority,
+      'PJIT INFER_PARAMS CACHE MISS for fun %s with jit_info %s, signature %s,'
+      ' in_avals %s, ctx_mesh %s',
+      fun,
+      jit_info,
+      signature,
+      in_avals,
+      ctx_mesh,
+  )
+
+
 class InferParamsCacheEntry:
   """Mutable value object for _infer_params_cached."""
   __slots__ = ['pjit_params']
@@ -698,6 +742,7 @@ def _infer_params_internal(
   if config.dynamic_shapes.value or any_boxes:  # don't use the cache
     p, args_flat = _infer_params_impl(fun, ji, ctx_mesh, dbg,
                                       args, kwargs, in_avals=None)
+    log_infer_params_cache_miss(fun, ji, None, None, ctx_mesh)
     return p, p.consts + args_flat
 
   signature, dynargs = jax_jit.parse_arguments(
@@ -707,11 +752,14 @@ def _infer_params_internal(
   entry = _infer_params_cached(fun, ji, signature, avals, ctx_mesh)
 
   if entry.pjit_params is None:
+    log_infer_params_cache_miss(fun, ji, signature, avals, ctx_mesh)
     p, args_flat = _infer_params_impl(
         fun, ji, ctx_mesh, dbg, args, kwargs, in_avals=avals)
     if p.attrs_tracked or p.box_data or p.params['jaxpr'].jaxpr.is_high:
       return p, p.consts + args_flat
     entry.pjit_params = p
+  else:
+    log_infer_params_cache_hit(fun, ji, signature, avals, ctx_mesh)
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
 def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
