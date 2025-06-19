@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -26,7 +25,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -66,47 +64,6 @@ SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
     }
   }
   return tile_strides;
-}
-
-FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
-    Operation *op, ArrayRef<int64_t> source_shape,
-    ArrayRef<int64_t> target_shape) {
-  SmallVector<int> squeezed;
-  int source_index = source_shape.size() - 1;
-  int target_index = target_shape.size() - 1;
-
-  while (source_index >= 0 || target_index >= 0) {
-    int64_t target_dim = (target_index >= 0) ? target_shape[target_index] : -1;
-    if (source_index < 0) {
-      op->emitError() << llvm::formatv(
-          "Target shape is not valid. Source: {0}, Target: {1}.",
-          shapeToString(source_shape), shapeToString(target_shape));
-      return failure();
-    }
-    int64_t source_dim = source_shape[source_index];
-    if (source_dim == target_dim) {
-      source_index--;
-      target_index--;
-    } else {
-      if (source_dim != 1) {
-        op->emitError() << llvm::formatv(
-            "Target shape is not valid. Source: {0}, Target: {1}.",
-            shapeToString(source_shape), shapeToString(target_shape));
-        return failure();
-      }
-      squeezed.push_back(source_index);
-      source_index--;
-    }
-  }
-
-  if (source_index != -1 || target_index != -1) {
-    op->emitError() << "Shape mismatch after traversal. Source shape: "
-                    << shapeToString(source_shape)
-                    << ", target shape: " << shapeToString(target_shape);
-    return failure();
-  }
-  std::reverse(squeezed.begin(), squeezed.end());
-  return squeezed;
 }
 
 std::optional<std::pair<bool, bool>> isTransposedMatmul(
