@@ -93,7 +93,7 @@ terms of capacity) and slowest (in both total bandwidth and latency of a single 
 
 <center><img alt="A diagram of memory spaces of an NVIDIA GPU" src="../../_static/pallas/gpu/memory_spaces.svg" style="width: 90%; min-width: 450px;"></center>
 
-The biggest memory space is `plgpu.GMEM`, for _global memory_. In recent data-center grade GPUs
+The biggest memory space is {py:data}`plgpu.GMEM <jax.experimental.pallas.mosaic_gpu.GMEM>`, for _global memory_. In recent data-center grade GPUs
 this memory space is often measured in tens or even hudreds of gigabytes, but it is also the
 slowest one.
 
@@ -104,7 +104,7 @@ is not exposed in Pallas:MGPU. While only about a 100MB in size, this memory has
 higher bandwidth than GMEM, and so it is still often recommended to take advantage of it while
 writing high-performance kernels.
 
-Next in line is _shared memory_, or `plgpu.SMEM`. This memory is located directly inside each SM
+Next in line is _shared memory_, or {py:data}`plgpu.SMEM <jax.experimental.pallas.mosaic_gpu.SMEM>`. This memory is located directly inside each SM
 and so it is partitioned. Unless block clusters are used (see the section of clusters below),
 each block is only allowed to access its own SMEM allocations.
 
@@ -116,7 +116,7 @@ we recommend avoiding them. The warning messages about spills can be clearly see
 messages during kernel compilation. To make them visible, run with `MOSAIC_GPU_DUMP_PTXAS=1`
 in your environment.
 
-The Blackwell GPU generation, has one additional memory space called _tensor memory_ or `plgpu.TMEM`.
+The Blackwell GPU generation, has one additional memory space called _tensor memory_ or {py:data}`plgpu.TMEM <jax.experimental.pallas.mosaic_gpu.TMEM>`.
 TMEM is very similar to register memory, only it is explicitly allocated and managed by you.
 It is used to store the MMA accumulator, operand metadata (for sparsity or scaling),
 and optionally the left MMA operand. See the Blackwell MMA section for more information about TMEM.
@@ -222,10 +222,10 @@ def body(..., scratch_ref):
   ...
 ```
 
-There are two ways in which references are allocated and each has a way to select
+There are two ways in which references are allocated, and each has a way to select
 the desired transforms:
 
-**1. Using `plgpu.BlockSpec`**
+**1. Using {py:class}`plgpu.BlockSpec <jax.experimental.pallas.mosaic_gpu.BlockSpec>`**
 
 ```python
 transforms = (plgpu.TileTransform((8, 64)), plgpu.SwizzleTransform(128))
@@ -236,7 +236,7 @@ f = pl.pallas_call(
 )
 ```
 
-Note that unlike `plgpu.BlockSpec`, `pl.BlockSpec` does *not* allow specifying
+Note that unlike {py:class}`plgpu.BlockSpec <jax.experimental.pallas.mosaic_gpu.BlockSpec>`, `pl.BlockSpec` does *not* allow specifying
 transforms.
 
 **2. Specifying the `transforms` argument on the allocated `SMEM`**
@@ -250,7 +250,7 @@ f = pl.pallas_call(
 ```
 
 The available transforms are:
-* `plgpu.TileTransform(tile_shape)`, which organizes the data into contiguous,
+* `plgpu.TilingTransform(tile_shape)`, which organizes the data into contiguous,
   non-overlapping tiles of shape `tile_shape`.  The data of one tile is always
   fully linearized (row-major), before another tile begins (tiles are also
   traversed in row-major order). As an example, applying `TileTransform((8,
@@ -267,12 +267,12 @@ The available transforms are:
   of how the memory looks like after swizzling _are not that important_, since
   all primitives will account for it automatically. Note that the swizzle amount
   is specified in bytes (only 128, 64, 32 and 16 are supported), and is usually
-  accompanied by a `TileTransform` (which uses elements in its shape!).
+  accompanied by a `TilingTransform` (which uses elements in its shape!).
 * `plgpu.TransposeTransform(permutation)`, which permutes the dimensions of the array before it is linearized.
   This is primarily useful in that it lets you change the layout during the GMEM-SMEM copies (only
   do keep in mind that changing the minormost/last dimension is not supported by the hardware).
 
-### Array layouts
+### Array layouts ({py:data}`plgpu.Layout <jax.experimental.pallas.mosaic_gpu.Layout>`)
 
 There are a few useful layouts we have defined for you so far:
 * `plgpu.Layout.WGMMA`, which is the layout in which the Hopper-generation TensorCore
@@ -323,7 +323,7 @@ Steps 2.-4. are usually performed in a loop over the contraction dimension (`K`)
 ### Memory space of `A` and `B` operands
 
 The `A` and `B` operands are generally best passed in through SMEM, where they can
-be conveniently loaded using `plgpu.copy_gmem_to_smem`. For those operands to be
+be conveniently loaded using {py:func}`plgpu.copy_gmem_to_smem <jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem>`. For those operands to be
 compatible with MMA operations, they need to have the appropriate tiling and swizzling
 transforms specified upon their allocation. For all currently supported generations,
 the TensorCore requires the data to be laid out into row-major 2D tiles of shape
@@ -398,7 +398,7 @@ operations before returning the final values.
 As discussed above, we recommend passing in `A` and `B` through shared memory. In this
 case the correct tiling and swizzling transforms must be specified.
 
-`plgpu.wgmma` additionally allows passing in `A` through registers (i.e. not an SMEM
+{py:func}`plgpu.wgmma <jax.experimental.pallas.mosaic_gpu.wgmma>` additionally allows passing in `A` through registers (i.e. not an SMEM
 reference but as a regular JAX array). This mode, however, comes with a number of
 significant drawbacks and it is very difficult to ensure sufficient synchronization to
 make this safe.
@@ -418,7 +418,7 @@ in which case it is allowed to be `jnp.float16` as well.
 
 #### Waiting for the operation to complete
 
-Each `plgpu.wgmma` call implicitly synchronizes with all previous `plgpu.wgmma` calls, such
+Each {py:func}`plgpu.wgmma <jax.experimental.pallas.mosaic_gpu.wgmma>` call implicitly synchronizes with all previous {py:func}`plgpu.wgmma <jax.experimental.pallas.mosaic_gpu.wgmma>` calls, such
 that once control returns from it, we guarantee that no WGMMA other than the last issued
 one is still running. As such, any SMEM regions that were read by previously issued WGMMA
 instructions can be reused. This is especially relevant for pipelining WGMMA with async memory copies:
@@ -464,7 +464,7 @@ function relaxes this restriction, allowing for using multiple threads within a
 single block (e.g. for warp specialization) or across multiple blocks in a block
 cluster (e.g. to utilize multicast TMA).
 
-### Replacing `pl.pallas_call` with `pl.core_map` or `plgpu.kernel`
+### Replacing `pl.pallas_call` with `pl.core_map` or {py:func}`plgpu.kernel <jax.experimental.pallas.mosaic_gpu.kernel>`
 
 Let us begin with a simple Pallas kernel that increments an array:
 
@@ -515,7 +515,7 @@ np.testing.assert_array_equal(y, x + 1)
 While `pl.core_map` is a powerful API, it is also quite low-level and is pretty
 much always used in under `pl.run_state` (to make JAX arrays into refs) or
 `pl.run_scoped` (to allocate for scratch refs). For that reason, we also
-provide a convenience API `plgpu.kernel`:
+provide a convenience API {py:func}`plgpu.kernel <jax.experimental.pallas.mosaic_gpu.kernel>`:
 
 ```python
 mesh = plgpu.Mesh(grid=(2,), grid_names=("x",))
@@ -536,14 +536,14 @@ np.testing.assert_array_equal(y, x + 1)
 ```
 
 ```{note}
-The `plgpu.Mesh` used with `pl.core_map` defines a topology for computation
+The {py:class}`plgpu.Mesh <jax.experimental.pallas.mosaic_gpu.Mesh>` used with `pl.core_map` defines a topology for computation
 *within a single GPU*, specifying how work is distributed across CUDA blocks
 (the `grid`), Pallas threads within a block (`num_threads`), and potentially
 CUDA block clusters (`cluster`). This is analogous to how `jax.sharding.Mesh`
 defines a topology for distributed computation *across multiple devices* in JAX.
 Both involve SPMD programs executing across the defined topology. Furthermore,
 you can run "collectives" over the Pallas threads and cluster (e.g., using
-`plgpu.ClusterBarrier` or collective async copies), similar to how JAX
+{py:class}`plgpu.ClusterBarrier <jax.experimental.pallas.mosaic_gpu.ClusterBarrier>` or collective async copies), similar to how JAX
 collectives (`psum`, `all_gather`, etc.) operate across devices in a JAX `Mesh`.
 Both also use named axes, and `lax.axis_index(axis_name)` can be used to get a
 thread's or block's coordinate.
@@ -588,7 +588,7 @@ and TensorCore in an alternating fashion to ensure no execution conflicts.
 Another common technique is to allocate one Pallas thread and devote it entirely
 to scheduling asynchronous copies for data consumed by other threads. While
 implementing this scheme from scratch can be complicated, we provide a
-convenient helper API: `plgpu.emit_pipeline_warp_specialized`.
+convenient helper API: {py:func}`plgpu.emit_pipeline_warp_specialized <jax.experimental.pallas.mosaic_gpu.emit_pipeline_warp_specialized>`.
 
 ### Using CUDA block clusters
 
@@ -622,7 +622,7 @@ np.testing.assert_array_equal(y, jnp.stack([x, x], axis=0))
 ### Collective allocations in `pl.run_scoped`
 
 When using `pl.core_map` with multiple Pallas threads (i.e., `num_threads > 1`
-in `plgpu.Mesh`), allocations made via `pl.run_scoped` (for SMEM or Barriers)
+in {py:class}`plgpu.Mesh <jax.experimental.pallas.mosaic_gpu.Mesh>`), allocations made via `pl.run_scoped` (for SMEM or Barriers)
 must be performed _collectively by all threads_. This is indicated by specifying
 a `collective_axis` argument to the `run_scoped`, which has two effects:
 1. it promises that all threads will call the same allocation, and
@@ -649,7 +649,7 @@ value2 = ref[...]
 
 This guarantee, however, does not extend to asynchronous primitives such as async
 copies or MMA operations. To make the SMEM writes visible to those primitives, you
-are required to explicitly synchronize with them using the `plgpu.commit_smem()` function.
+are required to explicitly synchronize with them using the {py:func}`plgpu.commit_smem <jax.experimental.pallas.mosaic_gpu.commit_smem>` function.
 
 For example:
 ```python
@@ -673,7 +673,7 @@ which is why we rely on you, the user, to insert it in the minimal number of pla
 This is essentially a thin wrapper around an array of PTX `mbarrier` types and is
 passed in as a reference. All functions involving barriers expect to only get a single
 barrier argument, and so if the reference contains multiple, you have to extract one
-of them explicitly using `barriers.at[index]`. `Barrier`s are always allocated in SMEM
+of them explicitly using `barriers.at[index]`. {py:class}`Barrier <jax.experimental.pallas.mosaic_gpu.Barrier>`s are always allocated in SMEM
 and as such have relatively low overheads. Each barrier can be configured to complete
 after a fixed number of "arrivals" (by default 1).
 
@@ -686,7 +686,7 @@ There are three operations that can complete a barrier:
 
 ```{warning}
 It is critical to ensure that the synchronization scheme makes it impossible for two
-barrier completions to happen without a call to `plgpu.barrier_wait` in between them.
+barrier completions to happen without a call to {py:func}`plgpu.barrier_wait <jax.experimental.pallas.mosaic_gpu.barrier_wait>` in between them.
 For example, if you use `Barrier`s to synchronize two producer/consumer threads, you
 need to perform barrier synchronization going both ways to introduce "backpressure"
 that will stop one thread from arriving twice before the other one had a chance to await.
@@ -714,7 +714,7 @@ Note that the `Barrier` can receive arrivals from any source, without restrictio
 #### Asynchronous GMEM-to-SMEM copies
 
 When an asynchronous GMEM-to-SMEM copy is being executed by the TMA engine, it will
-post progress updates to the barrier given to `plgpu.copy_gmem_to_smem`. Once the copy
+post progress updates to the barrier given to {py:func}`plgpu.copy_gmem_to_smem <jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem>`. Once the copy
 is complete, the barrier will complete one arrival as well.
 
 (cross-thread-synchronization)=
