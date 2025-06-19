@@ -136,7 +136,6 @@ def _choose_representative_layout(
 
 
 def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
-
   def is_array(v: ir.Value) -> bool:
     return ir.VectorType.isinstance(v.type)
 
@@ -637,11 +636,8 @@ if hasattr(mgpu, "BroadcastInDimOp"):
     ):
       out_layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
       return [in_layout], [out_layout]
-    else:
-      raise NotImplementedError(
-          f"Unsupported layout: {in_layout} for broadcast dimensions"
-          f" {broadcast_dims}"
-      )
+
+    return None
 
 
 @partial(_add_layout_inference_rule, mgpu.WGMMAOp)
@@ -709,20 +705,20 @@ def infer_layout(module: ir.Module):
   #
   # We run two passes over the module, in order to make sure that layouts
   # defined in the middle of the computation are propagated wherever they need
-  # to be propagated. We start with a backwards (root-to-parameters) pass to
-  # propagate the information as far up as possible, and then a forward pass
-  # (parameters-to-root).
+  # to be propagated. We start with a forward (parameters-to-root) pass to
+  # preserve replicated layouts as far down as possible, and then do a
+  # backwards (root-to-parameters) pass.
   #
-  # Backwards pass
-  for op in module.body:
-    inference_utils.traverse_op(
-        op, inference_step, inference_utils.TraversalOrder.BACKWARDS
-    )
-
   # Forward pass
   for op in module.body:
     inference_utils.traverse_op(
         op, inference_step, inference_utils.TraversalOrder.FORWARD
+    )
+
+  # Backwards pass
+  for op in module.body:
+    inference_utils.traverse_op(
+        op, inference_step, inference_utils.TraversalOrder.BACKWARDS
     )
 
   # At this point, layouts have been propagated as far as they could be

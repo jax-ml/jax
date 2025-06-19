@@ -1325,8 +1325,12 @@ class PallasCallTest(PallasTest):
         return plgpu.layout_cast(
             jnp.zeros(o_ref.shape, o_ref.dtype), plgpu.Layout.WGMMA_ROW
         )
-
-      _ = jax.lax.while_loop(cond, body, o_ref[...])
+      # Cast explicitly to cause the mismatch, otherwise layout inference will
+      # succeed at constructing a working program.
+      strided_input = plgpu.layout_cast(
+          o_ref[...], plgpu.Layout.WG_STRIDED(shape=(128,), vec_size=1)
+      )
+      _ = jax.lax.while_loop(cond, body, strided_input)
 
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
       with self.assertRaisesRegex(
