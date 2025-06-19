@@ -132,12 +132,41 @@ LogicalResult MemRefSliceOp::verify() {
     return emitOpError(
         "Memory spaces must match if the target memory space is provided.");
   }
-  bool is_target_layout_identity_map =
-      isa<AffineMapAttr>(target_layout) && target_layout.isIdentity();
-  if (!is_target_layout_identity_map &&
-      target_type.getLayout() != source_type.getLayout()) {
-    return emitOpError(
-        "Layouts must match if the target layout is not an identity map.");
+  if (isa<AffineMapAttr>(target_layout)) {
+    if (target_type.getLayout() != source_type.getLayout()) {
+      return emitOpError("Layout mismatch: got ")
+             << target_type.getLayout() << ", expected "
+             << source_type.getLayout() << ".";
+    }
+  } else if (isa<StridedLayoutAttr>(target_layout)) {
+    SmallVector<int64_t> source_strides;
+    int64_t source_offset;
+    if (failed(
+            source_type.getStridesAndOffset(source_strides, source_offset))) {
+      return failure();
+    }
+    int64_t target_offset = source_offset;
+    if (target_offset != ShapedType::kDynamic) {
+      for (auto [base_idx, source_stride] :
+           llvm::zip(getBaseIdx(), source_strides)) {
+        if (auto definingOp = base_idx.getDefiningOp<arith::ConstantOp>();
+            definingOp && isa<IntegerAttr>(definingOp.getValue())) {
+          target_offset +=
+              cast<IntegerAttr>(definingOp.getValue()).getInt() * source_stride;
+        } else {
+          target_offset = ShapedType::kDynamic;
+          break;
+        }
+      }
+    }
+    auto expected_layout =
+        StridedLayoutAttr::get(getContext(), target_offset, source_strides);
+    if (target_layout != expected_layout) {
+      return emitOpError("Layouts mismatch: got ")
+             << target_layout << ", expected " << expected_layout << ".";
+    }
+  } else if (!isa<TiledLayoutAttr>(target_layout)) {
+    return emitOpError("Unsupported target layout: ") << target_layout;
   }
   if (getDynamicSizes().size() != target_type.getNumDynamicDims()) {
     return emitOpError(
@@ -167,49 +196,6 @@ LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
   return success();
 }
 
-// Computes the dimensions that were squeezed from the source shape to match the
-// target shape. Returns the dimensions in increasing order.
-FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
-    Operation *op, ArrayRef<int64_t> source_shape,
-    ArrayRef<int64_t> target_shape) {
-  SmallVector<int> squeezed;
-  int source_index = source_shape.size() - 1;
-  int target_index = target_shape.size() - 1;
-
-  while (source_index >= 0 || target_index >= 0) {
-    int64_t target_dim = (target_index >= 0) ? target_shape[target_index] : -1;
-    if (source_index < 0) {
-      op->emitError() << llvm::formatv(
-          "Target shape is not valid. Source: {0}, Target: {1}.",
-          shapeToString(source_shape), shapeToString(target_shape));
-      return failure();
-    }
-    int64_t source_dim = source_shape[source_index];
-    if (source_dim == target_dim) {
-      source_index--;
-      target_index--;
-    } else {
-      if (source_dim != 1) {
-        op->emitError() << llvm::formatv(
-            "Target shape is not valid. Source: {0}, Target: {1}.",
-            shapeToString(source_shape), shapeToString(target_shape));
-        return failure();
-      }
-      squeezed.push_back(source_index);
-      source_index--;
-    }
-  }
-
-  if (source_index != -1 || target_index != -1) {
-    op->emitError() << "Shape mismatch after traversal. Source shape: "
-                    << shapeToString(source_shape)
-                    << ", target shape: " << shapeToString(target_shape);
-    return failure();
-  }
-  std::reverse(squeezed.begin(), squeezed.end());
-  return squeezed;
-}
-
 LogicalResult MemRefSqueezeOp::verify() {
   auto source_type = getMemRefType(getInput());
   auto target_type = getType();
@@ -229,6 +215,37 @@ LogicalResult MemRefSqueezeOp::verify() {
       computeSqueezedDimsChecked(*this, source_shape, target_shape);
   if (failed(squeezed_or)) {
     return failure();
+  }
+
+  auto target_layout = target_type.getLayout();
+  auto source_layout = source_type.getLayout();
+  if (isa<AffineMapAttr>(target_layout)) {
+    if (target_layout != source_layout) {
+      return emitOpError("Layouts mismatch: got ")
+             << target_layout << ", expected " << source_layout << ".";
+    }
+  }
+  if (isa<StridedLayoutAttr>(target_layout)) {
+    SmallVector<int64_t> source_strides;
+    int64_t source_offset;
+    if (failed(
+            source_type.getStridesAndOffset(source_strides, source_offset))) {
+      return failure();
+    }
+    SmallVector<int64_t> target_strides;
+    for (auto [i, stride] : llvm::enumerate(source_strides)) {
+      if (!llvm::is_contained(*squeezed_or, i)) {
+        target_strides.push_back(stride);
+      }
+    }
+    auto expected_layout =
+        StridedLayoutAttr::get(getContext(), source_offset, target_strides);
+    if (target_layout != expected_layout) {
+      return emitOpError("Layouts mismatch: got ")
+             << target_layout << ", expected " << expected_layout << ".";
+    }
+  } else if (!isa<TiledLayoutAttr>(target_layout)) {
+    return emitOpError("Unsupported target layout: ") << target_layout;
   }
 
   auto erase_layout_op = getInput().getDefiningOp<tpu::EraseLayoutOp>();
