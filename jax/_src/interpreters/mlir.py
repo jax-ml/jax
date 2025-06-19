@@ -48,7 +48,7 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
-from jax._src.layout import AutoLayout, DeviceLocalLayout
+from jax._src.layout import AutoLayout, Layout
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir, passmanager
@@ -1062,7 +1062,7 @@ def _to_physical_op_sharding(
   return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
 
 
-def _to_xla_layout(layout: DeviceLocalLayout | None | AutoLayout,
+def _to_xla_layout(layout: Layout | None | AutoLayout,
                    aval: core.AbstractValue) -> str | None:
   if layout is None:
     return None
@@ -1167,8 +1167,8 @@ def lower_jaxpr_to_module(
     replicated_args: Sequence[bool] | None = None,
     arg_shardings: Sequence[JSharding | AUTO | None] | None = None,
     result_shardings: Sequence[JSharding | AUTO | None] | None = None,
-    in_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
-    out_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
+    in_layouts: Sequence[Layout | None | AutoLayout] | None = None,
+    out_layouts: Sequence[Layout | None | AutoLayout] | None = None,
     arg_names: Sequence[str] | None = None,
     result_names: Sequence[str] | None = None,
     num_replicas: int = 1,
@@ -1364,7 +1364,7 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
         raise ValueError(
             f"Input layout being donated was {in_layouts[input_id]} while"
             f" output layout was {out_layouts[i]}. Did you mean to set the"
-            " **output layout** to **DeviceLocalLayout.AUTO**?\nThis will"
+            " **output layout** to **Layout.AUTO**?\nThis will"
             " allow for the input and output layout to be chosen by XLA and"
             " not the layout of the output which might not be optimal.")
       if (in_out_layout_not_none and
@@ -1373,7 +1373,7 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
         raise ValueError(
             f"Input layout being donated was {in_layouts[input_id]} while"
             f" output layout was {out_layouts[i]}. Did you mean to set the"
-            " **input layout** to **DeviceLocalLayout.AUTO**?\nThis will allow"
+            " **input layout** to **Layout.AUTO**?\nThis will allow"
             " for the input and output layout to be chosen by XLA and not the"
             " layout of the input which might not be optimal.")
       if (in_layouts is None or out_layouts is None or
@@ -1457,8 +1457,8 @@ def lower_jaxpr_to_fun(
     result_names: Sequence[str] | None = None,
     arg_memory_kinds: Sequence[str | None] | None = None,
     result_memory_kinds: Sequence[str | None] | None = None,
-    arg_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
-    result_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
+    arg_layouts: Sequence[Layout | None | AutoLayout] | None = None,
+    result_layouts: Sequence[Layout | None | AutoLayout] | None = None,
     propagated_out_mem_kinds: tuple[None | str, ...] | None = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
@@ -2758,7 +2758,7 @@ def get_sharding_attr(
 def wrap_with_layout_op(ctx: LoweringRuleContext,
                         x: ir.Value,
                         aval_out: core.AbstractValue,
-                        layout: DeviceLocalLayout,
+                        layout: Layout,
                         aval_in: core.AbstractValue):
   result_type = aval_to_ir_type(aval_out)
   assert isinstance(result_type, ir.Type), result_type
