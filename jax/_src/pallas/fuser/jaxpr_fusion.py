@@ -78,6 +78,7 @@ def _construct_fusion_jaxpr(
   new_jaxpr_no_dce = jaxpr.replace(
       outvars=flat_outvars,
       constvars=jaxpr.constvars + jaxpr.invars,
+      consts=jaxpr.consts + list(candidate_values),
       invars=flat_invars,
   )
   new_jaxpr, used_consts, used_invars = pe.dce_jaxpr_consts(
@@ -252,7 +253,8 @@ def _construct_output_fusions(
 
 
 def fuse_jaxpr(
-    jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args
+    jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef,
+    consts: Sequence[jax_core.Value], *args: jax_core.Value
 ):
   fusion_eqn_index = None
 

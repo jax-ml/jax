@@ -1734,6 +1734,8 @@ def _dce_jaxpr(closed_jaxpr, api_name, fun_name,
   in_avals = closed_jaxpr.in_avals
 
   if (keep_unused or auto_spmd_lowering or
+      # Don't drop inputs with symbolic shapes, because we may need them
+      # to infer the symbolic dimensions at call sites.
       any(hasattr(a, "shape") and not core.is_constant_shape(a.shape)
           for a in in_avals)):
     kept_var_idx = set(range(len(in_avals)))
@@ -1777,7 +1779,7 @@ def _move_mutable_consts(
   effects = pe.make_jaxpr_effects(constvars, invars, jaxpr.outvars, jaxpr.eqns)
   # TODO(mattjj): debug_info must be updated...
   jaxpr = core.Jaxpr(constvars, invars, jaxpr.outvars, jaxpr.eqns,
-                     effects, closed_jaxpr.jaxpr.debug_info)
+                     effects, closed_jaxpr.jaxpr.debug_info, consts=consts)
   return core.ClosedJaxpr(jaxpr, consts), in_mut
 
 @weakref_lru_cache

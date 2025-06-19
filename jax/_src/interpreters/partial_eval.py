@@ -880,7 +880,7 @@ def tracers_to_jaxpr(
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   jaxpr = Jaxpr(const_vars, invars,  # type: ignore[arg-type]
                 outvars, eqns, jaxpr_effects,
-                debug_info)
+                debug_info, consts=const_vals)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
   return jaxpr, const_vals, env_vals
@@ -897,34 +897,26 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   dbg = jaxpr.debug_info._replace(
       arg_names=("",) * len(jaxpr.constvars) + jaxpr.debug_info.arg_names)
   lifted_jaxpr = jaxpr.replace(
-      constvars=(), invars=jaxpr.constvars + jaxpr.invars, debug_info=dbg)
+      constvars=(), invars=jaxpr.constvars + jaxpr.invars, debug_info=dbg, consts=())
   config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
-@weakref_lru_cache
-def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
-  """Move n invars to constvars. Like an inverse of convert_constvars_jaxpr."""
+# DO_NOT_SUBMIT
+# @weakref_lru_cache
+def convert_invars_to_constvars(jaxpr: Jaxpr, n: int, consts: Sequence[core.Value]) -> Jaxpr:
+  """Move the first n invars to constvars. Like an inverse of convert_constvars_jaxpr."""
   if n == 0:
     return jaxpr.replace()  # 'return jaxpr' would create cache reference cycle
   config.enable_checks.value and core.check_jaxpr(jaxpr)
+  assert n == len(consts)
+  assert 0 == len(jaxpr.constvars)
   constvars, invars = split_list(jaxpr.invars, [n])
   dbg = jaxpr.debug_info._replace(
       arg_names=jaxpr.debug_info.arg_names[n:])
   lifted_jaxpr = jaxpr.replace(constvars=tuple(constvars), invars=invars,
-                               debug_info=dbg)
+                               debug_info=dbg, consts=consts)
   config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
-
-def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int) -> Jaxpr:
-  if any(isinstance(eff, effects.JaxprInputEffect) for eff in jaxpr.effects):
-    raise NotImplementedError
-  config.enable_checks.value and core.check_jaxpr(jaxpr)
-  env_vars, invars = split_list(jaxpr.invars, [num_env_vars])
-  converted_jaxpr = jaxpr.replace(constvars=jaxpr.constvars + env_vars,
-                                  invars=invars)
-  config.enable_checks.value and core.check_jaxpr(converted_jaxpr)
-  return converted_jaxpr
-
 
 def partial_eval_jaxpr_nounits(
     jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
@@ -1443,6 +1435,7 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool],
     instantiate: A bool or a list of bools indicating which inputs should be
       considered used, regardless of whether they are actually used in a jaxpr.
       If a bool, the same value is used for all inputs.
+      The constvars are left alone.
 
   Returns:
     A tuple of ``(new_jaxpr, used_inputs)``.
@@ -1459,7 +1452,9 @@ def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
   new_jaxpr, used_inputs_ = dce_jaxpr(jaxpr_, used_outputs, instantiate)
   used_consts, used_inputs = split_list(used_inputs_, [len(jaxpr.constvars)])
   if sum(used_consts):
-    new_jaxpr = convert_invars_to_constvars(new_jaxpr, sum(used_consts))
+    new_consts = tuple(c for u, c in zip(used_consts, jaxpr.consts) if u)
+    new_jaxpr = convert_invars_to_constvars(new_jaxpr, sum(used_consts),
+                                            new_consts)
   return new_jaxpr, used_consts, used_inputs
 
 
@@ -1473,6 +1468,7 @@ def has_effects(eqn: JaxprEqn) -> bool:
 def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
                instantiate: tuple[bool, ...]
                ) -> tuple[Jaxpr, list[bool]]:
+  # See dce_jaxpr
   env: dict[Var, bool] = {}
 
   def read(v: Var) -> bool:
@@ -1805,13 +1801,14 @@ class JaxprStackFrame:
       v.final_qdd = qdd.cur_val
 
     jaxpr = Jaxpr(constvars, invars, outvars, self.eqns, jaxpr_effects,
-                  debug_info, self.is_high)
+                  debug_info, self.is_high, consts=constvals)
     jaxpr, constvals = _drop_unused_vars(jaxpr, constvals)
     init_trees = [tree_structure(init_val) for init_val in self.attrs_inits]
     return jaxpr, list(constvals), zip(init_trees, end_trees, self.attrs_tracked)
 
   def to_jaxpr2(self, out_tracers: Sequence[core.Tracer],
-                debug_info: core.DebugInfo):
+                debug_info: core.DebugInfo
+                ) -> tuple[core.Jaxpr, tuple[core.AbstractValue, ...]]:
     # It's not necessary, but we keep the tracer-to-var mapping injective:
     vars = [v for v in self.tracer_to_var.values() if not isinstance(v, Literal)]
     assert len(vars) == len(set(vars))
@@ -1820,7 +1817,7 @@ class JaxprStackFrame:
     jaxpr_effects = make_jaxpr_effects(constvars, self.invars, expl_outvars,
                                         self.eqns)
     jaxpr = Jaxpr(constvars, self.invars, expl_outvars, self.eqns,
-                  jaxpr_effects, debug_info)
+                  jaxpr_effects, debug_info, consts=constvals)
     # We can't run check_jaxpr until after we normalize.
     jaxpr, constvals = _drop_unused_vars(jaxpr, constvals)
     jaxpr, out_type = _add_implicit_outputs(jaxpr)
@@ -1886,9 +1883,10 @@ def _drop_unused_vars(
     used.update(v for atom in eqn.invars for v in vars(atom))
   cvars, constvals = unzip2(
       (v, val) for v, val in zip(jaxpr.constvars, constvals) if v in used)
-  jaxpr._constvars = list(cvars)
-  jaxpr._effects = make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
-                                      jaxpr.outvars, jaxpr.eqns)
+  jaxpr = jaxpr.replace(constvars=list(cvars),
+                        effects=make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
+                                      jaxpr.outvars, jaxpr.eqns),
+                        consts=list(constvals))
   return jaxpr, list(constvals)
 
 
@@ -2831,5 +2829,5 @@ def convert_const_himutables(jaxpr):
   effects = make_jaxpr_effects(constvars, invars, jaxpr.jaxpr.outvars,
                                jaxpr.jaxpr.eqns)
   new_jaxpr = jaxpr.jaxpr.replace(constvars=constvars, invars=invars,
-                                  effects=effects)
+                                  effects=effects, consts=constvals)
   return jaxpr.replace(jaxpr=new_jaxpr, consts=constvals), in_mutables

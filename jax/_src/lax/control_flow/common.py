@@ -175,13 +175,18 @@ def _initial_style_jaxprs_with_common_consts(
     canonical_non_ref_indices.append(tuple(non_ref_indices))
 
   consts = [*canonical_refs, *canonical_non_refs]
-  jaxprs = tuple(_pad_jaxpr_constvars(jaxpr, i, (*canonical_ref_avals,), (*canonical_ref_indices,), (*canonical_non_ref_avals,), (*canonical_non_ref_indices,))
+  jaxprs = tuple(_pad_jaxpr_constvars(jaxpr, i, consts,
+                                      (*canonical_ref_avals,), (*canonical_ref_indices,), (*canonical_non_ref_avals,), (*canonical_non_ref_indices,))
                  for i, jaxpr in enumerate(jaxprs))
   return jaxprs, consts, all_out_trees
 
-@weakref_lru_cache
-def _pad_jaxpr_constvars(jaxpr, i, canonical_ref_avals, canonical_ref_indices,
-                         canonical_non_ref_avals, canonical_non_ref_indices):
+# DO_NOT_SUBMIT
+# @weakref_lru_cache
+def _pad_jaxpr_constvars(jaxpr: core.Jaxpr, i,
+                         consts: Sequence[core.Value],
+                         canonical_ref_avals, canonical_ref_indices,
+                         canonical_non_ref_avals, canonical_non_ref_indices
+                         ) -> core.ClosedJaxpr:
   is_ref = [isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars]
   nonref_constvars, ref_constvars = partition_list(is_ref, jaxpr.constvars)
   padded_ref_constvars  = map(core.Var, canonical_ref_avals)
@@ -191,7 +196,7 @@ def _pad_jaxpr_constvars(jaxpr, i, canonical_ref_avals, canonical_ref_indices,
   for canonical_id, non_ref_var in zip(canonical_non_ref_indices[i], nonref_constvars):
     padded_non_ref_constvars[canonical_id] = non_ref_var
   constvars = [*padded_ref_constvars, *padded_non_ref_constvars]
-  jaxpr = jaxpr.replace(constvars=constvars)
+  jaxpr = jaxpr.replace(constvars=constvars, consts=consts)
   effects = pe.make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
                                   jaxpr.outvars, jaxpr.eqns)
   jaxpr = jaxpr.replace(effects=effects)

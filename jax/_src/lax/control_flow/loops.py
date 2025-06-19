@@ -1909,7 +1909,8 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
                                     cond_jaxpr.jaxpr.outvars,
                                     cond_jaxpr.jaxpr.eqns,
                                     cond_jaxpr.jaxpr.effects,
-                                    augmented_debug)
+                                    augmented_debug,
+                                    consts=cond_jaxpr.consts)
   cond_jaxpr_augmented = core.ClosedJaxpr(cond_jaxpr_augmented, cond_jaxpr.consts)
 
   out = while_p.bind(
