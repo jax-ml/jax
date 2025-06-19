@@ -451,18 +451,16 @@ def emit_pipeline_warp_specialized(
   ``consumed_barriers`` is an optional argument that is only passed if the
   ``manual_consumed_barriers`` argument is True.
 
-  ```
-  def body(indices, *input_refs, *output_refs, [consumed_barriers]) -> None:
-  ```
+  ::
+    def body(indices, *input_refs, *output_refs, [consumed_barriers]) -> None:
 
   or with a carries enabled (enabled via the ``compute_context`` argument),
   where the body returns the next carry:
 
-  ```
-  def body(
-      indices, *input_refs, *output_refs, [consumed_barriers], carry
-  ) -> Carry:
-  ```
+  ::
+    def body(
+        indices, *input_refs, *output_refs, [consumed_barriers], carry
+    ) -> Carry:
 
   Args:
     body: The pipeline body.
