@@ -1212,7 +1212,9 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         results.append(None)
         # Accumulate arguments to `batched_copy_array_to_devices_with_sharding`.
         batch_xs.append(x)
-        batch_devs.append(list(devices))
+        batch_devs.append(
+            sharding._internal_device_list.addressable_device_list  # type: ignore
+        )
         batch_shardings.append(sharding)
         batch_indices.append(i)
         batch_cs.append(cs)
