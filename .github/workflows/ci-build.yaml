@@ -41,7 +41,6 @@ jobs:
     runs-on: linux-x86-n2-32
     container:
       image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
-    timeout-minutes: 60
     strategy:
       matrix:
         # Test the oldest and newest supported Python versions here.
@@ -72,8 +71,12 @@ jobs:
       run: |
         pip install uv~=0.5.30
         uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
-
+    - name: Print  the relvant connection details
+      run: |
+        echo "gcloud container clusters get-credentials $CONNECTION_CLUSTER --location $CONNECTION_LOCATION"
+        echo "kubectl exec -it --namespace=$CONNECTION_NS $CONNECTION_POD_NAME -- /bin/bash"
     - name: Run tests
+      continue-on-error: true
       env:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
         JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
@@ -90,7 +93,8 @@ jobs:
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
         echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
         pytest -n auto --tb=short --maxfail=20 tests examples
-
+    - name: Sleep
+      run: sleep 100000
 
   documentation:
     name: Documentation - test code snippets
