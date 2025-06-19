@@ -52,6 +52,7 @@ Other functions
     log_softmax
     logsumexp
     standardize
+    min_max_normalize
     one_hot
     dot_product_attention
     scaled_matmul

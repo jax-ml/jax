@@ -21,6 +21,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * `jax.extend.core.primitives.pjit_p` has been renamed to `jit_p`, although
     `pjit_p` is still exported as an alias for the time being.
   * Added {func}`jax.tree.reduce_associative`.
+  * Added {func}`jax.nn.min_max_normalize`, which implements min-max normalization.
 
 * Breaking changes:
   * {func}`jax.jit` now requires `fun` to be passed by position, and additional
