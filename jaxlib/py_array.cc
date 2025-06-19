@@ -2082,7 +2082,7 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
 
   m.attr("batched_copy_array_to_devices_with_sharding") = nb::cpp_function(
       [](absl::Span<const PyArray> arrays,
-         absl::Span<const std::vector<const PyDevice*>> dst_device_lists,
+         absl::Span<const nb::object> dst_device_lists,
          absl::Span<const nb::object> shardings,
          absl::Span<const ifrt::ArrayCopySemantics> array_copy_semantics) {
         if (arrays.empty()) {
@@ -2092,12 +2092,20 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
         std::vector<ifrt::DeviceListRef> device_lists;
         device_lists.reserve(dst_device_lists.size());
         for (const auto& dst_devices : dst_device_lists) {
-          absl::InlinedVector<ifrt::Device*, 1> devices;
-          devices.reserve(dst_devices.size());
-          for (auto& d : dst_devices) {
-            devices.push_back(d->device());
+          if (dst_devices.is(jax::PyDeviceList::type())) {
+            device_lists.push_back(xla::ValueOrThrow(
+                nb::cast<const jax::PyDeviceList*>(dst_devices)
+                    ->ifrt_device_list()));
+          } else {
+            auto dst_devices_vector =
+                nb::cast<std::vector<const PyDevice*>>(dst_devices);
+            absl::InlinedVector<ifrt::Device*, 1> devices;
+            devices.reserve(dst_devices_vector.size());
+            for (auto& d : dst_devices_vector) {
+              devices.push_back(d->device());
+            }
+            device_lists.push_back(client->MakeDeviceList(devices));
           }
-          device_lists.push_back(client->MakeDeviceList(devices));
         }
         return xla::ValueOrThrow(PyArray::BatchedCopyToDeviceWithSharding(
             arrays, device_lists, shardings, array_copy_semantics));
