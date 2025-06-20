@@ -31,4 +31,19 @@ from jax._src.lib import xla_client as _xc
 JaxRuntimeError = _xc.XlaRuntimeError
 del _xc
 
-from jax._src.traceback_util import SimplifiedTraceback as SimplifiedTraceback
+import jax._src.traceback_util
+_deprecations = {
+  "SimplifiedTraceback": (
+    "jax.errors.SimplifiedTraceback is deprecated and will be removed in JAX v0.8.",
+    jax._src.traceback_util.SimplifiedTraceback
+  ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  SimplifiedTraceback = jax._src.traceback_util.SimplifiedTraceback
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

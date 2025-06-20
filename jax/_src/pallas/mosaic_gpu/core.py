@@ -113,6 +113,10 @@ class CompilerParams(pallas_core.CompilerParams):
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Lane
 
   def __post_init__(self):
+    if self.dimension_semantics is not None:
+      object.__setattr__(
+          self, "dimension_semantics", tuple(self.dimension_semantics)
+      )
     if bool(self.profile_space) ^ bool(self.profile_dir):
       raise ValueError(
           "Either both profile_space and profile_dir must be set, or neither."
@@ -338,9 +342,9 @@ class AbstractRefUnion(pallas_core.AbstractMemoryRef):
     del tracer, index, value  # Unused.
     raise ValueError("Ref unions can't be assigned to.")
 
-  def update_vma(self, vma):
-    return AbstractRefUnion(self.inner_aval.update_vma(vma), self.refs,
-                            self.memory_space)
+  def update(self, inner_aval=None, memory_space=None):
+    ref = super().update(inner_aval, memory_space)
+    return AbstractRefUnion(ref.inner_aval, self.refs, self.memory_space)
 
 
 @dataclasses.dataclass(init=False, frozen=True)
@@ -918,14 +922,12 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
   def __repr__(self) -> str:
     return f'Accumulator{{{self.inner_aval.str_short()}}}'
 
-  def update_weak_type(self, weak_type):
-    return _as_accum(super().update_weak_type(weak_type))
-
-  def update_vma(self, vma):
-    return _as_accum(super().update_vma(vma))
-
   def update(self, inner_aval=None, memory_space=None):
-    return _as_accum(super().update(inner_aval=None, memory_space=None))
+    ref = super().update(inner_aval, memory_space)
+    return WGMMAAbstractAccumulatorRef(
+        inner_aval=ref.inner_aval,
+        memory_space=ref.memory_space,
+    )
 
   def _getitem(self, tracer, idx):
     from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_deref  # pytype: disable=import-error
@@ -937,12 +939,6 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
     return arr
 
 
-def _as_accum(ref) -> WGMMAAbstractAccumulatorRef:
-  return WGMMAAbstractAccumulatorRef(
-      inner_aval=ref.inner_aval,
-      memory_space=ref.memory_space,  # pytype: disable=attribute-error
-  )
-
 class AbstractTMEMRef(AbstractMemoryRef):
   __slots__ = ["inner_aval", "memory_space", "packed", "collective"]
 
@@ -953,6 +949,12 @@ class AbstractTMEMRef(AbstractMemoryRef):
 
   def __repr__(self) -> str:
     return f'TMEM({self.inner_aval.str_short()},packed={self.packed})'
+
+  def update(self, inner_aval=None, memory_space=None):
+    ref = super().update(inner_aval, memory_space)
+    return AbstractTMEMRef(
+        ref.inner_aval, ref.memory_space, self.packed, self.collective
+    )
 
 
 _WARPGROUP_AXIS_NAME = object()
@@ -988,6 +990,10 @@ class Mesh:
           "Requested too many CUDA threads per block. Each Mosaic thread"
           " corresponds to 128 CUDA threads."
       )
+    object.__setattr__(self, "grid", tuple(self.grid))
+    object.__setattr__(self, "grid_names", tuple(self.grid_names))
+    object.__setattr__(self, "cluster", tuple(self.cluster))
+    object.__setattr__(self, "cluster_names", tuple(self.cluster_names))
 
   @property
   def backend(self) -> str:

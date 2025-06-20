@@ -20,8 +20,6 @@ from jax._src.sharding_impls import (
     NamedSharding as NamedSharding,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
-    GSPMDSharding as _deprecated_GSPMDSharding,
-    PositionalSharding as _deprecated_PositionalSharding,
     use_mesh as use_mesh,
     set_mesh as set_mesh,
 )
@@ -39,26 +37,21 @@ _deprecations = {
     # Added April 11, 2025.
     "PositionalSharding": (
         (
-            "jax.sharding.PositionalSharding is deprecated. Use"
-            " jax.NamedSharding instead."
+            "jax.sharding.PositionalSharding was deprecated in JAX v0.6.0 and"
+            " removed in JAX v0.7.0"
         ),
-        _deprecated_PositionalSharding,
+        None,
     ),
     "GSPMDSharding": (
         (
-            "jax.sharding.GSPMDSharding is deprecated. Use"
-            " jax.NamedSharding instead."
+            "jax.sharding.GSPMDSharding was deprecated in JAX v0.6.0 and"
+            " removed in JAX v0.7.0"
         ),
-        _deprecated_GSPMDSharding,
+        None,
     ),
 }
 
-import typing
-if typing.TYPE_CHECKING:
-  PositionalSharding = _deprecated_PositionalSharding
-  GSPMDSharding = _deprecated_GSPMDSharding
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

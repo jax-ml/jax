@@ -20,7 +20,8 @@ import gc
 import itertools
 import math
 import threading
-from typing import Any, Callable, Literal, cast
+from typing import Any, Literal, cast
+from collections.abc import Callable
 
 import jax
 from jax import lax

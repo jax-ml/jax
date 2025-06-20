@@ -49,7 +49,7 @@ setup(
     author="JAX team",
     author_email="jax-dev@google.com",
     packages=[package_name],
-    python_requires=">=3.10",
+    python_requires=">=3.11",
     install_requires=[f"jax-cuda{cuda_version}-pjrt=={__version__}"],
     extras_require={
       'with-cuda': [
@@ -70,6 +70,8 @@ setup(
           # Until NVIDIA add version constraints, add a version constraint
           # here.
           "nvidia-nvjitlink-cu12>=12.1.105",
+          # nvrtc is a transitive and undeclared dep of cudnn.
+          "nvidia-cuda-nvrtc-cu12>=12.1.55",
           # NVSHMEM is used by Mosaic GPU collectives and can be used by XLA to
           # speed up collectives too.
           "nvidia-nvshmem-cu12>=3.2.5",
@@ -79,7 +81,6 @@ setup(
     license="Apache-2.0",
     classifiers=[
         "Development Status :: 5 - Production/Stable",
-        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",

@@ -32,6 +32,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
+from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -909,7 +910,7 @@ def _pallas_call_batching_rule(
 
   batched_out_avals = []
   for aval in out_avals:
-    sharding = aval.sharding.with_spec(tuple_insert(aval.sharding.spec, 0, None))
+    sharding = aval.sharding.update(spec=tuple_insert(aval.sharding.spec, 0, None))
     shape = tuple_insert(aval.shape, 0, axis_size)
     batched_out_avals.append(aval.update(shape=shape, sharding=sharding))
   batched_out_avals = tuple(batched_out_avals)
@@ -1483,7 +1484,7 @@ def _pallas_call_state_discharge_rule(
       *ref_args,
       *rest_args,
       jaxpr=new_jaxpr,
-      input_output_aliases=new_input_output_aliases,
+      input_output_aliases=tuple(new_input_output_aliases),
       grid_mapping=new_grid_mapping,
       mesh=mesh,
       debug=debug,
@@ -1512,7 +1513,7 @@ def pallas_call(
     interpret: Any = False,
     name: str | None = None,
     compiler_params: (
-        Mapping[Backend, "CompilerParams"] | "CompilerParams" | None
+        Mapping[Backend, pallas_core.CompilerParams] | pallas_core.CompilerParams | None
     ) = None,
     cost_estimate: CostEstimate | None = None,
     backend: Backend | None = None,
@@ -1608,11 +1609,12 @@ def pallas_call(
   )
 
 
+
 def _normalize_compiler_params(
-    compiler_params: Mapping[Backend, CompilerParams] | CompilerParams | None,
-) -> Mapping[Backend, CompilerParams]:
+    compiler_params: Mapping[Backend, pallas_core.CompilerParams] | pallas_core.CompilerParams | None,
+) -> Mapping[Backend, pallas_core.CompilerParams]:
   if compiler_params is None:
-    return {}
+    return FrozenDict({})
   if isinstance(compiler_params, CompilerParams):
     compiler_params = {compiler_params.BACKEND: compiler_params}
   assert isinstance(compiler_params, Mapping)
@@ -1628,6 +1630,8 @@ def _normalize_compiler_params(
           f"Inconsistent backend in compiler_params: {params.BACKEND} !="
           f" {backend}"
       )
+  if not isinstance(compiler_params, FrozenDict):
+    compiler_params = FrozenDict(compiler_params)
   return compiler_params
 
 
@@ -1695,8 +1699,9 @@ def _pallas_call(
         x.ref if isinstance(x, state_types.TransformedRef) else x
         for x in flat_kernel_args
     )
-    flat_kernel_avals = tuple(a.update_vma(frozenset())
-                              for a in flat_kernel_avals)
+    if config._check_vma.value:
+      flat_kernel_avals = tuple(a.update_vma(frozenset())
+                                for a in flat_kernel_avals)
     # Note that only a subset of all transforms can be found here, and they are
     # never expected to contain any arrays.
     kernel_arg_transforms = tuple(

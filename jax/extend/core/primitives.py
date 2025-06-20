@@ -223,7 +223,10 @@ from jax._src.lax.linalg import (
   schur_p as schur_p,
 )
 
-from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
+from jax._src.pjit import (
+    pjit_p as pjit_p,
+    sharding_constraint_p as sharding_constraint_p,
+)
 
 from jax._src.prng import (
   random_bits_p as random_bits_p,

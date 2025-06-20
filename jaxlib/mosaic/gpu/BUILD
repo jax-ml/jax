@@ -148,6 +148,7 @@ cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     deps = [
+        ":library_paths",
         ":nvshmem",
         ":passes",
         ":target",
@@ -245,4 +246,9 @@ cc_binary(
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
     ],
+)
+
+cc_library(
+    name = "library_paths",
+    hdrs = ["library_paths.h"],
 )

@@ -21,10 +21,12 @@ import dataclasses
 import enum
 import functools
 from typing import Any, ClassVar, Literal
+from collections.abc import Mapping
 
 import jax
 from jax._src import core as jax_core
 from jax._src import util
+from jax._src.frozen_dict import FrozenDict
 from jax._src.pallas import core as pallas_core
 import jax.numpy as jnp
 import numpy as np
@@ -88,8 +90,8 @@ class CompilerParams(pallas_core.CompilerParams):
     disable_bounds_checks: Disable bounds checks in the kernel.
   """
   BACKEND: ClassVar[pallas_core.Backend] = "mosaic_tpu"
-  dimension_semantics: Sequence[DimensionSemantics] | None = None
-  allow_input_fusion: Sequence[bool] | None = None
+  dimension_semantics: tuple[DimensionSemantics, ...] | None = None
+  allow_input_fusion: tuple[bool, ...] | None = None
   vmem_limit_bytes: int | None = None
   collective_id: int | None = None
   has_side_effects: bool = False
@@ -99,8 +101,45 @@ class CompilerParams(pallas_core.CompilerParams):
   kernel_type: KernelType = KernelType.TC
   disable_bounds_checks: bool = False
 
+  def __init__(
+      self,
+      dimension_semantics: Sequence[DimensionSemantics] | None = None,
+      allow_input_fusion: Sequence[bool] | None = None,
+      vmem_limit_bytes: int | None = None,
+      collective_id: int | None = None,
+      has_side_effects: bool = False,
+      flags: Mapping[str, Any] | None = None,
+      internal_scratch_in_bytes: int | None = None,
+      serialization_format: int = 1,
+      kernel_type: KernelType = KernelType.TC,
+      disable_bounds_checks: bool = False,
+  ):
+    object.__setattr__(
+        self,
+        "dimension_semantics",
+        None if dimension_semantics is None else tuple(dimension_semantics),
+    )
+    object.__setattr__(
+        self,
+        "allow_input_fusion",
+        None if allow_input_fusion is None else tuple(allow_input_fusion),
+    )
+    object.__setattr__(self, "vmem_limit_bytes", vmem_limit_bytes)
+    object.__setattr__(self, "collective_id", collective_id)
+    object.__setattr__(self, "has_side_effects", has_side_effects)
+    object.__setattr__(
+        self, "flags", None if flags is None else FrozenDict(flags)
+    )
+    object.__setattr__(
+        self, "internal_scratch_in_bytes", internal_scratch_in_bytes
+    )
+    object.__setattr__(self, "serialization_format", serialization_format)
+    object.__setattr__(self, "kernel_type", kernel_type)
+    object.__setattr__(self, "disable_bounds_checks", disable_bounds_checks)
+
   # Replace is a method, not a field.
   replace = dataclasses.replace
+
 
 class MemorySpace(enum.Enum):
   ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
@@ -180,6 +219,17 @@ class TensorCoreMesh:
   """A mesh of TensorCores."""
   devices: np.ndarray
   axis_names: Sequence[str]
+
+  def __init__(self, devices: np.ndarray, axis_names: Sequence[str]):
+    devices = np.copy(devices)
+    devices.setflags(write=False)
+    object.__setattr__(self, "devices", devices)
+    object.__setattr__(self, "axis_names", tuple(axis_names))
+
+  def __hash__(self) -> int:
+    return hash(
+        (self.devices.shape, tuple(np.ravel(self.devices)), self.axis_names)
+    )
 
   @property
   def backend(self) -> str:

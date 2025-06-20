@@ -258,20 +258,6 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
 
   PyThreadState* thread_state = PyThreadState_GET();
 
-#if PY_VERSION_HEX < 0x030b0000
-  // The representation of frame->f_lasti changed from bytes to words in Python
-  // 3.10, see https://docs.python.org/3/whatsnew/3.10.html#changes-in-the-c-api
-  // This should match sizeof(_Py_CODEUNIT) which is unfortunately private.
-  constexpr int kLastiWordBytes = 2;
-
-  for (PyFrameObject* py_frame = thread_state->frame;
-       py_frame != nullptr && count < kMaxFrames; py_frame = py_frame->f_back) {
-    Py_INCREF(py_frame->f_code);
-    frames[count] = {py_frame->f_code, py_frame->f_lasti * kLastiWordBytes};
-    ++count;
-  }
-#else  // PY_VERSION_HEX < 0x030b0000
-
 #ifdef PLATFORM_GOOGLE
 // This code is equivalent to the version using public APIs, but it saves us
 // an allocation of one object per stack frame. However, this is definitely
@@ -280,7 +266,7 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
 // Feel free to turn this on if you like, but it might break at any time!
 #if PY_VERSION_HEX < 0x030d0000
   for (_PyInterpreterFrame* f = thread_state->cframe->current_frame;
-       f != nullptr; f = f->previous) {
+       f != nullptr && count < kMaxFrames; f = f->previous) {
     if (_PyFrame_IsIncomplete(f)) continue;
     Py_INCREF(f->f_code);
     frames[count] = {f->f_code, static_cast<int>(_PyInterpreterFrame_LASTI(f) *
@@ -288,12 +274,13 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
     ++count;
   }
 #else   // PY_VERSION_HEX < 0x030d0000
-  for (_PyInterpreterFrame* f = thread_state->current_frame; f != nullptr;
-       f = f->previous) {
+  for (_PyInterpreterFrame* f = thread_state->current_frame;
+       f != nullptr && count < kMaxFrames; f = f->previous) {
     if (_PyFrame_IsIncomplete(f)) continue;
     Py_INCREF(f->f_executable);
-    frames[count] = {reinterpret_cast<PyCodeObject*>(f->f_executable),
-                     _PyInterpreterFrame_LASTI(f) * sizeof(_Py_CODEUNIT)};
+    frames[count] = {
+        reinterpret_cast<PyCodeObject*>(f->f_executable),
+        static_cast<int>(_PyInterpreterFrame_LASTI(f) * sizeof(_Py_CODEUNIT))};
     ++count;
   }
 #endif  // PY_VERSION_HEX < 0x030d0000
@@ -301,15 +288,13 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
 #else   // PLATFORM_GOOGLE
   PyFrameObject* next;
   for (PyFrameObject* py_frame = PyThreadState_GetFrame(thread_state);
-       py_frame != nullptr; py_frame = next) {
+       py_frame != nullptr && count < kMaxFrames; py_frame = next) {
     frames[count] = {PyFrame_GetCode(py_frame), PyFrame_GetLasti(py_frame)};
     ++count;
     next = PyFrame_GetBack(py_frame);
     Py_XDECREF(py_frame);
   }
 #endif  // PLATFORM_GOOGLE
-
-#endif  // PY_VERSION_HEX < 0x030b0000
 
   Traceback traceback =
       nb::steal<Traceback>(PyObject_NewVar(PyObject, traceback_type_, count));
@@ -335,14 +320,7 @@ void BuildTracebackSubmodule(nb::module_& m) {
       absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".Traceback");
 
   PyType_Spec traceback_spec = {
-#if PY_VERSION_HEX < 0x030B0000
-      // Work around for https://github.com/python/cpython/issues/89478
-      // CPython 3.10 and earlier assume that the .name value remains alive
-      // forever.
-      /*.name=*/strdup(name.c_str()),
-#else
       /*.name=*/name.c_str(),
-#endif  // PY_VERSION_HEX < 0x030B0000
       /*.basicsize=*/static_cast<int>(sizeof(TracebackObject)),
       /*.itemsize=*/static_cast<int>(sizeof(TracebackEntry)),
       /*.flags=*/Py_TPFLAGS_DEFAULT,
@@ -429,7 +407,6 @@ void BuildTracebackSubmodule(nb::module_& m) {
       },
       "Python wrapper around the Python C API function PyCode_Addr2Line");
 
-#if PY_VERSION_HEX >= 0x030b0000
   type.attr("code_addr2location") = nb::cpp_function(
       [](nb::handle code, int lasti) {
         if (!PyCode_Check(code.ptr())) {
@@ -444,30 +421,5 @@ void BuildTracebackSubmodule(nb::module_& m) {
         return nb::make_tuple(start_line, start_column, end_line, end_column);
       },
       "Python wrapper around the Python C API function PyCode_Addr2Location");
-#endif  // PY_VERSION_HEX >= 0x030b0000
-
-#if PY_VERSION_HEX < 0x030b0000
-  // This function replaces the exception traceback associated with the current
-  // Python thread.
-  m.def(
-      "replace_thread_exc_traceback",
-      [](nb::object tb) {
-        if (!tb.is_none() && !PyTraceBack_Check(tb.ptr())) {
-          throw xla::XlaRuntimeError(
-              "argument must be a traceback object or None");
-        }
-        PyThreadState* thread_state = PyThreadState_Get();
-        if (!thread_state->exc_info->exc_traceback) {
-          throw xla::XlaRuntimeError(
-              "Current thread does not have an active "
-              "exception traceback");
-        }
-        PyObject* old_exc_traceback = thread_state->exc_info->exc_traceback;
-        PyObject* new_tb = tb.is_none() ? nullptr : tb.release().ptr();
-        thread_state->exc_info->exc_traceback = new_tb;
-        Py_XDECREF(old_exc_traceback);
-      },
-      nb::arg("traceback").none());
-#endif  // PY_VERSION_HEX < 0x30b0000
 }
 }  // namespace xla

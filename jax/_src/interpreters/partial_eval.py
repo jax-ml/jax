@@ -49,7 +49,7 @@ from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_flatten,
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache, subs_list,
-                           HashableFunction, foreach)
+                           HashableFunction, foreach, cache)
 
 
 map, unsafe_map = safe_map, map
@@ -1153,9 +1153,11 @@ def _partial_eval_jaxpr_custom_cached(
         outvars_copy = list[Atom](eqn.outvars)
         offload_eqn = core.JaxprEqn(
             outvars_copy, resvars, device_put_p,
-            dict(devices=[TransferToMemoryKind(policy.dst)
-                          ] * len(outvars_copy), srcs=[None],
-                 copy_semantics=[CopySemantics.COPY]),
+            dict(
+                devices=(TransferToMemoryKind(policy.dst),) * len(outvars_copy),
+                srcs=(None,),
+                copy_semantics=(CopySemantics.COPY,),
+            ),
             set(), source_info_util.new_source_info(),
             JaxprEqnContext(None, False))
         known_eqns.append(offload_eqn)
@@ -1164,9 +1166,11 @@ def _partial_eval_jaxpr_custom_cached(
         residuals.update(resvars)
         reload_eqn = core.JaxprEqn(
             resvars, eqn.outvars, device_put_p,
-            dict(devices=[TransferToMemoryKind(policy.src)
-                          ] * len(resvars), srcs=[None],
-                 copy_semantics=[CopySemantics.COPY]),
+            dict(
+              devices=(TransferToMemoryKind(policy.src),) * len(resvars),
+              srcs=(None,),
+              copy_semantics=(CopySemantics.COPY,)
+            ),
             set(), source_info_util.new_source_info(),
             JaxprEqnContext(None, False))
         staged_eqns.append(reload_eqn)
@@ -1651,6 +1655,8 @@ class DynamicJaxprTracer(core.Tracer):
   def full_lower(self):
     var = self._trace.frame.tracer_to_var.get(id(self))
     if var is None: return self
+    if isinstance(var, Literal):
+      return var.val
     val = self._trace.frame.constvar_to_val.get(var)
     if val is None: return self
     return core.full_lower(val)
@@ -1886,6 +1892,23 @@ def _drop_unused_vars(
   return jaxpr, list(constvals)
 
 
+@cache()
+def _cached_abstract_eval(primitive: core.Primitive, *aval_qdds, **params):
+  return primitive.abstract_eval(*aval_qdds, **params)
+
+
+def _verify_params_are_hashable(
+    primitive: core.Primitive, params: dict[str, Any]) -> None:
+  for k, v in params.items():
+    try:
+      hash(v)
+    except TypeError as e:
+      raise TypeError(
+        "As of JAX v0.7, parameters to jaxpr equations must have __hash__ and "
+        f"__eq__ methods. In a call to primitive {primitive}, the value of "
+        f"parameter {k} was not hashable: {v}") from e
+
+
 class DynamicJaxprTrace(core.Trace):
   __slots__ = ("frame", "tag", "parent_trace")
 
@@ -1998,7 +2021,25 @@ class DynamicJaxprTrace(core.Trace):
   def default_process_primitive(self, primitive, tracers, params,
                                 source_info=None):
     aval_qdds = [t.aval_mutable_qdd for t in tracers]
-    out_avals, effs = primitive.abstract_eval(*aval_qdds, **params)
+    # TODO(mattjj): make custom_lin have hashable params.
+    # TODO(dougalm): add an attribute to primitives to mark primitives with
+    # effectful abstract_eval rules.
+    if (
+        primitive.name == "custom_lin"
+        or config.dynamic_shapes.value
+        or any(
+            isinstance(aval, core.MutableQuasiDynamicData) for aval in aval_qdds
+        )
+    ):
+      out_avals, effs = primitive.abstract_eval(*aval_qdds, **params)
+    else:
+      try:
+        out_avals, effs = _cached_abstract_eval(primitive, *aval_qdds, **params)
+      except Exception as e:
+        # TODO(phawkins): remove this 3 months after the release of JAX v0.7.
+        _verify_params_are_hashable(primitive, params)
+        raise
+
     if isinstance(out_avals, (tuple, list)) != primitive.multiple_results:
       raise ValueError(f"{primitive}.abstract_eval() method should return "
                        f"a tuple or a list iff {primitive}.multiple_results.")

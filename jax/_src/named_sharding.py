@@ -22,7 +22,6 @@ from typing import Any, Union
 
 from jax._src import config
 from jax._src.util import use_cpp_class, cache, use_cpp_method
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
@@ -146,14 +145,14 @@ class NamedSharding(JSharding.Sharding):
   def memory_kind(self) -> str | None:
     return self._memory_kind
 
-  @use_cpp_method(jaxlib_extension_version >= 353)
+  @use_cpp_method()
   def __hash__(self):
     if not hasattr(self, '_hash'):
       self._hash = hash(
           (self.mesh, self.memory_kind, self.spec, self._logical_device_ids))
     return self._hash
 
-  @use_cpp_method(jaxlib_extension_version >= 353)
+  @use_cpp_method()
   def __eq__(self, other):
     if not isinstance(other, NamedSharding):
       return False
@@ -230,12 +229,18 @@ class NamedSharding(JSharding.Sharding):
     return num_partitions == 1
 
   def with_memory_kind(self, kind: str) -> NamedSharding:
-    return NamedSharding(self.mesh, self.spec, memory_kind=kind)
+    return self.update(memory_kind=kind)
 
-  def with_spec(self, spec: PartitionSpec | Sequence[Any]) -> NamedSharding:
+  def update(self, **kwargs) -> NamedSharding:
+    spec = kwargs.pop("spec", self.spec)
     if not isinstance(spec, PartitionSpec):
       spec = PartitionSpec(*spec)
-    return NamedSharding(self.mesh, spec, memory_kind=self.memory_kind)
+    return NamedSharding(
+        mesh=kwargs.pop("mesh", self.mesh),
+        spec=spec,
+        memory_kind=kwargs.pop("memory_kind", self.memory_kind),
+        _logical_device_ids=kwargs.pop("_logical_device_ids",
+                                       self._logical_device_ids))
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)

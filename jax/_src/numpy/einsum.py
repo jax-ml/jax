@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import collections
-from typing import overload, Any, Callable, Sequence
+from typing import overload, Any
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import opt_einsum
@@ -554,12 +555,12 @@ def _einsum(
           dot_general_out_sharding = None
         elif out_sharding is not None and names != result_names:
           if len(result_names) > len(out_sharding.spec):
-            out_sharding = out_sharding.with_spec(
+            out_sharding = out_sharding.update(spec=
                 out_sharding.spec._normalized_spec_for_aval(len(result_names)))
           spec = out_sharding.spec
           inverse_spec = tuple(spec[result_names.index(name)] for name in names)
           dot_general_out_sharding = NamedSharding(
-              out_sharding.mesh, spec.with_partitions(inverse_spec))
+              out_sharding.mesh, spec.update(partitions=inverse_spec))
         else:
           dot_general_out_sharding = out_sharding  # type: ignore
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))

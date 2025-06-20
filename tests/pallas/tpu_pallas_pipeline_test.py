@@ -122,20 +122,16 @@ def basic_matmul_kernel(
 class PallasCallPipelineTest(parameterized.TestCase):
 
   def setUp(self):
-    if jax.device_count() < 2:
-      self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only works with TPU v5')
 
     super().setUp()
 
-  @parameterized.named_parameters(
-      ('vmem', pltpu.VMEM),
-      ('hbm', pltpu.ANY),
+  @parameterized.product(
+      no_pipelining=[False, True],
+      use_sreg_for_state=[False, True],
   )
-  def test_pipeline_matmul(self, memory_space):
-    # TODO(b/358121809): Re-enable this test once the bug is fixed.
-    self.skipTest('Broken test.')
+  def test_pipeline_matmul(self, no_pipelining, use_sreg_for_state):
     k1, k2 = jax.random.split(jax.random.key(0))
     x = jax.random.uniform(k1, (512, 512))
     y = jax.random.uniform(k2, (512, 512))
@@ -156,16 +152,18 @@ class PallasCallPipelineTest(parameterized.TestCase):
               pl.BlockSpec((128, 128), lambda i, j, k: (k, j)),
           ],
           out_specs=pl.BlockSpec((128, 128), lambda i, j, k: (i, j)),
+          no_pipelining=no_pipelining,
+          use_sreg_for_state=use_sreg_for_state,
       )(x_ref, y_ref, z_ref)
 
     z = pl.pallas_call(
         matmul_kernel,
         out_shape=jax.ShapeDtypeStruct((512, 512), jnp.float32),
         in_specs=[
-            pl.BlockSpec(memory_space=memory_space),
-            pl.BlockSpec(memory_space=memory_space),
+            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=memory_space),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
     )
 
     jax.block_until_ready(z(x, y))
@@ -174,7 +172,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
     out = jax.block_until_ready(z(x, y))
     expected_out = jax.block_until_ready(jnp.dot(x, y))
 
-    np.testing.assert_allclose(out, expected_out)
+    np.testing.assert_allclose(out, expected_out, atol=5e-5)
 
   @parameterized.named_parameters(
       ('vmem', pltpu.VMEM),

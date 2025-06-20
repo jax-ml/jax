@@ -14,7 +14,7 @@
 from collections import defaultdict
 from dataclasses import replace
 import itertools as it
-from typing import Sequence
+from collections.abc import Sequence
 import numpy as np
 
 from jax._src import ad_util
@@ -25,6 +25,7 @@ from jax._src import random
 from jax._src import shard_map
 from jax._src.lax import (
   ann,
+  control_flow,
   convolution,
   fft,
   lax,
@@ -42,6 +43,7 @@ _FMA_FLOPS_FACTOR = 2
 for prim in it.chain(
   ad_util.__dict__.values(),
   ann.__dict__.values(),
+  control_flow.__dict__.values(),
   convolution.__dict__.values(),
   fft.__dict__.values(),
   lax.__dict__.values(),
@@ -147,6 +149,50 @@ roofline.register_roofline(lax.eq_p)(_binary_p_roofline)
 roofline.register_roofline(lax.ne_p)(_binary_p_roofline)
 roofline.register_roofline(lax.min_p)(_binary_p_roofline)
 roofline.register_roofline(lax.max_p)(_binary_p_roofline)
+
+def _cumulative_p_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    axis: int,
+    **kw,
+) -> roofline.RooflineResult:
+  (x,) = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
+  return roofline.RooflineResult(
+      # `cum{max, min, prod, sum}` only calculate values for one axis.
+      unfused_flops=x.shape[axis],
+      unfused_hbm_bytes=(
+          x.dtype.itemsize * x.size + out.dtype.itemsize * out.size
+      ),
+  )
+
+roofline.register_roofline(control_flow.cummax_p)(_cumulative_p_roofline)
+roofline.register_roofline(control_flow.cummin_p)(_cumulative_p_roofline)
+roofline.register_roofline(control_flow.cumprod_p)(_cumulative_p_roofline)
+roofline.register_roofline(control_flow.cumsum_p)(_cumulative_p_roofline)
+
+@roofline.register_roofline(control_flow.cumlogsumexp_p)
+def _cumlogsumexp_p_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    axis: int,
+    **kw,
+) -> roofline.RooflineResult:
+  (x,) = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
+  return roofline.RooflineResult(
+      # Similar to `cum{max, min, prod, sum}`, `cumlogsumexp` only calculates
+      # values for one axis. But for `x.shape[axis] = S`, it computes (for a
+      # naive implementation):
+      #   S `exp` ops.
+      #   S-1 `add` ops.
+      #   1 log op.
+      # Thus, the total number of flops is 2 * S.
+      unfused_flops=x.shape[axis] * 2,
+      unfused_hbm_bytes=(
+          x.dtype.itemsize * x.size + out.dtype.itemsize * out.size
+      ),
+  )
 
 
 @roofline.register_roofline(lax.dot_general_p)
@@ -454,11 +500,33 @@ roofline.register_roofline(lax_parallel.all_gather_p)(
 )
 
 
+@roofline.register_roofline(slicing.gather_p)
+def _gather_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  _, indices = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
+
+  # Gather doesn't read the whole input buffer, it's equivalent to a copy the
+  # size of the output shape and a read of the gather indices.
+  bytes = (
+      out.dtype.itemsize * out.size * 2 + indices.dtype.itemsize * indices.size
+  )
+
+  return roofline.RooflineResult(
+      # Gather does not issue any flops.
+      unfused_flops=0,
+      unfused_hbm_bytes=bytes,
+  )
+
+
 def _scalar_collective_roofline(
-  ctx: roofline.RooflineRuleContext,
-  *args,
-  axes: tuple[str, ...],
-  **kw,
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    axes: tuple[str, ...],
+    **kw,
 ) -> roofline.RooflineResult:
   shapes = [roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in]
   ctx = replace(ctx, avals_in=[core.ShapedArray((1,), shape.dtype) for shape in shapes])

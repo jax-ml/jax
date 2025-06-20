@@ -461,7 +461,7 @@ class AxisData:
 def get_sharding_for_vmap(axis_data, orig_sharding, axis):
   val = axis_data.explicit_mesh_axis
   # TODO(yashkatariya): Preserve unreduced here using
-  # `orig_sharding.spec.with_partitions`
+  # `orig_sharding.spec.update`
   new_spec = P(*tuple_insert(orig_sharding.spec, axis, val))
   return NamedSharding(orig_sharding.mesh, new_spec)
 
@@ -504,7 +504,7 @@ class BatchTrace(Trace):
       with core.set_current_trace(self.parent_trace):
         val_out, dim_out = primitive_batchers[p](vals_in, dims_in, **params)
     else:
-      raise NotImplementedError("Batching rule for '{}' not implemented".format(p))
+      raise NotImplementedError(f"Batching rule for '{p}' not implemented")
     src = source_info_util.current()
     if p.multiple_results:
       with core.set_current_trace(self.parent_trace):  # val_out may be lazy map
@@ -1127,7 +1127,7 @@ def broadcast(x, sz, axis, mesh_axis=None):
   if x_aval.sharding.mesh.empty:
     mesh_axis = None
   new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
-  sharding = x_aval.sharding.with_spec(new_spec)
+  sharding = x_aval.sharding.update(spec=new_spec)
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure
   # out how to ensure jaxpr arguments always have the context mesh.
   with mesh_lib.use_abstract_mesh(sharding.mesh):

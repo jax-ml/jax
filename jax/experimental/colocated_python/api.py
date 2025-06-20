@@ -16,7 +16,8 @@
 from __future__ import annotations
 
 import collections
-from typing import Any, Callable, Sequence, Type, overload
+from typing import Any, overload
+from collections.abc import Callable, Sequence
 
 import jax
 from jax._src import api_util
@@ -110,13 +111,13 @@ def _colocated_cpu_mesh_cached(mesh: jax.sharding.Mesh) -> jax.sharding.Mesh:
   )
 
 
-def colocated_python(fun: Callable[..., Any]) -> Callable[..., Any]:
+def colocated_python(fun: Callable[..., Any]):
   """Executes the given Python function on the same devices as the arguments."""
   return make_callable(
       fun, api_util.fun_sourceinfo(fun), api_util.fun_signature(fun)
   )
 
 
-def colocated_python_class(cls: Type[object]) -> Type[object]:
+def colocated_python_class(cls: type[object]) -> type[object]:
   """Executes the given Python class methods on the same devices as the arguments."""
   return wrap_class(cls, api_util.fun_sourceinfo(cls))

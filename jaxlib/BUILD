@@ -1098,6 +1098,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@nanobind",
+        "@tsl//tsl/profiler/lib:traceme",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
     ],
 )

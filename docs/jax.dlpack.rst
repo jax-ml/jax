@@ -9,4 +9,3 @@
     :toctree: _autosummary
 
     from_dlpack
-    to_dlpack

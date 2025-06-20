@@ -23,11 +23,13 @@ import math
 import os
 import pathlib
 import time
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
+from collections.abc import Callable
 import weakref
 
 import itertools
 import jax
+from jax._src import lib
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
@@ -54,20 +56,9 @@ from . import transform_inference
 from . import utils
 
 # MLIR can't find libdevice unless we point it to the CUDA path
-# TODO(apaszke): Unify with jax._src.lib.cuda_path
-cuda_root = "/usr/local/cuda"
+cuda_root = lib.cuda_path or "/usr/local/cuda"
+os.environ["CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
-if os.environ.get("CUDA_ROOT") is None:
-  if PYTHON_RUNFILES:
-    cuda_nvcc_root = os.path.join(PYTHON_RUNFILES, "cuda_nvcc")
-    if os.path.exists(cuda_nvcc_root):
-      cuda_root = cuda_nvcc_root
-  os.environ["CUDA_ROOT"] = cuda_root
-else:
-  cuda_root = os.environ["CUDA_ROOT"]
-
-PTXAS_PATH = os.path.join(cuda_root, "bin/ptxas")
-NVDISASM_PATH = os.path.join(cuda_root, "bin/nvdisasm")
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
 FWD_COMPAT_IR_VERSION = 1
@@ -740,6 +731,10 @@ def as_gpu_kernel(
   elif not isinstance(inout_shape, tuple):
     inout_shape = (inout_shape,)
 
+  inout_shape = jax.tree.map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype),
+                             inout_shape)
+  out_shape = jax.tree.map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype),
+                           out_shape)
   module, out_shape, unwrap_output_tuple, launch_ctx = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, inout_shape,

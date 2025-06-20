@@ -675,7 +675,7 @@ class Trace(Generic[TracerType]):
     return not self._invalidated
 
   def __repr__(self):
-    return '{}'.format(self.__class__.__name__)
+    return f'{self.__class__.__name__}'
 
   def process_call(self, call_primitive, f, tracers, params):
     msg = (f"{type(self)} must override process_call to handle call-like "
@@ -1938,10 +1938,10 @@ def get_cur_mesh_sharding(spec=None):
 def _make_lengths_same(sharding, ndim):
   pspec = sharding.spec
   if ndim > len(pspec):
-    return sharding.with_spec(pspec._normalized_spec_for_aval(ndim))
+    return sharding.update(spec=pspec._normalized_spec_for_aval(ndim))
   if ndim < len(pspec):
     assert all(s is None for s in pspec[ndim:]), (ndim, pspec)
-    return sharding.with_spec(P(*pspec[:ndim], unreduced=pspec.unreduced))
+    return sharding.update(spec=P(*pspec[:ndim], unreduced=pspec.unreduced))
   assert False, "unreachable"
 
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
@@ -1965,7 +1965,7 @@ def _maybe_modify_sharding(sharding, ndim):
   elif sharding.mesh._are_all_axes_explicit:
     out = sharding
   else:
-    out = sharding.with_spec(modify_spec_for_auto_manual(
+    out = sharding.update(spec=modify_spec_for_auto_manual(
         sharding.spec, sharding.mesh))
   if len(out.spec) != ndim:
     out = _make_lengths_same(out, ndim)
@@ -2034,6 +2034,14 @@ def get_vma(vma, mesh):
           f" be of type `Manual`. Got axis: {i} of type {mesh._name_to_type[i]}")
   assert isinstance(vma, frozenset)
   return vma
+
+
+class SingleSideCollectiveEffect(effects.Effect):
+  __str__ = lambda _: "one-sided communication"
+
+
+single_side_collective_effect = SingleSideCollectiveEffect()
+effects.control_flow_allowed_effects.add_type(SingleSideCollectiveEffect)
 
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'sharding', 'vma']  # inherits slots from parent
@@ -2152,7 +2160,7 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
 def primal_sharding_to_cotangent_sharding(sharding):
   new_spec = P(*sharding.spec, unreduced=sharding.spec.reduced,
                reduced=sharding.spec.unreduced)
-  return sharding.with_spec(new_spec)
+  return sharding.update(spec=new_spec)
 
 def pvary(x, axis_name):
   if not axis_name:
@@ -2193,8 +2201,12 @@ def standard_insert_pvary(*args):
   in_vma = [frozenset() if (aval := get_aval(a)) is abstract_token
             else aval.vma for a in args]  # pytype: disable=attribute-error
   out_vma = frozenset.union(*in_vma)
-  return [pvary(arg, tuple(n for n in out_vma if n not in src))
-          if out_vma - src else arg for arg, src in zip(args, in_vma)]
+  return [
+      pvary(arg, tuple(n for n in out_vma if n not in src))
+      if isinstance(get_aval(arg), ShapedArray) and out_vma - src
+      else arg
+      for arg, src in zip(args, in_vma)
+  ]
 
 def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
   if not config._check_vma.value:
@@ -2202,7 +2214,7 @@ def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
   avals = tuple(a for a in avals if a is not abstract_token)
   if not avals:
     return frozenset()
-  vma, *vmas = [a.vma for a in avals]
+  vma, *vmas = (a.vma for a in avals)
   if not all(vma == vma_ for vma_ in vmas):
     raise ValueError(
         f'Primitive {prim_name} requires varying manual axes '
@@ -2271,7 +2283,8 @@ class DShapedArray(UnshapedArray):
             and self.weak_type == other.weak_type)
 
   def __hash__(self):
-    return hash((self.shape, self.dtype, self.weak_type))
+    # We don't hash the contents of the shape because it may contain tracers.
+    return hash((len(self.shape), self.dtype, self.weak_type))
 
   def to_tangent_aval(self):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
@@ -2773,7 +2786,7 @@ def _map_shaped_array(
   # assert axis is None or aval.shape[axis] == size
   if axis is None:
     return aval
-  sharding = aval.sharding.with_spec(tuple_delete(aval.sharding.spec, axis))
+  sharding = aval.sharding.update(spec=tuple_delete(aval.sharding.spec, axis))
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                      weak_type=aval.weak_type, sharding=sharding, vma=aval.vma)
 
@@ -2782,7 +2795,7 @@ def _unmap_shaped_array(
     ) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
-    sharding = aval.sharding.with_spec(tuple_insert(
+    sharding = aval.sharding.update(spec=tuple_insert(
         aval.sharding.spec, axis, explicit_mesh_axis))
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding,

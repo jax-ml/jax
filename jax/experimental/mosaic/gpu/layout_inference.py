@@ -25,7 +25,6 @@ from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import math as mlir_math
-from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import numpy as np
@@ -54,8 +53,8 @@ def _set_layout_attributes(
     in_layouts: list[ir.Attribute],
     out_layouts: list[ir.Attribute],
 ):
-    op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
-    op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
+  op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
+  op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
 
 
 def _choose_representative_layout(
@@ -137,7 +136,6 @@ def _choose_representative_layout(
 
 
 def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
-
   def is_array(v: ir.Value) -> bool:
     return ir.VectorType.isinstance(v.type)
 
@@ -638,11 +636,8 @@ if hasattr(mgpu, "BroadcastInDimOp"):
     ):
       out_layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
       return [in_layout], [out_layout]
-    else:
-      raise NotImplementedError(
-          f"Unsupported layout: {in_layout} for broadcast dimensions"
-          f" {broadcast_dims}"
-      )
+
+    return None
 
 
 @partial(_add_layout_inference_rule, mgpu.WGMMAOp)
@@ -663,21 +658,6 @@ def _earliest_use(regions: list[ir.Region], uses: Sequence[ir.OpOperand]) -> ir.
         if op in owners:
           return op
   raise ValueError("None of uses are in the given block")
-
-
-def _insert_memref_layout_cast(layout: ir.Attribute, view_op: memref.ViewOp):
-  mem_ref_type = ir.MemRefType(view_op.result.type)
-  memref_new_type = ir.MemRefType.get(
-    mem_ref_type.shape,
-    mem_ref_type.element_type,
-    layout,
-    mem_ref_type.memory_space,
-  )
-  uses = list(view_op.result.uses)
-  with ir.InsertionPoint(_earliest_use(view_op.parent.regions, uses)):
-    cast_op = memref.cast(memref_new_type, view_op.result)
-  for use in uses:
-    use.owner.operands[use.operand_number] = cast_op
 
 
 class TraversalOrder(enum.Enum):
@@ -725,20 +705,20 @@ def infer_layout(module: ir.Module):
   #
   # We run two passes over the module, in order to make sure that layouts
   # defined in the middle of the computation are propagated wherever they need
-  # to be propagated. We start with a backwards (root-to-parameters) pass to
-  # propagate the information as far up as possible, and then a forward pass
-  # (parameters-to-root).
+  # to be propagated. We start with a forward (parameters-to-root) pass to
+  # preserve replicated layouts as far down as possible, and then do a
+  # backwards (root-to-parameters) pass.
   #
-  # Backwards pass
-  for op in module.body:
-    inference_utils.traverse_op(
-        op, inference_step, inference_utils.TraversalOrder.BACKWARDS
-    )
-
   # Forward pass
   for op in module.body:
     inference_utils.traverse_op(
         op, inference_step, inference_utils.TraversalOrder.FORWARD
+    )
+
+  # Backwards pass
+  for op in module.body:
+    inference_utils.traverse_op(
+        op, inference_step, inference_utils.TraversalOrder.BACKWARDS
     )
 
   # At this point, layouts have been propagated as far as they could be
@@ -755,7 +735,7 @@ def infer_layout(module: ir.Module):
     max_vec_size_for_v = (
           np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
       )
-    desired_vec_size = 64 // utils.bitwidth(v.type.element_type)
+    desired_vec_size = 64 // utils.bitwidth(v.type.element_type)  # pytype: disable=attribute-error
     default_vector_size = min(
         default_vector_size, max_vec_size_for_v, desired_vec_size
     )

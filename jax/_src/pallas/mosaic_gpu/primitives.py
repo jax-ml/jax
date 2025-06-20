@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
@@ -1274,6 +1275,12 @@ def tcgen05_mma(acc: _Ref,
     raise ValueError(
         f"LHS and RHS have incompatible shapes. LHS: {a.shape}. RHS: {b.shape}.")
 
+  if isinstance(acc, pallas_core.TransformedRef):
+    acc_transforms_leaves, acc_transforms_tree = jax.tree.flatten(acc.transforms)
+    acc = acc.ref
+  else:
+    acc_transforms_leaves, acc_transforms_tree = [], None
+
   if isinstance(a, pallas_core.TransformedRef):
     a_transforms_leaves, a_transforms_tree = jax.tree.flatten(a.transforms)
     a = a.ref
@@ -1295,22 +1302,25 @@ def tcgen05_mma(acc: _Ref,
     barrier_transforms_leaves, barrier_transforms_tree = [], None
 
   tcgen05_mma_p.bind(acc, a, b, barrier, accumulate,
-                      *a_transforms_leaves, *b_transforms_leaves,
-                      *barrier_transforms_leaves,
-                      a_transforms_tree=a_transforms_tree,
-                      b_transforms_tree=b_transforms_tree,
-                      barrier_transforms_tree=barrier_transforms_tree,
-                      collective_axis=collective_axis)
+                     *acc_transforms_leaves, *a_transforms_leaves,
+                     *b_transforms_leaves,
+                     *barrier_transforms_leaves,
+                     acc_transforms_tree=acc_transforms_tree,
+                     a_transforms_tree=a_transforms_tree,
+                     b_transforms_tree=b_transforms_tree,
+                     barrier_transforms_tree=barrier_transforms_tree,
+                     collective_axis=collective_axis)
 
 
 @tcgen05_mma_p.def_abstract_eval
 def _tcgen05_mma_abstract_eval(acc, a, b, barrier, accumulate,
                                *transforms_leaves,
-                               a_transforms_tree, b_transforms_tree,
+                               acc_transforms_tree, a_transforms_tree,
+                               b_transforms_tree,
                                barrier_transforms_tree,
                                collective_axis):
-  del (accumulate, transforms_leaves, a_transforms_tree, b_transforms_tree,
-       barrier_transforms_tree)
+  del (accumulate, transforms_leaves, acc_transforms_tree,
+       a_transforms_tree, b_transforms_tree, barrier_transforms_tree)
 
   if acc.memory_space != gpu_core.TMEM:
     raise ValueError("Accumulator must be a TMEM Ref.")
@@ -1348,6 +1358,7 @@ def _tcgen05_mma_lowering(
     barrier_ref: mgpu.BarrierRef,
     accumulate: bool | ir.Value,
     *transforms_leaves,
+    acc_transforms_tree,
     a_transforms_tree,
     b_transforms_tree,
     barrier_transforms_tree,
@@ -1358,16 +1369,25 @@ def _tcgen05_mma_lowering(
   lhs_transpose: bool = False
 
   transforms_trees = (
+      acc_transforms_tree,
       a_transforms_tree,
       b_transforms_tree,
       barrier_transforms_tree,
   )
-  (a_transforms_leaves, b_transforms_leaves, barrier_transforms_leaves, _) = (
+  (acc_transforms_leaves, a_transforms_leaves, b_transforms_leaves, barrier_transforms_leaves, _) = (
       util.split_list(
           transforms_leaves,
           [getattr(tree, "num_leaves", 0) for tree in transforms_trees],
       )
   )
+
+  if acc_transforms_tree is not None:
+    acc_transforms = acc_transforms_tree.unflatten(acc_transforms_leaves)
+    acc, acc_transforms = lowering._handle_transforms(ctx, acc, acc_transforms)
+    if acc_transforms:
+      raise NotImplementedError(
+          f"Unsupported transforms: {acc_transforms}."
+      )
 
   if a_transforms_tree is not None:
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
@@ -1557,6 +1577,10 @@ class ParameterizedLayout:
   layout_cls: Layout
   args: Sequence[Any]
   kwargs: Any
+
+  def __post_init__(self):
+    object.__setattr__(self, "args", tuple(self.args))
+    object.__setattr__(self, "kwargs", frozen_dict.FrozenDict(self.kwargs))
 
   def to_mgpu(self) -> mgpu.FragmentedLayout:
     return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
@@ -1808,7 +1832,7 @@ def _jaxpr_call_discharge(
   outs = jaxpr_call_p.bind(
       *flat_args,
       jaxpr=discharged_jaxpr,
-      ref_treedefs=ref_treedefs,
+      ref_treedefs=tuple(ref_treedefs),
       program_ids_treedef=program_ids_treedef,
   )
   discharged_outs_it = iter(outs[len(jaxpr.outvars) :])
@@ -1861,7 +1885,7 @@ def jaxpr_call(
       *flat_refs,
       *flat_program_ids,
       jaxpr=jaxpr,
-      ref_treedefs=ref_treedefs,
+      ref_treedefs=tuple(ref_treedefs),
       program_ids_treedef=program_ids_treedef,
   )
 
@@ -1963,8 +1987,8 @@ def inline_mgpu(*, arg_types=(), return_type=None):
       flat_ret = inline_mgpu_p.bind(
           *raw_flat_args,
           *flat_ref_transforms,
-          flat_arg_types=flat_arg_types,
-          flat_ret_ty=flat_ret_ty,
+          flat_arg_types=tuple(flat_arg_types),
+          flat_ret_ty=tuple(flat_ret_ty),
           pytree_ret_ty=pytree_ret_ty,
           pytree_args=treedef,
           pytree_ref_transforms=pytree_ref_transforms,

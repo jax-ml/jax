@@ -638,7 +638,7 @@ class DevicePutTest(jtu.JaxTestCase):
   @jtu.run_on_devices('tpu')
   def test_ragged_copy_on_host(self):
     mesh = jtu.create_mesh((2,), ('x'))
-    sharding = jax.sharding.NamedSharding(mesh, P(('x')))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
     cpu_sharding = sharding.with_memory_kind('pinned_host')
 
     num_pages = 512 * 1024
@@ -648,7 +648,7 @@ class DevicePutTest(jtu.JaxTestCase):
 
     def write(x):
       return x.at[16 * 1024:].set(0)
-    x = shard_map(write, mesh=mesh, in_specs=P(('x'),), out_specs=P(('x')))(x)
+    x = shard_map(write, mesh=mesh, in_specs=P(('x'),), out_specs=P('x'))(x)
 
     chunk_size = 8
     def inner(state):
@@ -670,7 +670,7 @@ class DevicePutTest(jtu.JaxTestCase):
       return cpu_x
 
     fn = jax.jit(shard_map(foo, mesh=mesh, in_specs=P(('x'),),
-                           out_specs=P(('x')), check_vma=False),
+                           out_specs=P('x'), check_vma=False),
                  out_shardings=cpu_sharding)
     y = fn(x)
     jax.block_until_ready(y)

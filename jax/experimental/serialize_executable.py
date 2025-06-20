@@ -20,7 +20,7 @@ import io
 
 import jax
 from jax._src.lib import xla_client as xc
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def serialize(compiled: jax.stages.Compiled):

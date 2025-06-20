@@ -119,7 +119,10 @@ def _transforms_from_uses(op: ir.OpView) -> ir.Attribute | None:
     transforms = _resolve_transforms(transforms, user_transforms)
   return transforms
 
-def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
+
+def _infer_transforms_for_wgmma_ref(
+    ref_ty: ir.MemRefType, max_swizzle: mgpu.SwizzlingMode
+) -> tuple[ir.ArrayAttr, mgpu.SwizzlingMode]:
   if len(ref_ty.shape) != 2:
     raise ValueError(f"Expected a 2D memref, got {ref_ty}")
 
@@ -136,9 +139,12 @@ def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
       mgpu.SwizzlingMode.k32ByteSwizzle,
       mgpu.SwizzlingMode.kNoSwizzle,
   ]:
+    if swizzle > max_swizzle:
+      continue
     swizzle_elems = swizzle // element_bytewidth
     if minor_dim % swizzle_elems == 0:
       minor_tiling = swizzle_elems
+      inferred_swizzle = swizzle
       break
   else:
     # No valid tile transform can be inferred.
@@ -148,19 +154,30 @@ def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
     tiling = (minor_tiling, major_tiling)
   else:
     tiling = (major_tiling, minor_tiling)
-  return ir.ArrayAttr.get([
-      mgpu.TileTransformAttr.get(tiling),
-      mgpu.SwizzleTransformAttr.get(minor_tiling * element_bytewidth),
-  ])
+  return (
+      ir.ArrayAttr.get([
+          mgpu.TileTransformAttr.get(tiling),
+          mgpu.SwizzleTransformAttr.get(minor_tiling * element_bytewidth),
+      ]),
+      inferred_swizzle,
+  )
 
 
 @partial(_add_transform_inference_rule, mgpu.WGMMAOp)
 def infer_wgmma_transforms(op: mgpu.WGMMAOp) -> OptionalTransforms:
-  b_transforms = infer_transforms_for_wgmma_ref(ir.MemRefType(op.b.type))
+  b_transforms, b_swizzle = _infer_transforms_for_wgmma_ref(
+      ir.MemRefType(op.b.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+  )
   if ir.MemRefType.isinstance(op.a.type):
-    a_transforms = infer_transforms_for_wgmma_ref(
-        cast(ir.MemRefType, op.a.type)
+    a_transforms, a_swizzle = _infer_transforms_for_wgmma_ref(
+        cast(ir.MemRefType, op.a.type), max_swizzle=b_swizzle
     )
+    if a_swizzle != b_swizzle:
+      # The swizzle for a and b has to match.
+      b_transforms, b_swizzle = _infer_transforms_for_wgmma_ref(
+          ir.MemRefType(op.b.type), max_swizzle=a_swizzle
+      )
+      assert a_swizzle == b_swizzle
     return [a_transforms, b_transforms], []
   return [b_transforms], []
 
@@ -203,8 +220,8 @@ def _infer_vector_load_store_transforms(
   transforms = inference_utils.value_transforms(op.base)
 
   if layout == fa.WGMMA_LAYOUT:
-    layout_transforms = infer_transforms_for_wgmma_ref(
-        ir.MemRefType(op.base.type)
+    layout_transforms, _ = _infer_transforms_for_wgmma_ref(
+        ir.MemRefType(op.base.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
     )
   elif (
       layout == fa.WGMMA_ROW_LAYOUT

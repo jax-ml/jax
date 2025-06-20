@@ -52,7 +52,7 @@ from jax._src.sharding import Sharding, common_devices_indices_map
 from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src.sharding_impls import (
-    AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding, PositionalSharding,
+    AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
 from jax._src.pjit import (pjit, mesh_cast, auto_axes, explicit_axes,
                            use_auto_axes, use_explicit_axes, reshard,
@@ -507,8 +507,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
   def testShardingConstraintWithArrayOpSharding(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("Shardy doesn't support PositionalSharding")
     shape = (8, 8)
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     s = NamedSharding(mesh, P(None))
@@ -3673,20 +3671,17 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_pjit_out_sharding_preserved(self):
-    if config.use_shardy_partitioner.value:
-      raise unittest.SkipTest("Shardy doesn't support PositionalSharding")
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     ns = NamedSharding(mesh, P('x'))
-    ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
+    gs = GSPMDSharding(jax.devices()[:2], ns._to_xla_hlo_sharding(2))
 
     arr = jax.device_put(np.arange(8).reshape(8, 1), ns)
-    arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
+    arr2 = jax.device_put(np.arange(8).reshape(8, 1), gs)
 
     def mul(x):
       return x * 2
 
     f = pjit(mul, out_shardings=ns)
-    f2 = pjit(mul, out_shardings=ps)
 
     with jtu.count_pjit_cpp_cache_miss() as count:
       out = f(arr)
@@ -3697,24 +3692,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertIsInstance(out.sharding, NamedSharding)
     self.assertEqual(count(), 1)
 
-    with jtu.count_pjit_cpp_cache_miss() as count:
-      out2 = f2(arr)
-      cache_info2 = pxla._cached_compilation.cache_info()
-      self.assertIsInstance(out2.sharding, PositionalSharding)
-
-      out2 = f2(arr)
-      self.assertIsInstance(out2.sharding, PositionalSharding)
-    self.assertEqual(count(), 1)
-
-    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
-    self.assertEqual(cache_info2.misses, cache_info1.misses)
-
     with jtu.count_jit_tracing_cache_miss() as tracing_count:
       out3 = jnp.squeeze(arr, axis=-1)
       self.assertIsInstance(out3.sharding, NamedSharding)
 
       out4 = jnp.squeeze(arr2, axis=-1)
-      self.assertIsInstance(out4.sharding, PositionalSharding)
+      self.assertIsInstance(out4.sharding, GSPMDSharding)
     self.assertEqual(tracing_count(), 2)
 
   @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
@@ -3789,14 +3772,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_jit_mul_sum_sharding_preserved(self):
-    if config.use_shardy_partitioner.value:
-      raise unittest.SkipTest("Shardy doesn't support PositionalSharding")
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     ns = NamedSharding(mesh, P('x'))
-    ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
+    gs = GSPMDSharding(tuple(mesh.devices.flat), ns._to_xla_hlo_sharding(2))
 
     arr = jax.device_put(np.arange(8).reshape(8, 1), ns)
-    arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
+    arr2 = jax.device_put(np.arange(8).reshape(8, 1), gs)
 
     f = jax.jit(lambda x: x * 2)
 
@@ -3806,11 +3787,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
       with jtu.count_pjit_cpp_cache_miss() as cpp_count:
         out2 = f(arr2)
-        self.assertIsInstance(out2.sharding, PositionalSharding)
+        self.assertIsInstance(out2.sharding, GSPMDSharding)
 
         # This will hit the cpp cache.
         out3 = f(out2)
-        self.assertIsInstance(out3.sharding, PositionalSharding)
+        self.assertIsInstance(out3.sharding, GSPMDSharding)
 
     self.assertEqual(compilation_count(), 2)
     self.assertEqual(cpp_count(), 1)
@@ -3858,8 +3839,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out2.sharding.spec, P())
 
   def test_sharding_preserved_apply_primitive(self):
-    if config.use_shardy_partitioner.value:
-      raise unittest.SkipTest("Shardy doesn't support PositionalSharding")
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     ns = NamedSharding(mesh, P('x'))
 
@@ -3868,10 +3847,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = jnp.copy(arr)
     self.assertIsInstance(out.sharding, NamedSharding)
 
-    ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
-    arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
+    gs = GSPMDSharding(jax.devices()[:2], ns._to_xla_hlo_sharding(2))
+    arr2 = jax.device_put(np.arange(8).reshape(8, 1), gs)
     out2 = jnp.copy(arr2)
-    self.assertIsInstance(out2.sharding, PositionalSharding)
+    self.assertIsInstance(out2.sharding, GSPMDSharding)
 
     arr3 = jnp.arange(8)
     out3 = jnp.copy(arr3)
@@ -4348,11 +4327,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f(inps)  # doesn't crash
 
   def test_spmd_preserves_input_sharding_vmap_grad(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("Shardy doesn't support PositionalSharding")
     # https://github.com/jax-ml/jax/issues/20710
     n_devices = jax.device_count()
-    sharding = PositionalSharding(jax.devices())
+    mesh = Mesh(jax.devices(), 'x')
+    sharding = NamedSharding(mesh, P('x'))
 
     def model(params, x):
       return x @ params
@@ -4365,8 +4343,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     params = jnp.ones(feature_dim)
 
     # Shard data, replicate params
-    x = jax.device_put(x, sharding.reshape(n_devices, 1))
-    params = jax.device_put(params, sharding.replicate(axis=0))
+    x = jax.device_put(x, sharding)
+    params = jax.device_put(params, NamedSharding(mesh, P()))
 
     model(params, x)  # doesn't crash
 

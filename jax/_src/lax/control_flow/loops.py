@@ -66,7 +66,7 @@ from jax._src.util import (
     merge_lists, partition_list, safe_map, safe_zip, split_list,
     split_list_checked, unzip2, weakref_lru_cache,)
 from jax._src import xla_bridge as xb
-from jax.tree_util import (
+from jax._src.tree_util import (
     keystr, tree_flatten, tree_flatten_with_path, tree_map, tree_unflatten,
     treedef_is_leaf)
 import numpy as np
@@ -616,7 +616,7 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
-  sharding = aval.sharding.with_spec((*length_spec, *aval.sharding.spec))
+  sharding = aval.sharding.update(spec=(*length_spec, *aval.sharding.spec))
   empty = core.pvary(lax.empty(aval.dtype), tuple(aval.vma))
   return lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
 
@@ -2165,7 +2165,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           primitive=None,
           avals_in=[pred_aval],
           avals_out=[pred_aval.update(
-              shape=(), sharding=pred_aval.sharding.with_spec(()))],
+              shape=(), sharding=pred_aval.sharding.update(spec=()))],
           tokens_in=mlir.TokenSet(),
           tokens_out=None)
       pred, = lax._unary_reduce_lower(
@@ -2509,7 +2509,7 @@ def _scan_leaf(leaf, batch_elems, num_batches, batch_size):
         '0th dimension of leaf passed to `jax.lax.map` should be replicated.'
         f' Got {aval.str_short(True, True)}')
   if get_abstract_mesh()._are_all_axes_explicit:
-    out_s = aval.sharding.with_spec(P(None, None, *aval.sharding.spec[1:]))
+    out_s = aval.sharding.update(spec=P(None, None, *aval.sharding.spec[1:]))
     return auto_axes(f, out_sharding=out_s)(leaf)
   return f(leaf)
 
@@ -2612,7 +2612,7 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype,
         out_sharding=out_sharding), (None, None)
   keys = batching.moveaxis(keys, bd, 0)
   batch_size = keys.shape[0]
-  out_s = (out_sharding.with_spec((keys.aval.sharding.spec[0], *out_sharding.spec))
+  out_s = (out_sharding.update(spec=(keys.aval.sharding.spec[0], *out_sharding.spec))
            if out_sharding is not None else None)
   key = keys[0]
   new_key, bits = lax.rng_bit_generator_p.bind(

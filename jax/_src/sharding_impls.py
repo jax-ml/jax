@@ -43,7 +43,7 @@ from jax._src.named_sharding import (  # noqa: F401
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
-from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
+from jax._src.util import safe_zip, use_cpp_class, use_cpp_method
 import numpy as np
 
 config_ext = xc._xla.config
@@ -353,212 +353,6 @@ class PmapSharding(jsharding.Sharding):
     return sharded_shape
 
 PmapSharding.__module__ = 'jax.sharding'
-
-def _op_sharding_to_pos_sharding(
-    op_sharding: xc.OpSharding | xc.HloSharding,
-    device_assignment: Sequence[xc.Device],
-    memory_kind: str | None = None) -> PositionalSharding:
-  if isinstance(op_sharding, xc.OpSharding):
-    op_sharding = xc.HloSharding.from_proto(op_sharding)
-
-  if op_sharding.is_replicated():
-    return PositionalSharding(
-        device_assignment, memory_kind=memory_kind).replicate()
-
-  if len(op_sharding.subgroup_types()) > 1:
-    raise NotImplementedError(
-        'Unhandled HloSharding type. Please open a bug report!'
-    )
-
-  name = device_assignment[0].platform.upper()
-  ids = np.array(
-      [DeviceIdSet(name, i) for i in op_sharding.tile_assignment_devices()]
-  )
-  p = PositionalSharding._remake(tuple(device_assignment), ids,
-                                 memory_kind=memory_kind)
-  p = p.reshape(op_sharding.tile_assignment_dimensions())
-  if op_sharding.replicate_on_last_tile_dim():
-    p = p.replicate(-1, keepdims=False)
-  return p
-
-
-@util.cache(max_size=4096, trace_context_in_key=False)
-def _positional_sharding_to_xla_hlo_sharding(
-    self, num_dimensions: int) -> xc.HloSharding:
-  if self.shape == (1,) * self.ndim:
-    return replicated_hlo_sharding
-
-  pbuf = xc.OpSharding()
-  shape = self.shape[self.ndim - num_dimensions:]  # 'rank promotion' of val
-  set_size, = {len(device_set) for device_set in self._ids.flat}
-  pbuf.type = xc.OpSharding.Type.OTHER
-  if set_size > 1:
-    pbuf.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
-    pbuf.tile_assignment_dimensions = (*shape, set_size)
-  else:
-    pbuf.tile_assignment_dimensions = shape
-  pbuf.tile_assignment_devices = [i for ids in self._ids.flat for i in ids]
-  product_of_dims = math.prod(pbuf.tile_assignment_dimensions)
-  num_devices = len(pbuf.tile_assignment_devices)
-  assert product_of_dims == num_devices, (product_of_dims, num_devices)
-  return xc.HloSharding.from_proto(pbuf)
-
-
-class PositionalSharding(jsharding.Sharding):
-  _devices: tuple[xc.Device, ...]
-  _memory_kind: str | None
-  _ids: np.ndarray  # dtype DeviceIdSet
-
-  def __init__(self, devices: Sequence[xc.Device] | np.ndarray,
-               *, memory_kind: str | None = None):
-    super().__init__()
-    if not isinstance(devices, np.ndarray):
-      devices = np.array(devices, dtype='object')
-    if not devices.size:
-      raise ValueError(f"{self.__class__.__name__}.__init__ requires at least "
-                       f"one device, got {devices}")
-    self._devices = tuple(devices.flat)
-    self._memory_kind = memory_kind
-    name = self._devices[0].platform.upper()
-    self._ids = np.array([DeviceIdSet(name, i) for i in range(devices.size)],
-                         dtype='object').reshape(devices.shape)
-    self._internal_device_list = xc.DeviceList(self._devices)
-    self._memory_kind = xc.check_and_canonicalize_memory_kind(
-        self._memory_kind, self._internal_device_list)
-
-  @property
-  def shape(self):
-    return self._ids.shape
-
-  @property
-  def ndim(self):
-    return self._ids.ndim
-
-  def __repr__(self) -> str:
-    cls_name = self.__class__.__name__
-    ids = self._ids.copy()
-    platform_name = self._devices[0].platform.upper()
-    for idx, x in np.ndenumerate(ids):
-      ids[idx] = DeviceIdSet(platform_name, *(self._devices[i].id for i in x))
-    body = np.array2string(ids, prefix=cls_name + '(', suffix=')',
-                           max_line_width=100)
-    mem = '' if self._memory_kind is None else f', memory_kind={self._memory_kind}'
-    return f'{cls_name}({body}{mem}, shape={self.shape})'
-
-  def reshape(self, *shape) -> PositionalSharding:
-    return self._remake(self._devices, self._ids.reshape(*shape),
-                        memory_kind=self.memory_kind)
-
-  def transpose(self, *axes) -> PositionalSharding:
-    return self._remake(self._devices, self._ids.transpose(*axes),
-                        memory_kind=self.memory_kind)
-  T = property(transpose)
-
-  def replicate(self, axis=None, keepdims=True) -> PositionalSharding:
-    new_ids = self._ids.sum(axis=axis, keepdims=keepdims)  # union
-    return self._remake(self._devices, new_ids,
-                        memory_kind=self.memory_kind)
-
-  def check_compatible_aval(self, aval_shape: Shape) -> None:
-    if len(aval_shape) != len(self.shape) and not self.is_fully_replicated:
-      raise ValueError(
-          f"Sharding {self} is only valid for values of rank "
-          f"{len(self.shape)}, but was applied to a value of rank "
-          f"{len(aval_shape)}")
-
-  @classmethod
-  def _remake(
-      cls, devices: tuple[xc.Device, ...], ids: np.ndarray,
-      *, memory_kind: str | None = None) -> PositionalSharding:
-    sharding = cls(devices, memory_kind=memory_kind)
-    sharding._ids = ids
-    return sharding
-
-  # Hashable
-
-  def __hash__(self) -> int:
-    if not hasattr(self, '_hash'):
-      self._hash = hash((self._internal_device_list, self.memory_kind))
-    return self._hash
-
-  def __eq__(self, other) -> bool:
-    if not isinstance(other, PositionalSharding):
-      return False
-    if self is other:
-      return True
-    all_ids_equal = np.array_equal(self._ids,other._ids)
-    mem_kind_equal = self.memory_kind == other.memory_kind
-    if self._devices is other._devices and mem_kind_equal and all_ids_equal:
-      return True
-    return (mem_kind_equal and all_ids_equal and
-            self._internal_device_list == other._internal_device_list)
-
-  # Sharding interface
-
-  @property
-  def num_devices(self) -> int:
-    return len(self.device_set)
-
-  @functools.cached_property
-  def device_set(self) -> set[xc.Device]:
-    return set(self._devices)
-
-  @property
-  def memory_kind(self) -> str | None:
-    return self._memory_kind
-
-  def with_memory_kind(self, kind: str) -> PositionalSharding:
-    return PositionalSharding(self._devices, memory_kind=kind)
-
-  @functools.cached_property
-  def is_fully_replicated(self) -> bool:
-    return self.shape == (1,) * self.ndim
-
-  # jsharding.Sharding interface
-
-  @property
-  def _device_assignment(self) -> XLADeviceAssignment:
-    return self._devices
-
-  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-    return _positional_sharding_to_xla_hlo_sharding(self, num_dimensions)
-
-  def _to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
-    raise NotImplementedError(
-        "PositionalSharding can't be converted to an SdyArray.")
-
-  @functools.cached_property
-  def is_fully_addressable(self) -> bool:
-    return self._internal_device_list.is_fully_addressable
-
-
-class DeviceIdSet:
-  _name: str
-  _ids: frozenset[int]
-  def __init__(self, name, *ids):
-    self._name = name
-    self._ids = frozenset(ids)
-
-  def __iter__(self):
-    return iter(sorted(self._ids))
-
-  def __add__(self, other) -> DeviceIdSet:
-    assert isinstance(other, DeviceIdSet)
-    return DeviceIdSet(self._name, *(self._ids | other._ids))
-
-  def __len__(self) -> int:
-    return len(self._ids)
-
-  def __repr__(self) -> str:
-    ids = ', '.join(safe_map(str, sorted(self._ids)))
-    return f'{{{self._name} {ids}}}'
-
-  def __hash__(self) -> int:
-    return hash((self._name, self._ids))
-
-  def __eq__(self, other) -> bool:
-    return (isinstance(other, DeviceIdSet) and self._name == other._name and
-            self._ids == other._ids)
 
 
 def _unpickle_gspmd_sharding(devices, op_sharding, memory_kind):
@@ -1185,7 +979,7 @@ def make_key_array_phys_sharding(aval, sharding):
   elif isinstance(sharding, NamedSharding):
     elt_aval = core.physical_element_aval(aval.dtype)
     trailing_spec = [None] * elt_aval.ndim
-    return sharding.with_spec(PartitionSpec(*sharding.spec, *trailing_spec))
+    return sharding.update(spec=PartitionSpec(*sharding.spec, *trailing_spec))
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
     return GSPMDSharding(
@@ -1248,7 +1042,7 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
                    *[None] * (len(phys_shape) - len(phys_sharding.spec)))
     else:
       phys_spec = phys_sharding.spec  # type: ignore
-    return phys_sharding.with_spec(phys_spec[:-elt_aval.ndim])
+    return phys_sharding.update(spec=phys_spec[:-elt_aval.ndim])
   else:
     return get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding)
 
@@ -1366,9 +1160,14 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
     axis_names: Names of the mesh axes. For example, axis_names=('x', 'y')
     devices: Optional keyword only argument, that allows you to specify the
       devices you want to create a mesh with.
+    axis_types: and optional tuple of :class:`jax.sharding.AxisType` entries
+      corresponding to the ``axis_names``. See `Explicit Sharding`_ for more
+      information.
 
   Returns:
-    A `jax.sharding.Mesh` object.
+    A :class:`jax.sharding.Mesh` object.
+
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   if devices is None:
     devices = xb.devices()

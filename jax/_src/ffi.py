@@ -28,6 +28,7 @@ from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
 from jax._src import xla_bridge
+from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -556,24 +557,6 @@ def _unwrap_kwargs_hashable(kwargs: Sequence[tuple[str, Any]]) -> dict[str, Any]
     else:
       unwrapped_kwargs[k] = v
   return unwrapped_kwargs
-
-
-class HashableArray:
-  __slots__ = ["val"]
-
-  def __init__(self, val):
-    assert isinstance(val, np.ndarray)
-    self.val = np.copy(val)
-    self.val.setflags(write=False)
-
-  def __repr__(self):
-    return f"HashableArray({self.val})"
-
-  def __hash__(self):
-    return hash((self.val.shape, self.val.dtype, self.val.tobytes()))
-
-  def __eq__(self, other):
-    return isinstance(other, HashableArray) and np.array_equal(self.val, other.val)
 
 
 class HashableDict:

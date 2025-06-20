@@ -22,7 +22,7 @@ import io
 import math
 import re
 import sys
-from typing import Callable
+from collections.abc import Callable
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -1225,8 +1225,8 @@ class PallasCallDMATest(PallasBaseTest):
       self.skipTest('TODO(sharadmv, justinfu): Add interpret support for DMA.')
 
     # TODO(subhankarshah): Remove after all required changes are in.
-    if not jtu.if_cloud_tpu_at_least(2025, 6, 15):
-      self.skipTest('Requires libtpu built after 2025-06-15')
+    if not jtu.if_cloud_tpu_at_least(2025, 6, 30):
+      self.skipTest('Requires libtpu built after 2025-06-20')
 
     def kernel(x_hbm_ref, y_hbm_ref, sem_out):
       pltpu.make_async_copy(

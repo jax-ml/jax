@@ -46,6 +46,8 @@ build:linux --copt=-Wno-unknown-warning-option
 # See https://github.com/tensorflow/tensorflow/issues/39467
 build:linux --copt=-Wno-stringop-truncation
 build:linux --copt=-Wno-array-parameter
+build:linux --copt=-Wno-deprecated-register
+build:linux --copt=-Wno-register
 
 build:macos --config=posix
 build:macos --apple_platform_type=macos
@@ -98,9 +100,23 @@ build:windows --incompatible_strict_action_env=true
 # configs such as `avx_linux` and `mkl_open_source_only`, `ci_linux_x86_64_cuda`
 # inherits `cuda` and `build_cuda_with_nvcc`, etc.
 # #############################################################################
+build --repo_env=USE_PYWRAP_RULES=True
+build --copt=-DGRPC_BAZEL_BUILD
+build --host_copt=-DGRPC_BAZEL_BUILD
+build --action_env=GRPC_BAZEL_RUNTIME=1
+build --repo_env=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=upb
+build --action_env=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=upb
+build --repo_env=RULES_PYTHON_ENABLE_PYSTAR=0
+
+# Do not do this. If enabled protobuf's core internal target 
+# @com_google_protobuf//python:protobuf_python will start depending on a bunch
+# of cc_binary shared libraries artifacts, which will mess with how we link 
+# protobuf dependencies ourselves. By default this value is false, but some 
+# projects enable it, which we don't want here.
+# build --define=use_fast_cpp_protos=true
+
 build:nonccl --define=no_nccl_support=true
 
-build --repo_env USE_PYWRAP_RULES=1
 build:posix --copt=-fvisibility=hidden
 build:posix --copt=-Wno-sign-compare
 build:posix --cxxopt=-std=c++17

@@ -416,7 +416,7 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = export.export(jax.jit(f))(x1, x2)
     res = exp.call(x1, x2)
     self.assertEqual(tree_util.tree_structure(res),
-                     tree_util.tree_structure(((x1, x2, x1, x2))))
+                     tree_util.tree_structure((x1, x2, x1, x2)))
     self.assertEqual(type(res[0]), type(x1))
     self.assertEqual(type(res[1]), type(x2))
     self.assertEqual(type(res[2]), type(x1))

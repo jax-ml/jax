@@ -51,6 +51,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_piv
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_cusolver_sytrd
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_solve
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Lu
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxTopK
@@ -142,10 +143,8 @@ class CompatTest(bctu.CompatTestBase):
         cuda_svd_cusolver_gesvd.data_2024_10_08,
         cpu_tridiagonal_solve_lapack_gtsv.data_2025_01_09,
         cuda_tridiagonal_cusolver_sytrd.data_2025_01_09,
+        cuda_tridiagonal_solve.data_2025_06_16,
         rocm_eigh_hipsolver_syev.data_2024_08_05,
-        cpu_schur_lapack_gees.data_2023_07_16,
-        cpu_triangular_solve_blas_trsm.data_2023_07_16,
-        cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03,
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
         tpu_ApproxTopK.data_2023_05_16,
@@ -565,10 +564,6 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_schur_results)
-    data = self.load_testdata(cpu_schur_lapack_gees.data_2023_07_16[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=check_schur_results,
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -652,11 +647,6 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_triangular_solve_results)
 
-    data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2023_07_16[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=check_triangular_solve_results,
-                      expect_current_custom_calls=info["custom_call_targets"])
-
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
@@ -703,12 +693,6 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
 
-    data = self.load_testdata(
-        cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03[dtype_name]
-    )
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      expect_current_custom_calls=info["custom_call_targets"])
-
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
@@ -728,7 +712,7 @@ class CompatTest(bctu.CompatTestBase):
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   @jax.default_matmul_precision("float32")
-  def test_gpu_tridiagonal_solver_sytrd(self, dtype_name):
+  def test_gpu_tridiagonal_sytrd(self, dtype_name):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
@@ -742,6 +726,26 @@ class CompatTest(bctu.CompatTestBase):
         cuda_tridiagonal_cusolver_sytrd.data_2025_01_09[dtype_name]
     )
     self.run_one_test(func, data, rtol=rtol, atol=atol)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64"))
+  @jax.default_matmul_precision("float32")
+  def test_gpu_tridiagonal_solve(self, dtype_name):
+    if not config.enable_x64.value and dtype_name == "f64":
+      self.skipTest("Test disabled for x32 mode")
+
+    dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
+    def func(dl, d, du, b):
+      return lax.linalg.tridiagonal_solve(dl, d, du, b)
+
+    rtol = dict(f32=1e-3, f64=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12)[dtype_name]
+
+    data = self.load_testdata(
+        cuda_tridiagonal_solve.data_2025_06_16[dtype_name]
+    )
+    self.run_one_test(func, data, atol=atol, rtol=rtol)
 
   def test_tpu_approx_top_k(self):
     def func():

@@ -1526,6 +1526,8 @@ tf_not_yet_impl = [
     "pmax_p",
     "pmin",
     "ppermute",
+    "psend",
+    "precv",
     "psum",
     "psum2",
     "pbroadcast",

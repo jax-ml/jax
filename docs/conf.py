@@ -135,6 +135,7 @@ exclude_patterns = [
     'notebooks/*.md',
     'pallas/quickstart.md',
     'pallas/pipelining.md',
+    'pallas/gpu/pipelining.md',
     'pallas/tpu/pipelining.md',
     'pallas/tpu/distributed.md',
     'pallas/tpu/sparse.md',
@@ -206,6 +207,8 @@ html_css_files = [
 # -- Options for myst ----------------------------------------------
 myst_heading_anchors = 3  # auto-generate 3 levels of heading anchors
 myst_enable_extensions = ['dollarmath']
+myst_ref_domains = ["py"]
+myst_all_links_external = False
 nb_execution_mode = "force"
 nb_execution_allow_errors = False
 nb_merge_streams = True
@@ -231,6 +234,7 @@ nb_execution_excludepatterns = [
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/pipelining.*',
+    'pallas/gpu/pipelining.*',
     'pallas/tpu/pipelining.*',
     'pallas/tpu/distributed.*',
     'pallas/tpu/sparse.*',

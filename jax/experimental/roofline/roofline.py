@@ -14,7 +14,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Protocol
+from collections.abc import Callable, Sequence
 import numpy as np
 
 import jax.numpy as jnp
@@ -56,7 +57,7 @@ class RooflineShape:
   dtype: np.dtype
 
   @classmethod
-  def from_aval(cls, aval: core.AbstractValue) -> "RooflineShape":
+  def from_aval(cls, aval: core.AbstractValue) -> RooflineShape:
     if not isinstance(aval, core.ShapedArray):
       raise TypeError(f"Expected ShapedArray, got {type(aval)}.")
     if not isinstance(aval.dtype, np.dtype):
@@ -87,10 +88,10 @@ class RooflineResult:
   unfused_hbm_bytes: int = 0
 
   @classmethod
-  def zeros(cls) -> "RooflineResult":
+  def zeros(cls) -> RooflineResult:
     return cls()
 
-  def __add__(self, other: "RooflineResult") -> "RooflineResult":
+  def __add__(self, other: RooflineResult) -> RooflineResult:
     def merge_ici_dicts(d1: dict[str, int], d2: dict[str, int]) -> dict[str, int]:
       return {k: d1.get(k, 0) + d2.get(k, 0) for k in set(d1) | set(d2)}
 
@@ -104,7 +105,7 @@ class RooflineResult:
         unfused_hbm_bytes=self.unfused_hbm_bytes + other.unfused_hbm_bytes,
     )
 
-  def __mul__(self, constant: int | float) -> "RooflineResult":
+  def __mul__(self, constant: int | float) -> RooflineResult:
     return RooflineResult(
         flops=int(self.flops * constant),
         unfused_flops=int(self.unfused_flops * constant),
@@ -115,7 +116,7 @@ class RooflineResult:
         unfused_hbm_bytes=int(self.unfused_hbm_bytes * constant),
     )
 
-  def __rmul__(self, constant: int | float) -> "RooflineResult":
+  def __rmul__(self, constant: int | float) -> RooflineResult:
     return self.__mul__(constant)
 
 
@@ -184,6 +185,16 @@ def _roofline_interpreter(
         result += _roofline_interpreter(
           util.wrap_name(f_name, eqn.primitive.name),
           eqn.params["jaxpr"],
+          mesh,
+          pin_lhs_in_vmem=pin_lhs_in_vmem,
+          pin_rhs_in_vmem=pin_rhs_in_vmem,
+        )
+      elif "call_jaxpr" in eqn.params:
+        # Used for custom_jvp_call_p. Recursively calculates roofline result for
+        # all primitives in the custom function.
+        result += _roofline_interpreter(
+          util.wrap_name(f_name, eqn.primitive.name),
+          eqn.params['call_jaxpr'],
           mesh,
           pin_lhs_in_vmem=pin_lhs_in_vmem,
           pin_rhs_in_vmem=pin_rhs_in_vmem,

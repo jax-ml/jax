@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ctypes
 import functools
 import importlib
 import logging
@@ -24,21 +25,28 @@ from jax._src.lib import triton
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
 
-# cuda_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
-# preinstalled jax cuda plugin packages.
-for pkg_name in ['jax_cuda12_plugin', 'jaxlib.cuda']:
-  try:
-    cuda_plugin_extension = importlib.import_module(
-        f'{pkg_name}.cuda_plugin_extension'
-    )
-    cuda_versions = importlib.import_module(
-        f'{pkg_name}._versions'
-    )
-  except ImportError:
-    cuda_plugin_extension = None
-    cuda_versions = None
-  else:
-    break
+cuda_plugin_extension = None
+cuda_versions = None
+
+def _import_extensions():
+  global cuda_plugin_extension
+  global cuda_versions
+
+  # cuda_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
+  # preinstalled jax cuda plugin packages.
+  for pkg_name in ['jax_cuda12_plugin', 'jaxlib.cuda']:
+    try:
+      cuda_plugin_extension = importlib.import_module(
+          f'{pkg_name}.cuda_plugin_extension'
+      )
+      cuda_versions = importlib.import_module(
+          f'{pkg_name}._versions'
+      )
+    except ImportError:
+      cuda_plugin_extension = None
+      cuda_versions = None
+    else:
+      break
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +90,54 @@ def _get_library_path():
   return None
 
 
+def _load(module, libraries):
+  try:
+    m = importlib.import_module(f"nvidia.{module}")
+  except ImportError:
+    m = None
+
+  for lib in libraries:
+    excs = []
+    if m is not None:
+      path = pathlib.Path(m.__path__[0]) / "lib" / lib
+      try:
+        ctypes.cdll.LoadLibrary(path)
+        continue
+      except OSError as e:
+        excs.append(e)
+
+    # TODO(phawkins): check the non-Python path here and error if not found.
+    # # Try again, without the Python module path.
+    # try:
+    #   ctypes.cdll.LoadLibrary(lib)
+    #   continue
+    # except OSError as e:
+    #   excs.append(e)
+    #
+    # raise ExceptionGroup(f"Unable to load CUDA library {lib}", excs)  # noqa: F821
+
+
+def _load_nvidia_libraries():
+  """Attempts to load NVIDIA's libraries.
+
+  We prefer the Python packages, if present. If not, we fall back to loading
+  them from LD_LIBRARY_PATH. By loading the libraries here, later lookups will
+  find these copies."""
+  _load("cuda_runtime", ["libcudart.so.12"])
+  # cuda_nvrtc isn't directly a dependency of JAX, but CUDNN appears to need it
+  # and at least in CUDA 12.9 has RUNPATHs misconfigured to refer to
+  # nvidia/nvrtc instead of nvidia/cuda_nvrtc.
+  _load("cuda_nvrtc", ["libnvrtc.so.12"])
+  _load("cublas", ["libcublas.so.12", "libcublasLt.so.12"])
+  _load("nccl", ["libnccl.so.2"])
+  _load("cuda_cupti", ["libcupti.so.12"])
+  _load("cusparse", ["libcusparse.so.12"])
+  _load("cusolver", ["libcusolver.so.11"])
+  _load("cufft", ["libcufft.so.11"])
+  _load("nvshmem", ["libnvshmem_host.so.3"])
+  _load("cudnn", ["libcudnn.so.9"])
+
+
 def _check_cuda_versions(raise_on_first_error: bool = False,
                          debug: bool = False):
   assert cuda_versions is not None
@@ -110,11 +166,12 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
            f"{req_str}")
     return msg
 
+
   def _version_check(name: str,
                      get_version,
                      get_build_version,
                      scale_for_comparison: int = 1,
-                     min_supported_version: int = 0):
+                     min_supported_version: int = 0) -> int | None:
     """Checks the runtime CUDA component version against the JAX one.
 
     Args:
@@ -124,6 +181,8 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
       scale_for_comparison: For rounding down a version to ignore patch/minor.
       min_supported_version: An absolute minimum version required. Must be
         passed without rounding down.
+
+    Returns: the runtime version, or None if the component is not found.
 
     Raises:
       RuntimeError: If the component is not found, or is of unsupported version,
@@ -162,12 +221,13 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                   "version": version,
                   "minimum_supported": min_supported_version}
         results.append(record)
+    return version
 
   _version_check("CUDA", cuda_versions.cuda_runtime_get_version,
                  cuda_versions.cuda_runtime_build_version,
                  scale_for_comparison=10,
                  min_supported_version=12010)
-  _version_check(
+  cudnn_version = _version_check(
       "cuDNN",
       cuda_versions.cudnn_get_version,
       cuda_versions.cudnn_build_version,
@@ -191,7 +251,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
   _version_check("cuPTI", cuda_versions.cupti_get_version,
                  cuda_versions.cupti_build_version,
                  min_supported_version=18)
-  _version_check("cuBLAS", cuda_versions.cublas_get_version,
+  cublas_version = _version_check("cuBLAS", cuda_versions.cublas_get_version,
                  cuda_versions.cublas_build_version,
                  # Ignore patch versions.
                  scale_for_comparison=100,
@@ -201,6 +261,35 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                  # Ignore patch versions.
                  scale_for_comparison=100,
                  min_supported_version=12100)
+
+  # https://docs.nvidia.com/deeplearning/cudnn/backend/latest/release-notes.html#cudnn-9-10-1
+  if (cudnn_version is not None and cudnn_version == 91000
+      and cuda_versions.cudnn_build_version() != 91000):
+    msg = ("cuDNN 9.10.0 had a binary backward-compatibility issue due to reordered enum "
+           f"values affecting block-scale datatypes. Found runtime version {cudnn_version} "
+           f"and build version {cuda_versions.cudnn_build_version()}. Please upgrade to "
+           "9.10.1 or above.")
+    if raise_on_first_error:
+      raise RuntimeError(msg)
+    else:
+      results.append({"installed": True, "msg": msg, "passed": False})
+  # xb.local_device_count() cannot safely be called at this point
+  if xb.CUDA_VISIBLE_DEVICES.value == "all":
+    local_device_count = cuda_versions.cuda_device_count()
+  else:
+    local_device_count = len(xb.CUDA_VISIBLE_DEVICES.value.split(","))
+  # https://docs.nvidia.com/deeplearning/cudnn/backend/latest/release-notes.html#cudnn-9-10-0
+  if (cudnn_version is not None and cudnn_version < 91001
+      and cublas_version is not None and cublas_version >= 120900
+      and local_device_count > 1):
+    msg = (f"cuDNN < 9.10.0 ({cudnn_version} found) had an issue that caused some multi-GPU "
+            "matmuls, in which the same finalized execution plan is used across different "
+            f"GPUs, to be functionally incorrect when run with cublasLt >= 12.9 ({cublas_version} "
+            "found). Please upgrade to 9.10.1 or above.")
+    if raise_on_first_error:
+      raise RuntimeError(msg)
+    else:
+      results.append({"installed": True, "msg": msg, "passed": False})
 
   errors = []
   debug_results = []
@@ -222,6 +311,8 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
 
 
 def initialize():
+  _load_nvidia_libraries()
+  _import_extensions()
   path = _get_library_path()
   if path is None:
     return

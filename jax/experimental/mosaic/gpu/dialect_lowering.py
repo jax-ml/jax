@@ -20,7 +20,8 @@ import functools
 import itertools
 import math
 import operator
-from typing import Any, Sequence, Type, cast
+from typing import Any, cast
+from collections.abc import Sequence
 
 from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
@@ -198,7 +199,7 @@ def unwrap_transformed_memref(
 
 
 def _register_lowering(
-    op: str | Type[ir.OpView] | None
+    op: str | type[ir.OpView] | None
 ) -> Callable[[MlirLoweringRule], MlirLoweringRule]:
   def wrapper(f):
     if op is not None:

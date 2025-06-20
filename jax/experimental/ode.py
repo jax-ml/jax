@@ -28,7 +28,7 @@ Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 
 from functools import partial
 import operator as op
-from typing import Callable
+from collections.abc import Callable
 
 import jax
 from jax import api_util
@@ -214,7 +214,7 @@ def _odeint(func, rtol, atol, mxstep, hmax, y0, ts, *args):
     _, *carry = lax.while_loop(cond_fun, body_fun, [0] + carry)
     _, _, t, _, last_t, interp_coeff = carry
     relative_output_time = (target_t - last_t) / (t - last_t)
-    y_target = jnp.polyval(interp_coeff, relative_output_time.astype(interp_coeff.dtype))
+    y_target = jnp.polyval(interp_coeff, relative_output_time.astype(interp_coeff.dtype))  # pytype: disable=attribute-error
     return carry, y_target
 
   f0 = func_(y0, ts[0])

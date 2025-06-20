@@ -27,7 +27,6 @@ from jax._src import traceback_util
 from jax._src.lib import pytree
 from jax._src.util import safe_zip, set_module
 from jax._src.util import unzip2
-from jax._src.lib import jaxlib_extension_version
 
 
 export = set_module('jax.tree_util')
@@ -564,7 +563,7 @@ register_pytree_node(
 @export
 def tree_broadcast(prefix_tree: Any, full_tree: Any,
                    is_leaf: Callable[[Any], bool] | None = None
-                  ) -> list[Any]:
+                  ) -> Any:
   """Alias of :func:`jax.tree.broadcast`."""
   broadcast_leaves = broadcast_prefix(prefix_tree, full_tree, is_leaf=is_leaf)
   return tree_structure(full_tree).unflatten(broadcast_leaves)
@@ -1131,8 +1130,6 @@ def tree_flatten_with_path(
     is_leaf_takes_path: bool = False,
 ) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]:
   """Alias of :func:`jax.tree.flatten_with_path`."""
-  if jaxlib_extension_version < 351:
-    return default_registry.flatten_with_path(tree, is_leaf)
   is_leaf_with_kp: Callable[[Any, Any], bool] | None = is_leaf
   if not is_leaf_takes_path and is_leaf is not None:
     is_leaf_with_kp = lambda _, x: is_leaf(x)

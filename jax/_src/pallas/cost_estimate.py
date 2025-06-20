@@ -15,7 +15,8 @@
 import dataclasses
 import functools
 import math
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 import jax
 from jax._src import api_util

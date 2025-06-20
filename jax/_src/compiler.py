@@ -21,7 +21,8 @@ import copy
 from functools import partial
 import logging
 import time
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 import warnings
 
 from jax._src import cache_key as cache_key_type
@@ -34,7 +35,6 @@ from jax._src import path as pathlib
 from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
@@ -117,7 +117,6 @@ def get_compile_options(
     num_partitions: int,
     device_assignment=None,
     use_spmd_partitioning: bool = True,
-    use_shardy_partitioner: bool = False,
     use_auto_spmd_partitioning: bool = False,
     auto_spmd_partitioning_mesh_shape: list[int] | None = None,
     auto_spmd_partitioning_mesh_ids: list[int] | None = None,
@@ -137,10 +136,6 @@ def get_compile_options(
       `num_partitions`.
     use_spmd_partitioning: boolean indicating whether to enable SPMD or MPMD
       partitioning in XLA.
-    use_shardy_partitioner: boolean indicating whether to use the Shardy
-      partitioner in XLA. Shardy is a new open sourced propagation framework for
-      MLIR. Currently Shardy is experimental in JAX. See
-      www.github.com/openxla/shardy.
     use_auto_spmd_partitioning: boolean indicating whether to automatically
       generate XLA shardings for SPMD partitioner.
     auto_spmd_partitioning_mesh_shape: device mesh shape used to create
@@ -160,7 +155,7 @@ def get_compile_options(
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
   build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
-  build_options.use_shardy_partitioner = use_shardy_partitioner
+  build_options.use_shardy_partitioner = config.use_shardy_partitioner.value
   if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if use_auto_spmd_partitioning:
@@ -355,10 +350,7 @@ def backend_compile_and_load(
     # we use a separate function call to ensure that XLA compilation appears
     # separately in Python profiling results
     # TODO(dsuo): Simplify this logic once we delete _jax.CompileOnlyPyClient.
-    if jaxlib_extension_version < 345 or (
-        jaxlib_extension_version >= 345
-        and isinstance(backend, _jax.CompileOnlyPyClient)
-    ):
+    if isinstance(backend, _jax.CompileOnlyPyClient):
       if host_callbacks:
         return backend.compile(
             built_c,

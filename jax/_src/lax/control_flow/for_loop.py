@@ -20,14 +20,13 @@ import functools
 import operator
 from typing import Any, Generic, TypeVar
 
-from jax import lax
 from jax._src import api_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax.tree_util import (tree_flatten, tree_structure, tree_unflatten,
-                           treedef_tuple, tree_map, tree_leaves, PyTreeDef)
+from jax._src.tree_util import (tree_flatten, tree_structure, tree_unflatten,
+                                treedef_tuple, tree_map, tree_leaves, PyTreeDef)
 
 from jax._src import ad_util
 from jax._src import core
@@ -35,6 +34,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import source_info_util
+from jax._src.lax import lax
 from jax._src.state.types import (ReadEffect, AbstractRef, StateEffect)
 from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as state_primitives
@@ -272,7 +272,7 @@ def _for_impl_unrolled(body, nsteps, unroll, *args):
       state = body(i, state)
       i = i + 1
     return i, state
-  _, state = lax.while_loop(cond, while_body, (i, state))
+  _, state = loops.while_loop(cond, while_body, (i, state))
   return state
 
 mlir.register_lowering(for_p, mlir.lower_fun(_for_impl, multiple_results=True))

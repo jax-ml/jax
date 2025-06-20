@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import functools
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
+from collections.abc import Callable
 
 from absl.testing import absltest
 from absl.testing import parameterized

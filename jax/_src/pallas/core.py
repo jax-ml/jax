@@ -24,7 +24,8 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Hashable, Literal, Protocol, TypeAlias, Union, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, TypeAlias, Union, runtime_checkable
+from collections.abc import Hashable
 
 import jax
 from jax._src import api_util
@@ -236,12 +237,10 @@ class AbstractMemoryRef(state.AbstractRef):
     return f'MemRef<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
 
   def update_weak_type(self, weak_type):
-    return AbstractMemoryRef(
-        self.inner_aval.update_weak_type(weak_type), self.memory_space)
+    return self.update(inner_aval=self.inner_aval.update_weak_type(weak_type))
 
   def update_vma(self, vma):
-    return AbstractMemoryRef(
-        self.inner_aval.update_vma(vma), self.memory_space)
+    return self.update(inner_aval=self.inner_aval.update_vma(vma))
 
   def update(self, inner_aval=None, memory_space=None):
     inner_aval = self.inner_aval if inner_aval is None else inner_aval
@@ -249,8 +248,7 @@ class AbstractMemoryRef(state.AbstractRef):
     return AbstractMemoryRef(inner_aval, memory_space)
 
   def to_tangent_aval(self):
-    return AbstractMemoryRef(
-        self.inner_aval.to_tangent_aval(), self.memory_space)
+    return self.update(inner_aval=self.inner_aval.to_tangent_aval())
 
   # TODO(dougalm, sharadmv): figure out how to avoid needing this
   def normalize(self):

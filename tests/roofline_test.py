@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Sequence
+from collections.abc import Sequence
 
 from absl.testing import absltest
 import jax
@@ -44,6 +44,31 @@ def create_inputs(
     )
     arrays.append(array)
   return mesh, tuple(arrays)
+
+
+def example_function(x):
+  return jnp.sin(x) + x**2
+
+
+@jax.custom_jvp
+def example_custom_function(x):
+  """Example custom function.
+
+  Small wrapper around `example_function`. We define `example_custom_function`
+  separately since we add the `@jax.custom_jvp` decorator and want to compare
+  its behavior to `example_function`'s in tests.
+  """
+  return example_function(x)
+
+
+@example_custom_function.defjvp
+def example_custom_function_jvp(primals, tangents):
+  """Example custom function jvp.
+
+  Normally this function would define a mathematically correct JVP, but its
+  definition has 0 effect on the roofline result, so we keep it very simple.
+  """
+  return example_custom_function(primals), tangents
 
 
 class RooflineTest(jtu.JaxTestCase):
@@ -542,6 +567,37 @@ class RooflineTest(jtu.JaxTestCase):
     )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
     self.assertEqual(result.unfused_flops, 3 * 8)
 
+  @jtu.parameterized.product(
+      cumulative_function=[lax.cummax, lax.cummin, lax.cumprod, lax.cumsum],
+      axis=[0, 1, 2],
+  )
+  def test_cumulative_ops(self, cumulative_function: int, axis: int):
+    f = lambda x: cumulative_function(operand=x, axis=axis)
+    x = jnp.zeros((3, 8, 15), dtype=int)
+
+    _, result = roofline.roofline(f)(x)
+
+    self.assertEqual(result.unfused_flops, x.shape[axis])
+    self.assertEqual(
+        result.unfused_hbm_bytes, 2 * self._bytes_per_word * 3 * 8 * 15
+    )
+
+  @jtu.parameterized.named_parameters(
+      dict(testcase_name="axis_0", axis=0),
+      dict(testcase_name="axis_1", axis=1),
+      dict(testcase_name="axis_2", axis=2),
+  )
+  def test_cumlogsumexp_p_roofline(self, axis: int):
+    f = lambda x: lax.cumlogsumexp(operand=x, axis=axis)
+    x = jnp.zeros((3, 8, 15), dtype=int)
+
+    _, result = roofline.roofline(f)(x)
+
+    self.assertEqual(result.unfused_flops, 2 * x.shape[axis])
+    self.assertEqual(
+        result.unfused_hbm_bytes, 2 * self._bytes_per_word * 3 * 8 * 15
+    )
+
   def test_dot_general(self):
     _, result = roofline.roofline(lambda a, b: a @ b)(
         jnp.zeros((3, 7), dtype=int), jnp.ones((7, 5), dtype=int)
@@ -624,7 +680,7 @@ class RooflineTest(jtu.JaxTestCase):
     expected_output_shape = jnp.array(
         (batch / batch_group_count, num_output_channels, ow, oh)
     )
-    expected_output_size = jnp.prod((expected_output_shape))
+    expected_output_size = jnp.prod(expected_output_shape)
     # Bytes accessed is sum of inputs and output.
     expected_unfused_hbm_bytes = self._bytes_per_word * (
         expected_input_size + expected_kernel_size + expected_output_size
@@ -708,7 +764,6 @@ class RooflineTest(jtu.JaxTestCase):
     self.assertEqual(
         result.unfused_flops, 2 * expected_output_size * 3 * 3
     )
-
 
   @jtu.parameterized.named_parameters(
       dict(
@@ -801,6 +856,89 @@ class RooflineTest(jtu.JaxTestCase):
       self.assertEqual(
           result.unfused_hbm_bytes, self._bytes_per_word * expected_memory
       )
+
+  def test_custom_jvp_call_p_roofline(self):
+    dummy_input = jnp.ones((3, 8))
+
+    _, base_result = roofline.roofline(example_function)(dummy_input)
+    _, custom_result = roofline.roofline(example_custom_function)(dummy_input)
+
+    self.assertEqual(custom_result.unfused_flops, base_result.unfused_flops)
+    self.assertEqual(
+        custom_result.unfused_hbm_bytes, base_result.unfused_hbm_bytes
+    )
+
+  def test_custom_jvp_call_p_roofline_with_neg(self):
+    dummy_input = jnp.ones((3, 8))
+
+    def with_neg(f):
+      return lambda x: jax.lax.neg(f(x))
+
+    _, base_result = roofline.roofline(with_neg(example_function))(dummy_input)
+    _, custom_result = roofline.roofline(with_neg(example_custom_function))(
+        dummy_input
+    )
+
+    self.assertEqual(custom_result.unfused_flops, base_result.unfused_flops)
+    self.assertEqual(
+        custom_result.unfused_hbm_bytes, base_result.unfused_hbm_bytes
+    )
+
+  def test_gather_roofline(self):
+    operand = jnp.zeros((3, 3), dtype=jnp.int32)
+    indices = jnp.zeros((2, 1), dtype=jnp.int32)
+
+    dimension_numbers = jax.lax.GatherDimensionNumbers(
+        offset_dims=(1,),
+        collapsed_slice_dims=(0,),
+        start_index_map=(0,),
+    )
+
+    f = lambda x, y: jax.lax.gather(
+        x,
+        y,
+        dimension_numbers=dimension_numbers,
+        slice_sizes=(1, 3),
+    )
+
+    _, result = roofline.roofline(f)(operand, indices)
+
+    self.assertEqual(result.unfused_flops, 0)
+    # Expected bytes:
+    # operand: 2 * 3 * sizeof(int32) = 24
+    # indices: 2 * 1 * sizeof(int32) = 8
+    # output: 2 * 3 * sizeof(int32) = 24
+    # total = 56
+    self.assertEqual(result.unfused_hbm_bytes, 56)
+
+  def test_gather_batching_dims_roofline(self):
+    operand = jnp.zeros((5, 3, 3), dtype=jnp.int32)
+    indices = jnp.zeros((5, 1), dtype=jnp.int32)
+
+    dimension_numbers = jax.lax.GatherDimensionNumbers(
+        offset_dims=(1,),
+        collapsed_slice_dims=(1,),
+        start_index_map=(1,),
+        operand_batching_dims=(0,),
+        start_indices_batching_dims=(0,),
+    )
+
+    f = lambda x, y: jax.lax.gather(
+        x,
+        y,
+        dimension_numbers=dimension_numbers,
+        slice_sizes=(1, 1, 3),
+    )
+
+    _, result = roofline.roofline(f)(operand, indices)
+
+    self.assertEqual(result.unfused_flops, 0)
+    # Expected bytes:
+    # operand: 5 * 3 * sizeof(int32) = 60
+    # indices: 5 * 1 * sizeof(int32) = 20
+    # output: 5 * 3 * sizeof(int32) = 60
+    # total = 140
+    self.assertEqual(result.unfused_hbm_bytes, 140)
 
 
 if __name__ == "__main__":
