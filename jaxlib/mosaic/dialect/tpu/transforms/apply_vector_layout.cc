@@ -744,6 +744,162 @@ LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
 using rule_type = std::function<LogicalResult(
     RewriteContext &, Operation &, ArrayRef<Layout>, ArrayRef<Layout>)>;
 
+// PackUnpackSpec is used to describe the packing/unpacking scheme to be used
+// for arith.trunc and arith.ext ops.
+//
+// To apply the spec, let the padded unpacked vreg array be the unpacked vreg
+// array low-padded with "null" vregs according to row_vreg_offset and
+// col_vreg_offset, and high-padded to be aligned with vreg_rows and vreg_cols.
+//
+// The padded unpacked vreg array is split into windows of size
+// (vreg_rows, vreg_cols), each of which is packed into a single vreg in the
+// packed vreg array (null parts - "don't care"s - are specified in the packing
+// for "null" vregs). The ordering is always column-major within the window.
+// Note: For packings with unusual/unsupported tilings, such as
+//       (8, 128) f32 <-> (8, 256) bf16, other orderings would be needed.
+//
+// Null offsets indicate replication along the corresponding dimension, like
+// in layout offsets.
+//
+// Example for a pack/unpack of (8, 128) i32 <-> (16, 128) i8:
+// - Unpacked vreg array shape is (3, 4)
+// - (vreg_rows, vreg_cols) = (2, 2)
+// - (row_vreg_offset, col_vreg_offset) = (0, 1)
+// - Compressed pack format
+//
+// Padded unpacked vreg array  | Packed vreg array
+// x a b c                     | xxad becf
+// x d e f                     | xxgj hkil
+// x g h i                     |
+// x j k l                     |
+//
+// where x denotes a "null" vreg or a "don't care" vreg part.
+// TODO(b/384274392): There are some mixed-format packing schemes that cannot be
+//                    expressed by this spec.
+struct PackUnpackSpec {
+  int64_t vreg_rows;
+  int64_t vreg_cols;
+  std::optional<int64_t> row_vreg_offset;
+  std::optional<int64_t> col_vreg_offset;
+  PackFormat pack_format;
+};
+
+// Get the spec describing the packing/unpacking operation.
+// See comments in PackUnpackSpec for more info.
+// The op parameter is purely for error reporting.
+// Note: Mismatched replication is forbidden. To drop replication, materialize
+// the offsets before or after passing the layouts to getPackUnpackSpec.
+// - For pack, it is more efficient to materialize them *before* packing, as it
+//   allows skipping "don't care" parts.
+// - For unpack, it is more efficient to materialize them *after* unpacking, as
+//   it allows reusing the same unpacked parts.
+FailureOr<PackUnpackSpec> getPackUnpackSpec(RewriteContext &ctx, Operation &op,
+                                            const VectorLayout &unpacked_layout,
+                                            const VectorLayout &packed_layout) {
+  const std::array<int64_t, 2> unpacked_vreg_slice =
+      unpacked_layout.vregSlice(ctx.target_shape);
+  const std::array<int64_t, 2> packed_vreg_slice =
+      packed_layout.vregSlice(ctx.target_shape);
+  const LayoutOffsets unpacked_offsets = unpacked_layout.offsets();
+  const LayoutOffsets packed_offsets = packed_layout.offsets();
+  const int unpacked_sublanes_per_tile =
+      unpacked_layout.sublanesPerTile(ctx.target_shape);
+  if (unpacked_layout.implicit_dim() != packed_layout.implicit_dim()) {
+    return op.emitOpError(
+        "Not implemented: Trunc/ext changes implicit dimension");
+  }
+  for (const auto &[unpacked_offset, packed_offset, unpacked_slice_size] :
+       llvm::zip_equal(unpacked_offsets, packed_offsets, unpacked_vreg_slice)) {
+    if (!unpacked_offset.has_value() && !packed_offset.has_value()) {
+      // Replicated to replicated is okay
+    } else if (unpacked_offset.has_value() && packed_offset.has_value()) {
+      if (*unpacked_offset != *packed_offset % unpacked_slice_size) {
+        return op.emitOpError("Not implemented: Misaligned offsets");
+      }
+    } else {
+      return op.emitOpError("Not implemented: Mismatched replication");
+    }
+  }
+  if (packed_vreg_slice[0] % unpacked_vreg_slice[0] != 0 ||
+      packed_vreg_slice[1] % unpacked_vreg_slice[1] != 0) {
+    // The packed vreg slice should be a union of whole unpacked vreg slices
+    return op.emitOpError("Not implemented: Unsupported tiling change");
+  }
+  // How many rows and columns of unpacked vregs we are packing into one packed
+  // vreg:
+  const int64_t vreg_rows = packed_vreg_slice[0] / unpacked_vreg_slice[0];
+  const int64_t vreg_cols = packed_vreg_slice[1] / unpacked_vreg_slice[1];
+
+  // Currently, we always pack across rows first, and then across columns.
+  // Note: Even though we combine it into a single tpu.pack_subelements op, the
+  //       order of the operands is such that it is equivalent to packing across
+  //       rows and then across columns.
+
+  // The format for packing *across* multiple rows in the vreg array (different
+  // 2nd minor index):
+  PackFormat row_pack_format = PackFormat::kCompressed;
+  if (vreg_rows != 1) {
+    // When going from (a, b) to (a * n, b) tiling, each output tile is the
+    // union of n input tiles from different vregs. The ith tile of the output
+    // vreg is formed by packing the ith tiles of the input vregs together.
+    // This can only be done when tiles are one sublane (by packing interleaved)
+    // or when they occupy the full vreg (by packing compressed).
+    // Note: Currently, we always pack across rows before packing across
+    //       columns, so we just check the source tiling.
+    if (unpacked_sublanes_per_tile == 1) {
+      row_pack_format = PackFormat::kInterleaved;
+    } else if (unpacked_sublanes_per_tile == ctx.target_shape[0]) {
+      row_pack_format = PackFormat::kCompressed;
+    } else {
+      return op.emitOpError(
+          "Not implemented: Tiling change requires interleaving tiles that are "
+          "not one sublane or one full vreg");
+    }
+  }
+  // The tiling after packing across rows:
+  const std::array<int64_t, 2> intermediate_tiling = {
+      unpacked_layout.tiling()[0] * vreg_rows, unpacked_layout.tiling()[1]};
+  DCHECK_EQ(intermediate_tiling[0], packed_layout.tiling()[0]);
+
+  // We only support compressed packing across vreg columns, which doesn't
+  // change the tiling. Logically, it just stacks tiles horizontally.
+  if (intermediate_tiling[1] != packed_layout.tiling()[1] &&
+      // For (1, x) tiling all minor dimension tilings are equivalent, although
+      // some are illegal in VectorLayout. So, even though compressed packing in
+      // general does not change the tiling, for (1, x) we can still change to
+      // other minor dimension tilings (they are equivalent).
+      intermediate_tiling[0] != 1) {
+    // This could be handled, in some cases, by using interleaved packing across
+    // vreg columns, but we never use tilings like this. An example where we
+    // could use interleaved packing is (8, 128) f32 -> (8, 256) bf16.
+    return op.emitOpError(
+        "Not implemented: Truncating to increasing minor tile size");
+  }
+  // The format for packing *across* multiple columns in the vreg array
+  // (different minor index):
+  constexpr PackFormat col_pack_format = PackFormat::kCompressed;
+
+  if (vreg_rows != 1 && vreg_cols != 1 && row_pack_format != col_pack_format) {
+    // TODO(b/384274392): We can alternate interleaved and compressed packing
+    //                    but how should we expose it in tpu.pack_subelements?
+    return op.emitOpError(
+        "Not implemented: Tiling change requires mixed compressed and "
+        "interleaved packing");
+  }
+  const PackFormat pack_format =
+      vreg_rows != 1 ? row_pack_format : col_pack_format;
+  const std::optional<int64_t> row_vreg_offset =
+      packed_offsets[0].has_value()
+          ? *packed_offsets[0] / unpacked_vreg_slice[0]
+          : std::optional<int64_t>();
+  const std::optional<int64_t> col_vreg_offset =
+      packed_offsets[1].has_value()
+          ? *packed_offsets[1] / unpacked_vreg_slice[1]
+          : std::optional<int64_t>();
+  return PackUnpackSpec{vreg_rows, vreg_cols, row_vreg_offset, col_vreg_offset,
+                        pack_format};
+}
+
 template <typename OpTy>
 FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
                                               OpBuilder &builder, OpTy op,
@@ -757,45 +913,32 @@ FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
       xla::Array<Value> input_vregs,
       disassemble(builder, layout_in, source, ctx.target_shape,
                   /*use_implicit_shape=*/true));
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const PackUnpackSpec spec,
+      getPackUnpackSpec(ctx, *op, /*unpacked_layout=*/layout_out,
+                        /*packed_layout=*/layout_in));
+  const auto &[vreg_rows, vreg_cols, row_vreg_offset, col_vreg_offset,
+               pack_format] = spec;
   xla::Array<Value> output_vregs(output_vregs_shape);
   const VectorType res_vreg_ty =
       getNativeVregType(result_ty.getElementType(), ctx.target_shape);
-  if (layout_in.implicit_dim() != layout_out.implicit_dim()) {
-    return op.emitOpError(
-        "Not implemented: Change of implicit dim during the cast");
-  }
-  if (layout_in.offsets() != layout_out.offsets()) {
-    return op.emitOpError("Not implemented: Change of offsets during the cast");
-  }
-  const int packing = layout_out.bitwidth() / layout_in.bitwidth();
-  if (layout_in.hasNativeTiling(ctx.target_shape) &&
-      layout_out.hasNativeTiling(ctx.target_shape)) {
-    output_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-      SmallVector<int64_t> input_vreg_idxs(toArrayRef(idxs));
-      int64_t vreg_part = *(input_vreg_idxs.end() - 2) % packing;
-      *(input_vreg_idxs.end() - 2) /= packing;
-      *v = builder.create<UnpackSubelementsOp>(
-          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part,
-          tpu::PackFormat::kCompressed);
-    });
-  } else {
-    if (layout_in.tiling() != layout_out.tiling()) {
-      return op.emitOpError("Not implemented: Changing tiling during the cast");
-    }
-    auto tiling = layout_in.tiling();
-    if (ctx.target_shape[0] % tiling[0] != 0 ||
-        ctx.target_shape[1] != tiling[1]) {
-      return op.emitOpError("Not implemented: tiling not supported");
-    }
-    output_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-      SmallVector<int64_t> input_vreg_idxs(toArrayRef(idxs));
-      input_vreg_idxs.back() /= packing;
-      const int64_t vreg_part = idxs.back() % packing;
-      *v = builder.create<UnpackSubelementsOp>(
-          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part,
-          tpu::PackFormat::kCompressed);
-    });
-  }
+  output_vregs.Each([&](absl::Span<const int64_t> output_idxs, Value *v) {
+    SmallVector<int64_t> input_idxs(toArrayRef(output_idxs));
+    const int64_t row = row_vreg_offset.has_value()
+                            ? *(output_idxs.end() - 2) + *row_vreg_offset
+                            : 0;
+    const int64_t col = col_vreg_offset.has_value()
+                            ? *(output_idxs.end() - 1) + *col_vreg_offset
+                            : 0;
+    *(input_idxs.end() - 2) = row / vreg_rows;
+    *(input_idxs.end() - 1) = col / vreg_cols;
+    // The vreg_part is computed under the assumption that vregs are packed
+    // across rows first and then columns.
+    const int64_t vreg_part = col % vreg_cols * vreg_rows + row % vreg_rows;
+    *v = builder.create<UnpackSubelementsOp>(op.getLoc(), res_vreg_ty,
+                                             input_vregs(input_idxs), vreg_part,
+                                             pack_format);
+  });
   return output_vregs;
 }
 
@@ -909,110 +1052,13 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
       disassemble(builder, layout_in, source, ctx.target_shape,
                   /*use_implicit_shape=*/true));
   xla::Array<Value> output_vregs(output_vregs_shape);
-  const LayoutOffsets input_offsets = layout_in.offsets();
-  const LayoutOffsets output_offsets = layout_out.offsets();
-  const std::array<int64_t, 2> input_vreg_slice =
-      layout_in.vregSlice(ctx.target_shape);
-  const std::array<int64_t, 2> output_vreg_slice =
-      layout_out.vregSlice(ctx.target_shape);
-  const int input_sublanes_per_tile =
-      layout_in.sublanesPerTile(ctx.target_shape);
 
-  if (layout_in.implicit_dim() != layout_out.implicit_dim()) {
-    return op.emitOpError(
-        "Not implemented: Truncation changes implicit dimension");
-  }
-  for (const auto &[input_offset, output_offset, input_slice_size] :
-       llvm::zip_equal(input_offsets, output_offsets, input_vreg_slice)) {
-    if (!input_offset.has_value() && !output_offset.has_value()) {
-      // Replicated to replicated is okay
-    } else if (!input_offset.has_value() && output_offset.has_value()) {
-      // Replicated to non-replicated could be handled, but we don't leverage
-      // replication, so we don't expect a replicated input offset to be
-      // assigned. The materialization of replicated vregs in the vreg
-      // array should be handled by relayout.
-      return op.emitOpError(
-          "Not implemented: Replicated to non-replicated offset");
-    } else if (input_offset.has_value() && !output_offset.has_value()) {
-      return op.emitOpError(
-          "Not implemented: Truncation introduces replication");
-    } else {
-      DCHECK(input_offset.has_value() && output_offset.has_value());
-      if (*input_offset != *output_offset % input_slice_size) {
-        return op.emitOpError("Not implemented: Misaligned offsets");
-      }
-    }
-  }
-  if (output_vreg_slice[0] % input_vreg_slice[0] != 0 ||
-      output_vreg_slice[1] % input_vreg_slice[1] != 0) {
-    // The output vreg slice should be a union of whole input vreg slices
-    return op.emitOpError("Not implemented: Unsupported tiling change");
-  }
-  // How many rows and columns of input vregs we are packing into one output
-  // vreg:
-  const int64_t vreg_rows = output_vreg_slice[0] / input_vreg_slice[0];
-  const int64_t vreg_cols = output_vreg_slice[1] / input_vreg_slice[1];
-
-  // Currently, we always pack across rows first, and then across columns.
-  // Note: Even though we combine it into a single tpu.pack_subelements op, the
-  //       order of the operands is such that it is equivalent to packing across
-  //       rows and then across columns.
-  // TODO(b/384274392): For some cases we want to pack across columns first, but
-  //                    we also need mixed compressed/interleaved packing.
-
-  // The format for packing *across* multiple rows in the vreg array (different
-  // 2nd minor index):
-  PackFormat row_pack_format = PackFormat::kCompressed;
-  if (vreg_rows != 1) {
-    // When going from (a, b) to (a * n, b) tiling, each output tile is the
-    // union of n input tiles from different vregs. The ith tile of the output
-    // vreg is formed by packing the ith tiles of the input vregs together.
-    // This can only be done when tiles are one sublane (by packing interleaved)
-    // or when they occupy the full vreg (by packing compressed).
-    // Note: Currently, we always pack across rows before packing across
-    //       columns, so we just check the source tiling.
-    if (input_sublanes_per_tile == 1) {
-      row_pack_format = PackFormat::kInterleaved;
-    } else if (input_sublanes_per_tile == ctx.target_shape[0]) {
-      row_pack_format = PackFormat::kCompressed;
-    } else {
-      return op.emitOpError(
-          "Not implemented: Tiling change requires interleaving tiles that are "
-          "not one sublane or one full vreg");
-    }
-  }
-  // The tiling after packing across rows:
-  const std::array<int64_t, 2> intermediate_tiling = {
-      layout_in.tiling()[0] * vreg_rows, layout_in.tiling()[1]};
-  DCHECK_EQ(intermediate_tiling[0], layout_out.tiling()[0]);
-
-  // We only support compressed packing across vreg columns, which doesn't
-  // change the tiling. Logically, it just stacks tiles horizontally.
-  if (intermediate_tiling[1] != layout_out.tiling()[1] &&
-      // For (1, x) tiling all minor dimension tilings are equivalent, although
-      // some are illegal in VectorLayout. So, even though compressed packing in
-      // general does not change the tiling, for (1, x) we can still change to
-      // other minor dimension tilings (they are equivalent).
-      intermediate_tiling[0] != 1) {
-    // This could be handled, in some cases, by using interleaved packing across
-    // vreg columns, but we never use tilings like this. An example where we
-    // could use interleaved packing is (8, 128) f32 -> (8, 256) bf16.
-    return op.emitOpError(
-        "Not implemented: Truncating to increasing minor tile size");
-  }
-  // The format for packing *across* multiple columns in the vreg array
-  // (different minor index):
-  constexpr PackFormat col_pack_format = PackFormat::kCompressed;
-
-  if (vreg_rows != 1 && vreg_cols != 1 && row_pack_format != col_pack_format) {
-    // TODO(b/384274392): We can alternate interleaved and compressed packing
-    //                    but how should we expose it in tpu.pack_subelements?
-    return op.emitOpError(
-        "Not implemented: Tiling change requires mixed compressed and "
-        "interleaved packing");
-  }
-  const PackFormat pack_format =
-      vreg_rows != 1 ? row_pack_format : col_pack_format;
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const PackUnpackSpec spec,
+      getPackUnpackSpec(ctx, *op, /*unpacked_layout=*/layout_in,
+                        /*packed_layout=*/layout_out));
+  const auto &[vreg_rows, vreg_cols, row_vreg_offset, col_vreg_offset,
+               pack_format] = spec;
 
   const VectorType res_vreg_ty =
       getNativeVregType(result_ty.getElementType(), ctx.target_shape);
@@ -1022,14 +1068,13 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
     SmallVector<Value> parts;
     input_idx.assign(output_idx.begin(), output_idx.end());
     auto push_col = [&]() {
-      if (!output_offsets[0].has_value()) {
+      if (!row_vreg_offset.has_value()) {
         *(input_idx.end() - 2) = 0;
         // Make sure we set all rows of the column to make it replicated
         parts.append(vreg_rows, input_vregs(input_idx));
       } else {
-        const int64_t row_offset = *output_offsets[0] / input_vreg_slice[0];
         const int64_t base_src_row =
-            *(output_idx.end() - 2) * vreg_rows - row_offset;
+            *(output_idx.end() - 2) * vreg_rows - *row_vreg_offset;
         for (int64_t row = base_src_row; row < base_src_row + vreg_rows;
              ++row) {
           if (0 <= row && row < *(input_vregs.dimensions().end() - 2)) {
@@ -1041,7 +1086,7 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
         }
       }
     };
-    if (!output_offsets[1].has_value()) {
+    if (!col_vreg_offset.has_value()) {
       *(input_idx.end() - 1) = 0;
       // Make sure we set all column parts of the vreg to make it replicated
       push_col();
@@ -1051,9 +1096,8 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
         }
       }
     } else {
-      const int64_t col_offset = *output_offsets[1] / input_vreg_slice[1];
       const int64_t base_src_col =
-          *(output_idx.end() - 1) * vreg_cols - col_offset;
+          *(output_idx.end() - 1) * vreg_cols - *col_vreg_offset;
       for (int64_t col = base_src_col; col < base_src_col + vreg_cols; ++col) {
         if (0 <= col && col < *(input_vregs.dimensions().end() - 1)) {
           *(input_idx.end() - 1) = col;
@@ -7776,9 +7820,9 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
   // TODO: b/342235360 - This check is temporary while we increase and test
   // support for offsets outside of the first tile. When support is more broad,
   // any op without support should check it within their own rule.
-  if (!isa<arith::TruncFOp, arith::TruncIOp, vector::BroadcastOp,
-           vector::ExtractStridedSliceOp, vector::ShapeCastOp, tpu::RelayoutOp>(
-          op)) {
+  if (!isa<arith::TruncFOp, arith::TruncIOp, arith::ExtSIOp,
+           vector::BroadcastOp, vector::ExtractStridedSliceOp,
+           vector::ShapeCastOp, tpu::RelayoutOp>(op)) {
     for (const Layout &layout : layouts_in) {
       if (layout && layout->offsets()[1].has_value() &&
           layout->offsets()[1].value() >= layout->tiling()[1]) {
