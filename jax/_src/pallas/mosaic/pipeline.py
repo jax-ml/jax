@@ -408,6 +408,7 @@ class BufferedRef(BufferedRefBase):
   _spec: pl.BlockSpec       # static metadata
   dtype: Any               # static metadata
   _buffer_type: BufferType  # static metadata
+  buffer_count: int  # static metadata
   _current_slot_reg: int | jax.Array | None
   window_ref: ArrayRef | None
   accum_ref: ArrayRef | None
@@ -417,6 +418,11 @@ class BufferedRef(BufferedRefBase):
   # TODO(ramiroleal): Improve prefetch/postyeet interface to avoid
   # using this ref.
   swap: ArrayRef | None
+
+  def __post_init__(self):
+    if self.buffer_count > 2:
+      raise NotImplementedError(
+          "Multiple buffering with >2 buffers not implemented.")
 
   @property
   def spec(self):
@@ -437,7 +443,7 @@ class BufferedRef(BufferedRefBase):
             self.sem_sends,
             self.swap,
         ),
-        (self._spec, self.dtype, self._buffer_type),
+        (self._spec, self.dtype, self._buffer_type, self.buffer_count),
     )
 
   @classmethod
@@ -449,8 +455,8 @@ class BufferedRef(BufferedRefBase):
     return BufferType
 
   @classmethod
-  def create(cls, spec: pl.BlockSpec, dtype, buffer_type, needs_swap_ref=True
-            ) -> BufferedRef:
+  def create(cls, spec: pl.BlockSpec, dtype, buffer_type, buffer_count,
+             needs_swap_ref=True) -> BufferedRef:
     """Create a BufferedRef.
 
     Args:
@@ -476,6 +482,7 @@ class BufferedRef(BufferedRefBase):
           _spec=spec,
           dtype=dtype,
           _buffer_type=buffer_type,
+          buffer_count=1,
           _current_slot_reg=None,
           window_ref=None,  # to be bound to existing ref by the pipeline routine
           accum_ref=accum_ref,
@@ -490,6 +497,7 @@ class BufferedRef(BufferedRefBase):
           _spec=spec,
           dtype=dtype,
           _buffer_type=buffer_type,
+          buffer_count=buffer_count,
           _current_slot_reg=None,
           window_ref=memory_space((2,) + block_shape, dtype),
           accum_ref=accum_ref,
@@ -508,20 +516,24 @@ class BufferedRef(BufferedRefBase):
       )
 
   @classmethod
-  def input(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.INPUT, needs_swap_ref)
+  def input(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.INPUT, buffer_count,
+                      needs_swap_ref)
 
   @classmethod
-  def output(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.OUTPUT, needs_swap_ref)
+  def output(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.OUTPUT, buffer_count,
+                      needs_swap_ref)
 
   @classmethod
-  def accumulator(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.ACCUMULATOR, needs_swap_ref)
+  def accumulator(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.ACCUMULATOR, buffer_count,
+                      needs_swap_ref)
 
   @classmethod
-  def input_output(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.INPUT_OUTPUT, needs_swap_ref)
+  def input_output(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.INPUT_OUTPUT, buffer_count,
+                      needs_swap_ref)
 
   @property
   def block_shape(self):
@@ -828,6 +840,7 @@ class Scheduler:
       indices: tuple[int | jax.Array, ...],
       grid: tuple[int | jax.Array, ...],
       grid_offsets: tuple[int | jax.Array, ...],
+      num_stages: int,
       first_cycle=None,
       last_cycle=None,
       init_accumulators=None,
@@ -849,6 +862,8 @@ class Scheduler:
       use_sreg_for_state: optional bool, indicates whether to use sregs for
         current_slot state.
     """
+    if num_stages != 2:
+      raise ValueError("Only 2-stage pipelines are supported.")
     self.step = step
     self.grid = grid
     self.first_cycle = first_cycle
@@ -1180,12 +1195,22 @@ def make_pipeline_allocations(
   in_refs = refs[:num_in_specs]
   out_refs = refs[num_in_specs:]
   def make_input_bref(in_spec, in_ref):
-    return BufferedRef.input(in_spec, in_ref.dtype, needs_swap_ref)
+    buffer_count = 2
+    if in_spec.pipeline_mode is not None:
+      buffer_count = in_spec.pipeline_mode.buffer_count
+    return BufferedRef.input(in_spec, in_ref.dtype, buffer_count,
+                             needs_swap_ref)
   in_brefs = jax.tree.map(make_input_bref, in_specs, in_refs)
   def make_output_bref(out_spec, out_ref, accumulate):
+    buffer_count = 2
+    if out_spec.pipeline_mode is not None:
+      buffer_count = out_spec.pipeline_mode.buffer_count
+
     if accumulate:
-      return BufferedRef.accumulator(out_spec, out_ref.dtype, needs_swap_ref)
-    return BufferedRef.output(out_spec, out_ref.dtype, needs_swap_ref)
+      return BufferedRef.accumulator(out_spec, out_ref.dtype,
+                                     buffer_count, needs_swap_ref)
+    return BufferedRef.output(out_spec, out_ref.dtype,
+                              buffer_count, needs_swap_ref)
   out_brefs = jax.tree.map(
       make_output_bref, out_specs, out_refs, should_accumulate_out)
   return (*in_brefs, *out_brefs)
@@ -1380,6 +1405,10 @@ def emit_pipeline(
   if isinstance(out_specs, list):
     out_specs = tuple(out_specs)
   should_accumulate_out = _broadcast_pytree_to(should_accumulate_out, out_specs)
+  get_buffer_count = lambda spec: (spec.pipeline_mode.buffer_count if
+    (spec is not None and spec.pipeline_mode is not None) else 2)
+  flattened_specs = jax.tree.leaves((in_specs, out_specs))
+  max_buffer_count = max((2, *map(get_buffer_count, flattened_specs)))
 
   def pipeline(
     *refs: Any,
@@ -1467,6 +1496,7 @@ def emit_pipeline(
           indices,
           grid,
           grid_offsets=grid_offsets,
+          num_stages=max_buffer_count,
           first_cycle=first_cycle,
           last_cycle=last_cycle,
           init_accumulators=init_accumulators,
