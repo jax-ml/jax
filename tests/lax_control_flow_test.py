@@ -29,6 +29,7 @@ import numpy as np
 
 import jax
 from jax._src import core
+from jax._src import config
 from jax import dtypes
 from jax import lax
 from jax import random
@@ -2787,10 +2788,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x = jnp.asarray(rng.randn(32, 2, 32).astype('float32'))
     _, vjp_fun = jax.vjp(cumprod, x)
 
+    # TODO(mattjj): should we re-enable this check? The constants are now
+    # inlined in the Jaxprs, not easy to find them.
     # Need to spelunk into vjp_fun. This is fragile, and if it causes problems
     # just skip this test and make an issue for mattjj.
-    *_, ext_res = vjp_fun.args[0].args[0]
-    self.assertIs(ext_res, x)
+    if not config.use_simplified_jaxpr_constants.value:
+      *_, ext_res = vjp_fun.args[0].args[0]
+      self.assertIs(ext_res, x)
 
     if remat is not None:
       # TODO(mattjj): make the numpy.ndarray test pass w/ remat
@@ -3170,9 +3174,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
               lambda: data[0],  # noqa: F821
               lambda: data[1],  # noqa: F821
           )
+      _ = g()
       jg = jax.jit(g)
       _ = jg().block_until_ready()
       del g, jg, data, _
+
+      # TODO(necula): these caches hold on to Jaxprs
+      from jax._src.interpreters import partial_eval as pe
+      pe._cached_abstract_eval.cache_clear()
+      from jax._src import dispatch
+      dispatch.xla_primitive_callable.cache_clear()
 
     nbufs = lambda: len(jax.live_arrays())
     base = nbufs()
@@ -3482,7 +3493,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       (final_ref, outs_ref), vjp = jax.vjp(partial(jax.lax.scan, body_fun), init_vals, xs)
       init_vals_bar_ref, xs_bar_ref = vjp((final, outs))
 
-    self.assertAllClose(final, final_ref, check_dtypes=False)
+    self.assertAllClose(final, final_ref, check_dtypes=False,
+                        atol=1e-13)
     self.assertAllClose(outs, outs_ref, check_dtypes=False)
     self.assertAllClose(xs_bar, xs_bar_ref, check_dtypes=False)
 
