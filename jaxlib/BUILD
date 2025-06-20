@@ -169,6 +169,7 @@ pywrap_library(
         "//jaxlib/mlir/_mlir_libs:_tpu_ext",
         "//jaxlib/mlir/_mlir_libs:_triton_ext",
         "//jaxlib/mlir/_mlir_libs:register_jax_dialects",
+        "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
     ],
 )
