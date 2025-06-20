@@ -470,7 +470,8 @@ jax_multiplatform_test(
         "multiaccelerator",
     ],
     deps = [
-        "//jax:experimental",
+        "//jax:experimental_profiler",
+        "//jax:experimental_serialize_executable",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -531,7 +532,9 @@ jax_multiplatform_test(
     srcs = ["aot_test.py"],
     tags = ["multiaccelerator"],
     deps = [
-        "//jax:experimental",
+        "//jax:experimental_pjit",
+        "//jax:experimental_serialize_executable",
+        "//jax:experimental_topologies",
     ] + py_deps([
         "numpy",
         "absl/testing",
