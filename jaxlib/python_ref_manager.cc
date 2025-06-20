@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -87,6 +88,7 @@ void PythonRefManager::AddGarbage(
 
 void PythonRefManager::CollectGarbage() {
   // TODO(phawkins): we should CHECK(PyGILState_Check());
+  tsl::profiler::TraceMe traceme("PythonRefManager::CollectGarbage");
   std::deque<nanobind::object> garbage;
   {
     absl::MutexLock lock(&mu_);
