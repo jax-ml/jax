@@ -56,7 +56,7 @@ MlirAttribute mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding,
       llvm::dyn_cast<mlir::triton::DialectInferLayoutInterface>(&dialect);
   mlir::Attribute retEncoding;
   (void)inferLayoutInterface->inferReduceOpEncoding(opEncoding, axis,
-                                                    retEncoding);
+                                                    retEncoding, std::nullopt);
   return wrap(retEncoding);
 }
 
