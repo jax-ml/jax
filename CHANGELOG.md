@@ -24,6 +24,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     supported version until July 2026.
   * `Layout`, `.layout`, `.input_layouts` and `.output_layouts` have been
     renamed to `Format`, `.format`, `.input_formats` and `.output_formats` in JAX
+* Deprecations:
+  * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new
+    {func}`jax.dlpack.is_supported_dtype` function.
 
 ## JAX 0.6.2 (June 17, 2025)
 

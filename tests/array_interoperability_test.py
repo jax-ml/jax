@@ -21,6 +21,7 @@ import jax.dlpack
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 from jax._src import config
+from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
 from jax._src.lib import version as jaxlib_version
 
@@ -41,7 +42,7 @@ except ImportError:
   tf = None
 
 
-dlpack_dtypes = sorted(jax.dlpack.SUPPORTED_DTYPES, key=lambda x: x.__name__)
+dlpack_dtypes = sorted(dlpack_src.SUPPORTED_DTYPES_SET, key=lambda x: x.name)
 
 # These dtypes are not supported by neither NumPy nor TensorFlow, therefore
 # we list them separately from ``jax.dlpack.SUPPORTED_DTYPES``.
@@ -65,8 +66,8 @@ if jaxlib_version >= (0, 5, 3):
   ]
 
 numpy_dtypes = sorted(
-    [dt for dt in jax.dlpack.SUPPORTED_DTYPES if dt != jnp.bfloat16],
-    key=lambda x: x.__name__)
+    [dt for dt in dlpack_src.SUPPORTED_DTYPES_SET if dt != jnp.bfloat16],
+    key=lambda x: x.name)
 
 cuda_array_interface_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]
 
