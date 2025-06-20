@@ -489,7 +489,7 @@ We can write a similar kernel using `pl.core_map`. One big difference is that
 unlike `pl.pallas_call`, no GMEM<->SMEM copies will be inserted automatically.
 If you want them, you can either insert them yourself or use the
 {py:func}`plgpu.emit_pipeline <jax.experimental.pallas.mosaic_gpu.emit_pipeline>`
-helper.
+helper. We recommend reviewing the [software pipelining guide](./pipelining.md).
 
 ```python
 @pl.run_state
