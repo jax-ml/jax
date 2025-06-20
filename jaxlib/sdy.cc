@@ -70,41 +70,6 @@ void BuildSdySubmodule(nb::module_& m) {
   nb::module_ mlir_module = m.def_submodule("sdy", "Shardy/XLA integration");
 
   mlir_module
-      // TODO(b/707574930): define a C API for the XLA pipelines.
-      .def(
-          "sdy_round_trip_export_pipeline",
-          [](const nb::bytes& bytecode) -> nb::bytes {
-            mlir::MLIRContext context;
-            mlir::OwningOpRef<mlir::ModuleOp> module =
-                xla::ValueOrThrow(ParseMlirModuleString(
-                    absl::string_view(bytecode.c_str(), bytecode.size()),
-                    context));
-            mlir::PassManager pm(&context);
-            sdy::addSdyRoundTripExportPipeline(pm);
-            tsl::StatusScopedDiagnosticHandler diagnosticHandler(&context);
-            ThrowIfError(diagnosticHandler.consumeStatus(pm.run(module.get())));
-            std::string module_str =
-                xla::ValueOrThrow(SerializeUsingBytecode(module.get()));
-            return nb::bytes(module_str.data(), module_str.size());
-          },
-          nb::arg("module"))
-      .def(
-          "sdy_round_trip_import_shardings",
-          [](const nb::bytes& bytecode) -> nb::bytes {
-            mlir::MLIRContext context;
-            mlir::OwningOpRef<mlir::ModuleOp> module =
-                xla::ValueOrThrow(ParseMlirModuleString(
-                    absl::string_view(bytecode.c_str(), bytecode.size()),
-                    context));
-            mlir::PassManager pm(&context);
-            pm.addPass(xla::sdy::createSdyRoundTripImportShardyAttrsPass());
-            tsl::StatusScopedDiagnosticHandler diagnosticHandler(&context);
-            ThrowIfError(diagnosticHandler.consumeStatus(pm.run(module.get())));
-            std::string module_str =
-                xla::ValueOrThrow(SerializeUsingBytecode(module.get()));
-            return nb::bytes(module_str.data(), module_str.size());
-          },
-          nb::arg("module"))
       .def("lowered_with_shardy",
            [](const nb::bytes& bytecode) -> bool {
              mlir::MLIRContext context;
@@ -113,12 +78,11 @@ void BuildSdySubmodule(nb::module_& m) {
                      absl::string_view(bytecode.c_str(), bytecode.size()),
                      context));
              return mlir::sdy::getMeshAttr(module.get(), "mesh") ||
+                    mlir::sdy::getMeshAttr(module.get(), "empty_mesh") ||
                     sdy::tryGetFrontendAttr<mlir::DictionaryAttr>(
                         module.get(), sdy::kMeshesRoundTripAttr)
                         .has_value();
            })
-      // TODO(bartchr): delete this and all uses of it once I have JAX export
-      // support multiple meshes.
       .def("get_mesh", [](const nb::bytes& bytecode) -> nb::list {
         mlir::MLIRContext context;
         mlir::OwningOpRef<mlir::ModuleOp> module =
