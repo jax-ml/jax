@@ -42,6 +42,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
@@ -1060,6 +1061,67 @@ LogicalResult canonicalize_transpose(const CanonicalizeContext &ctx,
   return success();
 }
 
+Value canonicalize_extf_impl(const CanonicalizeContext &ctx,
+                             ImplicitLocOpBuilder &builder, arith::ExtFOp op) {
+  auto src_ty = dyn_cast<VectorType>(op.getOperand().getType());
+  auto dst_ty = dyn_cast<VectorType>(op.getType());
+  if (dst_ty.getElementType().isF32()) {
+    // Cast to f32 is always supported.
+    return nullptr;
+  }
+
+  // Otherwise, cast to f32 and then truncate.
+  VectorType f32_ty = VectorType::get(src_ty.getShape(), builder.getF32Type());
+  Value val_f32 = builder.create<tpu::ExtFOp>(f32_ty, op.getOperand());
+  return builder.create<tpu::TruncFOp>(dst_ty, val_f32,
+                                       tpu::RoundingMode::kToNearestEven);
+}
+
+Value canonicalize_truncf_impl(const CanonicalizeContext &ctx,
+                               ImplicitLocOpBuilder &builder,
+                               arith::TruncFOp op) {
+  auto src_ty = dyn_cast<VectorType>(op.getOperand().getType());
+  auto dst_ty = dyn_cast<VectorType>(op.getType());
+  if (src_ty.getElementType().isF32()) {
+    // Cast from f32 is always supported.
+    return nullptr;
+  }
+
+  // Otherwise, cast to f32 and then truncate.
+  VectorType f32_ty = VectorType::get(src_ty.getShape(), builder.getF32Type());
+  Value val_f32 = builder.create<tpu::ExtFOp>(f32_ty, op.getOperand());
+  return builder.create<tpu::TruncFOp>(dst_ty, val_f32,
+                                       tpu::RoundingMode::kToNearestEven);
+}
+
+LogicalResult canonicalize_extf(const CanonicalizeContext &ctx,
+                                Operation &raw_op) {
+  auto op = cast<arith::ExtFOp>(raw_op);
+  if (!isa<VectorType>(op.getType())) {
+    return failure();
+  }
+  auto builder = ImplicitLocOpBuilder(op->getLoc(), op.getOperation());
+  if (auto new_op_opt = canonicalize_extf_impl(ctx, builder, op)) {
+    op.replaceAllUsesWith(new_op_opt);
+    op.erase();
+  }
+  return success();
+}
+
+LogicalResult canonicalize_truncf(const CanonicalizeContext &ctx,
+                                  Operation &raw_op) {
+  auto op = cast<arith::TruncFOp>(raw_op);
+  if (!isa<VectorType>(op.getType())) {
+    return failure();
+  }
+  auto builder = ImplicitLocOpBuilder(op->getLoc(), op.getOperation());
+  if (auto new_op_opt = canonicalize_truncf_impl(ctx, builder, op)) {
+    op.replaceAllUsesWith(new_op_opt);
+    op.erase();
+  }
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(const CanonicalizeContext &ctx, Operation &op)>;
 
@@ -1076,6 +1138,8 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {arith::SIToFPOp::getOperationName(), canonicalize_sitofp},
+      {arith::ExtFOp::getOperationName(), canonicalize_extf},
+      {arith::TruncFOp::getOperationName(), canonicalize_truncf},
       {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
   return *rules;
