@@ -69,3 +69,5 @@ GMEM = MemorySpace.GMEM
 SMEM = MemorySpace.SMEM
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.TMEM`.
 TMEM = MemorySpace.TMEM
+#: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.REGS`.
+REGS = MemorySpace.REGS
