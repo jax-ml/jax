@@ -310,24 +310,19 @@ class DebugInfoTest(jtu.JaxTestCase):
     self.assertIsNotNone(dbg.func_lineno)
     self.assertEqual(dbg.arg_names, ("my_arg",))
 
-  def test_debug_info_save_wrapped_fun_source_info(self):
+  def test_debug_info_save_wrapped_fun_debug_info(self):
     def wrapper(x, y):
       return x
+
+    def other_f():
+      pass
 
     dbg = api_util.debug_info("test", wrapper, (1, 2), {})
     self.assertEqual("wrapper", dbg.func_name)
 
-    api_util.save_wrapped_fun_sourceinfo(wrapper, lambda x, y: x)
-    dbg = api_util.debug_info("test", wrapper, (1, 2), {})
-    self.assertEqual("<lambda>", dbg.func_name)
-
-    def other_f():
-      pass
-    dbg_other = api_util.debug_info("test other", other_f, (), {})
-    api_util.save_wrapped_fun_sourceinfo(wrapper, dbg_other)
-    dbg = api_util.debug_info("test", wrapper, (1, 2), {})
-    self.assertEqual("other_f", dbg.func_name)
-    self.assertEqual("test", dbg.traced_for)
+    api_util.save_wrapped_fun_debug_info(other_f, dbg)
+    dbg = api_util.debug_info("other", other_f, (1, 2), {})
+    self.assertEqual("wrapper", dbg.func_name)
 
   def test_debug_info_no_source_info_not_callable(self):
     # built-in function "int" does not have an inspect.Signature
@@ -1227,6 +1222,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=jit, fun=<lambda>, arg_names=x, from None",
             "traced_for=linear_call fun, fun=fn, arg_names=r,x['c'], from r",
             "traced_for=linear_call fun, fun=fn, arg_names=r,x['c'], from x['c']",
+            # TODO(necula): should be from t['b']
             "traced_for=linear_call fun_transpose, fun=fn_tp, arg_names=r,t['c'], from t['c']",
         ]),
 
@@ -1362,10 +1358,11 @@ class DebugInfoTest(jtu.JaxTestCase):
         ])
 
   def test_grad_scan(self):
-      # Based on control_flow_test:testScanHigherOrderDifferentiation
+    # Based on control_flow_test:testScanHigherOrderDifferentiation
     tracer_spy = TracerSpy()
-    def f(c, a):
+    def f(c, a):  # c: f32, a: f32[2]
       tracer_spy.append(c)
+      tracer_spy.append(a)
       d = 0.75
       b = jnp.sin(c * jnp.sum(jnp.cos(d * a)))
       c = 0.9 * jnp.cos(d * jnp.sum(jnp.sin(c * a)))
@@ -1375,13 +1372,13 @@ class DebugInfoTest(jtu.JaxTestCase):
     c = jnp.array(1, dtype=as_.dtype)
 
     @jax.jit
-    def my_f(x, as_):
+    def my_f(x, as_):  # x: f32, as_: f32[3, 2]
       tracer_spy.append(x)
       def to_remat(a, b):
         return for_loop.scan(f, a, b)
       return jax.remat(to_remat)(c, as_)
 
-    def the_grad(c, as_):
+    def the_grad(c, as_):  # c: f32[], as_: f32[3, 2],
       tracer_spy.append(c)
       _, pullback = jax.vjp(my_f, c, as_)
       return pullback((c, np.arange(3, dtype=c.dtype)))
@@ -1390,27 +1387,25 @@ class DebugInfoTest(jtu.JaxTestCase):
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
           "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
-          "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
-          "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
+          "traced_for=scan, fun=f, arg_names=,,, result_paths=,",
+          "traced_for=scan, fun=f, arg_names=c,a, result_paths=",
           "traced_for=jit, fun=my_f, arg_names=as_,,, result_paths=result[0],result[1]",
           "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
-          "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
-          "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
-          "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
-          "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,, result_paths=",
+          "traced_for=scan, fun=f, arg_names=,,,,,, result_paths=,",
+          "traced_for=scan, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
+          "traced_for=scan, fun=f, arg_names=,,,,,,,,,,, result_paths=",
       ]
     else:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
           "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=result[0],result[1]",
-          "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
-          "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
+          "traced_for=scan, fun=f, arg_names=,,, result_paths=,",
           "traced_for=jit, fun=my_f, arg_names=,,x,as_, result_paths=result[0],result[1]",
           "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
-          "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
-          "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
-          "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
-          "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,, result_paths=",
+          "traced_for=scan, fun=f, arg_names=,,,,,, result_paths=,",
+          "traced_for=scan, fun=f, arg_names=c,a, result_paths=",
+          "traced_for=scan, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
+          "traced_for=scan, fun=f, arg_names=,,,,,,,,,,, result_paths=",
       ]
     self._check_tracers_and_jaxprs(
         jax.jit(the_grad),
@@ -1420,17 +1415,14 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_tracer_debug_infos=[
             "traced_for=jit, fun=the_grad, arg_names=c,as_, from c",
             "traced_for=scan, fun=f, arg_names=c,a, from c",
+            "traced_for=scan, fun=f, arg_names=c,a, from a",
             "traced_for=jit, fun=my_f, arg_names=x,as_, from x",
-            # TODO(necula): arg_names, and "from x"
-            "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], from refs[0]",
         ],
         expected_lowering_lines=[
             re.compile(r".*func.func public @main\(%arg0: tensor<f..> loc\(\"c\"\)"),
             re.compile(r".*func.func public @main\(.*, %arg1: tensor<3x2xf..> loc\(\"as_\"\)"),
             re.compile(r".*func.func public @main\(.* -> .*tensor<f..> {jax.result_info = \"result\[0\]\""),
             re.compile(r".*func.func public @main\(.* -> .*tensor<3x2xf..> {jax.result_info = \"result\[1\]\""),
-            # TODO(necula): unnamed function?
-            re.compile(r".*func.func private @None"),
         ])
 
   def test_while_loop(self):
@@ -1473,13 +1465,11 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=result",
-            # TODO(necula): bad arg_names, result_paths
-            "traced_for=scan, fun=my_body, arg_names=loop_carry[0],loop_carry[1], result_paths=result[0][0],result[0][1]",
+            "traced_for=fori_loop, fun=my_body, arg_names=_,c,, result_paths=result[0][0],result[0][1]",
 
         ],
         expected_tracer_debug_infos=[
-            # TODO(necula): the arg_names are not right
-            "traced_for=scan, fun=my_body, arg_names=loop_carry[0],loop_carry[1], from loop_carry[1]",
+            "traced_for=fori_loop, fun=my_body, arg_names=_,c,, from c",
         ]
     )
 
@@ -1492,13 +1482,12 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=<lambda>, arg_names=ub,x, result_paths=result",
+            # The fori_cond fun is entire manufactured internally
             re.compile(r"traced_for=while_cond, fun=_fori_cond_fun at .*loops.py:.*, arg_names=loop_carry\[0\],loop_carry\[1\],loop_carry\[2\], result_paths="),
-            # TODO(necula): arg_names and result_paths are not right
-            "traced_for=while_body, fun=my_body, arg_names=loop_carry[0],loop_carry[1],loop_carry[2], result_paths=result[0],result[1],result[2]",
+            "traced_for=fori_loop, fun=my_body, arg_names=_,,c, result_paths=result[0],result[1],result[2]",
         ],
         expected_tracer_debug_infos=[
-            # TODO(necula): the arg_names are not right
-            "traced_for=while_body, fun=my_body, arg_names=loop_carry[0],loop_carry[1],loop_carry[2], from loop_carry[2]",
+            "traced_for=fori_loop, fun=my_body, arg_names=_,,c, from c",
         ])
 
   def test_scan(self):
@@ -1732,7 +1721,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         ],
     )
 
-    (x).block_until_ready()
+    x.block_until_ready()
 
   def test_remat(self):
     tracer_spy = TracerSpy()
