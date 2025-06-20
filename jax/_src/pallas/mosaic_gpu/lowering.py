@@ -947,12 +947,12 @@ def lower_jaxpr_to_module(
     # Each range is 2 events, each event is 4 bytes.
     prof_spec = mgpu_profiler.ProfilerSpec(params.profile_space * 2 * 4)
     prof_ctx = ProfilerContext(params.profile_dir, prof_spec)
-  mgpu_grid = tuple(map(operator.mul, parallel_grid, cluster))
+  cuda_grid = tuple(map(operator.mul, parallel_grid, cluster))
   semaphores_shape = ()
   if rs.gmem_semaphores:
     semaphores_shape = (
         jax.ShapeDtypeStruct(
-            shape=(math.prod(mgpu_grid) * rs.gmem_semaphores,), dtype=np.int32
+            shape=(math.prod(cuda_grid) * rs.gmem_semaphores,), dtype=np.int32
         ),
     )
   # NOTE: new_out_shapes has out_shapes, then semaphores_shape and
@@ -960,7 +960,7 @@ def lower_jaxpr_to_module(
   module, new_out_shapes, _, launch_ctx = (
       mgpu_core._lower_as_gpu_kernel(
           body,
-          grid=mgpu_grid,
+          grid=cuda_grid,
           cluster=cluster,
           block=block,
           in_shapes=(*in_shapes, *semaphores_shape),
@@ -988,7 +988,7 @@ def lower_jaxpr_to_module(
   launch_ctx.scratch.finalize_size()
 
   return LoweringResult(
-      module, parallel_grid, block, new_out_shapes, prof_ctx, semaphores_shape
+      module, cuda_grid, block, new_out_shapes, prof_ctx, semaphores_shape
   )
 
 
