@@ -638,6 +638,9 @@ class JVPTracer(Tracer):
     self.primal = primal
     self.tangent = tangent
 
+  def _short_repr(self):
+    return f"GradTracer<{self.aval}>"
+
   @property
   def aval(self):
     return get_aval(self.primal)
