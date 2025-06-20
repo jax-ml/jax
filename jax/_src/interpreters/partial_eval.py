@@ -209,8 +209,8 @@ class JaxprTrace(Trace['JaxprTracer']):
     if const is None:
       return tracer
     else:
-      if core.is_literalable(const):
-        return self.new_instantiated_literal(const)
+      if (const_literal := core.is_literalable(const)) is not None:
+        return self.new_instantiated_literal(const_literal)
       else:
         return self.new_instantiated_const(const)
 
@@ -1725,7 +1725,7 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
               "\n Jaxpr: "
               f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
         eqn_invar = eqn.invars[eff.input_index]
-        if eqn_invar in mut_arrays:
+        if type(eqn_invar) is core.Literal or eqn_invar in mut_arrays:
           continue
         if (input_index := all_vars.get(eqn_invar, sentinel)) is sentinel:
           # TODO(mattjj): ask for forgiveness
@@ -1963,8 +1963,8 @@ class DynamicJaxprTrace(core.Trace):
   def _new_const(self, aval, c, source_info: SourceInfo) -> DynamicJaxprTracer:
     tracer = DynamicJaxprTracer(self, aval, source_info)
     self.frame.tracers.append(tracer)
-    if core.is_literalable(c):
-      self.frame.tracer_to_var[id(tracer)] = Literal(c, aval)
+    if (const_literal := core.is_literalable(c)) is not None:
+      self.frame.tracer_to_var[id(tracer)] = Literal(const_literal, aval)
     else:
       self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
       self.frame.constid_to_tracer[id(c)] = tracer
@@ -2768,8 +2768,8 @@ def inline_jaxpr_into_trace(
         assert (eqn_ is None) == all(c is not None for c in consts_out)
         for v, c in zip(orig_outvars, consts_out):
           if c is not None:
-            if core.is_literalable(c):
-              env[v] = Literal(c, v.aval)
+            if (const_literal := core.is_literalable(c)) is not None:
+              env[v] = Literal(const_literal, v.aval)
             else:
               const_env[v] = c
     if eqn_ is not None:

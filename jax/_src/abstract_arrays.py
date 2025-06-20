@@ -69,7 +69,8 @@ def _make_shaped_array_for_numpy_scalar(x: np.generic) -> ShapedArray:
 for t in numpy_scalar_types:
   core.pytype_aval_mappings[t] = _make_shaped_array_for_numpy_scalar
 
-core.literalable_types.update(array_types)
+for a_type in array_types:
+  core.literalable_types[a_type] = lambda x: x
 
 
 def _make_abstract_python_scalar(typ, val):
@@ -81,4 +82,5 @@ def _make_abstract_python_scalar(typ, val):
 for t in dtypes.python_scalar_dtypes:
   core.pytype_aval_mappings[t] = partial(_make_abstract_python_scalar, t)
 
-core.literalable_types.update(dtypes.python_scalar_dtypes.keys())
+for s_type in dtypes.python_scalar_dtypes.keys():
+  core.literalable_types[s_type] = lambda x: x

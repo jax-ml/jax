@@ -1389,10 +1389,10 @@ class DebugInfoTest(jtu.JaxTestCase):
     if config.use_direct_linearize.value:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
-          "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
+          "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
-          "traced_for=jit, fun=my_f, arg_names=as_,,, result_paths=result[0],result[1]",
+          "traced_for=jit, fun=my_f, arg_names=as_,, result_paths=result[0],result[1]",
           "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
@@ -1405,7 +1405,7 @@ class DebugInfoTest(jtu.JaxTestCase):
           "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=result[0],result[1]",
           "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
-          "traced_for=jit, fun=my_f, arg_names=,,x,as_, result_paths=result[0],result[1]",
+          "traced_for=jit, fun=my_f, arg_names=,x,as_, result_paths=result[0],result[1]",
           "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
@@ -1901,8 +1901,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=result",
-            # TODO(necula): bad arg_names (why None), bad result_paths
-            'traced_for=custom_dce, fun=my_f, arg_names=,x, result_paths=result[0],result[1]',
+            'traced_for=custom_dce, fun=my_f, arg_names=x, result_paths=result[0],result[1]',
         ],
         expected_tracer_debug_infos=[
             # TODO(necula): no leaked tracer from my_rule?
