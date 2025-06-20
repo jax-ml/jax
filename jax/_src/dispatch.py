@@ -547,7 +547,7 @@ def _device_put_impl(
       raise ValueError(
           "sharding and device_local_layout in `Layout` instance should be"
           f" concrete. Got layout: {l} for input {aval.str_short()}")
-    if (getattr(x, 'layout', None) == l and getattr(x, '_committed', False) and
+    if (getattr(x, 'format', None) == l and getattr(x, '_committed', False) and
         copy == CopySemantics.ALIAS):
       return x
     if x_dll is None and dll is None:
