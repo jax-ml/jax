@@ -3436,6 +3436,32 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         jax.jit(kernel)(), jax.lax.broadcast_in_dim(x, output_shape, bcast_dims)
     )
 
+  def test_bad_layout_cast_raises_in_lowering(self):
+    shape = (128, 128)
+    def body(ctx, out, _):
+      del ctx, out
+      f32 = ir.F32Type.get()
+      x = vector.splat(ir.VectorType.get(shape, f32), arith.constant(f32, 0.0))
+      wgmma_layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+      wgmma_row_layout = layouts.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
+      lc1 = mgpu_dialect.layout_cast(x, wgmma_layout)
+      mgpu_dialect.layout_cast(lc1, wgmma_row_layout)
+
+    dtype = jnp.float32
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Cannot convert from TiledLayout.* to TiledLayout",
+    ):
+      mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=(),
+          out_shape=jax.ShapeDtypeStruct(shape, dtype),
+          smem_scratch_shape=(),
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )
+
   @parameterized.parameters(
       (jnp.float32, 5.0, 2.0, vector.CombiningKind.ADD),
       (jnp.float32, 5.0, 2.0, vector.CombiningKind.MAXIMUMF),
