@@ -17,6 +17,7 @@ import collections
 import contextlib
 from functools import partial
 import itertools
+import math
 import operator
 import re
 import unittest
@@ -3394,6 +3395,96 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return jax.lax.scan(f, 0, x)
     jaxpr = jax.make_jaxpr(g)(jnp.arange(3.))
     self.assertLen(jaxpr.eqns[0].params["jaxpr"].jaxpr.outvars, 1)
+
+  @jtu.sample_product(
+      seed=range(6),
+      num_rule_consts=range(6),
+      num_const_fwds=range(6),
+      num_carry_fwds=range(6),
+      num_input_fwds=range(6),
+  )
+  @jtu.run_on_devices("cpu")
+  def test_scan_vjp_forwarding_correctness(
+      self,
+      seed,
+      num_rule_consts,
+      num_const_fwds,
+      num_carry_fwds,
+      num_input_fwds):
+    # Unlike test_scan_forwarding_correctness, which tests forwarding in the
+    # scan traceable, this test covers forwarding logic related to residuals in
+    # the scan partial eval / vjp rule. So 'forwards' refer to residuals that
+    # will be forwarded.
+
+    # We use a custom_jvp where the jvp rule introduces consts to populate
+    # jaxpr.consts in _scan_partial_eval's input.
+    @jax.custom_jvp
+    def foo(x):
+      return 3. * x
+    @foo.defjvp
+    def foo_jvp(primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      if num_rule_consts:
+        coeff = sum([jnp.array(np.ones(3) / num_rule_consts) for _ in range(num_rule_consts)])  # noqa: C419
+      else:
+        coeff = 1.
+      return foo(x), jnp.prod(coeff) * x_dot
+
+    num_const = num_const_fwds + 2
+    num_carry = num_carry_fwds + 4
+    num_xs = num_input_fwds + 2
+    num_ys = num_xs + 1
+
+    rng = np.random.RandomState(seed)
+    carry_perm = rng.permutation(num_carry)
+    carry_iperm = np.argsort(carry_perm)
+
+    xs_perm = rng.permutation(num_xs)
+    ys_perm = rng.permutation(num_ys)
+    f = np.arange(num_xs)
+    f = [f[i] if idx < num_input_fwds else None for idx, i in enumerate(xs_perm)]
+    f += [None]
+    in_fwd = [f[i] for i in ys_perm]
+
+    body_consts = [jnp.array(rng.randn(3)) for _ in range(num_const)]
+    init_vals = list(map(jnp.array, rng.uniform(size=(num_carry, 3))))
+
+    def body_fun(c, x):
+      c = [c[i] for i in carry_iperm]
+
+      const_fwds, const_dont_fwd = split_list(body_consts, [num_const_fwds])
+      z = sum(const_dont_fwd)
+
+      carry_fwds, carry_dont_fwd = split_list(c, [num_const_fwds])
+      carry_fwds = [math.prod([x, x, *const_fwds, z]) for x in carry_fwds]
+      carry_dont_fwd = [jnp.sin(x) * sum(jnp.sum(c) for c in body_consts)
+                        for x in carry_dont_fwd]
+      new_c_perm = [*carry_fwds, *carry_dont_fwd]
+      new_c = [new_c_perm[i] for i in carry_perm]
+      new_c = [foo(new_c[0]), *new_c[1:]]
+
+      x = [x[i] for i in xs_perm]
+      x_fwd, x_dont_fwd = split_list(x, [num_input_fwds])
+      x_fwd = [x * x for x in x_fwd]
+      x_dont_fwd = [jnp.cos(x) * sum(jnp.sum(c) for c in body_consts)
+                    for x in x_dont_fwd]
+      y = [*x_fwd, *x_dont_fwd, 0]
+      y = [y[i] for i in ys_perm]
+
+      return new_c, y
+
+    xs = list(map(jnp.array, rng.uniform(size=(num_xs, 2))))
+
+    (final, outs), vjp = jax.vjp(partial(jax.lax.scan, body_fun), init_vals, xs)
+    init_vals_bar, xs_bar = vjp((final, outs))
+
+    with jax.disable_jit():
+      (final_ref, outs_ref), vjp = jax.vjp(partial(jax.lax.scan, body_fun), init_vals, xs)
+      init_vals_bar_ref, xs_bar_ref = vjp((final, outs))
+
+    self.assertAllClose(final, final_ref, check_dtypes=False)
+    self.assertAllClose(outs, outs_ref, check_dtypes=False)
+    self.assertAllClose(xs_bar, xs_bar_ref, check_dtypes=False)
 
 
 if __name__ == '__main__':
