@@ -138,65 +138,66 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
     return tiled_layout_attr;
   }
   if (auto affine_map_attr = dyn_cast<AffineMapAttr>(memref_ty.getLayout())) {
-    if (memref_ty.getRank() == 0) {
-      return emitError(UnknownLoc::get(memref_ty.getContext()),
-                       "0-rank memref not supported");
-    }
     if (!affine_map_attr.isIdentity()) {
       return emitError(UnknownLoc::get(memref_ty.getContext()),
                        "Non-identity affine layout");
     }
-    if (!memref_ty.getElementType().isIntOrFloat()) {
-      return emitError(UnknownLoc::get(memref_ty.getContext()),
-                       "Invalid element type for memref");
-    }
-    const int8_t bitwidth = memref_ty.getElementTypeBitWidth();
-    const auto [sublane_count, lane_count] = target_shape;
-    // Infer the layout
-    if (memref_ty.getRank() == 1) {
-      auto src_sublane =
-          llvm::divideCeil(memref_ty.getShape().back(), lane_count);
-      const int64_t leading_tile =
-          getTilingFactor(src_sublane, hardware_generation, sublane_count,
-                          tpu_tiling_flags, bitwidth, is_kernel_argument,
-                          /*is_1d=*/true) *
-          lane_count;
-      SmallVector<xla::Tile> tiles{xla::Tile({leading_tile})};
-      if (bitwidth != 32) {
-        if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
-          return emitError(UnknownLoc::get(memref_ty.getContext()),
-                           "Unsupported bitwidth: ")
-                 << bitwidth;
-        }
-        tiles.append({xla::Tile({lane_count}), xla::Tile({32 / bitwidth, 1})});
-      }
-      return TiledLayoutAttr::get(memref_ty.getContext(), tiles, {1});
-    }
-
-    // memref.getRank() > 1
-    const ArrayRef<int64_t> shape = memref_ty.getShape();
-
-    const int64_t src_sublane = shape[shape.size() - 2];
-    if (leading_tile_rows == 0) {
-      leading_tile_rows = getTilingFactor(
-          src_sublane, hardware_generation, sublane_count, tpu_tiling_flags,
-          bitwidth, is_kernel_argument, /*is_1d=*/false);
-    }
-    SmallVector<xla::Tile> tiles{xla::Tile({leading_tile_rows, lane_count})};
+  } else if (!isa<StridedLayoutAttr>(memref_ty.getLayout())) {
+    return emitError(UnknownLoc::get(memref_ty.getContext()),
+                     "Unrecognized layout annotation");
+  }
+  if (memref_ty.getRank() == 0) {
+    return emitError(UnknownLoc::get(memref_ty.getContext()),
+                     "0-rank memref not supported");
+  }
+  if (!memref_ty.getElementType().isIntOrFloat()) {
+    return emitError(UnknownLoc::get(memref_ty.getContext()),
+                     "Invalid element type for memref");
+  }
+  const int8_t bitwidth = memref_ty.getElementTypeBitWidth();
+  const auto [sublane_count, lane_count] = target_shape;
+  // Infer the layout
+  if (memref_ty.getRank() == 1) {
+    auto src_sublane =
+        llvm::divideCeil(memref_ty.getShape().back(), lane_count);
+    const int64_t leading_tile =
+        getTilingFactor(src_sublane, hardware_generation, sublane_count,
+                        tpu_tiling_flags, bitwidth, is_kernel_argument,
+                        /*is_1d=*/true) *
+        lane_count;
+    SmallVector<xla::Tile> tiles{xla::Tile({leading_tile})};
     if (bitwidth != 32) {
       if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
         return emitError(UnknownLoc::get(memref_ty.getContext()),
                          "Unsupported bitwidth: ")
                << bitwidth;
       }
-      tiles.push_back(xla::Tile({32 / bitwidth, 1}));
+      tiles.append({xla::Tile({lane_count}), xla::Tile({32 / bitwidth, 1})});
     }
-    auto tile_strides =
-        ComputeTileStrides(memref_ty, {leading_tile_rows, lane_count});
-    return TiledLayoutAttr::get(memref_ty.getContext(), tiles, tile_strides);
+    return TiledLayoutAttr::get(memref_ty.getContext(), tiles, {1});
   }
-  return emitError(UnknownLoc::get(memref_ty.getContext()),
-                   "Unrecognized layout annotation");
+
+  // memref.getRank() > 1
+  const ArrayRef<int64_t> shape = memref_ty.getShape();
+
+  const int64_t src_sublane = shape[shape.size() - 2];
+  if (leading_tile_rows == 0) {
+    leading_tile_rows = getTilingFactor(
+        src_sublane, hardware_generation, sublane_count, tpu_tiling_flags,
+        bitwidth, is_kernel_argument, /*is_1d=*/false);
+  }
+  SmallVector<xla::Tile> tiles{xla::Tile({leading_tile_rows, lane_count})};
+  if (bitwidth != 32) {
+    if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
+      return emitError(UnknownLoc::get(memref_ty.getContext()),
+                       "Unsupported bitwidth: ")
+             << bitwidth;
+    }
+    tiles.push_back(xla::Tile({32 / bitwidth, 1}));
+  }
+  auto tile_strides =
+      ComputeTileStrides(memref_ty, {leading_tile_rows, lane_count});
+  return TiledLayoutAttr::get(memref_ty.getContext(), tiles, tile_strides);
 }
 
 // Make sure only the first tile might introduce padding.

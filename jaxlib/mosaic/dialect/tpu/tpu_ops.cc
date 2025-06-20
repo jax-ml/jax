@@ -132,7 +132,11 @@ LogicalResult MemRefSliceOp::verify() {
     return emitOpError(
         "Memory spaces must match if the target memory space is provided.");
   }
-  if (isa<StridedLayoutAttr>(target_layout)) {
+  if (isa<TiledLayoutAttr>(source_layout) &&
+      !isa<TiledLayoutAttr>(target_layout)) {
+    // TODO(slebedev): Remove this special-case once we move layout propagation
+    // to the infer-memref-layout pass.
+  } else if (isa<StridedLayoutAttr>(target_layout)) {
     SmallVector<int64_t> source_strides;
     int64_t source_offset;
     if (failed(
@@ -214,8 +218,13 @@ LogicalResult MemRefSqueezeOp::verify() {
     return failure();
   }
 
+  auto source_layout = source_type.getLayout();
   auto target_layout = target_type.getLayout();
-  if (isa<StridedLayoutAttr>(target_layout)) {
+  if (isa<TiledLayoutAttr>(source_layout) &&
+      !isa<TiledLayoutAttr>(target_layout)) {
+    // TODO(slebedev): Remove this special-case once we move layout propagation
+    // to the infer-memref-layout pass.
+  } else if (isa<StridedLayoutAttr>(target_layout)) {
     SmallVector<int64_t> source_strides;
     int64_t source_offset;
     if (failed(
