@@ -289,6 +289,8 @@ def make_cpu_client(
     num_nodes=distributed.global_state.num_processes,
     collectives=collectives,
     num_devices=num_devices,
+    get_local_topology_timeout_minutes=cpu_get_local_topology_timeout_minutes.value,
+    get_global_topology_timeout_minutes=cpu_get_global_topology_timeout_minutes.value,
   )
 
 
@@ -1126,5 +1128,26 @@ num_cpu_devices = config.int_state(
         "Number of CPU devices to use. If not provided, the value of "
         "the XLA flag --xla_force_host_platform_device_count is used."
         " Must be set before JAX is initialized."),
+    validator=_validate_backend_not_initialized,
+)
+
+cpu_get_local_topology_timeout_minutes = config.int_state(
+    name="jax_cpu_get_local_topology_timeout_minutes",
+    default=2,
+    help=(
+        "Timeout in minutes for getting the local topology of each CPU device"
+        " when building the global topology."
+    ),
+    validator=_validate_backend_not_initialized,
+)
+
+cpu_get_global_topology_timeout_minutes = config.int_state(
+    name="jax_cpu_get_global_topology_timeout_minutes",
+    default=5,
+    help=(
+        "Timeout in minutes for getting the global topology of CPU devices;"
+        " should be strictly greater than"
+        " `--jax_cpu_get_local_topology_timeout_minutes`."
+    ),
     validator=_validate_backend_not_initialized,
 )
