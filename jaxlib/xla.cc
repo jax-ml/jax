@@ -507,6 +507,8 @@ NB_MODULE(_jax, m) {
                      const std::string& s = cms.serialized_buffer_assignment;
                      return nb::bytes(s.data(), s.size());
                    })
+      .def_rw("peak_memory_in_bytes",
+              &CompiledMemoryStats::peak_memory_in_bytes)
       .def("__str__", &CompiledMemoryStats::DebugString);
 
   nb::class_<PyExecuteResults>(m, "ExecuteResults")
