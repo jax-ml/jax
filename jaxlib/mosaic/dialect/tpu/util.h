@@ -220,13 +220,6 @@ inline SmallVector<int64_t> ComputeTileStrides(
                                   memref_ty.getShape().size());
   return ComputeTileStrides(shape, tiling);
 }
-
-// Computes the dimensions that were squeezed from the source shape to match the
-// target shape. Returns the dimensions in increasing order.
-FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
-    Operation *op, ArrayRef<int64_t> source_shape,
-    ArrayRef<int64_t> target_shape);
-
 // Assuming MKN matmul - This function must only be called after
 // canonicalization passes.
 //
