@@ -143,3 +143,5 @@ class Format:
       return False
     return (self.device_local_layout == other.device_local_layout and
             self.sharding == other.sharding)
+
+Layout = Format  # TODO(frostig, yashkatariya): remove this alias

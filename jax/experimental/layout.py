@@ -19,3 +19,5 @@ from jax._src.layout import (
 from jax._src.pjit import (
     with_layout_constraint as with_layout_constraint,
 )
+
+Layout = Format

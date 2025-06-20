@@ -99,11 +99,11 @@ class Executable:
     raise NotImplementedError(
         "compiled executable carries no output sharding information")
 
-  def input_formats(self):
+  def input_layouts(self):
     raise NotImplementedError(
         "compiled executable carries no input layout information")
 
-  def output_formats(self):
+  def output_layouts(self):
     raise NotImplementedError(
         "compiled executable carries no output layout information")
 
@@ -480,6 +480,16 @@ class Compiled(Stage):
     assert all(isinstance(l, DeviceLocalLayout) for l in layouts_flat)
     formats_flat = [Format(l, s) for l, s in zip(layouts_flat, shardings_flat)]
     return tree_util.tree_unflatten(self.out_tree, formats_flat)  # pytype: disable=attribute-error
+
+  # TODO(frostig, yashkatariya): remove
+  @property
+  def input_layouts(self):
+    return self.input_formats
+
+  # TODO(frostig, yashkatariya): remove
+  @property
+  def output_layouts(self):
+    return self.output_formats
 
   @staticmethod
   def call(*args, **kwargs):

@@ -561,6 +561,9 @@ class ArrayImpl(basearray.Array):
       else:
         raise
 
+  # TODO(frostig, yashkatariya): remove
+  layout = format
+
   @property
   def global_shards(self) -> Sequence[Shard]:
     """Returns list of all `Shard`s of the Array across all devices.

@@ -2837,6 +2837,8 @@ class ShapeDtypeStruct:
   def format(self):
     return Format(self._dll, self.sharding)
 
+  layout = format
+
   def __len__(self):
     try:
       return self.shape[0]
