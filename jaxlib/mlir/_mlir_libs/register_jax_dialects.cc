@@ -33,6 +33,7 @@ limitations under the License.
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "shardy/integrations/c/passes.h"
 #include "jaxlib/mosaic/gpu/integrations/c/passes.h"
+#include "xla/service/spmd/shardy/integrations/c/passes.h"
 
 namespace nb = nanobind;
 
@@ -60,6 +61,7 @@ NB_MODULE(register_jax_dialects, m) {
     mlirRegisterTransformsPasses();
     // For Shardy
     mlirRegisterAllSdyPassesAndPipelines();
+    mlirRegisterAllXlaSdyPassesAndPipelines();
     // Transforms used by JAX.
     mlirRegisterTransformsStripDebugInfo();
   });

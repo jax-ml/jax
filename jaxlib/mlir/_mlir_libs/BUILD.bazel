@@ -224,6 +224,7 @@ nanobind_pywrap_extension(
         "@local_config_python//:headers",
         "@nanobind",
         "@shardy//shardy/integrations/c:sdy_capi",
+        "@xla//xla/service/spmd/shardy/integrations/c:xla_sdy_capi",
     ],
 )
 

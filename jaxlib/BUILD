@@ -327,7 +327,6 @@ nanobind_pywrap_extension(
         ":py_client",
         ":python_ref_manager",
         ":pytree",
-        ":sdy",
         ":traceback",
         ":util",
         ":xla_compiler",
@@ -1138,39 +1137,6 @@ cc_library(
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla/pjrt:exceptions",
         "@xla//xla/tsl/platform:logging",
-    ],
-)
-
-cc_library(
-    name = "sdy",
-    srcs = ["sdy.cc"],
-    hdrs = ["sdy.h"],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:BytecodeWriter",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Pass",
-        "@llvm-project//mlir:Support",
-        "@nanobind",
-        "@shardy//shardy/dialect/sdy/ir:dialect",
-        "@xla//xla/hlo/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
-        "@xla//xla/mlir_hlo:all_passes",
-        "@xla//xla/pjrt:mlir_to_hlo",
-        "@xla//xla/pjrt:status_casters",
-        "@xla//xla/service/spmd/shardy:constants",
-        "@xla//xla/service/spmd/shardy:utils",
-        "@xla//xla/service/spmd/shardy/sdy_round_trip:import_shardy_attrs",
-        "@xla//xla/service/spmd/shardy/sdy_round_trip:pipelines",
-        "@xla//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
     ],
 )
 
