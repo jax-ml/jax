@@ -88,7 +88,7 @@ DebugInfo = lu.DebugInfo
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
-               '_effects', '_debug_info', '_is_high']
+               '_effects', '_debug_info', '_is_high', '_consts']
 
   _constvars: list[Var]
   _invars: list[Var]
@@ -126,6 +126,10 @@ class Jaxpr:
   def is_high(self) -> bool:
     return self._is_high
 
+  @property
+  def consts(self) -> list[Any]:
+    return self._consts
+
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
@@ -133,7 +137,8 @@ class Jaxpr:
                # compatibility we have to allow calls when the debug_info
                # is missing.
                debug_info: DebugInfo = None,  # type: ignore[annotation-type-mismatch,assignment]
-               is_high: bool = False,
+               is_high: bool = False, *,
+               consts: Sequence[Any] = (),
                ):
     """
     Args:
@@ -146,6 +151,7 @@ class Jaxpr:
       effects: set of effects. The effects on a jaxpr are a superset of the
         union of the effects for each equation.
       debug_info: debugging information.
+      consts: the constant values corresponding to the constvars
     """
     self._constvars = list(constvars)
     self._invars = list(invars)
@@ -159,7 +165,10 @@ class Jaxpr:
     # assert (len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
     self._is_high = is_high
-    num_vars = len(constvars) + len(invars)
+    self._consts = list(consts)
+    if len(constvars) != len(consts):
+      assert False, (constvars, consts)  # DO_NOT_SUBMIT
+    assert len(constvars) == len(consts), (constvars, consts)
 
   def __str__(self):
     return str(self.pretty_print())
@@ -187,6 +196,7 @@ class Jaxpr:
         effects=kwargs.pop("effects", self.effects),
         debug_info=kwargs.pop("debug_info", self.debug_info),
         is_high=kwargs.pop("is_high", self.is_high),
+        consts=kwargs.pop("consts", self.consts),
     )
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
@@ -223,11 +233,14 @@ class ClosedJaxpr:
   jaxpr = property(lambda self: self._jaxpr)
   consts = property(lambda self: self._consts)
 
-  def __init__(self, jaxpr: Jaxpr, consts: Sequence):
+  def __init__(self, jaxpr: Jaxpr, consts: Sequence[Value]):
     assert len(consts) == len(jaxpr.constvars)
     # assert not any(isinstance(c, Tracer) for c in consts)  # TODO(mattjj): enable
     self._jaxpr = jaxpr
     self._consts = list(consts)
+    if jaxpr.consts != self._consts:  # DO_NOT_SUBMIT
+      assert False, (jaxpr.consts, self._consts)  # TODO(necula): remove, when we remove ClosedJaxpr
+    assert jaxpr.consts == self._consts, (jaxpr.consts, self._consts)  # TODO(necula): remove, when we remove ClosedJaxpr
 
   @property
   def in_avals(self):
@@ -608,16 +621,17 @@ def traverse_jaxpr_params(f, params):
           if type(p) in (Jaxpr, ClosedJaxpr)}
 
 
-def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[Any]:
-  def read(v: Atom) -> Any:
+def eval_jaxpr(jaxpr: Jaxpr, consts: Sequence[Value],
+               *args, propagate_source_info=True) -> list[Value]:
+  def read(v: Atom) -> Value:
     return v.val if isinstance(v, Literal) else env[v]
 
-  def write(v: Var, val: Any) -> None:
+  def write(v: Var, val: Value) -> None:
     if config.enable_checks.value and not config.dynamic_shapes.value:
       assert typecheck(v.aval, val), (v.aval, get_aval(val))
     env[v] = val
 
-  env: dict[Var, Any] = {}
+  env: dict[Var, Value] = {}
   foreach(write, jaxpr.constvars, consts)
   foreach(write, jaxpr.invars, args)
   lu = last_used(jaxpr)

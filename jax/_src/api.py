@@ -2425,7 +2425,7 @@ def make_jaxpr(
     if traced._num_consts:
       consts, _ = split_list(traced._args_flat, [traced._num_consts])
       jaxpr_ = pe.convert_invars_to_constvars(traced.jaxpr.jaxpr,
-                                              traced._num_consts)
+                                              traced._num_consts, consts)
       jaxpr = core.ClosedJaxpr(jaxpr_, consts)
     else:
       jaxpr = traced.jaxpr

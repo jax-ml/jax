@@ -402,13 +402,13 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     super().setUp()
     lax_control_flow._initial_style_open_jaxpr.cache_clear()
     lax_control_flow._initial_style_jaxpr.cache_clear()
-    lax_control_flow.common._pad_jaxpr_constvars.cache_clear()
+    # lax_control_flow.common._pad_jaxpr_constvars.cache_clear()  # DO_NOT_SUBMIT
 
   def tearDown(self):
     super().tearDown()
     lax_control_flow._initial_style_open_jaxpr.cache_clear()
     lax_control_flow._initial_style_jaxpr.cache_clear()
-    lax_control_flow.common._pad_jaxpr_constvars.cache_clear()
+    # lax_control_flow.common._pad_jaxpr_constvars.cache_clear()  # DO_NOT_SUBMIT
 
   def test_check_jaxpr_correct(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr

@@ -48,7 +48,6 @@ from jax._src.interpreters.partial_eval import (
   config as config,
   const_fold_rules as const_fold_rules,
   convert_constvars_jaxpr as convert_constvars_jaxpr,
-  convert_envvars_to_constvars as convert_envvars_to_constvars,
   convert_invars_to_constvars as convert_invars_to_constvars,
   custom_partial_eval_rules as custom_partial_eval_rules,
   custom_staging_rules as custom_staging_rules,
