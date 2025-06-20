@@ -1389,29 +1389,44 @@ class DebugInfoTest(jtu.JaxTestCase):
     if config.use_direct_linearize.value:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
-          "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
           "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
-          "traced_for=jit, fun=my_f, arg_names=as_,,, result_paths=result[0],result[1]",
           "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
           "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,, result_paths=",
       ]
+      if config.use_simplified_jaxpr_constants.value:
+        expected_jaxpr_debug_infos.extend([
+            "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,",
+            "traced_for=jit, fun=my_f, arg_names=as_,, result_paths=result[0],result[1]",
+        ])
+      else:
+        expected_jaxpr_debug_infos.extend([
+            "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
+            "traced_for=jit, fun=my_f, arg_names=as_,,, result_paths=result[0],result[1]",
+        ])
     else:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
           "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=result[0],result[1]",
           "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
-          "traced_for=jit, fun=my_f, arg_names=,,x,as_, result_paths=result[0],result[1]",
           "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
           "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=,,,,,,,,,,, result_paths=",
       ]
+      if config.use_simplified_jaxpr_constants.value:
+        expected_jaxpr_debug_infos.extend([
+            "traced_for=jit, fun=my_f, arg_names=,x,as_, result_paths=result[0],result[1]",
+        ])
+      else:
+        expected_jaxpr_debug_infos.extend([
+            "traced_for=jit, fun=my_f, arg_names=,,x,as_, result_paths=result[0],result[1]",
+        ])
     self._check_tracers_and_jaxprs(
         jax.jit(the_grad),
         c, as_,
@@ -1895,15 +1910,22 @@ class DebugInfoTest(jtu.JaxTestCase):
           jnp.sqrt(y) if used_outs[1] else None,
       )
 
+    expected_jaxpr_debug_infos = [
+        "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=result",
+    ]
+    if config.use_simplified_jaxpr_constants.value:
+      expected_jaxpr_debug_infos.extend([
+          "traced_for=custom_dce, fun=my_f, arg_names=x, result_paths=result[0],result[1]",
+      ])
+    else:
+      expected_jaxpr_debug_infos.extend([
+          "traced_for=custom_dce, fun=my_f, arg_names=,x, result_paths=result[0],result[1]",
+      ])
     self._check_tracers_and_jaxprs(
         jax.jit(lambda x: my_f(x)[0]),
         np.array(1.1234),
         tracer_spy=tracer_spy,
-        expected_jaxpr_debug_infos=[
-            "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=result",
-            # TODO(necula): bad arg_names (why None), bad result_paths
-            'traced_for=custom_dce, fun=my_f, arg_names=,x, result_paths=result[0],result[1]',
-        ],
+        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
         expected_tracer_debug_infos=[
             # TODO(necula): no leaked tracer from my_rule?
             "traced_for=custom_dce, fun=my_f, arg_names=x, from x",

@@ -1520,7 +1520,7 @@ class JaxExportTest(jtu.JaxTestCase):
     shardings_rev = NamedSharding(mesh_rev, jax.sharding.PartitionSpec(("i",)))
     input_no_shards = jnp.ones(shape=(jax.local_device_count(),))
     input = jnp.ones(shape=(jax.local_device_count(),), device=shardings)
-    input_rev = jax.device_put(input_no_shards, device=shardings_rev)
+    input_rev = jnp.ones(shape=(jax.local_device_count(),), device=shardings_rev)
 
     exp = export.export(pjit.pjit(f, in_shardings=shardings))(input)
     exp_rev = export.export(pjit.pjit(f, in_shardings=shardings_rev))(input_no_shards)

@@ -1674,8 +1674,10 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertIn('call @shmap_body', hlo_str)
       self.assertIn('call @shmap_body_0', hlo_str)
       self.assertIn('%arg0: tensor<1xf32>', hlo_str)
-      self.assertIn('"[None]"', hlo_str)
-      self.assertIn('%arg1: tensor<1xf32>', hlo_str)
+      if not config.use_simplified_jaxpr_constants.value:
+        # A constvar is turned into an argument with location None in @shmap_body
+        self.assertIn('"[None]"', hlo_str)
+        self.assertIn('%arg1: tensor<1xf32>', hlo_str)
       self.assertIn('"[(\'i\',)]"', hlo_str)
       self.assertIn(
           '-> (tensor<1xf32> {jax.result_info = "[(\'i\',)]"})', hlo_str
