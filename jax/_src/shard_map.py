@@ -306,6 +306,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
     _check_specs(SpecErrorType.out, out_specs, axis_names)
   return mesh, axis_names
 
+
 def _manual_spec(manual_axes, spec: P) -> P:
   out = []  # type: ignore
   for s in spec:
@@ -320,7 +321,7 @@ def _manual_spec(manual_axes, spec: P) -> P:
       out.append(None if len(temp) == 0 else tuple(temp))
     else:
       out.append(s if s in manual_axes else None)
-  return P(*out)
+  return P(*out, unreduced=spec.unreduced, reduced=spec.reduced)
 
 
 # Error checking and messages
@@ -691,7 +692,7 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
   manual_mesh = _as_manual_mesh(mesh, manual_axes | set(mesh.manual_axes))
   new_sharding = NamedSharding(manual_mesh, aval.sharding.spec)
   vma = _spec_to_vma(spec) if check_vma else frozenset()
-  vma = vma | aval.vma
+  vma = vma | aval.vma | new_sharding.spec.unreduced
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
@@ -718,12 +719,13 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
         name_s = name_s if isinstance(name_s, tuple) else (name_s,)
         aval_s = aval_s if isinstance(aval_s, tuple) else (aval_s,)
         out_spec.append(name_s + aval_s)
-    out_spec = PartitionSpec(*out_spec)
+    out_spec = PartitionSpec(*out_spec, unreduced=spec.unreduced,
+                             reduced=spec.reduced)
   new_mesh = (mesh.abstract_mesh if get_abstract_mesh().empty else
               get_abstract_mesh())
   new_sharding = NamedSharding(new_mesh, out_spec)
   manual_axes = set(new_mesh.manual_axes)
-  vma = (frozenset(v for v in aval.vma if v in manual_axes)
+  vma = (frozenset(v for v in aval.vma | out_spec.unreduced if v in manual_axes)
          if check_vma else frozenset())
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
@@ -967,7 +969,7 @@ def _vma_to_spec(mesh, vma):
 
 def _spec_to_vma(spec):
   return frozenset(p for s in spec if s is not None
-                   for p in (s if isinstance(s, tuple) else (s,)))
+                   for p in (s if isinstance(s, tuple) else (s,))) | spec.unreduced
 
 def order_wrt_mesh(mesh, x):
   return tuple(a for a in mesh.axis_names if a in x)
