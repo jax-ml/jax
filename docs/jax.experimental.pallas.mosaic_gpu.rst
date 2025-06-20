@@ -13,6 +13,7 @@ Classes
    BlockSpec
    CompilerParams
    MemorySpace
+   jax.experimental.pallas.mosaic_gpu.Mesh
    Layout
    SwizzleTransform
    TilingTransform
@@ -31,6 +32,7 @@ Functions
    copy_gmem_to_smem
    copy_smem_to_gmem
    emit_pipeline
+   kernel
    layout_cast
    set_max_registers
    wait_smem_to_gmem
@@ -46,3 +48,4 @@ Aliases
    ACC
    GMEM
    SMEM
+   TMEM
