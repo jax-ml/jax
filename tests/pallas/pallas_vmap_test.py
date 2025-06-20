@@ -131,6 +131,8 @@ class PallasCallVmapTest(PallasBaseTest):
     np.testing.assert_allclose(out, out_ref)
 
   def test_vmap_with_hoisted_consts(self):
+    if config.use_simplified_jaxpr_constants.value:
+      self.skipTest("TODO: decide if we want to keep these errors")
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
     x = np.arange(4 * 16 * 128, dtype=np.float32).reshape((4, 16, 128))
 

@@ -5107,11 +5107,26 @@ class APITest(jtu.JaxTestCase):
     # long time. This test checks we don't *unintentionally* break it.
     c = np.ones(3)
 
+    def find_constants(jaxpr: core.ClosedJaxpr):
+      for j in it.chain([jaxpr], core.subjaxprs(jaxpr)):
+        for eq in j.eqns:
+          for inv in eq.invars:
+            if isinstance(inv, core.Literal) and np.shape(inv.val):
+              yield inv.val
+
+    def uniq(lst):
+      return {id(v): v for v in lst}.values()
+
     @jax.make_jaxpr
     def f():
       return c, jnp.sum(c), c, jnp.sum(c)
 
-    self.assertLen(f().consts, 1)
+    if config.use_simplified_jaxpr_constants.value:
+      consts = uniq(find_constants(f()))
+    else:
+      consts = f().consts
+
+    self.assertLen(consts, 1)
 
     d = np.zeros(3)
 
@@ -5120,7 +5135,11 @@ class APITest(jtu.JaxTestCase):
       return jax.lax.cond(True,
                           lambda: (c, jnp.sum(c), c),
                           lambda: (c, jnp.sum(d), d))
-    self.assertLen(g().consts, 2)
+    if config.use_simplified_jaxpr_constants.value:
+      consts = uniq(find_constants(g()))
+    else:
+      consts = g().consts
+    self.assertLen(consts, 2)
 
   # TODO(mattjj,dougalm): this test was flakey on CI; figure out how to enable?
   # @jtu.run_on_devices('cpu')
@@ -6164,7 +6183,10 @@ class RematTest(jtu.JaxTestCase):
     res = saved_residuals(f, (2., 3.), y=4.)
     self.assertLen(res, 6)
     self.assertEqual(res[0][0].shape, (1,))
-    self.assertEqual(res[0][1], "from a constant")
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEqual(res[0][1], "from a literal")
+    else:
+      self.assertEqual(res[0][1], "from a constant")
     self.assertEqual(res[1][0].shape, ())
     self.assertEqual(res[1][1], "from the argument x[0]")
     self.assertEqual(res[2][0].shape, ())
@@ -6183,18 +6205,22 @@ class RematTest(jtu.JaxTestCase):
       return z * ((x1 * x2) * y) * np.array([3.])
 
     res = saved_residuals(f, (2., 3.), y=4.)
-    self.assertLen(res, 6)
-    self.assertEqual(res[0][0].shape, (1,))
-    self.assertEqual(res[0][1], "from a constant")
+    if config.use_simplified_jaxpr_constants.value:
+      base_res_idx = 0
+    else:
+      self.assertEqual(res[0][1], "from a constant")
+      self.assertEqual(res[0][0].shape, (1,))
+      res.pop(0)
+    self.assertLen(res, 5)
+    self.assertEqual(res[0][0].shape, ())
+    self.assertEqual(res[0][1], "from the argument x[0]")
     self.assertEqual(res[1][0].shape, ())
-    self.assertEqual(res[1][1], "from the argument x[0]")
+    self.assertEqual(res[1][1], "from the argument x[1]")
     self.assertEqual(res[2][0].shape, ())
-    self.assertEqual(res[2][1], "from the argument x[1]")
+    self.assertEqual(res[2][1], "from the argument y")
     self.assertEqual(res[3][0].shape, ())
-    self.assertEqual(res[3][1], "from the argument y")
+    self.assertStartsWith(res[3][1], "output of jitted function 'f'")
     self.assertEqual(res[4][0].shape, ())
-    self.assertStartsWith(res[4][1], "output of jitted function 'f'")
-    self.assertEqual(res[5][0].shape, ())
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -6897,7 +6923,10 @@ class JaxprTest(jtu.JaxTestCase):
       return (x, 1., np.zeros(1, dtype=jnp.float32))
 
     dtype = "f64" if config.enable_x64.value else "f32"
-    expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
+    if config.use_simplified_jaxpr_constants.value:
+      expected = f"{{ lambda ; a:f32[]. let  in (a, 1.0:{dtype}[], [0.]:f32[1]) }}"
+    else:
+      expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 

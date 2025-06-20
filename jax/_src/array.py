@@ -1113,6 +1113,8 @@ def _array_mlir_constant_handler(val):
 
 mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
 
+if config.use_simplified_jaxpr_constants.value:
+  core.literalable_types.add(ArrayImpl)
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would

@@ -1745,7 +1745,7 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
               "\n Jaxpr: "
               f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
         eqn_invar = eqn.invars[eff.input_index]
-        if eqn_invar in mut_arrays:
+        if type(eqn_invar) is core.Literal or eqn_invar in mut_arrays:
           continue
         if (input_index := all_vars.get(eqn_invar, sentinel)) is sentinel:
           # TODO(mattjj): ask for forgiveness
