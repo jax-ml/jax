@@ -39,7 +39,7 @@ For more detailed platform-specific installation information, check out {ref}`in
 
 ## JAX as NumPy
 
-Most JAX usage is through the familiar {mod}`jax.numpy` API, which is typically imported under the `jnp` alias:
+NumPy provides a well-known, powerful API for working with numerical data. For convenience, JAX provides {mod}`jax.numpy` which closely mirrors the NumPy API and provides easy entry into JAX. Almost anything that can be done with `numpy` can be done with `jax.numpy`, which is typically imported under the `jnp` alias:
 
 ```{code-cell}
 import jax.numpy as jnp
@@ -49,16 +49,30 @@ With this import, you can immediately use JAX in a similar manner to typical Num
 including using NumPy-style array creation functions, Python functions and operators, and
 array attributes and methods:
 
-```{code-cell}
-def selu(x, alpha=1.67, lmbda=1.05):
-  return lmbda * jnp.where(x > 0, x, alpha * jnp.exp(x) - alpha)
+```{code-cell} ipython3
+import matplotlib.pyplot as plt
+import numpy as np
 
-x = jnp.arange(5.0)
-print(selu(x))
+x_np = np.linspace(0, 10, 1000)
+y_np = 2 * np.sin(x_np) * np.cos(x_np)
+plt.plot(x_np, y_np);
 ```
 
-You'll find a few differences between JAX arrays and NumPy arrays once you begin digging-in;
-these are explored in  [🔪 JAX - The Sharp Bits 🔪](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html).
+```{code-cell} ipython3
+import jax.numpy as jnp
+
+x_jnp = jnp.linspace(0, 10, 1000)
+y_jnp = 2 * jnp.sin(x_jnp) * jnp.cos(x_jnp)
+plt.plot(x_jnp, y_jnp);
+```
+
+The code blocks are identical aside from replacing `np` with `jnp`, and the results are the same. As we can see, JAX arrays can often be used directly in place of NumPy arrays for things like plotting.
+
+You'll find a few differences between JAX arrays and NumPy arrays once you begin digging-in. See also:
+
+- [How to think in JAX](https://docs.jax.dev/en/latest/notebooks/thinking_in_jax.html) for a a conceptual walkthrough of JAX’s execution model.
+- [Key concepts](https://docs.jax.dev/en/latest/key-concepts.html#jax-arrays-jax-array) for an introduction to the key concepts of JAX, such as transformations, tracing, jaxprs and pytrees.
+- [🔪 JAX - The Sharp Bits 🔪](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html) for common gotchas when using JAX.
 
 ## Just-in-time compilation with {func}`jax.jit`
 JAX runs transparently on the GPU or TPU (falling back to CPU if you don't have one). However, in the above example, JAX is dispatching kernels to the chip one operation at a time. If we have a sequence of operations, we can use the {func}`jax.jit` function to compile this sequence of operations together using XLA.
@@ -68,6 +82,9 @@ account for JAX's dynamic dispatch (See {ref}`async-dispatch`):
 
 ```{code-cell}
 from jax import random
+
+def selu(x, alpha=1.67, lmbda=1.05):
+  return lmbda * jnp.where(x > 0, x, alpha * jnp.exp(x) - alpha)
 
 key = random.key(1701)
 x = random.normal(key, (1_000_000,))
