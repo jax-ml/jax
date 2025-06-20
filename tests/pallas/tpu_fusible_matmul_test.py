@@ -793,6 +793,83 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     )
 
   @parameterized.parameters('float32', 'bfloat16')
+  def test_matmul_out_custom_vjp_fwd(self, dtype):
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (256, 256), dtype)
+    y = jax.random.normal(k1, (256, 512), dtype)
+
+    @jax.custom_vjp
+    def act(x):
+      return jax.nn.relu(x) * x
+
+    def act_fwd(x):
+      del x
+      assert False, 'unreachable'
+
+    def act_bwd(res, dy):
+      del res, dy
+      assert False, 'unreachable'
+    act.defvjp(act_fwd, act_bwd)
+
+    def matmul(impl, x, y):
+      z = impl(x, y)
+      return act(z)
+    impl = fuser.fuse(
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
+    )
+    ref = functools.partial(matmul, mm_ref)
+    self.assertAllClose(
+        jax.jit(impl)(x, y),
+        jax.jit(ref)(x, y),
+        atol=1e-5,
+    )
+
+  @parameterized.parameters('float32', 'bfloat16')
+  def test_matmul_out_custom_vjp_bwd(self, dtype):
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (256, 256), dtype)
+    y = jax.random.normal(k1, (256, 512), dtype)
+    dz = jax.random.normal(k2, (256, 512), dtype)
+
+    @jax.custom_vjp
+    def act(x):
+      return jax.nn.relu(x) * x
+
+    def act_fwd(x):
+      return jax.nn.relu(x) * x, (x,)
+
+    def act_bwd(res, dy):
+      x, = res
+      return (dy * x * 2.34,)
+    act.defvjp(act_fwd, act_bwd)
+
+    def matmul(impl, x, y, dz):
+      z = impl(x, y)
+      dz = dz.astype(z.dtype)
+      return jax.vjp(act, z)[1](dz)[0].astype(dtype)
+    impl = fuser.fuse(
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
+    )
+    ref = functools.partial(matmul, mm_ref)
+    out_dz = jax.jit(impl)(x, y, dz)
+    out_ref_dz = jax.jit(ref)(x, y, dz)
+    expected_dz = (
+        dz.astype(jnp.float32)
+        * 2.34
+        * jnp.dot(x, y, preferred_element_type=jnp.float32)
+    ).astype(dtype)
+    self.assertAllClose(
+        out_dz,
+        expected_dz,
+        atol=1e-5,
+    )
+    self.assertAllClose(
+        out_dz,
+        out_ref_dz,
+        atol=1e-5,
+    )
+
+  @parameterized.parameters('float32', 'bfloat16')
   def test_matmul_out_transpose_mul(self, dtype):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (256, 256), dtype)
