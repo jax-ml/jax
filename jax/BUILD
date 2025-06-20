@@ -295,13 +295,11 @@ py_library_providing_imports_info(
     name = "jax",
     srcs = [
         "_src/__init__.py",
-        "_src/ad_checkpoint.py",  # TODO(vanderplas): remove once downstream users depend on :lax
         "_src/blocked_sampler.py",
         "_src/checkify.py",
         "_src/debugging.py",
         "_src/dlpack.py",
         "_src/error_check.py",
-        "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
         "_src/prng.py",
         "_src/random.py",
@@ -312,12 +310,10 @@ py_library_providing_imports_info(
             "_src/cudnn/**/*.py",
             "_src/debugger/**/*.py",
             "_src/image/**/*.py",
-            "_src/lax/**/*.py",  # TODO(vanderplas): remove once downstream users depend on :lax
             "_src/nn/**/*.py",
             "_src/numpy/**/*.py",
             "_src/ops/**/*.py",
             "_src/scipy/**/*.py",
-            "_src/state/**/*.py",  # TODO(vanderplas): remove once downstream users depend on :lax and :state_types
             "_src/third_party/**/*.py",
             "_src/tpu/**/*.py",
             "experimental/key_reuse/**/*.py",
@@ -388,6 +384,7 @@ py_library_providing_imports_info(
         ":environment_info",
         ":export",
         ":ffi",
+        ":flatten_util",
         ":hashable_array",
         ":internal_mesh_utils",
         ":jaxpr_util",
@@ -632,12 +629,6 @@ py_library_providing_imports_info(
         [
             "_src/lax/**/*.py",
             "_src/state/**/*.py",
-        ],
-        exclude = [
-            # These are included in :state_types.
-            "_src/state/__init__.py",
-            "_src/state/indexing.py",
-            "_src/state/types.py",
         ],
     ) + [
         "_src/ad_checkpoint.py",
@@ -959,6 +950,19 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "flatten_util",
+    srcs = [
+        "_src/flatten_util.py",
+    ],
+    deps = [
+        ":dtypes",
+        ":lax",
+        ":tree_util",
+        ":util",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "frozen_dict",
     srcs = ["_src/frozen_dict.py"],
 )
@@ -1193,6 +1197,7 @@ pytype_strict_library(
     ],
     deps = [
         ":jax",
+        ":lax",
         ":pallas",
         ":pallas_gpu",
     ] + py_deps("numpy"),
