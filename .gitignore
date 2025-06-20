@@ -4,6 +4,7 @@
 *.whl
 /build/lib
 /build/bazel*
+/build/__editable__.jax-*
 /dist/
 .ipynb_checkpoints
 /bazel-*
