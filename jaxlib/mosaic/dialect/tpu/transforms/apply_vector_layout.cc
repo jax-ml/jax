@@ -195,6 +195,25 @@ SmallVector<xla::Array<Value>> split(const xla::Array<Value> &vregs, int axis) {
   return chunks;
 };
 
+// Similar to incrementIndex, but only increments the dimensions in
+// `subsequence`, starting with the last dimension in `subsequence` (row-major
+// order).
+template <typename T>
+bool incrementIndexSubsequence(const MutableArrayRef<int64_t> idx,
+                               const ArrayRef<T> subsequence,
+                               const ArrayRef<int64_t> limits) {
+  CHECK_EQ(idx.size(), limits.size());
+  for (int64_t i = subsequence.size() - 1; i >= 0; --i) {
+    const int64_t d = subsequence[i];
+    ++idx[d];
+    if (idx[d] < limits[d]) {
+      return true;
+    }
+    idx[d] = 0;
+  }
+  return false;
+}
+
 bool incrementIndex(const MutableArrayRef<int64_t> idx,
                     const absl::Span<const int64_t> limits) {
   const int64_t nd = idx.size();
@@ -528,9 +547,9 @@ FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
       // Every lane has all the data, so at each sublane we can just pick out
       // the element that we want using a sublane shuffle.
       Value vreg = vregs(old_idxs);
-      Value iota_vreg = builder.create<tpu::IotaOp>(
-          loc, iota_vreg_ty,
-          /*dimension =*/builder.getI32IntegerAttr(1));
+      Value iota_vreg =
+          builder.create<tpu::IotaOp>(loc, iota_vreg_ty,
+                                      /*dimensions=*/ArrayRef<int32_t>{1});
       iota_vreg = builder.create<arith::AddIOp>(
           loc, iota_vreg,
           create_i32_vreg_const(old_sublane_offset - new_lane_offset));
@@ -2438,8 +2457,8 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
     if (stride > 0) {
       auto offset = builder.create<arith::MulIOp>(
           i32_vreg,
-          builder.create<tpu::IotaOp>(
-              i32_vreg, builder.getI32IntegerAttr(dim == 0 ? 1 : 0)),
+          builder.create<tpu::IotaOp>(i32_vreg,
+                                      ArrayRef<int32_t>{dim == 0 ? 1 : 0}),
           builder.create<arith::ConstantOp>(DenseElementsAttr::get(
               i32_vreg, builder.getI32IntegerAttr(stride))));
       padding_vreg =
@@ -2447,7 +2466,7 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
     }
     return builder.create<arith::CmpIOp>(
         arith::CmpIPredicate::slt,
-        builder.create<tpu::IotaOp>(i32_vreg, builder.getI32IntegerAttr(dim)),
+        builder.create<tpu::IotaOp>(i32_vreg, ArrayRef<int32_t>{dim}),
         padding_vreg);
   };
 
@@ -2987,92 +3006,114 @@ LogicalResult tpu_iota_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_out.front().has_value());
   const VectorLayout &layout_out = *layouts_out.front();
+  const int bitwidth = layout_out.bitwidth();
+  const std::array<int64_t, 2> vreg_slice =
+      layout_out.vregSlice(ctx.target_shape);
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   tpu::IotaOp iota_op = cast<tpu::IotaOp>(op);
   VectorType vty = iota_op.getResult().getType();
-  if (const auto int_ty = dyn_cast<IntegerType>(vty.getElementType());
-      int_ty == nullptr || int_ty.getWidth() != 32) {
-    return iota_op.emitOpError("Not implemented: Only 32-bit Iota supported");
+  const int64_t rank = vty.getRank();
+  if (bitwidth != 16 && bitwidth != 32) {
+    return iota_op.emitOpError(
+        "Not implemented: Only 16- and 32-bit Iota supported");
   }
   if (!layout_out.hasNativeTiling(ctx.target_shape)) {
     return iota_op.emitOpError("Not implemented: Only native tiling supported");
   }
-
-  const auto native_vreg_ty =
-      getNativeVregType(vty.getElementType(), ctx.target_shape);
   if (layout_out.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
     return op.emitOpError("Not implemented: Only 2D layouts supported");
   }
+  const ArrayRef<int32_t> dimensions = iota_op.getDimensions();
+  if ((llvm::is_contained(dimensions, rank - 2) &&
+       !layout_out.offsets()[0].has_value()) ||
+      (llvm::is_contained(dimensions, rank - 1) &&
+       !layout_out.offsets()[1].has_value())) {
+    return op.emitOpError(
+        "Not implemented: Invalid layout offsets: Offsets can (and should) be"
+        " replicated only when the corresponding dimension is not specified "
+        "for the iota.");
+  }
+
+  VectorType vreg_ty =
+      getNativeVregType(vty.getElementType(), ctx.target_shape);
+
+  // Non-iota dimensions are left with a value of 0
+  SmallVector<int64_t> strides(rank);
+  int64_t stride = 1;
+  for (int32_t dim : llvm::reverse(dimensions)) {
+    strides[dim] = stride;
+    stride *= vty.getDimSize(dim);
+  }
+  auto vreg_const = [&](const int64_t value) {
+    return getFullVector(builder, vreg_ty,
+                         IntegerAttr::get(vty.getElementType(), value));
+  };
+  Value iota_vreg;
+  // Check if a vreg iota along both minor dimensions is useful:
+  if (strides[rank - 2] != 0 && strides[rank - 1] != 0 &&
+      strides[rank - 2] == ctx.target_shape[1] * strides[rank - 1]) {
+    iota_vreg = builder.create<tpu::IotaOp>(
+        vreg_ty,
+        bitwidth == 32 ? ArrayRef<int32_t>{0, 1} : ArrayRef<int32_t>{0, 2, 1});
+    iota_vreg =
+        builder.create<arith::MulIOp>(iota_vreg, vreg_const(strides[rank - 1]));
+  } else {  // Fall back to combining 1D iotas
+    Value second_minor_iota, minor_iota;
+    if (strides[rank - 2] != 0) {
+      second_minor_iota = builder.create<tpu::IotaOp>(
+          vreg_ty,
+          bitwidth == 32 ? ArrayRef<int32_t>{0} : ArrayRef<int32_t>{0, 2});
+      second_minor_iota = builder.create<arith::MulIOp>(
+          second_minor_iota, vreg_const(strides[rank - 2]));
+    }
+    if (strides[rank - 1] != 0) {
+      minor_iota = builder.create<tpu::IotaOp>(vreg_ty, ArrayRef<int32_t>{1});
+      minor_iota = builder.create<arith::MulIOp>(minor_iota,
+                                                 vreg_const(strides[rank - 1]));
+    }
+    if (second_minor_iota && minor_iota) {
+      iota_vreg = builder.create<arith::AddIOp>(second_minor_iota, minor_iota);
+    } else if (second_minor_iota) {
+      iota_vreg = second_minor_iota;
+    } else if (minor_iota) {
+      iota_vreg = minor_iota;
+    }
+  }
+
   const SmallVector<int64_t> tile_array_shape =
       layout_out.tileArrayShape(vty.getShape(), ctx.target_shape);
-  const std::optional<int32_t> dimension = iota_op.getDimension();
-  if (!dimension.has_value()) {
-    return op.emitOpError("Not implemented: null dimension");
-  }
-  if (*dimension == vty.getRank() - 1) {
-    if (layout_out.offsets()[1] != 0) {
-      return op.emitOpError("Not implemented: Unsupported offset");
+  xla::Array<Value> vregs(tile_array_shape);
+  SmallVector<int64_t> idxs(rank);
+  SmallVector<int64_t> replicated_dimensions;
+  replicated_dimensions.reserve(rank - dimensions.size());
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    if (strides[dim] == 0) {
+      replicated_dimensions.push_back(dim);
     }
-    const int64_t num_tiles = tile_array_shape[tile_array_shape.size() - 1];
-    SmallVector<Value> tiles(num_tiles);
-    auto vreg_iota = builder.create<tpu::IotaOp>(
-        native_vreg_ty,
-        /*dimension =*/builder.getI32IntegerAttr(1));
-    for (int64_t i = 0; i < num_tiles; ++i) {
-      Value offset = getFullVector(
-          builder, native_vreg_ty,
-          IntegerAttr::get(vty.getElementType(),
-                           i * *(native_vreg_ty.getShape().end() - 1)));
-      tiles[i] = builder.create<arith::AddIOp>(vreg_iota, offset);
-    }
-    xla::Array<Value> broadcasted_tiles(tile_array_shape);
-    broadcasted_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-      *v = tiles[*(idxs.end() - 1)];
-    });
-    op.replaceAllUsesWith(assemble(builder, vty, layout_out, broadcasted_tiles,
-                                   ctx.target_shape));
-    op.erase();
-    return success();
   }
-  if (*dimension == vty.getRank() - 2) {
-    if (layout_out.offsets()[0] != 0) {
-      return op.emitOpError("Not implemented: Unsupported offset");
+  do {
+    int64_t offset = 0;
+    for (const int32_t dim : dimensions) {
+      const int64_t vreg_slice_size =
+          dim < rank - 2 ? 1 : vreg_slice[dim - (rank - 2)];
+      // Offsets must be non-replicated, this is checked above.
+      const int64_t layout_offset =
+          dim < rank - 2 ? 0 : *layout_out.offsets()[dim - (rank - 2)];
+      offset += (idxs[dim] * vreg_slice_size - layout_offset) * strides[dim];
     }
-    const int64_t num_tiles = tile_array_shape[tile_array_shape.size() - 2];
-    SmallVector<Value> tiles(num_tiles);
-    auto vreg_iota = builder.create<tpu::IotaOp>(
-        native_vreg_ty,
-        /*dimension =*/builder.getI32IntegerAttr(0));
-    for (int64_t i = 0; i < num_tiles; ++i) {
-      Value offset = getFullVector(
-          builder, native_vreg_ty,
-          IntegerAttr::get(vty.getElementType(),
-                           i * *(native_vreg_ty.getShape().end() - 2)));
-      tiles[i] = builder.create<arith::AddIOp>(vreg_iota, offset);
+    Value vreg = vreg_const(offset);
+    if (iota_vreg != nullptr) {
+      vreg = builder.create<arith::AddIOp>(vreg, iota_vreg);
     }
-    xla::Array<Value> broadcasted_tiles(tile_array_shape);
-    broadcasted_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-      *v = tiles[*(idxs.end() - 2)];
-    });
-    op.replaceAllUsesWith(assemble(builder, vty, layout_out, broadcasted_tiles,
-                                   ctx.target_shape));
-    op.erase();
-    return success();
-  }
-  // We take the iota over an untiled dimension.
-  CHECK_LT(*dimension, vty.getRank());
-  SmallVector<Value> tiles;
-  tiles.reserve(vty.getDimSize(*dimension));
-  for (int64_t i = 0; i < vty.getDimSize(*dimension); ++i) {
-    tiles.push_back(getFullVector(builder, native_vreg_ty,
-                                  IntegerAttr::get(vty.getElementType(), i)));
-  }
-  xla::Array<Value> out_tiles(tile_array_shape);
-  out_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-    *v = tiles[idxs[*dimension]];
-  });
+    // Broadcast along replicated dimensions
+    do {
+      vregs(idxs) = vreg;
+    } while (incrementIndexSubsequence(idxs, ArrayRef(replicated_dimensions),
+                                       tile_array_shape));
+    // Note that replicated dimensions have wrapped back to 0
+  } while (incrementIndexSubsequence(idxs, dimensions, tile_array_shape));
   op.replaceAllUsesWith(
-      assemble(builder, vty, layout_out, out_tiles, ctx.target_shape));
+      assemble(builder, vty, layout_out, vregs, ctx.target_shape));
   op.erase();
   return success();
 }
