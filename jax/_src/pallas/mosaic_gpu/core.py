@@ -128,7 +128,7 @@ class MemorySpace(enum.Enum):
   GMEM = "gmem"
   #: Shared memory.
   SMEM = "smem"
-  #: Tensor memory.
+  #: Tensor memory. New addition to Blackwell. Not available on Hopper.
   TMEM = "tmem"
   #: Registers.
   REGS = "regs"
