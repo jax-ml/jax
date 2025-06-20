@@ -1391,6 +1391,7 @@ def _tcgen05_mma_lowering(
 
   if a_transforms_tree is not None:
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
+    a_dtype = lowering._transform_dtype(a_aval.dtype, a_transforms)
     a_ref, a_transforms = lowering._handle_transforms(
         ctx, a_ref, a_transforms, handle_transposes=False, handle_reshapes=True
     )
@@ -1407,13 +1408,14 @@ def _tcgen05_mma_lowering(
         raise NotImplementedError(
             f"Unsupported transforms: {a_transforms}."
         )
-    swizzle_elems = lhs_swizzle // a_aval.dtype.itemsize
+    swizzle_elems = lhs_swizzle // a_dtype.itemsize
     if lhs_tiling != (8, swizzle_elems):
       raise ValueError("MMA lhs tiling does not fit swizzle. "
                        f"{lhs_tiling=} expected={(8, swizzle_elems)}")
 
   assert b_transforms_tree is not None
   b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
+  b_dtype = lowering._transform_dtype(b_aval.dtype, b_transforms)
   b_ref, b_transforms = lowering._handle_transforms(
       ctx, b_ref, b_transforms, handle_transposes=False, handle_reshapes=True
   )
@@ -1430,7 +1432,7 @@ def _tcgen05_mma_lowering(
       raise NotImplementedError(
           f"Unsupported transforms: {b_transforms}."
       )
-  swizzle_elems = rhs_swizzle // b_aval.dtype.itemsize
+  swizzle_elems = rhs_swizzle // b_dtype.itemsize
   if rhs_tiling != (8, swizzle_elems):
     raise ValueError(
         "MMA rhs tiling does not fit swizzle"

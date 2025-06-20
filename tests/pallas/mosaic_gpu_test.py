@@ -2808,6 +2808,85 @@ class PallasCallSm100ATest(PallasSm100ATest):
     expected = x @ y
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
+  @parameterized.parameters(
+      (128, jnp.float16)
+  )
+  def test_matmul_with_smem_aliasing(self, swizzle, dtype):
+    # Perform a 128x128 @ 128x128 matmul and a 128x64 @ 64x128 matmul
+    # using aliased Refs pointing to the same SMEM address.
+    self.skip_if_wg_semantics()
+    shape = (128, 128)
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+
+    def kernel(a_gmem, b_gmem, out_gmem128, out_gmem64,
+        a_aliased, b_aliased, out_smem, tma_barrier, mma_barrier, acc_tmem):
+      # Note: We directly copy into 128-sized refs assuming that both aliased
+      # refs point to the same address, so we can skip the copy for
+      # the 64-sized ref. We transpose the LHS Ref so that the 64-sized Ref
+      # receives the correct slice of data from this TMA.
+      # As this is implementation dependent, this test may break if we change
+      # the underlying aliasing behavior.
+      a_smem_128, a_smem_64 = a_aliased
+      plgpu.copy_gmem_to_smem(a_gmem, a_smem_128, tma_barrier)
+      plgpu.barrier_wait(tma_barrier)
+      b_smem_128, b_smem_64 = b_aliased
+      plgpu.copy_gmem_to_smem(b_gmem, b_smem_128, tma_barrier)
+      plgpu.barrier_wait(tma_barrier)
+
+      # Do 128x128 @ 128x128 matmul
+      plgpu.commit_tmem()
+      plgpu.tcgen05_mma(acc_tmem,
+                        plgpu.transpose_ref(a_smem_128, (1, 0)),
+                        b_smem_128,
+                        mma_barrier,
+                        accumulate=False)
+      plgpu.barrier_wait(mma_barrier)
+      out_smem[...] = acc_tmem[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(out_smem, out_gmem128)
+      plgpu.wait_smem_to_gmem(0)
+
+      # Do 128x64 @ 64x128 matmul
+      plgpu.tcgen05_mma(acc_tmem,
+                        plgpu.transpose_ref(a_smem_64, (1, 0)),
+                        b_smem_64,
+                        mma_barrier,
+                        accumulate=False)
+      plgpu.barrier_wait(mma_barrier)
+      out_smem[...] = acc_tmem[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(out_smem, out_gmem64)
+      plgpu.wait_smem_to_gmem(0)
+
+    f = plgpu.kernel(
+        kernel,
+        out_shape=[jax.ShapeDtypeStruct(shape, dtype),
+                   jax.ShapeDtypeStruct(shape, dtype)],
+        scratch_shapes=[
+          plgpu.RefUnion(   # aliased a_smem
+            plgpu.SMEM(shape, dtype, transforms=transforms),
+            plgpu.SMEM((64, 128), dtype, transforms=transforms),
+          ),
+          plgpu.RefUnion(   # aliased b_smem
+            plgpu.SMEM(shape, dtype, transforms=transforms),
+            plgpu.SMEM((64, 128), dtype, transforms=transforms),
+          ),
+          plgpu.SMEM(shape, dtype, transforms=transforms),  # out_smem
+          plgpu.Barrier(),  # tma_barrier
+          plgpu.Barrier(for_tensor_core=True),  # mma_barrier
+          plgpu.TMEM(shape, jnp.float32),  # acc
+        ],
+    )
+    x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
+    y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
+    result_128, result_64 = f(x.T, y)
+    np.testing.assert_allclose(result_128, x @ y, rtol=1e-3)
+    np.testing.assert_allclose(result_64, x[:, :64] @ y[:64, :], rtol=1e-3)
+
   @parameterized.parameters((0,), (1,))
   def test_mma_barrier_indexing(
       self, barrier_index, shape=(128, 128), swizzle=128, dtype=jnp.float16
