@@ -387,7 +387,7 @@ PyLoadedExecutable::HloModules() const {
   return ifrt_loaded_executable_->GetHloModules();
 }
 
-absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+absl::StatusOr<std::vector<absl::string_view>>
 PyLoadedExecutable::GetOutputMemoryKinds() const {
   nb::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetOutputMemoryKinds();

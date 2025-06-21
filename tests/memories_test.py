@@ -45,7 +45,7 @@ FLAGS = flags.FLAGS
 
 def get_memory_kinds_from_executable(f, args):
   compiled = f.lower(*args).compile()
-  return compiled.runtime_executable().get_output_memory_kinds()[0]
+  return compiled.runtime_executable().get_output_memory_kinds()
 
 
 def _create_inputs(shape, pspec, mem_kind=None):

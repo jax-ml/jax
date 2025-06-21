@@ -2460,7 +2460,7 @@ def get_out_shardings_from_executable(
     num_ordered_effects: int,
 ) -> Sequence[sharding_impls.GSPMDSharding] | None:
   try:
-    omk = xla_executable.get_output_memory_kinds()[0]
+    omk = xla_executable.get_output_memory_kinds()
     if num_ordered_effects > 0:
       omk = omk[num_ordered_effects:]
   except:
