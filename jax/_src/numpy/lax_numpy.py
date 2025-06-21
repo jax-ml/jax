@@ -9104,7 +9104,7 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
     raise ValueError("m has more than 2 dimensions")  # same as numpy error
 
   X = atleast_2d(m)
-  if not rowvar and X.shape[0] != 1:
+  if not rowvar and m.ndim != 1:
     X = X.T
   if X.shape[0] == 0:
     return array([]).reshape(0, 0)

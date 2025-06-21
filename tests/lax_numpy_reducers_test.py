@@ -690,6 +690,12 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol,
                           rtol=tol)
 
+  def testCovSingleRow(self):
+    x = jnp.ones((3, 1))
+    expected = jnp.cov(x, ddof=0, rowvar=True)
+    actual = jnp.cov(x.T, ddof=0, rowvar=False)
+    self.assertAllClose(actual, expected, atol=0, rtol=0)
+
   @jtu.sample_product(
     [dict(op=op, q_rng=q_rng)
       for (op, q_rng) in (
