@@ -17,6 +17,7 @@ from __future__ import annotations
 from absl.testing import absltest
 from absl.testing import parameterized
 from functools import partial
+import itertools as it
 import numpy as np
 import jax
 from jax._src import core
@@ -399,13 +400,15 @@ class MutableArrayTest(jtu.JaxTestCase):
 
   @parameterized.parameters([False, True])
   def test_custom_vjp_grad_stats_plumbing_basic(self, jit):
-    @jax.jit
     def primal(grads_ref, x):  # note: jit-abstracted!
       x = jnp.sin(x)
       x = stash_grads(grads_ref, x)
       x = jnp.sin(x)
       x = stash_grads(grads_ref, x)  # ignored, order-preserved
       return x
+
+    if jit:
+      primal = jax.jit(primal)
 
     @jax.custom_vjp
     def stash_grads(grads_ref, x):
@@ -421,17 +424,21 @@ class MutableArrayTest(jtu.JaxTestCase):
     jax.grad(primal, 1)(grads_ref, jnp.float32(1.0))
     self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
 
-  @parameterized.parameters([False, True])
-  def test_custom_vjp_grad_stats_plumbing_scan(self, jit):
-    @jax.jit
+  @parameterized.parameters(it.product([False, True], repeat=2))
+  def test_custom_vjp_grad_stats_plumbing_scan(self, jit, remat):
     def primal(grads_ref, x):  # note: jit-abstracted!
       def body(x, _):
         x = jnp.sin(x)
         x = stash_grads(grads_ref, x)
         x = jnp.sin(x)
         return x, ()
+      if remat:
+        body = jax.remat(body)
       x, () = jax.lax.scan(body, x, None, length=1)
       return x
+
+    if jit:
+      primal = jax.jit(primal)
 
     @jax.custom_vjp
     def stash_grads(grads_ref, x):
@@ -446,6 +453,35 @@ class MutableArrayTest(jtu.JaxTestCase):
     grads_ref = core.mutable_array(jnp.float32(0.))
     jax.grad(primal, argnums=1)(grads_ref, jnp.float32(1.0))
     self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
+
+  # TODO(mattjj,dougalm): this errors, which may or may not be desired behavior
+  # def test_remat_basic(self):
+  #   @jax.remat
+  #   def f(x_ref, y):
+  #     x_ref[...] += 1
+  #     return y
+
+  #   x_ref = core.mutable_array(0)
+  #   jax.grad(f, 1)(x_ref, 3.14)
+
+  def test_remat_grad_stats_plumbing_basic(self):
+    @jax.remat
+    def f(x_ref, y):
+      stash_grads(x_ref, y)
+      return y
+
+    @jax.custom_vjp
+    def stash_grads(grads_ref, x):
+      return x
+    def stash_grads_fwd(grads_ref, x):
+      return x, grads_ref
+    def stash_grads_bwd(grads_ref, g):
+      grads_ref[...] = g
+      return None, g
+    stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
+
+    x_ref = core.mutable_array(0)
+    jax.grad(f, 1)(x_ref, 3.14)
 
 
 @jtu.with_config(jax_mutable_array_checks=True)
