@@ -6084,7 +6084,7 @@ class RematTest(jtu.JaxTestCase):
     res = saved_residuals(f, (2., 3.), y=4.)
     self.assertLen(res, 6)
     self.assertEqual(res[0][0].shape, (1,))
-    self.assertEqual(res[0][1], "from a constant")
+    self.assertEqual(res[0][1], "from a literal")
     self.assertEqual(res[1][0].shape, ())
     self.assertEqual(res[1][1], "from the argument x[0]")
     self.assertEqual(res[2][0].shape, ())
@@ -6105,7 +6105,7 @@ class RematTest(jtu.JaxTestCase):
     res = saved_residuals(f, (2., 3.), y=4.)
     self.assertLen(res, 6)
     self.assertEqual(res[0][0].shape, (1,))
-    self.assertEqual(res[0][1], "from a constant")
+    self.assertEqual(res[0][1], "from a literal")
     self.assertEqual(res[1][0].shape, ())
     self.assertEqual(res[1][1], "from the argument x[0]")
     self.assertEqual(res[2][0].shape, ())
@@ -6779,7 +6779,7 @@ class JaxprTest(jtu.JaxTestCase):
       return (x, 1., np.zeros(1, dtype=jnp.float32))
 
     dtype = "f64" if config.enable_x64.value else "f32"
-    expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
+    expected = f"{{ lambda ; a:f32[]. let  in (a, 1.0:{dtype}[], [0.]:{dtype}[1]) }}"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 

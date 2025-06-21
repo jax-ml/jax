@@ -86,6 +86,32 @@ no_effects: Effects = effects.no_effects
 
 DebugInfo = lu.DebugInfo
 
+
+# TODO(necula): remove
+def _check_no_nested_constvars(jaxpr: Jaxpr, prim: Primitive | None):
+  # We don't want nested Jaxpr with constvars. When we achieve this we
+  # can ensure that we don't use ClosedJaxpr as eqn.params.
+  if (jaxpr.constvars and prim is not None):
+    pass # assert not jaxpr.constvars, (prim, jaxpr.constvars)  # TODO(necula): remove
+
+  for e in jaxpr.eqns:
+    # Take first the block mapping Jaxprs
+    if e.primitive.name == "pallas_call":
+      # For pallas_call, extract also jaxprs inside the grid_mapping
+      mapping = e.params["grid_mapping"]
+      for bm in mapping.block_mappings:
+        _check_no_nested_constvars(bm.index_map_jaxpr.jaxpr, e.primitive)
+    for val in e.params.values():
+      vals = val if isinstance(val, tuple) else (val,)
+      for v in vals:
+        if isinstance(v, Jaxpr):
+          _check_no_nested_constvars(v, e.primitive)
+        elif isinstance(v, ClosedJaxpr):
+          if v.consts:
+            pass # assert False, (e.primitive, v.consts)
+          _check_no_nested_constvars(v.jaxpr, e.primitive)
+
+
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
                '_effects', '_debug_info', '_is_high']
@@ -160,6 +186,7 @@ class Jaxpr:
     # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
     self._is_high = is_high
     num_vars = len(constvars) + len(invars)
+    _check_no_nested_constvars(self, None)  # TODO(necula): remove
 
   def __str__(self):
     return str(self.pretty_print())
@@ -505,10 +532,17 @@ class Literal:
   def __repr__(self):
     return f'{self.val}'
 
-literalable_types: set[type] = set()
+# Maps types to a function that can extract something that can go into a
+# core.Literal.
+literalable_types: dict[type, Callable[[Any], Any]] = {}
 
-def is_literalable(x: Any) -> bool:
-  return type(x) in dtypes.python_scalar_dtypes or (type(x) in literalable_types and not np.shape(x))
+def is_literalable(x: Any) -> Any | None:
+  # Returns something that can go into a core.Literal, or None if it has
+  # to remain a constant
+  # if type(x) in dtypes.python_scalar_dtypes: return x
+  if (literable_handler := literalable_types.get(type(x))) is not None:
+    return literable_handler(x)
+  return None
 
 Atom = Union[Var, Literal]
 
@@ -3083,7 +3117,7 @@ def _check_jaxpr(
       for eff in eqn.effects:
         if isinstance(eff, effects.JaxprInputEffect):
           eqn_invar = eqn.invars[eff.input_index]
-          if eqn_invar in mut_arrays:
+          if type(eqn_invar) is Literal or eqn_invar in mut_arrays:
             continue
           if (jaxpr_index := in_idx.get(eqn_invar, sentinel)) is sentinel:
             raise JaxprTypeError(
