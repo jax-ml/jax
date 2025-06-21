@@ -17,11 +17,10 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from jax import lax
-
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src.lax import lax
 from jax._src.numpy import util
 from jax._src.util import canonicalize_axis, set_module
 from jax._src.typing import Array, ArrayLike

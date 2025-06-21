@@ -19,7 +19,7 @@ from typing import Any, Literal, overload
 
 import numpy as np
 
-from jax._src.api import device_put, jit
+from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax
@@ -211,7 +211,7 @@ def full(shape: Any, fill_value: ArrayLike,
     shape = canonicalize_shape(shape)
     return lax.full(shape, fill_value, dtype, sharding=util.normalize_device_to_sharding(device))
   else:
-    return device_put(
+    return api.device_put(
         util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
@@ -407,7 +407,7 @@ def full_like(a: ArrayLike | DuckTypedArray,
   else:
     shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
     dtype = dtypes.result_type(a) if dtype is None else dtype
-    return device_put(
+    return api.device_put(
         util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 @overload
@@ -502,7 +502,7 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.linspace")
   return _linspace(start, stop, num, endpoint, retstep, dtype, axis, device=device)
 
-@partial(jit, static_argnames=('num', 'endpoint', 'retstep', 'dtype', 'axis', 'device'))
+@partial(api.jit, static_argnames=('num', 'endpoint', 'retstep', 'dtype', 'axis', 'device'))
 def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               endpoint: bool = True, retstep: bool = False,
               dtype: DTypeLike | None = None,
@@ -628,7 +628,7 @@ def logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.logspace")
   return _logspace(start, stop, num, endpoint, base, dtype, axis)
 
-@partial(jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
+@partial(api.jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
 def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               endpoint: bool = True, base: ArrayLike = 10.0,
               dtype: DTypeLike | None = None, axis: int = 0) -> Array:
@@ -699,7 +699,7 @@ def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool =
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.geomspace")
   return _geomspace(start, stop, num, endpoint, dtype, axis)
 
-@partial(jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
+@partial(api.jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
 def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
                dtype: DTypeLike | None = None, axis: int = 0) -> Array:
   """Implementation of geomspace differentiable in start and stop args."""

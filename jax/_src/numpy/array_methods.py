@@ -31,23 +31,23 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 
-from jax import lax
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import lax
+from jax._src.lax import slicing as lax_slicing
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import array_api_metadata
 from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import tensor_contractions
+from jax._src.numpy import reductions
+from jax._src.numpy import ufuncs
 from jax._src.pjit import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
-from jax._src.numpy import reductions
-from jax._src.numpy import ufuncs
 from jax._src.ops import scatter
 from jax._src.typing import Array, ArrayLike, DimSize, DTypeLike, Shape, StaticScalar
 from jax._src.util import safe_zip, safe_map
@@ -190,7 +190,7 @@ def _diagonal(self: Array, offset: int = 0, axis1: int = 0, axis2: int = 1) -> A
   """
   return lax_numpy.diagonal(self, offset=offset, axis1=axis1, axis2=axis2)
 
-def _dot(self: Array, b: ArrayLike, *, precision: lax_internal.PrecisionLike = None,
+def _dot(self: Array, b: ArrayLike, *, precision: lax.PrecisionLike = None,
          preferred_element_type: DTypeLike | None = None) -> Array:
   """Compute the dot product of two arrays.
 
@@ -631,7 +631,7 @@ def _multi_slice(self: Array,
   """
   results: list[Array] = []
   for starts, limits, removed in zip(start_indices, limit_indices, removed_dims):
-    sliced = lax.slice(self, starts, limits)
+    sliced = lax_slicing.slice(self, starts, limits)
     if removed:
       sliced = lax.squeeze(sliced, removed)
     results.append(sliced)
@@ -650,9 +650,9 @@ def _chunk_iter(x, size):
   else:
     num_chunks, tail = ufuncs.divmod(x.shape[0], size)
     for i in range(num_chunks):
-      yield lax.dynamic_slice_in_dim(x, i * size, size)
+      yield lax_slicing.dynamic_slice_in_dim(x, i * size, size)
     if tail:
-      yield lax.dynamic_slice_in_dim(x, num_chunks * size, tail)
+      yield lax_slicing.dynamic_slice_in_dim(x, num_chunks * size, tail)
 
 def _getitem(self, item):
   return indexing.rewriting_take(self, item)
@@ -792,7 +792,7 @@ class _IndexUpdateRef:
     return f"_IndexUpdateRef({self.array!r}, {self.index!r})"
 
   def get(self, *, indices_are_sorted: bool = False, unique_indices: bool = False,
-          mode: str | lax.GatherScatterMode | None = None,
+          mode: str | lax_slicing.GatherScatterMode | None = None,
           fill_value: ArrayLike | None = None,
           out_sharding: Sharding | PartitionSpec | None = None,
           wrap_negative_indices: bool = True):
@@ -817,7 +817,7 @@ class _IndexUpdateRef:
 
   def set(self, values: ArrayLike, *, indices_are_sorted: bool = False,
           unique_indices: bool = False,
-          mode: str | lax.GatherScatterMode | None = None,
+          mode: str | lax_slicing.GatherScatterMode | None = None,
           wrap_negative_indices: bool = True) -> None:
     """Pure equivalent of ``x[idx] = y``.
 
@@ -829,14 +829,14 @@ class _IndexUpdateRef:
     out_s = core.typeof(self.array).sharding
     if out_s.mesh.empty or out_s.mesh._are_all_axes_auto_or_manual:
       out_s = None
-    return scatter._scatter_update(self.array, self.index, values, lax.scatter,
+    return scatter._scatter_update(self.array, self.index, values, lax_slicing.scatter,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode,
                                    out_sharding=out_s, normalize_indices=wrap_negative_indices)
 
   def apply(self, func: Callable[[ArrayLike], Array], *,
             indices_are_sorted: bool = False, unique_indices: bool = False,
-            mode: str | lax.GatherScatterMode | None = None,
+            mode: str | lax_slicing.GatherScatterMode | None = None,
             wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``func.at(x, idx)`` for a unary ufunc ``func``.
 
@@ -852,9 +852,9 @@ class _IndexUpdateRef:
     See :func:`jax.numpy.ndarray.at` for details.
     """
     def _scatter_apply(x, indices, y, dims, **kwargs):
-      return lax.scatter_apply(x, indices, func, dims, update_shape=y.shape, **kwargs)
+      return lax_slicing.scatter_apply(x, indices, func, dims, update_shape=y.shape, **kwargs)
     return scatter._scatter_update(self.array, self.index,
-                                   lax_internal._zero(self.array),
+                                   lax._zero(self.array),
                                    _scatter_apply,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode,
@@ -862,7 +862,7 @@ class _IndexUpdateRef:
 
   def add(self, values: ArrayLike, *,
           indices_are_sorted: bool = False, unique_indices: bool = False,
-          mode: str | lax.GatherScatterMode | None = None,
+          mode: str | lax_slicing.GatherScatterMode | None = None,
           wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] += y``.
 
@@ -872,14 +872,14 @@ class _IndexUpdateRef:
     See :func:`jax.numpy.ndarray.at` for details.
     """
     return scatter._scatter_update(self.array, self.index, values,
-                                   lax.scatter_add,
+                                   lax_slicing.scatter_add,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode,
                                    normalize_indices=wrap_negative_indices)
 
   def subtract(self, values: ArrayLike, *,
                indices_are_sorted: bool = False, unique_indices: bool = False,
-               mode: str | lax.GatherScatterMode | None = None,
+               mode: str | lax_slicing.GatherScatterMode | None = None,
                wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] -= y``.
 
@@ -889,14 +889,14 @@ class _IndexUpdateRef:
     See :func:`jax.numpy.ndarray.at` for details.
     """
     return scatter._scatter_update(self.array, self.index, values,
-                                   lax.scatter_sub,
+                                   lax_slicing.scatter_sub,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode,
                                    normalize_indices=wrap_negative_indices)
 
   def multiply(self, values: ArrayLike, *,
                indices_are_sorted: bool = False, unique_indices: bool = False,
-               mode: str | lax.GatherScatterMode | None = None,
+               mode: str | lax_slicing.GatherScatterMode | None = None,
                wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] *= y``.
 
@@ -906,7 +906,7 @@ class _IndexUpdateRef:
     See :func:`jax.numpy.ndarray.at` for details.
     """
     return scatter._scatter_update(self.array, self.index, values,
-                                   lax.scatter_mul,
+                                   lax_slicing.scatter_mul,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices,
                                    mode=mode, normalize_indices=wrap_negative_indices)
@@ -914,7 +914,7 @@ class _IndexUpdateRef:
 
   def divide(self, values: ArrayLike, *,
              indices_are_sorted: bool = False, unique_indices: bool = False,
-             mode: str | lax.GatherScatterMode | None = None,
+             mode: str | lax_slicing.GatherScatterMode | None = None,
              wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] /= y``.
 
@@ -926,14 +926,14 @@ class _IndexUpdateRef:
     return ufuncs.divide(
       self.array,
       scatter._scatter_update(lax_numpy.ones_like(self.array), self.index, values,
-                              lax.scatter_mul,
+                              lax_slicing.scatter_mul,
                               indices_are_sorted=indices_are_sorted,
                               unique_indices=unique_indices, mode=mode,
                               normalize_indices=wrap_negative_indices))
 
   def power(self, values: ArrayLike, *,
             indices_are_sorted: bool = False, unique_indices: bool = False,
-            mode: str | lax.GatherScatterMode | None = None,
+            mode: str | lax_slicing.GatherScatterMode | None = None,
             wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] **= y``.
 
@@ -945,14 +945,14 @@ class _IndexUpdateRef:
     return ufuncs.power(
       self.array,
       scatter._scatter_update(lax_numpy.ones_like(self.array), self.index, values,
-                              lax.scatter_mul,
+                              lax_slicing.scatter_mul,
                               indices_are_sorted=indices_are_sorted,
                               unique_indices=unique_indices, mode=mode,
                               normalize_indices=wrap_negative_indices))
 
   def min(self, values: ArrayLike, *,
           indices_are_sorted: bool = False, unique_indices: bool = False,
-          mode: str | lax.GatherScatterMode | None = None,
+          mode: str | lax_slicing.GatherScatterMode | None = None,
           wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
 
@@ -963,14 +963,14 @@ class _IndexUpdateRef:
     See :func:`jax.numpy.ndarray.at` for details.
     """
     return scatter._scatter_update(self.array, self.index, values,
-                                   lax.scatter_min,
+                                   lax_slicing.scatter_min,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode,
                                    normalize_indices=wrap_negative_indices)
 
   def max(self, values: ArrayLike, *,
           indices_are_sorted: bool = False, unique_indices: bool = False,
-          mode: str | lax.GatherScatterMode | None = None,
+          mode: str | lax_slicing.GatherScatterMode | None = None,
           wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
 
@@ -981,7 +981,7 @@ class _IndexUpdateRef:
     See :func:`jax.numpy.ndarray.at` for details.
     """
     return scatter._scatter_update(self.array, self.index, values,
-                                   lax.scatter_max,
+                                   lax_slicing.scatter_max,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode,
                                    normalize_indices=wrap_negative_indices)

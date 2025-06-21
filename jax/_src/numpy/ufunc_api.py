@@ -22,18 +22,19 @@ import math
 import operator
 from typing import Any
 
+import numpy as np
+
 from jax._src import api
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.lax import control_flow
 from jax._src.lax import slicing
 from jax._src.lax import lax
 from jax._src.numpy import indexing
-import jax._src.numpy.lax_numpy as jnp
+from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.reductions import _moveaxis
 from jax._src.numpy.util import check_arraylike, _broadcast_to, _where
 from jax._src.numpy.vectorize import vectorize
 from jax._src.util import canonicalize_axis, set_module
-import numpy as np
 
 
 export = set_module("jax.numpy")

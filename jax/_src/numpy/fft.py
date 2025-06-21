@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import operator
+
 import numpy as np
 
 from jax._src import dtypes
