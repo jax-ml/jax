@@ -1092,7 +1092,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "serialize_executable",
     srcs = ["experimental/serialize_executable.py"],
-    visibility = [":serialize_executable_users"],
+    visibility = ["//visibility:private"],
     deps = [
         ":jax",
         "//jax/_src/lib",
