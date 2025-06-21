@@ -835,6 +835,8 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   else:
     target_version = hlo.get_version_from_compatibility_requirement(
       hlo.StablehloCompatibilityRequirement.WEEK_4)
+  if xb.get_backend("gpu").mixed_mlir_dialects:
+    print("Using mixed dialects")
   module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
       mlir_str, target_version)
   return module_serialized
