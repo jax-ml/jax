@@ -18,19 +18,16 @@ from collections.abc import Sequence
 from functools import partial
 import itertools
 import math
-
-import numpy as np
 import operator
 from typing import Literal, NamedTuple, overload
 
-from jax import lax
+import numpy as np
 
-from jax._src.api import jit
+from jax._src import api
 from jax._src import config
-from jax._src.custom_derivatives import custom_jvp
 from jax._src import deprecations
-from jax._src.lax import lax as lax_internal
-from jax._src.lax.lax import PrecisionLike
+from jax._src.custom_derivatives import custom_jvp
+from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import einsum
 from jax._src.numpy import indexing
@@ -73,7 +70,7 @@ def _symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
 
 
 @export
-@partial(jit, static_argnames=['upper', 'symmetrize_input'])
+@partial(api.jit, static_argnames=['upper', 'symmetrize_input'])
 def cholesky(a: ArrayLike, *, upper: bool = False, symmetrize_input: bool = True) -> Array:
   """Compute the Cholesky decomposition of a matrix.
 
@@ -203,7 +200,7 @@ def svd(
 
 @export
 @partial(
-    jit,
+    api.jit,
     static_argnames=(
         "full_matrices",
         "compute_uv",
@@ -323,7 +320,7 @@ def svd(
 
 
 @export
-@partial(jit, static_argnames=('n',))
+@partial(api.jit, static_argnames=('n',))
 def matrix_power(a: ArrayLike, n: int) -> Array:
   """Raise a square matrix to an integer power.
 
@@ -404,7 +401,7 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
 
 
 @export
-@jit
+@api.jit
 def matrix_rank(
   M: ArrayLike, rtol: ArrayLike | None = None, *,
   tol: ArrayLike | DeprecatedArg | None = DeprecatedArg()) -> Array:
@@ -509,7 +506,7 @@ def _slogdet_qr(a: Array) -> tuple[Array, Array]:
 
 
 @export
-@partial(jit, static_argnames=('method',))
+@partial(api.jit, static_argnames=('method',))
 def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
   """
   Compute the sign and (natural) logarithm of the determinant of an array.
@@ -690,7 +687,7 @@ def _det_jvp(primals, tangents):
 
 
 @export
-@jit
+@api.jit
 def det(a: ArrayLike) -> Array:
   """
   Compute the determinant of an array.
@@ -773,7 +770,7 @@ def eig(a: ArrayLike) -> tuple[Array, Array]:
 
 
 @export
-@jit
+@api.jit
 def eigvals(a: ArrayLike) -> Array:
   """
   Compute the eigenvalues of a general matrix.
@@ -811,7 +808,7 @@ def eigvals(a: ArrayLike) -> Array:
 
 
 @export
-@partial(jit, static_argnames=('UPLO', 'symmetrize_input'))
+@partial(api.jit, static_argnames=('UPLO', 'symmetrize_input'))
 def eigh(a: ArrayLike, UPLO: str | None = None,
          symmetrize_input: bool = True) -> EighResult:
   """
@@ -869,7 +866,7 @@ def eigh(a: ArrayLike, UPLO: str | None = None,
 
 
 @export
-@partial(jit, static_argnames=('UPLO', 'symmetrize_input'))
+@partial(api.jit, static_argnames=('UPLO', 'symmetrize_input'))
 def eigvalsh(a: ArrayLike, UPLO: str | None = 'L', *,
              symmetrize_input: bool = True) -> Array:
   """
@@ -970,7 +967,7 @@ def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
 
 
 @partial(custom_jvp, nondiff_argnums=(1, 2))
-@partial(jit, static_argnames=('hermitian'))
+@partial(api.jit, static_argnames=('hermitian'))
 def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) -> Array:
   # Uses same algorithm as
   # https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
@@ -1025,7 +1022,7 @@ def _pinv_jvp(rtol, hermitian, primals, tangents):
 
 
 @export
-@jit
+@api.jit
 def inv(a: ArrayLike) -> Array:
   """Return the inverse of a square matrix
 
@@ -1085,7 +1082,7 @@ def inv(a: ArrayLike) -> Array:
 
 
 @export
-@partial(jit, static_argnames=('ord', 'axis', 'keepdims'))
+@partial(api.jit, static_argnames=('ord', 'axis', 'keepdims'))
 def norm(x: ArrayLike, ord: int | str | None = None,
          axis: None | tuple[int, ...] | int = None,
          keepdims: bool = False) -> Array:
@@ -1226,7 +1223,7 @@ def qr(a: ArrayLike, mode: Literal["r"]) -> Array: ...
 def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult: ...
 
 @export
-@partial(jit, static_argnames=('mode',))
+@partial(api.jit, static_argnames=('mode',))
 def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
   """Compute the QR decomposition of an array
 
@@ -1310,7 +1307,7 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
 
 
 @export
-@jit
+@api.jit
 def solve(a: ArrayLike, b: ArrayLike) -> Array:
   """Solve a linear system of equations.
 
@@ -1416,7 +1413,7 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
     x = x.ravel()
   return x, resid, rank, s
 
-_jit_lstsq = jit(partial(_lstsq, numpy_resid=False))
+_jit_lstsq = api.jit(partial(_lstsq, numpy_resid=False))
 
 
 @export
@@ -1683,14 +1680,14 @@ def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, k
     raise ValueError(msg)
   else:
     abs_x = ufuncs.abs(x)
-    ord_arr = lax_internal._const(abs_x, ord)
-    ord_inv = lax_internal._const(abs_x, 1. / ord_arr)
+    ord_arr = lax._const(abs_x, ord)
+    ord_inv = lax._const(abs_x, 1. / ord_arr)
     out = reductions.sum(abs_x ** ord_arr, axis=axis, keepdims=keepdims)
     return ufuncs.power(out, ord_inv)
 
 @export
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
-           precision: PrecisionLike = None,
+           precision: lax.PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
   """Compute the (batched) vector conjugate dot product of two arrays.
 
@@ -1741,7 +1738,7 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
 
 @export
 def matmul(x1: ArrayLike, x2: ArrayLike, /, *,
-           precision: PrecisionLike = None,
+           precision: lax.PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
   """Perform a matrix multiplication.
 
@@ -1803,7 +1800,7 @@ def matmul(x1: ArrayLike, x2: ArrayLike, /, *,
 @export
 def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
               axes: int | tuple[Sequence[int], Sequence[int]] = 2,
-              precision: PrecisionLike = None,
+              precision: lax.PrecisionLike = None,
               preferred_element_type: DTypeLike | None = None) -> Array:
   """Compute the tensor dot product of two N-dimensional arrays.
 
@@ -2040,7 +2037,7 @@ def tensorsolve(a: ArrayLike, b: ArrayLike, axes: tuple[int, ...] | None = None)
 
 
 @export
-def multi_dot(arrays: Sequence[ArrayLike], *, precision: PrecisionLike = None) -> Array:
+def multi_dot(arrays: Sequence[ArrayLike], *, precision: lax.PrecisionLike = None) -> Array:
   """Efficiently compute matrix products between a sequence of arrays.
 
   JAX implementation of :func:`numpy.linalg.multi_dot`.
@@ -2132,7 +2129,7 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: PrecisionLike = None) -
 
 
 @export
-@partial(jit, static_argnames=['p'])
+@partial(api.jit, static_argnames=['p'])
 def cond(x: ArrayLike, p=None):
   """Compute the condition number of a matrix.
 

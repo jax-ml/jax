@@ -16,8 +16,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from functools import partial
 from typing import Any, overload
-
 import warnings
+
+import numpy as np
 
 from jax._src import api
 from jax._src import config
@@ -27,11 +28,9 @@ from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.util import safe_zip, safe_map, set_module
+from jax._src.sharding import Sharding
 from jax._src.typing import (
     Array, ArrayLike, DimSize, Shape, SupportsNdim, SupportsShape, SupportsSize)
-from jax.sharding import Sharding
-
-import numpy as np
 
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map

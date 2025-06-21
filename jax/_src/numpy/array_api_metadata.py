@@ -21,11 +21,11 @@ from __future__ import annotations
 
 from types import ModuleType
 
-from jax._src.sharding import Sharding
-from jax._src.lib import xla_client as xc
 from jax._src import config
 from jax._src import dtypes as _dtypes
 from jax._src import xla_bridge as xb
+from jax._src.lib import xla_client as xc
+from jax._src.sharding import Sharding
 
 
 __array_api_version__ = '2024.12'

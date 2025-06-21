@@ -23,15 +23,15 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from jax import lax
+from jax._src import api
 from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
-from jax._src.api import jit
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import lax
+from jax._src.lax import slicing
 from jax._src.numpy import einsum
 from jax._src.numpy import error as jnp_error
 from jax._src.numpy import lax_numpy
@@ -133,7 +133,7 @@ def take(
                fill_value=fill_value)
 
 
-@partial(jit, static_argnames=('axis', 'mode', 'unique_indices', 'indices_are_sorted', 'fill_value'))
+@partial(api.jit, static_argnames=('axis', 'mode', 'unique_indices', 'indices_are_sorted', 'fill_value'))
 def _take(a, indices, axis: int | None = None, out=None, mode=None,
           unique_indices=False, indices_are_sorted=False, fill_value=None):
   if out is not None:
@@ -147,17 +147,17 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
     axis_idx = canonicalize_axis(axis, np.ndim(a))
 
   if mode is None or mode == "fill":
-    gather_mode = lax.GatherScatterMode.FILL_OR_DROP
+    gather_mode = slicing.GatherScatterMode.FILL_OR_DROP
     # lax.gather() does not support negative indices, so we wrap them here
     indices = util._where(indices < 0, indices + a.shape[axis_idx], indices)
   elif mode == "raise":
     # TODO(phawkins): we have no way to report out of bounds errors yet.
     raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
   elif mode == "wrap":
-    indices = ufuncs.mod(indices, lax_internal._const(indices, a.shape[axis_idx]))
-    gather_mode = lax.GatherScatterMode.PROMISE_IN_BOUNDS
+    indices = ufuncs.mod(indices, lax._const(indices, a.shape[axis_idx]))
+    gather_mode = slicing.GatherScatterMode.PROMISE_IN_BOUNDS
   elif mode == "clip":
-    gather_mode = lax.GatherScatterMode.CLIP
+    gather_mode = slicing.GatherScatterMode.CLIP
   else:
     raise ValueError(f"Invalid mode '{mode}' for np.take")
 
@@ -174,16 +174,16 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
     return lax.full_like(a, 0, shape=out_shape)
 
   slice_sizes[axis_idx] = 1
-  dnums = lax.GatherDimensionNumbers(
+  dnums = slicing.GatherDimensionNumbers(
     offset_dims=tuple(
       list(range(axis_idx)) +
       list(range(axis_idx + index_dims, len(a.shape) + index_dims - 1))),
     collapsed_slice_dims=(axis_idx,),
     start_index_map=(axis_idx,))
-  return lax.gather(a, indices[..., None], dimension_numbers=dnums,
-                    slice_sizes=tuple(slice_sizes),
-                    mode=gather_mode, unique_indices=unique_indices,
-                    indices_are_sorted=indices_are_sorted, fill_value=fill_value)
+  return slicing.gather(a, indices[..., None], dimension_numbers=dnums,
+                        slice_sizes=tuple(slice_sizes),
+                        mode=gather_mode, unique_indices=unique_indices,
+                        indices_are_sorted=indices_are_sorted, fill_value=fill_value)
 
 
 def _normalize_index(index, axis_size):
@@ -191,7 +191,7 @@ def _normalize_index(index, axis_size):
   if dtypes.issubdtype(dtypes.dtype(index, canonicalize=True), np.unsignedinteger):
     return index
   if core.is_constant_dim(axis_size):
-    axis_size_val = lax_internal._const(index, axis_size)
+    axis_size_val = lax._const(index, axis_size)
   else:
     axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
                                              dtypes.dtype(index, canonicalize=True))
@@ -202,12 +202,12 @@ def _normalize_index(index, axis_size):
 
 
 @export
-@partial(jit, static_argnames=('axis', 'mode', 'fill_value'))
+@partial(api.jit, static_argnames=('axis', 'mode', 'fill_value'))
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
     axis: int | None,
-    mode: str | lax.GatherScatterMode | None = None,
+    mode: str | slicing.GatherScatterMode | None = None,
     fill_value: StaticScalar | None = None,
 ) -> Array:
   """Take elements from an array.
@@ -388,14 +388,14 @@ def take_along_axis(
   # Squeeze a to remove singleton dimensions.
   a = lax.squeeze(a, dims_to_squeeze)
   gather_indices_arr = lax.concatenate(gather_indices, dimension=j)
-  dnums = lax.GatherDimensionNumbers(
+  dnums = slicing.GatherDimensionNumbers(
     offset_dims=tuple(offset_dims),
     collapsed_slice_dims=tuple(collapsed_slice_dims),
     start_index_map=tuple(start_index_map),
     operand_batching_dims=tuple(operand_batching_dims),
     start_indices_batching_dims=tuple(start_indices_batching_dims))
-  return lax.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
-                    mode="fill" if mode is None else mode, fill_value=fill_value)
+  return slicing.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
+                        mode="fill" if mode is None else mode, fill_value=fill_value)
 
 
 def _make_along_axis_idx(shape, indices, axis):
@@ -405,7 +405,7 @@ def _make_along_axis_idx(shape, indices, axis):
 
 
 @export
-@partial(jit, static_argnames=('axis', 'inplace', 'mode'))
+@partial(api.jit, static_argnames=('axis', 'inplace', 'mode'))
 def put_along_axis(
   arr: ArrayLike,
   indices: ArrayLike,
@@ -598,7 +598,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
   if all(isinstance(i, (int, np.integer)) and i >= 0 for i in start_indices):
     int_start_indices = [int(i) for i in start_indices]  # type: ignore
     int_limit_indices = [i + s for i, s in zip(int_start_indices, slice_sizes)]
-    arr = lax.slice(
+    arr = slicing.slice(
         arr, start_indices=int_start_indices, limit_indices=int_limit_indices)
   else:
     # We must be careful with dtypes because dynamic_slice requires all
@@ -608,7 +608,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
     jnp_error._check_precondition_oob_dynamic_slice(
         arr.shape, start_indices, slice_sizes, allow_negative_indices
     )
-    internal_ds = partial(lax.dynamic_slice, slice_sizes=slice_sizes,
+    internal_ds = partial(slicing.dynamic_slice, slice_sizes=slice_sizes,
                           allow_negative_indices=allow_negative_indices)
     if out_sharding is not None:
       arr = auto_axes(internal_ds, out_sharding=out_sharding)(arr, start_indices)
@@ -643,7 +643,7 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
           dtypes.issubdtype(aval.dtype, np.integer) and
           not dtypes.issubdtype(aval.dtype, dtypes.bool_) and
           isinstance(arr.shape[0], int)):
-        return lax.dynamic_index_in_dim(arr, idx, keepdims=False)
+        return slicing.dynamic_index_in_dim(arr, idx, keepdims=False)
 
   treedef, static_idx, dynamic_idx = split_index_for_jit(idx, arr.shape)
   internal_gather = partial(
@@ -658,7 +658,7 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
-# @partial(jit, static_argnums=(1, 2))
+# @partial(api.jit, static_argnums=(1, 2))
 def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
             unique_indices, mode, fill_value, normalize_indices):
   idx = merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
@@ -684,7 +684,7 @@ def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
 
   # We avoid generating a gather when indexer.gather_indices.size is empty.
   if not core.is_empty_shape(indexer.gather_indices.shape):
-    y = lax.gather(
+    y = slicing.gather(
         y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape,
         unique_indices=unique_indices or indexer.unique_indices,
         indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted,
@@ -705,7 +705,7 @@ class _Indexer(NamedTuple):
   # The gather indices to use.
   gather_indices: ArrayLike
   # A GatherDimensionNumbers object describing the gather to perform.
-  dnums: lax.GatherDimensionNumbers
+  dnums: slicing.GatherDimensionNumbers
 
   # Are the gather_indices known to be non-overlapping and/or sorted?
   # (In practice, these translate to "there no advanced indices", because
@@ -981,7 +981,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       for g, i in gather_indices],
       last_dim)
 
-  dnums = lax.GatherDimensionNumbers(
+  dnums = slicing.GatherDimensionNumbers(
     offset_dims = tuple(offset_dims),
     collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
     start_index_map = tuple(start_index_map)
