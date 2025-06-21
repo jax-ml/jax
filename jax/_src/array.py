@@ -36,7 +36,7 @@ from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
-from jax._src.layout import AutoLayout, DeviceLocalLayout, Format
+from jax._src.layout import AutoLayout, Layout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
 from jax._src.sharding import Sharding
@@ -552,7 +552,7 @@ class ArrayImpl(basearray.Array):
     if self.is_deleted():
       return Format(None, self.sharding)
     try:
-      return Format(DeviceLocalLayout.from_pjrt_layout(self._pjrt_layout),
+      return Format(Layout.from_pjrt_layout(self._pjrt_layout),
                     self.sharding)
     except _jax.XlaRuntimeError as e:
       msg, *_ = e.args
@@ -756,10 +756,10 @@ def make_array_from_callback(
     (4, 2)
   """
   # pyformat: enable
-  dll = sharding.device_local_layout if isinstance(sharding, Format) else None
+  dll = sharding.layout if isinstance(sharding, Format) else None
   if isinstance(dll, AutoLayout):
     raise TypeError(
-        "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
+        "`Layout.AUTO` cannot be used in place of a device-local"
         f" layout when calling `jax.make_array_from_callback`. Got {sharding}")
   sharding = sharding.sharding if isinstance(sharding, Format) else sharding
   if not isinstance(sharding, Sharding):
@@ -812,7 +812,7 @@ def make_array_from_callback(
         and sharding.is_fully_replicated
         and first_value.is_fully_replicated
         and first_value.sharding._device_assignment == tuple(devices)
-        and first_value.format.device_local_layout == dll):
+        and first_value.format.layout == dll):
       return first_value
 
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
@@ -1197,7 +1197,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
     x._check_if_deleted()
     indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
     same_layout = (True if layout is None else
-                   x.format.device_local_layout == layout)
+                   x.format.layout == layout)
 
     if not x.is_fully_addressable:
       if same_indices and same_layout:

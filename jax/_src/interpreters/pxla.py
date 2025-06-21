@@ -57,7 +57,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
-from jax._src.layout import DeviceLocalLayout, AutoLayout, Format
+from jax._src.layout import Layout, AutoLayout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -186,7 +186,7 @@ def is_default_layout(curr_layout, sharding, aval):
     # int4.
     return is_user_xla_layout_equal(
         curr_layout,
-        DeviceLocalLayout.from_pjrt_layout(
+        Layout.from_pjrt_layout(
             d.client.get_default_layout(aval.dtype, shard_shape, d)))
   except xe.XlaRuntimeError as e:
     msg, *_ = e.args
@@ -2015,7 +2015,7 @@ def get_out_memory_kinds_via_propagation(closed_jaxpr: core.ClosedJaxpr,
 
 @weakref_lru_cache
 def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
-                                    ) -> tuple[None | DeviceLocalLayout]:
+                                    ) -> tuple[None | Layout]:
   env = {}  # type: ignore
   jaxpr = closed_jaxpr.jaxpr
 
@@ -2071,7 +2071,7 @@ def _get_num_devices(
   return abstract_mesh.size, None
 
 
-MaybeLayout = Sequence[Union[DeviceLocalLayout, AutoLayout, None]]
+MaybeLayout = Sequence[Union[Layout, AutoLayout, None]]
 
 
 class AllArgsInfo(NamedTuple):
@@ -2095,8 +2095,8 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
     closed_jaxpr, inout_aliases, mut = _discharge_refs(closed_jaxpr)
     in_shardings = (*in_shardings, *(
         pjit.finalize_arg_sharding(c.sharding, c.committed) for c in mut.in_mut))
-    in_layouts = (*in_layouts, *(c.format.dll if hasattr(c, 'format') else None
-                                 for c in mut.in_mut))
+    in_layouts = (*in_layouts, *(c.format.layout if hasattr(c, 'format')
+                                 else None for c in mut.in_mut))
     donated_invars = (*donated_invars,) + (False,) * len(mut.in_mut)
     out_layouts_ = iter(zip(out_shardings, out_layouts))
     out_shardings, out_layouts = unzip2(
@@ -2207,7 +2207,7 @@ def lower_sharding_computation(
   # so that XLA can override the entry_computation_layout. The propagated
   # layout will be set via a custom call.
   out_layouts_via_prop = get_out_layouts_via_propagation(closed_jaxpr)
-  out_layouts = tuple(DeviceLocalLayout.AUTO if p is not None else o
+  out_layouts = tuple(Layout.AUTO if p is not None else o
                       for o, p in safe_zip(out_layouts, out_layouts_via_prop))
 
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
@@ -2614,9 +2614,9 @@ def maybe_recover_user_shardings(
 
   return new_shardings
 
-def is_user_xla_layout_equal(ul: DeviceLocalLayout | AutoLayout,
-                             xl: DeviceLocalLayout) -> bool:
-  if isinstance(ul, DeviceLocalLayout) and not ul._tiling:
+def is_user_xla_layout_equal(ul: Layout | AutoLayout,
+                             xl: Layout) -> bool:
+  if isinstance(ul, Layout) and not ul._tiling:
     return ul.major_to_minor == xl.major_to_minor
   else:
     return ul == xl
@@ -2624,7 +2624,7 @@ def is_user_xla_layout_equal(ul: DeviceLocalLayout | AutoLayout,
 
 def _get_layouts_from_executable(
     xla_executable, in_layouts, out_layouts, num_ordered_effects
-) -> tuple[Sequence[DeviceLocalLayout | None], Sequence[DeviceLocalLayout | None]]:
+) -> tuple[Sequence[Layout | None], Sequence[Layout | None]]:
   try:
     in_layouts_xla = xla_executable.get_parameter_layouts()
     out_layouts_xla = xla_executable.get_output_layouts()
@@ -2637,8 +2637,8 @@ def _get_layouts_from_executable(
 
   new_in_layouts = []
   for x, l in safe_zip(in_layouts_xla, in_layouts):
-    x = DeviceLocalLayout.from_pjrt_layout(x)
-    if isinstance(l, DeviceLocalLayout) and not is_user_xla_layout_equal(l, x):
+    x = Layout.from_pjrt_layout(x)
+    if isinstance(l, Layout) and not is_user_xla_layout_equal(l, x):
       raise AssertionError(
           f"Unexpected XLA layout override: (XLA) {x} != {l} "
           f"(User input layout)")
@@ -2648,8 +2648,8 @@ def _get_layouts_from_executable(
 
   new_out_layouts = []
   for x, l in safe_zip(out_layouts_xla, out_layouts):
-    x = DeviceLocalLayout.from_pjrt_layout(x)
-    if isinstance(l, DeviceLocalLayout) and not is_user_xla_layout_equal(l, x):
+    x = Layout.from_pjrt_layout(x)
+    if isinstance(l, Layout) and not is_user_xla_layout_equal(l, x):
       raise AssertionError(
           f"Unexpected XLA layout override: (XLA) {x} != {l} "
           f"(User output layout)")
@@ -2657,8 +2657,8 @@ def _get_layouts_from_executable(
     # (tiling, etc) even if the user layout does not specify tiling.
     new_out_layouts.append(x)
 
-  assert all(isinstance(i, DeviceLocalLayout) for i in new_in_layouts)
-  assert all(isinstance(o, DeviceLocalLayout) for o in new_out_layouts)
+  assert all(isinstance(i, Layout) for i in new_in_layouts)
+  assert all(isinstance(o, Layout) for o in new_out_layouts)
   return new_in_layouts, new_out_layouts
 
 
@@ -2855,9 +2855,9 @@ class UnloadedMeshExecutable:
   kept_var_idx: set[int]
   mut: MutationData | None
   auto_spmd_lowering: bool
-  xla_in_layouts: Sequence[DeviceLocalLayout | None]
-  dispatch_in_layouts: Sequence[DeviceLocalLayout | None]
-  xla_out_layouts: Sequence[DeviceLocalLayout | None]
+  xla_in_layouts: Sequence[Layout | None]
+  dispatch_in_layouts: Sequence[Layout | None]
+  xla_out_layouts: Sequence[Layout | None]
   all_args_info: AllArgsInfo | None
   pgle_profiler: profiler.PGLEProfiler | None
 
@@ -2965,7 +2965,7 @@ class UnloadedMeshExecutable:
         in_shardings, out_shardings, committed, da = _get_metadata_jit_pmap(
             xla_executable.local_devices(), len(in_shardings), len(out_shardings))
 
-    # xla_in_layouts are all either None or DeviceLocalLayout. Even default
+    # xla_in_layouts are all either None or Layout. Even default
     # layout are concrete layouts and they are used in `compiled.input_formats`
     # to return concrete layouts to users.
     # `dispatch_in_layouts` replaces default layouts with `None` to simplify
@@ -3017,7 +3017,7 @@ class MeshExecutableFastpathData(NamedTuple):
   out_avals: Sequence[ShapedArray]
   out_committed: Sequence[bool]
   kept_var_bitvec: Iterable[bool]
-  in_device_local_layouts: Sequence[DeviceLocalLayout | None]
+  in_device_local_layouts: Sequence[Layout | None]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -3216,7 +3216,7 @@ def check_device_backend_on_shardings(shardings) -> bool:
 def check_array_xla_sharding_layout_match(
     args_after_dce,
     in_xla_shardings: Sequence[JSharding],
-    in_xla_layouts: Sequence[DeviceLocalLayout],
+    in_xla_layouts: Sequence[Layout],
     jaxpr_debug_info: core.DebugInfo,
     kept_var_idx: set[int]) -> None:
   # jaxpr_debug_info.arg_names are before DCE, so need to DCE them.
@@ -3244,11 +3244,11 @@ def check_array_xla_sharding_layout_match(
           'sharding'))
 
     if (not db_xs and arg._committed and
-        arg.format.device_local_layout is not None and xl is not None and
-        arg.format.device_local_layout != xl):
+        arg.format.layout is not None and xl is not None and
+        arg.format.layout != xl):
       errors.append(
           ("Got input layout(s) that compiled object was called with: "
-          f"{arg.format.device_local_layout} and layout(s) the computation was "
+          f"{arg.format.layout} and layout(s) the computation was "
           f"compiled with: {xl} for arg {name} with "
           f"shape: {arg.aval.str_short()}",
           'layout'))

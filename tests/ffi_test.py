@@ -32,7 +32,7 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
-from jax._src.layout import DeviceLocalLayout
+from jax._src.layout import Layout
 from jax._src.lib import lapack
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
@@ -60,7 +60,7 @@ class FfiTest(jtu.JaxTestCase):
   @parameterized.parameters([
     (tuple(range(3)), tuple(range(3))),
     (None, tuple(reversed(range(3)))),
-    (DeviceLocalLayout(tuple(range(3))), tuple(reversed(range(3)))),
+    (Layout(tuple(range(3))), tuple(reversed(range(3)))),
   ])
   def test_lowering_layouts(self, layout_spec, expected_layout):
     # Regression test to ensure that the lowering rule properly captures
