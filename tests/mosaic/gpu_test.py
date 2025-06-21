@@ -27,6 +27,7 @@ import unittest
 from absl.testing import absltest, parameterized
 import jax
 from jax._src import config
+from jax._src import dtypes
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
@@ -1221,13 +1222,21 @@ class TCGen05Test(TestCase):
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float16, jnp.float32,),
-      m=(128,),  # TODO(apaszke): 64, 192, 256
+      m=(64, 128,),  # TODO(apaszke): 64, 192, 256
       n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       swizzle=(32, 64, 128,),
   )
   def test_mma_basic_float(self, **kwargs):
-    if kwargs["n"] * jnp.dtype(kwargs["in_jax_dtype"]).itemsize < kwargs["swizzle"]:
-      self.skipTest("swizzle too large for input")
+    in_bytewidth = jnp.dtype(kwargs["in_jax_dtype"]).itemsize
+    lhs_transpose = kwargs["lhs_transpose"]
+    swizzle = kwargs["swizzle"]
+    if lhs_transpose and kwargs["m"] * in_bytewidth < swizzle:
+      self.skipTest("swizzle too large for input (lhs)")
+    n_steps = 2 if kwargs["m"] == 64 else 1
+    if kwargs["n"] * in_bytewidth // n_steps < swizzle:
+      self.skipTest("swizzle too large for input (rhs)")
+    if dtypes.bit_width(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
+      self.skipTest("Only 8-bit and larger inputs are supported for MMA")
     self._basic_mma_test(
         **kwargs,
         k_steps=2,  # Reducing to 1 can be helpful while debugging.
@@ -1240,13 +1249,21 @@ class TCGen05Test(TestCase):
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.int8,),
       out_jax_dtype=(jnp.int32,),
-      m=(128,),  # TODO(apaszke): 64, 192, 256
+      m=(64, 128,),  # TODO(apaszke): 192, 256
       n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       swizzle=(32, 64, 128,),
   )
   def test_mma_basic_int(self, **kwargs):
-    if kwargs["n"] * jnp.dtype(kwargs["in_jax_dtype"]).itemsize < kwargs["swizzle"]:
-      self.skipTest("swizzle too large for input")
+    in_bytewidth = jnp.dtype(kwargs["in_jax_dtype"]).itemsize
+    lhs_transpose = kwargs["lhs_transpose"]
+    swizzle = kwargs["swizzle"]
+    if lhs_transpose and kwargs["m"] * in_bytewidth < swizzle:
+      self.skipTest("swizzle too large for input (lhs)")
+    n_steps = 2 if kwargs["m"] == 64 else 1
+    if kwargs["n"] * in_bytewidth // n_steps < swizzle:
+      self.skipTest("swizzle too large for input (rhs)")
+    if dtypes.bit_width(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
+      self.skipTest("Only 8-bit and larger inputs are supported for MMA")
     self._basic_mma_test(
         **kwargs,
         k_steps=2,  # Reducing to 1 can be helpful while debugging.
@@ -1358,7 +1375,7 @@ class TCGen05Test(TestCase):
         jax.ShapeDtypeStruct(lhs_smem_shape, in_jax_dtype),
         jax.ShapeDtypeStruct(rhs_smem_shape, in_jax_dtype),
         mgpu.TMABarrier(3),
-        mgpu.TMEM((128, n), out_jax_dtype),
+        mgpu.TMEM((m, n), out_jax_dtype),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
@@ -1445,7 +1462,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16,),
       out_jax_dtype=(jnp.float32,),
       m=(256,),  # TODO(apaszke): 64, 192, 256
-      n=(128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
+      n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
       k_steps=(1, 2),
       swizzle=(32, 64, 128,),
   )
@@ -1523,12 +1540,11 @@ class TCGen05Test(TestCase):
     y_block_shape = (n_block_tile, k) if rhs_transpose else (k, n_block_tile)
     y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
-    tmem_layout = tcgen05.TMEM_COLLECTIVE_N512_LAYOUT if n == 512 else None
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
         mgpu.TMABarrier(3),
-        mgpu.TMEM((128, n), out_jax_dtype, collective=True, layout=tmem_layout),
+        mgpu.TMEM((128, n), out_jax_dtype, collective=True),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (2, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape, cluster=(2, 1, 1)
