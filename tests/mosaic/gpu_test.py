@@ -27,6 +27,7 @@ import unittest
 from absl.testing import absltest, parameterized
 import jax
 from jax._src import config
+from jax._src import dtypes
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
@@ -1116,12 +1117,24 @@ class TCGen05Test(TestCase):
     if not any(jtu.is_cuda_compute_capability_equal(sm) for sm in capabilities):
       self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
 
-  @parameterized.parameters([(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2)])
-  def test_load_store_tmem_swizzle(self, jax_dtype, packing):
+  @parameterized.product(
+      jax_dtype_packing=[(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2)],
+      reg_tmem_layout_m=[
+          (lambda _: tcgen05.LAYOUT, lambda _, p: tcgen05.tmem_default_layout(p), 128),
+          (lambda _: fa.WGMMA_LAYOUT, tcgen05.tmem_half_lane_layout, 64),
+          (tcgen05.fa_m64_collective_layout, tcgen05.tmem_m64_collective_layout, 64),
+      ],
+  )
+  def test_load_store_tmem_swizzle(self, jax_dtype_packing, reg_tmem_layout_m):
+    jax_dtype, packing = jax_dtype_packing
+    reg_layout_f, tmem_layout_f, m = reg_tmem_layout_m
     swizzle = 128
     in_mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
     swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
     tiling = (8, swizzle_elems)
+    # SMEM store planning for FA is too complicated for too long N...
+    n = 128 if jax_dtype != jnp.float32 else 64
+    reg_layout = reg_layout_f(n)
 
     def kernel(ctx, input, output, scratch):
       smem, barrier, tmem = scratch
@@ -1133,20 +1146,20 @@ class TCGen05Test(TestCase):
           barrier=barrier,
       )
       barrier.wait()
-      tmem.store(fa.FragmentedArray.load_tiled(smem, swizzle, layout=tcgen05.LAYOUT))
+      tmem.store(fa.FragmentedArray.load_tiled(smem, swizzle, layout=reg_layout))
       tcgen05.commit_tmem()
-      tmem.load().store_tiled(smem, swizzle)
+      tmem.load(reg_layout).store_tiled(smem, swizzle)
       mgpu.commit_shared()
       ctx.async_copy(
           src_ref=smem, dst_ref=output, swizzle=swizzle, gmem_transform=mgpu.TileTransform(tiling),
       )
       ctx.await_async_copy(0)
 
-    x = self.prng.uniform(-1, 1, (128, 128)).astype(jax_dtype)
+    x = self.prng.uniform(-1, 1, (m, n)).astype(jax_dtype)
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x.shape, tiling), jax_dtype),
         mgpu.TMABarrier(),
-        mgpu.TMEM(x.shape, jax_dtype, packing=packing),
+        mgpu.TMEM(x.shape, jax_dtype, layout=tmem_layout_f(n, packing)),
     ]
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
@@ -1221,13 +1234,21 @@ class TCGen05Test(TestCase):
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float16, jnp.float32,),
-      m=(128,),  # TODO(apaszke): 64, 192, 256
+      m=(64, 128,),  # TODO(apaszke): 64, 192, 256
       n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       swizzle=(32, 64, 128,),
   )
   def test_mma_basic_float(self, **kwargs):
-    if kwargs["n"] * jnp.dtype(kwargs["in_jax_dtype"]).itemsize < kwargs["swizzle"]:
-      self.skipTest("swizzle too large for input")
+    in_bytewidth = jnp.dtype(kwargs["in_jax_dtype"]).itemsize
+    lhs_transpose = kwargs["lhs_transpose"]
+    swizzle = kwargs["swizzle"]
+    if lhs_transpose and kwargs["m"] * in_bytewidth < swizzle:
+      self.skipTest("swizzle too large for input (lhs)")
+    n_steps = 2 if kwargs["m"] == 64 else 1
+    if kwargs["n"] * in_bytewidth // n_steps < swizzle:
+      self.skipTest("swizzle too large for input (rhs)")
+    if dtypes.bit_width(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
+      self.skipTest("Only 8-bit and larger inputs are supported for MMA")
     self._basic_mma_test(
         **kwargs,
         k_steps=2,  # Reducing to 1 can be helpful while debugging.
@@ -1240,13 +1261,21 @@ class TCGen05Test(TestCase):
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.int8,),
       out_jax_dtype=(jnp.int32,),
-      m=(128,),  # TODO(apaszke): 64, 192, 256
+      m=(64, 128,),  # TODO(apaszke): 192, 256
       n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       swizzle=(32, 64, 128,),
   )
   def test_mma_basic_int(self, **kwargs):
-    if kwargs["n"] * jnp.dtype(kwargs["in_jax_dtype"]).itemsize < kwargs["swizzle"]:
-      self.skipTest("swizzle too large for input")
+    in_bytewidth = jnp.dtype(kwargs["in_jax_dtype"]).itemsize
+    lhs_transpose = kwargs["lhs_transpose"]
+    swizzle = kwargs["swizzle"]
+    if lhs_transpose and kwargs["m"] * in_bytewidth < swizzle:
+      self.skipTest("swizzle too large for input (lhs)")
+    n_steps = 2 if kwargs["m"] == 64 else 1
+    if kwargs["n"] * in_bytewidth // n_steps < swizzle:
+      self.skipTest("swizzle too large for input (rhs)")
+    if dtypes.bit_width(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
+      self.skipTest("Only 8-bit and larger inputs are supported for MMA")
     self._basic_mma_test(
         **kwargs,
         k_steps=2,  # Reducing to 1 can be helpful while debugging.
@@ -1358,7 +1387,7 @@ class TCGen05Test(TestCase):
         jax.ShapeDtypeStruct(lhs_smem_shape, in_jax_dtype),
         jax.ShapeDtypeStruct(rhs_smem_shape, in_jax_dtype),
         mgpu.TMABarrier(3),
-        mgpu.TMEM((128, n), out_jax_dtype),
+        mgpu.TMEM((m, n), out_jax_dtype),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
@@ -1444,22 +1473,21 @@ class TCGen05Test(TestCase):
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16,),
       out_jax_dtype=(jnp.float32,),
-      m=(256,),  # TODO(apaszke): 64, 192, 256
-      n=(128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
-      k_steps=(1, 2),
+      m=(128, 256),  # TODO(apaszke): 192, 256
+      n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
       swizzle=(32, 64, 128,),
   )
   def test_mma_collective(
       self,
       m,
       n,
-      k_steps,
       swizzle,
       lhs_transpose,
       rhs_transpose,
       in_jax_dtype,
       out_jax_dtype,
   ):
+    k_steps = 2  # Reducing to 1 can be helpful while debugging.
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       raise self.skipTest("Only f16 input is supported for f16 output.")
 
@@ -1523,12 +1551,11 @@ class TCGen05Test(TestCase):
     y_block_shape = (n_block_tile, k) if rhs_transpose else (k, n_block_tile)
     y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
-    tmem_layout = tcgen05.TMEM_COLLECTIVE_N512_LAYOUT if n == 512 else None
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
         mgpu.TMABarrier(3),
-        mgpu.TMEM((128, n), out_jax_dtype, collective=True, layout=tmem_layout),
+        mgpu.TMEM((m_block_tile, n), out_jax_dtype, collective=True),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (2, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape, cluster=(2, 1, 1)
@@ -4001,6 +4028,7 @@ if hp is not None:
     assert math.prod(initial_tile) >= 128
     tiles = [initial_tile]
     dim_offset = len(initial_tile)
+    # TODO: Generate layouts with multiple warp dims
     warp_dim = fa.Replicated(4)
     if draw(hps.booleans()):
       warp_dim = draw(
@@ -4052,7 +4080,7 @@ if hp is not None:
     vector_dim = vector_dim - dim_offset
     return fa.TiledLayout(
         tiling=fa.Tiling(tuple(map(tuple, tiles))),
-        warp_dim=warp_dim,
+        warp_dims=(warp_dim,),
         lane_dims=lane_dims,
         vector_dim=vector_dim,
         _check_canonical=False,
