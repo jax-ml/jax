@@ -14,36 +14,22 @@
 
 # Package for Mosaic-specific Pallas extensions
 
-load(
-    "//jaxlib:jax.bzl",
-    "py_deps",
-    "py_library_providing_imports_info",
-)
 load("@rules_python//python:defs.bzl", "py_library")
+load("//jaxlib:jax.bzl", "py_deps")
 
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//:__subpackages__",
-    ],
-)
-
-py_library_providing_imports_info(
-    name = "mosaic",
-    srcs = ["__init__.py"],
-    lib_rule = py_library,
-    deps = [
-        ":core",
-        ":kernel_regeneration_util",
-        ":lowering",
-        ":pallas_call_registration",
-        ":primitives",
+        "//jax:internal",
     ],
 )
 
 py_library(
     name = "core",
-    srcs = ["core.py"],
+    srcs = [
+        "__init__.py",
+        "core.py",
+    ],
     deps = [
         "//jax",
         "//jax/_src/pallas",
@@ -51,12 +37,39 @@ py_library(
 )
 
 py_library(
+    name = "verification",
+    srcs = ["verification.py"],
+    deps = [
+        "//jax",
+        "//jax:mlir",
+        "//jax/_src/lib",
+    ],
+)
+
+py_library(
+    name = "error_handling",
+    srcs = ["error_handling.py"],
+    deps = [
+        "//jax:compiler",
+        "//jax:traceback_util",
+        "//jax/_src/lib",
+    ],
+)
+
+py_library(
     name = "primitives",
     srcs = ["primitives.py"],
     deps = [
+        ":core",
         "//jax",
         "//jax:core",
+        "//jax:dtypes",
         "//jax:mlir",
+        "//jax:pretty_printer",
+        "//jax:tree_util",
+        "//jax:typing",
+        "//jax:util",
+        "//jax/_src/pallas",
     ],
 )
 
@@ -64,10 +77,17 @@ py_library(
     name = "pallas_call_registration",
     srcs = ["pallas_call_registration.py"],
     deps = [
+        ":core",
         ":lowering",
+        ":verification",
         "//jax",
+        "//jax:config",
+        "//jax:core",
+        "//jax:mlir",
         "//jax:mosaic",
+        "//jax:sharding_impls",
         "//jax:source_info_util",
+        "//jax:tpu_custom_call",
         "//jax/_src/lib",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
@@ -78,9 +98,14 @@ py_library(
     srcs = ["lowering.py"],
     deps = [
         ":core",
+        ":error_handling",
         ":primitives",
         "//jax",
+        "//jax:ad_util",
         "//jax:core",
+        "//jax:custom_derivatives",
+        "//jax:dtypes",
+        "//jax:mesh",
         "//jax:mlir",
         "//jax:mosaic",
         "//jax:partial_eval",
@@ -93,9 +118,53 @@ py_library(
 )
 
 py_library(
-    name = "kernel_regeneration_util",
-    srcs = ["kernel_regeneration_util.py"],
+    name = "pipeline",
+    srcs = ["pipeline.py"],
     deps = [
-        "//third_party/py/mlir:ir",
+        ":core",
+        ":primitives",
+        "//jax",
+        "//jax:api_util",
+        "//jax:pallas",
+        "//jax:util",
+        "//jax/_src/pallas",
+        "//jax/extend:backend",
+    ] + py_deps("numpy"),
+)
+
+py_library(
+    name = "random",
+    srcs = ["random.py"],
+    deps = [
+        ":primitives",
+        "//jax",
+        "//jax:typing",
+    ] + py_deps("numpy"),
+)
+
+py_library(
+    name = "helpers",
+    srcs = ["helpers.py"],
+    deps = [
+        ":core",
+        ":primitives",
+        "//jax",
+        "//jax/_src/pallas",
     ],
+)
+
+py_library(
+    name = "interpret",
+    srcs = ["interpret.py"],
+    deps = [
+        ":core",
+        ":primitives",
+        ":verification",
+        "//jax",
+        "//jax:core",
+        "//jax:source_info_util",
+        "//jax:util",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+    ] + py_deps("numpy"),
 )

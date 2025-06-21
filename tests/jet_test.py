@@ -29,8 +29,7 @@ from jax.example_libraries import stax
 from jax.experimental.jet import jet, fact, zero_series
 from jax import lax
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 def jvp_taylor(fun, primals, series):
   # Computes the Taylor series the slow way, with nested jvp.
@@ -58,8 +57,8 @@ class JetTest(jtu.JaxTestCase):
   def check_jet(self, fun, primals, series, atol=1e-5, rtol=1e-5,
                 check_dtypes=True):
     # Convert to jax arrays to ensure dtype canonicalization.
-    primals = jax.tree_util.tree_map(jnp.asarray, primals)
-    series = jax.tree_util.tree_map(jnp.asarray, series)
+    primals = jax.tree.map(jnp.asarray, primals)
+    series = jax.tree.map(jnp.asarray, series)
 
     y, terms = jet(fun, primals, series)
     expected_y, expected_terms = jvp_taylor(fun, primals, series)
@@ -73,8 +72,8 @@ class JetTest(jtu.JaxTestCase):
   def check_jet_finite(self, fun, primals, series, atol=1e-5, rtol=1e-5,
                        check_dtypes=True):
     # Convert to jax arrays to ensure dtype canonicalization.
-    primals = jax.tree_util.tree_map(jnp.asarray, primals)
-    series = jax.tree_util.tree_map(jnp.asarray, series)
+    primals = jax.tree.map(jnp.asarray, primals)
+    series = jax.tree.map(jnp.asarray, series)
 
     y, terms = jet(fun, primals, series)
     expected_y, expected_terms = jvp_taylor(fun, primals, series)
@@ -95,6 +94,8 @@ class JetTest(jtu.JaxTestCase):
                         check_dtypes=check_dtypes)
 
   @jtu.skip_on_devices("tpu")
+  # Default tolerance too tight on A100 after openxla/xla@a58070090
+  @jax.default_matmul_precision("float32")
   def test_dot(self):
     M, K, N = 2, 3, 4
     order = 3
@@ -242,6 +243,8 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_ceil(self):       self.unary_check(jnp.ceil)
   @jtu.skip_on_devices("tpu")
+  def test_trunc(self):       self.unary_check(jnp.trunc)
+  @jtu.skip_on_devices("tpu")
   def test_round(self):      self.unary_check(lax.round)
   @jtu.skip_on_devices("tpu")
   def test_sign(self):       self.unary_check(lax.sign)
@@ -320,6 +323,7 @@ class JetTest(jtu.JaxTestCase):
   def test_lgamma(self):    self.unary_check(lax.lgamma)
   @jtu.skip_on_devices("tpu")
   def test_digamma(self):    self.unary_check(lax.digamma)
+  def test_copy(self):       self.unary_check(jnp.array)
 
 
   @jtu.skip_on_devices("tpu")
@@ -405,7 +409,7 @@ class JetTest(jtu.JaxTestCase):
     self.assertArraysEqual(g_out_series, f_out_series)
 
   def test_add_any(self):
-    # https://github.com/google/jax/issues/5217
+    # https://github.com/jax-ml/jax/issues/5217
     f = lambda x, eps: x * eps + eps + x
     def g(eps):
       x = jnp.array(1.)
@@ -413,7 +417,7 @@ class JetTest(jtu.JaxTestCase):
     jet(g, (1.,), ([1.],))  # doesn't crash
 
   def test_scatter_add(self):
-    # very basic test from https://github.com/google/jax/issues/5365
+    # very basic test from https://github.com/jax-ml/jax/issues/5365
     def f(x):
       x0 = x[0]
       x1 = x[1]

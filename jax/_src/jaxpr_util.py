@@ -14,12 +14,16 @@
 
 """Utilities for the Jaxpr IR."""
 
-import collections
+from __future__ import annotations
+
+from collections import Counter, defaultdict
+from collections.abc import Callable
 import gzip
 import itertools
 import json
 import types
-from typing import Any, Callable, DefaultDict, Optional
+from typing import Any, Union
+from collections.abc import Iterator
 
 from jax._src import core
 from jax._src import util
@@ -30,14 +34,26 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
-def all_eqns(jaxpr: core.Jaxpr):
+def _all_eqns(
+    jaxpr: core.Jaxpr, visited: set[core.Jaxpr] | None,
+) -> Iterator[tuple[core.Jaxpr, core.JaxprEqn]]:
   for eqn in jaxpr.eqns:
     yield (jaxpr, eqn)
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from all_eqns(subjaxpr)
+    if visited is None:
+      yield from _all_eqns(subjaxpr, visited)
+    elif subjaxpr not in visited:
+      visited.add(subjaxpr)
+      yield from _all_eqns(subjaxpr, visited)
+
+def all_eqns(
+    jaxpr: core.Jaxpr, revisit_inner_jaxprs: bool = True
+) -> Iterator[tuple[core.Jaxpr, core.JaxprEqn]]:
+  yield from _all_eqns(jaxpr, None if revisit_inner_jaxprs else set())
+
 
 def collect_eqns(jaxpr: core.Jaxpr, key: Callable):
-  d = collections.defaultdict(list)
+  d = defaultdict(list)
   for _, eqn in all_eqns(jaxpr):
     d[key(eqn)].append(eqn)
   return dict(d)
@@ -68,7 +84,7 @@ def source_locations(jaxpr: core.Jaxpr):
     return source_info_util.summarize(eqn.source_info)
   return histogram(jaxpr, key)
 
-MaybeEqn = Optional[core.JaxprEqn]
+MaybeEqn = Union[core.JaxprEqn, None]
 
 def var_defs_and_refs(jaxpr: core.Jaxpr):
   defs: dict[core.Var, MaybeEqn] = {}
@@ -128,19 +144,19 @@ def print_histogram(histogram: dict[Any, int]):
 
 
 def _pprof_profile(
-    profile: dict[tuple[Optional[xla_client.Traceback], core.Primitive], int]
+    profile: dict[tuple[xla_client.Traceback | None, core.Primitive], int]
 ) -> bytes:
   """Converts a profile into a compressed pprof protocol buffer.
 
   The input profile is a map from (traceback, primitive) pairs to counts.
   """
-  s: DefaultDict[str, int]
-  func: DefaultDict[types.CodeType, int]
-  loc: DefaultDict[tuple[types.CodeType, int], int]
+  s: defaultdict[str, int]
+  func: defaultdict[types.CodeType, int]
+  loc: defaultdict[tuple[types.CodeType, int], int]
 
-  s = collections.defaultdict(itertools.count(1).__next__)
-  func = collections.defaultdict(itertools.count(1).__next__)
-  loc = collections.defaultdict(itertools.count(1).__next__)
+  s = defaultdict(itertools.count(1).__next__)
+  func = defaultdict(itertools.count(1).__next__)
+  loc = defaultdict(itertools.count(1).__next__)
   s[""] = 0
   primitive_key = s["primitive"]
   samples = []
@@ -150,7 +166,7 @@ def _pprof_profile(
     else:
       raw_frames = zip(*tb.raw_frames())
       frames = [loc[(code, lasti)] for code, lasti in raw_frames
-                if source_info_util.is_user_filename(code.co_filename)]  # type: ignore
+                if source_info_util.is_user_filename(code.co_filename)]
     samples.append({
        "location_id": frames,
        "value": [count],
@@ -201,8 +217,40 @@ def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
     A gzip-compressed pprof Profile protocol buffer, suitable for passing to
     pprof tool for visualization.
   """
-  d: DefaultDict[tuple[Optional[xla_client.Traceback], core.Primitive], int]
-  d = collections.defaultdict(int)
-  for _, eqn in all_eqns(jaxpr):
-    d[(eqn.source_info.traceback, eqn.primitive)] += 1
+  d = Counter(
+      (eqn.source_info.traceback, eqn.primitive)
+      for _, eqn in all_eqns(jaxpr, revisit_inner_jaxprs=False)
+  )
   return _pprof_profile(d)
+
+def eqns_using_var_with_invar_index(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[tuple[core.JaxprEqn, int]]:
+  """Find all the equations which use invar and the positional index of its binder"""
+  for eqn in jaxpr.eqns:
+    for invar_index, eqn_var in enumerate(eqn.invars):
+      if eqn_var == invar:
+        yield eqn, invar_index
+        break # we found the var, no need to keep looking in this eqn
+
+def jaxpr_and_binder_in_params(params, index: int) -> Iterator[tuple[core.Jaxpr, core.Var]]:
+  for val in params.values():
+    vals = val if isinstance(val, tuple) else (val,)
+    for v in vals:
+      if isinstance(v, core.Jaxpr):
+        if index >= len(v.invars):
+          raise RuntimeError(f"Failed to find index {index} in jaxpr.invars while building report")
+        yield v, v.invars[index]
+      elif isinstance(v, core.ClosedJaxpr):
+        if index >= len(v.jaxpr.invars):
+          raise RuntimeError(f"Failed to find index {index} in jaxpr.invars while building report")
+        yield v.jaxpr, v.jaxpr.invars[index]
+
+def eqns_using_var(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[core.JaxprEqn]:
+  """Find the leaf equations using a variable"""
+  # The complexity of this call is because the invar might originate from a nested jaxpr
+  for eqn, invar_index in eqns_using_var_with_invar_index(jaxpr, invar):
+    if (child_jaxprs_and_vars := tuple(jaxpr_and_binder_in_params(eqn.params, invar_index))):
+      for (jaxpr, invar) in child_jaxprs_and_vars:
+        yield from eqns_using_var(jaxpr, invar)
+    else:
+      # if the previous condition fails, there is no deeper jaxpr to explore =(
+      yield eqn

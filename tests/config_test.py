@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,25 +12,76 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
+from absl.testing import absltest
+import jax
+from jax._src import config
+from jax._src import test_util as jtu
+from jax._src.cloud_tpu_init import cloud_tpu_init
 
-from jax import config
+jax.config.parse_flags_with_absl()
 
-class ConfigTest(unittest.TestCase):
-  def test_deprecations(self):
-    for name in ["DEFINE_bool", "define_bool_state"]:
-      with (
-          self.subTest(name),
-          self.assertWarnsRegex(
-              DeprecationWarning,
-              "other libraries for configuration"),
-      ):
-        getattr(config, name)
 
-  def test_missing_attribute(self):
-    with self.assertRaises(AttributeError):
-      config.missing_attribute
+jax_test_enum_config = config.enum_state(
+    name='jax_test_enum_config',
+    enum_values=['default', 'xxx', 'yyy'],
+    default='default',
+    help='Configuration only used for tests.',
+)
+
+
+class ConfigTest(jtu.JaxTestCase):
+  def test_config_setting_via_update(self):
+    self.assertEqual(jax_test_enum_config.value, 'default')
+
+    jax.config.update('jax_test_enum_config', 'xxx')
+    self.assertEqual(jax_test_enum_config.value, 'xxx')
+
+    jax.config.update('jax_test_enum_config', 'yyy')
+    self.assertEqual(jax_test_enum_config.value, 'yyy')
+
+    jax.config.update('jax_test_enum_config', 'default')
+    self.assertEqual(jax_test_enum_config.value, 'default')
+
+  def test_config_setting_via_context(self):
+    self.assertEqual(jax_test_enum_config.value, 'default')
+
+    with jax_test_enum_config('xxx'):
+      self.assertEqual(jax_test_enum_config.value, 'xxx')
+
+      with jax_test_enum_config('yyy'):
+        self.assertEqual(jax_test_enum_config.value, 'yyy')
+
+      self.assertEqual(jax_test_enum_config.value, 'xxx')
+
+    self.assertEqual(jax_test_enum_config.value, 'default')
+
+  def test_config_update_validation(self):
+    self.assertEqual(jax_test_enum_config.value, 'default')
+    with self.assertRaisesRegex(ValueError, 'new enum value must be in.*'):
+      jax.config.update('jax_test_enum_config', 'invalid')
+    # Error should raise before changing the value
+    self.assertEqual(jax_test_enum_config.value, 'default')
+
+  def test_config_context_validation(self):
+    self.assertEqual(jax_test_enum_config.value, 'default')
+    with self.assertRaisesRegex(ValueError, 'new enum value must be in.*'):
+      with jax_test_enum_config('invalid'):
+        pass
+    self.assertEqual(jax_test_enum_config.value, 'default')
+
+  def test_cloud_tpu_init(self):
+    if not jtu.is_cloud_tpu():
+      self.skipTest('Not running on a Cloud TPU VM.')
+
+    # Context manager resets the jax_platforms config to its original value.
+    with jtu.global_config_context(jax_platforms=None):
+      cloud_tpu_init()
+      self.assertEqual(config.jax_platforms.value, 'tpu,cpu')
+
+    with jtu.global_config_context(jax_platforms='platform_A'):
+      cloud_tpu_init()
+      self.assertEqual(config.jax_platforms.value, 'platform_A')
 
 
 if __name__ == '__main__':
-  unittest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

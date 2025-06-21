@@ -50,11 +50,10 @@ from absl import app
 from absl import flags
 
 from jax._src import dtypes
-import jax.numpy as jnp
 
 import tensorflow as tf
 
-from jax.experimental.jax2tf.shape_poly import InconclusiveDimensionOperation
+from jax.core import InconclusiveDimensionOperation
 from jax.experimental.jax2tf.tests.model_harness import ALL_HARNESSES
 from jax.experimental.jax2tf.tests.converters import ALL_CONVERTERS
 
@@ -216,7 +215,7 @@ def test_converters():
           jax_result = harness.apply_with_vars(*xs)
           try:
             tf_result = apply_tf(*xs)
-            jax.tree_map(np_assert_allclose, jax_result, tf_result)
+            jax.tree.map(np_assert_allclose, jax_result, tf_result)
             print("=== Numerical comparison OK!")
           except AssertionError as e:
             error_msg = "Numerical comparison error:\n" + _format(e)

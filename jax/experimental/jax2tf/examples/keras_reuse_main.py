@@ -18,13 +18,16 @@ Includes the flags from saved_model_main.py.
 See README.md.
 """
 import logging
+import warnings
 from absl import app
 from absl import flags
-from jax.experimental.jax2tf.examples import mnist_lib  # type: ignore
-from jax.experimental.jax2tf.examples import saved_model_main  # type: ignore
-import tensorflow as tf  # type: ignore
+from jax.experimental.jax2tf.examples import mnist_lib
+from jax.experimental.jax2tf.examples import saved_model_main
+import tensorflow as tf
 import tensorflow_datasets as tfds  # type: ignore
-import tensorflow_hub as hub  # type: ignore
+with warnings.catch_warnings():
+  warnings.simplefilter("ignore")
+  import tensorflow_hub as hub  # type: ignore
 
 
 FLAGS = flags.FLAGS

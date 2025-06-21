@@ -30,7 +30,7 @@ in Tensorflow errors (for some devices and compilation modes). These limitations
 are captured as jax2tf_limitations.Jax2TfLimitation objects.
 
 From the limitations objects, we generate a
-[report](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
+[report](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
 The report has instructions for how to re-generate it.
 
 If a harness run fails with error, and a limitation that matches the device
@@ -67,10 +67,9 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import jax2tf
 from jax.interpreters import mlir
-from jax._src.interpreters import xla
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 
 config.parse_flags_with_absl()
 
@@ -113,14 +112,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                                   dtype=harness.dtype), limitations))
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
-    enable_xla = harness.params.get("enable_xla", True)
-    if config.jax2tf_default_native_serialization.value and not enable_xla:
-      raise unittest.SkipTest("native_serialization not supported with enable_xla=False")
 
     if ("eigh" == harness.group_name and
         np.complex64 == harness.dtype and
         device == "tpu"):
       raise unittest.SkipTest("b/264716764: error on tf.cast from c64 to f32")
+
+    if ("eigh" == harness.group_name and
+        device == "cpu"):
+      raise unittest.SkipTest(
+          "Equality comparisons on eigendecompositions are not stable.")
 
     if (config.jax2tf_default_native_serialization.value and
         device == "gpu" and
@@ -142,8 +143,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     associative_scan_reductions = harness.params.get("associative_scan_reductions", False)
     try:
       with jax.jax2tf_associative_scan_reductions(associative_scan_reductions):
-        self.ConvertAndCompare(func_jax, *args, limitations=limitations,
-                               enable_xla=enable_xla)
+        self.ConvertAndCompare(func_jax, *args, limitations=limitations)
     except Exception as e:
       # TODO(b/264596006): custom calls are not registered properly with TF in OSS
       if (config.jax2tf_default_native_serialization.value and
@@ -157,11 +157,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     """Fail if there are JAX primitives that are not implemented."""
     # Harvest primitives from XLA translation tables
     all_primitives = (
-        set(xla._translations)
-        | set(xla._backend_specific_translations["cpu"])
-        | set(xla._backend_specific_translations["gpu"])
-        | set(xla._backend_specific_translations["tpu"])
-        | set(mlir._lowerings)
+        set(mlir._lowerings)
         | set(mlir._platform_specific_lowerings["cpu"])
         | set(mlir._platform_specific_lowerings["gpu"])
         | set(mlir._platform_specific_lowerings["tpu"]))
@@ -174,13 +170,49 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for p in all_primitives:
       if p.name == "axis_index":
         continue
+      if p.name == "composite":
+        continue
+      if p.name == "pvary":
+        continue
+      if p.name == "psum_invariant":
+        continue
       if p.name == "sharding_constraint":
+        continue
+      if p.name == "layout_constraint":
+        continue
+      if p.name == "mesh_cast":
+        continue
+      if p.name == "reshard":
         continue
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":
         continue
-      if p.name == "debug_callback":
+      if p.name == "debug_callback" or p.name == "debug_print":
         # TODO(sharadmv,necula): enable debug callbacks in TF
+        continue
+      if p.name in ("max_contiguous", "multiple_of", "run_scoped"):
+        # Pallas-specific primitives are not supported.
+        continue
+      if p.name == "pallas_call":
+        continue
+      if p.name == "ragged_all_to_all":
+        continue
+      if p.name == "ffi_call":
+        continue
+      if p.name == "tpu_custom_call":
+        continue
+      if p.name == "custom_partitioning":
+        continue
+      if p.name in (
+          "dot_product_attention_fwd",
+          "dot_product_attention_bwd",
+          "dot_product_attention_fwd_wrapper",
+          "dot_product_attention_bwd_wrapper",
+          "dot_product_attention_fp8_fwd_wrapper",
+          "dot_product_attention_fp8_bwd_wrapper",
+      ):
+        continue
+      if p.name == "scaled_matmul_wrapper":
         continue
       if p.name in tf_not_yet_impl:
         self.assertNotIn(

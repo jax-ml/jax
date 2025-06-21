@@ -162,7 +162,7 @@ def get_num_params_in_lstm(input_size: int, hidden_size: int, num_layers: int,
   """Get param count in LSTM."""
   layer_shapes = _get_params_shapes_in_lstm(input_size, hidden_size, num_layers,
                                             bidirectional)
-  param_count = sum([math.prod(shape) for shape in layer_shapes])
+  param_count = sum(math.prod(shape) for shape in layer_shapes)
   return param_count
 
 
@@ -174,6 +174,31 @@ def init_lstm_weight(rng: PRNGKeyArray, input_size: int, hidden_size: int,
   k = np.sqrt(1.0 / hidden_size)
   return jax.random.uniform(
       rng, shape=(param_count,), dtype=jnp.float32, minval=-k, maxval=k)
+
+def swap_lstm_gates(weights, input_size, hidden_size, num_layers, bidirectional):
+  """Swaps the weights for the input and output gates for an LSTM model."""
+  weights = jnp.asarray(weights)  # Ensure weights are JAX arrays
+  flat_shapes = _get_params_shapes_in_lstm(input_size, hidden_size, num_layers, bidirectional)
+  num_directions = 2 if bidirectional else 1
+
+  w_offsets = 0
+  for l in range(num_layers):
+    for direction in range(num_directions):
+      # Iterate through all weight and bias gate names to swap gates in both weights and biases
+      for gate_name in ["W_ih", "W_hh", "b_ih", "b_hh"]:
+        shape = flat_shapes.pop(0)  # Get the current shape and remove it from the list
+        num_elems = math.prod(shape)
+        matrix = weights[w_offsets:w_offsets + num_elems].reshape(shape)
+
+        # Swap between the input and output gates (third and fourth gates)
+        gates = jnp.split(matrix, 4, axis=0)
+        swapped_matrix = jnp.concatenate([gates[0], gates[1], gates[3], gates[2]], axis=0)
+
+        # Update the weights with swapped matrix
+        weights = weights.at[w_offsets:w_offsets + num_elems].set(swapped_matrix.flatten())
+        w_offsets += num_elems
+
+  return weights
 
 
 def unpack_lstm_weights(
@@ -228,18 +253,18 @@ def _lstm_cudnn_allow_tf32(precision: lax.PrecisionLike) -> bool:
   #
   # but we prefer to still invoke it here for consistency
   precision = lax.canonicalize_precision(precision)
-  if precision is None:
+  if precision is None or not (isinstance(precision, tuple) and len(precision) == 2):
     return True
   # cuDNN allows only one precision specifier per RNN op
-  precision, _ = precision
-  if precision == lax.Precision.HIGHEST:
-    return False
-  elif precision == lax.Precision.HIGH:
-    return True
-  elif precision == lax.Precision.DEFAULT: # bfloat16
-    raise NotImplementedError("bfloat16 support not implemented for LSTM")
-  else:
-    raise ValueError(f"Unexpected precision specifier value {precision}")
+  match precision:
+    case (lax.Precision.HIGHEST, _):
+      return False
+    case (lax.Precision.HIGH, _):
+      return True
+    case (lax.Precision.DEFAULT, _): # bfloat16
+      raise NotImplementedError("bfloat16 support not implemented for LSTM")
+    case _:
+      raise ValueError(f"Unexpected precision specifier value {precision}")
 
 
 @partial(custom_vjp, nondiff_argnums=(5, 6, 7, 8, 9, 10))
@@ -438,6 +463,8 @@ rnn_fwd_p.def_impl(partial(xla.apply_primitive, rnn_fwd_p))
 rnn_fwd_p.def_abstract_eval(rnn_abstract_eval)
 if gpu_rnn:
   mlir.register_lowering(rnn_fwd_p, gpu_rnn.cudnn_rnn_lowering, platform='cuda')
+  if hasattr(gpu_rnn, "miopen_rnn_lowering"):
+    mlir.register_lowering(rnn_fwd_p, gpu_rnn.miopen_rnn_lowering, platform='rocm')
 
 
 def lstm_bwd(input_size: int, hidden_size: int, num_layers: int, dropout: float,
@@ -466,7 +493,7 @@ def lstm_bwd(input_size: int, hidden_size: int, num_layers: int, dropout: float,
   return (dx, dh_0, dc_0, dw, jnp.zeros_like(seq_lengths))
 
 
-def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,  # type: ignore
+def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,
                           w_aval, y_aval, reserve_space_aval,
                           seq_lengths_aval, input_size: int, hidden_size: int,
                           num_layers: int, dropout: float, bidirectional: bool,
@@ -481,5 +508,8 @@ rnn_bwd_p.def_abstract_eval(rnn_bwd_abstract_eval)
 if gpu_rnn:
   mlir.register_lowering(
       rnn_bwd_p, gpu_rnn.cudnn_rnn_bwd_lowering, platform='cuda')
+  if hasattr(gpu_rnn, "miopen_rnn_bwd_lowering"):
+    mlir.register_lowering(
+        rnn_bwd_p, gpu_rnn.miopen_rnn_bwd_lowering, platform='rocm')
 
 lstm.defvjp(lstm_fwd, lstm_bwd)

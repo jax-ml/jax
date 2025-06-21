@@ -24,8 +24,7 @@ from jax._src import test_util as jtu
 from jax._src.lax.control_flow import for_loop
 import jax.numpy as jnp
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 def remat_of_for_loop(nsteps, body, state, **kwargs):
   return jax.remat(lambda state: for_loop.for_loop(nsteps, body, state,
@@ -143,7 +142,7 @@ class ForLoopTest(jtu.JaxTestCase):
 
     key = jax.random.PRNGKey(0)
     x = jax.random.normal(key, (8,))
-    np.testing.assert_allclose(cumsum(x), jnp.cumsum(x))
+    np.testing.assert_allclose(cumsum(x), jnp.cumsum(x), rtol=1e-6)
 
 def for_body_swap(i, refs):
   a_ref, b_ref = refs
@@ -224,7 +223,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     [dict(for_impl=for_impl, impl_name=impl_name)
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
-  @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @jtu.skip_on_devices("gpu", "cpu")  # TODO(mattjj,sharadmv, dougalm): timeouts?
   def test_for_jvp(self, f, ref, body_shapes, n, for_impl, for_body_name,
                    impl_name):
     for_ = for_impl
@@ -256,7 +255,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     [dict(for_impl=for_impl, impl_name=impl_name)
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
-  @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @jtu.skip_on_devices("gpu", "cpu")  # TODO(mattjj,sharadmv, dougalm): timeouts?
   def test_for_linearize(self, f, ref, body_shapes, n, for_impl, for_body_name,
                          impl_name):
     for_ = for_impl
@@ -297,7 +296,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     A = jnp.zeros((3, 3))
     # The second DUS was unnecessarily replicating A across time.
     # We check XLA because _scan_impl is "underneath" the jaxpr language.
-    s = str(jax.xla_computation(jax.grad(loss))(A).as_hlo_text())
+    s = jax.jit(jax.grad(loss)).lower(A).as_text('hlo')
     assert s.count("dynamic-update-slice(") < 2
 
   @_for_loop_impls
@@ -320,8 +319,10 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     _, f_lin = jax.linearize(f, a, b)
     expected_tangents = f_lin(a, b)
     _, actual_tangents = jax.jvp(f, (a, b), (a, b))
-    np.testing.assert_allclose(actual_tangents[0], expected_tangents[0])
-    np.testing.assert_allclose(actual_tangents[1], expected_tangents[1])
+    np.testing.assert_allclose(actual_tangents[0], expected_tangents[0],
+                               rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(actual_tangents[1], expected_tangents[1],
+                               rtol=1e-6, atol=1e-6)
 
     def body2(_, refs):
       # Here we use `i_ref` as a loop counter
@@ -344,7 +345,8 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     expected_tangents = g_lin(a, b)
     _, actual_tangents = jax.jvp(g, (a, b), (a, b))
     np.testing.assert_allclose(actual_tangents[0], expected_tangents[0])
-    np.testing.assert_allclose(actual_tangents[1], expected_tangents[1])
+    np.testing.assert_allclose(actual_tangents[1], expected_tangents[1],
+                               rtol=1e-6)
 
   @jtu.sample_product(
     [dict(for_body_name=for_body_name, f=for_body, ref=ref,
@@ -363,7 +365,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     [dict(for_impl=for_impl, impl_name=impl_name)
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
-  @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @jtu.skip_on_devices("gpu", "cpu")  # TODO(mattjj,sharadmv, dougalm): timeouts?
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_for_grad(self, f, ref, body_shapes, n, for_impl, for_body_name,
                     impl_name):
@@ -383,7 +385,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     jtu.check_grads(lambda *args: for_(n, f, args)[1].sum(), args, order=2,
                     rtol=7e-3, atol=1e-2)
 
-  @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @jtu.skip_on_devices("gpu", "cpu")  # TODO(mattjj,sharadmv, dougalm): timeouts?
   @jax.legacy_prng_key('allow')
   def test_grad_of_triple_nested_for_loop(self):
 

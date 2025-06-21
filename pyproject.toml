@@ -6,49 +6,58 @@ build-backend = "setuptools.build_meta"
 show_error_codes = true
 disable_error_code = "attr-defined, name-defined, annotation-unchecked"
 no_implicit_optional = true
+warn_redundant_casts = true
+allow_redefinition = true
 
 [[tool.mypy.overrides]]
 module = [
+    "IPython.*",
     "absl.*",
     "colorama.*",
-    "importlib_metadata.*",
-    "IPython.*",
+    "etils.*",
+    "filelock.*",
+    "flatbuffers.*",
+    "flax.*",
+    "google.colab.*",
+    "hypothesis.*",
+    "jax.experimental.jax2tf.tests.back_compat_testdata",
+    "jax.experimental.jax2tf.tests.flax_models",
+    "jax_cuda12_plugin.*",
+    "jaxlib.cpu_feature_guard",
+    "jaxlib.cuda.*",
+    "jaxlib.mlir.*",
+    "jaxlib.mosaic.dialect.gpu.*",
+    "jaxlib.mosaic.python._tpu_gen",
+    "jaxlib.triton.*",
+    "jaxlib.utils",
+    "jaxlib.version",
+    "jaxlib._jax.utils",
+    "jaxlib._pretty_printer",
+    "jraph.*",
+    "libtpu.*",
+    "matplotlib.*",
+    "mlir.*",
+    "ml_dtypes.*",
+    "nvidia.*",
     "numpy.*",
     "opt_einsum.*",
-    "scipy.*",
-    "libtpu.*",
-    "jaxlib.mlir.*",
-    "iree.*",
-    "rich.*",
     "optax.*",
-    "flax.*",
+    "portpicker.*",
+    "pygments.*",
+    "pytest.*",
+    "rich.*",
+    "scipy.*",
+    "setuptools.*",
+    "xprof.convert.*",
     "tensorflow.*",
-    "tensorflowjs.*",
     "tensorflow.io.*",
+    "tensorflowjs.*",
     "tensorstore.*",
     "web_pdb.*",
-    "etils.*",
-    "google.colab.*",
-    "pygments.*",
-    "jraph.*",
-    "matplotlib.*",
-    "tensorboard_plugin_profile.convert.*",
-    "jaxlib.*",
-    "pytest.*",
     "zstandard.*",
-    "jax.experimental.jax2tf.tests.flax_models",
-    "jax.experimental.jax2tf.tests.back_compat_testdata",
-    "setuptools.*",
+    "kubernetes.*"
 ]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = [
-    "jax.interpreters.autospmd",
-    "jax.lax.lax_parallel",
-    "jax._src.internal_test_util.test_harnesses",
-]
-ignore_errors = true
 
 [tool.pytest.ini_options]
 markers = [
@@ -57,62 +66,30 @@ markers = [
 ]
 filterwarnings = [
     "error",
-    "ignore:The hookimpl.*:DeprecationWarning",
-    "ignore:No GPU/TPU found, falling back to CPU.:UserWarning",
-    "ignore:xmap is an experimental feature and probably has bugs!",
-    "ignore:the imp module is deprecated in favour of importlib.*:DeprecationWarning",
-    "ignore:can't resolve package from __spec__ or __package__:ImportWarning",
-    "ignore:Using or importing the ABCs.*:DeprecationWarning",
-    "ignore:numpy.ufunc size changed",
-    "ignore:.*experimental feature",
-    "ignore:The distutils.* is deprecated.*:DeprecationWarning",
-    "default:Error reading persistent compilation cache entry for 'jit__lambda_'",
-    "default:Error writing persistent compilation cache entry for 'jit__lambda_'",
-    "ignore:backend and device argument on jit is deprecated.*:DeprecationWarning",
-    # TODO(skyewm): remove when jaxlib >= 0.4.12 is released (needs
-    # https://github.com/openxla/xla/commit/fb9dc3db0999bf14c78d95cb7c3aa6815221ddc7)
-    "ignore:ml_dtypes.float8_e4m3b11 is deprecated.",
-    "ignore:JAX_USE_PJRT_C_API_ON_TPU=false will no longer be supported.*:UserWarning",
-    "ignore:np.find_common_type is deprecated.*:DeprecationWarning",
-    "ignore:jax.numpy.in1d is deprecated.*:DeprecationWarning",
-    "ignore:jax.numpy.trapz is deprecated.*:DeprecationWarning",
+
     # TODO(jakevdp): remove when array_api_tests stabilize
-    # start array_api_tests-related warnings
-    "ignore:The numpy.array_api submodule is still experimental.*:UserWarning",
-    "ignore:case not machine-readable.*:UserWarning",
-    "ignore:not machine-readable.*:UserWarning",
-    "ignore:Special cases found for .* but none were parsed.*:UserWarning",
-    # end array_api_tests-related warnings
+    "default:.*not machine-readable.*:UserWarning",
+    "default:Special cases found for .* but none were parsed.*:UserWarning",
+
+    # jax.profiler imports tensorflow.python.profiler.trace internally, which
+    # will fail with python 3.12 and some versions of protobuf because the
+    # "error" entry above promotes DeprecationWarnings into errors. See also:
+    # https://github.com/protocolbuffers/protobuf/issues/12186#issuecomment-1745679358
+    "ignore:Type google\\._upb\\._message\\.(Scalar|Message)MapContainer uses PyType_Spec with a metaclass that has custom tp_new\\. This is deprecated and will no longer be allowed in Python 3\\.14\\.:DeprecationWarning",
+
+    # TODO(b/401588349): Remove this once transparent hugepages are enabled.
+    "ignore:Transparent hugepages",
+
+    # NOTE: this is probably not where you want to add code to suppress a
+    # warning. Only pytest tests look at this list, whereas Bazel tests also
+    # check for warnings and do not check this list. Most likely, you should
+    # add a @jtu.ignore_warning decorator to your test instead.
 ]
 doctest_optionflags = [
     "NUMBER",
     "NORMALIZE_WHITESPACE"
 ]
-addopts = "--doctest-glob='*.rst'"
-
-[tool.pylint.master]
-extension-pkg-whitelist = "numpy"
-
-[tool.pylint."messages control"]
-disable = [
-    "missing-docstring",
-    "too-many-locals",
-    "invalid-name",
-    "redefined-outer-name",
-    "redefined-builtin",
-    "protected-name",
-    "no-else-return",
-    "fixme",
-    "protected-access",
-    "too-many-arguments",
-    "blacklisted-name",
-    "too-few-public-methods",
-    "unnecessary-lambda"
-]
-enable = "c-extension-no-member"
-
-[tool.pylint.format]
-indent-string=" "
+addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --import-mode=importlib"
 
 [tool.ruff]
 preview = true
@@ -121,20 +98,29 @@ exclude = [
     "build",
     "__pycache__",
 ]
+line-length = 88
+indent-width = 2
+target-version = "py310"
+
+[tool.ruff.lint]
 ignore = [
     # Unnecessary collection call
     "C408",
     # Unnecessary map usage
     "C417",
+    # Unnecessary dict comprehension for iterable
+    "C420",
     # Object names too complex
     "C901",
     # Local variable is assigned to but never used
     "F841",
+    # Class could be dataclass or namedtuple
+    "B903",
     # Raise with from clause inside except block
     "B904",
+    # Zip without explicit strict parameter
+    "B905",
 ]
-line-length = 88
-indent-width = 2
 select = [
     "B9",
     "C",
@@ -142,56 +128,28 @@ select = [
     "W",
     "YTT",
     "ASYNC",
+    "E101",
+    "E112",
+    "E113",
+    "E115",
+    "E117",
     "E225",
     "E227",
     "E228",
 ]
-target-version = "py39"
 
-[tool.ruff.mccabe]
+[tool.ruff.lint.mccabe]
 max-complexity = 18
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 # F811: Redefinition of unused name.
-"docs/autodidax.py" = ["F811"]
-# Note: we don't use jax/*.py because this matches contents of jax/_src
-"__init__.py" = ["F401"]
-"jax/abstract_arrays.py" = ["F401"]
-"jax/ad_checkpoint.py" = ["F401"]
-"jax/api_util.py" = ["F401"]
-"jax/cloud_tpu_init.py" = ["F401"]
-"jax/core.py" = ["F401"]
-"jax/custom_batching.py" = ["F401"]
-"jax/custom_derivatives.py" = ["F401"]
-"jax/custom_transpose.py" = ["F401"]
-"jax/debug.py" = ["F401"]
-"jax/distributed.py" = ["F401"]
-"jax/dlpack.py" = ["F401"]
-"jax/dtypes.py" = ["F401"]
-"jax/errors.py" = ["F401"]
-"jax/experimental/*.py" = ["F401"]
-"jax/extend/*.py" = ["F401"]
-"jax/flatten_util.py" = ["F401"]
-"jax/interpreters/ad.py" = ["F401"]
-"jax/interpreters/batching.py" = ["F401"]
-"jax/interpreters/mlir.py" = ["F401"]
-"jax/interpreters/partial_eval.py" = ["F401"]
-"jax/interpreters/pxla.py" = ["F401"]
-"jax/interpreters/xla.py" = ["F401"]
-"jax/lax/*.py" = ["F401"]
-"jax/linear_util.py" = ["F401"]
-"jax/monitoring.py" = ["F401"]
-"jax/nn/*.py" = ["F401"]
-"jax/numpy/*.py" = ["F401"]
-"jax/prng.py" = ["F401"]
-"jax/profiler.py" = ["F401"]
-"jax/random.py" = ["F401"]
-"jax/scipy/*.py" = ["F401"]
-"jax/sharding.py" = ["F401"]
-"jax/stages.py" = ["F401"]
-"jax/test_util.py" = ["F401"]
-"jax/tree_util.py" = ["F401"]
-"jax/typing.py" = ["F401"]
-"jax/util.py" = ["F401"]
 # F821: Undefined name.
-"jax/numpy/__init__.pyi" = ["F821"]
+"docs/autodidax.py" = ["F811"]
+"docs/pallas/tpu/matmul.ipynb" = ["F811"]
+"docs/pallas/tpu/distributed.ipynb" = ["F811"]
+"docs/pallas/quickstart.ipynb" = ["F811"]
+"docs/notebooks/autodiff_cookbook.ipynb" = ["F811", "F821"]
+"docs/notebooks/autodiff_remat.ipynb" = ["F811", "F821"]
+"docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb" = ["F811"]
+"docs/jep/9407-type-promotion.ipynb" = ["F811"]
+"docs/autodidax.ipynb" = ["F811"]

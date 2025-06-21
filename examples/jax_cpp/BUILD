@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-package(default_applicable_licenses = ["//third_party/py/jax:license"])
+package(default_applicable_licenses = ["//jax:license"])
 
 licenses(["notice"])
 
@@ -21,16 +21,20 @@ cc_binary(
     srcs = ["main.cc"],
     tags = ["manual"],
     deps = [
-        "@xla//xla:literal",
-        "@xla//xla:literal_util",
-        "@xla//xla:shape_util",
-        "@xla//xla:status",
-        "@xla//xla:statusor",
-        "@xla//xla/pjrt:pjrt_client",
-        "@xla//xla/pjrt:tfrt_cpu_pjrt_client",
-        "@xla//xla/service:hlo_proto_cc",
-        "@xla//xla/tools:hlo_module_loader",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
+        "@xla//xla:literal",
+        "@xla//xla:literal_util",
+        "@xla//xla/hlo/builder:xla_computation",
+        "@xla//xla/hlo/ir:hlo",
+        "@xla//xla/pjrt:pjrt_client",
+        "@xla//xla/pjrt:pjrt_executable",
+        "@xla//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "@xla//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "@xla//xla/service:hlo_module_config",
+        "@xla//xla/service:hlo_proto_cc",
+        "@xla//xla/tools:hlo_module_loader",
     ],
 )

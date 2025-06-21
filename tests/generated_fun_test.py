@@ -22,15 +22,15 @@ from absl.testing import parameterized
 
 import itertools as it
 import jax.numpy as jnp
+import jax
 from jax import jit, jvp, vjp
 import jax._src.test_util as jtu
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 npr.seed(0)
 
-from jax._src.util import unzip2, safe_zip, safe_map
+from jax._src.util import foreach, unzip2, safe_zip, safe_map
 
 map = safe_map
 zip = safe_zip
@@ -87,10 +87,10 @@ def eval_fun(fun, *args):
     env[v] = x
 
   env = {}
-  map(write, fun.in_vars, args)
+  foreach(write, fun.in_vars, args)
   for in_vars, out_vars, f in fun.eqns:
     out_vals = f(*map(read, in_vars))
-    map(write, out_vars, out_vals)
+    foreach(write, out_vars, out_vals)
 
   return map(read, fun.out_vars)
 
@@ -218,7 +218,7 @@ def check_all_close(xs, ys, tol=1e-3):
 
 def check_close(x, y, tol=1e-3):
   assert jnp.shape(x) == jnp.shape(y)
-  # TODO(dougalm): re-enable once we've tackled the less pendantic bugs
+  # TODO(dougalm): re-enable once we've tackled the less pedantic bugs
   # assert x.dtype == y.dtype
   assert jnp.allclose(x, y, rtol=tol, atol=tol), \
      f"Value mismatch:\n{x}\n  vs\n{y}\n"

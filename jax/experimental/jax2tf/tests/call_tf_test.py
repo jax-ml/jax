@@ -11,34 +11,36 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for call_tf."""
+
+from collections.abc import Callable
+import contextlib
 from functools import partial
 import os
-from typing import Callable
 import unittest
 
 from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax import config
+from jax import dlpack
 from jax import dtypes
+from jax import export
 from jax import lax
 from jax import numpy as jnp
+from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental import jax2tf
-from jax.experimental.export import export
 from jax.experimental.jax2tf.tests import tf_test_util
 import numpy as np
 
 try:
-  import tensorflow as tf  # type: ignore[import]
+  import tensorflow as tf
 except ImportError:
   tf = None
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 def _maybe_jit(with_jit: bool, func: Callable) -> Callable:
@@ -66,18 +68,6 @@ _call_tf_dynamic_shape_error = "call_tf cannot call functions whose output has d
 
 class CallTfTest(tf_test_util.JaxToTfTestCase):
 
-  @classmethod
-  def setUpClass(cls):
-    # One TF device of each device_type
-    cls.tf_devices = []
-    for tf_device in tf.config.list_logical_devices():
-      if tf_device.device_type == "TPU_SYSTEM":
-        continue  # A virtual device
-      if all(tf_device.device_type != d.device_type for d in cls.tf_devices):
-        cls.tf_devices.append(tf_device)
-
-    super().setUpClass()
-
   def setUp(self):
     if tf is None:
       raise unittest.SkipTest("Test requires tensorflow")
@@ -85,6 +75,24 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     # bug in TensorFlow.
     _ = tf.add(1, 1)
     super().setUp()
+    # One TF device of each device_type
+    self.tf_devices = []
+    for tf_device in tf.config.list_logical_devices():
+      if tf_device.device_type == "TPU_SYSTEM":
+        continue  # A virtual device
+      if all(tf_device.device_type != d.device_type for d in self.tf_devices):
+        self.tf_devices.append(tf_device)
+    self.warning_ctx = jtu.ignore_warning(
+        message=(
+            "(jax2tf.convert with native_serialization=False has been deprecated"
+            "|Calling from_dlpack with a DLPack tensor is deprecated)"
+        )
+    )
+    self.warning_ctx.__enter__()
+
+  def tearDown(self):
+    self.warning_ctx.__exit__(None, None, None)
+    super().tearDown()
 
   @_parameterized_jit
   def test_eval_scalar_arg(self, with_jit=True):
@@ -301,7 +309,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(x * outer_var_array + 1., res, check_dtypes=False)
 
   def test_with_var_different_shape(self):
-    # See https://github.com/google/jax/issues/6050
+    # See https://github.com/jax-ml/jax/issues/6050
     v = tf.Variable((4., 2.), dtype=tf.float32)
 
     def tf_func(x):
@@ -377,6 +385,20 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
     self.assertAllClose((x * 3. + 4. + 2.) * 3. + 5., res, check_dtypes=False)
 
+  def test_with_capture_then_convert_again(self):
+    captured_by_tf = tf.Variable(np.arange(1024, dtype=np.float32))
+    def tf_fn(x):
+      return tf.math.add(x, captured_by_tf)
+
+    x = np.arange(1024, dtype=np.float32)
+    res = jax2tf.convert(jax2tf.call_tf(tf_fn))(x)
+    self.assertAllClose(res, 2 * x)
+
+    # The bug appears only when we use non-eager mode on the converted func
+    res = tf.function(jax2tf.convert(jax2tf.call_tf(tf_fn)),
+                      autograph=False)(x)
+    self.assertAllClose(res, 2 * x)
+
   @_parameterized_jit
   def test_grad(self, with_jit=False):
     x = np.float32(3.)
@@ -425,7 +447,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(g_jax, g_tf)
 
   def test_grad_int_argument(self):
-    # Similar to https://github.com/google/jax/issues/6975
+    # Similar to https://github.com/jax-ml/jax/issues/6975
     # state is a pytree that contains an integer and a boolean.
     # The function returns an integer and a boolean.
     def f(param, state, x):
@@ -692,7 +714,6 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     jax.grad(cos_tf_sin_jax)(x)
 
     logging.info(jax.make_jaxpr(cos_tf_sin_jax)(x))
-    logging.info(jax.xla_computation(cos_tf_sin_jax)(x).as_hlo_text())
 
   def test_tf_gather(self):
     """tf_gather gradient output is tf.IndexSlices."""
@@ -771,15 +792,12 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
     jax_and_tf_platforms = (
       set(jax_platforms) & {d.device_type.lower()
-                            for d in self.__class__.tf_devices})
+                            for d in self.tf_devices})
 
-    # TODO(b/306753579): call_tf can only be lowered when we have a device
-    lowering_platforms = tuple(
-      p if p != "gpu" else "cuda"
-      for p in jax_and_tf_platforms)
+    lowering_platforms = ("tpu", "cpu", "cuda")
 
-    exp = export.export(f_jax,
-                        lowering_platforms=lowering_platforms)(x)
+    exp = export.export(jax.jit(f_jax),
+                        platforms=lowering_platforms)(x)
     for jax_platform in jax_and_tf_platforms:
       with self.subTest(jax_platform):
         jax_device = jax.devices(jax_platform)[0]
@@ -787,7 +805,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
         logging.info("Running harness natively on %s", jax_device)
         native_res = f_jax(x_device)
         logging.info("Running exported harness on %s", jax_device)
-        exported_res = export.call_exported(exp)(x_device)
+        exported_res = exp.call(x_device)
         self.assertAllClose(native_res, exported_res)
 
   def test_multi_platform_call_tf_graph(self):
@@ -809,7 +827,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       f_jax,
       native_serialization=True,
       native_serialization_platforms=lowering_platforms))
-    for tf_device in self.__class__.tf_devices:
+    for tf_device in self.tf_devices:
       with self.subTest(tf_device.device_type):
         logging.info(
           f"Running on tf_device = {tf_device} of device_type = {tf_device.device_type}")
@@ -817,9 +835,53 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
           res = f_tf(x)
         self.assertAllClose(res, f_jax(x))
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_type={type_.__name__}", "type_": type_}
+      for type_ in dlpack.SUPPORTED_DTYPES
+  )
+  def test_avoid_copy_between_gpu_and_cpu(self, type_):
+    try:
+      gpu_devices = jax.devices("gpu")
+    except RuntimeError:
+      gpu_devices = []
+    if not gpu_devices:
+      raise unittest.SkipTest("Test requires a GPU device.")
+
+    def tf_fun(x):
+      if type_ == jnp.bool_:
+        return tf.math.logical_or(x, True)
+      else:
+        return x + 1
+
+    jax_array_on_gpu = jnp.zeros([1], type_, device=gpu_devices[0])
+
+    # Since the input array is already on a GPU device, we expect that no memory
+    # copy occurs between GPU and CPU. Thus, we expect no errors raised by the
+    # transfer guard.
+    # There are two exceptions:
+    # First, when dtype is "int32". This is because almost all TensorFlow
+    # kernels for GPU devices keep int32 tensors in host memory.
+    # (https://github.com/tensorflow/tensorflow/blob/4eb3e36d1b0cd511e1677e740bd093f42365cf9f/tensorflow/python/eager/pywrap_tensor.cc#L352-L354)
+    # Hence, for "int32", we do expect a "host-to-device" copy.
+    # Second, when using PJRT C API runtime. This is because it currently skips dlpack
+    # to workaround "PJRT C API does not support GetDefaultLayout" runtime error.
+    # https://github.com/openxla/xla/blob/762bde36adf22792e91c38fe87cabe5af05bfadc/xla/pjrt/pjrt_c_api_client.h#L285-L289
+    @contextlib.contextmanager
+    def _transfer_guard(guard_level):
+      with contextlib.ExitStack() as stack:
+        stack.enter_context(jax.transfer_guard_device_to_device(guard_level))
+        stack.enter_context(jax.transfer_guard_device_to_host(guard_level))
+        if type_ != jnp.int32:
+          stack.enter_context(jax.transfer_guard_host_to_device(guard_level))
+        yield
+
+    with _transfer_guard("disallow_explicit"):
+      jax2tf.call_tf(tf_fun)(jax_array_on_gpu)
+
 
 class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
   "Reloading output of jax2tf into JAX with call_tf"
+
   def setUp(self):
     if tf is None:
       raise unittest.SkipTest("Test requires tensorflow")
@@ -827,6 +889,17 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     # bug in TensorFlow.
     _ = tf.add(1, 1)
     super().setUp()
+    self.warning_ctx = jtu.ignore_warning(
+        message=(
+            "(jax2tf.convert with native_serialization=False has been deprecated"
+            "|Calling from_dlpack with a DLPack tensor is deprecated)"
+        )
+    )
+    self.warning_ctx.__enter__()
+
+  def tearDown(self):
+    self.warning_ctx.__exit__(None, None, None)
+    super().tearDown()
 
   def test_simple(self):
     f_jax = jnp.sin
@@ -892,6 +965,13 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     restored_jax = jax2tf.call_tf(restored_model.f)
     self.assertAllClose(f_jax(param, x), restored_jax(x))
     self.assertAllClose(f_jax(param, x), jax.jit(restored_jax)(x))
+    self.assertAllClose(f_jax(param, x), jax2tf.convert(restored_jax)(x))
+    self.assertAllClose(f_jax(param, x),
+                        tf.function(jax2tf.convert(restored_jax),
+                                    autograph=False)(x))
+    self.assertAllClose(f_jax(param, x),
+                        tf.function(jax2tf.convert(restored_jax),
+                                    autograph=True)(x))
 
   def test_saved_model_shape_poly(self):
     tracing_count = 0
@@ -1094,6 +1174,16 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     # Jit mode
     self.assertAllClose(jax.jit(grad_fun_jax)(x), jax.jit(grad_fun_jax_rt)(x))
 
+  def test_grad_pytree_arg_with_none_leaf(self):
+    def tf_f(x, params):
+      return x * params["y"]
+
+    x = jnp.array(1.0)
+    y = jnp.array(2.0)
+    actual = jax.grad(
+        jax2tf.call_tf(tf_f), argnums=(1,))(x, {"y": y, "other": None})
+    self.assertDictEqual(actual[0], {"y": x, "other": None})
+
 
 class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   "Reloading output of call_tf into TF with jax2tf."
@@ -1105,17 +1195,17 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     # bug in TensorFlow.
     _ = tf.add(1, 1)
     super().setUp()
+    self.warning_ctx = jtu.ignore_warning(
+        message=(
+            "(jax2tf.convert with native_serialization=False has been deprecated"
+            "|Calling from_dlpack with a DLPack tensor is deprecated)"
+        )
+    )
+    self.warning_ctx.__enter__()
 
-  def override_serialization_version(self, version_override: int):
-      version = config.jax_serialization_version
-      if version != version_override:
-        self.addCleanup(partial(config.update,
-                                "jax_serialization_version",
-                                version_override))
-        config.update("jax_serialization_version", version_override)
-      logging.info(
-        "Using JAX serialization version %s",
-        config.jax_serialization_version)
+  def tearDown(self):
+    self.warning_ctx.__exit__(None, None, None)
+    super().tearDown()
 
   def test_alternate(self):
     # Alternate sin/cos with sin in TF and cos in JAX
@@ -1231,7 +1321,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_shape_poly_static_output_shape(self, with_jit=True):
-    if config.jax2tf_default_native_serialization:
+    if jax.config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
     x = np.array([0.7, 0.8], dtype=np.float32)
 
@@ -1245,7 +1335,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_shape_poly(self, with_jit=False):
-    if config.jax2tf_default_native_serialization:
+    if jax.config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
     x = np.array([7, 8, 9, 10], dtype=np.float32)
     def fun_jax(x):
@@ -1264,7 +1354,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_shape_poly_pytree_result(self, with_jit=True):
-    if config.jax2tf_default_native_serialization:
+    if jax.config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
     x = np.array([7, 8, 9, 10], dtype=np.float32)
     def fun_jax(x):
@@ -1350,7 +1440,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     if kind == "bad_dim" and with_jit:
       # TODO: in jit more the error pops up later, at AddV2
       expect_error = "Dimensions must be equal, but are 4 and 9 for .* AddV2"
-    if kind == "bad_dim" and config.jax2tf_default_native_serialization:
+    if kind == "bad_dim" and jax.config.jax2tf_default_native_serialization:
       # TODO(b/268386622): call_tf with shape polymorphism and native serialization.
       expect_error = "Error compiling TensorFlow function"
     fun_tf_rt = _maybe_tf_jit(with_jit,
@@ -1388,7 +1478,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
                                f4_function=False, f4_saved_model=False):
     if (f2_saved_model and
         f4_saved_model and
-        not config.jax2tf_default_native_serialization):
+        not jax.config.jax2tf_default_native_serialization):
       # TODO: Getting error Found invalid capture Tensor("jax2tf_vjp/jax2tf_arg_0:0", shape=(), dtype=float32) when saving custom gradients
       # when saving f4, but only with non-native serialization.
       raise unittest.SkipTest("TODO: error invalid capture when saving custom gradients")
@@ -1617,116 +1707,127 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt_2, input_args=[])
 
   @jtu.parameterized_filterable(
-    kwargs=[dict(version=version) for version in [8, 9]]
+    kwargs=[dict(version=version) for version in [9]]
   )
   def test_call_tf_graph_ordered(self, *, version: int):
-    self.override_serialization_version(version)
-    @tf.function
-    def tf_print(x):
-      tf.print(x)
+    with config.jax_export_calling_convention_version(version):
+      logging.info(
+        "Using JAX serialization version %s",
+        jax.config.jax_export_calling_convention_version)
 
-    call_tf_print = jax2tf.call_tf(
-        tf_print,
-        call_tf_graph=True,
-        ordered=True,
-    )
+      @tf.function
+      def tf_print(x):
+        tf.print(x)
 
-    x = jnp.array(1.0, dtype=jnp.float32)
+      call_tf_print = jax2tf.call_tf(
+          tf_print,
+          call_tf_graph=True,
+          ordered=True,
+      )
 
-    def body(i, x):
-      call_tf_print(x)
-      return x + 1
+      x = jnp.array(1.0, dtype=jnp.float32)
 
-    @jax.jit
-    def f_jax(x):
-      return jax.lax.fori_loop(0, 4, body, x)
+      def body(i, x):
+        call_tf_print(x)
+        return x + 1
 
-    num_custom_calls = 0
+      @jax.jit
+      def f_jax(x):
+        return jax.lax.fori_loop(0, 4, body, x)
 
-    def _check_mlir_ops(op):
-      nonlocal num_custom_calls
+      num_custom_calls = 0
 
-      if (
-          op.operation.name == "stablehlo.custom_call"
-          and ir.StringAttr(op.attributes["call_target_name"]).value
-          == "tf.call_tf_function"
+      def _check_mlir_ops(op):
+        nonlocal num_custom_calls
+
+        if (
+            op.operation.name == "stablehlo.custom_call"
+            and ir.StringAttr(op.attributes["call_target_name"]).value
+            == "tf.call_tf_function"
+        ):
+          num_custom_calls += 1
+
+          # The custom call op must have `has_token_input_output` attribute.
+          tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
+          self.assertTrue(
+              ir.BoolAttr(tf_backend_config["has_token_input_output"]).value
+          )
+
+          # Verify that the first argument/result of the custom call op is a token
+          # type. This is a calling convention defined by `has_token_input_output`.
+          self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
+          self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
+
+      stablehlo_module = None
+      with self.assertRaisesRegex(
+          ValueError,
+          "call_tf_graph=True only support exporting by jax2tf.convert currently",
       ):
-        num_custom_calls += 1
+        lower = f_jax.lower(x)
+        self.assertNotEmpty(lower._lowering.compile_args["ordered_effects"])
+        stablehlo_module = lower.compiler_ir("stablehlo")
+      if stablehlo_module:
+        self._walk_stablehlo_operations(stablehlo_module, _check_mlir_ops)
+        self.assertEqual(num_custom_calls, 1)
 
-        # The custom call op must have `has_token_input_output` attribute.
-        tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
-        self.assertTrue(
-            ir.BoolAttr(tf_backend_config["has_token_input_output"]).value
-        )
-
-        # Verify that the first argument/result of the custom call op is a token
-        # type. This is a calling convention defined by `has_token_input_output`.
-        self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
-        self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
-
-    stablehlo_module = None
-    with self.assertRaisesRegex(
-        ValueError,
-        "call_tf_graph=True only support exporting by jax2tf.convert currently",
-    ):
-      lower = f_jax.lower(x)
-      self.assertNotEmpty(lower._lowering.compile_args["ordered_effects"])
-      stablehlo_module = lower.compiler_ir("stablehlo")
-    if stablehlo_module:
-      self._walk_stablehlo_operations(stablehlo_module, _check_mlir_ops)
-      self.assertEqual(num_custom_calls, 1)
-
-    f_tf = jax2tf.convert(
-        f_jax,
-        native_serialization=True,
-        with_gradient=False,
-    )
-    _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
+      f_tf = jax2tf.convert(
+          f_jax,
+          native_serialization=True,
+          with_gradient=False,
+      )
+      _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
 
   @jtu.parameterized_filterable(
     kwargs=[dict(poly=poly, version=version)
             for poly in [True, False]
-            for version in [8, 9]]
+            for version in [9]]
   )
   def test_call_tf_ordered_dead_inputs(self, *, poly: bool, version: int):
-    self.override_serialization_version(version)
-    def f_jax(x1, x_dead, x3):
-      return (x1, jax2tf.call_tf(lambda x: tf.math.sin(x), ordered=True,
-                                 call_tf_graph=True)(x3))
-    if poly:
-      polymorphic_shapes = ["b", None, None]
-    else:
-      polymorphic_shapes = None
-    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes)
-    x1 = np.arange(3, dtype=np.float32)
-    x_dead = np.arange(4, dtype=np.float32)
-    x3 = np.arange(5, dtype=np.float32)
-    self.assertAllClose(f_jax(x1, x_dead, x3),
-                        f_tf(x1, x_dead, x3))
+    with config.jax_export_calling_convention_version(version):
+      logging.info(
+        "Using JAX serialization version %s",
+        jax.config.jax_export_calling_convention_version)
+      def f_jax(x1, x_dead, x3):
+        return (x1, jax2tf.call_tf(lambda x: tf.math.sin(x), ordered=True,
+                                  call_tf_graph=True)(x3))
+      if poly:
+        polymorphic_shapes = ["b", None, None]
+      else:
+        polymorphic_shapes = None
+      f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes)
+      x1 = np.arange(3, dtype=np.float32)
+      x_dead = np.arange(4, dtype=np.float32)
+      x3 = np.arange(5, dtype=np.float32)
+      self.assertAllClose(f_jax(x1, x_dead, x3),
+                          f_tf(x1, x_dead, x3))
 
   @jtu.parameterized_filterable(
     kwargs=[dict(ordered=ordered, version=version)
       for ordered in [True, False]
-      for version in [8, 9]
+      for version in [9]
     ]
   )
   def test_call_tf_graph_polymorphic(self, ordered: bool, version: int):
-    self.override_serialization_version(version)
-    @tf.function(jit_compile=True, autograph=False)
-    @partial(jax2tf.convert,
-      with_gradient=False,
-      native_serialization=True,
-      polymorphic_shapes=["(b)"])
-    @jax.jit
-    def tf_f_2(x):
-      tf_f = lambda x: print(tf.strings.length(tf.constant("hello, world")))
-      jax2tf.call_tf(tf_f,
-                     call_tf_graph=True,
-                     ordered=ordered)(x)
-      return x
+    with config.jax_export_calling_convention_version(version):
+      logging.info(
+        "Using JAX serialization version %s",
+        jax.config.jax_export_calling_convention_version)
 
-    x = np.arange(3, dtype=np.int32)
-    _ = tf.function(tf_f_2, autograph=False).get_concrete_function(x)
+      @tf.function(jit_compile=True, autograph=False)
+      @partial(jax2tf.convert,
+        with_gradient=False,
+        native_serialization=True,
+        polymorphic_shapes=["(b)"])
+      @jax.jit
+      def tf_f_2(x):
+        tf_f = lambda x: print(tf.strings.length(tf.constant("hello, world")))
+        jax2tf.call_tf(tf_f,
+                      call_tf_graph=True,
+                      ordered=ordered)(x)
+        return x
+
+      x = np.arange(3, dtype=np.int32)
+      _ = tf.function(tf_f_2, autograph=False).get_concrete_function(x)
 
   # TODO(b/293927250): call_tf_graph=True only accept concrete_function. The
   # workaround here is to set `module.call=concrete_fn.`.

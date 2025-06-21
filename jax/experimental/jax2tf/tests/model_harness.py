@@ -13,10 +13,12 @@
 # limitations under the License.
 """All the models to convert."""
 
-from collections.abc import Sequence
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
-from typing import Any, Callable, Optional, Union
+from typing import Any
 import re
 
 import numpy as np
@@ -46,8 +48,8 @@ class ModelHarness:
   variables: dict[str, Any]
   inputs: Sequence[np.ndarray]
   rtol: float = 1e-4
-  polymorphic_shapes: Optional[Sequence[Union[str, None]]] = None
-  tensor_spec: Optional[Sequence[tf.TensorSpec]] = None
+  polymorphic_shapes: Sequence[str | None] | None = None
+  tensor_spec: Sequence[tf.TensorSpec] | None = None
 
   def __post_init__(self):
     # When providing polymorphic shapes, tensor_spec should be provided as well.
@@ -291,7 +293,7 @@ for poly_shapes, tensor_specs in [
       tensor_specs=tensor_specs)
 
 # bilstm input specs: [((2, 3), np.int32), ((2,), np.int32)] = [inputs, lengths]
-for poly_shapes, tensor_specs in [  # type: ignore
+for poly_shapes, tensor_specs in [
     (None, None),
     # batch polymorphism
     (["(b, _)", "(_,)"], [((None, 3), tf.int32), ((2,), tf.int32)]),
@@ -345,7 +347,7 @@ for poly_shapes, tensor_specs in [
 #   ((1, 2, 4), np.float32),  # encoder inp: [batch, max_input_len, vocab_size]
 #   ((1, 3, 4), np.float32),  # decoder_inp: [batch, max_output_len, vocab_size]
 # ]
-for poly_shapes, tensor_specs in [  # type: ignore
+for poly_shapes, tensor_specs in [
     (None, None),
     # batch polymorphism
     (
@@ -370,7 +372,7 @@ for poly_shapes, tensor_specs in [  # type: ignore
       tensor_specs=tensor_specs)
 
 # lm1b/nlp_seq input spec: [((2, 1), np.float32)]  [batch, seq_len]
-for poly_shapes, tensor_specs in [  # type: ignore
+for poly_shapes, tensor_specs in [
     (None, None),
     # batch polymorphism.
     (["(b, _)"], [((None, 1), tf.float32)]),
@@ -390,7 +392,7 @@ for poly_shapes, tensor_specs in [  # type: ignore
 #   ((1, 2), np.float32),  # inputs:  [batch, max_target_len]
 #   ((1, 2), np.float32),  # targets: [batch, max_target_len]
 # ]
-for poly_shapes, tensor_specs in [  # type: ignore
+for poly_shapes, tensor_specs in [
     (None, None),
     # batch polymorphism.
     (["(b, _)"] * 2, [((None, 1), tf.float32)] * 2),

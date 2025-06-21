@@ -27,11 +27,6 @@ namespace jax {
 //
 // Failing statuses become Python exceptions; OK Status() becomes None.
 //
-// Given there can be only a single global pybind11 type_caster for the
-// `absl::Status` type, and given XLA wants a custom exception being raised,
-// we use a dedicated helper to implement this feature without relying on a
-// global `type_caster`.
-//
 // For example:
 //
 // - Functions without arguments:

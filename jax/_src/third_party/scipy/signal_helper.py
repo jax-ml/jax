@@ -1,14 +1,15 @@
 """Utility functions adopted from scipy.signal."""
 
-import scipy.signal as osp_signal
-from typing import Any, Optional, Union
+from __future__ import annotations
+
+from typing import Any
 import warnings
 
 import jax.numpy as jnp
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
-def _triage_segments(window: Union[ArrayLike, str, tuple[Any, ...]], nperseg: Optional[int],
+def _triage_segments(window: ArrayLike | str | tuple[Any, ...], nperseg: int | None,
                      input_length: int, dtype: DTypeLike) -> tuple[Array, int]:
   """
   Parses window and nperseg arguments for spectrogram and _spectral_helper.
@@ -41,12 +42,22 @@ def _triage_segments(window: Union[ArrayLike, str, tuple[Any, ...]], nperseg: Op
   if isinstance(window, (str, tuple)):
     nperseg_int = input_length if nperseg is None else int(nperseg)
     if nperseg_int > input_length:
-      warnings.warn(f'nperseg = {nperseg_int} is greater than input length '
-                    f' = {input_length}, using nperseg = {input_length}')
+      warnings.warn(f'nperseg={nperseg_int} is greater than {input_length=},'
+                    f' using nperseg={input_length}')
       nperseg_int = input_length
-    win = jnp.array(osp_signal.get_window(window, nperseg_int), dtype=dtype)
+    if window == 'hann':
+      # Implement the default case without scipy
+      win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, jnp.pi, nperseg_int, endpoint=False)) ** 2
+    else:
+      # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency
+      try:
+        from scipy.signal import get_window
+      except ImportError as err:
+        raise ImportError(f"scipy must be available to use {window=}") from err
+      win = get_window(window, nperseg_int)
+    win = jnp.array(win, dtype=dtype)
   else:
-    win = jnp.asarray(window)
+    win = jnp.asarray(window, dtype=dtype)
     nperseg_int = win.size if nperseg is None else int(nperseg)
     if win.ndim != 1:
       raise ValueError('window must be 1-D')

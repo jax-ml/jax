@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "nanobind/nanobind.h"
 #include "jaxlib/gpu/prng_kernels.h"
+#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 
 namespace jax {
@@ -23,21 +24,15 @@ namespace {
 
 namespace nb = nanobind;
 
-std::string BuildThreeFry2x32Descriptor(std::int64_t n) {
-  return PackDescriptorAsString(ThreeFry2x32Descriptor{n});
-}
 nb::dict Registrations() {
   nb::dict dict;
-  dict[JAX_GPU_PREFIX "_threefry2x32"] = EncapsulateFunction(ThreeFry2x32);
+  dict[JAX_GPU_PREFIX "_threefry2x32_ffi"] =
+      EncapsulateFfiHandler(ThreeFry2x32Ffi);
   return dict;
 }
 
 NB_MODULE(_prng, m) {
   m.def("registrations", &Registrations);
-  m.def("threefry2x32_descriptor", [](std::int64_t n) {
-    std::string result = BuildThreeFry2x32Descriptor(n);
-    return nb::bytes(result.data(), result.size());
-  });
 }
 
 }  // namespace

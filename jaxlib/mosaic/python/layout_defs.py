@@ -19,6 +19,7 @@ TODO(tlongeri): Migrate definitions to tpu module
 """
 import collections
 import enum
+from typing import Literal
 
 TargetTuple = collections.namedtuple("TargetTuple", ["sublanes", "lanes"])
 
@@ -45,6 +46,7 @@ class Replicated(enum.Enum):
   def __bool__(self):
     return False  # Useful because we can then say `offset or 0`
 REPLICATED = Replicated.REPLICATED
+Offset = int | Literal[REPLICATED]
 
 
 class ImplicitDim(enum.IntEnum):

@@ -14,9 +14,10 @@
 
 import hashlib
 import os
-import random
+import re
 import sys
 import unittest
+from typing import cast as type_cast
 
 import numpy as np
 
@@ -30,71 +31,17 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
+from jax._src.lib.mlir import ir
+from jax._src.mesh import Mesh
+from jax._src.partition_spec import PartitionSpec as P
+from jax._src.sharding_impls import NamedSharding
+from jax._src.custom_partitioning import custom_partitioning
 
 
 config.parse_flags_with_absl()
 
 
 class CacheKeyTest(jtu.JaxTestCase):
-
-  def test_compile_options(self):
-    compile_options_not_filled = compiler.get_compile_options(
-        num_replicas=1, num_partitions=1
-    )
-    compile_options_filled = self.filled_compile_options()
-    filled_hash1 = self.get_hashed_value(
-        cache_key._hash_compile_options, compile_options_filled
-    )
-    filled_hash2 = self.get_hashed_value(
-        cache_key._hash_compile_options, compile_options_filled
-    )
-    not_filled_hash3 = self.get_hashed_value(
-        cache_key._hash_compile_options, compile_options_not_filled
-    )
-    self.assertEqual(filled_hash1, filled_hash2)
-    self.assertNotEqual(filled_hash1, not_filled_hash3)
-
-  def test_executable_build_options(self):
-    compile_options_not_filled = compiler.get_compile_options(
-        num_replicas=1, num_partitions=1
-    )
-    compile_options_filled = self.filled_compile_options()
-    filled_hash1 = self.get_hashed_value(
-        cache_key._hash_executable_build_options,
-        compile_options_filled.executable_build_options,
-    )
-    filled_hash2 = self.get_hashed_value(
-        cache_key._hash_executable_build_options,
-        compile_options_filled.executable_build_options,
-    )
-    not_filled_hash3 = self.get_hashed_value(
-        cache_key._hash_executable_build_options,
-        compile_options_not_filled.executable_build_options,
-    )
-    self.assertEqual(filled_hash1, filled_hash2)
-    self.assertNotEqual(filled_hash1, not_filled_hash3)
-
-  def test_debug_options(self):
-    compile_options = compiler.get_compile_options(
-        num_replicas=1, num_partitions=1
-    )
-    hash1 = self.get_hashed_value(
-        cache_key._hash_debug_options,
-        compile_options.executable_build_options.debug_options,
-    )
-    hash2 = self.get_hashed_value(
-        cache_key._hash_debug_options,
-        compile_options.executable_build_options.debug_options,
-    )
-    self.assertEqual(hash1, hash2)
-    new_debug_options = self.create_new_debug_options(
-        compile_options.executable_build_options.debug_options
-    )
-    hash3 = self.get_hashed_value(
-        cache_key._hash_debug_options, new_debug_options
-    )
-    self.assertNotEqual(hash1, hash3)
 
   def test_serialized_compile_options(self):
     compile_options = compiler.get_compile_options(
@@ -121,6 +68,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     debug_options.xla_dump_hlo_as_long_text = True
     debug_options.xla_dump_disable_metadata = True
     debug_options.xla_dump_hlo_pipeline_re = "xyzzy"
+    debug_options.xla_gpu_experimental_autotune_cache_mode = 2
     hash2 = self.get_hashed_value(
         cache_key._hash_serialized_compile_options, compile_options
     )
@@ -128,9 +76,6 @@ class CacheKeyTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu")
   def test_hash_accelerator_devices(self):
-    if xla_extension_version < 209 and xla_bridge.using_pjrt_c_api():
-      raise unittest.SkipTest("PjRt C API not yet supported.")
-
     devices = np.array([[jax.local_devices()[0]]])
 
     dev_hash1 = self.get_hashed_value(cache_key._hash_devices, devices)
@@ -138,9 +83,9 @@ class CacheKeyTest(jtu.JaxTestCase):
     self.assertEqual(dev_hash1, dev_hash2)
 
     acc_hash1 = self.get_hashed_value(
-        cache_key._hash_accelerator_config, devices, xla_bridge.get_backend())
+        cache_key._hash_accelerator_config, devices)
     acc_hash2 = self.get_hashed_value(
-        cache_key._hash_accelerator_config, devices, xla_bridge.get_backend())
+        cache_key._hash_accelerator_config, devices)
     self.assertEqual(acc_hash1, acc_hash2)
 
   def test_hash_platform(self):
@@ -155,29 +100,6 @@ class CacheKeyTest(jtu.JaxTestCase):
       cpu_backend = xla_bridge.get_backend("cpu")
       hash3 = self.get_hashed_value(cache_key._hash_platform, cpu_backend)
       self.assertNotEqual(hash1, hash3)
-
-  def test_hash_int(self):
-    hash1 = self.get_hashed_value(cache_key._hash_int, 90)
-    hash2 = self.get_hashed_value(cache_key._hash_int, 8)
-    hash3 = self.get_hashed_value(cache_key._hash_int, 8)
-    self.assertEqual(hash2, hash3)
-    self.assertNotEqual(hash1, hash2)
-
-  def test_hash_signed_int(self):
-    hash1 = self.get_hashed_value(cache_key._hash_signed_int, 90)
-    hash2 = self.get_hashed_value(cache_key._hash_signed_int, -90)
-    hash3 = self.get_hashed_value(cache_key._hash_signed_int, -8)
-    hash4 = self.get_hashed_value(cache_key._hash_signed_int, -8)
-    self.assertEqual(hash3, hash4)
-    self.assertNotEqual(hash1, hash2)
-    self.assertNotEqual(hash1, hash3)
-
-  def test_hash_bool(self):
-    hash1 = self.get_hashed_value(cache_key._hash_bool, False)
-    hash2 = self.get_hashed_value(cache_key._hash_bool, True)
-    hash3 = self.get_hashed_value(cache_key._hash_bool, True)
-    self.assertEqual(hash2, hash3)
-    self.assertNotEqual(hash1, hash2)
 
   def test_hash_string(self):
     hash1 = self.get_hashed_value(cache_key._hash_string, "foo")
@@ -213,6 +135,21 @@ class CacheKeyTest(jtu.JaxTestCase):
         cache_key.get(computation, devices, compile_options_filled, backend),
     )
 
+  def test_custom_hook(self):
+    computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
+    devices = np.array([[jax.local_devices()[0]]])
+    compile_options = compiler.get_compile_options(
+        num_replicas=1, num_partitions=1
+    )
+    backend = xla_bridge.get_backend()
+    original_custom_hook = cache_key.custom_hook
+    cache_key.custom_hook = lambda: "hook1"
+    key1 = cache_key.get(computation, devices, compile_options, backend)
+    cache_key.custom_hook = lambda: "hook2"
+    key2 = cache_key.get(computation, devices, compile_options, backend)
+    cache_key.custom_hook = original_custom_hook
+    self.assertNotEqual(key1, key2)
+
   def test_different_computations(self):
     computation1 = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
     computation2 = jax.jit(lambda x, y: x * y).lower(2, 2).compiler_ir()
@@ -226,7 +163,116 @@ class CacheKeyTest(jtu.JaxTestCase):
         cache_key.get(computation2, devices, compile_options, backend),
     )
 
+  # TODO(phawkins): this test flakes if test concurrency is enabled.
+  @jtu.thread_unsafe_test()
+  def test_custom_partitioning_ptr_removal(self):
+    def _partition(mesh, arg_shapes, result_shape):
+      arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)
+      result_shardings = NamedSharding(mesh, arg_shapes[0].sharding.spec)
+      return mesh, jax.numpy.add, result_shardings, arg_shardings
+
+    def _infer_sharding_from_operands(mesh, arg_shapes, result_shape):
+      return NamedSharding(mesh, arg_shapes[0].sharding.spec)
+
+    @custom_partitioning
+    def _cp_add(x, y):
+      return jax.numpy.add(x, y)
+
+    _cp_add.def_partition(
+      infer_sharding_from_operands=_infer_sharding_from_operands,
+      partition=_partition,
+      sharding_rule='..., ... -> ...')
+
+    devices = np.asarray(jax.devices())
+    with Mesh(devices, ('x',)) as m:
+      computation = jax.jit(
+        _cp_add,
+        in_shardings=(NamedSharding(m, P('x')),
+                      NamedSharding(m, P('x'))),
+                      out_shardings=NamedSharding(m, P('x'))
+      ).lower(
+        jax.ShapeDtypeStruct([1024], dtype=jax.numpy.float32),
+        jax.ShapeDtypeStruct([1024], dtype=jax.numpy.float32),
+      ).compiler_ir()
+      pattern = (
+          r'stablehlo\.custom_call @CustomSPMDPartitioning\('
+          r'(.*?)\) \{'
+          r'(.*?backend_config\s*=\s*"([^"]*)".*?)'
+          r'\}'
+      )
+      with computation.context:
+        updated_module = cache_key._remove_callbacks(
+            type_cast(ir.Module, computation.operation.clone()),
+            ignore_callbacks=cache_key.IgnoreCallbacks.ALL,
+        )
+        bcs = [
+            match[2]
+            for match in re.findall(pattern, str(updated_module), re.DOTALL)
+        ]
+        for bc in bcs:
+          self.assertEqual(bc, "REMOVED")
+
+      compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+      )
+      backend = xla_bridge.get_backend()
+      hash_without_callback_ptrs = cache_key.get(
+          computation,
+          devices,
+          compile_options,
+          backend,
+          ignore_callbacks=cache_key.IgnoreCallbacks.CUSTOM_PARTITIONING,
+      )
+      expected_hash = cache_key.get(
+          updated_module, devices, compile_options, backend
+      )
+      self.assertEqual(expected_hash, hash_without_callback_ptrs)
+
+  @jtu.skip_on_devices("cpu")
+  def test_host_callbacks_ptrs_removed(self):
+    def _host_callback(x, y):
+      jax.debug.print("x={x[0]} y={y[0]}", x=x, y=y)
+
+    computation = (
+        jax.jit(_host_callback)
+        .lower(
+            jax.ShapeDtypeStruct([1024], dtype=jax.numpy.float32),
+            jax.ShapeDtypeStruct([1024], dtype=jax.numpy.float32),
+        )
+        .compiler_ir()
+    )
+    pattern = r'(.*?backend_config\s*=\s*"([^"]*)".*?)'
+    with computation.context:
+      updated_module = cache_key._remove_callbacks(
+          type_cast(ir.Module, computation.operation.clone()),
+          ignore_callbacks=cache_key.IgnoreCallbacks.ALL,
+      )
+      bcs = [
+          match[1]
+          for match in re.findall(pattern, str(updated_module), re.DOTALL)
+      ]
+      for bc in bcs:
+        self.assertEqual(bc, "REMOVED")
+
+  def test_different_device_assignment(self):
+    computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
+    devices = np.array([[jax.local_devices()[0]]])
+    compile_options_1 = compiler.get_compile_options(
+        num_replicas=1, num_partitions=1, device_assignment=np.array([[0]])
+    )
+    compile_options_2 = compiler.get_compile_options(
+        num_replicas=1, num_partitions=1, device_assignment=np.array([[1]])
+    )
+    backend = xla_bridge.get_backend()
+    hash_1 = cache_key.get(computation, devices, compile_options_1, backend)
+    hash_2 = cache_key.get(computation, devices, compile_options_2, backend)
+    if backend.platform == "gpu":
+      self.assertEqual(hash_1, hash_2)
+    else:
+      self.assertNotEqual(hash_1, hash_2)
+
   @parameterized.parameters([False, True])
+  @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_identical_computations_different_metadata(self, include_metadata):
     f = lambda x, y: lax.mul(lax.add(x, y), 2)
     g = lambda x, y: lax.mul(lax.add(x, y), 2)
@@ -243,6 +289,7 @@ class CacheKeyTest(jtu.JaxTestCase):
       key2 = cache_key.get(computation2, devices, compile_options, backend)
     self.assertEqual(include_metadata, key1 != key2)
 
+  @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_xla_flags(self):
     if jtu.is_device_tpu(version=4):
       raise unittest.SkipTest("TODO(b/240151176)")
@@ -289,6 +336,7 @@ class CacheKeyTest(jtu.JaxTestCase):
         del os.environ["XLA_FLAGS"]
       sys.argv = orig_argv
 
+  @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_libtpu_init_args(self):
     if jtu.is_device_tpu(version=4):
       raise unittest.SkipTest("TODO(b/240151176)")
@@ -319,19 +367,6 @@ class CacheKeyTest(jtu.JaxTestCase):
       elif os.getenv("LIBTPU_INIT_ARGS") is not None:
         del os.environ["LIBTPU_INIT_ARGS"]
       sys.argv = orig_argv
-
-  def create_new_debug_options(self, debug_options_obj):
-    debug_options_obj.xla_cpu_enable_fast_math = False
-    debug_options_obj.xla_cpu_fast_math_honor_infs = False
-    debug_options_obj.xla_cpu_fast_math_honor_nans = False
-    debug_options_obj.xla_cpu_fast_math_honor_division = False
-    debug_options_obj.xla_cpu_fast_math_honor_functions = False
-    debug_options_obj.xla_gpu_enable_fast_min_max = False
-    debug_options_obj.xla_backend_optimization_level = random.randint(0, 10)
-    debug_options_obj.xla_cpu_enable_xprof_traceme = False
-    debug_options_obj.xla_llvm_disable_expensive_passes = False
-    debug_options_obj.xla_test_all_input_layouts = False
-    return debug_options_obj
 
   def filled_compile_options(self):
     compile_options = xla_client.CompileOptions()

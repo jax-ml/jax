@@ -1,12 +1,12 @@
-JAX Frequently Asked Questions (FAQ)
-====================================
+Frequently asked questions (FAQ)
+================================
 
 .. comment RST primer for Sphinx: https://thomas-cokelaer.info/tutorials/sphinx/rest_syntax.html
 .. comment Some links referenced here. Use `JAX - The Sharp Bits`_ (underscore at the end) to reference
 
-.. _JAX - The Sharp Bits: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html
+.. _JAX - The Sharp Bits: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html
 
-We are collecting here answers to frequently asked questions.
+We are collecting answers to frequently asked questions here.
 Contributions welcome!
 
 ``jit`` changes the behavior of my function
@@ -116,7 +116,7 @@ code in JAX's internal representation, typically because it makes heavy use of
 Python control flow such as ``for`` loops. For a handful of loop iterations,
 Python is OK, but if you need *many* loop iterations, you should rewrite your
 code to make use of JAX's
-`structured control flow primitives <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#Structured-control-flow-primitives>`_
+`structured control flow primitives <https://docs.jax.dev/en/latest/control-flow.html#Structured-control-flow-primitives>`_
 (such as :func:`lax.scan`) or avoid wrapping the loop with ``jit`` (you can
 still use ``jit`` decorated functions *inside* the loop).
 
@@ -267,7 +267,7 @@ your object**. Mutations of objects used as hash keys lead to several subtle pro
 which is why for example mutable Python containers (e.g. :class:`dict`, :class:`list`)
 don't define ``__hash__``, while their immutable counterparts (e.g. :class:`tuple`) do.
 
-If your class relies on in-place mutations (such as setting ```self.attr = ...`` within its
+If your class relies on in-place mutations (such as setting ``self.attr = ...`` within its
 methods), then your object is not really "static" and marking it as such may lead to problems.
 Fortunately, there's another option for this case.
 
@@ -337,7 +337,7 @@ referred to as being *sticky* to the device).
 By default, JAX arrays are placed uncommitted on the default device
 (``jax.devices()[0]``), which is the first GPU or TPU by default. If no GPU or
 TPU is present, ``jax.devices()[0]`` is the CPU. The default device can
-temporarily overridden with the :func:`jax.default_device` context manager, or
+be temporarily overridden with the :func:`jax.default_device` context manager, or
 set for the whole process by setting the environment variable ``JAX_PLATFORMS``
 or the absl flag ``--jax_platforms`` to "cpu", "gpu", or "tpu"
 (``JAX_PLATFORMS`` can also be a list of platforms, which determines which
@@ -372,7 +372,7 @@ device.
 Jitted functions behave like any other primitive operations—they will follow the
 data and will show errors if invoked on data committed on more than one device.
 
-(Before `PR #6002 <https://github.com/google/jax/pull/6002>`_ in March 2021
+(Before `PR #6002 <https://github.com/jax-ml/jax/pull/6002>`_ in March 2021
 there was some laziness in creation of array constants, so that
 ``jax.device_put(jnp.zeros(...), jax.devices()[1])`` or similar would actually
 create the array of zeros on ``jax.devices()[1]``, instead of creating the
@@ -385,14 +385,14 @@ and its use is not recommended.)
 
 For a worked-out example, we recommend reading through
 ``test_computation_follows_data`` in
-`multi_device_test.py <https://github.com/google/jax/blob/main/tests/multi_device_test.py>`_.
+`multi_device_test.py <https://github.com/jax-ml/jax/blob/main/tests/multi_device_test.py>`_.
 
 .. _faq-benchmark:
 
 Benchmarking JAX code
 ---------------------
 
-You just ported a tricky function from NumPy/SciPy to JAX. Did that actuallly
+You just ported a tricky function from NumPy/SciPy to JAX. Did that actually
 speed things up?
 
 Keep in mind these important differences from NumPy when measuring the
@@ -413,7 +413,7 @@ speed of code using JAX:
    use 32-bit dtypes in NumPy or enable 64-bit dtypes in JAX (see
    `Double (64 bit) precision`_) for a fair comparison.
 4. **Transferring data between CPUs and accelerators takes time.** If you only
-   want to measure the how long it takes to evaluate a function, you may want to
+   want to measure how long it takes to evaluate a function, you may want to
    transfer data to the device on which you want to run it first (see
    :ref:`faq-data-placement`).
 
@@ -422,7 +422,6 @@ for comparing JAX versus NumPy, making using of IPython's convenient
 `%time and %timeit magics`_::
 
     import numpy as np
-    import jax.numpy as jnp
     import jax
 
     def f(x):  # function we're benchmarking (works in both NumPy & JAX)
@@ -431,7 +430,9 @@ for comparing JAX versus NumPy, making using of IPython's convenient
     x_np = np.ones((1000, 1000), dtype=np.float32)  # same as JAX default dtype
     %timeit f(x_np)  # measure NumPy runtime
 
-    %time x_jax = jax.device_put(x_np)  # measure JAX device transfer time
+    # measure JAX device transfer time
+    %time x_jax = jax.device_put(x_np).block_until_ready()
+
     f_jit = jax.jit(f)
     %time f_jit(x_jax).block_until_ready()  # measure JAX compilation time
     %timeit f_jit(x_jax).block_until_ready()  # measure JAX runtime
@@ -454,8 +455,8 @@ performing matrix-matrix multiplication) to amortize the increased overhead of
 JAX/accelerators vs NumPy/CPU. For example, if we switch this example to use
 10x10 input instead, JAX/GPU runs 10x slower than NumPy/CPU (100 µs vs 10 µs).
 
-.. _To JIT or not to JIT: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#to-jit-or-not-to-jit
-.. _Double (64 bit) precision: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
+.. _To JIT or not to JIT: https://docs.jax.dev/en/latest/notebooks/thinking_in_jax.html#to-jit-or-not-to-jit
+.. _Double (64 bit) precision: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
 .. _`%time and %timeit magics`: https://ipython.readthedocs.io/en/stable/interactive/magics.html#magic-time
 .. _Colab: https://colab.research.google.com/
 
@@ -626,7 +627,7 @@ for its components are donated::
    def add_ones(xs: List[Array]):
      return [x + 1 for x in xs]
 
-   xs = [jax.device_put(np.ones((2, 3)), jax.device_put(np.ones((3, 4))]
+   xs = [jax.device_put(np.ones((2, 3))), jax.device_put(np.ones((3, 4)))]
    # Execute `add_ones` with donation of all the buffers for `xs`.
    # The outputs have the same shape and type as the elements of `xs`,
    # so they will share those buffers.
@@ -686,12 +687,12 @@ The inner ``jnp.where`` may be needed in addition to the original one, e.g.::
 
   def my_log_or_y(x, y):
     """Return log(x) if x > 0 or y"""
-    return jnp.where(x > 0., jnp.log(jnp.where(x > 0., x, 1.), y)
+    return jnp.where(x > 0., jnp.log(jnp.where(x > 0., x, 1.)), y)
 
 
 Additional reading:
 
-  * `Issue: gradients through jnp.where when one of branches is nan <https://github.com/google/jax/issues/1052#issuecomment-514083352>`_.
+  * `Issue: gradients through jnp.where when one of branches is nan <https://github.com/jax-ml/jax/issues/1052#issuecomment-514083352>`_.
   * `How to avoid NaN gradients when using where <https://github.com/tensorflow/probability/blob/master/discussion/where-nan.pdf>`_.
 
 
@@ -729,7 +730,7 @@ Why is this? Remember that what differentiation is measuring the change in ``f``
 given an infinitesimal change in ``x``. For ``x=1.0``, ``f`` returns ``1.0``.
 If we perturb ``x`` to make it slightly larger or smaller, this does not change
 the output, so by definition, :code:`grad(f)(1.0)` should be zero.
-This same logic holds for all values of ``f`` greater than zero: infinitessimally
+This same logic holds for all values of ``f`` greater than zero: infinitesimally
 perturbing the input does not change the output, so the gradient is zero.
 Similarly, for all values of ``x`` less than zero, the output is zero.
 Perturbing ``x`` does not change this output, so the gradient is zero.
@@ -814,11 +815,39 @@ computation at runtime. For example:
 For more information on runtime callbacks and examples of their use,
 see `External callbacks in JAX`_.
 
+Why do some CUDA libraries fail to load/initialize?
+---------------------------------------------------
 
-.. _JIT mechanics: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#jit-mechanics-tracing-and-static-variables
-.. _External callbacks in JAX: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
-.. _Pure callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#example-pure-callback-with-custom-jvp
-.. _IO callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#exploring-jax-experimental-io-callback
+When resolving dynamic libraries, JAX uses the usual `dynamic linker search pattern`_.
+JAX sets :code:`RPATH` to point to the JAX-relative location of the
+pip-installed NVIDIA CUDA packages, preferring them if installed. If :code:`ld.so`
+cannot find your CUDA runtime libraries along its usual search path, then you
+must include the paths to those libraries explicitly in :code:`LD_LIBRARY_PATH`.
+The easiest way to ensure your CUDA files are discoverable is to simply install
+the :code:`nvidia-*-cu12` pip packages, which are included in the standard
+:code:`jax[cuda_12]` install option.
+
+Occasionally, even when you have ensured that your runtime libraries are discoverable,
+there may still be some issues with loading or initializing them. A common cause of
+such issues is simply having insufficient memory for CUDA library initialization at
+runtime. This sometimes occurs because JAX will pre-allocate too large of a chunk of
+currently available device memory for faster execution, occasionally resulting in
+insufficient memory being left available for runtime CUDA library initialization. 
+
+This is especially likely when running multiple JAX instances, running JAX in
+tandem with TensorFlow which performs its own pre-allocation, or when running
+JAX on a system where the GPU is being heavily utilized by other processes. When
+in doubt, try running the program again with reduced pre-allocation, either by
+reducing :code:`XLA_PYTHON_CLIENT_MEM_FRACTION` from the default of :code:`.75`,
+or setting :code:`XLA_PYTHON_CLIENT_PREALLOCATE=false`. For more details, please
+see the page on `JAX GPU memory allocation`_.
+
+.. _JIT mechanics: https://docs.jax.dev/en/latest/notebooks/thinking_in_jax.html#jit-mechanics-tracing-and-static-variables
+.. _External callbacks in JAX: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
+.. _Pure callback example: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html#example-pure-callback-with-custom-jvp
+.. _IO callback example: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html#exploring-jax-experimental-io-callback
 .. _Heaviside Step Function: https://en.wikipedia.org/wiki/Heaviside_step_function
 .. _Sigmoid Function: https://en.wikipedia.org/wiki/Sigmoid_function
-.. _algebraic_simplifier.cc: https://github.com/tensorflow/tensorflow/blob/v2.10.0/tensorflow/compiler/xla/service/algebraic_simplifier.cc#L3266
+.. _algebraic_simplifier.cc: https://github.com/openxla/xla/blob/33f815e190982dac4f20d1f35adb98497a382377/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc#L4851
+.. _JAX GPU memory allocation: https://docs.jax.dev/en/latest/gpu_memory_allocation.html
+.. _dynamic linker search pattern: https://man7.org/linux/man-pages/man8/ld.so.8.html

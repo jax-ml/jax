@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import os
 import re
-from typing import Optional
 from jax._src import clusters
 
 #  OMPI_MCA_orte_hnp_uri exists only when processes are launched via mpirun or mpiexec
@@ -24,12 +25,15 @@ _PROCESS_ID = 'OMPI_COMM_WORLD_RANK'
 _LOCAL_PROCESS_ID = 'OMPI_COMM_WORLD_LOCAL_RANK'
 
 class OmpiCluster(clusters.ClusterEnv):
+
+  name: str = "ompi"
+
   @classmethod
   def is_env_present(cls) -> bool:
     return _ORTE_URI in os.environ
 
   @classmethod
-  def get_coordinator_address(cls) -> str:
+  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
     # Examples of orte_uri:
     # 1531576320.0;tcp://10.96.0.1,10.148.0.1,10.108.0.1:34911
     # 1314521088.0;tcp6://[fe80::b9b:ac5d:9cf0:b858,2620:10d:c083:150e::3000:2]:43370
@@ -55,5 +59,5 @@ class OmpiCluster(clusters.ClusterEnv):
     return int(os.environ[_PROCESS_ID])
 
   @classmethod
-  def get_local_process_id(cls) -> Optional[int]:
+  def get_local_process_id(cls) -> int | None:
     return int(os.environ[_LOCAL_PROCESS_ID])

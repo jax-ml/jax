@@ -9,12 +9,17 @@
 
 repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v4.5.0
+  rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # frozen: v5.0.0
   hooks:
   - id: check-ast
   - id: check-merge-conflict
   - id: check-toml
   - id: check-yaml
+    exclude: |
+      (?x)^(
+          examples/k8s/svc-acct\.yaml |
+          ci/k8s/indexed-job\.yaml
+      )$
   - id: end-of-file-fixer
     # only include python files
     files: \.py$
@@ -26,21 +31,22 @@ repos:
     files: \.py$
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.1.5
+  rev: 24e02b24b8ab2b7c76225602d13fa60e12d114e6  # frozen: v0.11.9
   hooks:
   - id: ruff
 
 - repo: https://github.com/pre-commit/mirrors-mypy
-  rev: 'v1.6.1'
+  rev: '7010b10a09f65cd60a23c207349b539aa36dbec1'  # frozen: v1.16.0
   hooks:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
-    exclude: jax/_src/basearray.py|jax/numpy/__init__.py  # Use pyi instead
-    additional_dependencies: [types-requests==2.31.0, jaxlib==0.4.19, ml_dtypes==0.2.0, numpy==1.26.0, scipy==1.11.2]
+    exclude: jax/_src/basearray.py|jax/numpy/__init__.py|jaxlib/_jax/.*  # Use pyi instead
+    additional_dependencies: [types-requests==2.31.0, numpy>=2.2.0]
     args: [--config=pyproject.toml]
 
 - repo: https://github.com/mwouts/jupytext
-  rev: v1.15.2
+  rev: 8ed836db64ad5d304f2315e6bfd9049c9142e190  # frozen: v1.16.4
   hooks:
   - id: jupytext
+    files: docs/
     args: [--sync]

@@ -13,12 +13,26 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax.experimental.x64_context import (
   enable_x64 as enable_x64,
   disable_x64 as disable_x64,
 )
+from jax._src.api import (
+  saved_input_vjp as saved_input_vjp,
+  si_vjp as si_vjp
+)
 from jax._src.callback import (
   io_callback as io_callback
+)
+from jax._src.dtypes import (
+    primal_tangent_dtype as primal_tangent_dtype,
+)
+from jax._src.earray import (
+    EArray as EArray
+)
+from jax._src.core import (
+    mutable_array as mutable_array,
+    MutableArray as MutableArray,
 )

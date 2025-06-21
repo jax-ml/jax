@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.15.2
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -16,7 +16,9 @@ kernelspec:
 
 # Writing custom Jaxpr interpreters in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Writing_custom_interpreters_in_Jax.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/Writing_custom_interpreters_in_Jax.ipynb)
+<!--* freshness: { reviewed: '2024-04-08' } *-->
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/Writing_custom_interpreters_in_Jax.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/notebooks/Writing_custom_interpreters_in_Jax.ipynb)
 
 +++ {"id": "r-3vMiKRYXPJ"}
 
@@ -25,12 +27,11 @@ etc.) that enable writing concise, accelerated code.
 
 Here we show how to add your own function transformations to the system, by writing a custom Jaxpr interpreter. And we'll get composability with all the other transformations for free.
 
-**This example uses internal JAX APIs, which may break at any time. Anything not in [the API Documentation](https://jax.readthedocs.io/en/latest/jax.html) should be assumed internal.**
+**This example uses internal JAX APIs, which may break at any time. Anything not in [the API Documentation](https://docs.jax.dev/en/latest/jax.html) should be assumed internal.**
 
 ```{code-cell} ipython3
 :id: s27RDKvKXFL8
 
-import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import jit, grad, vmap
@@ -48,7 +49,7 @@ JAX provides a NumPy-like API for numerical computing which can be used as is, b
 ```{code-cell} ipython3
 :id: HmlMcICOcSXR
 
-x = random.normal(random.PRNGKey(0), (5000, 5000))
+x = random.normal(random.key(0), (5000, 5000))
 def f(w, b, x):
   return jnp.tanh(jnp.dot(x, w) + b)
 fast_f = jit(f)
@@ -56,7 +57,7 @@ fast_f = jit(f)
 
 +++ {"id": "gA8V51wZdsjh"}
 
-When we call `fast_f`, what happens? JAX traces the function and constructs an XLA computation graph. The graph is then JIT-compiled and executed. Other transformations work similarly in that they first trace the function and handle the output trace in some way. To learn more about Jax's tracing machinery, you can refer to the ["How it works"](https://github.com/google/jax#how-it-works) section in the README.
+When we call `fast_f`, what happens? JAX traces the function and constructs an XLA computation graph. The graph is then JIT-compiled and executed. Other transformations work similarly in that they first trace the function and handle the output trace in some way. To learn more about Jax's tracing machinery, you can refer to the ["How it works"](https://github.com/jax-ml/jax#how-it-works) section in the README.
 
 +++ {"id": "2Th1vYLVaFBz"}
 
@@ -144,11 +145,10 @@ Let's use `make_jaxpr` to trace a function into a Jaxpr.
 :id: BHkg_3P1pXJj
 
 # Importing Jax functions useful for tracing/interpreting.
-import numpy as np
 from functools import wraps
 
-from jax import core
 from jax import lax
+from jax.extend import core
 from jax._src.util import safe_map
 ```
 
@@ -183,7 +183,7 @@ To do this, we first create an environment to store the values for each of the v
 def eval_jaxpr(jaxpr, consts, *args):
   # Mapping from variable -> value
   env = {}
-  
+
   def read(var):
     # Literals are values baked into the Jaxpr
     if type(var) is core.Literal:
@@ -200,16 +200,16 @@ def eval_jaxpr(jaxpr, consts, *args):
   # Loop through equations and evaluate primitives using `bind`
   for eqn in jaxpr.eqns:
     # Read inputs to equation from environment
-    invals = safe_map(read, eqn.invars)  
+    invals = safe_map(read, eqn.invars)
     # `bind` is how a primitive is called
     outvals = eqn.primitive.bind(*invals, **eqn.params)
     # Primitives may return multiple outputs or not
-    if not eqn.primitive.multiple_results: 
+    if not eqn.primitive.multiple_results:
       outvals = [outvals]
     # Write the results of the primitive into the environment
-    safe_map(write, eqn.outvars, outvals) 
+    safe_map(write, eqn.outvars, outvals)
   # Read the final result of the Jaxpr from the environment
-  return safe_map(read, jaxpr.outvars) 
+  return safe_map(read, jaxpr.outvars)
 ```
 
 ```{code-cell} ipython3
@@ -223,7 +223,7 @@ eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.literals, jnp.ones(5))
 
 Notice that `eval_jaxpr` will always return a flat list even if the original function does not.
 
-Furthermore, this interpreter does not handle higher-order primitives (like `jit` and `pmap`), which we will not cover in this guide. You can refer to `core.eval_jaxpr` ([link](https://github.com/google/jax/blob/main/jax/core.py)) to see the edge cases that this interpreter does not cover.
+Furthermore, this interpreter does not handle higher-order primitives (like `jit` and `pmap`), which we will not cover in this guide. You can refer to `core.eval_jaxpr` ([link](https://github.com/jax-ml/jax/blob/main/jax/core.py)) to see the edge cases that this interpreter does not cover.
 
 +++ {"id": "0vb2ZoGrCMM4"}
 
@@ -231,7 +231,7 @@ Furthermore, this interpreter does not handle higher-order primitives (like `jit
 
 An `inverse` interpreter doesn't look too different from `eval_jaxpr`. We'll first set up the registry which will map primitives to their inverses. We'll then write a custom interpreter that looks up primitives in the registry.
 
-It turns out that this interpreter will also look similar to the "transpose" interpreter used in reverse-mode autodifferentiation [found here](https://github.com/google/jax/blob/main/jax/interpreters/ad.py#L164-L234).
+It turns out that this interpreter will also look similar to the "transpose" interpreter used in reverse-mode autodifferentiation [found here](https://github.com/jax-ml/jax/blob/main/jax/interpreters/ad.py#L164-L234).
 
 ```{code-cell} ipython3
 :id: gSMIT2z1vUpO
@@ -277,7 +277,7 @@ Now we just need to define `inverse_jaxpr`, which will walk through the Jaxpr ba
 
 def inverse_jaxpr(jaxpr, consts, *args):
   env = {}
-  
+
   def read(var):
     if type(var) is core.Literal:
       return var.val
@@ -291,12 +291,12 @@ def inverse_jaxpr(jaxpr, consts, *args):
 
   # Looping backward
   for eqn in jaxpr.eqns[::-1]:
-    #  outvars are now invars 
+    #  outvars are now invars
     invals = safe_map(read, eqn.outvars)
     if eqn.primitive not in inverse_registry:
       raise NotImplementedError(
           f"{eqn.primitive} does not have registered inverse.")
-    # Assuming a unary function 
+    # Assuming a unary function
     outval = inverse_registry[eqn.primitive](*invals)
     safe_map(write, eqn.invars, [outval])
   return safe_map(read, jaxpr.invars)

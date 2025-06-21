@@ -16,7 +16,10 @@
 https://github.com/google/flax/tree/main/examples/lm1b
 """
 
-from typing import Callable, Any, Optional
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
 
 from flax import linen as nn
 from flax import struct
@@ -40,7 +43,7 @@ class TransformerConfig:
   attention_dropout_rate: float = 0.3
   kernel_init: Callable = nn.initializers.xavier_uniform()
   bias_init: Callable = nn.initializers.normal(stddev=1e-6)
-  posemb_init: Optional[Callable] = None
+  posemb_init: Callable | None = None
 
 
 def sinusoidal_init(max_len=2048):
@@ -117,7 +120,7 @@ class MlpBlock(nn.Module):
     out_dim: optionally specify out dimension.
   """
   config: TransformerConfig
-  out_dim: Optional[int] = None
+  out_dim: int | None = None
 
   @nn.compact
   def __call__(self, inputs, deterministic=True):

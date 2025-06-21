@@ -23,13 +23,14 @@ import jax
 from jax import lax
 from jax.experimental import checkify
 from jax.experimental import pjit
-from jax.sharding import NamedSharding
+from jax._src import shard_map
+from jax.sharding import NamedSharding, PartitionSpec as P
 from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.checkify import JaxRuntimeError, FailedCheckError, ErrorEffect, OOBError
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -474,12 +475,25 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "division by zero")
 
+  def test_checify_donation_no_forwarding(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+
+    @checkify.checkify
+    @partial(jax.jit, donate_argnums=(0,))
+    def f(x: jax.Array) -> jax.Array:
+      checkify.check(jnp.all(x > 0), "a")
+      return x
+
+    x = jax.device_put(jnp.zeros(64, dtype="int32"), NamedSharding(mesh, P()))
+    err, y = f(x)
+    err, z = f(y)  # doesn't crash
+
   @jtu.skip_on_devices("tpu")
   def test_while_loop_body_and_cond_error(self):
     def while_cond(val):
       i, cond_val, _ = val
-      _ = jnp.sin(cond_val)
-      return i < 2
+      j = jnp.sin(cond_val)
+      return i + (0. * j) < 2  # don't let the sin value be dead code
 
     def while_body(val):
       i, cond_val, body_val = val
@@ -538,6 +552,46 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertStartsWith(u_err.get(), "division by zero")
     self.assertIsNotNone(b_err.get())
     self.assertStartsWith(b_err.get(), "division by zero")
+
+  @parameterized.parameters(True, False)
+  def test_shard_map(self, check_vma):
+    def f(x):
+      # unary func
+      return jax.lax.axis_index("dev") * x / x
+
+    def g(x, y):
+      # binary func
+      return jax.lax.axis_index("dev") * x / y
+
+    devices = jax.local_devices()[:8] # Taking up to 8 devices
+    mesh = jax.sharding.Mesh(np.array(devices), ["dev"])
+    pspec = jax.sharding.PartitionSpec("dev")
+    ps = NamedSharding(mesh, pspec)
+    inp = np.tile(np.arange(4, dtype=np.int32), 2)
+    x = array.make_array_from_callback(inp.shape, ps, lambda idx: inp[idx])
+
+    f = shard_map.shard_map(
+        f, mesh=mesh, in_specs=pspec, out_specs=pspec, check_vma=check_vma
+    )
+    f = jax.jit(f, in_shardings=ps, out_shardings=ps)
+    f = checkify.checkify(f, errors=checkify.float_checks)
+    g = shard_map.shard_map(
+        g, mesh=mesh, in_specs=(pspec, pspec), out_specs=pspec, check_vma=check_vma
+    )
+    g = jax.jit(g, in_shardings=(ps, ps), out_shardings=ps)
+    g = checkify.checkify(g, errors=checkify.float_checks)
+    u_err, _ = f(x)
+    b_err, _ = g(x, x)
+
+    divbyzero = "division by zero"
+    expected_err = f"at mapped index 0: {divbyzero}"
+    if (next_device_with_zero := len(devices) // 2) != 0:
+      expected_err += f"\nat mapped index {next_device_with_zero}: {divbyzero}"
+
+    self.assertIsNotNone(u_err.get())
+    self.assertEqual(u_err.get(), expected_err)
+    self.assertIsNotNone(b_err.get())
+    self.assertEqual(b_err.get(), expected_err)
 
   def test_empty_enabled_errors(self):
     def multi_errors(x):
@@ -815,9 +869,9 @@ class CheckifyTransformTests(jtu.JaxTestCase):
   def test_retracing(self):
     f = checkify.checkify(jax.jit(lambda x: jnp.sin(x) ** 2))
     _ = f(3.)
-    with jtu.count_jit_and_pmap_compiles() as count:
+    with jtu.count_jit_and_pmap_lowerings() as count:
       _ = f(3.)
-    self.assertEqual(count[0], 0)
+    self.assertEqual(count(), 0)
 
   def test_goodfellow_custom_jvp(self):
     def h(fext):
@@ -870,6 +924,25 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       return jax.lax.while_loop(lambda i: i < n, lambda i: i + 1, x)
 
     jax.jit(checkify.checkify(f))(0)  # Does not crash bc of leaked tracer.
+
+  @parameterized.parameters(True, False)
+  def test_remat(self, jit):
+    # basic test from https://github.com/jax-ml/jax/issues/23867
+    def fn(x: jax.Array):
+      checkify.check(jnp.all(x > 0), "x must be positive")
+      return x + 1
+
+    fn = jax.remat(fn)
+    if jit:
+      fn = jax.jit(fn)
+    fn = checkify.checkify(fn)
+    err, y = fn(jnp.array([1, 2, 3]))
+    self.assertIsNone(err.get())
+    self.assertAllClose(y, jnp.array([2, 3, 4]), check_dtypes=False)
+
+    err, _ = fn(jnp.array([0, 2, 3]))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "x must be positive")
 
 
 @jtu.with_config(jax_check_tracer_leaks=True)
@@ -1155,7 +1228,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(ValueError, "checkify-of-vmap-of-while"):
       checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([5., 2., 4.]))
-    # TODO(lenamartens): reenable assertions below.
+    # TODO(lenamartens): re-enable assertions below.
     # self.assertIsNotNone(err.get())
     # self.assertStartsWith(err.get(), "division by zero")
 
@@ -1184,7 +1257,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(ValueError, "checkify-of-vmap-of-while"):
       checked_f(jnp.arange(5))
-    # TODO(lenamartens): reenable assertions below.
+    # TODO(lenamartens): re-enable assertions below.
     # self.assertIsNone(err.get())
 
   def test_assert_cond_no_data_dependence(self):
@@ -1314,9 +1387,9 @@ class LowerableChecksTest(jtu.JaxTestCase):
       checkify.check(x > 0, "x needs to be positive")
       return x
 
-    with self.assertRaisesRegex(xla_extension.XlaRuntimeError,
+    with self.assertRaisesRegex(_jax.XlaRuntimeError,
                                 "x needs to be positive"):
-      f(-1.)
+      f(-1.).block_until_ready()
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

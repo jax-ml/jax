@@ -12,19 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import abc
+from __future__ import annotations
+
 from collections.abc import Iterable
 from typing import Any, Union
 
-import jax
+import numpy as np
+
+from jax._src import config
 from jax._src import core
+from jax._src.numpy.array import array
 from jax._src.numpy.util import promote_dtypes
 from jax._src.numpy.lax_numpy import (
-  arange, array, concatenate, expand_dims, linspace, meshgrid, stack, transpose
+  arange, concatenate, expand_dims, linspace, meshgrid, stack, transpose
 )
 from jax._src.typing import Array, ArrayLike
+from jax._src.util import set_module
 
-import numpy as np
+
+export = set_module('jax.numpy')
 
 
 __all__ = ["c_", "index_exp", "mgrid", "ogrid", "r_", "s_"]
@@ -74,11 +80,11 @@ class _Mgrid:
             [0, 1, 2]]], dtype=int32)
   """
 
-  def __getitem__(self, key: Union[slice, tuple[slice, ...]]) -> Array:
+  def __getitem__(self, key: slice | tuple[slice, ...]) -> Array:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="mgrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="mgrid") for k in key)
-    with jax.numpy_dtype_promotion('standard'):
+    with config.numpy_dtype_promotion('standard'):
       output = promote_dtypes(*output)
     output_arr = meshgrid(*output, indexing='ij', sparse=False)
     if len(output_arr) == 0:
@@ -86,7 +92,7 @@ class _Mgrid:
     return stack(output_arr, 0)
 
 
-mgrid = _Mgrid()
+mgrid = export(_Mgrid())
 
 
 class _Ogrid:
@@ -118,30 +124,30 @@ class _Ogrid:
   """
 
   def __getitem__(
-      self, key: Union[slice, tuple[slice, ...]]
-  ) -> Union[Array, list[Array]]:
+      self, key: slice | tuple[slice, ...]
+  ) -> Array | list[Array]:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="ogrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="ogrid") for k in key)
-    with jax.numpy_dtype_promotion('standard'):
+    with config.numpy_dtype_promotion('standard'):
       output = promote_dtypes(*output)
     return meshgrid(*output, indexing='ij', sparse=True)
 
 
-ogrid = _Ogrid()
+ogrid = export(_Ogrid())
 
 
 _IndexType = Union[ArrayLike, str, slice]
 
 
-class _AxisConcat(abc.ABC):
+class _AxisConcat:
   """Concatenates slices, scalars and array-like objects along a given axis."""
   axis: int
   ndmin: int
   trans1d: int
   op_name: str
 
-  def __getitem__(self, key: Union[_IndexType, tuple[_IndexType, ...]]) -> Array:
+  def __getitem__(self, key: _IndexType | tuple[_IndexType, ...]) -> Array:
     key_tup: tuple[_IndexType, ...] = key if isinstance(key, tuple) else (key,)
 
     params = [self.axis, self.ndmin, self.trans1d, -1]
@@ -278,7 +284,7 @@ class RClass(_AxisConcat):
   op_name = "r_"
 
 
-r_ = RClass()
+r_ = export(RClass())
 
 
 class CClass(_AxisConcat):
@@ -326,7 +332,7 @@ class CClass(_AxisConcat):
   op_name = "c_"
 
 
-c_ = CClass()
+c_ = export(CClass())
 
 s_ = np.s_
 

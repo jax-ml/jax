@@ -1,34 +1,63 @@
+/* Copyright 2023 The JAX Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
 #include "jaxlib/gpu/triton_kernels.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "absl/base/optimization.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/triton_utils.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/service/custom_call_status.h"
-#include "xla/stream_executor/gpu/asm_compiler.h"
-#include "tsl/platform/env.h"
+
+#ifdef JAX_GPU_CUDA
+#include "xla/stream_executor/cuda/cuda_asm_compiler.h"
+#endif  // JAX_GPU_CUDA
+
+#ifdef JAX_GPU_HIP
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#endif  // JAX_GPU_HIP
 
 #define GPU_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))
-
 
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {
@@ -36,11 +65,39 @@ namespace {
 constexpr float kBenchmarkTimeMillis = 10.;
 
 struct gpuModuleDeleter {
-  void operator()(gpuModule_t module) { gpuModuleUnload(module); }
+  void operator()(gpuModule_t module) {
+    absl::Status status = JAX_AS_STATUS(gpuModuleUnload(module));
+    if (!status.ok()) {
+      LOG(WARNING) << "Failed to unload GPU module: " << status;
+    }
+  }
 };
 
 using OwnedGPUmodule =
     std::unique_ptr<std::remove_pointer_t<gpuModule_t>, gpuModuleDeleter>;
+
+absl::StatusOr<gpuDevice_t> GetStreamDevice(gpuStream_t stream) {
+  gpuDevice_t device;
+#ifdef JAX_GPU_HIP
+  int device_id = gpuGetStreamDeviceId(stream);
+  GPU_RETURN_IF_ERROR(gpuDeviceGet(&device, device_id));
+#else  // JAX_GPU_CUDA
+  gpuContext_t context;
+  GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
+  GPU_RETURN_IF_ERROR(gpuCtxPushCurrent(context));
+  absl::Cleanup ctx_restorer = [] { gpuCtxPopCurrent(nullptr); };
+  GPU_RETURN_IF_ERROR(gpuCtxGetDevice(&device));
+#endif
+  return device;
+}
+
+absl::StatusOr<uint32_t> MaxSharedMemoryPerBlock(gpuDevice_t device) {
+  int shared_optin;
+  GPU_RETURN_IF_ERROR(gpuDeviceGetAttribute(
+      &shared_optin, GPU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN,
+      device));
+  return shared_optin;
+}
 
 absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
                                             uint32_t shared_mem_bytes,
@@ -58,9 +115,9 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
   auto it = module_images.find(key);
   if (it != module_images.end()) return it->second.get();
 
-#ifdef JAX_GPU_HIP //For HIP/ROCM just read the hsaco file
+#ifdef JAX_GPU_HIP  // For HIP/ROCM just read the hsaco file
   std::string result_blob;
-  std::string fname{ptx}; 
+  std::string fname{ptx};
   TF_RETURN_IF_ERROR(
       tsl::ReadFileToString(tsl::Env::Default(), fname, &result_blob));
   std::vector<uint8_t> module_image(result_blob.begin(), result_blob.end());
@@ -105,44 +162,60 @@ absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
                                           gpuStream_t stream, void** buffers) {
   static absl::Mutex mutex;
   static auto& kernel_calls =
-      *new absl::flat_hash_map<std::string, std::unique_ptr<KernelCall>>
+      *new absl::flat_hash_map<std::string,
+                               absl::StatusOr<std::unique_ptr<KernelCall>>>
           ABSL_GUARDED_BY(mutex);
 
-  absl::MutexLock lock(&mutex);
-  auto it = kernel_calls.find(opaque);
-  if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) return it->second.get();
-
-  // The opaque data is a zlib compressed protobuf.
-  JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
-
-  jax_triton::TritonAnyKernelCall proto;
-  if (!proto.ParseFromString(serialized)) {
-    return absl::InvalidArgumentError("Failed to parse serialized data.");
-  }
-
-  std::unique_ptr<KernelCall> kernel_call;
-  if (proto.has_kernel_call()) {
-    JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
-                         KernelCall::FromProto(proto.kernel_call()));
-    kernel_call = std::make_unique<KernelCall>(std::move(kernel_call_));
-  } else if (proto.has_autotuned_kernel_call()) {
-    JAX_ASSIGN_OR_RETURN(
-        AutotunedKernelCall autotuned_call,
-        AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
-    {
-      JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
-                           AutotunedKernelCall::Autotune(
-                               std::move(autotuned_call), stream, buffers));
-      kernel_call = std::make_unique<KernelCall>(std::move(kernel_call_));
+  {
+    // Fast path uses reader lock (as hash map look-up is relatively slow).
+    absl::ReaderMutexLock lock(&mutex);
+    auto it = kernel_calls.find(opaque);
+    if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) {
+      JAX_RETURN_IF_ERROR(it->second.status());
+      return it->second->get();
     }
-  } else {
-    return absl::InvalidArgumentError("Unknown kernel call type.");
   }
 
-  auto [it2, success] =
-      kernel_calls.insert({std::string(opaque), std::move(kernel_call)});
-  CHECK(success);
-  return it2->second.get();
+  if (opaque.empty()) {
+    return absl::InvalidArgumentError("Opaque data is empty.");
+  }
+
+  absl::MutexLock lock(&mutex);
+
+  auto get_kernel_call = [&]() -> absl::StatusOr<std::unique_ptr<KernelCall>> {
+    // The opaque data is a zlib compressed protobuf.
+    JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
+
+    jax_triton::TritonAnyKernelCall proto;
+    if (!proto.ParseFromString(serialized)) {
+      return absl::InvalidArgumentError("Failed to parse serialized data.");
+    }
+
+    if (proto.has_kernel_call()) {
+      JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
+                           KernelCall::FromProto(proto.kernel_call()));
+      return std::make_unique<KernelCall>(std::move(kernel_call_));
+    } else if (proto.has_autotuned_kernel_call()) {
+      JAX_ASSIGN_OR_RETURN(
+          AutotunedKernelCall autotuned_call,
+          AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
+      {
+        JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
+                             AutotunedKernelCall::Autotune(
+                                 std::move(autotuned_call), stream, buffers));
+        return std::make_unique<KernelCall>(std::move(kernel_call_));
+      }
+    } else {
+      return absl::InvalidArgumentError("Unknown kernel call type.");
+    }
+  };
+
+  // We released the reader lock, so it may have been written by another thread.
+  // Create a new entry if it already exists or create a new one.
+  auto it = kernel_calls.emplace(std::string(opaque), get_kernel_call()).first;
+
+  JAX_RETURN_IF_ERROR(it->second.status());
+  return it->second->get();
 }
 
 }  // namespace
@@ -163,7 +236,12 @@ class ModuleImage {
     }
 
     GPU_RETURN_IF_ERROR(gpuCtxPushCurrent(context));
-    absl::Cleanup ctx_restorer = [] { gpuCtxPopCurrent(nullptr); };
+    absl::Cleanup ctx_restorer = [] {
+      absl::Status status = JAX_AS_STATUS(gpuCtxPopCurrent(nullptr));
+      if (!status.ok()) {
+        LOG(WARNING) << "Failed to pop GPU context: " << status;
+      }
+    };
 
     gpuModule_t module;
     GPU_RETURN_IF_ERROR(gpuModuleLoadData(&module, module_image_.data()));
@@ -198,10 +276,10 @@ class ModuleImage {
     }
 
     if (shared_optin > kMaxStaticSharedMemBytes) {
-      #ifdef JAX_GPU_CUDA  
-        GPU_RETURN_IF_ERROR(
+#ifdef JAX_GPU_CUDA
+      GPU_RETURN_IF_ERROR(
           gpuFuncSetCacheConfig(function, CU_FUNC_CACHE_PREFER_SHARED));
-      #endif
+#endif
       int shared_total;
       GPU_RETURN_IF_ERROR(gpuDeviceGetAttribute(
           &shared_total,
@@ -209,11 +287,11 @@ class ModuleImage {
       int shared_static;
       GPU_RETURN_IF_ERROR(gpuFuncGetAttribute(
           &shared_static, GPU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, function));
-      #ifdef JAX_GPU_CUDA
-        GPU_RETURN_IF_ERROR(cuFuncSetAttribute(
+#ifdef JAX_GPU_CUDA
+      GPU_RETURN_IF_ERROR(cuFuncSetAttribute(
           function, GPU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
           shared_optin - shared_static));
-      #endif
+#endif
     }
     return function;
   }
@@ -225,47 +303,95 @@ class ModuleImage {
 
   absl::Mutex mutex_;
   std::vector<OwnedGPUmodule> modules_ ABSL_GUARDED_BY(mutex_);
-  absl::flat_hash_map<gpuContext_t, gpuFunction_t> functions_ ABSL_GUARDED_BY(mutex_);
+  absl::flat_hash_map<gpuContext_t, gpuFunction_t> functions_
+      ABSL_GUARDED_BY(mutex_);
 };
 
 Kernel::Kernel(std::string kernel_name, uint32_t num_warps,
                uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-               int compute_capability)
+               int compute_capability, uint32_t cluster_dim_0,
+               uint32_t cluster_dim_1, uint32_t cluster_dim_2)
     : kernel_name_(std::move(kernel_name)),
       block_dim_x_(num_warps * kNumThreadsPerWarp),
       shared_mem_bytes_(shared_mem_bytes),
       ptx_(std::move(ptx)),
       ttir_(std::move(ttir)),
-      compute_capability_(compute_capability) {}
+      compute_capability_(compute_capability),
+      cluster_dims_{cluster_dim_0, cluster_dim_1, cluster_dim_2} {}
 
-absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3], void** params) {
+absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
+                            void** params) {
   if (ABSL_PREDICT_FALSE(module_image_ == nullptr)) {
     JAX_ASSIGN_OR_RETURN(module_image_,
                          GetModuleImage(kernel_name_, shared_mem_bytes_, ptx_,
                                         compute_capability_));
   }
 
-  gpuContext_t context; 
-  #ifdef JAX_GPU_HIP
-    int device_id = gpuGetStreamDeviceId(stream);
-    gpuDevice_t device;
-    GPU_RETURN_IF_ERROR(gpuDeviceGet(&device, device_id));
-    GPU_RETURN_IF_ERROR(gpuDevicePrimaryCtxRetain(&context, device));
-  #else //JAX_GPU_CUDA
-    GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context)); 
-  #endif
+  gpuContext_t context;
+#ifdef JAX_GPU_HIP
+  int device_id = gpuGetStreamDeviceId(stream);
+  gpuDevice_t device;
+  GPU_RETURN_IF_ERROR(gpuDeviceGet(&device, device_id));
+  GPU_RETURN_IF_ERROR(gpuDevicePrimaryCtxRetain(&context, device));
   JAX_ASSIGN_OR_RETURN(gpuFunction_t kernel,
                        module_image_->GetFunctionForContext(context));
   return JAX_AS_STATUS(gpuLaunchKernel(
       kernel, grid[0], grid[1], grid[2], block_dim_x_,
       /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
       /*extra=*/nullptr));
+#else  // JAX_GPU_CUDA
+  // TODO(b/324319767): A bug in CUDA prevents us from calling cuStreamGetCtx
+  // inside graph capture. We use cuCtxGetCurrent as a workaround here because
+  // context is not updated, but we should change it back to cuStreamGetCtx once
+  // the bug is fixed.
+  gpustreamCaptureStatus_t capture_status;
+  GPU_RETURN_IF_ERROR(gpuStreamIsCapturing(stream, &capture_status));
+  if (capture_status == GPU_STREAM_CAPTURE_STATUS_ACTIVE) {
+    GPU_RETURN_IF_ERROR(gpuCtxGetCurrent(&context));
+  } else {
+    GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
+  }
+
+  JAX_ASSIGN_OR_RETURN(gpuFunction_t kernel,
+                       module_image_->GetFunctionForContext(context));
+  const uint32_t cluster_size =
+      cluster_dims_[0] * cluster_dims_[1] * cluster_dims_[2];
+  if (cluster_size <= 1) {
+    return JAX_AS_STATUS(gpuLaunchKernel(
+        kernel, grid[0], grid[1], grid[2], block_dim_x_,
+        /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
+        /*extra=*/nullptr));
+  }
+  CUlaunchAttribute launch_attrs[2];
+  launch_attrs[0].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
+  launch_attrs[0].value.clusterDim.x = cluster_dims_[0];
+  launch_attrs[0].value.clusterDim.y = cluster_dims_[1];
+  launch_attrs[0].value.clusterDim.z = cluster_dims_[2];
+  launch_attrs[1].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_SCHEDULING_POLICY_PREFERENCE;
+  launch_attrs[1].value.clusterSchedulingPolicyPreference =
+      CU_CLUSTER_SCHEDULING_POLICY_SPREAD;
+  CUlaunchConfig launch_config = {
+      /*gridDimX=*/grid[0] * cluster_dims_[0],
+      /*gridDimY=*/grid[1] * cluster_dims_[1],
+      /*gridDimZ=*/grid[2] * cluster_dims_[2],
+      /*blockDimX=*/block_dim_x_,
+      /*blockDimY=*/1,
+      /*blockDimZ=*/1,
+      /*sharedMemBytes=*/shared_mem_bytes_,
+      /*hStream=*/stream,
+      /**attrs=*/launch_attrs,
+      /*numAttrs=*/2,
+  };
+  return JAX_AS_STATUS(
+      cuLaunchKernelEx(&launch_config, kernel, params, /*extra=*/nullptr));
+#endif
 }
 
 /*static*/ Kernel Kernel::FromProto(const jax_triton::TritonKernel& proto) {
   return Kernel(proto.kernel_name(), proto.num_warps(),
                 proto.shared_mem_bytes(), proto.ptx(), proto.ttir(),
-                proto.compute_capability());
+                proto.compute_capability(), proto.cluster_dim_0(),
+                proto.cluster_dim_1(), proto.cluster_dim_2());
 }
 
 jax_triton::TritonKernel Kernel::ToProto() const {
@@ -276,6 +402,9 @@ jax_triton::TritonKernel Kernel::ToProto() const {
   proto.set_ptx(ptx_);
   proto.set_ttir(ttir_);
   proto.set_compute_capability(compute_capability_);
+  proto.set_cluster_dim_0(cluster_dims_[0]);
+  proto.set_cluster_dim_1(cluster_dims_[1]);
+  proto.set_cluster_dim_2(cluster_dims_[2]);
   return proto;
 }
 
@@ -316,6 +445,10 @@ KernelCall::Parameter::FromProto(
   return param;
 }
 
+bool Kernel::CanLaunchOnDevice(gpuDevice_t device) const {
+  return shared_mem_bytes_ <= MaxSharedMemoryPerBlock(device).value_or(0);
+}
+
 jax_triton::TritonKernelCall_Parameter KernelCall::Parameter::ToProto() const {
   jax_triton::TritonKernelCall_Parameter proto;
   if (std::holds_alternative<Array>(value)) {
@@ -350,7 +483,8 @@ KernelCall::KernelCall(Kernel kernel, uint32_t grid_0, uint32_t grid_1,
 
 absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
   std::vector<void*> params;
-  params.reserve(parameters_.size());
+  // We need an additional parameter for the scratchpad buffer.
+  params.reserve(parameters_.size() + 1);
   for (size_t i = 0; i < parameters_.size(); ++i) {
     const Parameter& param = parameters_[i];
     if (std::holds_alternative<Parameter::Array>(param.value)) {
@@ -376,6 +510,14 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
           param.value)));
     }
   }
+  // Triton's kernel ABI expects an additional scratchpad global memory.
+  // For now it is only used for on-device creation of TMA descriptors, which
+  // we do not use yet, so we are just replacing this argument with a null
+  // pointer.
+  // TODO: b/381242007 - Allocate a proper buffer if we want to use
+  // device-side TMA APIs.
+  void* scratch_ptr = nullptr;  // Alive until kernel_.Launch returns.
+  params.push_back(&scratch_ptr);
 
   return kernel_.Launch(stream, grid_, params.data());
 }
@@ -403,6 +545,10 @@ jax_triton::TritonKernelCall KernelCall::ToProto() const {
     *proto.add_parameters() = param.ToProto();
   }
   return proto;
+}
+
+bool KernelCall::CanLaunchOnDevice(gpuDevice_t device) const {
+  return kernel_.CanLaunchOnDevice(device);
 }
 
 AutotunedKernelCall::AutotunedKernelCall(
@@ -454,10 +600,21 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
 /*static*/ absl::StatusOr<KernelCall> AutotunedKernelCall::Autotune(
     AutotunedKernelCall kernel_call, gpuStream_t stream, void** buffers) {
   // Ensure a valid context for driver calls that don't take the stream.
-  //gpuContext_t context;
-  //GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
-  //GPU_RETURN_IF_ERROR(gpuCtxPushCurrent(context));
-  //absl::Cleanup ctx_restorer = [] { gpuCtxPopCurrent(nullptr); };
+  // gpuContext_t context;
+  // GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
+  // GPU_RETURN_IF_ERROR(gpuCtxPushCurrent(context));
+  // absl::Cleanup ctx_restorer = [] { gpuCtxPopCurrent(nullptr); };
+
+  // Autotuning is not supported if the stream is in graph capture mode.
+  gpustreamCaptureStatus_t capture_status;
+  GPU_RETURN_IF_ERROR(gpuStreamIsCapturing(stream, &capture_status));
+  if (capture_status == GPU_STREAM_CAPTURE_STATUS_ACTIVE) {
+    return absl::FailedPreconditionError(
+        "Can't autotune Triton kernel when the stream is in graph capture "
+        "mode. Autotuning can rely on real data present in input buffers to "
+        "use them in address computation, but in graph capture mode buffers "
+        "can have arbitrary data");
+  }
 
   // If an input aliases with an output, it will get overwritten during the
   // kernel execution. If the kernel is called repeatedly, as we do during
@@ -468,8 +625,8 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
     if (buffers[input_idx] == buffers[output_idx]) {
       std::vector<uint8_t> input_copy(size);
       GPU_RETURN_IF_ERROR(gpuMemcpyDtoHAsync(
-          input_copy.data(), reinterpret_cast<gpuDevicePtr_t>(buffers[input_idx]),
-          size, stream));
+          input_copy.data(),
+          reinterpret_cast<gpuDevicePtr_t>(buffers[input_idx]), size, stream));
       input_copies[input_idx] = std::move(input_copy);
     }
   }
@@ -478,7 +635,13 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
   // First run a single iteration of each to config to determine how many
   // iterations to run for benchmarking.
   float best = std::numeric_limits<float>::infinity();
+  JAX_ASSIGN_OR_RETURN(gpuDevice_t device, GetStreamDevice(stream));
+  absl::flat_hash_set<Config*> configs_to_skip;
   for (Config& config : kernel_call.configs_) {
+    if (!config.kernel_call.CanLaunchOnDevice(device)) {
+      configs_to_skip.insert(&config);
+      continue;
+    }
     JAX_ASSIGN_OR_RETURN(float t,
                          Benchmark(stream, config.kernel_call, buffers, 1));
     LOG(INFO) << config.description << ", ran 1 iter in " << t << " ms";
@@ -497,6 +660,12 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
 
   best = std::numeric_limits<float>::infinity();
   for (Config& config : kernel_call.configs_) {
+    if (configs_to_skip.contains(&config)) {
+      LOG(WARNING) << "Unable to launch autotune config on device: "
+                   << config.description;
+      continue;
+    }
+
     JAX_ASSIGN_OR_RETURN(
         float t, Benchmark(stream, config.kernel_call, buffers, timed_iters));
     LOG(INFO) << config.description << ", ran " << timed_iters << " iters in "
@@ -508,6 +677,11 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
       std::swap(config, kernel_call.configs_[0]);
     }
   }
+  if (std::isinf(best)) {
+    LOG(WARNING) << "Finished autotuning function: " << kernel_call.name_
+                 << " no valid configs found.";
+    return absl::FailedPreconditionError("No launchable configs.");
+  }
 
   LOG(INFO) << "Finished autotuning function: " << kernel_call.name_
             << " best config " << kernel_call.configs_[0].description;
@@ -516,11 +690,13 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
   for (auto [input_idx, _, size] : kernel_call.input_output_aliases_) {
     GPU_RETURN_IF_ERROR(
         gpuMemcpyHtoDAsync(reinterpret_cast<gpuDevicePtr_t>(buffers[input_idx]),
-                          input_copies[input_idx].data(), size, stream));
+                           input_copies[input_idx].data(), size, stream));
   }
+
   // Synchronize stream to ensure copies are complete before the host copy
   // is deleted.
   GPU_RETURN_IF_ERROR(gpuStreamSynchronize(stream));
+
   return std::move(kernel_call.configs_[0].kernel_call);
 }
 

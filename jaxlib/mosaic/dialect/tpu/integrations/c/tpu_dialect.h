@@ -19,6 +19,7 @@ limitations under the License.
 #ifndef JAXLIB_MOSAIC_DIALECT_TPU_INTEGRATIONS_C_TPU_DIALECT_H_
 #define JAXLIB_MOSAIC_DIALECT_TPU_INTEGRATIONS_C_TPU_DIALECT_H_
 
+#include "jaxlib/mosaic/dialect/tpu/integrations/c/tpu_dialect.h"
 #ifndef __cplusplus
 #include <stdbool.h>
 #endif
@@ -92,6 +93,11 @@ typedef struct MlirTpuI64TargetTuple {
   int64_t lane;
 } MlirTpuI64TargetTuple;
 
+typedef struct MlirTpuMxuShape {
+  int64_t contracting_size;
+  int64_t non_contracting_size;
+} MlirTpuMxuShape;
+
 typedef struct MlirTpuBoolTargetTuple {
   bool sublane;
   bool lane;
@@ -103,6 +109,13 @@ typedef struct MlirTpuInsertionPoint {
   MlirBlock block;  // Only used when ref_operation is unspecified (null)
   MlirOperation ref_operation;
 } MlirTpuInsertionPoint;
+
+typedef struct MlirTpuApplyVectorLayoutContext {
+  int hardware_generation = -1;
+  MlirTpuI64TargetTuple target_shape = {8, 128};
+  MlirTpuMxuShape mxu_shape = {128, 128};
+  int64_t max_sublanes_in_scratch = 0;
+} MlirTpuApplyVectorLayoutContext;
 
 // Caller owns the returned object and is responsible for calling
 // mlirTpuVectorLayoutDestroy
@@ -176,6 +189,12 @@ MLIR_CAPI_EXPORTED bool mlirTpuVectorLayoutEquivalentTo(
     MlirTpuVectorLayout layout, MlirTpuVectorLayout other,
     MlirTpuI64ArrayRef shape, MlirTpuI64TargetTuple target_shape);
 
+MLIR_CAPI_EXPORTED void mlirTpuVectorLayoutPrint(
+    MlirTpuVectorLayout layout, MlirStringCallback callback, void* user_data);
+
+MLIR_CAPI_EXPORTED bool mlirTpuVectorLayoutIsValid(
+    MlirTpuVectorLayout layout, MlirTpuI64TargetTuple target_shape);
+
 MLIR_CAPI_EXPORTED void mlirTpuVregDataBoundsDestroy(
     MlirTpuVregDataBounds data_bounds);
 
@@ -208,14 +227,17 @@ MLIR_CAPI_EXPORTED MlirTpuValueArray mlirTpuDisassemble(
     MlirValue val, MlirTpuI64TargetTuple target_shape);
 
 MLIR_CAPI_EXPORTED MlirLogicalResult
-mlirTpuApplyLayoutOp(int hardware_generation, MlirOperation op,
-                     MlirTpuI64TargetTuple target_shape);
+mlirTpuApplyLayoutOp(MlirTpuApplyVectorLayoutContext ctx, MlirOperation op);
 
 // Returns null on failure
 MLIR_CAPI_EXPORTED MlirValue
 mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
                 MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
-                MlirTpuI64TargetTuple target_shape);
+                MlirTpuApplyVectorLayoutContext ctx);
+
+
+MLIR_CAPI_EXPORTED void mlirTpuRegisterMosaicSerdePass();
+
 #ifdef __cplusplus
 }
 #endif

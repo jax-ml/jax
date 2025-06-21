@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//jaxlib:symlink_files.bzl", "symlink_inputs")
+load("@rules_python//python:py_library.bzl", "py_library")
+load("//jaxlib:symlink_files.bzl", "symlink_files", "symlink_inputs")
 
 package(
     default_visibility = [
@@ -29,11 +30,24 @@ symlink_inputs(
 )
 
 symlink_inputs(
+    name = "extras",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        "extras": ["@llvm-project//mlir/python:ExtrasPyFiles"],
+    }},
+    deps = [
+        ":ir",
+        ":mlir",
+    ],
+)
+
+symlink_inputs(
     name = "ir",
     rule = py_library,
     symlinked_inputs = {"srcs": {
         ".": [
             "@llvm-project//mlir/python:IRPyFiles",
+            "@llvm-project//mlir/python:IRPyIFiles",
         ],
     }},
     deps = [
@@ -51,9 +65,9 @@ py_library(
 symlink_inputs(
     name = "func_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:FuncPyFiles",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:FuncPyFiles"],
+    }},
     deps = [
         ":core",
         ":ir",
@@ -64,9 +78,9 @@ symlink_inputs(
 symlink_inputs(
     name = "vector_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:VectorOpsPyFiles",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:VectorOpsPyFiles"],
+    }},
     deps = [
         ":core",
         ":ir",
@@ -77,9 +91,9 @@ symlink_inputs(
 symlink_inputs(
     name = "math_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:MathOpsPyFiles",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:MathOpsPyFiles"],
+    }},
     deps = [
         ":core",
         ":ir",
@@ -90,9 +104,9 @@ symlink_inputs(
 symlink_inputs(
     name = "arithmetic_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:ArithOpsPyFiles",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:ArithOpsPyFiles"],
+    }},
     deps = [
         ":core",
         ":ir",
@@ -103,9 +117,22 @@ symlink_inputs(
 symlink_inputs(
     name = "memref_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:MemRefOpsPyFiles",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:MemRefOpsPyFiles"],
+    }},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+    ],
+)
+
+symlink_inputs(
+    name = "control_flow_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:ControlFlowOpsPyFiles"],
+    }},
     deps = [
         ":core",
         ":ir",
@@ -116,9 +143,9 @@ symlink_inputs(
 symlink_inputs(
     name = "scf_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:SCFPyFiles",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:SCFPyFiles"],
+    }},
     deps = [
         ":core",
         ":ir",
@@ -129,11 +156,12 @@ symlink_inputs(
 symlink_inputs(
     name = "builtin_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:BuiltinOpsPyFiles",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:BuiltinOpsPyFiles"],
+    }},
     deps = [
         ":core",
+        ":extras",
         ":ir",
         ":mlir",
     ],
@@ -142,9 +170,9 @@ symlink_inputs(
 symlink_inputs(
     name = "chlo_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@stablehlo//:chlo_ops_py_files",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@stablehlo//:chlo_ops_py_files"],
+    }},
     deps = [
         ":core",
         ":ir",
@@ -156,9 +184,9 @@ symlink_inputs(
 symlink_inputs(
     name = "sparse_tensor_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:SparseTensorOpsPyFiles",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:SparseTensorOpsPyFiles"],
+    }},
     deps = [
         ":core",
         ":ir",
@@ -171,9 +199,9 @@ symlink_inputs(
 symlink_inputs(
     name = "mhlo_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@xla//xla/mlir_hlo:MhloOpsPyFiles",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@xla//xla/mlir_hlo:MhloOpsPyFiles"],
+    }},
     deps = [
         ":core",
         ":ir",
@@ -188,6 +216,7 @@ symlink_inputs(
     symlinked_inputs = {"srcs": {
         ".": [
             "@llvm-project//mlir/python:PassManagerPyFiles",
+            "@llvm-project//mlir/python:PassManagerPyIFiles",
         ],
     }},
     deps = [
@@ -196,15 +225,107 @@ symlink_inputs(
 )
 
 symlink_inputs(
+    name = "sdy_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@shardy//shardy/integrations/python/ir:sdy_ops_py_files"],
+    }},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_sdy",
+    ],
+)
+
+symlink_inputs(
     name = "stablehlo_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@stablehlo//:stablehlo_ops_py_files",
-    ]}},
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@stablehlo//:stablehlo_ops_py_files"],
+    }},
     deps = [
         ":core",
         ":ir",
         ":mlir",
         "//jaxlib/mlir/_mlir_libs:_stablehlo",
+    ],
+)
+
+symlink_inputs(
+    name = "nvgpu_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@llvm-project//mlir/python:NVGPUOpsPyFiles",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsNVGPU",
+    ],
+)
+
+symlink_inputs(
+    name = "nvvm_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@llvm-project//mlir/python:NVVMOpsPyFiles",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+    ],
+)
+
+symlink_files(
+    name = "gpu_files",
+    srcs = ["@llvm-project//mlir/python:GPUOpsPyFiles"],
+    dst = "dialects",
+    flatten = True,
+)
+
+symlink_files(
+    name = "gpu_package_files",
+    srcs = ["@llvm-project//mlir/python:GPUOpsPackagePyFiles"],
+    dst = "dialects/gpu",
+    flatten = True,
+)
+
+symlink_files(
+    name = "gpu_package_passes_files",
+    srcs = ["@llvm-project//mlir/python:GPUOpsPackagePassesPyFiles"],
+    dst = "dialects/gpu/passes",
+    flatten = True,
+)
+
+py_library(
+    name = "gpu_dialect",
+    srcs = [
+        ":gpu_files",
+        ":gpu_package_files",
+        ":gpu_package_passes_files",
+    ],
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsGPU",
+        "//jaxlib/mlir/_mlir_libs:_mlirGPUPasses",
+    ],
+)
+
+symlink_inputs(
+    name = "llvm_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@llvm-project//mlir/python:LLVMOpsPyFiles",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsLLVM",
     ],
 )

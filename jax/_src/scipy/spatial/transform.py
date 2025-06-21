@@ -12,21 +12,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import functools
 import re
 import typing
 
-import scipy.spatial.transform
 
 import jax
 import jax.numpy as jnp
-from jax._src.numpy.util import _wraps
 
 
-@_wraps(scipy.spatial.transform.Rotation)
 class Rotation(typing.NamedTuple):
-  """Rotation in 3 dimensions."""
+  """Rotation in 3 dimensions.
 
+  JAX implementation of :class:`scipy.spatial.transform.Rotation`.
+
+  Examples:
+    Construct an object describing a 90 degree rotation about the z-axis:
+
+    >>> from jax.scipy.spatial.transform import Rotation
+    >>> r = Rotation.from_euler('z', 90, degrees=True)
+
+    Convert to a rotation vector:
+
+    >>> r.as_rotvec()
+    Array([0.       , 0.       , 1.5707964], dtype=float32)
+
+    Convert to rotation matrix:
+
+    >>> r.as_matrix()
+    Array([[ 0.        , -0.99999994,  0.        ],
+           [ 0.99999994,  0.        ,  0.        ],
+           [ 0.        ,  0.        ,  0.99999994]], dtype=float32)
+
+    Compose with another rotation:
+
+    >>> r2 = Rotation.from_euler('x', 90, degrees=True)
+    >>> r3 = r * r2
+    >>> r3.as_matrix()
+    Array([[0., 0., 1.],
+           [1., 0., 0.],
+           [0., 1., 0.]], dtype=float32)
+
+    See the scipy :class:`~scipy.spatial.transform.Rotation` documentation for
+    further examples of manipulating Rotation objects.
+  """
   quat: jax.Array
 
   @classmethod
@@ -74,17 +105,17 @@ class Rotation(typing.NamedTuple):
     return cls(_from_rotvec(rotvec, degrees))
 
   @classmethod
-  def identity(cls, num: typing.Optional[int] = None, dtype=float):
+  def identity(cls, num: int | None = None, dtype=float):
     """Get identity rotation(s)."""
     assert num is None
     quat = jnp.array([0., 0., 0., 1.], dtype=dtype)
     return cls(quat)
 
   @classmethod
-  def random(cls, random_key: jax.Array, num: typing.Optional[int] = None):
+  def random(cls, random_key: jax.Array, num: int | None = None):
     """Generate uniformly distributed rotations."""
     # Need to implement scipy.stats.special_ortho_group for this to work...
-    raise NotImplementedError
+    raise NotImplementedError()
 
   def __getitem__(self, indexer):
     """Extract rotation(s) at given index(es) from object."""
@@ -99,7 +130,7 @@ class Rotation(typing.NamedTuple):
     else:
       return self.quat.shape[0]
 
-  def __mul__(self, other):
+  def __mul__(self, other) -> Rotation:
     """Compose this rotation with the other."""
     return Rotation.from_quat(_compose_quat(self.quat, other.quat))
 
@@ -121,7 +152,8 @@ class Rotation(typing.NamedTuple):
       raise ValueError("Expected consecutive axes to be different, "
                        "got {}".format(seq))
     axes = jnp.array([_elementary_basis_index(x) for x in seq.lower()])
-    return _compute_euler_from_quat(self.quat, axes, extrinsic, degrees)
+    with jax.numpy_rank_promotion('allow'):
+      return _compute_euler_from_quat(self.quat, axes, extrinsic, degrees)
 
   def as_matrix(self) -> jax.Array:
     """Represent as rotation matrix."""
@@ -135,9 +167,12 @@ class Rotation(typing.NamedTuple):
     """Represent as rotation vectors."""
     return _as_rotvec(self.quat, degrees)
 
-  def as_quat(self) -> jax.Array:
+  def as_quat(self, canonical: bool=False, scalar_first: bool=False) -> jax.Array:
     """Represent as quaternions."""
-    return self.quat
+    quat = _make_canonical(self.quat) if canonical else self.quat
+    if scalar_first:
+        return jnp.roll(quat, shift=1, axis=-1)
+    return quat
 
   def inv(self):
     """Invert this rotation."""
@@ -147,7 +182,7 @@ class Rotation(typing.NamedTuple):
     """Get the magnitude(s) of the rotation(s)."""
     return _magnitude(self.quat)
 
-  def mean(self, weights: typing.Optional[jax.Array] = None):
+  def mean(self, weights: jax.Array | None = None):
     """Get the mean of the rotations."""
     w = jnp.ones(self.quat.shape[0], dtype=self.quat.dtype) if weights is None else jnp.asarray(weights, dtype=self.quat.dtype)
     if w.ndim != 1:
@@ -167,9 +202,31 @@ class Rotation(typing.NamedTuple):
     return self.quat.ndim == 1
 
 
-@_wraps(scipy.spatial.transform.Slerp)
 class Slerp(typing.NamedTuple):
-  """Spherical Linear Interpolation of Rotations."""
+  """Spherical Linear Interpolation of Rotations.
+
+  JAX implementation of :class:`scipy.spatial.transform.Slerp`.
+
+  Examples:
+    Create a Slerp instance from a series of rotations:
+
+    >>> import math
+    >>> from jax.scipy.spatial.transform import Rotation, Slerp
+    >>> rots = jnp.array([[90, 0, 0],
+    ...                   [0, 45, 0],
+    ...                   [0, 0, -30]])
+    >>> key_rotations = Rotation.from_euler('zxy', rots, degrees=True)
+    >>> key_times = [0, 1, 2]
+    >>> slerp = Slerp.init(key_times, key_rotations)
+    >>> times = [0, 0.5, 1, 1.5, 2]
+    >>> interp_rots = slerp(times)
+    >>> interp_rots.as_euler('zxy')
+    Array([[ 1.5707963e+00,  0.0000000e+00,  0.0000000e+00],
+           [ 8.5309029e-01,  3.8711953e-01,  1.7768645e-01],
+           [-2.3841858e-07,  7.8539824e-01,  0.0000000e+00],
+           [-5.6668043e-02,  3.9213133e-01, -2.8347540e-01],
+           [ 0.0000000e+00,  0.0000000e+00, -5.2359891e-01]], dtype=float32)
+  """
 
   times: jnp.ndarray
   timedelta: jnp.ndarray
@@ -269,7 +326,6 @@ def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
                     p[3]*q[2] + q[3]*p[2] + cross[2],
                     p[3]*q[3] - p[0]*q[0] - p[1]*q[1] - p[2]*q[2]])
 
-
 @functools.partial(jnp.vectorize, signature='(m),(l),(),()->(n)')
 def _compute_euler_from_quat(quat: jax.Array, axes: jax.Array, extrinsic: bool, degrees: bool) -> jax.Array:
   angle_first = jnp.where(extrinsic, 0, 2)
@@ -362,7 +418,7 @@ def _from_mrp(mrp: jax.Array) -> jax.Array:
 
 @functools.partial(jnp.vectorize, signature='(n)->(n)')
 def _inv(quat: jax.Array) -> jax.Array:
-  return quat.at[3].set(-quat[3])
+  return quat * jnp.array([-1, -1, -1, 1], dtype=quat.dtype)
 
 
 @functools.partial(jnp.vectorize, signature='(n)->()')
@@ -386,3 +442,18 @@ def _normalize_quaternion(quat: jax.Array) -> jax.Array:
 @functools.partial(jnp.vectorize, signature='(n)->()')
 def _vector_norm(vector: jax.Array) -> jax.Array:
   return jnp.sqrt(jnp.dot(vector, vector))
+
+
+@functools.partial(jnp.vectorize, signature='(n)->(n)')
+def _make_canonical(quat: jax.Array) -> jax.Array:
+  is_neg = quat < 0
+  is_zero = quat == 0
+
+  neg = (
+      is_neg[3]
+      | (is_zero[3] & is_neg[0])
+      | (is_zero[3] & is_zero[0] & is_neg[1])
+      | (is_zero[3] & is_zero[0] & is_zero[1] & is_neg[2])
+  )
+
+  return jnp.where(neg, -quat, quat)

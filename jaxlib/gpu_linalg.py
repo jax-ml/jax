@@ -12,72 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import functools
-from functools import partial
-import importlib
-import operator
+from typing import Any
 
-import jaxlib.mlir.ir as ir
+from .plugin_support import import_from_plugin
 
-from .hlo_helpers import custom_call
-from .gpu_common_utils import GpuLibNotLinkedError
-
-from jaxlib import xla_client
-
-for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
-  try:
-    _cuda_linalg = importlib.import_module(
-        f"{cuda_module_name}._linalg", package="jaxlib"
-    )
-  except ImportError:
-    _cuda_linalg = None
-  else:
-    break
-
-if _cuda_linalg:
-  for _name, _value in _cuda_linalg.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-
-try:
-  from .rocm import _linalg as _hip_linalg  # pytype: disable=import-error
-  for _name, _value in _hip_linalg.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="ROCM")
-except ImportError:
-  _hip_linalg = None
-
-_prod = lambda xs: functools.reduce(operator.mul, xs, 1)
+_cuda_linalg = import_from_plugin("cuda", "_linalg")
+_hip_linalg = import_from_plugin("rocm", "_linalg")
 
 
-def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_size):
-  """Kernel for the transformation of pivots to permutations on GPU."""
-  typ = ir.RankedTensorType(pivots.type)
-  dims = typ.shape
-  i32_type = ir.IntegerType.get_signless(32)
+def registrations() -> dict[str, list[tuple[str, Any, int]]]:
+  registrations: dict[str, list[tuple[str, Any, int]]] = {
+      "CUDA": [],
+      "ROCM": [],
+  }
+  for platform, module in [("CUDA", _cuda_linalg), ("ROCM", _hip_linalg)]:
+    if module:
+      registrations[platform].extend(
+          (*i, 1) for i in module.registrations().items()
+      )
+  return registrations  # pytype: disable=bad-return-type
 
-  assert typ.element_type == i32_type, typ
 
-  batch_size = _prod(dims[:-1])
-  pivot_size = dims[-1]
-
-  if not gpu_linalg:
-    raise GpuLibNotLinkedError()
-
-  opaque = gpu_linalg.lu_pivots_to_permutation_descriptor(
-      batch_size, pivot_size, permutation_size)
-  pivots_layout = tuple(range(len(dims) - 1, -1, -1))
-  permutations_layout = pivots_layout
-  permutations_dims = list(dims)
-  permutations_dims[-1] = permutation_size
-  permutations_type = ir.RankedTensorType.get(permutations_dims, i32_type)
-  return custom_call(
-      f"{platform}_lu_pivots_to_permutation",
-      result_types=[permutations_type],
-      operands=[pivots],
-      backend_config=opaque,
-      operand_layouts=[pivots_layout],
-      result_layouts=[permutations_layout]).results
-
-cuda_lu_pivots_to_permutation = partial(_lu_pivots_to_permutation_hlo, "cu",
-                                        _cuda_linalg)
-hip_lu_pivots_to_permutation = partial(
-    _lu_pivots_to_permutation_hlo, "hip", _hip_linalg)
+def batch_partitionable_targets() -> list[str]:
+  targets = []
+  if _cuda_linalg:
+    targets.append("cu_lu_pivots_to_permutation")
+  if _hip_linalg:
+    targets.append("hip_lu_pivots_to_permutation")
+  return targets

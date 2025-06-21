@@ -18,7 +18,7 @@ import operator
 from jax import dtypes
 from jax import vmap
 from jax import random
-from jax.util import split_list
+from jax._src.util import split_list
 import jax.numpy as jnp
 from jax.experimental import sparse
 
@@ -29,7 +29,7 @@ def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=None,
   """Generate a random BCOO matrix.
 
   Args:
-    key : random.PRNGKey to be passed to ``generator`` function.
+    key : PRNG key to be passed to ``generator`` function.
     shape : tuple specifying the shape of the array to be generated.
     dtype : dtype of the array to be generated.
     indices_dtype: dtype of the BCOO indices.

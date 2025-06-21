@@ -1,0 +1,12 @@
+[build-system]
+requires = ["scikit-build-core", "nanobind", "jax>=0.4.31"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "jax_ffi_example"
+version = "0.0.1"
+requires-python = ">=3.11"
+dependencies = ["jax"]
+
+[project.optional-dependencies]
+test = ["pytest", "absl-py"]

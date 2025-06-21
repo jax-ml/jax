@@ -1,6 +1,8 @@
 # The `checkify` transformation
 
-**TL;DR** Checkify lets you add `jit`-able runtime error checking (e.g. out of bounds indexing) to your JAX code. Use the `checkify.checkify` transformation together with the assert-like `checkify.check` function to add runtime checks to JAX code:
+<!--* freshness: { reviewed: '2023-02-28' } *-->
+
+**Summary:** Checkify lets you add `jit`-able runtime error checking (e.g. out of bounds indexing) to your JAX code. Use the `checkify.checkify` transformation together with the assert-like `checkify.check` function to add runtime checks to JAX code:
 
 ```python
 from jax.experimental import checkify

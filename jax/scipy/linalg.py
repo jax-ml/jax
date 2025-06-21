@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.scipy.linalg import (
   block_diag as block_diag,
@@ -26,10 +26,12 @@ from jax._src.scipy.linalg import (
   expm as expm,
   expm_frechet as expm_frechet,
   hessenberg as hessenberg,
+  hilbert as hilbert,
   inv as inv,
   lu as lu,
   lu_factor as lu_factor,
   lu_solve as lu_solve,
+  pascal as pascal,
   polar as polar,
   qr as qr,
   rsf2csf as rsf2csf,
@@ -44,31 +46,3 @@ from jax._src.scipy.linalg import (
 from jax._src.third_party.scipy.linalg import (
   funm as funm,
 )
-
-# Deprecations
-from jax._src.scipy.linalg import (
-  tril as _deprecated_tril,
-  triu as _deprecated_triu,
-)
-
-_deprecations = {
-    # Added August 18, 2023:
-    "tril": (
-        "jax.scipy.linalg.tril is deprecated. Use jax.numpy.tril instead.",
-        _deprecated_tril,
-    ),
-    "triu": (
-        "jax.scipy.linalg.triu is deprecated. Use jax.numpy.triu instead.",
-        _deprecated_triu,
-    ),
-}
-
-import typing
-if typing.TYPE_CHECKING:
-  tril = _deprecated_tril
-  triu = _deprecated_triu
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing

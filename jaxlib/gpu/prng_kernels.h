@@ -16,24 +16,21 @@ limitations under the License.
 #ifndef JAXLIB_GPU_PRNG_KERNELS_H_
 #define JAXLIB_GPU_PRNG_KERNELS_H_
 
-#include <cstddef>
-#include <string>
+#include <cstdint>
 
 #include "jaxlib/gpu/vendor.h"
-#include "xla/service/custom_call_status.h"
+#include "xla/ffi/api/ffi.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
-struct ThreeFry2x32Descriptor {
-  std::int64_t n;  // If -1 then the length is passed as a 5th operand
-};
+void LaunchThreeFry2x32KernelFfi(gpuStream_t stream,
+                                 std::int64_t n,
+                                 std::uint32_t *keys0, std::uint32_t *keys1,
+                                 std::uint32_t *data0, std::uint32_t *data1,
+                                 std::uint32_t *out0, std::uint32_t *out1);
 
-void LaunchThreeFry2x32Kernel(gpuStream_t stream, void** buffers,
-                              ThreeFry2x32Descriptor descriptor);
-
-void ThreeFry2x32(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(ThreeFry2x32Ffi);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

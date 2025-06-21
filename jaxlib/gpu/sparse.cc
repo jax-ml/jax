@@ -13,24 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <algorithm>
-#include <cstdint>
+#include <cstddef>
 #include <stdexcept>
 #include <utility>
-#include <vector>
 
-#include "nanobind/nanobind.h"
-#include "nanobind/stl/pair.h"
-#include "absl/base/casts.h"
-#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
-#include "absl/synchronization/mutex.h"
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
+#include "jaxlib/absl_status_casters.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/sparse_kernels.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
-#include "tsl/python/lib/core/numpy.h"
+#include "xla/tsl/python/lib/core/numpy.h"
 
 namespace nb = nanobind;
 
@@ -57,14 +53,19 @@ gpusparseIndexType_t DtypeToCuSparseIndexType(const dtype& np_type) {
 gpuDataType DtypeToCudaDataType(const dtype& np_type) {
   static auto* types =
       new absl::flat_hash_map<std::pair<char, int>, gpuDataType>({
-        {{'f', 2}, GPU_R_16F}, {{'c', 4}, GPU_C_16F}, {{'f', 4}, GPU_R_32F},
-            {{'c', 8}, GPU_C_32F}, {{'f', 8}, GPU_R_64F},
-            {{'c', 16}, GPU_C_64F},
+          {{'f', 2}, GPU_R_16F},
+          {{'c', 4}, GPU_C_16F},
+          {{'f', 4}, GPU_R_32F},
+          {{'c', 8}, GPU_C_32F},
+          {{'f', 8}, GPU_R_64F},
+          {{'c', 16}, GPU_C_64F},
 #ifdef JAX_GPU_CUDA
-            {{'i', 1}, CUDA_R_8I}, {{'u', 1}, CUDA_R_8U},
-            {{'i', 4}, CUDA_R_32I}, {{'u', 4}, CUDA_R_32U},
+          {{'i', 1}, CUDA_R_8I},
+          {{'u', 1}, CUDA_R_8U},
+          {{'i', 4}, CUDA_R_32I},
+          {{'u', 4}, CUDA_R_32U},
 #if JAX_GPU_HAVE_SPARSE
-            {{'V', 2}, CUDA_R_16BF},
+          {{'V', 2}, CUDA_R_16BF},
 #endif  // JAX_GPU_HAVE_SPARSE
 #endif  // JAX_GPU_CUDA
       });
@@ -78,9 +79,8 @@ gpuDataType DtypeToCudaDataType(const dtype& np_type) {
 }
 // Returns the descriptor for a Sparse matrix.
 SparseMatDescriptor BuildSparseMatDescriptor(const dtype& data_dtype,
-                                             const dtype& index_dtype,
-                                             int rows, int cols, int nnz,
-                                             int batch_count,
+                                             const dtype& index_dtype, int rows,
+                                             int cols, int nnz, int batch_count,
                                              int batch_stride) {
   gpuDataType value_type = DtypeToCudaDataType(data_dtype);
   gpusparseIndexType_t index_type = DtypeToCuSparseIndexType(index_dtype);
@@ -89,16 +89,15 @@ SparseMatDescriptor BuildSparseMatDescriptor(const dtype& data_dtype,
 }
 
 // Returns the descriptor for a Dense matrix.
-DenseMatDescriptor BuildDenseMatDescriptor(const dtype& data_dtype,
-                                           int rows, int cols, int batch_count,
+DenseMatDescriptor BuildDenseMatDescriptor(const dtype& data_dtype, int rows,
+                                           int cols, int batch_count,
                                            int batch_stride) {
   gpuDataType value_type = DtypeToCudaDataType(data_dtype);
   return DenseMatDescriptor{value_type, rows, cols, batch_count, batch_stride};
 }
 
 // Returns the descriptor for a Dense vector.
-DenseVecDescriptor BuildDenseVecDescriptor(const dtype& data_dtype,
-                                           int size) {
+DenseVecDescriptor BuildDenseVecDescriptor(const dtype& data_dtype, int size) {
   gpuDataType value_type = DtypeToCudaDataType(data_dtype);
   return DenseVecDescriptor{value_type, size};
 }
@@ -107,9 +106,10 @@ DenseVecDescriptor BuildDenseVecDescriptor(const dtype& data_dtype,
 // CsrToDense: Convert CSR matrix to dense matrix
 
 // Returns the descriptor for a Sparse matrix.
-std::pair<size_t, nb::bytes> BuildCsrToDenseDescriptor(
-    const dtype& data_dtype, const dtype& index_dtype, int rows,
-    int cols, int nnz) {
+std::pair<size_t, nb::bytes> BuildCsrToDenseDescriptor(const dtype& data_dtype,
+                                                       const dtype& index_dtype,
+                                                       int rows, int cols,
+                                                       int nnz) {
   auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
@@ -142,51 +142,12 @@ std::pair<size_t, nb::bytes> BuildCsrToDenseDescriptor(
   return {buffer_size, PackDescriptor(d)};
 }
 
-absl::Status CsrToDense_(gpuStream_t stream, void** buffers, const char* opaque,
-                         size_t opaque_len) {
-  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const SparseMatDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
-
-  gpusparseSpMatDescr_t mat_a = 0;
-  gpusparseDnMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseCreateCsr(&mat_a, d.rows, d.cols, d.nnz,
-                         /*csrRowOffsets=*/buffers[2],
-                         /*csrColInd=*/buffers[1],
-                         /*csrValues=*/buffers[0], d.index_type, d.index_type,
-                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_b, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[3], d.value_type, GPUSPARSE_ORDER_ROW)));
-
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseSparseToDense(handle.get(), mat_a, mat_b,
-                             GPUSPARSE_SPARSETODENSE_ALG_DEFAULT, buffers[4])));
-
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
-  return absl::OkStatus();
-}
-
-void CsrToDense(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrToDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
-
 // CsrFromDense: Convert dense matrix to CSR matrix
 
 // Returns the descriptor for a CsrFromDense operation.
 std::pair<size_t, nb::bytes> BuildCsrFromDenseDescriptor(
-    const dtype& data_dtype, const dtype& index_dtype, int rows,
-    int cols, int nnz) {
+    const dtype& data_dtype, const dtype& index_dtype, int rows, int cols,
+    int nnz) {
   auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
@@ -217,53 +178,12 @@ std::pair<size_t, nb::bytes> BuildCsrFromDenseDescriptor(
   return {buffer_size, PackDescriptor(d)};
 }
 
-absl::Status CsrFromDense_(gpuStream_t stream, void** buffers,
-                           const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const SparseMatDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
-
-  gpusparseDnMatDescr_t mat_a = 0;
-  gpusparseSpMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_a, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[0], d.value_type, GPUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseCreateCsr(&mat_b, d.rows, d.cols, d.nnz,
-                         /*csrRowOffsets=*/buffers[3],
-                         /*csrColInd=*/buffers[2],
-                         /*csrValues=*/buffers[1], d.index_type, d.index_type,
-                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_analysis(
-      handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_convert(
-      handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_b)));
-  return absl::OkStatus();
-}
-
-void CsrFromDense(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrFromDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
-
 // CsrMatvec: Product of CSR matrix and dense vector.
 
 // Returns the descriptor for a CsrMatvec operation.
 std::pair<size_t, nb::bytes> BuildCsrMatvecDescriptor(
-    const dtype& data_dtype, const dtype& x_dtype,
-    const dtype& compute_dtype, const dtype& index_dtype, int rows,
-    int cols, int nnz, bool transpose) {
+    const dtype& data_dtype, const dtype& x_dtype, const dtype& compute_dtype,
+    const dtype& index_dtype, int rows, int cols, int nnz, bool transpose) {
   auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
@@ -292,7 +212,7 @@ std::pair<size_t, nb::bytes> BuildCsrMatvecDescriptor(
   JAX_THROW_IF_ERROR(
       JAX_AS_STATUS(gpusparseCreateDnVec(&vec_y, y.size, empty, y.type)));
   size_t buffer_size;
-  SparseConst alpha = ConstOne(y.type);
+  SparseConst alpha = ValueOrThrow(ConstOne(y.type));
   SparseConst beta = ConstZero(y.type);
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseSpMV_bufferSize(
       handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y, y.type,
@@ -309,9 +229,9 @@ std::pair<size_t, nb::bytes> BuildCsrMatvecDescriptor(
 
 // Returns the descriptor for a CsrMatmat operation.
 std::pair<size_t, nb::bytes> BuildCsrMatmatDescriptor(
-    const dtype& data_dtype, const dtype& b_dtype,
-    const dtype& compute_dtype, const dtype& index_dtype, int rows,
-    int cols, int BCcols, int nnz, bool transpose) {
+    const dtype& data_dtype, const dtype& b_dtype, const dtype& compute_dtype,
+    const dtype& index_dtype, int rows, int cols, int BCcols, int nnz,
+    bool transpose) {
   auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
@@ -344,7 +264,7 @@ std::pair<size_t, nb::bytes> BuildCsrMatmatDescriptor(
       JAX_AS_STATUS(gpusparseCreateDnMat(&mat_c, C.rows, C.cols, /*ld=*/C.cols,
                                          empty, C.type, GPUSPARSE_ORDER_ROW)));
   size_t buffer_size;
-  SparseConst alpha = ConstOne(C.type);
+  SparseConst alpha = ValueOrThrow(ConstOne(C.type));
   SparseConst beta = ConstZero(C.type);
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseSpMM_bufferSize(
       handle.get(), op_A, GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mat_a,
@@ -360,9 +280,10 @@ std::pair<size_t, nb::bytes> BuildCsrMatmatDescriptor(
 // CooToDense: Convert COO matrix to dense matrix
 
 // Returns the descriptor for a CooToDense operation.
-std::pair<size_t, nb::bytes> BuildCooToDenseDescriptor(
-    const dtype& data_dtype, const dtype& index_dtype, int rows,
-    int cols, int nnz) {
+std::pair<size_t, nb::bytes> BuildCooToDenseDescriptor(const dtype& data_dtype,
+                                                       const dtype& index_dtype,
+                                                       int rows, int cols,
+                                                       int nnz) {
   auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
@@ -398,8 +319,8 @@ std::pair<size_t, nb::bytes> BuildCooToDenseDescriptor(
 
 // Returns the descriptor for a CooFromDense operation.
 std::pair<size_t, nb::bytes> BuildCooFromDenseDescriptor(
-    const dtype& data_dtype, const dtype& index_dtype, int rows,
-    int cols, int nnz) {
+    const dtype& data_dtype, const dtype& index_dtype, int rows, int cols,
+    int nnz) {
   auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
@@ -434,9 +355,8 @@ std::pair<size_t, nb::bytes> BuildCooFromDenseDescriptor(
 
 // Returns the descriptor for a CooMatvec operation.
 std::pair<size_t, nb::bytes> BuildCooMatvecDescriptor(
-    const dtype& data_dtype, const dtype& x_dtype,
-    const dtype& compute_dtype, const dtype& index_dtype, int rows,
-    int cols, int nnz, bool transpose) {
+    const dtype& data_dtype, const dtype& x_dtype, const dtype& compute_dtype,
+    const dtype& index_dtype, int rows, int cols, int nnz, bool transpose) {
   auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
@@ -465,7 +385,7 @@ std::pair<size_t, nb::bytes> BuildCooMatvecDescriptor(
   JAX_THROW_IF_ERROR(
       JAX_AS_STATUS(gpusparseCreateDnVec(&vec_y, y.size, empty, y.type)));
   size_t buffer_size;
-  SparseConst alpha = ConstOne(y.type);
+  SparseConst alpha = ValueOrThrow(ConstOne(y.type));
   SparseConst beta = ConstZero(y.type);
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseSpMV_bufferSize(
       handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y, y.type,
@@ -482,10 +402,10 @@ std::pair<size_t, nb::bytes> BuildCooMatvecDescriptor(
 
 // Returns the descriptor for a CooMatmat operation.
 std::pair<size_t, nb::bytes> BuildCooMatmatDescriptor(
-    const dtype& data_dtype, const dtype& b_dtype,
-    const dtype& compute_dtype, const dtype& index_dtype, int rows,
-    int cols, int BCcols, int nnz, bool transpose, int batch_count,
-    int lhs_batch_stride, int rhs_batch_stride) {
+    const dtype& data_dtype, const dtype& b_dtype, const dtype& compute_dtype,
+    const dtype& index_dtype, int rows, int cols, int BCcols, int nnz,
+    bool transpose, int batch_count, int lhs_batch_stride,
+    int rhs_batch_stride) {
   // Three batch modes are supported, C_i = A_i B, C_i = A B_i, and
   // Ci = A_i B_i, where `i` denotes the batch dimension.
   // All three matrices A, B, and C must have the same batch count.
@@ -535,7 +455,7 @@ std::pair<size_t, nb::bytes> BuildCooMatmatDescriptor(
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseDnMatSetStridedBatch(
       mat_c, /*batchCount=*/batch_count, /*batchStride=*/C.batch_stride)));
   size_t buffer_size;
-  SparseConst alpha = ConstOne(C.type);
+  SparseConst alpha = ValueOrThrow(ConstOne(C.type));
   SparseConst beta = ConstZero(C.type);
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseSpMM_bufferSize(
       handle.get(), op_A, GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mat_a,
@@ -550,46 +470,28 @@ std::pair<size_t, nb::bytes> BuildCooMatmatDescriptor(
 
 #endif  // if JAX_GPU_HAVE_SPARSE
 
-nb::bytes BuildGtsv2Descriptor(int b, int m, int n, int ldb) {
-  return PackDescriptor(Gtsv2Descriptor{b, m, n, ldb});
-}
-
-template <typename F>
-size_t Gtsv2BufferSize(F f, int m, int n, int ldb) {
-  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
-  JAX_THROW_IF_ERROR(h.status());
-  auto& handle = *h;
-  size_t size;
-  JAX_THROW_IF_ERROR(
-      JAX_AS_STATUS(f(handle.get(), m, n, /*dl=*/nullptr, /*d=*/nullptr,
-                      /*du=*/nullptr, /*B=*/nullptr, ldb, &size)));
-  return size;
-}
-
-size_t Gtsv2BufferSizeF32(int m, int n, int ldb) {
-  return Gtsv2BufferSize(gpusparseSgtsv2_bufferSizeExt, m, n, ldb);
-}
-
-size_t Gtsv2BufferSizeF64(int m, int n, int ldb) {
-  return Gtsv2BufferSize(gpusparseDgtsv2_bufferSizeExt, m, n, ldb);
-}
-
 nb::dict Registrations() {
   nb::dict dict;
 #if JAX_GPU_HAVE_SPARSE
-  dict[JAX_GPU_PREFIX "sparse_csr_todense"] = EncapsulateFunction(CsrToDense);
-  dict[JAX_GPU_PREFIX "sparse_csr_fromdense"] =
-      EncapsulateFunction(CsrFromDense);
-  dict[JAX_GPU_PREFIX "sparse_csr_matvec"] = EncapsulateFunction(CsrMatvec);
-  dict[JAX_GPU_PREFIX "sparse_csr_matmat"] = EncapsulateFunction(CsrMatmat);
-  dict[JAX_GPU_PREFIX "sparse_coo_todense"] = EncapsulateFunction(CooToDense);
-  dict[JAX_GPU_PREFIX "sparse_coo_fromdense"] =
-      EncapsulateFunction(CooFromDense);
-  dict[JAX_GPU_PREFIX "sparse_coo_matvec"] = EncapsulateFunction(CooMatvec);
-  dict[JAX_GPU_PREFIX "sparse_coo_matmat"] = EncapsulateFunction(CooMatmat);
+  dict[JAX_GPU_PREFIX "sparse_csr_todense_ffi"] =
+      EncapsulateFfiHandler(CsrToDenseFfi);
+  dict[JAX_GPU_PREFIX "sparse_csr_fromdense_ffi"] =
+      EncapsulateFfiHandler(CsrFromDenseFfi);
+  dict[JAX_GPU_PREFIX "sparse_csr_matvec_ffi"] =
+      EncapsulateFfiHandler(CsrMatvecFfi);
+  dict[JAX_GPU_PREFIX "sparse_csr_matmat_ffi"] =
+      EncapsulateFfiHandler(CsrMatmatFfi);
+  dict[JAX_GPU_PREFIX "sparse_coo_todense_ffi"] =
+      EncapsulateFfiHandler(CooToDenseFfi);
+  dict[JAX_GPU_PREFIX "sparse_coo_fromdense_ffi"] =
+      EncapsulateFfiHandler(CooFromDenseFfi);
+  dict[JAX_GPU_PREFIX "sparse_coo_matvec_ffi"] =
+      EncapsulateFfiHandler(CooMatvecFfi);
+  dict[JAX_GPU_PREFIX "sparse_coo_matmat_ffi"] =
+      EncapsulateFfiHandler(CooMatmatFfi);
 #endif
-  dict[JAX_GPU_PREFIX "sparse_gtsv2_f32"] = EncapsulateFunction(gtsv2_f32);
-  dict[JAX_GPU_PREFIX "sparse_gtsv2_f64"] = EncapsulateFunction(gtsv2_f64);
+  dict[JAX_GPU_PREFIX "sparse_gtsv2_ffi"] = EncapsulateFfiHandler(kGtsv2);
+
   // TODO(tomhennigan): Add support for gtsv2 complex 32/64.
   return dict;
 }
@@ -608,9 +510,6 @@ NB_MODULE(_sparse, m) {
   m.def("build_coo_matvec_descriptor", &BuildCooMatvecDescriptor);
   m.def("build_coo_matmat_descriptor", &BuildCooMatmatDescriptor);
 #endif
-  m.def("gtsv2_f32_buffer_size", &Gtsv2BufferSizeF32);
-  m.def("gtsv2_f64_buffer_size", &Gtsv2BufferSizeF64);
-  m.def("build_gtsv2_descriptor", &BuildGtsv2Descriptor);
 }
 
 }  // namespace

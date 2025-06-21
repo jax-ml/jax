@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.cloud_tpu_init import cloud_tpu_init
+from jax._src.cloud_tpu_init import cloud_tpu_init as cloud_tpu_init

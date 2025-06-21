@@ -13,9 +13,11 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.scipy.stats.uniform import (
   logpdf as logpdf,
   pdf as pdf,
+  cdf as cdf,
+  ppf as ppf,
 )

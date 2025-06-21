@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import warnings
-
 import numpy as np
 
 from jax import lax
 import jax.numpy as jnp
 
+from jax._src.lax import lax as lax_internal
 from jax._src import dtypes
 from jax._src.tree_util import tree_flatten, tree_unflatten
 from jax._src.util import safe_zip, unzip2, HashablePartial
@@ -36,13 +35,13 @@ def ravel_pytree(pytree):
     A pair where the first element is a 1D array representing the flattened and
     concatenated leaf values, with dtype determined by promoting the dtypes of
     leaf values, and the second element is a callable for unflattening a 1D
-    vector of the same length back to a pytree of of the same structure as the
+    vector of the same length back to a pytree of the same structure as the
     input ``pytree``. If the input pytree is empty (i.e. has no leaves) then as
     a convention a 1D empty array of dtype float32 is returned in the first
     component of the output.
 
   For details on dtype promotion, see
-  https://jax.readthedocs.io/en/latest/type_promotion.html.
+  https://docs.jax.dev/en/latest/type_promotion.html.
 
   """
   leaves, treedef = tree_flatten(pytree)
@@ -61,7 +60,7 @@ def _ravel_list(lst):
 
   if all(dt == to_dtype for dt in from_dtypes):
     # Skip any dtype conversion, resulting in a dtype-polymorphic `unravel`.
-    # See https://github.com/google/jax/issues/7809.
+    # See https://github.com/jax-ml/jax/issues/7809.
     del from_dtypes, to_dtype
     raveled = jnp.concatenate([jnp.ravel(e) for e in lst])
     return raveled, HashablePartial(_unravel_list_single_dtype, indices, shapes)
@@ -83,7 +82,8 @@ def _unravel_list(indices, shapes, from_dtypes, to_dtype, arr):
     raise TypeError(f"unravel function given array of dtype {arr_dtype}, "
                     f"but expected dtype {to_dtype}")
   chunks = jnp.split(arr, indices[:-1])
-  with warnings.catch_warnings():
-    warnings.simplefilter("ignore")  # ignore complex-to-real cast warning
-    return [lax.convert_element_type(chunk.reshape(shape), dtype)
-            for chunk, shape, dtype in zip(chunks, shapes, from_dtypes)]
+  return [
+    lax_internal._convert_element_type(chunk.reshape(shape), dtype,
+                                       warn_on_complex_to_real_cast=False)
+    for chunk, shape, dtype in zip(chunks, shapes, from_dtypes)
+  ]

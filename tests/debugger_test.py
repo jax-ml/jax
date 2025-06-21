@@ -21,14 +21,14 @@ import unittest
 
 from absl.testing import absltest
 import jax
-from jax import config
 from jax.experimental import pjit
 from jax._src import debugger
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 import numpy as np
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
+jtu.request_cpu_devices(2)
 
 def make_fake_stdin_stdout(commands: Sequence[str]) -> tuple[IO[str], io.StringIO]:
   fake_stdin = io.StringIO()
@@ -41,19 +41,12 @@ def make_fake_stdin_stdout(commands: Sequence[str]) -> tuple[IO[str], io.StringI
 def _format_multiline(text):
   return textwrap.dedent(text).lstrip()
 
-prev_xla_flags = None
-
-def setUpModule():
-  global prev_xla_flags
-  # This will control the CPU devices. On TPU we always have 2 devices
-  prev_xla_flags = jtu.set_host_platform_device_count(2)
-
-# Reset to previous configuration in case other test modules will be run.
-def tearDownModule():
-  prev_xla_flags()
-
 foo = 2
 
+# This test is thread-unsafe because jax.effects_barrier() is global. This means
+# that we can create a deadlock if running tests in multiple threads because we
+# can introduce false dependencies via the effects barrier.
+@jtu.thread_unsafe_test_class()
 class CliDebuggerTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -111,7 +104,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return y
     expected = _format_multiline(r"""
     Entering jdb:
-    (jdb) array(2., dtype=float32)
+    (jdb) Array(2., dtype=float32)
     (jdb) """)
     f(jnp.array(2., jnp.float32))
     jax.effects_barrier()
@@ -127,7 +120,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return y
     expected = _format_multiline(r"""
     Entering jdb:
-    (jdb) (array(2., dtype=float32), array(3., dtype=float32))
+    (jdb) (Array(2., dtype=float32), Array(3., dtype=float32))
     (jdb) """)
     f(jnp.array(2., jnp.float32))
     jax.effects_barrier()
@@ -197,7 +190,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
     ->        y = f\(x\)
               return jnp\.exp\(y\)
     .*
-    \(jdb\) array\(2\., dtype=float32\)
+    \(jdb\) Array\(2\., dtype=float32\)
     \(jdb\) > .*debugger_test\.py\([0-9]+\)
             def f\(x\):
               y = jnp\.sin\(x\)
@@ -226,9 +219,9 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return jnp.exp(y)
     expected = _format_multiline(r"""
     Entering jdb:
-    (jdb) array(3., dtype=float32)
+    (jdb) Array(3., dtype=float32)
     (jdb) Entering jdb:
-    (jdb) array(6., dtype=float32)
+    (jdb) Array(6., dtype=float32)
     (jdb) """)
     g(jnp.array(2., jnp.float32))
     jax.effects_barrier()
@@ -237,14 +230,9 @@ class CliDebuggerTest(jtu.JaxTestCase):
   def test_debugger_works_with_vmap(self):
     stdin, stdout = make_fake_stdin_stdout(["p y", "c", "p y", "c"])
 
-    # On TPU, the breakpoints can be reordered inside of vmap but can be fixed
-    # by ordering sends.
-    # TODO(sharadmv): change back to ordered = False when sends are ordered
-    ordered = jax.default_backend() == "tpu"
-
     def f(x):
       y = x + 1.
-      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=ordered,
+      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=True,
           backend="cli")
       return 2. * y
 
@@ -255,9 +243,9 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return jnp.exp(y)
     expected = _format_multiline(r"""
     Entering jdb:
-    (jdb) array(1., dtype=float32)
+    (jdb) Array(1., dtype=float32)
     (jdb) Entering jdb:
-    (jdb) array(2., dtype=float32)
+    (jdb) Array(2., dtype=float32)
     (jdb) """)
     g(jnp.arange(2., dtype=jnp.float32))
     jax.effects_barrier()
@@ -280,9 +268,9 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return jnp.exp(y)
     expected = _format_multiline(r"""
     Entering jdb:
-    \(jdb\) array\(.*, dtype=float32\)
+    \(jdb\) Array\(.*, dtype=float32\)
     \(jdb\) Entering jdb:
-    \(jdb\) array\(.*, dtype=float32\)
+    \(jdb\) Array\(.*, dtype=float32\)
     \(jdb\) """)
     g(jnp.arange(2., dtype=jnp.float32))
     jax.effects_barrier()
@@ -308,7 +296,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
         out_shardings=jax.sharding.PartitionSpec("dev"),
     )
     with jax.sharding.Mesh(np.array(jax.devices()), ["dev"]):
-      arr = (1 + np.arange(8)).astype(np.int32)
+      arr = (1 + jnp.arange(8)).astype(np.int32)
       expected = _format_multiline(r"""
       Entering jdb:
       \(jdb\) {}

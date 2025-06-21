@@ -36,67 +36,59 @@ for examples.
 """
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.tree_util import (
-  Partial as Partial,
-  PyTreeDef as PyTreeDef,
-  all_leaves as all_leaves,
-  build_tree as build_tree,
-  register_pytree_node as register_pytree_node,
-  register_pytree_node_class as register_pytree_node_class,
-  tree_all as tree_all,
-  tree_flatten as tree_flatten,
-  tree_leaves as tree_leaves,
-  tree_map as tree_map,
-  tree_reduce as tree_reduce,
-  tree_structure as tree_structure,
-  tree_transpose as tree_transpose,
-  tree_unflatten as tree_unflatten,
-  treedef_children as treedef_children,
-  treedef_is_leaf as treedef_is_leaf,
-  treedef_tuple as treedef_tuple,
-  register_pytree_with_keys as register_pytree_with_keys,
-  register_pytree_with_keys_class as register_pytree_with_keys_class,
-  tree_map_with_path as tree_map_with_path,
-  tree_flatten_with_path as tree_flatten_with_path,
-  tree_leaves_with_path as tree_leaves_with_path,
-  keystr as keystr,
-  SequenceKey as SequenceKey,
-  DictKey as DictKey,
-  GetAttrKey as GetAttrKey,
-  FlattenedIndexKey as FlattenedIndexKey,
-  register_static as register_static,
-  register_keypaths as _deprecated_register_keypaths,
-  AttributeKeyPathEntry as _DeprecatedAttributeKeyPathEntry,
-  GetitemKeyPathEntry as _DeprecatedGetitemKeyPathEntry,
+    DictKey as DictKey,
+    FlattenedIndexKey as FlattenedIndexKey,
+    GetAttrKey as GetAttrKey,
+    KeyEntry as KeyEntry,
+    KeyPath as KeyPath,
+    Partial as Partial,
+    PyTreeDef as PyTreeDef,
+    SequenceKey as SequenceKey,
+    all_leaves as all_leaves,
+    default_registry as default_registry,
+    keystr as keystr,
+    register_dataclass as register_dataclass,
+    register_pytree_node_class as register_pytree_node_class,
+    register_pytree_node as register_pytree_node,
+    register_pytree_with_keys_class as register_pytree_with_keys_class,
+    register_pytree_with_keys as register_pytree_with_keys,
+    register_static as register_static,
+    tree_all as tree_all,
+    tree_broadcast as tree_broadcast,
+    tree_flatten_with_path as tree_flatten_with_path,
+    tree_flatten as tree_flatten,
+    tree_leaves_with_path as tree_leaves_with_path,
+    tree_leaves as tree_leaves,
+    tree_map_with_path as tree_map_with_path,
+    tree_map as tree_map,
+    tree_reduce as tree_reduce,
+    tree_structure as tree_structure,
+    tree_transpose as tree_transpose,
+    tree_unflatten as tree_unflatten,
+    treedef_children as treedef_children,
+    treedef_is_leaf as treedef_is_leaf,
+    treedef_tuple as treedef_tuple,
 )
 
-
 _deprecations = {
-    # Added August 29, 2023; emitted warning since March 10, 2023
-    "register_keypaths": (
-        "jax.tree_util.register_keypaths is deprecated. Use register_pytree_with_keys instead",
-        _deprecated_register_keypaths,
-    ),
-    # Added August 29, 2023:
-    "AttributeKeyPathEntry": (
-        "jax.tree_util.AttributeKeyPathEntry is deprecated. Use `SequenceKey` or `DictKey` instead.",
-        _DeprecatedAttributeKeyPathEntry,
-    ),
-    "GetitemKeyPathEntry": (
-        "jax.tree_util.GetitemKeyPathEntry is deprecated. Use `SequenceKey` or `DictKey` instead.",
-        _DeprecatedGetitemKeyPathEntry,
+    # Added March 21, 2025:
+    "build_tree": (
+        (
+            "jax.tree_util.build_tree was deprecated in JAX v0.6.0 and removed in"
+            " JAX v0.7.0. Use jax.tree.unflatten instead."
+        ),
+        None
     ),
 }
 
-import typing
-if typing.TYPE_CHECKING:
-  register_keypaths = _deprecated_register_keypaths
-  AttributeKeyPathEntry = _DeprecatedAttributeKeyPathEntry
-  GetitemKeyPathEntry = _DeprecatedGetitemKeyPathEntry
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  from jax._src.tree_util import build_tree as build_tree
 else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing
+  from jax._src.deprecations import deprecation_getattr
+  __getattr__ = deprecation_getattr(__name__, _deprecations)
+  del deprecation_getattr
+del _typing

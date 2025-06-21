@@ -13,14 +13,16 @@
 # limitations under the License.
 
 """Module for lowering JAX primitives to Triton IR."""
+
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
+import math
 import operator
-from typing import Any, Callable
-from collections.abc import Sequence
-import zlib
+from typing import Any, TypeVar
+from collections.abc import Hashable
 
 import jax
 from jax import lax
@@ -28,155 +30,204 @@ from jax import tree_util
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax._src import pjit
+from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.control_flow import for_loop
-from jax._src.lib import gpu_triton as triton_kernel_call_lib
-from jax._src.lib import hlo_helpers
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith as arith_dialect
+from jax._src.lib.mlir.dialects import math as math_dialect
+from jax._src.lib.mlir.dialects import scf as scf_dialect
+from jax._src.lib.triton import dialect as tt_dialect
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import indexing
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
-from jax._src.pallas.pallas_call import pallas_call_p
-from jax._src.state import AbstractRef
 from jax._src.state import discharge
+from jax._src.state import indexing
 from jax._src.state import primitives as sp
+from jax._src.util import foreach
 from jax._src.util import merge_lists
 from jax._src.util import partition_list
 from jax._src.util import split_list
-from jax._src.util import weakref_lru_cache
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
-from jax_triton import triton_lib
-from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
-from jax_triton.triton_lib import get_triton_type
 import numpy as np
-from triton._C.libtriton.triton import ir as tl_ir
-from triton.compiler import code_generator as code_gen
-from triton.compiler import compiler as tc
-import triton.language as tl
 
-# TODO(sharadmv): enable type checking
+# TODO(sharadmv): Enable type checking.
 # mypy: ignore-errors
+# pytype: skip-file
+
+_T = TypeVar("_T")
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
-partial = functools.partial
-Grid = tuple[int, ...]
+
 NDIndexer = indexing.NDIndexer
 GridMapping = pallas_core.GridMapping
 BlockMapping = pallas_core.BlockMapping
+Blocked = pallas_core.Blocked
 
 
 # # General lowering logic
 @dataclasses.dataclass
-class TritonModuleContext:
+class ModuleContext:
   name: str
-  ir_context: tl_ir.context
-  builder: tl_ir.builder
-  module: tl_ir.module
   grid_mapping: GridMapping
-  program_ids: Sequence[tl.tensor]
+  program_ids: Sequence[ir.Value]
+  traceback_caches: mlir.TracebackCaches = dataclasses.field(repr=False)
+  platform: str
 
 
 @dataclasses.dataclass
 class BlockInfo:
   full_shape_dtype: jax.ShapeDtypeStruct
   start_indices: Sequence[Any]
-  block_shape: tuple[int, ...]
+  start_indices_alignment: Sequence[int]
+  block_shape: tuple[int | pallas_core.Squeezed, ...]
 
 
 @dataclasses.dataclass
-class TritonLoweringRuleContext:
-  context: TritonModuleContext
-  avals_in: Any
-  avals_out: Any
+class LoweringRuleContext:
+  context: ModuleContext
+  avals_in: Sequence[jax_core.ShapedArray]
+  avals_out: Sequence[jax_core.ShapedArray]
   block_infos: Sequence[BlockInfo | None]
-
-  def __post_init__(self):
-    self.builder = self.context.builder
 
   replace = dataclasses.replace
 
 
 @dataclasses.dataclass
-class TritonLoweringResult:
-  """Keeps pybind11 objects alive."""
+class LoweringResult:
+  """Keeps python objects alive."""
 
-  ir_context: tl_ir.context
-  module: tl_ir.module
-  builder: tl_ir.builder
+  module: ir.Module
   grid: tuple[int, ...]
 
 
-@dataclasses.dataclass
-class TritonCompilationResult:
-  kernel_name: str
-  ttir: str
-  ptx: str
-  shared_mem_bytes: int
-  compute_capability: int
-  lowering_result: TritonLoweringResult
-
-
-class TritonLoweringException(Exception):
+class LoweringError(Exception):
   pass
 
 
 def _eval_index_map(
-    ctx: TritonModuleContext, idx, block_mapping: BlockMapping | None
+    ctx: ModuleContext, idx, block_mapping: BlockMapping
 ):
-  if block_mapping is None:
-    return None
+  block_indices = lower_jaxpr_to_triton_ir(
+      ctx, block_mapping.index_map_jaxpr.jaxpr, None, *idx
+  )
   block_indices = tuple(
-      lower_jaxpr_to_triton_ir(
-          ctx, block_mapping.index_map_jaxpr.jaxpr, None, *idx
-      )
+      _ensure_ir_value(i, jax_core.ShapedArray((), jnp.int32))
+      for i in block_indices
   )
+  block_indices = tree_util.tree_unflatten(
+      block_mapping.index_map_out_tree, block_indices)
+  if block_mapping.pipeline_mode is not None:
+    raise NotImplementedError(
+        "Pipeline mode is not supported in Triton lowering."
+    )
+  if any(
+      isinstance(b, pallas_core.Element) and b.padding != (0, 0)
+      for b in block_mapping.block_shape
+  ):
+    raise NotImplementedError(
+        "Unblocked indexing with padding is not supported in Triton lowering."
+    )
+  def _get_start_index(i, b):
+    match b:
+      case pallas_core.Squeezed() | pallas_core.Element():
+        return i
+      case pallas_core.Blocked():
+        return _mul(i, _ir_constant(b.block_size, i.type))
+      case _:
+        raise ValueError(f"Unsupported block dim type: {type(b)}")
   return tuple(
-      i if b is pallas_core.mapped else i.__mul__(b, _builder=ctx.builder)
-      for i, b in zip(block_indices, block_mapping.block_shape)
+      _get_start_index(i, b) for i, b in
+      zip(block_indices, block_mapping.block_shape)
   )
 
 
-def _convert_dtype(dtype: jnp.dtype) -> tl.dtype:
-  if dtype == jnp.float32:
-    return tl.float32
-  elif dtype == jnp.float64:
-    return tl.float64
-  elif dtype == jnp.float16:
-    return tl.float16
-  elif dtype == jnp.bfloat16:
-    return tl.bfloat16
-  elif dtype == jnp.int32:
-    return tl.int32
-  elif dtype == jnp.int64:
-    return tl.int64
-  raise ValueError(f"Unhandled dtype: {dtype}")
+def _get_index_alignment(block_mapping: BlockMapping) -> tuple[int, ...]:
+  def _get_bdim_alignment(b: pallas_core.BlockDim):
+    match b:
+      case pallas_core.Squeezed() | pallas_core.Element():
+        return 1
+      case pallas_core.Blocked():
+        return b.block_size
+  return tuple(_get_bdim_alignment(b) for b in block_mapping.block_shape)
+
+
+def _bcast_to(a: ir.Value, shape: tuple[int, ...]) -> ir.Value:
+  if not ir.RankedTensorType.isinstance(a.type):
+    if not shape:
+      return a
+    return tt_dialect.splat(ir.RankedTensorType.get(shape, a.type), a)
+  else:
+    a_type = ir.RankedTensorType(a.type)
+    if a_type.shape == [*shape]:
+      return a
+    if a_type.rank != len(shape) or not all(
+        a_type.shape[i] in (dim, 1) for i, dim in enumerate(shape)
+    ):
+      raise ValueError(f"Cannot broadcast from {a_type.shape} to {[*shape]}")
+    return tt_dialect.broadcast(
+        ir.RankedTensorType.get(shape, a_type.element_type, a_type.encoding), a
+    )
+
+
+def _bcast(
+    x: ir.Value,
+    y: ir.Value,
+    x_aval: jax_core.ShapedArray,
+    y_aval: jax_core.ShapedArray,
+    out_aval: jax_core.ShapedArray,
+) -> ir.Value:
+  if isinstance(x, (np.ndarray, np.number, int, float)):
+    x_dtype = x_aval.dtype
+    if x_aval.weak_type:
+      x_dtype = y_aval.dtype
+    x = _ir_constant(x, _dtype_to_ir_type(x_dtype))
+  if isinstance(y, (np.ndarray, np.number, int, float)):
+    y_dtype = y_aval.dtype
+    if y_aval.weak_type:
+      y_dtype = x_aval.dtype
+    y = _ir_constant(y, _dtype_to_ir_type(y_dtype))
+  if x_aval.shape != out_aval.shape:
+    x = _bcast_to(x, out_aval.shape)
+  if y_aval.shape != out_aval.shape:
+    y = _bcast_to(y, out_aval.shape)
+  return x, y
 
 
 triton_lowering_rules = {}
 
 
-def _process_grid_to_3d_grid(builder, grid_mapping: GridMapping):
+def register_lowering(primitive: jax_core.Primitive) -> Callable[[_T], _T]:
+  def wrapper(fn):
+    triton_lowering_rules[primitive] = fn
+    return fn
+  return wrapper
+
+
+def _process_grid_to_3d_grid(grid_mapping: GridMapping):
   launch_grid = []
   launch_grid_to_pallas_grid = []
 
   # Preserve grid order provided to pallas_call
   for i, s in enumerate(grid_mapping.grid):
-    if i not in grid_mapping.mapped_dims:
+    if i not in grid_mapping.vmapped_dims:
       launch_grid.append(s)
       launch_grid_to_pallas_grid.append(i)
 
   # For mapped dims, iterate from inner to outer. This follows the pallas_call
   # batching rule that prepends the vmapped dimension.
-  for dim in reversed(grid_mapping.mapped_dims):
+  for dim in reversed(grid_mapping.vmapped_dims):
     s = grid_mapping.grid[dim]
     launch_grid.append(s)
     launch_grid_to_pallas_grid.append(dim)
@@ -199,283 +250,189 @@ def _process_grid_to_3d_grid(builder, grid_mapping: GridMapping):
   if len(collapse_dims) == 0:
     prog_ids = [None] * len(prog_id_dims)
     for i in range(len(prog_id_dims)):
-        out_idx = launch_grid_to_pallas_grid[i]
-        prog_ids[out_idx] = tl.program_id(i, _builder=builder)
+      prog_ids[launch_grid_to_pallas_grid[i]] = _program_id(i, prog_id_dims)
 
     return prog_id_dims, prog_ids
-  else:
-    new_grid = [np.prod(collapse_dims), *prog_id_dims]
+
+  new_grid = [math.prod(collapse_dims), *prog_id_dims]
 
   assert new_grid[0] < 2**31 - 1, \
           "Cannot fix pallas kernel launch grid within CUDA limits"
 
   out_indices = [None] * len(grid_mapping.grid)
 
-  grid0 = tl.program_id(0, _builder=builder)
+  grid0 = _program_id(0, new_grid)
   for i, s in enumerate(collapse_dims):
     out_idx = launch_grid_to_pallas_grid[i]
-    grid0, out_indices[out_idx] = (
-        grid0.__floordiv__(s, _builder=builder),
-        grid0.__mod__(s, _builder=builder),
-    )
+    s = _i32_constant(s)
+    out_indices[out_idx] = _mod(grid0, s, signed=False)
+    grid0 = _floordiv(grid0, s, signed=False)
 
   for i in range(len(prog_id_dims)):
     out_idx = launch_grid_to_pallas_grid[num_collapse + i]
-    out_indices[out_idx] = tl.program_id(i + 1, _builder=builder)
+    out_indices[out_idx] = _program_id(i + 1, new_grid)
 
   assert len(out_indices) == len(grid_mapping.grid)
   return new_grid, out_indices
 
 
+def _new_ir_context() -> ir.Context:
+  ctx = mlir.JaxIrContext()
+  ctx.append_dialect_registry(mlir.upstream_dialects)
+  tt_dialect.register_dialect(ctx)
+  ctx.load_all_available_dialects()
+  return ctx
+
+# Many Trion operations require that their inputs and outputs have sizes that
+# are a power of 2 (they are defined to have TensorSizeTrait that enforces
+# this). This check is only needed to obtain a nicer error message; the
+# Triton lowering will fail anyway but it will crash with a C++ exception.
+# We currently apply this check only to load/store operations.
+def _check_tensor_size(shape: tuple[int | pallas_core.Squeezed, ...]):
+  size = math.prod(1 if isinstance(d, pallas_core.Squeezed) else d
+                   for d in shape)
+  power_of_2 = (size & (size - 1)) == 0
+  if not power_of_2:
+    raise ValueError(
+        "The Pallas Triton lowering currently requires that all "
+        "operations have array arguments and results whose size "
+        "is a power of 2. Encountered an array of "
+        f"shape {shape}")
+
+
 def lower_jaxpr_to_triton_module(
-    jaxpr: jax_core.Jaxpr, in_shapes, grid_mapping: GridMapping, name: str,
-    num_warps: int
-) -> tl_ir.module:
-  jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), instantiate=True)
-  ir_context = tl_ir.context()
-  ir_context.load_triton()
-  builder = tl_ir.builder(ir_context)
-  # TODO(sharadmv): handle multiple devices, right now we assume device 0
-  # which is fine when we have multiple of the same GPU but this won't work in
-  # general.
-  device = 0
-  builder.target = tc.CudaTargetDescriptor(
-      capability=triton_kernel_call_lib.get_compute_capability(device),
-      num_warps=num_warps,
-      enable_fp_fusion=True
-  )
-  module = builder.create_module()
-  in_avals = [var.aval for var in jaxpr.invars]
-  triton_types = [get_triton_type(x) for x in in_avals]
-  arg_types = [code_gen.str_to_ty(arg) for arg in triton_types]
-  assert len(jaxpr.outvars) == 0
-  prototype = tl.function_type([], arg_types)
-  out = prototype.to_ir(builder)
-  fn = builder.get_or_insert_function(module, name, out, "public", False)
-  module.push_back(fn)
-  entry = fn.add_entry_block()
-  args = []
-  for i in range(len(in_avals)):
-    fn.set_arg_attr(i, "tt.divisibility", 16)
-    ptr = tl.tensor(fn.args(i), prototype.param_types[i])
-    args.append(ptr)
-  builder.set_insertion_point_to_start(entry)
-  new_grid, program_ids = _process_grid_to_3d_grid(builder, grid_mapping)
-  local_program_ids = [
-      pid for i, pid in enumerate(program_ids) if i not in grid_mapping.mapped_dims
-  ]
-  ctx = TritonModuleContext(
-      name, ir_context, builder, module, grid_mapping, local_program_ids
-  )
+    jaxpr: jax_core.Jaxpr,
+    grid_mapping: GridMapping,
+    platform: str
+) -> LoweringResult:
+  debug_info = jaxpr.debug_info
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError(
+        "dynamic grid bounds not supported in the Triton backend"
+    )
   if grid_mapping.num_index_operands:
     raise NotImplementedError(
-        "Scalar prefetch not supported in Triton lowering.")
-  start_indices = map(
-      partial(_eval_index_map, ctx, program_ids), grid_mapping.block_mappings
-  )
-  block_infos = [
-      BlockInfo(
-          jax.ShapeDtypeStruct(shape_dtype.shape, shape_dtype.dtype),
-          start_idx,
-          block_mapping.block_shape,
+        "scalar prefetch not implemented in the Triton backend"
+    )
+  if jaxpr.invars[grid_mapping.slice_scratch_ops]:
+    raise NotImplementedError(
+        "scratch memory not implemented in the Triton backend"
+    )
+  with _new_ir_context(), ir.Location.unknown():
+    module = ir.Module.create()
+    attrs = module.operation.attributes
+    module_name = mlir.sanitize_name(debug_info.func_name)
+    attrs["sym_name"] = ir.StringAttr.get(module_name)
+    param_types = [
+        tt_dialect.PointerType.get(_dtype_to_ir_type(var.aval.dtype), 1)
+        for var in jaxpr.invars
+    ]
+    assert len(jaxpr.outvars) == 0
+    fn_type = ir.FunctionType.get(param_types, [])
+    fn = tt_dialect.FuncOp(
+        module_name,
+        ir.TypeAttr.get(fn_type),
+        sym_visibility="public",
+        res_attrs=ir.DictAttr.get(dict(noinline=ir.BoolAttr.get(False))),
+        ip=ir.InsertionPoint.at_block_begin(module.body),
+    )
+    fn.arg_attrs = ir.ArrayAttr.get(
+        [ir.DictAttr.get({"tt.divisibility": mlir.i32_attr(32)})]
+        * len(param_types)
+    )
+    fn.body.blocks.append(*fn_type.inputs)
+    [entry] = fn.body.blocks
+    with ir.InsertionPoint(entry):
+      new_grid, program_ids = _process_grid_to_3d_grid(grid_mapping)
+      local_program_ids = [
+          pid
+          for i, pid in enumerate(program_ids)
+          if i not in grid_mapping.vmapped_dims
+      ]
+      ctx = ModuleContext(
+          mlir.sanitize_name(debug_info.func_name),
+          grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
       )
-      if block_mapping is not None
-      else None
-      for shape_dtype, block_mapping, start_idx in zip(
-          in_shapes, grid_mapping.block_mappings, start_indices
-      )
-  ]
-  () = lower_jaxpr_to_triton_ir(ctx, jaxpr, block_infos, *args)
-  module.context = ir_context
-  ctx.builder.ret([])
-  return TritonLoweringResult(ir_context, module, builder, new_grid)
+      if grid_mapping.num_index_operands:
+        raise NotImplementedError(
+            "Scalar prefetch not supported in Triton lowering."
+        )
+      block_infos = [
+          BlockInfo(
+              block_mapping.array_shape_dtype,
+              _eval_index_map(ctx, program_ids, block_mapping),
+              _get_index_alignment(block_mapping),
+              tuple(pallas_core.squeezed if isinstance(b, pallas_core.Squeezed)
+                    else pallas_core._get_block_dim_size(b)
+                    for b in block_mapping.block_shape),
+          )
+          for block_mapping in grid_mapping.block_mappings
+      ]
+      () = lower_jaxpr_to_triton_ir(ctx, jaxpr, block_infos, *entry.arguments)
+      tt_dialect.return_([])
+    return LoweringResult(module, new_grid)
 
 
 def lower_jaxpr_to_triton_ir(
-    ctx: TritonModuleContext,
+    ctx: ModuleContext,
     jaxpr: jax_core.Jaxpr,
     block_infos: Sequence[BlockInfo | None] | None,
-    *args
+    *args,
 ) -> Sequence[Any]:
   env = {}
   block_info_env = {}
 
-  def read_env(var: jax_core.Atom):
-    if type(var) is jax_core.Literal:
-      t = tl.core._to_tensor(np.array(var.val).tolist(), builder=ctx.builder)
-      dst_ty = code_gen.str_to_ty(get_triton_type(var.aval)).element_ty
-      if t.type.scalar != dst_ty:
-        # _to_tensor(np.array(var.val).tolist()) can be lossy e.g. np.float64
-        # comes out of .tolist() as list[float], which then comes out of
-        # _to_tensor as a block of f32.
-        t = tl.semantic.cast(t, dst_ty, ctx.builder)
-      return t
-    return env[var]
+  def read_env(atom: jax_core.Atom):
+    return atom.val if isinstance(atom, jax_core.Literal) else env[atom]
 
-  def read_block_info_env(var: jax_core.Atom):
-    if type(var) is jax_core.Literal:
+  def read_block_info_env(atom: jax_core.Atom):
+    if isinstance(atom, jax_core.Literal):
       return None
-    return block_info_env.get(var, None)
+    return block_info_env.get(atom)
 
   def write_env(var: jax_core.Var, val):
     env[var] = val
 
-  if block_infos is None:
-    block_infos = [None] * len(jaxpr.invars)
-  for invar, block_info in zip(jaxpr.invars, block_infos):
-    block_info_env[invar] = block_info
-  map(write_env, jaxpr.invars, args)
+  if block_infos is not None:
+    for invar, block_info in zip(jaxpr.invars, block_infos):
+      if block_info is not None:
+        block_info_env[invar] = block_info
+
+  foreach(write_env, jaxpr.invars, args)
+
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
     if eqn.primitive not in triton_lowering_rules:
       raise NotImplementedError(
           "Unimplemented primitive in Pallas GPU lowering: "
           f"{eqn.primitive.name}. "
-          "Please file an issue on https://github.com/google/jax/issues.")
+          "Please file an issue on https://github.com/jax-ml/jax/issues.")
     rule = triton_lowering_rules[eqn.primitive]
     avals_in = [v.aval for v in eqn.invars]
     avals_out = [v.aval for v in eqn.outvars]
     eqn_block_infos = map(read_block_info_env, eqn.invars)
-    rule_ctx = TritonLoweringRuleContext(
-        ctx, avals_in, avals_out, eqn_block_infos
-    )
+    loc = mlir._source_info_to_location(ctx, eqn.primitive, eqn.source_info)
+    rule_ctx = LoweringRuleContext(ctx, avals_in, avals_out, eqn_block_infos)
     try:
-      outvals = rule(rule_ctx, *invals, **eqn.params)
-    except TritonLoweringException:
+      with source_info_util.user_context(eqn.source_info.traceback), loc:
+        outvals = rule(rule_ctx, *invals, **eqn.params)
+    except LoweringError:
       raise  # We only add the extra info to the innermost exception.
     except Exception as e:
-      raise TritonLoweringException(
-          f"Exception while lowering eqn:\n  {eqn}\n"
-          f"With context:\n  {rule_ctx}\n"
-          f"With inval shapes={map(lambda t: t.shape, invals)}\n"
-          f"With inval types={map(lambda t: t.type, invals)}\n"
-          f"In jaxpr:\n{jaxpr}") from e
+      if not pallas_call._verbose_errors_enabled():
+        raise
+      inval_types = map(lambda t: getattr(t, "type", None), invals)
+      raise LoweringError(
+          f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "
+          f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}\n"
+          f"msg={e}"
+      ) from e
     if eqn.primitive.multiple_results:
-      map(write_env, eqn.outvars, outvals)
+      foreach(write_env, eqn.outvars, outvals)
     else:
       write_env(eqn.outvars[0], outvals)
+
   return map(read_env, jaxpr.outvars)
-
-
-# # Primitive lowering rules
-# ## Programming model primitives
-def _program_id_lowering_rule(ctx: TritonLoweringRuleContext, *, axis):
-  return ctx.context.program_ids[axis]
-
-
-triton_lowering_rules[primitives.program_id_p] = _program_id_lowering_rule
-# ## Atomic op primitives
-_ATOMIC_OP_MAPPING = {
-    primitives.AtomicOpType.XCHG: tl.core.atomic_xchg,
-    primitives.AtomicOpType.ADD: tl.core.atomic_add,
-    primitives.AtomicOpType.MAX: tl.core.atomic_max,
-    primitives.AtomicOpType.MIN: tl.core.atomic_min,
-    primitives.AtomicOpType.AND: tl.core.atomic_and,
-    primitives.AtomicOpType.OR: tl.core.atomic_or,
-    primitives.AtomicOpType.XOR: tl.core.atomic_xor,
-}
-
-
-def _atomic_lowering_rule(
-    ctx: TritonLoweringRuleContext,
-    *args_flat,
-    args_tree,
-    atomic_type: primitives.AtomicOpType,
-):
-  ptr, idx, value, mask = args_tree.unflatten(args_flat)
-  ptr = _compute_pointers_from_indices(
-      ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
-  )
-  op = _ATOMIC_OP_MAPPING.get(atomic_type)
-  if op is None:
-    raise NotImplementedError(atomic_type)
-  return op(ptr, value, mask=mask, _builder=ctx.builder)
-
-
-triton_lowering_rules[primitives.atomic_rmw_p] = _atomic_lowering_rule
-
-
-_TRITON_FN_MAPPING = {
-    # Unary ops.
-    lax.neg_p: tl.semantic.minus,
-    lax.abs_p: tl.abs,
-    lax.ceil_p: tl.math.ceil,
-    lax.floor_p: tl.math.floor,
-    lax.exp_p: tl.exp,
-    lax.exp2_p: tl.math.exp2,
-    lax.expm1_p: tl.math.expm1,
-    lax.log_p: tl.log,
-    lax.log1p_p: tl.math.log1p,
-    lax.sqrt_p: tl.sqrt,
-    lax.cbrt_p: tl.math.cbrt,
-    lax.rsqrt_p: tl.math.rsqrt,
-    lax.sin_p: tl.sin,
-    lax.cos_p: tl.cos,
-    lax.tan_p: tl.math.tan,
-    lax.asin_p: tl.math.asin,
-    lax.acos_p: tl.math.acos,
-    lax.atan_p: tl.math.atan,
-    lax.atan2_p: tl.math.atan2,
-    lax.sinh_p: tl.math.sinh,
-    lax.cosh_p: tl.math.cosh,
-    lax.tanh_p: tl.math.tanh,
-    lax.asinh_p: tl.math.asinh,
-    lax.acosh_p: tl.math.acosh,
-    lax.atanh_p: tl.math.atanh,
-    lax.not_p: tl.semantic.invert,
-    lax.population_count_p: tl.math.popc,
-    lax.clz_p: tl.math.clz,
-    # Binary ops.
-    lax.add_p: tl.semantic.add,
-    lax.sub_p: tl.semantic.sub,
-    lax.mul_p: tl.semantic.mul,
-    lax.pow_p: tl.math.pow,
-    lax.rem_p: tl.semantic.mod,
-    lax.and_p: tl.semantic.and_,
-    lax.or_p: tl.semantic.or_,
-    lax.xor_p: tl.semantic.xor_,
-    lax.eq_p: tl.semantic.equal,
-    lax.ne_p: tl.semantic.not_equal,
-    lax.gt_p: tl.semantic.greater_than,
-    lax.ge_p: tl.semantic.greater_equal,
-    lax.lt_p: tl.semantic.less_than,
-    lax.le_p: tl.semantic.less_equal,
-    lax.max_p: tl.math.max,
-    lax.min_p: tl.math.min,
-    lax.shift_left_p: tl.semantic.shl,
-    lax.shift_right_arithmetic_p: tl.semantic.ashr,
-    lax.shift_right_logical_p: tl.semantic.lshr,
-    lax.nextafter_p: tl.math.nextafter,
-    ad_util.add_any_p: tl.semantic.add,
-    # Other ops.
-    indexing.broadcast_to_p: tl.broadcast_to,
-    primitives.atomic_cas_p: tl.atomic_cas,
-    primitives.max_contiguous_p: tl.max_contiguous,
-    primitives.multiple_of_p: tl.multiple_of,
-}
-
-
-for primitive, fn in _TRITON_FN_MAPPING.items():
-  if tl.core.is_builtin(fn):
-
-    def rule(ctx, *args, fn=fn, **kwargs):
-      kwargs = tree_util.tree_map(tl.constexpr, kwargs)
-      return fn(*args, **kwargs, _builder=ctx.builder)
-
-  else:
-    rule = lambda ctx, *args, fn=fn: fn(*args, ctx.builder)
-
-  triton_lowering_rules[primitive] = rule
-
-
-def _integer_pow(a, *, y):
-  if y == 2:
-    return a * a
-  if y == 3:
-    return a * a * a
-  if y == -2:
-    return 1.0 / (a * a)
-  return jax.lax.pow(a, y)
 
 
 def lower_fun(
@@ -483,9 +440,12 @@ def lower_fun(
 ) -> Callable[..., Any]:
   fn = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
 
-  def f_lowered(ctx: TritonLoweringRuleContext, *args, **params):
-    wrapped_fun = lu.wrap_init(fn, params)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+  def f_lowered(ctx: LoweringRuleContext, *args, **params):
+    wrapped_fun = lu.wrap_init(
+        fn, params,
+        debug_info=api_util.debug_info("pallas triton lower_fun", fun,
+                                       args, params))
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
     jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
     out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
     return out if multiple_results else out[0]
@@ -493,254 +453,1500 @@ def lower_fun(
   return f_lowered
 
 
-_JAX_FN_MAPPING = {
-    lax.clamp_p: lambda min, a, max: jnp.minimum(jnp.maximum(min, a), max),
-    lax.integer_pow_p: _integer_pow,
-    lax.logistic_p: lambda a: 1 / (1 + jnp.exp(-a)),
+# # Primitive lowering rules
+# ## Programming model primitives
+
+
+def _program_id(axis: int, launch_grid: Sequence[int]) -> ir.Value:
+  if axis not in range(3):
+    raise ValueError(f"axis must be in [0, 3), but got: {axis}")
+  if launch_grid[axis] == 1:
+    return _i32_constant(0)
+  return tt_dialect.get_program_id(axis)
+
+
+@register_lowering(primitives.program_id_p)
+def _program_id_lowering_rule(ctx: LoweringRuleContext, *, axis):
+  return ctx.context.program_ids[axis]
+
+
+@register_lowering(primitives.num_programs_p)
+def _num_programs_lowering_rule(ctx: LoweringRuleContext, *, axis):
+  if axis not in range(3):
+    raise ValueError(f"axis must be in [0, 3), but got: {axis}")
+  return tt_dialect.get_num_programs(axis)
+
+def _atomic_rmw(
+    op: tt_dialect.RMWOp,
+    ptr: ir.Value,
+    val: ir.Value,
+    mask: ir.Value | None = None,
+    semantic: tt_dialect.MemSemantic = tt_dialect.MemSemantic.ACQUIRE_RELEASE,
+    sync_scope: tt_dialect.MemSyncScope = tt_dialect.MemSyncScope.GPU,
+) -> ir.Value:
+  if ir.RankedTensorType.isinstance(ptr.type):
+    ptr_type = ir.RankedTensorType(ptr.type)
+    element_type = tt_dialect.PointerType(ptr_type.element_type)
+    result_type = ir.RankedTensorType.get(
+        ptr_type.shape, element_type.pointee_type, ptr_type.encoding
+    )
+  else:
+    result_type = tt_dialect.PointerType(ptr.type).pointee_type
+  return tt_dialect.atomic_rmw(
+      result_type, op, ptr, val, mask=mask, sem=semantic, scope=sync_scope
+  )
+
+
+@register_lowering(primitives.atomic_rmw_p)
+def _atomic_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args_flat,
+    args_tree,
+    atomic_type: primitives.AtomicOpType,
+):
+  block_info, *_ = ctx.block_infos
+  assert block_info is not None
+  ptr, indexers, val, mask = args_tree.unflatten(args_flat)
+  *_, value_aval, mask_aval = args_tree.unflatten(ctx.avals_in)
+  if len(indexers) != 1:
+    raise NotImplementedError("Only single indexer is supported.")
+  idx = indexers[0]
+  ptr = _compute_pointers_from_indices(ptr, block_info, idx)
+  val = _ensure_ir_value(val, value_aval)
+  if mask is not None:
+    mask = _ensure_ir_value(mask, mask_aval)
+  if atomic_type == primitives.AtomicOpType.XCHG:
+    op = tt_dialect.RMWOp.XCHG
+  elif atomic_type == primitives.AtomicOpType.ADD:
+    if isinstance(val.type, ir.IntegerType):
+      op = tt_dialect.RMWOp.ADD
+    else:
+      op = tt_dialect.RMWOp.FADD
+  elif atomic_type == primitives.AtomicOpType.MIN:
+    op = tt_dialect.RMWOp.MIN
+  elif atomic_type == primitives.AtomicOpType.MAX:
+    op = tt_dialect.RMWOp.MAX
+  elif atomic_type == primitives.AtomicOpType.AND:
+    op = tt_dialect.RMWOp.AND
+  elif atomic_type == primitives.AtomicOpType.OR:
+    op = tt_dialect.RMWOp.OR
+  elif atomic_type == primitives.AtomicOpType.XOR:
+    op = tt_dialect.RMWOp.XOR
+  else:
+    raise NotImplementedError(f"unsupported atomic operation: {atomic_type}")
+  return _atomic_rmw(op, ptr, val, mask=mask)
+
+
+@register_lowering(primitives.atomic_cas_p)
+def _atomic_cas_lowering_rule(ctx: LoweringRuleContext, ptr, cmp, val):
+  _, cmp_aval, val_aval = ctx.avals_in
+  if ir.RankedTensorType.isinstance(ptr.type):
+    ptr_type = ir.RankedTensorType(ptr.type)
+    element_type = tt_dialect.PointerType(ptr_type.element_type)
+    result_type = ir.RankedTensorType.get(
+        ptr_type.shape, element_type.pointee_type, ptr_type.encoding
+    )
+  else:
+    result_type = tt_dialect.PointerType(ptr.type).pointee_type
+  return tt_dialect.atomic_cas(
+      result_type,
+      ptr,
+      _ensure_ir_value(cmp, cmp_aval),
+      _ensure_ir_value(val, val_aval),
+      sem=tt_dialect.MemSemantic.ACQUIRE_RELEASE,
+      scope=tt_dialect.MemSyncScope.GPU,
+  )
+
+
+def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
+  flat_args = tree_util.tree_leaves(args)
+  (axis,) = axes
+  dtype = ctx.avals_in[0].dtype
+  in_avals = [
+      jax_core.ShapedArray((), dtype=dtype),
+      jax_core.ShapedArray((), dtype=dtype),
+  ]
+  in_tree = tree_util.tree_structure((args, args))
+  flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(
+          body,
+          debug_info=api_util.debug_info("pallas triton associative_scan",
+                                         body, (args, args), {})),
+      in_tree
+  )
+  combine_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+      flat_fun, in_avals
+  )
+  out_tree = out_tree_thunk()
+  del out_tree  # Not needed
+  if consts:
+    raise NotImplementedError("Associative scan with constants not supported.")
+  element_types = [_element_type(arg.type) for arg in flat_args]
+  scan_op = tt_dialect.ScanOp(flat_args, axis)
+  param_types = element_types * 2
+  entry = scan_op.regions[0].blocks.append(*param_types)
+  with ir.InsertionPoint.at_block_begin(entry):
+    results = lower_jaxpr_to_triton_ir(
+        ctx.context, combine_jaxpr, None, *entry.arguments
+    )
+    tt_dialect.scan_return(results)
+  scan_op.verify()
+  return list(scan_op.result)
+
+
+@register_lowering(lax.cumsum_p)
+def _cumsum_lowering_rule(
+    ctx: LoweringRuleContext, x, *, axis: int, reverse: bool
+):
+  if reverse:
+    raise NotImplementedError("Reverse cumsum is not supported.")
+  return _associative_scan_lowering(jnp.add, ctx, x, (axis,))[0]
+
+
+@register_lowering(lax.not_p)
+def _not_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  return arith_dialect.xori(x, _full(x.type, ~x_aval.dtype.type(0)))
+
+
+@dataclasses.dataclass(frozen=True)
+class _Extern:
+  arg_types: Sequence[jax.typing.DTypeLike]
+  symbol: str
+  result_type: str
+
+  def matches(self, avals: Sequence[jax_core.ShapedArray]) -> bool:
+    if len(avals) != len(self.arg_types):
+      return False
+    return all(
+        aval.dtype == jnp.dtype(arg_type)
+        or (aval.weak_type and aval.dtype.kind == jnp.dtype(arg_type).kind)
+        for aval, arg_type in zip(avals, self.arg_types)
+    )
+
+  def lower(self, ctx: LoweringRuleContext, *args: Sequence[ir.Value]):
+    [out_aval] = ctx.avals_out
+    bcast_args = []
+    for aval, arg, arg_type in zip(ctx.avals_in, args, self.arg_types):
+      bcast_arg = _bcast_to(_ensure_ir_value(arg, aval), out_aval.shape)
+      if aval.weak_type and aval.dtype != jnp.dtype(arg_type):
+        bcast_arg = _cast(bcast_arg, aval.dtype, jnp.dtype(arg_type))
+      bcast_args.append(bcast_arg)
+
+    result_type = _dtype_to_ir_type(jnp.dtype(self.result_type))
+    if out_aval.shape:
+      result_type = ir.RankedTensorType.get(out_aval.shape, result_type)
+    return tt_dialect.extern_elementwise(
+        result_type,
+        bcast_args,
+        libname="",
+        libpath="",
+        symbol=self.symbol,
+        pure=True,
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class _Fallback:
+  arg_classes: Sequence[jax.typing.DTypeLike]
+  op: Callable[..., ir.Value]
+
+  def matches(self, avals: Sequence[jax_core.ShapedArray]) -> bool:
+    if len(avals) != len(self.arg_classes):
+      return False
+    return all(
+        jnp.issubdtype(aval.dtype, arg_class)
+        for aval, arg_class in zip(avals, self.arg_classes)
+    )
+
+  def lower(self, ctx: LoweringRuleContext, *args: Sequence[ir.Value]):
+    [out_aval] = ctx.avals_out
+    bcast_args = []
+    for aval, arg in zip(ctx.avals_in, args):
+      bcast_args.append(_bcast_to(_ensure_ir_value(arg, aval), out_aval.shape))
+    return self.op(*args)
+
+
+def _make_dispatch_table(
+    name: str, **tables: Sequence[_Extern | _Fallback]
+) -> Callable[..., ir.Value]:
+
+  def inner(
+      ctx: LoweringRuleContext, *args: ir.Value, **_
+  ) -> ir.Value:
+    table = tables[ctx.context.platform]
+    h = next((e for e in table if e.matches(ctx.avals_in)), None)
+    if h is None:
+      arg_aval_dtypes = tuple(aval.dtype for aval in ctx.avals_in)
+      raise NotImplementedError(
+          f"unsupported types for {name}: {arg_aval_dtypes}"
+      )
+    return h.lower(ctx, *args)
+
+  return inner
+
+
+abs_dispatch_table = _make_dispatch_table(
+    "abs",
+    cuda=[
+        _Extern([jnp.int32], "__nv_abs", jnp.int32),
+        _Extern([jnp.int64], "__nv_llabs", jnp.int64),
+        _Extern([jnp.float32], "__nv_fabsf", jnp.float32),
+        _Extern([jnp.float64], "__nv_fabs", jnp.float64),
+        _Fallback([jnp.integer], math_dialect.absi),
+        _Fallback([jnp.floating], math_dialect.absf),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_fabs_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_fabs_f64", jnp.float64),
+        _Fallback([jnp.integer], math_dialect.absi),
+        _Fallback([jnp.floating], math_dialect.absf),
+    ],
+)
+
+ceil_dispatch_table = _make_dispatch_table(
+    "ceil",
+    cuda=[
+        _Extern([jnp.float32], "__nv_ceilf", jnp.float32),
+        _Extern([jnp.float64], "__nv_ceil", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.ceil),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_ceil_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_ceil_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.ceil),
+    ],
+)
+
+floor_dispatch_table = _make_dispatch_table(
+    "floor",
+    cuda=[
+        _Extern([jnp.float32], "__nv_floorf", jnp.float32),
+        _Extern([jnp.float64], "__nv_floor", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.floor),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_floor_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_floor_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.floor),
+    ],
+)
+
+exp_dispatch_table = _make_dispatch_table(
+    "exp",
+    cuda=[
+        _Extern([jnp.float32], "__nv_expf", jnp.float32),
+        _Extern([jnp.float64], "__nv_exp", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.exp),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_exp_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_exp_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.exp),
+    ],
+)
+
+exp2_dispatch_table = _make_dispatch_table(
+    "exp2",
+    cuda=[
+        _Extern([jnp.float32], "__nv_exp2f", jnp.float32),
+        _Extern([jnp.float64], "__nv_exp2", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.exp2),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_exp2_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_exp2_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.exp2),
+    ],
+)
+
+expm1_dispatch_table = _make_dispatch_table(
+    "expm1",
+    cuda=[
+        _Extern([jnp.float32], "__nv_expm1f", jnp.float32),
+        _Extern([jnp.float64], "__nv_expm1", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.expm1),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_expm1_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_expm1_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.expm1),
+    ],
+)
+
+log_dispatch_table = _make_dispatch_table(
+    "log",
+    cuda=[
+        _Extern([jnp.float32], "__nv_logf", jnp.float32),
+        _Extern([jnp.float64], "__nv_log", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.log),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_log_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_log_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.log),
+    ],
+)
+
+log1p_dispatch_table = _make_dispatch_table(
+    "log1p",
+    cuda=[
+        _Extern([jnp.float32], "__nv_log1pf", jnp.float32),
+        _Extern([jnp.float64], "__nv_log1p", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.log1p),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_log1p_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_log1p_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.log1p),
+    ],
+)
+
+sqrt_dispatch_table = _make_dispatch_table(
+    "sqrt",
+    cuda=[
+        _Extern([jnp.float32], "__nv_sqrtf", jnp.float32),
+        _Extern([jnp.float64], "__nv_sqrt", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.sqrt),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_sqrt_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_sqrt_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.sqrt),
+    ],
+)
+
+pow_dispatch_table = _make_dispatch_table(
+    "pow",
+    cuda=[
+        _Extern([jnp.float32, jnp.int32], "__nv_powif", jnp.float32),
+        _Extern([jnp.float64, jnp.int32], "__nv_powi", jnp.float64),
+        _Fallback(
+            [jnp.floating, jnp.integer],
+            math_dialect.fpowi
+        ),
+        _Extern([jnp.float32, jnp.float32], "__nv_powf", jnp.float32),
+        _Extern([jnp.float64, jnp.float64], "__nv_pow", jnp.float64),
+        _Fallback(
+            [jnp.floating, jnp.floating],
+            math_dialect.powf
+        ),
+    ],
+    rocm=[
+        _Extern([jnp.float32, jnp.int32], "__ocml_pown_f32", jnp.float32),
+        _Extern([jnp.float64, jnp.int32], "__ocml_pown_f64", jnp.float64),
+        _Fallback(
+            [jnp.floating, jnp.integer],
+            math_dialect.fpowi
+        ),
+        _Extern([jnp.float32, jnp.float32], "__ocml_pow_f32", jnp.float32),
+        _Extern([jnp.float64, jnp.float64], "__ocml_pow_f64", jnp.float64),
+        _Fallback(
+            [jnp.floating, jnp.floating],
+            math_dialect.powf
+        ),
+    ],
+)
+
+cbrt_dispatch_table = _make_dispatch_table(
+    "cbrt",
+    cuda=[
+        _Extern([jnp.float32], "__nv_cbrtf", jnp.float32),
+        _Extern([jnp.float64], "__nv_cbrt", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.cbrt),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_cbrt_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_cbrt_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.cbrt),
+    ],
+)
+
+rsqrt_dispatch_table = _make_dispatch_table(
+    "rsqrt",
+    cuda=[
+        _Extern([jnp.float32], "__nv_rsqrtf", jnp.float32),
+        _Extern([jnp.float64], "__nv_rsqrt", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.rsqrt),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_rsqrt_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_rsqrt_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.rsqrt),
+    ],
+)
+
+sin_dispatch_table = _make_dispatch_table(
+    "sin",
+    cuda=[
+        _Extern([jnp.float32], "__nv_sinf", jnp.float32),
+        _Extern([jnp.float64], "__nv_sin", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.sin),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_sin_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_sin_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.sin),
+    ],
+)
+
+cos_dispatch_table = _make_dispatch_table(
+    "cos",
+    cuda=[
+        _Extern([jnp.float32], "__nv_cosf", jnp.float32),
+        _Extern([jnp.float64], "__nv_cos", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.cos),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_cos_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_cos_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.cos),
+    ],
+)
+
+tan_dispatch_table = _make_dispatch_table(
+    "tan",
+    cuda=[
+        _Extern([jnp.float32], "__nv_tanf", jnp.float32),
+        _Extern([jnp.float64], "__nv_tan", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.tan),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_tan_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_tan_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.tan),
+    ],
+)
+
+asin_dispatch_table = _make_dispatch_table(
+    "asin",
+    cuda=[
+        _Extern([jnp.float32], "__nv_asinf", jnp.float32),
+        _Extern([jnp.float64], "__nv_asin", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.asin),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_asin_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_asin_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.asin),
+    ],
+)
+
+acos_dispatch_table = _make_dispatch_table(
+    "acos",
+    cuda=[
+        _Extern([jnp.float32], "__nv_acosf", jnp.float32),
+        _Extern([jnp.float64], "__nv_acos", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.acos),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_acos_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_acos_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.acos),
+    ],
+)
+
+atan_dispatch_table = _make_dispatch_table(
+    "atan",
+    cuda=[
+        _Extern([jnp.float32], "__nv_atanf", jnp.float32),
+        _Extern([jnp.float64], "__nv_atan", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.atan),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_atan_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_atan_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.atan),
+    ],
+)
+
+atan2_dispatch_table = _make_dispatch_table(
+    "atan2",
+    cuda=[
+        _Extern([jnp.float32, jnp.float32], "__nv_atan2f", jnp.float32),
+        _Extern([jnp.float64, jnp.float64], "__nv_atan2", jnp.float64),
+        _Fallback([jnp.floating, jnp.floating], math_dialect.atan2),
+    ],
+    rocm=[
+        _Extern([jnp.float32, jnp.float32], "__ocml_atan2_f32", jnp.float32),
+        _Extern([jnp.float64, jnp.float64], "__ocml_atan2_f64", jnp.float64),
+        _Fallback([jnp.floating, jnp.floating], math_dialect.atan2),
+    ],
+)
+
+sinh_dispatch_table = _make_dispatch_table(
+    "sinh",
+    cuda=[
+        _Extern([jnp.float32], "__nv_sinhf", jnp.float32),
+        _Extern([jnp.float64], "__nv_sinh", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.sinh),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_sinh_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_sinh_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.sinh),
+    ],
+)
+
+cosh_dispatch_table = _make_dispatch_table(
+    "cosh",
+    cuda=[
+        _Extern([jnp.float32], "__nv_coshf", jnp.float32),
+        _Extern([jnp.float64], "__nv_cosh", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.cosh),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_cosh_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_cosh_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.cosh),
+    ],
+)
+
+tanh_dispatch_table = _make_dispatch_table(
+    "tanh",
+    cuda=[
+        _Extern([jnp.float32], "__nv_tanhf", jnp.float32),
+        _Extern([jnp.float64], "__nv_tanh", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.tanh),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_tanh_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_tanh_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.tanh),
+    ],
+)
+
+asinh_dispatch_table = _make_dispatch_table(
+    "asinh",
+    cuda=[
+        _Extern([jnp.float32], "__nv_asinhf", jnp.float32),
+        _Extern([jnp.float64], "__nv_asinh", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.asinh),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_asinh_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_asinh_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.asinh),
+    ],
+)
+
+acosh_dispatch_table = _make_dispatch_table(
+    "acosh",
+    cuda=[
+        _Extern([jnp.float32], "__nv_acoshf", jnp.float32),
+        _Extern([jnp.float64], "__nv_acosh", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.acosh),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_acosh_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_acosh_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.acosh),
+    ],
+)
+
+atanh_dispatch_table = _make_dispatch_table(
+    "atanh",
+    cuda=[
+        _Extern([jnp.float32], "__nv_atanhf", jnp.float32),
+        _Extern([jnp.float64], "__nv_atanh", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.atanh),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_atanh_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_atanh_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.atanh),
+    ],
+)
+
+population_count_dispatch_table = _make_dispatch_table(
+    "population_count",
+    cuda=[
+        _Extern([jnp.int32], "__nv_popc", jnp.int32),
+        _Extern([jnp.int64], "__nv_popcll", jnp.int32),
+        _Fallback([jnp.integer], math_dialect.ctpop),
+    ],
+    rocm=[
+        _Extern([jnp.int32], "__ockl_popcount_u32", jnp.int32),
+        _Extern([jnp.int64], "__ockl_popcount_u64", jnp.int64),
+        _Fallback([jnp.integer], math_dialect.ctpop),
+    ],
+)
+
+clz_dispatch_table = _make_dispatch_table(
+    "clz",
+    cuda=[
+        _Extern([jnp.int32], "__nv_clz", jnp.int32),
+        _Extern([jnp.int64], "__nv_clzll", jnp.int32),
+        _Fallback([jnp.integer], math_dialect.ctlz),
+    ],
+    rocm=[
+        _Extern([jnp.int32], "__ockl_clz_u32", jnp.int32),
+        _Extern([jnp.int64], "__ockl_clz_u64", jnp.int64),
+        _Fallback([jnp.integer], math_dialect.ctlz),
+    ],
+)
+
+nextafter_dispatch_table = _make_dispatch_table(
+    "nextafter",
+    cuda=[
+        _Extern([jnp.float32, jnp.float32], "__nv_nextafterf", jnp.float32),
+        _Extern([jnp.float64, jnp.float64], "__nv_nextafter", jnp.float64),
+    ],
+    rocm=[
+        _Extern(
+            [jnp.float32, jnp.float32], "__ocml_nextafter_f32", jnp.float32
+        ),
+        _Extern(
+            [jnp.float64, jnp.float64], "__ocml_nextafter_f64", jnp.float64
+        ),
+    ],
+)
+
+triton_lowering_rules.update({
+    lax.abs_p: abs_dispatch_table,
+    lax.neg_p: lambda ctx, x: _minus(x),
+    lax.ceil_p: ceil_dispatch_table,
+    lax.floor_p: floor_dispatch_table,
+    lax.exp_p: exp_dispatch_table,
+    lax.exp2_p: exp2_dispatch_table,
+    lax.expm1_p: expm1_dispatch_table,
+    lax.log_p: log_dispatch_table,
+    lax.log1p_p: log1p_dispatch_table,
+    lax.sqrt_p: sqrt_dispatch_table,
+    lax.square_p: lambda ctx, x: _mul(x, x),
+    lax.pow_p: pow_dispatch_table,
+    lax.cbrt_p: cbrt_dispatch_table,
+    lax.rsqrt_p: rsqrt_dispatch_table,
+    lax.sin_p: sin_dispatch_table,
+    lax.cos_p: cos_dispatch_table,
+    lax.tan_p: tan_dispatch_table,
+    lax.asin_p: asin_dispatch_table,
+    lax.acos_p: acos_dispatch_table,
+    lax.atan_p: atan_dispatch_table,
+    lax.atan2_p: atan2_dispatch_table,
+    lax.sinh_p: sinh_dispatch_table,
+    lax.cosh_p: cosh_dispatch_table,
+    lax.tanh_p: tanh_dispatch_table,
+    lax.asinh_p: asinh_dispatch_table,
+    lax.acosh_p: acosh_dispatch_table,
+    lax.atanh_p: atanh_dispatch_table,
+    lax.population_count_p: population_count_dispatch_table,
+    lax.clz_p: clz_dispatch_table,
+    lax.nextafter_p: nextafter_dispatch_table,
+})
+
+
+def _minus(x: ir.Value) -> ir.Value:
+  if tt_dialect.PointerType.isinstance(_element_type(x.type)):
+    raise NotImplementedError(f"unsupported type: {x.type}")
+  return _sub(_zeros_like(x), x)
+
+
+def _add(x: ir.Value, y: ir.Value):
+  x_element_type = _element_type(x.type)
+  y_element_type = _element_type(y.type)
+
+  if tt_dialect.PointerType.isinstance(x_element_type):
+    assert not tt_dialect.PointerType.isinstance(y_element_type)
+    return tt_dialect.addptr(x.type, x, y)
+  if tt_dialect.PointerType.isinstance(y_element_type):
+    return tt_dialect.addptr(y.type, y, x)
+
+  assert x.type == y.type, (str(x.type), str(y.type))
+  if isinstance(x_element_type, ir.IntegerType):
+    return arith_dialect.addi(x, y)
+  if isinstance(x_element_type, ir.FloatType):
+    return arith_dialect.addf(x, y)
+  raise NotImplementedError(f"unsupported dtypes: {x.type} and {y.type}")
+
+
+def _sub(x: ir.Value, y: ir.Value) -> ir.Value:
+  x_element_type = _element_type(x.type)
+  y_element_type = _element_type(y.type)
+  if tt_dialect.PointerType.isinstance(x_element_type):
+    return tt_dialect.addptr(x.type, x, _minus(y))
+  elif not tt_dialect.PointerType.isinstance(y_element_type):
+    assert x.type == y.type, (str(x.type), str(y.type))
+    if isinstance(x_element_type, ir.IntegerType):
+      return arith_dialect.subi(x, y)
+    elif isinstance(x_element_type, ir.FloatType):
+      return arith_dialect.subf(x, y)
+  raise NotImplementedError(f"unsupported dtype: {y.type}")
+
+
+def _mul(x: ir.Value, y: ir.Value) -> ir.Value:
+  assert x.type == y.type, (str(x.type), str(y.type))
+  x_element_type = _element_type(x.type)
+  if isinstance(x_element_type, ir.IntegerType):
+    return arith_dialect.muli(x, y)
+  elif isinstance(x_element_type, ir.FloatType):
+    return arith_dialect.mulf(x, y)
+  raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
+
+
+def _floordiv(x: ir.Value, y: ir.Value, *, signed: bool) -> ir.Value:
+  assert x.type == y.type, (str(x.type), str(y.type))
+  x_element_type = _element_type(x.type)
+  if isinstance(x_element_type, (ir.F32Type, ir.F64Type)):
+    return arith_dialect.divf(x, y)
+  if not isinstance(x_element_type, ir.IntegerType):
+    raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
+  if signed:
+    return arith_dialect.divsi(x, y)
+  else:
+    return arith_dialect.divui(x, y)
+
+
+def _truediv(x: ir.Value, y: ir.Value, *, signed: bool) -> ir.Value:
+  assert x.type == y.type, (str(x.type), str(y.type))
+  x_element_type = _element_type(x.type)
+  if isinstance(x_element_type, ir.IntegerType):
+    x_element_type = ir.F32Type.get()
+    x = _int_float_cast(x, x_element_type, signed=signed)
+    y = _int_float_cast(y, x_element_type, signed=signed)
+  if isinstance(x_element_type, (ir.F32Type, ir.F64Type)):
+    return arith_dialect.divf(x, y)
+  raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
+
+
+def _mod(x: ir.Value, y: ir.Value, *, signed: bool) -> ir.Value:
+  assert x.type == y.type, (str(x.type), str(y.type))
+  x_element_type = _element_type(x.type)
+  if isinstance(x_element_type, ir.FloatType):
+    return arith_dialect.remf(x, y)
+  if not isinstance(x_element_type, ir.IntegerType):
+    raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
+  if signed:
+    return arith_dialect.remsi(x, y)
+  else:
+    return arith_dialect.remui(x, y)
+
+
+def _cmp(
+    x: ir.Value,
+    y: ir.Value,
+    si_pred: arith_dialect.CmpIPredicate,
+    ui_pred: arith_dialect.CmpIPredicate,
+    f_pred: arith_dialect.CmpFPredicate,
+    *,
+    signed: bool,
+) -> ir.Value:
+  assert x.type == y.type, (str(x.type), str(y.type))
+  x_element_type = _element_type(x.type)
+  if isinstance(x_element_type, ir.IntegerType):
+    return arith_dialect.cmpi(si_pred if signed else ui_pred, x, y)
+  elif isinstance(x_element_type, ir.FloatType):
+    return arith_dialect.cmpf(f_pred, x, y)
+  else:
+    raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
+
+
+_equal = functools.partial(
+    _cmp,
+    si_pred=arith_dialect.CmpIPredicate.eq,
+    ui_pred=arith_dialect.CmpIPredicate.eq,
+    f_pred=arith_dialect.CmpFPredicate.OEQ,
+)
+_not_equal = functools.partial(
+    _cmp,
+    si_pred=arith_dialect.CmpIPredicate.ne,
+    ui_pred=arith_dialect.CmpIPredicate.ne,
+    f_pred=arith_dialect.CmpFPredicate.UNE,
+)
+_less_than = functools.partial(
+    _cmp,
+    si_pred=arith_dialect.CmpIPredicate.slt,
+    ui_pred=arith_dialect.CmpIPredicate.ult,
+    f_pred=arith_dialect.CmpFPredicate.OLT,
+)
+_less_equal = functools.partial(
+    _cmp,
+    si_pred=arith_dialect.CmpIPredicate.sle,
+    ui_pred=arith_dialect.CmpIPredicate.ule,
+    f_pred=arith_dialect.CmpFPredicate.OLE,
+)
+_greater_than = functools.partial(
+    _cmp,
+    si_pred=arith_dialect.CmpIPredicate.sgt,
+    ui_pred=arith_dialect.CmpIPredicate.ugt,
+    f_pred=arith_dialect.CmpFPredicate.OGT,
+)
+_greater_equal = functools.partial(
+    _cmp,
+    si_pred=arith_dialect.CmpIPredicate.sge,
+    ui_pred=arith_dialect.CmpIPredicate.uge,
+    f_pred=arith_dialect.CmpFPredicate.OGE,
+)
+
+
+def _is_nan(x: ir.Value) -> ir.Value:
+  return arith_dialect.cmpf(arith_dialect.CmpFPredicate.UNO, x, x)
+
+
+_JAX_TO_TRITON_BINARY = {
+    lax.add_p: _add,
+    lax.sub_p: _sub,
+    lax.mul_p: _mul,
+    lax.and_p: arith_dialect.andi,
+    lax.or_p: arith_dialect.ori,
+    lax.xor_p: arith_dialect.xori,
+    lax.shift_left_p: arith_dialect.shli,
+    lax.shift_right_arithmetic_p: arith_dialect.shrsi,
+    lax.shift_right_logical_p: arith_dialect.shrui,
+    ad_util.add_any_p: _add,
 }
 
-for primitive, fn in _JAX_FN_MAPPING.items():
-  triton_lowering_rules[primitive] = lower_fun(fn, multiple_results=False)
+for prim, fn in _JAX_TO_TRITON_BINARY.items():
+
+  def signless_rule(ctx: LoweringRuleContext, x, y, fn=fn):
+    x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
+    return fn(x, y)
+
+  triton_lowering_rules[prim] = signless_rule
 
 
-def _div_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  if a.dtype.is_floating() or b.dtype.is_floating():
-    return a.__truediv__(b, _builder=ctx.builder)
-  return a.__floordiv__(b, _builder=ctx.builder)
+_JAX_TO_TRITON_SIGNED_BINARY = {
+    lax.rem_p: _mod,
+    lax.eq_p: _equal,
+    lax.ne_p: _not_equal,
+    lax.gt_p: _greater_than,
+    lax.ge_p: _greater_equal,
+    lax.lt_p: _less_than,
+    lax.le_p: _less_equal,
+}
+
+for prim, fn in _JAX_TO_TRITON_SIGNED_BINARY.items():
+
+  def signed_rule(ctx: LoweringRuleContext, x, y, fn=fn):
+    x_aval, _ = ctx.avals_in
+    x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
+    return fn(x, y, signed=jnp.issubdtype(x_aval.dtype, jnp.signedinteger))
+
+  triton_lowering_rules[prim] = signed_rule
 
 
-triton_lowering_rules[lax.div_p] = _div_lowering_rule
-
-
-def _iota_lowering_rule(
-    ctx: TritonLoweringRuleContext, *, dtype, shape, dimension
+@register_lowering(primitives.debug_print_p)
+def debug_print_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args: ir.Value,
+    fmt: str,
+    has_placeholders: bool,
 ):
-  if dimension != 0:
-    raise NotImplementedError()
-  return tl.arange(0, shape[0], _builder=ctx.builder)
+  if has_placeholders:
+    raise ValueError(
+        "pl.debug_print() does not support placeholders when lowering to Triton"
+    )
+
+  tt_dialect.print_(
+      f" {fmt} ",
+      hex=False,
+      args=args,
+      is_signed=ir.DenseI32ArrayAttr.get([
+          jnp.issubdtype(aval.dtype, jnp.signedinteger) for aval in ctx.avals_in
+      ]),
+  )
+  return ()
 
 
-triton_lowering_rules[lax.iota_p] = _iota_lowering_rule
+def _set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
+  if not ir.BlockArgument.isinstance(v):
+    v.owner.attributes[name] = attr
+    return
+
+  arg = ir.BlockArgument(v)
+  name += f"_arg{arg.arg_number}"
+  owner = arg.owner
+  is_entry = owner.region.blocks[0] == owner
+  if not is_entry:
+    return
+  if (op := owner.owner.operation) and not isinstance(op, tt_dialect.FuncOp):
+    op.attributes[name] = attr
 
 
-def _convert_element_type_lowering_rule(
-    ctx: TritonLoweringRuleContext, a, *, new_dtype, weak_type
-):
-  if new_dtype == ctx.avals_in[0].dtype:
-    return a
-  return tl.semantic.cast(a, _convert_dtype(new_dtype), ctx.builder)
+@register_lowering(primitives.multiple_of_p)
+def _multiple_of_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
+  [x_aval] = ctx.avals_in
+  assert max(1, len(x_aval.shape)) == len(values)
+  _set_attr(
+      x,
+      "tt.divisibility",
+      ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),
+  )
+  return x
 
 
-triton_lowering_rules[lax.convert_element_type_p] = (
-    _convert_element_type_lowering_rule
+@register_lowering(primitives.max_contiguous_p)
+def _max_contiguous_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
+  [x_aval] = ctx.avals_in
+  assert len(x_aval.shape) == len(values)
+  _set_attr(
+      x,
+      "tt.contiguity",
+      ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),
+  )
+  return x
+
+
+@register_lowering(sp.broadcast_to_p)
+def _broadcast_to_rule(ctx: LoweringRuleContext, x, shape: Sequence[int]):
+  (x_aval,) = ctx.avals_in
+  return _bcast_to(_ensure_ir_value(x, x_aval), shape)
+
+
+@register_lowering(lax.integer_pow_p)
+def _integer_pow_rule(ctx: LoweringRuleContext, x, *, y: int):
+  if y == 0:
+    return _ones_like(x)
+
+  is_reciprocal = y < 0
+  if is_reciprocal:
+    y = -y
+
+  acc = None
+  while y > 0:
+    y, mod = divmod(y, 2)
+    if mod:
+      acc = x if acc is None else _mul(acc, x)
+    if y > 0:
+      x = _mul(x, x)
+  assert acc is not None
+
+  [x_aval] = ctx.avals_in
+  [out_aval] = ctx.avals_out
+  acc = _cast(acc, x_aval.dtype, out_aval.dtype)
+  if is_reciprocal:
+    signed = jnp.issubdtype(out_aval.dtype, jnp.signedinteger)
+    return  _truediv(_ones_like(acc), acc, signed=signed)
+  else:
+    return acc
+
+
+_JAX_FN_MAPPING = {
+    lax.clamp_p: lambda min, a, max: jnp.minimum(jnp.maximum(min, a), max),
+    lax.logistic_p: lambda a, accuracy: 1 / (1 + jnp.exp(-a)),
+}
+
+for prim, fn in _JAX_FN_MAPPING.items():
+  triton_lowering_rules[prim] = lower_fun(fn, multiple_results=False)
+
+
+@register_lowering(lax.min_p)
+def _min_lowering_rule(ctx: LoweringRuleContext, x, y):
+  # TODO(slebedev): Consider allowing customizing nan behavior.
+  x_aval, y_aval = ctx.avals_in
+  x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
+  if jnp.issubdtype(x_aval.dtype, jnp.floating):
+    # TODO(slebedev): Triton promotes bfloat16 to float32 and back here.
+    return arith_dialect.minnumf(x, y)
+  if not jnp.issubdtype(x_aval.dtype, jnp.integer):
+    raise NotImplementedError(
+        f"unsupported dtypes: {x_aval.dtype} and {y_aval.dtype}"
+    )
+  if jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
+    return arith_dialect.minsi(x, y)
+  else:
+    return arith_dialect.minui(x, y)
+
+
+@register_lowering(lax.max_p)
+def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
+  # TODO(slebedev): Consider allowing customizing nan behavior.
+  x_aval, y_aval = ctx.avals_in
+  x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
+  if jnp.issubdtype(x_aval.dtype, jnp.floating):
+    # TODO(slebedev): Triton promotes bfloat16 to float32 and back here.
+    return arith_dialect.maxnumf(x, y)
+  if not jnp.issubdtype(x_aval.dtype, jnp.integer):
+    raise NotImplementedError(
+        f"unsupported dtypes: {x_aval.dtype} and {y_aval.dtype}"
+    )
+  if jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
+    return arith_dialect.maxsi(x, y)
+  else:
+    return arith_dialect.maxui(x, y)
+
+
+@register_lowering(lax.div_p)
+def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
+  x_aval, y_aval = ctx.avals_in
+  x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
+  signed = jnp.issubdtype(x_aval.dtype, jnp.signedinteger) or jnp.issubdtype(
+      y_aval.dtype, jnp.signedinteger
+  )
+  if jnp.issubdtype(x_aval.dtype, np.floating) or jnp.issubdtype(
+      y_aval.dtype, np.floating
+  ):
+    return _truediv(x, y, signed=signed)
+  return _floordiv(x, y, signed=signed)
+
+
+register_lowering(lax.sign_p)(
+    lower_fun(pallas_utils.sign_lowering_helper, multiple_results=False)
 )
 
 
-def select_n_lowering_rule(ctx: TritonLoweringRuleContext, pred, a, b):
-  return tl.semantic.where(pred, b, a, ctx.builder)
+register_lowering(lax.erf_inv_p)(
+    lower_fun(pallas_utils.erf_inv_lowering_helper, multiple_results=False)
+)
 
 
-triton_lowering_rules[lax.select_n_p] = select_n_lowering_rule
+@register_lowering(lax.iota_p)
+def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension,
+                        sharding):
+  iota = _make_range(0, shape[dimension])
+  iota = _cast(iota, jnp.int32, dtype)
+  for i in range(len(shape)):
+    if i != dimension:
+      iota = _expand_dims(iota, i)
+  return _bcast_to(iota, shape)
 
 
-def _broadcast_in_dim_lowering_rule(
-    ctx: TritonLoweringRuleContext, a, *, broadcast_dimensions, shape
+def _element_type(t: ir.Type) -> ir.Type:
+  if ir.RankedTensorType.isinstance(t):
+    return ir.RankedTensorType(t).element_type
+  else:
+    return t
+
+
+def _make_range(start: int, end: int) -> ir.Value:
+  if end <= start:
+    raise ValueError(
+        f"end must be greater than start, but got: {end} <= {start}"
+    )
+  if max(start, end) >= 2**32:
+    raise ValueError("start and end must fit in int32")
+  return tt_dialect.make_range(
+      ir.RankedTensorType.get([end - start], ir.IntegerType.get_signless(32)),
+      start,
+      end,
+  )
+
+
+def _full(t: ir.Type, v: object) -> ir.Type:
+  element_type = _element_type(t)
+  if isinstance(element_type, ir.IntegerType):
+    result = arith_dialect.constant(element_type, int(v))
+  elif isinstance(element_type, ir.FloatType):
+    result = arith_dialect.constant(element_type, float(v))
+  else:
+    raise NotImplementedError
+
+  if ir.RankedTensorType.isinstance(t):
+    return tt_dialect.splat(t, result)
+  else:
+    return result
+
+
+def _zeros(t: ir.Type) -> ir.Value:
+  return _full(t, 0)
+
+
+def _zeros_like(x: ir.Value) -> ir.Value:
+  return _full(x.type, 0)
+
+
+def _ones(t: ir.Type) -> ir.Value:
+  return _full(t, 1)
+
+
+def _ones_like(x: ir.Value) -> ir.Value:
+  return _full(x.type, 1)
+
+
+def _splat(x: ir.value, shape: Sequence[int]) -> ir.Value:
+  if ir.RankedTensorType.isinstance(x.type):
+    raise TypeError("cannot splat a tensor")
+  if not shape:
+    return x
+  return tt_dialect.splat(ir.RankedTensorType.get(shape, x.type), x)
+
+
+def _expand_dims(x: ir.Value, axis: int) -> ir.Value:
+  if not ir.RankedTensorType.isinstance(x.type):
+    shape = list(ir.RankedTensorType(x.type).shape)
+    shape.insert(axis, 1)
+    return _splat(x, shape)
+  return tt_dialect.expand_dims(x, axis)
+
+
+def _float_float_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
+  src_element_type = ir.FloatType(_element_type(src.type))
+  dst_element_type = ir.FloatType(_element_type(dst_type))
+  if src_element_type.width == 8 or dst_element_type.width == 8:
+    rounding = (
+        tt_dialect.RoundingMode.RTNE if src_element_type.width > 8 else None
+    )
+    return tt_dialect.fp_to_fp(dst_type, src, rounding=rounding)
+  if src_element_type.width > dst_element_type.width:
+    return arith_dialect.truncf(dst_type, src)
+  elif src_element_type.width < dst_element_type.width:
+    return arith_dialect.extf(dst_type, src)
+  else:
+    raise NotImplementedError
+
+
+def _int_int_cast(src: ir.Value, dst_type: ir.Type, signed: bool) -> ir.Value:
+  src_element_type = ir.IntegerType(_element_type(src.type))
+  dst_element_type = ir.IntegerType(_element_type(dst_type))
+  assert src_element_type != dst_element_type
+  if dst_element_type.width == 1:
+    return _not_equal(src, _zeros_like(src), signed=signed)
+
+  if src_element_type.width == dst_element_type.width:
+    return arith_dialect.bitcast(dst_type, src)
+  elif src_element_type.width > dst_element_type.width:
+    return arith_dialect.trunci(dst_type, src)
+  elif signed and src_element_type.width != 1:
+    return arith_dialect.extsi(dst_type, src)
+  else:
+    return arith_dialect.extui(dst_type, src)
+
+
+def _float_int_cast(
+    src: ir.Value, dst_type: ir.Type, *, signed: bool
+) -> ir.Value:
+  src_element_type = _element_type(src.type)
+  if not isinstance(src_element_type, (ir.BF16Type, ir.F16Type, ir.F32Type, ir.F64Type)):
+    raise NotImplementedError(f"cannot cast {src} tp {dst_type}")
+  dst_element_type = ir.IntegerType(_element_type(dst_type))
+  if dst_element_type.width == 1:
+    return _not_equal(src, _zeros_like(src), signed=signed)
+  else:
+    # We clamp the float value to the min/max integer destination value
+    # in order to match JAX/XLA casting behavior. Note that this differs
+    # from numpy casting behavior.
+    if signed:
+      maxint = 2**(dst_element_type.width-1) - 1
+      minint = -2**(dst_element_type.width-1)
+    else:
+      maxint = 2**dst_element_type.width - 1
+      minint = 0
+    src = arith_dialect.minimumf(src, _full(src.type, maxint))
+    src = arith_dialect.maximumf(src, _full(src.type, minint))
+    if signed:
+      return arith_dialect.fptosi(dst_type, src)
+    else:
+      return arith_dialect.fptoui(dst_type, src)
+
+
+def _int_float_cast(
+    src: ir.Value, dst_type: ir.Type, *, signed: bool
+) -> ir.Value:
+  src_element_type = ir.IntegerType(_element_type(src.type))
+  dst_element_type = _element_type(dst_type)
+  if not isinstance(
+      dst_element_type, (ir.BF16Type, ir.F16Type, ir.F32Type, ir.F64Type)
+  ):
+    raise NotImplementedError(f"cannot cast {src} tp {dst_type}")
+  if src_element_type.width == 1 or not signed:
+    return arith_dialect.uitofp(dst_type, src)
+  else:
+    return arith_dialect.sitofp(dst_type, src)
+
+
+def _cast(
+    src: ir.Value,
+    src_type: jax.typing.DTypeLike,
+    dst_type: jax.typing.DTypeLike,
+) -> ir.Value:
+  return _ir_cast(
+      src,
+      _dtype_to_ir_type(dst_type),
+      signed=jnp.issubdtype(src_type, jnp.signedinteger),
+      dst_signed=jnp.issubdtype(dst_type, jnp.signedinteger),
+  )
+
+
+def _ir_cast(src: ir.Value, dst_type: ir.Type, *,
+             signed: bool, dst_signed: bool = False) -> ir.Value:
+  if ir.RankedTensorType.isinstance(
+      src.type
+  ) and not ir.RankedTensorType.isinstance(dst_type):
+    src_type = ir.RankedTensorType(src.type)
+    dst_type = ir.RankedTensorType.get(
+        src_type.shape,
+        dst_type,
+        src_type.encoding,
+    )
+  if src.type == dst_type:
+    return src
+
+  src_element_type = _element_type(src.type)
+  dst_element_type = _element_type(dst_type)
+  if isinstance(src_element_type, ir.Float8E4M3FNUZType) or isinstance(
+      dst_element_type, ir.Float8E4M3FNUZType
+  ):
+    # TODO(slebedev): Check the CUDA version and raise conditionally.
+    raise NotImplementedError("cannot cast from or to float8_e4m3fnuz")
+
+  if isinstance(src_element_type, (ir.F16Type, ir.BF16Type)) and not isinstance(
+      dst_element_type, ir.F32Type
+  ):
+    return _ir_cast(
+        _ir_cast(src, ir.F32Type.get(), signed=False),
+        dst_type, signed=False, dst_signed=dst_signed
+    )
+
+  if isinstance(src_element_type, ir.FloatType) and isinstance(
+      dst_element_type, ir.FloatType
+  ):
+    return _float_float_cast(src, dst_type)
+
+  if isinstance(src_element_type, ir.IntegerType) and isinstance(
+      dst_element_type, ir.IntegerType
+  ):
+    return _int_int_cast(src, dst_type, signed=signed)
+
+  if isinstance(src_element_type, ir.FloatType) and isinstance(
+      dst_element_type, ir.IntegerType
+  ):
+    return _float_int_cast(src, dst_type, signed=dst_signed)
+  if isinstance(src_element_type, ir.IntegerType) and isinstance(
+      dst_element_type, ir.FloatType
+  ):
+    return _int_float_cast(src, dst_type, signed=signed)
+
+  if tt_dialect.PointerType.isinstance(src_element_type) and isinstance(
+      dst_element_type, ir.IntegerType
+  ):
+    if dst_element_type.width == 64:
+      return tt_dialect.ptr_to_int(dst_type, src)
+    elif dst_element_type.width == 1:
+      x = _ir_cast(src, ir.IntegerType.get_signless(64), signed=signed)
+      zero = _zeros_like(x)
+      return _ir_cast(_not_equal(x, zero, signed=signed), dst_type, signed=signed)
+  if isinstance(
+      src_element_type, ir.IntegerType
+  ) and tt_dialect.PointerType.isinstance(dst_element_type):
+    return tt_dialect.int_to_ptr(dst_type, src)
+  if tt_dialect.PointerType.isinstance(
+      src_element_type
+  ) and tt_dialect.PointerType.isinstance(dst_element_type):
+    return tt_dialect.bitcast(dst_type, src)
+
+  raise NotImplementedError(f"cannot cast {src} to {dst_type}")
+
+
+@register_lowering(lax.convert_element_type_p)
+def _convert_element_type_lowering_rule(
+    ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
-  shape = map(tl.constexpr, shape)
-  if not a.type.is_block():
-    return tl.broadcast_to(a, shape, _builder=ctx.builder)
+  [x_aval] = ctx.avals_in
+  x = _ensure_ir_value(x, x_aval)
+  if new_dtype == x_aval.dtype:
+    return x
+  return _cast(x, x_aval.dtype, new_dtype)
+
+
+@register_lowering(lax.select_n_p)
+def select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, y):
+  pred_aval, a_aval, b_aval = ctx.avals_in
+  [out_aval] = ctx.avals_out
+  pred, x = _bcast(pred, x, pred_aval, a_aval, out_aval)
+  pred, y = _bcast(pred, y, pred_aval, b_aval, out_aval)
+  return arith_dialect.select(pred, y, x)
+
+
+@register_lowering(lax.broadcast_in_dim_p)
+def _broadcast_in_dim_lowering_rule(
+    ctx: LoweringRuleContext, x, *, broadcast_dimensions, shape, sharding
+):
+  del sharding
+  x = _ensure_ir_value(x, *ctx.avals_in)
+  if not ir.RankedTensorType.isinstance(x.type):
+    return _bcast_to(x, shape)
   expand_dims = [i for i in range(len(shape)) if i not in broadcast_dimensions]
   for dim in expand_dims:
-    a = tl.semantic.expand_dims(a, dim, ctx.builder)
-  return tl.broadcast_to(a, shape, _builder=ctx.builder)
+    x = _expand_dims(x, dim)
+  return _bcast_to(x, shape)
 
 
-triton_lowering_rules[jax.lax.broadcast_in_dim_p] = (
-    _broadcast_in_dim_lowering_rule
-)
-
-
-def _squeeze_lowering_rule(ctx: TritonLoweringRuleContext, a, *, dimensions):
+@register_lowering(lax.squeeze_p)
+def _squeeze_lowering_rule(ctx: LoweringRuleContext, a, *, dimensions):
   del dimensions
-  return _reshape_lowering_rule(ctx, a, new_sizes=None, dimensions=None)
+  return _reshape_lowering_rule(ctx, a, new_sizes=None, dimensions=None, sharding=None)
 
 
-triton_lowering_rules[lax.squeeze_p] = _squeeze_lowering_rule
-
-
+@register_lowering(lax.reshape_p)
 def _reshape_lowering_rule(
-    ctx: TritonLoweringRuleContext, a, *, new_sizes, dimensions
+    ctx: LoweringRuleContext, a, *, new_sizes, dimensions, sharding,
 ):
   del new_sizes  # Unused.
   if dimensions is not None:
     return ValueError("`dimensions` is not supported.")
 
-  dst_shape = map(tl.constexpr, ctx.avals_out[0].shape)
-  if not a.type.is_block():
-    assert all(dim_size.value == 1 for dim_size in dst_shape)
-    return tl.broadcast_to(a, dst_shape, _builder=ctx.builder)
-
-  # Expand-dims or reduce-sum to handle singleton dims as `tl.reshape` is not
-  # currently implemented.
-  i = 0
-  while a.shape != dst_shape:
-    dim_size = a.shape[i].value if i < len(a.shape) else None
-    dst_dim_size = dst_shape[i].value if i < len(dst_shape) else None
-    if dim_size == dst_dim_size:
-      i += 1
-    elif dst_dim_size == 1:
-      a = tl.expand_dims(a, axis=i, _builder=ctx.builder)
-      i += 1
-    elif dim_size == 1:
-      in_shape = tuple(d.value for d in a.shape)
-      out_shape = tuple(d.value for di, d in enumerate(a.shape) if di != i)
-      reduce_ctx = ctx.replace(
-          avals_in=[ctx.avals_in[0].update(shape=in_shape)],
-          avals_out=[ctx.avals_in[0].update(shape=out_shape)],
-      )
-      a = _reduce_lowering(jnp.add, reduce_ctx, a, axes=(i,))
-    else:  # We expect this to fail.
-      return tl.reshape(a, dst_shape, _builder=ctx.builder)
-  return a
+  a = _ensure_ir_value(a, *ctx.avals_in)
+  [a_aval] = ctx.avals_in
+  [out_aval] = ctx.avals_out
+  # Triton Reshape doesn't support scalar result types (only 0d tensors).
+  if out_aval.ndim == 0:
+    return _reduce_lowering(jnp.add, ctx, a, axes=tuple(range(a_aval.ndim)))
+  return _reshape(a, out_aval.shape)
 
 
-triton_lowering_rules[jax.lax.reshape_p] = _reshape_lowering_rule
+def _reshape(a: ir.Value, shape: Sequence[int]) -> ir.Value:
+  if not ir.RankedTensorType.isinstance(a.type):
+    assert all(dim_size == 1 for dim_size in shape)
+    return _splat(a, shape)
+
+  ty = ir.RankedTensorType(a.type)
+  return tt_dialect.reshape(
+      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding),
+      a,
+      allow_reorder=False,
+  )
 
 
-def _compute_pointers_from_indices(
-    root_ptr: tl.core.tensor,
-    block_info: BlockInfo | None,
-    nd_indexer: NDIndexer,
-    array_shape: tuple[int, ...],
-    builder: tl_ir.builder,
-) -> tl.core.tensor:
-  if block_info is None:
-    full_shape = array_shape
-    num_mapped_dims = 0
-    block_shape = array_shape
-  else:
-    full_shape = block_info.full_shape_dtype.shape
-    num_mapped_dims = sum(
-        b is pallas_core.mapped for b in block_info.block_shape
+def get_join_type(old_type: ir.RankedTensorType):
+  shape = old_type.shape
+  shape.append(2)
+  return ir.RankedTensorType.get(shape, old_type.element_type, old_type.encoding)
+
+
+@register_lowering(lax.concatenate_p)
+def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
+  if len(args) != 2:
+    raise NotImplementedError("Only 2-argument concatenate is supported.")
+  x_aval, y_aval = ctx.avals_in
+  x, y = args
+  if dimension != x_aval.ndim-1:
+    raise NotImplementedError(
+        "Only concatenate along the last dimension is supported."
     )
-    block_shape = block_info.block_shape
+  if x_aval.shape[-1] != 1 or y_aval.shape[-1] != 1:
+    raise NotImplementedError(
+        "Only arguments with shape [..., 1] are supported."
+    )
+  lhs = _reshape(x, x_aval.shape[:-1])
+  rhs = _reshape(y, y_aval.shape[:-1])
+  ret_type = get_join_type(ir.RankedTensorType(rhs.type))
+  return tt_dialect.join(ret_type, lhs, rhs)
+
+
+@register_lowering(lax.split_p)
+def _split_lowering_rule(ctx: LoweringRuleContext, x, *, sizes, axis):
+  pass
+  # TODO(cjfj): Add support for larger powers of 2.
+  num_parts = len(sizes)
+  if num_parts != pallas_utils.next_power_of_2(num_parts):
+    raise NotImplementedError("Only power-of-2 num parts supported.")
+  if any(size != sizes[0] for size in sizes):
+    raise NotImplementedError("Only equal-sized splits are supported.")
+
+  def split_into_2(x):
+    shape = ir.RankedTensorType(x.type).shape
+    x = _reshape(x, shape[:axis] + [2, shape[axis] // 2] + shape[axis + 1 :])
+    permutation = tuple(d for d in range(len(shape) + 1) if d != axis) + (axis,)
+    return tuple(tt_dialect.split(tt_dialect.trans(x, permutation)))
+
+  x_parts = (x,)
+  while len(x_parts) < num_parts:
+    x_parts = sum(map(split_into_2, x_parts), ())
+  return x_parts
+
+
+def _compute_offsets_from_indices(
+    block_info: BlockInfo, nd_indexer: NDIndexer
+) -> ir.Value:
+  full_shape = block_info.full_shape_dtype.shape
+  num_squeezed_dims = sum(isinstance(b, pallas_core.Squeezed)
+                          for b in block_info.block_shape)
   strides = pallas_utils.strides_from_shape(full_shape)
   indexer_shape = nd_indexer.get_indexer_shape()
   int_indexer_shape = nd_indexer.int_indexer_shape
+  _check_tensor_size(indexer_shape)
   indices = nd_indexer.indices
   other_shape = indexer_shape[len(int_indexer_shape) :]
-  bcast_indices = []
   other_shape_idx = 0
-  if block_info is None:
-    start_index_offsets = [None] * len(indices)
+  assert len(indices) + num_squeezed_dims == len(full_shape)
+  assert len(block_info.start_indices) == len(full_shape)
+
+  array_dtype = jnp.dtype(block_info.full_shape_dtype.dtype)
+  full_size = math.prod(full_shape) * array_dtype.itemsize
+  # Use 64-bit indexing when offset might be >= 2**32 bytes.
+  offset_eltype = ir.IntegerType.get_signless(64 if full_size > 2**32 else 32)
+  if indexer_shape:
+    offsets = _zeros(ir.RankedTensorType.get(indexer_shape, offset_eltype))
   else:
-    start_index_offsets = block_info.start_indices
-  assert len(indices) + num_mapped_dims == len(full_shape)
-  assert len(start_index_offsets) == len(full_shape)
+    offsets = _ir_constant(0, offset_eltype)
+
   indexer_iter = iter(indices)
   for dim_stride, dim_block_size, start_offset in zip(
-      strides, block_shape, start_index_offsets
+      strides, block_info.block_shape, block_info.start_indices
   ):
-    if dim_block_size is pallas_core.mapped:
-      index = tl.core._to_tensor(0, builder)
-    else:
-      index = next(indexer_iter)
+    match dim_block_size:
+      case pallas_core.Squeezed():
+        index = _ir_constant(0, offset_eltype)
+      case int():
+        index = next(indexer_iter)
+
+    if isinstance(index, slice):
+      index = primitives.Slice.from_slice(index, dim_block_size)
+
     if isinstance(index, primitives.Slice):
-      # Handle slices with static and dynamic indices and static sizes
-      if isinstance(index.start, int):
-        ptr_dim_offset = tl.arange(
-            index.start, index.start + index.size, _builder=builder
-        )
+      if index.is_dynamic_start or (index.stride != 1):
+        start = index.start
+        if not index.is_dynamic_start:
+          start = _ir_constant(start, offset_eltype)
+        start = _ir_cast(start, offset_eltype, signed=False)
+
+        iota = _ir_cast(_make_range(0, index.size), offset_eltype, signed=False)
+        if index.stride != 1:
+          iota = _mul(iota, _full(iota.type, index.stride))
+        dim_offsets = _add(_bcast_to(start, [index.size]), iota)
       else:
-        ptr_dim_offset = index.start.__add__(
-            tl.arange(0, index.size, _builder=builder), _builder=builder
-        )
-      # We need to add broadcastable dimensions for the advanced int indexing
-      # and for previous slices
-      num_left_expand_dims = len(int_indexer_shape) + other_shape_idx
-      num_right_expand_dims = len(other_shape) - other_shape_idx - 1
+        iota = _make_range(index.start, index.start + index.size)
+        dim_offsets = _ir_cast(iota, offset_eltype, signed=False)
+
       other_shape_idx += 1
-    elif isinstance(index, slice):
-      if index != slice(None):
-        raise NotImplementedError("Only `slice(None)` allowed.")
-      ptr_dim_offset = tl.arange(0, dim_block_size, _builder=builder)
-      num_left_expand_dims = len(int_indexer_shape) + other_shape_idx
-      num_right_expand_dims = len(other_shape) - other_shape_idx - 1
-      other_shape_idx += 1
+      for _ in other_shape[other_shape_idx:]:
+        rank = ir.RankedTensorType(dim_offsets.type).rank
+        dim_offsets = _expand_dims(dim_offsets, rank)
     else:
       # indexer is either a *scalar* or an array of size `int_indexer_shape`
-      ptr_dim_offset = index
-      num_left_expand_dims = 0
-      num_right_expand_dims = len(other_shape)
-      if not ptr_dim_offset.type.is_block():
-        num_left_expand_dims = max(len(indexer_shape) - 1, 0)
-      else:
-        num_right_expand_dims = len(other_shape)
-    if not ptr_dim_offset.type.is_block() and indexer_shape:
-      ptr_dim_offset = tl.broadcast_to(
-          ptr_dim_offset,
-          [tl.constexpr(1)] * len(indexer_shape),
-          _builder=builder,
-      )
-    else:
-      for _ in range(num_left_expand_dims):
-        ptr_dim_offset = tl.semantic.expand_dims(ptr_dim_offset, 0, builder)
-      for _ in range(num_right_expand_dims):
-        ndim = len(ptr_dim_offset.shape)
-        ptr_dim_offset = tl.semantic.expand_dims(ptr_dim_offset, ndim, builder)
+      dim_offsets = index
+      if not isinstance(dim_offsets, ir.Value):
+        dim_offsets = _ir_constant(dim_offsets, offset_eltype)
+      dim_offsets = _ir_cast(dim_offsets, offset_eltype, signed=False)
+
+      if ir.RankedTensorType.isinstance(dim_offsets.type):
+        for _ in other_shape:
+          rank = ir.RankedTensorType(dim_offsets.type).rank
+          dim_offsets = _expand_dims(dim_offsets, rank)
+
+    if ir.RankedTensorType.isinstance(dim_offsets.type):
+      rank = ir.RankedTensorType(dim_offsets.type).rank
+      for _ in range(len(indexer_shape) - rank):
+        dim_offsets = _expand_dims(dim_offsets, 0)
+    dim_offsets = _bcast_to(dim_offsets, indexer_shape)
+
     if start_offset is not None:
-      ptr_dim_offset = ptr_dim_offset.__add__(start_offset, _builder=builder)
-    stride_size = tl.core._to_tensor(int(dim_stride), builder)
-    bcast_indices.append(ptr_dim_offset.__mul__(stride_size, _builder=builder))
-  block_shapes = [
-      () if not index.type.is_block() else tuple(index.type.get_block_shapes())
-      for index in bcast_indices
-  ]
-  bcast_indices = [
-      tl.core.broadcast_to(
-          index, map(tl.constexpr, indexer_shape), _builder=builder
-      )
-      if indexer_shape != block_shape
-      else index
-      for index, block_shape in zip(bcast_indices, block_shapes)
-  ]
-  ptr = root_ptr
-  for bcast_idx in bcast_indices:
-    ptr = ptr.__add__(bcast_idx, _builder=builder)
-  return ptr
+      start_offset = _ir_cast(start_offset, offset_eltype, signed=False)
+      dim_offsets = _add(dim_offsets, _bcast_to(start_offset, indexer_shape))
+
+    dim_offsets = _mul(dim_offsets, _full(dim_offsets.type, dim_stride))
+    offsets = _add(offsets, dim_offsets)
+
+  return offsets
 
 
-def _pack_indices(non_slice_idx, indexed_dims):
-  non_slice_idx_iter = iter(non_slice_idx)
-  return tuple(
-      next(non_slice_idx_iter) if indexed else slice(None)
-      for indexed in indexed_dims
-  )
+def _compute_pointers_from_indices(
+    root_ptr: ir.Value, block_info: BlockInfo, nd_indexer: NDIndexer
+) -> ir.Value:
+  offsets = _compute_offsets_from_indices(block_info, nd_indexer)
+  return _add(_bcast_to(root_ptr, nd_indexer.get_indexer_shape()), offsets)
 
 
-def _get_lowering_rule(
-    ctx: TritonLoweringRuleContext, ptr, *non_slice_idx, indexed_dims
-):
-  if not isinstance(ptr.type, tl.pointer_type):
-    assert not non_slice_idx
+@register_lowering(sp.get_p)
+def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  if not tt_dialect.PointerType.isinstance(ptr.type):
+    assert len(indexers) == 0
     return ptr
-
-  ref_aval, *idx_avals = ctx.avals_in
-  idx_avals = _pack_indices(idx_avals, indexed_dims)
-  if non_slice_idx:
-    (int_indexer_shape,) = {
-        i.shape for i in idx_avals if not isinstance(i, slice)
-    }
-  else:
-    int_indexer_shape = ()
-
-  idx = _pack_indices(non_slice_idx, indexed_dims)
-  idx = tuple(
-      primitives.Slice.from_slice(slc, s) if isinstance(slc, slice) else slc
-      for s, slc in zip(ref_aval.shape, idx)
-  )
-  idx = NDIndexer(idx, ref_aval.shape, int_indexer_shape)
-  args_flat, args_tree = tree_util.tree_flatten((ptr, idx, None, None))
+  if len(indexers) > 1:
+    raise NotImplementedError("No support for multiple indexers yet.")
+  indexer = indexers[0]
+  args_flat, args_tree = tree_util.tree_flatten((ptr, (indexer,), None, None))
   return _masked_load_lowering_rule(
       ctx,
       *args_flat,
@@ -751,228 +1957,476 @@ def _get_lowering_rule(
   )
 
 
-triton_lowering_rules[sp.get_p] = _get_lowering_rule
+_STR_TO_EVICTION_POLICY = {str(e): e for e in tt_dialect.EvictionPolicy}
+_STR_TO_CACHE_MODIFIER = {str(c): c for c in tt_dialect.CacheModifier}
 
 
+def _load(
+    ptr: ir.Value,
+    mask: ir.Value | None = None,
+    other: ir.Value | None = None,
+    *,
+    cache_modifier: str | None = None,
+    eviction_policy: str | None = None,
+    is_volatile: bool = False,
+) -> ir.Value:
+  if cache_modifier is None:
+    cache_modifier = tt_dialect.CacheModifier.NONE
+  elif cache_modifier == ".ca" or cache_modifier == ".cg":
+    cache_modifier = _STR_TO_CACHE_MODIFIER[cache_modifier]
+  else:
+    raise ValueError(f"unsupported cache modifier: {cache_modifier}")
+  if eviction_policy is None:
+    eviction_policy = tt_dialect.EvictionPolicy.NORMAL
+  else:
+    try:
+      eviction_policy = _STR_TO_EVICTION_POLICY[eviction_policy]
+    except KeyError:
+      raise ValueError(
+          f"unsupported eviction policy: {eviction_policy}"
+      ) from None
+
+  if tt_dialect.PointerType.isinstance(ptr.type):
+    ptr_type = tt_dialect.PointerType(ptr.type)
+    if ir.RankedTensorType.isinstance(ptr_type.pointee_type):
+      raise NotImplementedError("loading from a block pointer is not supported")
+
+  ptr_type = _element_type(ptr.type)
+  if not tt_dialect.PointerType.isinstance(ptr_type):
+    raise ValueError(f"unsupported pointer type: {ptr_type}")
+  ptr_type = tt_dialect.PointerType(ptr_type)
+  if other is not None and mask is None:
+    raise ValueError("other requires mask to be provided")
+  if not ir.RankedTensorType.isinstance(ptr.type):
+    if other is not None and ir.RankedTensorType.isinstance(other.type):
+      raise ValueError("other cannot be a block if pointer is not a block")
+    if mask is not None and ir.RankedTensorType.isinstance(mask.type):
+      raise ValueError("mask cannot be a block if pointer is not a block")
+
+  pointee_type = ptr_type.pointee_type
+  is_int1 = isinstance(pointee_type, ir.IntegerType) and pointee_type.width == 1
+  if is_int1:
+    pointee_type = ir.IntegerType.get_signless(8)
+    ptr = _ir_cast(
+        ptr,
+        tt_dialect.PointerType.get(pointee_type, ptr_type.address_space),
+        signed=False,
+    )
+
+  if other is not None:
+    other = _ir_cast(other, pointee_type, signed=False)
+
+  result = tt_dialect.load(
+      ptr,
+      mask=mask,
+      other=other,
+      cache=cache_modifier,
+      evict=eviction_policy,
+      is_volatile=is_volatile,
+  )
+  return (
+      result
+      if not is_int1
+      else _ir_cast(result, ir.IntegerType.get_signless(1), signed=False)
+  )
+
+
+def _is_contiguous_int4(block_info: BlockInfo, nd_indexer: NDIndexer) -> bool:
+  """Returns True if the block is contiguous in the last dimension."""
+  # In order to loaded as `uint8` the index must be an aligned slice.
+  return (
+      block_info.full_shape_dtype.dtype in (jnp.int4, jnp.uint4)
+      and block_info.start_indices_alignment
+      and (block_info.start_indices_alignment[-1] % 2 == 0)
+      and isinstance(slc := nd_indexer.indices[-1], indexing.Slice)
+      and isinstance(slc.start, int)
+      and isinstance(slc.size, int)
+      and (slc.start % 2 == 0)
+      and (slc.size % 2 == 0)
+      and (slc.stride == 1)
+  )
+
+
+def _reinterpret_int4_as_uint8(
+    block_info: BlockInfo, nd_indexer: NDIndexer
+) -> tuple[BlockInfo, NDIndexer]:
+  """Returns a new block info and indexer that reads `int4` as `uint8`."""
+  last_idx = nd_indexer.indices[-1]
+  new_last_idx = indexing.Slice(last_idx.start // 2, last_idx.size // 2)
+  new_indices = (*nd_indexer.indices[:-1], new_last_idx)
+  new_shape = (*nd_indexer.shape[:-1], nd_indexer.shape[-1] // 2)
+  idx = dataclasses.replace(nd_indexer, indices=new_indices, shape=new_shape)
+
+  full_shape = block_info.full_shape_dtype.shape
+  new_full_shape = (*full_shape[:-1], full_shape[-1] // 2)
+  start_idx = block_info.start_indices[-1]
+  new_start_idx = _floordiv(start_idx, _full(start_idx.type, 2), signed=False)
+  new_start_indices = (*block_info.start_indices[:-1], new_start_idx)
+  block_info = dataclasses.replace(
+      block_info,
+      full_shape_dtype=jax.ShapeDtypeStruct(new_full_shape, jnp.uint8),
+      start_indices=new_start_indices,
+  )
+  return block_info, idx
+
+
+@register_lowering(primitives.load_p)
 def _masked_load_lowering_rule(
-    ctx: TritonLoweringRuleContext,
+    ctx: LoweringRuleContext,
     *args_flat,
     args_tree,
     eviction_policy,
     cache_modifier,
     is_volatile,
 ):
-  ptr, idx, mask, other = args_tree.unflatten(args_flat)
-  if not isinstance(ptr.type, tl.pointer_type):
+  block_info, *_ = ctx.block_infos
+  assert block_info is not None
+  ptr, indexers, mask, other = args_tree.unflatten(args_flat)
+  *_, mask_aval, other_aval = args_tree.unflatten(ctx.avals_in)
+  if len(indexers) > 1:
+    raise NotImplementedError("No support for multiple indexers yet.")
+  idx = indexers[0]
+  if not tt_dialect.PointerType.isinstance(ptr.type):
     assert len(ctx.avals_in) == 1
     return ptr
-  ptr = _compute_pointers_from_indices(
-      ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
-  )
-  val = tl.load(
+
+  is_int4 = block_info.full_shape_dtype.dtype in (jnp.int4, jnp.uint4)
+  is_contiguous_int4 = _is_contiguous_int4(block_info, idx)
+
+  if is_contiguous_int4:
+    # If the load reads contiguously in the last dimension, we can reinterpret
+    # the `int4` block as `uint8`. This generates much more efficient code. The
+    # more generic `int4` code below has offsets like `0, 0, 1, 1, ...`, which
+    # Triton doesn't optimize as well.
+    block_info, idx = _reinterpret_int4_as_uint8(block_info, idx)
+
+  offsets = _compute_offsets_from_indices(block_info, idx)
+  ptr_offsets = offsets
+
+  if is_int4 and not is_contiguous_int4:
+    ptr_offsets = _floordiv(offsets, _full(offsets.type, 2), signed=False)
+
+  shape = idx.get_indexer_shape()
+  ptr = _add(_bcast_to(ptr, shape), ptr_offsets)
+  if mask is not None:
+    mask = _bcast_to(_ensure_ir_value(mask, mask_aval), shape)
+  if other is not None:
+    other = _bcast_to(_ensure_ir_value(other, other_aval), shape)
+  values = _load(
       ptr,
       mask=mask,
       other=other,
       cache_modifier=cache_modifier,
-      volatile=is_volatile,
+      is_volatile=is_volatile,
       eviction_policy=eviction_policy,
-      _builder=ctx.builder,
   )
-  # `tl.load` of a `*int1` returns a tensor with type `int8`, so fix the type.
-  return val.to(ptr.dtype.element_ty, _builder=ctx.builder)
 
+  if not is_int4:
+    return values
 
-triton_lowering_rules[primitives.load_p] = _masked_load_lowering_rule
-
-
-def _swap_lowering_rule(
-    ctx: TritonLoweringRuleContext, ptr, value, *non_slice_idx, indexed_dims
-):
-  ref_aval, _, *idx_avals = ctx.avals_in
-  idx_avals = _pack_indices(idx_avals, indexed_dims)
-  if non_slice_idx:
-    (int_indexer_shape,) = {
-        i.shape for i in idx_avals if not isinstance(i, slice)
-    }
+  # After jaxlib 0.5.2, XLA packs pairs of `[u]int4` values into a `uint8`
+  # value with the first in the least significant bits and the second in the
+  # most significant. Before jaxlib 0.5.2, the order was reversed.
+  if is_contiguous_int4:
+    msb_values = arith_dialect.shrui(values, _full(values.type, 4))
+    join_type = get_join_type(ir.RankedTensorType(values.type))
+    if jaxlib_version < (0, 5, 2):
+      values = tt_dialect.join(join_type, msb_values, values)
+    else:
+      values = tt_dialect.join(join_type, values, msb_values)
+    shape = ir.RankedTensorType(values.type).shape
+    values = _reshape(values, (*shape[:-2], shape[-2] * shape[-1]))
   else:
-    int_indexer_shape = ()
+    offsets = _ir_cast(offsets, ir.IntegerType.get_signless(32), signed=False)
+    in_msb = _mod(offsets, _full(offsets.type, 2), signed=False)
+    if jaxlib_version < (0, 5, 2):
+      in_msb = arith_dialect.xori(in_msb, _ones_like(in_msb))
+    shift = _mul(in_msb, _full(in_msb.type, 4))
+    shift = _ir_cast(shift, values.type, signed=False)
+    values = arith_dialect.shrui(values, shift)
+  return _ir_cast(values, ir.IntegerType.get_signless(4), signed=False)
 
-  idx = _pack_indices(non_slice_idx, indexed_dims)
-  idx = tuple(
-      primitives.Slice.from_slice(slc, s) if isinstance(slc, slice) else slc
-      for s, slc in zip(ref_aval.shape, idx)
-  )
-  idx = NDIndexer(idx, ref_aval.shape, int_indexer_shape)
-  args_flat, args_tree = tree_util.tree_flatten((ptr, idx, value, None))
+
+@register_lowering(sp.swap_p)
+def _swap_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  if not tt_dialect.PointerType.isinstance(ptr.type):
+    assert len(indexers) == 0
+    return ptr
+  if len(indexers) > 1:
+    raise NotImplementedError("No support for multiple indexers yet.")
+  indexer = indexers[0]
+  args_flat, args_tree = tree_util.tree_flatten((ptr, (indexer,), value, None))
   return _masked_swap_lowering_rule(
       ctx, *args_flat, args_tree=args_tree, eviction_policy=None
   )
 
 
-triton_lowering_rules[sp.swap_p] = _swap_lowering_rule
+def _store(
+    ptr: ir.Value,
+    value: ir.Value,
+    mask: ir.Value | None = None,
+    *,
+    cache_modifier: str | None = None,
+    eviction_policy: str | None = None,
+) -> ir.Value:
+  if cache_modifier is None:
+    cache_modifier = tt_dialect.CacheModifier.NONE
+  elif cache_modifier != ".ca":
+    cache_modifier = _STR_TO_CACHE_MODIFIER[cache_modifier]
+  else:
+    raise ValueError(f"unsupported cache modifier: {cache_modifier}")
+  if eviction_policy is None:
+    eviction_policy = tt_dialect.EvictionPolicy.NORMAL
+  else:
+    try:
+      eviction_policy = _STR_TO_EVICTION_POLICY[eviction_policy]
+    except KeyError:
+      raise ValueError(
+          f"unsupported eviction policy: {eviction_policy}"
+      ) from None
+
+  if tt_dialect.PointerType.isinstance(ptr.type):
+    ptr_type = tt_dialect.PointerType(ptr.type)
+    if ir.RankedTensorType.isinstance(ptr_type.pointee_type):
+      raise NotImplementedError("loading from a block pointer is not supported")
+
+  ptr_type = _element_type(ptr.type)
+  if not tt_dialect.PointerType.isinstance(ptr_type):
+    raise ValueError(f"unsupported pointer type: {ptr_type}")
+  ptr_type = tt_dialect.PointerType(ptr_type)
+  if not ir.RankedTensorType.isinstance(ptr.type):
+    if ir.RankedTensorType.isinstance(value.type):
+      raise ValueError("value cannot be a block if pointer is not a block")
+    if mask is not None and ir.RankedTensorType.isinstance(mask.type):
+      raise ValueError("mask cannot be a block if pointer is not a block")
+
+  pointee_type = ptr_type.pointee_type
+  if isinstance(pointee_type, ir.IntegerType) and pointee_type.width == 1:
+    pointee_type = ir.IntegerType.get_signless(8)
+    ptr = _ir_cast(
+        ptr,
+        tt_dialect.PointerType.get(pointee_type, ptr_type.address_space),
+        signed=False,
+    )
+
+  value = _ir_cast(value, pointee_type, signed=False)
+  return tt_dialect.store(
+      ptr, value, mask=mask, cache=cache_modifier, evict=eviction_policy
+  )
 
 
+@register_lowering(primitives.swap_p)
 def _masked_swap_lowering_rule(
-    ctx: TritonLoweringRuleContext, *args_flat, args_tree, eviction_policy
+    ctx: LoweringRuleContext, *args_flat, args_tree, eviction_policy
 ):
-  ptr, idx, value, mask = args_tree.unflatten(args_flat)
-  ptr_type = (
-      ptr.type.element_ty.element_ty
-      if ptr.type.is_block()
-      else ptr.type.element_ty
-  )
-  value_type = value.type.element_ty if value.type.is_block() else value.type
-  assert ptr_type == value_type, (ptr_type, value_type)
-  ptr = _compute_pointers_from_indices(
-      ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
-  )
-  other = None if mask is None else value
-  old_value = tl.load(ptr, mask=mask, other=other, _builder=ctx.builder)
-  tl.store(
-      ptr,
-      value,
-      mask=mask,
-      eviction_policy=eviction_policy,
-      _builder=ctx.builder,
-  )
+  block_info, *_ = ctx.block_infos
+  assert block_info is not None
+  ptr, indexers, value, mask = args_tree.unflatten(args_flat)
+  *_, value_aval, mask_aval = args_tree.unflatten(ctx.avals_in)
+  if len(indexers) > 1:
+    raise NotImplementedError("No support for multiple indexers yet.")
+  idx = indexers[0]
+  ptr = _compute_pointers_from_indices(ptr, block_info, idx)
+  other = None
+  if value is not None:
+    value = _ensure_ir_value(value, value_aval)
+  if mask is not None:
+    mask = _bcast_to(_ensure_ir_value(mask, mask_aval), idx.get_indexer_shape())
+    if value is not None:
+      other = _bcast_to(value, idx.get_indexer_shape())
+
+  old_value = _load(ptr, mask=mask, other=other)
+  _store(ptr, value, mask=mask, eviction_policy=eviction_policy)
   return old_value
 
 
-triton_lowering_rules[primitives.swap_p] = _masked_swap_lowering_rule
-
-
-def _addupdate_lowering_rule(
-    ctx: TritonLoweringRuleContext, ptr, value, *non_slice_idx, indexed_dims
-):
-  ref_block_info, *_ = ctx.block_infos
-  avals_in = ctx.avals_in
-  idx = _pack_indices(non_slice_idx, indexed_dims)
-  if non_slice_idx:
-    (int_indexer_shape,) = {
-        tuple(map(lambda x: x.value, i.shape)) for i in non_slice_idx
-    }
-  else:
-    int_indexer_shape = ()
-  idx = tuple(
-      primitives.Slice.from_slice(slc, s) if isinstance(slc, slice) else slc
-      for s, slc in zip(avals_in[0].shape, idx)
-  )
-  idx = primitives.NDIndexer(idx, avals_in[0].shape, int_indexer_shape)
-  ptr = _compute_pointers_from_indices(
-      ptr, ref_block_info, idx, avals_in[0].shape, ctx.builder
-  )
-  tl.atomic_add(ptr, value, _builder=ctx.builder)
+@register_lowering(sp.addupdate_p)
+def _addupdate_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
+  block_info, *_ = ctx.block_infos
+  assert block_info is not None
+  indexers = tree_util.tree_unflatten(tree, idx)
+  if not tt_dialect.PointerType.isinstance(ptr.type):
+    assert len(indexers) == 0
+    return ptr
+  if len(indexers) > 1:
+    raise NotImplementedError("No support for multiple indexers yet.")
+  indexer = indexers[0]
+  ptr = _compute_pointers_from_indices(ptr, block_info, indexer)
+  op = tt_dialect.RMWOp.FADD
+  if isinstance(_element_type(value.type), ir.IntegerType):
+    op = tt_dialect.RMWOp.ADD
+  _atomic_rmw(op, ptr, value)
   return []
 
 
-triton_lowering_rules[sp.addupdate_p] = _addupdate_lowering_rule
-
-
-def _transpose_lowering(ctx: TritonLoweringRuleContext, a, *, permutation):
-  if permutation != (1, 0):
-    raise NotImplementedError(permutation)
-  return tl.trans(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.transpose_p] = _transpose_lowering
+@register_lowering(lax.transpose_p)
+def _transpose_lowering(ctx: LoweringRuleContext, x, *, permutation):
+  return tt_dialect.trans(x, permutation)
 
 
 _TF32_PRECISIONS = (lax.Precision.HIGH, lax.Precision.DEFAULT)
 
 
+def _as_bf16(x):
+  return _ir_cast(x, _dtype_to_ir_type(jnp.bfloat16), signed=False)
+
+
+def _as_f32(x):
+  return _ir_cast(x, _dtype_to_ir_type(jnp.float32), signed=False)
+
+
+@register_lowering(lax.dot_general_p)
 def _dot_general_lowering(
-    ctx: TritonLoweringRuleContext,
+    ctx: LoweringRuleContext,
     a,
     b,
     *,
     dimension_numbers,
+    out_sharding,
     precision,
-    preferred_element_type
+    preferred_element_type,
 ):
-  del preferred_element_type  # Unused.
+  del preferred_element_type, out_sharding  # Unused.
   ((a_contract_dim,), (b_contract_dim,)), batch_dims = dimension_numbers
   assert batch_dims == ((), ())
 
   if a_contract_dim == 0:
-    a = tl.trans(a, _builder=ctx.builder)
+    a = tt_dialect.trans(a, (1, 0))
   if b_contract_dim == 1:
-    b = tl.trans(b, _builder=ctx.builder)
+    b = tt_dialect.trans(b, (1, 0))
 
-  if precision is None:
-    allow_tf32 = True
+  a_aval, b_aval = ctx.avals_in
+  [out_aval] = ctx.avals_out
+
+  if precision is None or (precision == lax.DotAlgorithmPreset.DEFAULT):
+    precision = (lax.Precision.DEFAULT, lax.Precision.DEFAULT)
+
+  if isinstance(precision, lax.DotAlgorithmPreset):
+    match precision:
+      case lax.DotAlgorithmPreset.TF32_TF32_F32:
+        input_precision = tt_dialect.InputPrecision.TF32
+      case lax.DotAlgorithmPreset.TF32_TF32_F32_X3:
+        input_precision = tt_dialect.InputPrecision.TF32x3
+      case lax.DotAlgorithmPreset.F32_F32_F32:
+        input_precision = tt_dialect.InputPrecision.IEEE
+      case (
+          lax.DotAlgorithmPreset.F16_F16_F16
+          | lax.DotAlgorithmPreset.F16_F16_F32
+          | lax.DotAlgorithmPreset.BF16_BF16_BF16
+          | lax.DotAlgorithmPreset.BF16_BF16_F32
+          | lax.DotAlgorithmPreset.BF16_BF16_F32_X3
+          | lax.DotAlgorithmPreset.BF16_BF16_F32_X6
+          | lax.DotAlgorithmPreset.BF16_BF16_F32_X9
+      ):
+        input_precision = None
+      case _:
+        raise NotImplementedError(f"Unsupported dot algorithm: {precision}.")
+
+    a = _cast(a, a_aval.dtype, precision.supported_lhs_types[0])
+    b = _cast(b, b_aval.dtype, precision.supported_rhs_types[0])
+    acc_dtype = precision.accumulation_type
+  elif isinstance(precision, tuple):
+    a_precision, b_precision = precision
+    if a_precision in _TF32_PRECISIONS or b_precision in _TF32_PRECISIONS:
+      input_precision = tt_dialect.InputPrecision.TF32
+    elif a_aval.dtype == jnp.float32:
+      input_precision = tt_dialect.InputPrecision.IEEE
+    else:
+      input_precision = None
+
+    acc_dtype = out_aval.dtype
+    if acc_dtype != jnp.int32 and acc_dtype != jnp.float16:
+      acc_dtype = jnp.float32
   else:
-    prec_a, prec_b = precision
-    allow_tf32 = prec_a in _TF32_PRECISIONS or prec_b in _TF32_PRECISIONS
+    raise NotImplementedError(f"Unsupported dot precision: {precision}.")
 
-  out_dtype = acc_dtype = _convert_dtype(ctx.avals_out[0].dtype)
-  if acc_dtype not in (tl.int32, tl.float16):
-    acc_dtype = tl.float32
+  a_type = ir.RankedTensorType(a.type)
+  b_type = ir.RankedTensorType(b.type)
+  if len(a_type.shape) != len(b_type.shape) != 2:
+    raise ValueError("a and b must be 2D, but got:"
+                     f" {a_type.shape} and {b_type.shape}")
+  if min(*b_type.shape) < 16:
+    raise ValueError("all dimensions of b must be >= 16 ")
+  if a_type.element_type != b_type.element_type:
+    raise ValueError(
+        "a and b must have the same element type, but got:"
+        f" {a_type.element_type} and {b_type.element_type}"
+    )
 
-  return tl.dot(
-      a,
-      b,
-      allow_tf32=allow_tf32,
-      out_dtype=acc_dtype,
-      _builder=ctx.builder,
-  ).to(out_dtype, _builder=ctx.builder)
+  m, _ = a_type.shape
+  _, n = b_type.shape
+  acc = _zeros(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)))
+
+  if precision in (
+      lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+      lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+      lax.DotAlgorithmPreset.BF16_BF16_F32_X9,
+  ):
+    a_bf16 = _as_bf16(a)
+    b_bf16 = _as_bf16(b)
+    a_err0 = _sub(a, _as_f32(a_bf16))
+    b_err0 = _sub(b, _as_f32(b_bf16))
+    a_err0_bf16 = _as_bf16(a_err0)
+    b_err0_bf16 = _as_bf16(b_err0)
+    a_err1_bf16 = _as_bf16(_sub(a_err0, _as_f32(a_err0_bf16)))
+    b_err1_bf16 = _as_bf16(_sub(b_err0, _as_f32(b_err0_bf16)))
+    # Accumulate the smallest values first to reduce the numeric error.
+    if precision == lax.DotAlgorithmPreset.BF16_BF16_F32_X9:
+      acc = tt_dialect.dot(a_err1_bf16, b_err0_bf16, acc)
+      acc = tt_dialect.dot(a_err1_bf16, b_err1_bf16, acc)
+      acc = tt_dialect.dot(a_err0_bf16, b_err1_bf16, acc)
+    if precision in (
+        lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+        lax.DotAlgorithmPreset.BF16_BF16_F32_X9,
+    ):
+      acc = tt_dialect.dot(a_err1_bf16, b_bf16, acc)
+      acc = tt_dialect.dot(a_bf16, b_err1_bf16, acc)
+      acc = tt_dialect.dot(a_err0_bf16, b_err0_bf16, acc)
+    acc = tt_dialect.dot(a_err0_bf16, b_bf16, acc)
+    acc = tt_dialect.dot(a_bf16, b_err0_bf16, acc)
+    # If `a` rounding error is zero and `b` is `inf` then `acc` may contain
+    # `NaN`s (as `0 * inf = NaN`), and vice versa.
+    acc = arith_dialect.select(_is_nan(acc), _zeros_like(acc), acc)
+    a, b = a_bf16, b_bf16
+
+  acc = tt_dialect.dot(a, b, acc, input_precision=input_precision)
+  return _cast(acc, acc_dtype, out_aval.dtype)
 
 
-triton_lowering_rules[lax.dot_general_p] = _dot_general_lowering
-
-
-def _reduction_lowering(body, ctx: TritonLoweringRuleContext, args, axes):
-  flat_args = tree_util.tree_leaves(args)
+def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
+  flat_args = tree_util.tree_leaves(a)
   (axis,) = axes
-  mapped_avals = [
-      jax_core.mapped_aval(aval.shape[axis], axis, aval)
-      for aval in ctx.avals_in
-  ]
-  in_tree = tree_util.tree_structure((args, args))
+  mapped_avals = [jax_core.ShapedArray((), aval.dtype) for aval in ctx.avals_in]
+  in_tree = tree_util.tree_structure((a, a))
   flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(body), in_tree
+      lu.wrap_init(
+          body,
+          debug_info=api_util.debug_info("pallas triton reduction",
+                                         body, (a, a), {})),
+      in_tree
   )
-  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+  combine_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       flat_fun, [*mapped_avals, *mapped_avals]
   )
   out_tree = out_tree_thunk()
   del out_tree  # Not needed
   if consts:
     raise NotImplementedError("Reductions with constants not supported.")
-  element_types = [arg.type.scalar for arg in flat_args]
-  builder = ctx.builder
-  reduce_op = builder.create_reduce([t.handle for t in flat_args], axis)
-  region = reduce_op.get_region(0)
-  old_ip = builder.get_insertion_point()
+  element_types = [_element_type(arg.type) for arg in flat_args]
+  reduce_op = tt_dialect.ReduceOp(flat_args, axis)
   param_types = element_types * 2
-  ir_param_types = [ty.to_ir(builder) for ty in param_types]
-  block = builder.create_block_with_parent(region, ir_param_types)
-  combine_args = [
-      tl.core.tensor(block.arg(i), ty) for i, ty in enumerate(param_types)
-  ]
-  results = lower_jaxpr_to_triton_ir(
-      ctx.context, combine_jaxpr, None, *combine_args
-  )
-  handles = [r.handle for r in results]
-  builder.create_reduce_ret(*handles)
-  builder.restore_insertion_point(old_ip)
+  entry = reduce_op.regions[0].blocks.append(*param_types)
+  with ir.InsertionPoint.at_block_begin(entry):
+    results = lower_jaxpr_to_triton_ir(
+        ctx.context, combine_jaxpr, None, *entry.arguments
+    )
+    tt_dialect.reduce_return(results)
   reduce_op.verify()
-
-  def wrap_tensor(x, scalar_ty):
-    if ctx.avals_out[0].shape:
-      res_ty = tl.block_type(scalar_ty, ctx.avals_out[0].shape)
-    else:
-      # 0d-tensor -> scalar
-      res_ty = scalar_ty
-    return tl.core.tensor(x, res_ty)
-
-  results = [
-      wrap_tensor(reduce_op.get_result(i), ty)
-      for i, ty in enumerate(element_types)
-  ]
-  return results
+  return list(reduce_op.result)
 
 
-def _reduce_lowering(body, ctx: TritonLoweringRuleContext, a, *, axes):
+def _reduce_lowering(body, ctx: LoweringRuleContext, a, *, axes):
   assert isinstance(axes, tuple)
   if not axes:
     return a
@@ -986,7 +2440,7 @@ def _reduce_lowering(body, ctx: TritonLoweringRuleContext, a, *, axes):
     # reduces, which seems necessary for correctness.
     # TODO(bjp): Get rid of the double negation.
     #     https://github.com/openai/triton/issues/1776
-    a = a.__neg__(_builder=ctx.builder).__neg__(_builder=ctx.builder)
+    a = _minus(_minus(a))
     ctx = ctx.replace(avals_in=dst_avals)
     axes = tuple(ax for ax in axes if ax != axis)
   return _reduction_lowering(body, ctx, a, axes=axes)[0]
@@ -1004,27 +2458,22 @@ triton_lowering_rules[lax.reduce_sum_p] = functools.partial(
 
 
 def _argreduce_lowering(
-    body, ctx: TritonLoweringRuleContext, a, *, axes, index_dtype
+    body, ctx: LoweringRuleContext, a, *, axes, index_dtype
 ):
   if index_dtype != jnp.int32:
     raise ValueError("`index_type` must be i32.")
   if len(axes) != 1:
     raise ValueError("`pallas` reduce operations only support one reduce axis.")
-  (axis,) = axes
-  n = ctx.avals_in[0].shape[axis]
-  index = tl.arange(0, n, _builder=ctx.builder)
-  if len(a.shape) > 1:
+  [axis] = axes
+  [a_aval] = ctx.avals_in
+  index = _make_range(0, a_aval.shape[axis])
+  if len(a_aval.shape) > 1:
     # Broadcast index across the non-reduced axes
-    expand_dims_index = [tl.constexpr(None)] * len(a.shape)
-    expand_dims_index[axis] = slice(None)
-    index = index.__getitem__(expand_dims_index, _builder=ctx.builder)
-    index = tl.core.broadcast_to(index, a.shape, _builder=ctx.builder)
-  ctx = ctx.replace(
-      avals_in=[
-          ctx.avals_in[0],
-          ctx.avals_in[0].update(dtype=jnp.dtype("int32")),
-      ]
-  )
+    for i in range(len(a_aval.shape)):
+      if i != axis:
+        index = _expand_dims(index, i)
+    index = _bcast_to(index, a_aval.shape)
+  ctx = ctx.replace(avals_in=[a_aval, a_aval.update(dtype=jnp.dtype(jnp.int32))])
   _, indices = _reduction_lowering(body, ctx, (a, index), axes=axes)
   return indices
 
@@ -1061,19 +2510,23 @@ triton_lowering_rules[lax.argmin_p] = functools.partial(
 )
 
 
-def _pjit_lowering_rule(ctx: TritonLoweringRuleContext, *args, jaxpr, **_):
+@register_lowering(pjit.pjit_p)
+def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   if jaxpr.consts:
     raise NotImplementedError
   return lower_jaxpr_to_triton_ir(
       ctx.context, jaxpr.jaxpr, ctx.block_infos, *args
   )
 
+@register_lowering(pjit.mesh_cast_p)
+def _mesh_cast_lowering_rule(ctx, x, dst_sharding):
+  return x
 
-triton_lowering_rules[pjit.pjit_p] = _pjit_lowering_rule
 
-
+@register_lowering(jax_core.closed_call_p)
+@register_lowering(custom_derivatives.custom_jvp_call_p)
 def _closed_call_lowering_rule(
-    ctx: TritonLoweringRuleContext, *args, call_jaxpr, **_
+    ctx: LoweringRuleContext, *args, call_jaxpr, **_
 ):
   jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
   if consts:
@@ -1081,19 +2534,21 @@ def _closed_call_lowering_rule(
   return lower_jaxpr_to_triton_ir(ctx.context, jaxpr, ctx.block_infos, *args)
 
 
-triton_lowering_rules[jax_core.closed_call_p] = _closed_call_lowering_rule
-triton_lowering_rules[custom_derivatives.custom_jvp_call_p] = (
-    _closed_call_lowering_rule
-)
-
-
-def _remat_lowering_rule(ctx: TritonLoweringRuleContext, *args, jaxpr, **_):
+@register_lowering(ad_checkpoint.remat_p)
+def _remat_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   return lower_jaxpr_to_triton_ir(ctx.context, jaxpr, ctx.block_infos, *args)
 
 
-triton_lowering_rules[ad_checkpoint.remat_p] = _remat_lowering_rule
 triton_lowering_rules[ad_util.stop_gradient_p] = lambda _, x: x
 
+
+@register_lowering(lax.axis_index_p)
+def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  grid_names = ctx.context.grid_mapping.grid_names
+  if axis_name in grid_names:
+    # We are querying a named axis corresponding to a grid dimension.
+    return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
+  raise LookupError(f"Axis name {axis_name} not found in grid.")
 
 def _is_read_only(ref_effects) -> bool:
   if len(ref_effects) == 0:
@@ -1105,26 +2560,28 @@ def _is_read_only(ref_effects) -> bool:
   return isinstance(eff, state.ReadEffect)
 
 
+@register_lowering(for_loop.for_p)
 def _for_lowering_rule(
-    ctx: TritonLoweringRuleContext,
+    ctx: LoweringRuleContext,
     *args,
     jaxpr,
     which_linear,
     nsteps,
     reverse,
-    unroll
+    unroll,
 ):
   del which_linear
   if reverse or unroll != 1:
     raise NotImplementedError
-  builder = ctx.builder
-  lower_bound = builder.get_int32(0)
-  upper_bound = builder.get_int32(nsteps)
-  step = builder.get_int32(1)
-  current_block = builder.get_insertion_block()
-  init_args = args
+  _i_constant = _i64_constant if config.enable_x64.value else _i32_constant
+  lower_bound = _i_constant(0)
+  upper_bound = _i_constant(nsteps)
+  step = _i_constant(1)
+  init_args = map(_ensure_ir_value, args, ctx.avals_in)
   # Partially discharge state from jaxpr for non-pointers
-  should_discharge = [not isinstance(a, AbstractRef) for a in ctx.avals_in]
+  should_discharge = [
+      not isinstance(a, state.AbstractRef) for a in ctx.avals_in
+  ]
   discharged_jaxpr, () = discharge.discharge_state(
       jaxpr, (), should_discharge=[True, *should_discharge]
   )
@@ -1138,81 +2595,63 @@ def _for_lowering_rule(
   )
   ptrs, _ = partition_list(should_discharge, init_args)
   non_loop_args, loop_args = partition_list(is_loop_arg, init_args)
-  for_op = builder.create_for_op(
-      lower_bound, upper_bound, step, [arg.handle for arg in loop_args]
-  )
-  loop_block = builder.create_block()
-  builder.set_insertion_point_to_start(loop_block)
-  loop_index = tl.core.tensor(for_op.get_induction_var(), tl.core.int32)
-  # Emit loop body
-  for_body_args = [
-      tl.core.tensor(for_op.get_body(0).arg(i + 1), arg.type)
-      for i, arg in enumerate(loop_args)
-  ]
-  loop_body_args = merge_lists(is_loop_arg, non_loop_args, for_body_args)
-  out_discharged = lower_jaxpr_to_triton_ir(
-      ctx.context,
-      discharged_jaxpr,
-      [None, *ctx.block_infos],
-      loop_index,
-      *loop_body_args
-  )
-  all_out = merge_lists(should_discharge, ptrs, out_discharged)
-  _, loop_out = partition_list(is_loop_arg, all_out)
-  if loop_out:
-    builder.create_yield_op([arg.handle for arg in loop_out])
-  loop_block.merge_block_before(for_op.get_body(0))
-  for_results = [for_op.get_result(i) for i in range(len(loop_args))]
-  builder.set_insertion_point_to_end(current_block)
-  for_out = [tl.core.tensor(r, a.type) for r, a in zip(for_results, loop_args)]
-  return merge_lists(is_loop_arg, non_loop_args, for_out)
+  for_op = scf_dialect.ForOp(lower_bound, upper_bound, step, loop_args)
+  with ir.InsertionPoint(for_op.body):
+    loop_index = for_op.induction_variable
+    for_body_args = [
+        for_op.body.arguments[i + 1] for i, _ in enumerate(loop_args)
+    ]
+    loop_body_args = merge_lists(is_loop_arg, non_loop_args, for_body_args)
+    out_discharged = lower_jaxpr_to_triton_ir(
+        ctx.context,
+        discharged_jaxpr,
+        [None, *ctx.block_infos],
+        loop_index,
+        *loop_body_args,
+    )
+    all_out = merge_lists(should_discharge, ptrs, out_discharged)
+    _, loop_out = partition_list(is_loop_arg, all_out)
+    scf_dialect.yield_(loop_out)
+  return merge_lists(is_loop_arg, non_loop_args, list(for_op.results_))
 
 
-triton_lowering_rules[for_loop.for_p] = _for_lowering_rule
-
-def _lower_jaxpr_to_for_loop(ctx: TritonLoweringRuleContext, jaxpr: jax_core.Jaxpr,
-                             lower_bound, upper_bound, consts, *args,
-                             has_loop_index: bool,
-                             step: int = 1,
-                             bound_type: tl.dtype = tl.int32):
+def _lower_jaxpr_to_for_loop(
+    ctx: LoweringRuleContext,
+    jaxpr: jax_core.Jaxpr,
+    lower_bound,
+    upper_bound,
+    consts,
+    *args,
+    has_loop_index: bool,
+    step: int = 1,
+    bound_type: ir.IntegerType | None = None,
+):
   if step != 1:
     raise NotImplementedError
-  builder = ctx.builder
-  if bound_type == tl.int64:
-    step = builder.get_int64(step)
+  if bound_type is None or bound_type.width == 32:
+    step = _i32_constant(step)
   else:
-    step = builder.get_int32(step)
-  current_block = builder.get_insertion_block()
-  for_op = builder.create_for_op(
-      lower_bound, upper_bound, step, [arg.handle for arg in args]
-  )
-  loop_block = builder.create_block()
-  builder.set_insertion_point_to_start(loop_block)
-  loop_index = tl.core.tensor(for_op.get_induction_var(), tl.core.int32)
-  # Emit loop body
-  for_body_args = [
-      tl.core.tensor(for_op.get_body(0).arg(i + 1), arg.type)
-      for i, arg in enumerate(args)
-  ]
-  if has_loop_index:
-    jaxpr_args = [*consts, loop_index, *for_body_args]
-  else:
-    jaxpr_args = [*consts, *for_body_args]
-  all_out = lower_jaxpr_to_triton_ir(
-      ctx.context,
-      jaxpr,
-      ctx.block_infos,
-      *jaxpr_args)
-  if all_out:
-    builder.create_yield_op([arg.handle for arg in all_out])
-  loop_block.merge_block_before(for_op.get_body(0))
-  for_results = [for_op.get_result(i) for i in range(len(args))]
-  builder.set_insertion_point_to_end(current_block)
-  return [tl.core.tensor(r, a.type) for r, a in zip(for_results, args)]
+    step = _i64_constant(step)
+
+  for_op = scf_dialect.ForOp(lower_bound, upper_bound, step, args)
+  with ir.InsertionPoint.at_block_begin(for_op.body):
+    loop_index = for_op.induction_variable
+    for_body_args = [for_op.body.arguments[i + 1] for i, _ in enumerate(args)]
+    if has_loop_index:
+      jaxpr_args = [*consts, loop_index, *for_body_args]
+    else:
+      jaxpr_args = [*consts, *for_body_args]
+    all_out = lower_jaxpr_to_triton_ir(
+        ctx.context, jaxpr, ctx.block_infos, *jaxpr_args
+    )
+    scf_dialect.yield_(all_out)
+
+  return list(for_op.results_)
 
 
+@register_lowering(lax.scan_p)
 def _scan_lowering_rule(
-    ctx: TritonLoweringRuleContext,
+    ctx: LoweringRuleContext,
     *args,
     jaxpr,
     linear,
@@ -1221,7 +2660,9 @@ def _scan_lowering_rule(
     unroll,
     num_consts,
     num_carry,
+    _split_transpose,
 ):
+  del _split_transpose
   # Only implements fori_loop-like scans
   num_extensive = len(args) - num_consts - num_carry
   if num_extensive: raise NotImplementedError
@@ -1229,39 +2670,41 @@ def _scan_lowering_rule(
   if unroll != 1: raise NotImplementedError
   del linear, num_extensive, unroll, reverse
 
-  builder = ctx.builder
   jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
   if jaxpr_consts: raise NotImplementedError
   del jaxpr_consts
 
   jaxpr, has_loop_index = (
       pallas_utils.pattern_match_scan_to_fori_loop(jaxpr, num_consts, num_carry)
-      )
+  )
+  args = map(_ensure_ir_value, args, ctx.avals_in)
   consts, args = util.split_list(args, [num_consts])
   if has_loop_index:
-    lb, *args = args
-    lower_bound = lb.handle
-    ub = lb.__add__(tl.constexpr(length), _builder=builder)
-    upper_bound = ub.handle
-    bound_type = ub.type
+    lower_bound, *args = args
+    upper_bound = _add(lower_bound, _ir_constant(length, lower_bound.type))
+    bound_type = lower_bound.type
   else:
-    lower_bound = builder.get_int32(0)
-    upper_bound = builder.get_int32(length)
-    bound_type = tl.int32
+    lower_bound = _i32_constant(0)
+    upper_bound = _i32_constant(length)
+    bound_type = ir.IntegerType.get_signless(32)
   for_out = _lower_jaxpr_to_for_loop(
       ctx, jaxpr, lower_bound, upper_bound, consts, *args,
       has_loop_index=has_loop_index, step=1, bound_type=bound_type)
   if has_loop_index:
     # Need to return the final loop index value if the outer scan expects
     # it as an output
-    return [tl.core.tensor(upper_bound, bound_type), *for_out]
+    return [upper_bound, *for_out]
   return for_out
 
-triton_lowering_rules[lax.scan_p] = _scan_lowering_rule
 
-def _maybe_pattern_match_fori_loop(ctx: TritonLoweringRuleContext, *args,
-                                   cond_nconsts, cond_jaxpr, body_nconsts, body_jaxpr
-                                   ):
+def _maybe_pattern_match_fori_loop(
+    ctx: LoweringRuleContext,
+    *args,
+    cond_nconsts,
+    cond_jaxpr,
+    body_nconsts,
+    body_jaxpr,
+):
   if cond_nconsts:
     return None
   _, cond_invars = split_list(cond_jaxpr.jaxpr.invars, [cond_nconsts])
@@ -1320,295 +2763,189 @@ def _maybe_pattern_match_fori_loop(ctx: TritonLoweringRuleContext, *args,
                                                    [body_nconsts])
   ctx = ctx.replace(block_infos=[*const_block_infos, None,
                                  *args_block_infos[2:]])
-  for_out = _lower_jaxpr_to_for_loop(ctx, jaxpr, lb.handle, ub.handle,
-                                     body_consts, *args, has_loop_index=True,
-                                     step=1, bound_type=lb.type)
+  for_out = _lower_jaxpr_to_for_loop(
+      ctx,
+      jaxpr,
+      lb,
+      ub,
+      body_consts,
+      *args,
+      has_loop_index=True,
+      step=1,
+      bound_type=lb.type,
+  )
   return [ub, ub, *for_out]
 
+
+@register_lowering(lax.while_p)
 def _while_lowering_rule(
-    ctx: TritonLoweringRuleContext,
+    ctx: LoweringRuleContext,
     *args,
     cond_nconsts,
     cond_jaxpr,
     body_nconsts,
-    body_jaxpr
+    body_jaxpr,
 ):
+  args = map(_ensure_ir_value, args, ctx.avals_in)
+
   # First, try to pattern match to fori_loop and lower to scf.for if possible
+  # TODO(slebedev): Use `pallas_utils.pattern_match_while_to_fori_loop`.
   result = _maybe_pattern_match_fori_loop(ctx, *args, cond_nconsts=cond_nconsts,
                                           body_nconsts=body_nconsts, cond_jaxpr=cond_jaxpr,
                                           body_jaxpr=body_jaxpr)
   if result is not None:
     return result
   # Fall back to default while lowering
-  num_args = len(args)
   cond_consts, body_consts, carry = util.split_list(
       args, [cond_nconsts, body_nconsts]
   )
   cond_const_block_infos, body_const_block_infos, carry_block_infos = (
       util.split_list(ctx.block_infos, [cond_nconsts, body_nconsts])
   )
-  current_bb = ctx.builder.get_insertion_block()
-  cond_const_types = [a.type.to_ir(ctx.builder) for a in cond_consts]
-  body_const_types = [a.type.to_ir(ctx.builder) for a in body_consts]
-  carry_types = [a.type.to_ir(ctx.builder) for a in carry]
+  cond_const_types = [a.type for a in cond_consts]
+  body_const_types = [a.type for a in body_consts]
+  carry_types = [a.type for a in carry]
   all_types = [*cond_const_types, *body_const_types, *carry_types]
-  while_op = ctx.builder.create_while_op(
-      [*cond_const_types, *body_const_types, *carry_types],
-      [arg.handle for arg in args],
-  )
-  before_block = ctx.builder.create_block_with_parent(
-      while_op.get_before(), all_types
-  )
-  ctx.builder.set_insertion_point_to_start(before_block)
+  while_op = scf_dialect.WhileOp(all_types, args)
+
+  before_block = while_op.before.blocks.append(*all_types)
   cond_consts_, _, carry_ = util.split_list(
-      [before_block.arg(i) for i in range(num_args)],
+      before_block.arguments,
       [cond_nconsts, body_nconsts],
   )
-  cond_args = [
-      tl.core.tensor(a, b.type)
-      for a, b in zip([*cond_consts_, *carry_], [*cond_consts, *carry])
-  ]
-  (cond,) = lower_jaxpr_to_triton_ir(
-      ctx.context,
-      cond_jaxpr.jaxpr,
-      [*cond_const_block_infos, *carry_block_infos],
-      *cond_args
-  )
-  ctx.builder.create_condition_op(
-      cond.handle, [before_block.arg(i) for i in range(num_args)]
-  )
-  after_block = ctx.builder.create_block_with_parent(
-      while_op.get_after(), all_types
-  )
-  ctx.builder.set_insertion_point_to_start(after_block)
+  cond_args = [*cond_consts_, *carry_]
+  with ir.InsertionPoint.at_block_begin(before_block):
+    [cond] = lower_jaxpr_to_triton_ir(
+        ctx.context,
+        cond_jaxpr.jaxpr,
+        [*cond_const_block_infos, *carry_block_infos],
+        *cond_args,
+    )
+    scf_dialect.condition(cond, before_block.arguments)
+
+  after_block = while_op.after.blocks.append(*all_types)
   cond_consts_, body_consts_, carry_ = util.split_list(
-      [after_block.arg(i) for i in range(num_args)],
+      after_block.arguments,
       [cond_nconsts, body_nconsts],
   )
-  all_args = [
-      tl.core.tensor(a, b.type)
-      for a, b in zip(
-          [*cond_consts_, *body_consts_, *carry_],
-          [*cond_consts, *body_consts, *carry],
-      )
-  ]
+  all_args = [*cond_consts_, *body_consts_, *carry_]
   cond_const_args, body_const_args, carry_args = util.split_list(
       all_args, [cond_nconsts, body_nconsts]
   )
-  loop_out = lower_jaxpr_to_triton_ir(
-      ctx.context,
-      body_jaxpr.jaxpr,
-      [*body_const_block_infos, *carry_block_infos],
-      *body_const_args,
-      *carry_args
-  )
-  cond_consts_handles = [a.handle for a in cond_const_args]
-  body_consts_handles = [a.handle for a in body_const_args]
-  loop_out_handles = [a.handle for a in loop_out]
-  all_handles = [*cond_consts_handles, *body_consts_handles, *loop_out_handles]
-  if all_handles:
-    ctx.builder.create_yield_op(all_handles)
-  ctx.builder.set_insertion_point_to_end(current_bb)
-  all_out = [
-      tl.core.tensor(while_op.get_result(i), a.type) for i, a in enumerate(args)
-  ]
+  with ir.InsertionPoint.at_block_begin(after_block):
+    loop_out = lower_jaxpr_to_triton_ir(
+        ctx.context,
+        body_jaxpr.jaxpr,
+        [*body_const_block_infos, *carry_block_infos],
+        *body_const_args,
+        *carry_args
+    )
+    all_handles = [*cond_const_args, *body_const_args, *loop_out]
+    if all_handles:
+      scf_dialect.yield_(all_handles)
+
+  all_out = list(while_op.results_)
   return all_out[cond_nconsts + body_nconsts :]
 
 
-triton_lowering_rules[lax.while_p] = _while_lowering_rule
-
-
+@register_lowering(lax.cond_p)
 def _cond_lowering_rule(
-    ctx: TritonLoweringRuleContext,
+    ctx: LoweringRuleContext,
     index,
     *args,  # *consts, *ops
     branches,  # tuple(jaxprs)
-    linear,
 ):
   block_infos = ctx.block_infos
-  current_bb = ctx.builder.get_insertion_block()
 
   def to_type(out_aval):
-    elt_type = code_gen.str_to_ty(get_triton_type(out_aval)).element_ty
+    element_type = _dtype_to_ir_type(out_aval.dtype)
     if not out_aval.shape:
-      # Scalar types get special handling.
-      return elt_type
-    return tl.block_type(elt_type, out_aval.shape)
+      return element_type
+    return ir.RankedTensorType.get(out_aval.shape, element_type)
 
   out_types = [to_type(out) for out in ctx.avals_out]
-  out_ir_types = [t.to_ir(ctx.builder) for t in out_types]
 
-  use_branch0 = index.__eq__(0, _builder=ctx.builder)
+  use_branch0 = _equal(index, _ir_constant(0, index.type), signed=False)
   # TODO(bjp): Switch to scf.index_switch once exposed in triton.cc
-  if_op = ctx.builder.create_if_op(
-      out_ir_types,  # retTypes
-      use_branch0.handle,  # condition
-      True)  # withElse
-  # Lower then block.
-  ctx.builder.set_insertion_point_to_start(if_op.get_then_block())
-  outs0 = lower_jaxpr_to_triton_ir(
-      ctx.context,
-      branches[0].jaxpr,
-      block_infos[1:],
-      *args)
-  if outs0:
-    ctx.builder.create_yield_op([out.handle for out in outs0])
-  # Lower else block.
-  ctx.builder.set_insertion_point_to_start(if_op.get_else_block())
-  # TODO(bjp): Instead of linear nest of 'if's, partition into halves.
-  if len(branches) > 2:
-    outs1 = _cond_lowering_rule(
-        ctx,
-        index.__sub__(1, _builder=ctx.builder),
-        *args,
-        branches=branches[1:],
-        linear=linear)
-  else:
-    outs1 = lower_jaxpr_to_triton_ir(
+  if_op = scf_dialect.IfOp(use_branch0, out_types, hasElse=True)
+  with ir.InsertionPoint.at_block_begin(if_op.then_block):
+    outs0 = lower_jaxpr_to_triton_ir(
         ctx.context,
-        branches[1].jaxpr,
+        branches[0].jaxpr,
         block_infos[1:],
         *args)
-  if outs1:
-    ctx.builder.create_yield_op([out.handle for out in outs1])
-  ctx.builder.set_insertion_point_to_end(current_bb)
-  all_out = [
-      tl.core.tensor(if_op.get_result(i), ty)
-      for i, ty in enumerate(out_types)
-  ]
-  return all_out
+    scf_dialect.yield_(outs0)
+  with ir.InsertionPoint.at_block_begin(if_op.else_block):
+    # TODO(bjp): Instead of linear nest of 'if's, partition into halves.
+    if len(branches) > 2:
+      outs1 = _cond_lowering_rule(
+          ctx,
+          _sub(index, _ir_constant(1, index.type)),
+          *args,
+          branches=branches[1:],
+      )
+    else:
+      outs1 = lower_jaxpr_to_triton_ir(
+          ctx.context,
+          branches[1].jaxpr,
+          block_infos[1:],
+          *args)
+    scf_dialect.yield_(outs1)
 
-triton_lowering_rules[lax.cond_p] = _cond_lowering_rule
-
-
-@weakref_lru_cache
-def compile_jaxpr(
-    jaxpr: jax_core.Jaxpr,
-    in_shapes,
-    grid_mapping: GridMapping,
-    name: str,
-    num_warps: int,
-    num_stages: int,
-    debug: bool,
-) -> TritonCompilationResult:
-  lowering_result = lower_jaxpr_to_triton_module(
-      jaxpr, in_shapes, grid_mapping, name, num_warps
-  )
-  device = 0
-  ttir = str(lowering_result.module)
-  ptx, name, shared_mem_bytes, compute_capability = compile_ttir_to_ptx_inplace(
-      lowering_result.module,
-      device=device,
-      num_warps=num_warps,
-      num_stages=num_stages,
-      dump=debug,
-  )
-  return TritonCompilationResult(
-      name, ttir, ptx, shared_mem_bytes, compute_capability, lowering_result
-  )
+  return list(if_op.results_)
 
 
-def pallas_call_lowering(
-    ctx: mlir.LoweringRuleContext,
-    *in_nodes,
-    jaxpr: jax_core.Jaxpr,
-    name: str,
-    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
-    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
-    which_linear: tuple[bool, ...],
-    interpret: bool,
-    debug: bool,
-    input_output_aliases: tuple[tuple[int, int], ...],
-    grid_mapping: GridMapping,
-    triton_params: dict[str, Any] | None = None,
-    **compiler_params: Any,
-):
-  if interpret:
-    return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
-        ctx,
-        *in_nodes,
-        jaxpr=jaxpr,
-        name=name,
-        out_shapes=out_shapes,
-        in_shapes=in_shapes,
-        which_linear=which_linear,
-        interpret=interpret,
-        debug=debug,
-        input_output_aliases=input_output_aliases,
-        grid_mapping=grid_mapping,
-        **compiler_params
+def _ensure_ir_value(x: object, aval: jax_core.ShapedArray) -> ir.Value:
+  if isinstance(x, ir.Value):
+    return x
+  elif isinstance(x, (np.number, np.ndarray, int, float)):
+    return _ir_constant(x, _dtype_to_ir_type(aval.dtype))
+  raise NotImplementedError
+
+
+def _ir_constant(v: object, t: ir.Type) -> ir.Value:
+  if isinstance(v, (np.number, np.ndarray, int, float)):
+    if isinstance(t, ir.IntegerType):
+      v = int(v)
+    else:
+      assert isinstance(t, ir.FloatType)
+      v = float(v)
+    return arith_dialect.constant(t, v)
+  raise NotImplementedError
+
+
+def _i32_constant(v: int) -> ir.Value:
+  return arith_dialect.constant(ir.IntegerType.get_signless(32), v)
+
+
+def _i64_constant(v: int) -> ir.Value:
+  return arith_dialect.constant(ir.IntegerType.get_signless(64), v)
+
+
+def _dtype_to_ir_type(dtype: jax.typing.DTypeLike) -> ir.Type:
+  dtype = jnp.dtype(dtype)
+  if jnp.issubdtype(dtype, np.integer):
+    # All integer types in Triton are signless.
+    return ir.IntegerType.get_signless(dtype.itemsize * 8)
+  return mlir.dtype_to_ir_type(dtype)
+
+
+@register_lowering(lax.bitcast_convert_type_p)
+def _bitcast_convert_type_lowering_rule(
+    ctx: LoweringRuleContext, operand: ir.Value, *, new_dtype
+) -> ir.Value:
+  # TODO(petebu) Handle case where src and dst types have different bitwidths
+  src_elem_type = _element_type(operand.type)
+  dst_elem_type = _element_type(_dtype_to_ir_type(new_dtype))
+  assert isinstance(src_elem_type, (ir.IntegerType, ir.FloatType))
+  assert isinstance(dst_elem_type, (ir.IntegerType, ir.FloatType))
+  if src_elem_type.width != dst_elem_type.width:
+    raise NotImplementedError(
+        f"cannot cast {operand} to {new_dtype} because of different widths"
     )
-  num_warps = compiler_params.get("num_warps", 4)
-  if len(ctx.module_context.platforms) > 1:
-    raise NotImplementedError("multi-platform lowering for Pallas kernels")
-  if ctx.module_context.platforms[0] == 'rocm':
-    num_stages = compiler_params.get("num_stages", 1)
+  if ir.RankedTensorType.isinstance(operand.type):
+    shape = ir.RankedTensorType(operand.type).shape
+    result_type = ir.RankedTensorType.get(shape, dst_elem_type)
   else:
-    num_stages = compiler_params.get("num_stages", 3)
-
-  if debug:
-    print(jaxpr)
-    print(grid_mapping)
-  compilation_result = compile_jaxpr(
-      jaxpr,
-      (*in_shapes, *out_shapes),
-      grid_mapping,
-      name,
-      num_warps,
-      num_stages,
-      debug=debug,
-  )
-  #Triton returns a tuple for ROCm. We just want file path to be passed
-  if ctx.module_context.platforms[0] == 'rocm':
-      compilation_result.ptx = compilation_result.ptx[1]
-
-  if debug:
-    compilation_result.lowering_result.module.dump()
-
-  kernel = triton_kernel_call_lib.TritonKernel(
-      compilation_result.kernel_name,
-      num_warps,
-      compilation_result.shared_mem_bytes,
-      compilation_result.ptx,
-      compilation_result.ttir,
-      compilation_result.compute_capability,
-  )
-
-  grid = triton_lib.normalize_grid(
-      compilation_result.lowering_result.grid, metaparams={}
-  )
-
-  kernel_params = []
-  for _ in range(len(in_shapes) + len(out_shapes)):
-    kernel_params.append(
-        triton_kernel_call_lib.create_array_parameter(
-            0,  # bytes to zero  # TODO(cjfj): Expose through user API.
-            16,  # divisible by 16
-        )
-    )
-
-  kernel_call = triton_kernel_call_lib.TritonKernelCall(
-      kernel, grid[0], grid[1], grid[2], kernel_params
-  )
-
-  out_types = [
-      ir.RankedTensorType.get(shape.shape, mlir.dtype_to_ir_type(shape.dtype))
-      for shape in out_shapes
-  ]
-
-  if triton_params is None:
-    triton_params = {}
-  serialized_metadata = triton_params.get("serialized_metadata", b"")
-  kernel_call_proto = kernel_call.to_proto(name, serialized_metadata)
-  return hlo_helpers.custom_call(
-      call_target_name="triton_kernel_call",
-      result_types=out_types,
-      operands=in_nodes,
-      backend_config=zlib.compress(kernel_call_proto),
-      operand_layouts=triton_lib.avals_to_layouts(ctx.avals_in),
-      result_layouts=triton_lib.avals_to_layouts(ctx.avals_out),
-      operand_output_aliases=dict(input_output_aliases),
-  ).results
-
-
-mlir.register_lowering(pallas_call_p, pallas_call_lowering, platform="gpu")
+    result_type = dst_elem_type
+  return tt_dialect.bitcast(result_type, operand)

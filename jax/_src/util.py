@@ -12,24 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterable, Iterator, Sequence
+from __future__ import annotations
+
+import abc
+from collections.abc import Callable, Iterable, Iterator, Sequence
 import functools
 from functools import partial
 import itertools as it
 import logging
+import math
 import operator
-from typing import (Any, Callable, Generic, Optional, TypeVar, overload, TYPE_CHECKING, cast)
+from typing import (Any, Generic, SupportsIndex, TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np
 
 from jax._src import config
-from jax._src.lib import xla_client as xc
+from jax._src.lib import weakref_lru_cache as _weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
 
 logger = logging.getLogger(__name__)
 
 Seq = Sequence
+
+# TODO(jakevdp): fix import cycles and import Array.
+Array = Any
 
 T = TypeVar("T")
 T1 = TypeVar("T1")
@@ -51,12 +58,19 @@ if TYPE_CHECKING:
   def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> list[tuple[Any, ...]]: ...
 
   def safe_zip(*args):
-    args = list(map(list, args))
-    n = len(args[0])
-    for arg in args[1:]:
-      assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
-    return list(zip(*args))
+    """
+    Like builtin :func:`zip`, but with additional safety checks.
 
+    The differences from :func:`zip` are:
+
+    - :func:`safe_zip` checks that at least one argument is provided.
+    - :func:`safe_zip` checks that all arguments have the same length.
+    - :func:`safe_zip` returns an eagerly-evaluated list instead of a
+      lazily-evaluated iterator.
+    """
+    if not args:
+      raise TypeError("safe_zip requires at least 1 argument.")
+    return list(zip(*args, strict=True))
 else:
   safe_zip = jaxlib_utils.safe_zip
 
@@ -87,6 +101,27 @@ if TYPE_CHECKING:
 else:
   safe_map = jaxlib_utils.safe_map
 
+if TYPE_CHECKING:
+  @overload
+  def foreach(f: Callable[[T1], Any], __arg1: Iterable[T1]) -> None: ...
+
+  @overload
+  def foreach(f: Callable[[T1, T2], Any], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> None: ...
+
+  @overload
+  def foreach(f: Callable[[T1, T2, T3], Any], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> None: ...
+
+  @overload
+  def foreach(f: Callable[..., Any], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> None: ...
+
+  def foreach(f, *args):
+    safe_map(f, *args)
+    return None
+
+else:
+  foreach = jaxlib_utils.foreach
+
+
 def unzip2(xys: Iterable[tuple[T1, T2]]
     ) -> tuple[tuple[T1, ...], tuple[T2, ...]]:
   """Unzip sequence of length-2 tuples into two tuples."""
@@ -113,13 +148,15 @@ def unzip3(xyzs: Iterable[tuple[T1, T2, T3]]
     zs.append(z)
   return tuple(xs), tuple(ys), tuple(zs)
 
-def subvals(lst, replace):
+def subvals(lst: Sequence[T], replace: Iterable[tuple[int, T]]) -> tuple[T, ...]:
+  """Substitute values within a list."""
   lst = list(lst)
   for i, v in replace:
     lst[i] = v
   return tuple(lst)
 
 def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
+  """Split list into sublists of the specified sizes."""
   args = list(args)
   lists = []
   for n in ns:
@@ -128,23 +165,38 @@ def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   lists.append(args)
   return lists
 
+def split_list_checked(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
+  """Split list into sublists of the specified sizes."""
+  args = list(args)
+  assert sum(ns) == len(args) and all(n >= 0 for n in ns)
+  lists = []
+  for n in ns:
+    lists.append(args[:n])
+    args = args[n:]
+  return lists
+
 def partition_list(bs: Sequence[bool], l: Sequence[T]) -> tuple[list[T], list[T]]:
+  """Partition a list into two based on a mask."""
   assert len(bs) == len(l)
-  lists = [], []  # type: ignore
+  lists: tuple[list[T], list[T]] = ([], [])
   for b, x in zip(bs, l):
     lists[b].append(x)
   return lists
 
-def merge_lists(bs: Sequence[bool], l0: Sequence[T], l1: Sequence[T]) -> list[T]:
+def merge_lists(bs: Sequence[bool],
+                l0: Sequence[T1],
+                l1: Sequence[T2]
+                ) -> list[T1 | T2]:
+  """Merge the elements of two lists based on a mask."""
   assert sum(bs) == len(l1) and len(bs) - sum(bs) == len(l0)
   i0, i1 = iter(l0), iter(l1)
-  out = [next(i1) if b else next(i0) for b in bs]
+  out: list[T1 | T2] = [next(i1) if b else next(i0) for b in bs]
   sentinel = object()
   assert next(i0, sentinel) is next(i1, sentinel) is sentinel
   return out
 
 def subs_list(
-    subs: Sequence[Optional[int]], src: Sequence[T], base: Sequence[T],
+    subs: Sequence[int | None], src: Sequence[T], base: Sequence[T],
 ) -> list[T]:
   base_ = iter(base)
   out = [src[i] if i is not None else next(base_) for i in subs]
@@ -153,7 +205,7 @@ def subs_list(
   return out
 
 def subs_list2(
-    subs1: Sequence[Optional[int]], subs2: Sequence[Optional[int]],
+    subs1: Sequence[int | None], subs2: Sequence[int | None],
     src1: Sequence[T], src2: Sequence[T], base: Sequence[T],
 ) -> list[T]:
   assert len(subs1) == len(subs2)
@@ -164,7 +216,7 @@ def subs_list2(
   assert next(base_, sentinel) is sentinel
   return out
 
-def split_dict(dct, names):
+def split_dict(dct: dict[T1, T2], names: Sequence[T1]) -> list[T2]:
   dct = dict(dct)
   lst = [dct.pop(name) for name in names]
   assert not dct
@@ -204,54 +256,14 @@ def curry(f):
   """
   return wraps(f)(partial(partial, f))
 
-def toposort(end_nodes):
-  if not end_nodes: return []
-  end_nodes = _remove_duplicates(end_nodes)
+toposort: Callable[[Iterable[Any]], list[Any]]
+toposort = partial(jaxlib_utils.topological_sort, "parents")
 
-  child_counts = {}
-  stack = list(end_nodes)
-  while stack:
-    node = stack.pop()
-    if id(node) in child_counts:
-      child_counts[id(node)] += 1
-    else:
-      child_counts[id(node)] = 1
-      stack.extend(node.parents)
-  for node in end_nodes:
-    child_counts[id(node)] -= 1
 
-  sorted_nodes = []
-  childless_nodes = [node for node in end_nodes if child_counts[id(node)] == 0]
-  assert childless_nodes
-  while childless_nodes:
-    node = childless_nodes.pop()
-    sorted_nodes.append(node)
-    for parent in node.parents:
-      if child_counts[id(parent)] == 1:
-        childless_nodes.append(parent)
-      else:
-        child_counts[id(parent)] -= 1
-  sorted_nodes = sorted_nodes[::-1]
-
-  check_toposort(sorted_nodes)
-  return sorted_nodes
-
-def check_toposort(nodes):
-  visited = set()
-  for node in nodes:
-    assert all(id(parent) in visited for parent in node.parents)
-    visited.add(id(node))
-
-def _remove_duplicates(node_list):
-  seen = set()
-  out = []
-  for n in node_list:
-    if id(n) not in seen:
-      seen.add(id(n))
-      out.append(n)
-  return out
-
-def split_merge(predicate, xs):
+def split_merge(
+    predicate: Callable[[T], bool],
+    xs: Sequence[T]
+) -> tuple[list[T], list[T], Callable[[Sequence[T], Sequence[T]], list[T]]]:
   sides = list(map(predicate, xs))
   lhs = [x for x, s in zip(xs, sides) if s]
   rhs = [x for x, s in zip(xs, sides) if not s]
@@ -270,7 +282,10 @@ def split_merge(predicate, xs):
 
   return lhs, rhs, merge
 
-def cache(max_size=4096):
+def _ignore(): return None
+
+
+def cache(max_size=4096, trace_context_in_key=True):
   def wrap(f):
     @functools.lru_cache(max_size)
     def cached(_, *args, **kwargs):
@@ -280,17 +295,26 @@ def cache(max_size=4096):
     def wrapper(*args, **kwargs):
       if config.check_tracer_leaks.value:
         return f(*args, **kwargs)
-      else:
-        return cached(config.config._trace_context(), *args, **kwargs)
+      return cached(config.trace_context() if trace_context_in_key else _ignore(),
+                    *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
+    cache_clearing_funs.add(wrapper.cache_clear)
     return wrapper
   return wrap
 
+cache_clearing_funs = weakref.WeakSet()  # type: ignore
+
+def clear_all_caches():
+  global cache_clearing_funs
+  for clear in cache_clearing_funs:
+    clear()
+
 memoize = cache(max_size=None)
 
-def weakref_lru_cache(call: Callable, maxsize=2048):
+def weakref_lru_cache(call: Callable, maxsize=2048,
+                      trace_context_in_key: bool = True):
   """
   Least recently used cache decorator with weakref support.
 
@@ -299,7 +323,9 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   behave similar to `functools.lru_cache`.
   """
   global _weakref_lru_caches
-  cached_call = xc.weakref_lru_cache(config.config._trace_context, call, maxsize)
+  cached_call = _weakref_lru_cache.weakref_lru_cache(
+      config.trace_context if trace_context_in_key else _ignore, call, maxsize
+  )
   _weakref_lru_caches.add(cached_call)
   return cached_call
 
@@ -342,10 +368,29 @@ class WrapKwArgs:
   def __eq__(self, other):
     return self.val == other.val
 
-def wrap_name(name, transform_name):
+def wrap_name(name: str, transform_name: str) -> str:
   return transform_name + '(' + name + ')'
 
-def canonicalize_axis(axis, num_dims) -> int:
+
+def fun_name(fun: Callable, default_name: str = "<unnamed function>") -> str:
+  name = getattr(fun, "__name__", None)
+  if name is not None:
+    return name
+  if isinstance(fun, partial):
+    return fun_name(fun.func)
+  else:
+    return default_name
+
+
+def fun_qual_name(fun: Callable) -> str:
+  qual_name = getattr(fun, "__qualname__", None)
+  if qual_name is not None:
+    return qual_name
+  if isinstance(fun, partial):
+    return fun_qual_name(fun.func)
+  return fun_name(fun)
+
+def canonicalize_axis(axis: SupportsIndex, num_dims: int) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
   if not -num_dims <= axis < num_dims:
@@ -354,7 +399,7 @@ def canonicalize_axis(axis, num_dims) -> int:
     axis = axis + num_dims
   return axis
 
-def moveaxis(x, src, dst):
+def moveaxis(x: Array, src: int | Sequence[int], dst: int | Sequence[int]) -> Array:
   if src == dst:
     return x
   if isinstance(src, int):
@@ -368,14 +413,14 @@ def moveaxis(x, src, dst):
     perm.insert(d, s)
   return x.transpose(perm)
 
-def ceil_of_ratio(x, y):
+def ceil_of_ratio(x: int, y: int) -> int:
   return -(-x // y)
 
 
 def wraps(
     wrapped: Callable,
-    namestr: Optional[str] = None,
-    docstr: Optional[str] = None,
+    namestr: str | None = None,
+    docstr: str | None = None,
     **kwargs,
 ) -> Callable[[T], T]:
   """
@@ -384,7 +429,7 @@ def wraps(
   """
   def wrapper(fun: T) -> T:
     try:
-      name = getattr(wrapped, "__name__", "<unnamed function>")
+      name = fun_name(wrapped)
       doc = getattr(wrapped, "__doc__", "") or ""
       fun.__dict__.update(getattr(wrapped, "__dict__", {}))
       fun.__annotations__ = getattr(wrapped, "__annotations__", {})
@@ -394,8 +439,9 @@ def wraps(
                      else docstr.format(fun=name, doc=doc, **kwargs))
       fun.__qualname__ = getattr(wrapped, "__qualname__", fun.__name__)
       fun.__wrapped__ = wrapped
-    finally:
-      return fun
+    except Exception:
+      pass
+    return fun
   return wrapper
 
 
@@ -404,13 +450,17 @@ def wraps(
 def assert_unreachable(x):
   raise AssertionError(f"Unhandled case: {type(x).__name__}")
 
-def tuple_insert(t, idx, val):
+def tuple_insert(t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
   assert 0 <= idx <= len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx:]
 
-def tuple_delete(t, idx):
+def tuple_delete(t: tuple[T, ...], idx: int) -> tuple[T, ...]:
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
+
+def tuple_update(t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
+  assert 0 <= idx < len(t), (idx, len(t))
+  return t[:idx] + (val,) + t[idx+1:]
 
 class HashableFunction:
   """Decouples function equality and hash from its identity.
@@ -465,13 +515,8 @@ class HashablePartial:
             self.args == other.args and self.kwargs == other.kwargs)
 
   def __hash__(self):
-    return hash(
-      (
-        self.f.__code__,
-        self.args,
-        tuple(sorted(self.kwargs.items(), key=lambda kv: kv[0])),
-      ),
-    )
+    kwargs = tuple(sorted(self.kwargs.items(), key=lambda kv: kv[0]))
+    return hash((self.f.__code__, self.args, kwargs))
 
   def __call__(self, *args, **kwargs):
     return self.f(*self.args, *args, **self.kwargs, **kwargs)
@@ -504,6 +549,14 @@ def distributed_debug_log(*pairs):
     logger.warning("\n".join(lines))
 
 
+def stable_unique(it: Iterable[T]) -> Iterable[T]:
+  """Returns unique elements from `it` in the order of occurrence.
+
+  The elements must be hashable.
+  """
+  return dict.fromkeys(it).keys()
+
+
 class OrderedSet(Generic[T]):
   elts_set: set[T]
   elts_list: list[T]
@@ -533,7 +586,7 @@ class OrderedSet(Generic[T]):
 
 class HashableWrapper:
   x: Any
-  hash: Optional[int]
+  hash: int | None
   def __init__(self, x):
     self.x = x
     try: self.hash = hash(x)
@@ -546,7 +599,7 @@ class HashableWrapper:
     return self.x == other.x if self.hash is not None else self.x is other.x
 
 
-def _original_func(f):
+def _original_func(f: Callable) -> Callable:
   if isinstance(f, property):
     return cast(property, f).fget
   elif isinstance(f, functools.cached_property):
@@ -562,60 +615,71 @@ def set_module(module: str) -> Callable[[T], T]:
   return wrapper
 
 
-if TYPE_CHECKING:
-  def use_cpp_class(cpp_cls: Any) -> Callable[[T], T]:
-    def wrapper(cls: T) -> T:
+def use_cpp_class(cpp_cls: type[Any]) -> Callable[[type[T]], type[T]]:
+  """A decorator replacing a Python class with its C++ version at runtime."""
+
+  def wrapper(cls):
+    if cpp_cls is None:
       return cls
-    return wrapper
 
-  def use_cpp_method(is_enabled: bool = True) -> Callable[[T], T]:
-    def wrapper(cls: T) -> T:
-      return cls
-    return wrapper
+    exclude_methods = {'__module__', '__dict__', '__doc__'}
 
-else:
-  def use_cpp_class(cpp_cls):
-    """A helper decorator to replace a python class with its C++ version"""
+    for attr_name, attr in cls.__dict__.items():
+      if attr_name not in exclude_methods:
+        if not hasattr(_original_func(attr), "_use_cpp"):
+          setattr(cpp_cls, attr_name, attr)
 
-    def wrapper(cls):
-      if cpp_cls is None:
-        return cls
+    cpp_cls.__doc__ = cls.__doc__
+    return cpp_cls
 
-      exclude_methods = {'__module__', '__dict__', '__doc__'}
+  return wrapper
 
-      originals = {}
-      for attr_name, attr in cls.__dict__.items():
-        if attr_name not in exclude_methods:
-          if hasattr(_original_func(attr), "_use_cpp"):
-            originals[attr_name] = attr
-          else:
-            setattr(cpp_cls, attr_name, attr)
-
-      cpp_cls.__doc__ = cls.__doc__
-      # TODO(pschuh): Remove once fastpath is gone.
-      cpp_cls._original_py_fns = originals
-      return cpp_cls
-
-    return wrapper
-
-  def use_cpp_method(is_enabled=True):
-    """A helper decorator to exclude methods from the set that are forwarded to C++ class"""
-    def decorator(f):
-      if is_enabled:
-        original_func = _original_func(f)
-        original_func._use_cpp = True
-      return f
-
-    if not isinstance(is_enabled, bool):
-      raise TypeError(
-          "Decorator got wrong type: @use_cpp_method(is_enabled: bool=True)"
-      )
-    return decorator
+def use_cpp_method(is_enabled: bool = True) -> Callable[[T], T]:
+  """A decorator excluding methods from the set that are forwarded to C++ class."""
+  if not isinstance(is_enabled, bool):
+    raise TypeError("``is_enabled`` must be a bool")
+  def decorator(f):
+    if is_enabled:
+      original_func = _original_func(f)
+      original_func._use_cpp = True
+    return f
+  return decorator
 
 
-try:
-  # numpy 1.25.0 or newer
-  NumpyComplexWarning: type[Warning] = np.exceptions.ComplexWarning
-except AttributeError:
-  # legacy numpy
-  NumpyComplexWarning = np.ComplexWarning
+class StrictABCMeta(abc.ABCMeta):
+  """A variant of `abc.ABCMeta` which does not allow virtual subclasses.
+
+  Virtual subclasses support require `abc.ABCMeta` to roundtrip through
+  pure Python when doing instance/subclass checking. This if fine for ABCs
+  which need virtual subclasses, but is wasteful for the ones which don't.
+  """
+  def register(cls, subclass):
+    del subclass  # Unused.
+    raise NotImplementedError(f"{cls} does not support virtual subclasses")
+
+  __instancecheck__ = type.__instancecheck__  # type: ignore[assignment]
+  __subclasscheck__ = type.__subclasscheck__  # type: ignore[assignment]
+
+
+class StrictABC(metaclass=StrictABCMeta):
+  __slots__ = ()
+
+
+test_event_listener: Callable | None = None
+
+def test_event(name: str, *args) -> None:
+  if not test_event_listener:
+    return
+  test_event_listener(name, *args)
+
+if hasattr(jaxlib_utils, "Mutex"):
+  Mutex = jaxlib_utils.Mutex
+
+
+def pprint_bytes(num_bytes: int | float) -> str:
+  prefixes = ("", "K", "M", "G", "T")
+  if num_bytes <= 0:
+    return "0.00B"
+  exponent = min(math.floor(math.log(num_bytes, 1000)), len(prefixes) - 1)
+  scaled_value = num_bytes / (1000**exponent)
+  return f"{scaled_value:.2f}{prefixes[exponent]}B"

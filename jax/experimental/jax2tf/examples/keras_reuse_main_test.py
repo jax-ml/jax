@@ -16,13 +16,13 @@ import os
 from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
+import jax
 from jax._src import test_util as jtu
-from jax import config
 
 from jax.experimental.jax2tf.examples import keras_reuse_main
 from jax.experimental.jax2tf.tests import tf_test_util
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 FLAGS = flags.FLAGS
 
 
@@ -41,6 +41,7 @@ class KerasReuseMainTest(tf_test_util.JaxToTfTestCase):
   @parameterized.named_parameters(
       dict(testcase_name=f"_{model}", model=model)
       for model in ["mnist_pure_jax", "mnist_flax"])
+  @jtu.ignore_warning(message="the imp module is deprecated")
   def test_keras_reuse(self, model="mnist_pure_jax"):
     FLAGS.model = model
     keras_reuse_main.main(None)

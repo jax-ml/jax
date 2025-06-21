@@ -15,7 +15,7 @@
 """Sparse utilities."""
 
 import functools
-from typing import Any, NamedTuple, Union
+from typing import NamedTuple
 
 import numpy as np
 import jax
@@ -23,11 +23,9 @@ from jax import lax
 from jax import tree_util
 from jax import vmap
 from jax._src import core
-from jax._src import dtypes
-from jax._src import stages
 from jax._src.api_util import flatten_axes
 import jax.numpy as jnp
-from jax.util import safe_zip
+from jax._src.util import safe_zip
 from jax._src.lax.lax import _dot_general_shape_rule, DotDimensionNumbers
 from jax._src.typing import Array
 
@@ -113,4 +111,4 @@ def _dot_general_validated_shape(
   rhs = core.ShapedArray(rhs_shape, np.float32)
   return _dot_general_shape_rule(
     lhs, rhs, dimension_numbers=dimension_numbers,
-    precision=None, preferred_element_type=None)
+    precision=None, preferred_element_type=None, out_sharding=None)

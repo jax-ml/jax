@@ -85,7 +85,7 @@ except ImportError:
 try:
   import tensorflow as tf
 except ImportError:
-  tf = None  # type: ignore
+  tf = None
 
 
 _FN = flags.DEFINE_string(
@@ -151,7 +151,7 @@ def jax_to_ir(fn, input_shapes, *, constants=None, format):
     return fn_curried(**dict(zip(arg_names, args)))
 
   if format == 'HLO':
-    comp = jax.xla_computation(ordered_wrapper)(*args)
+    comp = jax.jit(ordered_wrapper).lower(*args).compiler_ir('hlo')
     serialized_proto = comp.as_serialized_hlo_module_proto()
     debug_txt = comp.as_hlo_text()
   else:
@@ -160,7 +160,7 @@ def jax_to_ir(fn, input_shapes, *, constants=None, format):
       raise ValueError(
           'Conversion to TF graph requires TensorFlow to be installed.')
 
-    f = jax2tf.convert(ordered_wrapper, native_serialization=False)
+    f = jax2tf.convert(ordered_wrapper)
     f = tf_wrap_with_input_names(f, input_shapes)
     f = tf.function(f, autograph=False)
     g = f.get_concrete_function(*args).graph.as_graph_def()
@@ -238,12 +238,15 @@ def parse_shape_str(s):
     shape = ()
   return jax.core.ShapedArray(shape, dtype)
 
-_DT = {'pred': jnp.bool_,
-       'u8': jnp.uint8, 'u16': jnp.uint16, 'u32': jnp.uint32, 'u64': jnp.uint64,
-       's8': jnp.int8, 's16': jnp.int16, 's32': jnp.int32, 's64': jnp.int64,
-       'bf16': jnp.bfloat16,
-       'f16': jnp.float16, 'f32': jnp.float32, 'f64': jnp.float64,
-       'c64': jnp.complex64, 'c128': jnp.complex128}
+_DT = {
+    'pred': jnp.bool_,
+    'u2': jnp.uint2, 'u4': jnp.uint4, 'u8': jnp.uint8, 'u16': jnp.uint16, 'u32': jnp.uint32, 'u64': jnp.uint64,
+    's2': jnp.int2, 's4': jnp.int4, 's8': jnp.int8, 's16': jnp.int16, 's32': jnp.int32, 's64': jnp.int64,
+    'bf16': jnp.bfloat16,
+    'f16': jnp.float16, 'f32': jnp.float32, 'f64': jnp.float64,
+    'c64': jnp.complex64, 'c128': jnp.complex128
+}
+
 _SHAPE_RE = re.compile(f"^({'|'.join(_DT)})\\[\\s*(\\d*[\\s*,\\d+]*)\\s*\\]$")
 
 

@@ -13,6 +13,8 @@
 # limitations under the License.
 """Sharding utilities"""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import itertools
 from typing import Union
@@ -23,8 +25,8 @@ from jax._src.lib import xla_client as xc
 
 
 def get_num_ways_dim_sharded(
-    hlo_sharding: xc.HloSharding) -> tuple[Sequence[int], int]:
-  if hlo_sharding.is_replicated():  # type: ignore
+    hlo_sharding: xc.HloSharding) -> tuple[list[int], int]:
+  if hlo_sharding.is_replicated():
     return [], 1
   partitions = hlo_sharding.tile_assignment_dimensions()
   subgroup_types = hlo_sharding.subgroup_types()
@@ -40,20 +42,20 @@ def get_num_ways_dim_sharded(
   if replicate_on_last_tile_dim:
     num_replicas = partitions[-1]
     partitions = partitions[:-1]
-  return partitions, num_replicas
+  return list(partitions), num_replicas
 
 
-def is_op_sharding_replicated(op: Union[xc.OpSharding, xc.HloSharding]) -> bool:
+def is_op_sharding_replicated(op: xc.OpSharding | xc.HloSharding) -> bool:
   if isinstance(op, xc.OpSharding):
     op = xc.HloSharding.from_proto(op)
   if op.num_devices() == 1:
     return True
-  return op.is_replicated()  # type: ignore
+  return op.is_replicated()
 
 
-def are_op_shardings_equal(op1: Union[xc.OpSharding, xc.HloSharding],
-                           op2: Union[xc.OpSharding, xc.HloSharding]) -> bool:
-  if id(op1) == id(op2):
+def are_op_shardings_equal(op1: xc.OpSharding | xc.HloSharding,
+                           op2: xc.OpSharding | xc.HloSharding) -> bool:
+  if op1 is op2:
     return True
   if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
     return True

@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.15.2
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   name: python3
@@ -15,6 +15,8 @@ kernelspec:
 
 ## Control autodiff's saved values with `jax.checkpoint` (aka `jax.remat`)
 
+<!--* freshness: { reviewed: '2024-04-08' } *-->
+
 ```{code-cell}
 import jax
 import jax.numpy as jnp
@@ -22,7 +24,7 @@ import jax.numpy as jnp
 
 +++ {"id": "qaIsQSh1XoKF"}
 
-### TL;DR
+### Summary
 
 Use the `jax.checkpoint` decorator (aliased as `jax.remat`) with `jax.grad` to control which intermediates are saved on the forward pass versus recomputed on the backward pass, trading off memory and FLOPs.
 
@@ -154,7 +156,7 @@ print_fwd_bwd(f3, W1, W2, W3, x)
 
 ### Let's think step by step
 
-You might want to first (re)read [the Autodiff Cookbook Part 1](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html).
+You might want to first (re)read [the Autodiff Cookbook Part 1](https://docs.jax.dev/en/latest/notebooks/autodiff_cookbook.html).
 
 +++ {"id": "VMfwm_yinvoZ"}
 
@@ -368,8 +370,6 @@ Notice also that by providing a policy, we didn't need to edit the code defining
 Some policies can refer to values named with `jax.ad_checkpoint.checkpoint_name`:
 
 ```{code-cell}
-from jax.ad_checkpoint import checkpoint_name
-
 def predict(params, x):
   *Ws, Wlast = params
   for i, W in enumerate(Ws):
@@ -490,7 +490,7 @@ print_fwd_bwd(f, 3.)
 
 When differentiated functions are staged out to XLA for compilation, for example by applying `jax.jit` to a function which contains a `jax.grad` call, XLA will automatically optimize the computation, including decisions about when to compute or rematerialize values. As a result, **`jax.checkpoint` often isn't needed for differentiated functions under a `jax.jit`**. XLA will optimize things for you.
 
-One exception is when using staged-out control flow, like `jax.lax.scan`. Automatic compiler optimizations across multiple control flow primitives, e.g. across a forward-pass `scan` and the corresponding backward-pass `scan`, typically aren't aren't as thorough. As a result, it's often a good idea to use `jax.checkpoint` on the body function passed to `jax.lax.scan`.
+One exception is when using staged-out control flow, like `jax.lax.scan`. Automatic compiler optimizations across multiple control flow primitives, e.g. across a forward-pass `scan` and the corresponding backward-pass `scan`, typically aren't as thorough. As a result, it's often a good idea to use `jax.checkpoint` on the body function passed to `jax.lax.scan`.
 
 For example, one common pattern in large [Transformer models](https://en.wikipedia.org/wiki/Transformer_(machine_learning_model)) is to express the architecture as a `jax.lax.scan` over layers so as to reduce compilation times. That is, using a simple fully-connected network as an analogy, instead of writing something like this:
 

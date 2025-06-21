@@ -11,19 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib
 
 from jaxlib import xla_client
 
-for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
-  try:
-    _cuda_triton = importlib.import_module(
-        f"{cuda_module_name}._triton", package="jaxlib"
-    )
-  except ImportError:
-    _cuda_triton = None
-  else:
-    break
+from .plugin_support import import_from_plugin
+
+_cuda_triton = import_from_plugin("cuda", "_triton")
+_hip_triton = import_from_plugin("rocm", "_triton")
 
 if _cuda_triton:
   xla_client.register_custom_call_target(
@@ -35,11 +29,11 @@ if _cuda_triton:
   create_array_parameter = _cuda_triton.create_array_parameter
   create_scalar_parameter = _cuda_triton.create_scalar_parameter
   get_compute_capability = _cuda_triton.get_compute_capability
+  get_arch_details = _cuda_triton.get_arch_details
   get_custom_call = _cuda_triton.get_custom_call
   get_serialized_metadata = _cuda_triton.get_serialized_metadata
 
-try:
-  from .rocm import _triton as _hip_triton # pytype: disable=import-error
+if _hip_triton:
   xla_client.register_custom_call_target(
       "triton_kernel_call", _hip_triton.get_custom_call(),
       platform='ROCM')
@@ -49,7 +43,6 @@ try:
   create_array_parameter = _hip_triton.create_array_parameter
   create_scalar_parameter = _hip_triton.create_scalar_parameter
   get_compute_capability = _hip_triton.get_compute_capability
+  get_arch_details = _hip_triton.get_arch_details
   get_custom_call = _hip_triton.get_custom_call
   get_serialized_metadata = _hip_triton.get_serialized_metadata
-except ImportError:
-  _hip_triton = None

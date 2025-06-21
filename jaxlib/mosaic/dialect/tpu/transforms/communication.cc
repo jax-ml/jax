@@ -17,13 +17,16 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/ValueRange.h"
 #include "mlir/IR/Visitors.h"
-#include "mlir/Support/LogicalResult.h"
+#include "mlir/Pass/Pass.h"
+#include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "xla/layout.h"
 
@@ -107,9 +110,13 @@ struct LogicalToPhysicalDeviceIdPass
       auto device_assignment_type = MemRefType::get(
           {total_devices}, IntegerType::get(func.getContext(), 32),
           TiledLayoutAttr::get(func.getContext(), {xla::Tile({128})}, {1}),
-          MemorySpaceAttr::get(func.getContext(), MemorySpace::smem));
-      func.insertArgument(func.getNumArguments(), device_assignment_type,
-                          nullptr, UnknownLoc::get(func.getContext()));
+          MemorySpaceAttr::get(func.getContext(), MemorySpace::kSmem));
+
+      if (failed(func.insertArgument(func.getNumArguments(),
+                                     device_assignment_type, nullptr,
+                                     UnknownLoc::get(func.getContext())))) {
+        return signalPassFailure();
+      }
       auto device_assignment_arg = func.getArgument(func.getNumArguments() - 1);
       func.walk([device_assignment_arg](Operation *some_op) {
         if (auto op = dyn_cast<tpu::EnqueueDMAOp>(some_op)) {

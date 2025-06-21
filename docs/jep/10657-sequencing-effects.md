@@ -47,7 +47,7 @@ g()
 In many cases, JAX will execute `f` and `g` *in parallel*, dispatching
 the computations onto different threads -- `g` might actually be executed
 before `f`. Parallel execution is a nice performance optimization, especially if copying
-to and from a device is expensive (see the [asynchronous dispatch note](https://jax.readthedocs.io/en/latest/async_dispatch.html) for more details).
+to and from a device is expensive (see the [asynchronous dispatch note](https://docs.jax.dev/en/latest/async_dispatch.html) for more details).
 In practice, however, we often don't need to
 think about asynchronous dispatch because we're writing pure functions and only
 care about the inputs and outputs of functions -- we'll naturally block on future
@@ -74,7 +74,7 @@ before `"hello"`. The reordering of the print side-effects breaks the illusion
 of a single-threaded execution model.
 
 Another example of where side-effects can "reveal" out-of-order execution is
-when we we compile JAX programs. Consider the following JAX code:
+when we compile JAX programs. Consider the following JAX code:
 ```python
 @jax.jit
 def f(x):
@@ -132,7 +132,7 @@ def f(token, x):
   return token, x
 ```
 If we rewrite `jax.print` to take in and return a token, we have now sequenced
-the two prints since the input to the second print depends is the output of the first print.
+the two prints since the input to the second print depends on the output of the first print.
 The actual value of `token` can be anything really, but we'll see in practice
 that the tokens are invisible to users.
 
@@ -154,7 +154,7 @@ def f(runtime_token, x):
 ```
 Notice how the runtime tokens are only used at the JIT boundary and the compiler tokens
 are only within the compiled code. Compiler tokens are created during
-"lowering" (we convert Python code to a lower level representation like HLO or MHLO)
+"lowering" (we convert Python code to a lower level representation like HLO or StableHLO)
 but runtime tokens need to be managed in Python since they're being threaded in and out
 of JIT-ted functions.
 
@@ -200,14 +200,14 @@ this copy is not necessary.
 
 ## Adding compiler tokens
 
-When we lower Python code to HLO or MHLO we need to create a token at the start of the computation and
+When we lower Python code to HLO or StableHLO we need to create a token at the start of the computation and
 ensure they are available when we have side-effecting computations that need to be ordered. The side-effecting
 computations will take the token as input and return it as an output.
 
 The implementation of this token threading involves upgrading the JAX lowering machinery to do
 this bookkeeping automatically.
 The main challenges involve dealing with higher-order primitives like call primitives
-and control-flow primitives. We won't go into details in how to handle those in this design note.
+and control-flow primitives. We won't go into details on how to handle those in this design note.
 
 ## Blocking on output tokens
 

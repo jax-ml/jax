@@ -27,19 +27,18 @@
 # This encoding is assumed by various parts of the system, e.g. generating
 # replica groups for collective operations.
 
-import collections
-from collections.abc import Mapping, Sequence
-import functools
+from __future__ import annotations
+
+from collections.abc import Sequence
 import itertools
 import math
-from typing import Any, Optional, Union, cast
+from typing import Union
 
 import numpy as np
 
-from jax._src import op_shardings
+from jax._src import config
 from jax._src import util
 from jax._src.lib import pmap_lib
-from jax._src.lib import xla_client as xc
 
 unsafe_map, map = map, util.safe_map
 
@@ -55,98 +54,6 @@ MeshDimAssignment = Union[ShardedAxis, Replicated]
 
 ShardingSpec = pmap_lib.ShardingSpec
 
-OpShardingType = Any
-
-
-
-def _sharding_spec_mesh_shape(self):
-  sharded_axis_sizes = []
-  for sharding in self.sharding:
-    if isinstance(sharding, NoSharding):
-      continue
-    elif isinstance(sharding, Unstacked):
-      sharded_axis_sizes.append(sharding.size)
-    elif isinstance(sharding, Chunked):
-      sharded_axis_sizes.extend(sharding.chunks)
-    else:
-      util.assert_unreachable(sharding)
-  return tuple(sharded_axis_sizes[a.axis] if isinstance(a, ShardedAxis)
-               else a.replicas
-               for a in self.mesh_mapping)
-
-
-def get_logical_mesh_ids(mesh_shape):
-  return np.arange(math.prod(mesh_shape)).reshape(mesh_shape)
-
-
-_MeshAxisName = Any
-
-def sharding_spec_sharding_proto(
-    self, special_axes: Optional[Mapping[int, OpShardingType]] = None
-) -> xc.HloSharding:
-  """Converts a ShardingSpec to an OpSharding proto.
-
-  See
-  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/xla_data.proto#L601
-  for details on the OpSharding proto.
-  Unfortunately the semantics are not very well described in the proto spec, but
-  the code here might help:
-  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/compiler/xla/experimental/xla_sharding/xla_sharding.py
-  """
-  special_axes_dict = {} if special_axes is None else special_axes
-  mesh_shape = cast(tuple[int, ...], self.mesh_shape)
-
-  sharded_axes = {}  # maps sharded axis identifiers to mesh axis indices to which they're mapped
-  replicated_maxes = []  # lists mesh axis identifiers to replicate over
-  for maxis, assignment in enumerate(self.mesh_mapping):
-    if isinstance(assignment, Replicated):
-      replicated_maxes.append((maxis, assignment.replicas))
-    elif isinstance(assignment, ShardedAxis):
-      sharded_axes[assignment.axis] = maxis
-    else:
-      util.assert_unreachable(assignment)
-
-  if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes_dict:
-    return xc.HloSharding.replicate()
-
-  mesh_permutation = []
-  new_mesh_shape = []
-  next_sharded_axis = 0
-  for axis, sharding in enumerate(self.sharding):
-    if isinstance(sharding, NoSharding):
-      new_mesh_shape.append(1)  # Add a dummy mesh axis we won't be sharding over
-    elif isinstance(sharding, Chunked):
-      for nchunks in sharding.chunks:
-        maxis = sharded_axes[next_sharded_axis]
-        assert mesh_shape[maxis] == nchunks
-        mesh_permutation.append(maxis)
-        next_sharded_axis += 1
-      new_mesh_shape.append(math.prod(sharding.chunks))
-    elif isinstance(sharding, Unstacked):
-      raise RuntimeError("Cannot convert unstacked sharding specs to XLA OpSharding")
-    else:
-      util.assert_unreachable(sharding)
-
-  # Create a partial sharding proto if tensor is replicated or partitioned
-  # specially over some mesh axes.
-  last_tile_dims = []
-  if replicated_maxes:
-    axes_by_type: dict[OpShardingType, list[_MeshAxisName]] = {}
-    size_by_type: dict[OpShardingType, int] = collections.defaultdict(lambda: 1)
-    assert {x[0] for x in replicated_maxes}.issuperset(set(special_axes_dict.keys()))
-    for axis, size in replicated_maxes:
-      ty = special_axes_dict.get(axis, xc.OpSharding.Type.REPLICATED)
-      axes_by_type.setdefault(ty, []).append(axis)
-      size_by_type[ty] *= size
-    for ty, axes in sorted(axes_by_type.items(), key=lambda x: x[0].value):
-      last_tile_dims.append(ty)
-      new_mesh_shape.append(size_by_type[ty])
-      mesh_permutation.extend(axes)
-
-  return xc.HloSharding.iota_tile(
-      dims=new_mesh_shape, reshape_dims=mesh_shape,
-      transpose_perm=mesh_permutation, subgroup_types=last_tile_dims)
-
 
 def _sharding_spec_indices(self, shape: tuple[int, ...]) -> np.ndarray:
   """Returns NumPy-style indices corresponding to a sharding spec.
@@ -161,14 +68,6 @@ def _sharding_spec_indices(self, shape: tuple[int, ...]) -> np.ndarray:
     ints, slice objects with step=1, or tuples of those.
   """
   assert len(shape) == len(self.sharding), (shape, self.sharding)
-
-  has_unstacked = any(isinstance(s, Unstacked) for s in self.sharding)
-  # Take the op sharding indices generation route for pjit/xmap cases.
-  if not has_unstacked:
-    hlo_sharding = sharding_spec_sharding_proto(self)
-    return op_shardings.op_sharding_to_numpy_indices(
-        hlo_sharding, shape, math.prod(self.mesh_shape)
-    ).reshape(self.mesh_shape)
 
   axis_indices: list[Sequence[Index]] = []
   shard_indices_shape = []
@@ -219,8 +118,6 @@ def _sharding_spec_repr(self):
   return f'ShardingSpec({self.sharding}, {self.mesh_mapping})'
 
 
-ShardingSpec.mesh_shape = property(_sharding_spec_mesh_shape)
-ShardingSpec.sharding_proto = sharding_spec_sharding_proto
 ShardingSpec.indices = _sharding_spec_indices
 # mypy raises: error: Cannot assign to a method  [assignment]
 ShardingSpec.__repr__ = _sharding_spec_repr  # type: ignore
@@ -250,30 +147,8 @@ def spec_to_indices(shape: Sequence[int],
   return tuple(spec.indices(shape).flat)  # type: ignore
 
 
-def make_sharding_spec(axis_sizes, mesh_axis_pos, num_dimensions, aval_axes):
-  mesh_mapping = [Replicated(axis_size) for axis_size in axis_sizes.values()]
-  sharding = [_UNSHARDED_INSTANCE] * num_dimensions
-  next_sharded_axis = 0
-  # NOTE: sorted is stable, which is important when multiple resources
-  #       map to the same axis.
-  for name, axis in sorted(aval_axes.items(), key=lambda x: x[1]):
-    chunked = sharding[axis]
-    if isinstance(chunked, NoSharding):
-      chunked = Chunked([])
-    sharding[axis] = Chunked(list(chunked.chunks) + [axis_sizes[name]])
-    assert isinstance(mesh_mapping[mesh_axis_pos[name]], Replicated), \
-        "Value mapped to the same mesh axis twice"
-    mesh_mapping[mesh_axis_pos[name]] = ShardedAxis(next_sharded_axis)
-    next_sharded_axis += 1
-  return ShardingSpec(sharding, mesh_mapping)
-
-
-def new_mesh_sharding_specs(axis_sizes, axis_names):
-  mesh_axis_pos = {name: i for i, name in enumerate(axis_names)}
-  return functools.partial(make_sharding_spec, axis_sizes, mesh_axis_pos)
-
 def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],
-                       map_axis: Optional[int]) -> ShardingSpec:
+                       map_axis: int | None) -> ShardingSpec:
   """Sharding spec for arguments or results of a pmap.
   Args:
     nrep: number of local XLA replicas (product of local axis sizes)
@@ -297,9 +172,14 @@ def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],
       return a
     # replication_factor represents the product of inner pmaps, so it goes
     # after the outer pmapped axis at index 0
+    if config.pmap_no_rank_reduction.value:
+      sharding = util.tuple_update(
+          pspec.sharding, map_axis, Chunked([axis_size]))
+    else:
+      sharding = util.tuple_insert(
+          pspec.sharding, map_axis, Unstacked(axis_size))
     return ShardingSpec(
-      sharding=util.tuple_insert(
-          pspec.sharding, map_axis, Unstacked(axis_size)),
+      sharding=sharding,
       mesh_mapping=itertools.chain(
           [ShardedAxis(sharded_in_axis)], maybe_replicate,
           map(shift_sharded_axis, pspec.mesh_mapping)))
@@ -310,9 +190,12 @@ def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],
 
 
 def create_pmap_sharding_spec(shape: tuple[int, ...], sharded_dim: int = 0,
-                              sharded_dim_size: Optional[int] = None):
+                              sharded_dim_size: int | None = None):
   if sharded_dim is not None:
-    sharded_shape = shape[:sharded_dim] + shape[sharded_dim+1:]
+    if config.pmap_no_rank_reduction.value:
+      sharded_shape = util.tuple_update(shape, sharded_dim, 1)
+    else:
+      sharded_shape = util.tuple_delete(shape, sharded_dim)
     if sharded_dim_size is None:
       sharded_dim_size = shape[sharded_dim]
   else:

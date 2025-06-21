@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import re
-import sys
 import traceback
 
 from absl.testing import absltest
@@ -46,10 +45,7 @@ def check_filtered_stack_trace(test, etype, f, frame_patterns=(),
     e = get_exception(etype, f)
   c = e.__cause__
   if filter_mode == "quiet_remove_frames":
-    if sys.version_info >= (3, 11):
-      assert any("For simplicity" in x for x in e.__notes__)
-    else:
-      test.assertIsInstance(c, jax.errors.SimplifiedTraceback)
+    assert any("For simplicity" in x for x in e.__notes__)
   elif filter_mode == "remove_frames":
     test.assertIsInstance(c, traceback_util.UnfilteredStackTrace)
   else:
@@ -335,6 +331,47 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('bwd_err', 'g = err(g)'),
         ('err', 'assert False')], filter_mode=filter_mode)
 
+  def test_jvp(self, filter_mode):
+    def err(_):
+      assert False
+      return ()
+
+    def f():
+      p = (1.,)
+      t = (0.,)
+      return jax.jvp(err, p, t)
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return jax.jvp(err, p, t)'),
+        ('err', 'assert False')], filter_mode=filter_mode)
+
+  def test_vjp(self, filter_mode):
+    def err(_):
+      assert False
+      return ()
+
+    def f():
+      x = 1.
+      return jax.vjp(err, x)[0]
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return jax.vjp(err, x)[0]'),
+        ('err', 'assert False')], filter_mode=filter_mode)
+
+  def test_debug_nans(self, filter_mode):
+    @jax.jit
+    def f(x):
+      return 0. / x
+
+    f(2.)
+    def g():
+      return f(0.)
+
+    with jax.debug_nans(True):
+      check_filtered_stack_trace(self, ZeroDivisionError, g, [
+          ('g', 'return f(0.)'),
+          ('f', 'return 0. / x')], filter_mode=filter_mode)
+
   def test_cause_chain(self, filter_mode):
     @jit
     def inner(x):
@@ -352,12 +389,8 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('<lambda>', 'f = lambda: outer'),
         ('outer', 'raise TypeError')], filter_mode=filter_mode)
     e = get_exception(TypeError, f)  # Uses the default JAX_TRACEBACK_FILTERING=auto
-    if sys.version_info >= (3, 11):
-      assert any("For simplicity" in x for x in e.__notes__)
-      self.assertIsInstance(e.__cause__, ValueError)
-    else:
-      self.assertIsInstance(e.__cause__, jax.errors.SimplifiedTraceback)
-      self.assertIsInstance(e.__cause__.__cause__, ValueError)
+    assert any("For simplicity" in x for x in e.__notes__)
+    self.assertIsInstance(e.__cause__, ValueError)
 
   def test_null_traceback(self, filter_mode):
     class TestA: pass
@@ -383,22 +416,25 @@ class UserContextTracebackTest(jtu.JaxTestCase):
       e = exc
     self.assertIsNot(e, None)
     self.assertIn("invalid value", str(e))
-    if sys.version_info >= (3, 11):
-      self.assertIsInstance(
-          e.__cause__,
-          source_info_util.JaxStackTraceBeforeTransformation)
-    else:
-      self.assertIsInstance(
-          e.__cause__.__cause__,
-          source_info_util.JaxStackTraceBeforeTransformation)
+    self.assertIsInstance(
+        e.__cause__,
+        source_info_util.JaxStackTraceBeforeTransformation)
 
 
 class CustomErrorsTest(jtu.JaxTestCase):
+
   @jtu.sample_product(
-    errorclass=[
-     errorclass for errorclass in dir(jax.errors)
-     if errorclass.endswith('Error') and errorclass not in ['JaxIndexError', 'JAXTypeError']
-    ],
+      errorclass=[
+          errorclass
+          for errorclass in dir(jax.errors)
+          if errorclass.endswith('Error')
+          and errorclass
+          not in [
+              'JaxIndexError',
+              'JAXTypeError',
+              'JaxRuntimeError',
+          ]
+      ],
   )
   def testErrorsURL(self, errorclass):
     class FakeTracer(core.Tracer):
@@ -406,7 +442,7 @@ class CustomErrorsTest(jtu.JaxTestCase):
     ErrorClass = getattr(jax.errors, errorclass)
     err = ErrorClass(FakeTracer(None))
 
-    self.assertIn(f'https://jax.readthedocs.io/en/latest/errors.html#jax.errors.{errorclass}', str(err))
+    self.assertIn(f'https://docs.jax.dev/en/latest/errors.html#jax.errors.{errorclass}', str(err))
 
 
 if __name__ == '__main__':

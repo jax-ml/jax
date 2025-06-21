@@ -29,29 +29,25 @@ except Exception as exc:
   # Defensively swallow any exceptions to avoid making jax unimportable
   from warnings import warn as _warn
   _warn(f"cloud_tpu_init failed: {exc!r}\n This a JAX bug; please report "
-        f"an issue at https://github.com/google/jax/issues")
+        f"an issue at https://github.com/jax-ml/jax/issues")
   del _warn
 del _cloud_tpu_init
-
-# Confusingly there are two things named "config": the module and the class.
-# We want the exported object to be the class, so we first import the module
-# to make sure a later import doesn't overwrite the class.
-from jax import config as _config_module
-del _config_module
 
 # Force early import, allowing use of `jax.core` after importing `jax`.
 import jax.core as _core
 del _core
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.basearray import Array as Array
+from jax import tree as tree
 from jax import typing as typing
 
 from jax._src.config import (
   config as config,
   enable_checks as enable_checks,
+  debug_key_reuse as debug_key_reuse,
   check_tracer_leaks as check_tracer_leaks,
   checking_leaks as checking_leaks,
   enable_custom_prng as enable_custom_prng,
@@ -60,6 +56,8 @@ from jax._src.config import (
   debug_nans as debug_nans,
   debug_infs as debug_infs,
   log_compiles as log_compiles,
+  no_tracing as no_tracing,
+  explain_cache_misses as explain_cache_misses,
   default_device as default_device,
   default_matmul_precision as default_matmul_precision,
   default_prng_impl as default_prng_impl,
@@ -72,7 +70,6 @@ from jax._src.config import (
   transfer_guard_host_to_device as transfer_guard_host_to_device,
   transfer_guard_device_to_device as transfer_guard_device_to_device,
   transfer_guard_device_to_host as transfer_guard_device_to_host,
-  spmd_mode as spmd_mode,
 )
 from jax._src.core import ensure_compile_time_eval as ensure_compile_time_eval
 from jax._src.environment_info import print_environment_info as print_environment_info
@@ -81,12 +78,13 @@ from jax._src.lib import xla_client as _xc
 Device = _xc.Device
 del _xc
 
+from jax._src.core import typeof as typeof
 from jax._src.api import effects_barrier as effects_barrier
 from jax._src.api import block_until_ready as block_until_ready
-from jax._src.ad_checkpoint import checkpoint_wrapper as checkpoint
+from jax._src.ad_checkpoint import checkpoint_wrapper as checkpoint  # noqa: F401
 from jax._src.ad_checkpoint import checkpoint_policies as checkpoint_policies
-from jax._src.api import clear_backends as clear_backends
 from jax._src.api import clear_caches as clear_caches
+from jax._src.api import copy_to_host_async as copy_to_host_async
 from jax._src.custom_derivatives import closure_convert as closure_convert
 from jax._src.custom_derivatives import custom_gradient as custom_gradient
 from jax._src.custom_derivatives import custom_jvp as custom_jvp
@@ -101,6 +99,7 @@ from jax._src.xla_bridge import devices as devices
 from jax._src.api import disable_jit as disable_jit
 from jax._src.api import eval_shape as eval_shape
 from jax._src.dtypes import float0 as float0
+from jax._src.api import fwd_and_bwd as fwd_and_bwd
 from jax._src.api import grad as grad
 from jax._src.api import hessian as hessian
 from jax._src.xla_bridge import host_count as host_count
@@ -122,13 +121,17 @@ from jax._src.api import named_scope as named_scope
 from jax._src.api import pmap as pmap
 from jax._src.xla_bridge import process_count as process_count
 from jax._src.xla_bridge import process_index as process_index
-from jax._src.callback import pure_callback_api as pure_callback
-from jax._src.ad_checkpoint import checkpoint_wrapper as remat
+from jax._src.xla_bridge import process_indices as process_indices
+from jax._src.callback import pure_callback as pure_callback
+from jax._src.ad_checkpoint import checkpoint_wrapper as remat  # noqa: F401
 from jax._src.api import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.api import value_and_grad as value_and_grad
 from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap
-from jax._src.api import xla_computation as xla_computation
+from jax._src.sharding_impls import NamedSharding as NamedSharding
+from jax._src.sharding_impls import make_mesh as make_mesh
+
+from jax._src.shard_map import shard_map as shard_map
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
 from jax.interpreters import ad, batching, mlir, partial_eval, pxla, xla
@@ -137,16 +140,7 @@ del ad, batching, mlir, partial_eval, pxla, xla
 from jax._src.array import (
     make_array_from_single_device_arrays as make_array_from_single_device_arrays,
     make_array_from_callback as make_array_from_callback,
-)
-
-from jax._src.tree_util import (
-  tree_map as tree_map,
-  treedef_is_leaf as _deprecated_treedef_is_leaf,
-  tree_flatten as _deprecated_tree_flatten,
-  tree_leaves as _deprecated_tree_leaves,
-  tree_structure as _deprecated_tree_structure,
-  tree_transpose as _deprecated_tree_transpose,
-  tree_unflatten as _deprecated_tree_unflatten,
+    make_array_from_process_local_data as make_array_from_process_local_data,
 )
 
 # These submodules are separate because they are in an import cycle with
@@ -160,9 +154,9 @@ from jax import debug as debug
 from jax import dlpack as dlpack
 from jax import dtypes as dtypes
 from jax import errors as errors
+from jax import ffi as ffi
 from jax import image as image
 from jax import lax as lax
-from jax import linear_util as _deprecated_linear_util
 from jax import monitoring as monitoring
 from jax import nn as nn
 from jax import numpy as numpy
@@ -182,54 +176,52 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
-  # Added July 2022
+  # Finalized 2025-03-25; remove after 2025-06-25
   "treedef_is_leaf": (
-    "jax.treedef_is_leaf is deprecated: use jax.tree_util.treedef_is_leaf.",
-    _deprecated_treedef_is_leaf
+    "jax.treedef_is_leaf was removed in JAX v0.6.0: use jax.tree_util.treedef_is_leaf.",
+    None
   ),
   "tree_flatten": (
-    "jax.tree_flatten is deprecated: use jax.tree_util.tree_flatten.",
-    _deprecated_tree_flatten
+    "jax.tree_flatten was removed in JAX v0.6.0: use jax.tree.flatten (jax v0.4.25 or newer) "
+    "or jax.tree_util.tree_flatten (any JAX version).",
+    None
   ),
   "tree_leaves": (
-    "jax.tree_leaves is deprecated: use jax.tree_util.tree_leaves.",
-    _deprecated_tree_leaves
+    "jax.tree_leaves was removed in JAX v0.6.0: use jax.tree.leaves (jax v0.4.25 or newer) "
+    "or jax.tree_util.tree_leaves (any JAX version).",
+    None
   ),
   "tree_structure": (
-    "jax.tree_structure is deprecated: use jax.tree_util.tree_structure.",
-    _deprecated_tree_structure
+    "jax.tree_structure was removed in JAX v0.6.0: use jax.tree.structure (jax v0.4.25 or newer) "
+    "or jax.tree_util.tree_structure (any JAX version).",
+    None
   ),
   "tree_transpose": (
-    "jax.tree_transpose is deprecated: use jax.tree_util.tree_transpose.",
-    _deprecated_tree_transpose
+    "jax.tree_transpose was removed in JAX v0.6.0: use jax.tree.transpose (jax v0.4.25 or newer) "
+    "or jax.tree_util.tree_transpose (any JAX version).",
+    None
   ),
   "tree_unflatten": (
-    "jax.tree_unflatten is deprecated: use jax.tree_util.tree_unflatten.",
-    _deprecated_tree_unflatten
+    "jax.tree_unflatten was removed in JAX v0.6.0: use jax.tree.unflatten (jax v0.4.25 or newer) "
+    "or jax.tree_util.tree_unflatten (any JAX version).",
+    None
   ),
-  # Added Aug 29 2023
-  "linear_util": (
-    "jax.linear_util is deprecated: use jax.extend.linear_util.",
-    _deprecated_linear_util,
+  "tree_map": (
+    "jax.tree_map was removed in JAX v0.6.0: use jax.tree.map (jax v0.4.25 or newer) "
+    "or jax.tree_util.tree_map (any JAX version).",
+    None
   ),
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  from jax import linear_util as linear_util
-  from jax._src.tree_util import treedef_is_leaf as treedef_is_leaf
-  from jax._src.tree_util import tree_flatten as tree_flatten
-  from jax._src.tree_util import tree_leaves as tree_leaves
-  from jax._src.tree_util import tree_structure as tree_structure
-  from jax._src.tree_util import tree_transpose as tree_transpose
-  from jax._src.tree_util import tree_unflatten as tree_unflatten
-
+  pass
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
 
-import jax.lib  # TODO(phawkins): remove this export.
+import jax.lib  # TODO(phawkins): remove this export.  # noqa: F401
 
 # trailer

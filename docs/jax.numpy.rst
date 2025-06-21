@@ -47,6 +47,8 @@ namespace; they are listed below.
     ndarray.at
     abs
     absolute
+    acos
+    acosh
     add
     all
     allclose
@@ -78,7 +80,12 @@ namespace; they are listed below.
     array_split
     array_str
     asarray
+    asin
+    asinh
     astype
+    atan
+    atanh
+    atan2
     atleast_1d
     atleast_2d
     atleast_3d
@@ -87,8 +94,11 @@ namespace; they are listed below.
     bincount
     bitwise_and
     bitwise_count
+    bitwise_invert
+    bitwise_left_shift
     bitwise_not
     bitwise_or
+    bitwise_right_shift
     bitwise_xor
     blackman
     block
@@ -111,6 +121,7 @@ namespace; they are listed below.
     complexfloating
     ComplexWarning
     compress
+    concat
     concatenate
     conj
     conjugate
@@ -127,6 +138,8 @@ namespace; they are listed below.
     csingle
     cumprod
     cumsum
+    cumulative_prod
+    cumulative_sum
     deg2rad
     degrees
     delete
@@ -207,7 +220,6 @@ namespace; they are listed below.
     identity
     iinfo
     imag
-    in1d
     index_exp
     indices
     inexact
@@ -225,6 +237,7 @@ namespace; they are listed below.
     isclose
     iscomplex
     iscomplexobj
+    isdtype
     isfinite
     isin
     isinf
@@ -261,6 +274,7 @@ namespace; they are listed below.
     mask_indices
     matmul
     matrix_transpose
+    matvec
     max
     maximum
     mean
@@ -304,6 +318,7 @@ namespace; they are listed below.
     pad
     partition
     percentile
+    permute_dims
     piecewise
     place
     poly
@@ -316,12 +331,14 @@ namespace; they are listed below.
     polysub
     polyval
     positive
+    pow
     power
     printoptions
     prod
     promote_types
     ptp
     put
+    put_along_axis
     quantile
     r_
     rad2deg
@@ -342,7 +359,6 @@ namespace; they are listed below.
     roots
     rot90
     round
-    round_
     s_
     save
     savez
@@ -362,6 +378,7 @@ namespace; they are listed below.
     size
     sort
     sort_complex
+    spacing
     split
     sqrt
     square
@@ -378,8 +395,8 @@ namespace; they are listed below.
     tensordot
     tile
     trace
+    trapezoid
     transpose
-    trapz
     tri
     tril
     tril_indices
@@ -398,13 +415,20 @@ namespace; they are listed below.
     uint8
     union1d
     unique
+    unique_all
+    unique_counts
+    unique_inverse
+    unique_values
     unpackbits
     unravel_index
+    unstack
     unsignedinteger
     unwrap
     vander
     var
     vdot
+    vecdot
+    vecmat
     vectorize
     vsplit
     vstack
@@ -449,24 +473,35 @@ jax.numpy.linalg
 
   cholesky
   cond
+  cross
   det
+  diagonal
   eig
   eigh
   eigvals
   eigvalsh
   inv
   lstsq
+  matmul
+  matrix_norm
   matrix_power
   matrix_rank
+  matrix_transpose
   multi_dot
   norm
+  outer
   pinv
   qr
   slogdet
   solve
   svd
+  svdvals
+  tensordot
   tensorinv
   tensorsolve
+  trace
+  vector_norm
+  vecdot
 
 JAX Array
 ---------
@@ -497,3 +532,37 @@ This is because in general, pickling and unpickling may take place in different 
 environments, and there is no general way to map the device IDs of one runtime
 to the device IDs of another. If :mod:`pickle` is used in traced/JIT-compiled code,
 it will result in a :class:`~jax.errors.ConcretizationTypeError`.
+
+.. _python-array-api:
+
+Python Array API standard
+-------------------------
+
+.. note::
+
+  Prior to JAX v0.4.32, you must ``import jax.experimental.array_api`` in order
+  to enable the array API for JAX arrays. After JAX v0.4.32, importing this
+  module is no longer required, and will raise a deprecation warning. After
+  JAX v0.5.0, this import will raise an error.
+
+Starting with JAX v0.4.32, :class:`jax.Array` and :mod:`jax.numpy` are compatible
+with the `Python Array API Standard`_. You can access the Array API namespace via
+:meth:`jax.Array.__array_namespace__`::
+
+    >>> def f(x):
+    ...   nx = x.__array_namespace__()
+    ...   return nx.sin(x) ** 2 + nx.cos(x) ** 2
+
+    >>> import jax.numpy as jnp
+    >>> x = jnp.arange(5)
+    >>> f(x).round()
+    Array([1., 1., 1., 1., 1.], dtype=float32)
+
+JAX departs from the standard in a few places, namely because JAX arrays are
+immutable, in-place updates are not supported. Some of these incompatibilities
+are being addressed via the `array-api-compat`_ module.
+
+For more information, refer to the `Python Array API Standard`_ documentation.
+
+.. _Python Array API Standard: https://data-apis.org/array-api
+.. _array-api-compat: https://github.com/data-apis/array-api-compat

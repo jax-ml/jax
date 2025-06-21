@@ -129,7 +129,7 @@ def tf_http_archive(name, sha256, urls, **kwargs):
         "storage.googleapis.com",
     )]):
         fail("The first entry of tf_http_archive(urls) must be a mirror " +
-             "URL, preferrably mirror.tensorflow.org. Even if you don't have " +
+             "URL, preferably mirror.tensorflow.org. Even if you don't have " +
              "permission to mirror the file, please put the correctly " +
              "formatted mirror URL there anyway, because someone will come " +
              "along shortly thereafter and mirror the file.")

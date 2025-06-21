@@ -1,11 +1,14 @@
-# `jax.debug.print` and `jax.debug.breakpoint`
+# Compiled prints and breakpoints
+
+<!--* freshness: { reviewed: '2024-03-13' } *-->
 
 The {mod}`jax.debug` package offers some useful tools for inspecting values
-inside of JIT-ted functions.
+inside of compiled functions.
 
 ## Debugging with `jax.debug.print` and other debugging callbacks
 
-**TL;DR** Use {func}`jax.debug.print` to print traced array values to stdout in `jit`- and `pmap`-decorated functions:
+**Summary:** Use {func}`jax.debug.print` to print traced array values to
+stdout in compiled (e.g. `jax.jit` or `jax.pmap`-decorated) functions:
 
 ```python
 import jax
@@ -24,7 +27,6 @@ f(2.)
 # 🤯 0.9092974662780762 🤯
 ```
 
-<!-- mattjj added this line -->
 With some transformations, like `jax.grad` and `jax.vmap`, you can use Python's builtin `print` function to print out numerical values. But `print` won't work with `jax.jit` or `jax.pmap` because those transformations delay numerical evaluation. So use `jax.debug.print` instead!
 
 Semantically, `jax.debug.print` is roughly equivalent to the following Python function
@@ -89,8 +91,8 @@ def f(x):
   jax.debug.print("x: {}", x)
   return x
 jax.pmap(f)(xs)
-# Prints: x: 1.0
-#         x: 0.0
+# Prints: x: 0.0
+#         x: 1.0
 # OR
 # Prints: x: 1.0
 #         x: 0.0
@@ -136,7 +138,7 @@ jax.grad(f)(1.)
 
 #### Printing in other transformations
 
-`jax.debug.print` also works in other transformations like `xmap` and `pjit`.
+`jax.debug.print` also works in other transformations like `pjit`.
 
 ### More control with `jax.debug.callback`
 
@@ -150,7 +152,7 @@ def callback(fun: Callable, *args: PyTree[Array], **kwargs: PyTree[Array]) -> No
   return None
 ```
 
-As with `jax.debug.print`, these callbacks should only be used for debugging output, like printing or plotting. Printing and plotting are pretty harmless, but if you use it for anything else its behavior might surprise you under transformations. For example, it's not safe to use `jax.debug.callback` for timing operations, since callbacks might reordered and asynchronous (see below).
+As with `jax.debug.print`, these callbacks should only be used for debugging output, like printing or plotting. Printing and plotting are pretty harmless, but if you use it for anything else its behavior might surprise you under transformations. For example, it's not safe to use `jax.debug.callback` for timing operations, since callbacks might be reordered and asynchronous (see below).
 
 ### Sharp bits
 Like most JAX APIs, `jax.debug.print` can cut you if you're not careful.
@@ -234,7 +236,7 @@ Furthermore, when using `jax.debug.print` with `jax.pjit`, a global synchronizat
 
 ## Interactive inspection with `jax.debug.breakpoint()`
 
-**TL;DR** Use `jax.debug.breakpoint()` to pause the execution of your JAX program to inspect values:
+**Summary:** Use `jax.debug.breakpoint()` to pause the execution of your JAX program to inspect values:
 
 ```python
 @jax.jit

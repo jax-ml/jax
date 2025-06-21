@@ -1,6 +1,16 @@
 ``jax.scipy`` module
 ====================
 
+jax.scipy.cluster
+-----------------
+
+.. automodule:: jax.scipy.cluster.vq
+
+.. autosummary::
+   :toctree: _autosummary
+   
+   vq
+
 jax.scipy.fft
 -------------
 
@@ -24,6 +34,17 @@ jax.scipy.integrate
 
    trapezoid
 
+jax.scipy.interpolate
+---------------------
+
+.. automodule:: jax.scipy.interpolate
+
+.. autosummary::
+  :toctree: _autosummary
+
+   RegularGridInterpolator
+
+
 jax.scipy.linalg
 ----------------
 
@@ -43,22 +64,21 @@ jax.scipy.linalg
    expm_frechet
    funm
    hessenberg
+   hilbert
    inv
    lu
    lu_factor
    lu_solve
+   pascal
    polar
    qr
    rsf2csf
    schur
-   sqrtm
    solve
    solve_triangular
    sqrtm
    svd
    toeplitz
-   tril
-   triu
 
 jax.scipy.ndimage
 -----------------
@@ -95,6 +115,7 @@ jax.scipy.signal
    correlate
    correlate2d
    csd
+   detrend
    istft
    stft
    welch
@@ -144,16 +165,20 @@ jax.scipy.special
    expit
    expn
    factorial
+   fresnel
    gamma
    gammainc
    gammaincc
    gammaln
+   gammasgn
    hyp1f1
    i0
    i0e
    i1
    i1e
+   kl_div
    log_ndtr
+   log_softmax
    logit
    logsumexp
    lpmn
@@ -163,13 +188,13 @@ jax.scipy.special
    ndtri
    poch
    polygamma
+   rel_entr
+   softmax
    spence
    sph_harm
    xlog1py
    xlogy
    zeta
-   kl_div
-   rel_entr
 
 
 jax.scipy.stats
@@ -182,6 +207,7 @@ jax.scipy.stats
 
    mode
    rankdata
+   sem
 
 jax.scipy.stats.bernoulli
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -278,6 +304,11 @@ jax.scipy.stats.expon
 
    logpdf
    pdf
+   logcdf
+   cdf
+   logsf
+   sf
+   ppf
 
 jax.scipy.stats.gamma
 ~~~~~~~~~~~~~~~~~~~~~
@@ -395,6 +426,7 @@ jax.scipy.stats.poisson
 
    logpmf
    pmf
+   cdf
 
 jax.scipy.stats.t
 ~~~~~~~~~~~~~~~~~
@@ -426,6 +458,8 @@ jax.scipy.stats.uniform
 
    logpdf
    pdf
+   cdf
+   ppf
 
 jax.scipy.stats.gaussian_kde
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

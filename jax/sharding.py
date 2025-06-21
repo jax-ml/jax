@@ -13,18 +13,45 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.sharding import Sharding as Sharding
 from jax._src.sharding_impls import (
-    XLACompatibleSharding as XLACompatibleSharding,
     NamedSharding as NamedSharding,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
-    GSPMDSharding as GSPMDSharding,
-    PositionalSharding as PositionalSharding,
+    use_mesh as use_mesh,
+    set_mesh as set_mesh,
 )
 from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,
 )
-from jax._src.interpreters.pxla import Mesh as Mesh
+from jax._src.mesh import (
+    Mesh as Mesh,
+    AbstractMesh as AbstractMesh,
+    AxisType as AxisType,
+    get_abstract_mesh as get_abstract_mesh,
+)
+
+_deprecations = {
+    # Added April 11, 2025.
+    "PositionalSharding": (
+        (
+            "jax.sharding.PositionalSharding was deprecated in JAX v0.6.0 and"
+            " removed in JAX v0.7.0"
+        ),
+        None,
+    ),
+    "GSPMDSharding": (
+        (
+            "jax.sharding.GSPMDSharding was deprecated in JAX v0.6.0 and"
+            " removed in JAX v0.7.0"
+        ),
+        None,
+    ),
+}
+
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

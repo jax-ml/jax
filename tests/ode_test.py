@@ -21,12 +21,10 @@ import jax
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax.experimental.ode import odeint
-from jax.tree_util import tree_map
 
 import scipy.integrate as osp_integrate
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 class ODETest(jtu.JaxTestCase):
@@ -63,7 +61,7 @@ class ODETest(jtu.JaxTestCase):
   def test_pytree_state(self):
     """Test calling odeint with y(t) values that are pytrees."""
     def dynamics(y, _t):
-      return tree_map(jnp.negative, y)
+      return jax.tree.map(jnp.negative, y)
 
     y0 = (np.array(-0.1), np.array([[[0.1]]]))
     ts = np.linspace(0., 1., 11)
@@ -92,8 +90,7 @@ class ODETest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu", "gpu")
   def test_decay(self):
     def decay(_np, y, t, arg1, arg2):
-        return -_np.sqrt(t) - y + arg1 - _np.mean((y + arg2)**2)
-
+      return -_np.sqrt(t) - y + arg1 - _np.mean((y + arg2)**2)
 
     rng = self.rng()
     args = (rng.randn(3), rng.randn(3))
@@ -141,7 +138,7 @@ class ODETest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu", "gpu")
   def test_odeint_vmap_grad(self):
-    # https://github.com/google/jax/issues/2531
+    # https://github.com/jax-ml/jax/issues/2531
 
     def dx_dt(x, *args):
       return 0.1 * x
@@ -171,7 +168,7 @@ class ODETest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu", "gpu")
   def test_disable_jit_odeint_with_vmap(self):
-    # https://github.com/google/jax/issues/2598
+    # https://github.com/jax-ml/jax/issues/2598
     with jax.disable_jit():
       t = jnp.array([0.0, 1.0])
       x0_eval = jnp.zeros((5, 2))
@@ -180,7 +177,7 @@ class ODETest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu", "gpu")
   def test_grad_closure(self):
-    # simplification of https://github.com/google/jax/issues/2718
+    # simplification of https://github.com/jax-ml/jax/issues/2718
     def experiment(x):
       def model(y, t):
         return -x * y
@@ -190,7 +187,7 @@ class ODETest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu", "gpu")
   def test_grad_closure_with_vmap(self):
-    # https://github.com/google/jax/issues/2718
+    # https://github.com/jax-ml/jax/issues/2718
     @jax.jit
     def experiment(x):
       def model(y, t):
@@ -204,14 +201,14 @@ class ODETest(jtu.JaxTestCase):
     ans = h[11], g[11]
 
     expected_h = experiment(t[11])
-    expected_g = (experiment(t[11] + 1e-5) - expected_h) / 1e-5
+    expected_g = (experiment(t[11] + 5e-6) - experiment(t[11] - 5e-6)) / 1e-5
     expected = expected_h, expected_g
 
     self.assertAllClose(ans, expected, check_dtypes=False, atol=1e-2, rtol=1e-2)
 
   @jtu.skip_on_devices("tpu", "gpu")
   def test_forward_mode_error(self):
-    # https://github.com/google/jax/issues/3558
+    # https://github.com/jax-ml/jax/issues/3558
 
     def f(k):
       return odeint(lambda x, t: k*x, 1.,  jnp.linspace(0, 1., 50)).sum()
@@ -221,7 +218,7 @@ class ODETest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu", "gpu")
   def test_closure_nondiff(self):
-    # https://github.com/google/jax/issues/3584
+    # https://github.com/jax-ml/jax/issues/3584
 
     def dz_dt(z, t):
       return jnp.stack([z[0], z[1]])
@@ -234,8 +231,8 @@ class ODETest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu", "gpu")
   def test_complex_odeint(self):
-    # https://github.com/google/jax/issues/3986
-    # https://github.com/google/jax/issues/8757
+    # https://github.com/jax-ml/jax/issues/3986
+    # https://github.com/jax-ml/jax/issues/8757
 
     def dy_dt(y, t, alpha):
       return alpha * y * jnp.exp(-t).astype(y.dtype)

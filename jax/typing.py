@@ -15,7 +15,7 @@
 """
 The JAX typing module is where JAX-specific static type annotations live.
 This submodule is a work in progress; to see the proposal behind the types exported
-here, see https://jax.readthedocs.io/en/latest/jep/12049-type-annotations.html.
+here, see https://docs.jax.dev/en/latest/jep/12049-type-annotations.html.
 
 The currently-available types are:
 
@@ -24,7 +24,7 @@ The currently-available types are:
 - :obj:`jax.typing.ArrayLike`: annotation for any value that is safe to implicitly cast to
   a JAX array; this includes :class:`jax.Array`, :class:`numpy.ndarray`, as well as Python
   builtin numeric values (e.g. :class:`int`, :class:`float`, etc.) and numpy scalar values
-  (e.g. :class:`numpy.int32`, :class:`numpy.flota64`, etc.)
+  (e.g. :class:`numpy.int32`, :class:`numpy.float64`, etc.)
 - :obj:`jax.typing.DTypeLike`: annotation for any value that can be cast to a JAX-compatible
   dtype; this includes strings (e.g. `'float32'`, `'int32'`), scalar types (e.g. `float`,
   `np.float32`), dtypes (e.g. `np.dtype('float32')`), or objects with a dtype attribute
@@ -67,7 +67,7 @@ cause extra overhead in JAX transforms like :func:`~jax.jit` and can behave in u
 batch-wise transforms like :func:`~jax.vmap` or :func:`jax.pmap`. For more information on this,
 see `Non-array inputs NumPy vs JAX`_
 
-.. _Non-array inputs NumPy vs JAX: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#non-array-inputs-numpy-vs-jax
+.. _Non-array inputs NumPy vs JAX: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#non-array-inputs-numpy-vs-jax
 """
 from jax._src.typing import (
     ArrayLike as ArrayLike,

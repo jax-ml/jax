@@ -15,20 +15,20 @@
 
 See README.md for instructions.
 """
-import grpc  # type: ignore[import]
+import grpc  # type: ignore
 import json
 import logging
-import requests  # type: ignore[import]
+import requests
 
 from absl import app
 from absl import flags
 
-from jax.experimental.jax2tf.examples import mnist_lib  # type: ignore
+from jax.experimental.jax2tf.examples import mnist_lib
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
-import tensorflow_datasets as tfds  # type: ignore[import]
-from tensorflow_serving.apis import predict_pb2  # type: ignore[import]
+import tensorflow as tf
+import tensorflow_datasets as tfds  # type: ignore[import-not-found]
+from tensorflow_serving.apis import predict_pb2  # type: ignore[import-not-found]
 from tensorflow_serving.apis import prediction_service_pb2_grpc
 
 
@@ -92,7 +92,7 @@ def serving_call_mnist(images):
     # You can see the name of the input ("inputs") in the SavedModel dump.
     data = f'{{"inputs": {images_json}}}'
     predict_url = f"http://{_PREDICTION_SERVICE_ADDR.value}/v1/models/{_MODEL_SPEC_NAME.value}:predict"
-    response = requests.post(predict_url, data=data)
+    response = requests.post(predict_url, data=data, timeout=60)
     if response.status_code != 200:
       msg = (f"Received error response {response.status_code} from model "
              f"server: {response.text}")

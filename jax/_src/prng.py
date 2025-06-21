@@ -13,13 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
-import abc
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from functools import partial, reduce
 import math
 import operator as op
-from typing import Any, Callable, NamedTuple
-import warnings
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -28,16 +26,14 @@ from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
 
-from jax._src import ad_util
-from jax._src import api_util
 from jax._src import api
-from jax._src import basearray
 from jax._src import config as config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import ffi
 from jax._src import pretty_printer as pp
-from jax._src import sharding_specs
+from jax._src import source_info_util
 from jax._src import tree_util as tree_util_internal
 from jax._src import typing
 from jax._src.api import jit, vmap
@@ -48,16 +44,15 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.lax import lax as lax_internal
-from jax._src.lax import utils as lax_utils
-from jax._src.lib.mlir import ir
 from jax._src.lib import gpu_prng
 from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
-from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
-    NamedSharding, PmapSharding, GSPMDSharding, XLACompatibleSharding)
+    NamedSharding, PmapSharding, SingleDeviceSharding, physical_sharding,
+    logical_sharding)
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
 
@@ -69,7 +64,14 @@ Shard = Any  # TODO(jakevdp): fix circular imports and import Shard
 Shape = tuple[int, ...]
 
 UINT_DTYPES = {
-    8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}  # type: ignore[has-type]
+    8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}
+
+if hasattr(gpu_prng, "registrations"):
+  for platform, targets in gpu_prng.registrations().items():
+    for name, value, api_version in targets:
+      ffi.register_ffi_target(
+          name, value, platform=platform, api_version=api_version
+      )
 
 # -- PRNG implementation interface
 
@@ -112,7 +114,7 @@ class PRNGImpl(NamedTuple):
             ]))))
 
 
-prngs = {}
+prngs: dict[str, PRNGImpl] = {}
 
 def register_prng(impl: PRNGImpl):
   if impl.name in prngs:
@@ -138,113 +140,7 @@ def _check_prng_key_data(impl, key_data: typing.Array):
                     f"got dtype={key_data.dtype}")
 
 
-class PRNGKeyArrayMeta(abc.ABCMeta):
-  """Metaclass for overriding PRNGKeyArray isinstance checks."""
-
-  def __instancecheck__(cls, instance):
-    try:
-      return (isinstance(instance.aval, core.ShapedArray) and
-              type(instance.aval.dtype) is KeyTy)
-    except AttributeError:
-      return super().__instancecheck__(instance)
-
-
-class PRNGKeyArray(jax.Array, metaclass=PRNGKeyArrayMeta):
-  """An array whose elements are PRNG keys"""
-
-  @abc.abstractmethod
-  def unsafe_buffer_pointer(self) -> int: ...
-
-  @abc.abstractmethod
-  def block_until_ready(self) -> PRNGKeyArray: ...
-
-  @abc.abstractmethod
-  def copy_to_host_async(self) -> None: ...
-
-  @property
-  @abc.abstractmethod
-  def shape(self) -> tuple[int, ...]: ...
-
-  @property
-  @abc.abstractmethod
-  def ndim(self) -> int: ...
-
-  @property
-  @abc.abstractmethod
-  def size(self) -> int: ...
-
-  @property
-  @abc.abstractmethod
-  def dtype(self): ...
-
-  @property
-  @abc.abstractmethod
-  def itemsize(self): ...
-
-  @property
-  @abc.abstractmethod
-  def sharding(self): ...
-
-  @property
-  @abc.abstractmethod
-  def at(self) -> _IndexUpdateHelper: ...  # type: ignore[override]
-
-  @abc.abstractmethod
-  def __len__(self) -> int: ...
-  @abc.abstractmethod
-  def __iter__(self) -> Iterator[PRNGKeyArray]: ...
-
-  @abc.abstractmethod
-  def reshape(self, *args, order='C') -> PRNGKeyArray: ...
-
-  @property
-  @abc.abstractmethod
-  def T(self)                   -> PRNGKeyArray: ...
-  @abc.abstractmethod
-  def __getitem__(self, _)      -> PRNGKeyArray: ...
-  @abc.abstractmethod
-  def ravel(self, *_, **__)     -> PRNGKeyArray: ...
-  @abc.abstractmethod
-  def squeeze(self, *_, **__)   -> PRNGKeyArray: ...
-  @abc.abstractmethod
-  def swapaxes(self, *_, **__)  -> PRNGKeyArray: ...
-  @abc.abstractmethod
-  def take(self, *_, **__)      -> PRNGKeyArray: ...
-  @abc.abstractmethod
-  def transpose(self, *_, **__) -> PRNGKeyArray: ...
-  @abc.abstractmethod
-  def flatten(self, *_, **__)   -> PRNGKeyArray: ...
-
-  @property
-  @abc.abstractmethod
-  def is_fully_addressable(self) -> bool: ...
-  @property
-  @abc.abstractmethod
-  def is_fully_replicated(self) -> bool: ...
-  @abc.abstractmethod
-  def device(self) -> Device: ...
-  @abc.abstractmethod
-  def devices(self) -> set[Device]: ...
-  @abc.abstractmethod
-  def delete(self) -> None: ...
-  @abc.abstractmethod
-  def is_deleted(self) -> bool: ...
-  @abc.abstractmethod
-  def on_device_size_in_bytes(self) -> int: ...
-  @property
-  @abc.abstractmethod
-  def addressable_shards(self) -> list[Shard]: ...
-  @property
-  @abc.abstractmethod
-  def global_shards(self) -> list[Shard]: ...
-  @abc.abstractmethod
-  def addressable_data(self, index: int) -> PRNGKeyArray: ...
-
-  # TODO(jakevdp): potentially add tolist(), tobytes(),
-  #    device_buffer, device_buffers, __cuda_interface__()
-
-
-class PRNGKeyArrayImpl(PRNGKeyArray):
+class PRNGKeyArray(jax.Array):
   """An array of PRNG keys backed by an RNG implementation.
 
   This class lifts the definition of a PRNG, provided in the form of a
@@ -257,15 +153,28 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   wrapper methods around the PRNG implementation functions (``split``,
   ``random_bits``, ``fold_in``).
   """
+  # TODO(jakevdp): potentially add tolist(), tobytes(),
+  #    device_buffer, device_buffers, __cuda_interface__()
 
   _impl: PRNGImpl
-  _base_array: typing.Array
+  _base_array: jax.Array
+  _consumed: bool | np.ndarray  # Used in jax.experimental.key_reuse.
+  _source_info: None | source_info_util.SourceInfo = None
 
   def __init__(self, impl, key_data: Any):
     assert not isinstance(key_data, core.Tracer)
     _check_prng_key_data(impl, key_data)
     self._impl = impl
+    self._consumed = False  # TODO(jakevdp): default to True here?
+    if isinstance(key_data, np.ndarray):
+      aval = core.get_aval(key_data)
+      device = pxla.get_default_device()
+      key_data = pxla.batched_device_put(aval, SingleDeviceSharding(device),
+                                         [key_data], [device], committed=False)
     self._base_array = key_data
+
+  def _replace_with(self, value: PRNGKeyArray):
+    self._base_array._replace_with(value._base_array)
 
   def block_until_ready(self):
     _ = self._base_array.block_until_ready()
@@ -276,7 +185,8 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
 
   @property
   def aval(self):
-    return keys_shaped_array(self._impl, self.shape)
+    vma = self._base_array.aval.vma
+    return keys_shaped_array(self._impl, self.shape, self.sharding, vma)
 
   @property
   def shape(self):
@@ -295,12 +205,16 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
     return KeyTy(self._impl)
 
   @property
+  def nbytes(self):
+    return self.itemsize * self.size
+
+  @property
   def itemsize(self):
     return self.dtype.itemsize
 
   _device = property(op.attrgetter('_base_array._device'))
   _committed = property(op.attrgetter('_base_array._committed'))
-  device = property(op.attrgetter('_base_array.device'))  # type: ignore[assignment]
+  device = property(op.attrgetter('_base_array.device'))
   devices = property(op.attrgetter('_base_array.devices'))  # type: ignore[assignment]
   is_fully_addressable = property(op.attrgetter('_base_array.is_fully_addressable'))  # type: ignore[assignment]
   is_fully_replicated = property(op.attrgetter('_base_array.is_fully_replicated'))  # type: ignore[assignment]
@@ -309,15 +223,8 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   on_device_size_in_bytes = property(op.attrgetter('_base_array.on_device_size_in_bytes'))  # type: ignore[assignment]
   unsafe_buffer_pointer = property(op.attrgetter('_base_array.unsafe_buffer_pointer'))  # type: ignore[assignment]
 
-  def unsafe_raw_array(self):
-    # deprecated on 13 Sept 2023
-    raise warnings.warn(
-        'The `unsafe_raw_array` method of PRNG key arrays is deprecated. '
-        'Use `jax.random.key_data` instead.', DeprecationWarning, stacklevel=2)
-    return self._base_array
-
-  def addressable_data(self, index: int) -> PRNGKeyArrayImpl:
-    return PRNGKeyArrayImpl(self._impl, self._base_array.addressable_data(index))
+  def addressable_data(self, index: int) -> PRNGKeyArray:
+    return PRNGKeyArray(self._impl, self._base_array.addressable_data(index))
 
   @property
   def addressable_shards(self) -> list[Shard]:
@@ -326,7 +233,7 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
             device=s._device,
             sharding=s._sharding,
             global_shape=s._global_shape,
-            data=PRNGKeyArrayImpl(self._impl, s._data),
+            data=PRNGKeyArray(self._impl, s._data),
         )
         for s in self._base_array.addressable_shards
     ]
@@ -338,15 +245,18 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
             device=s._device,
             sharding=s._sharding,
             global_shape=s._global_shape,
-            data=PRNGKeyArrayImpl(self._impl, s._data),
+            data=PRNGKeyArray(self._impl, s._data),
         )
         for s in self._base_array.global_shards
     ]
 
   @property
   def sharding(self):
-    phys_sharding = self._base_array.sharding
-    return KeyTyRules.logical_op_sharding(self.aval, phys_sharding)
+    return logical_sharding(self.shape, self.dtype, self._base_array.sharding)
+
+  @property
+  def committed(self):
+    return self._base_array.committed
 
   def _is_scalar(self):
     base_ndim = len(self._impl.key_shape)
@@ -357,7 +267,7 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
       raise TypeError('len() of unsized object')
     return len(self._base_array)
 
-  def __iter__(self) -> Iterator[PRNGKeyArrayImpl]:
+  def __iter__(self) -> Iterator[PRNGKeyArray]:
     if self._is_scalar():
       raise TypeError('iteration over a 0-d key array')
     # TODO(frostig): we may want to avoid iteration by slicing because
@@ -369,7 +279,7 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
     # * return iter over these unpacked slices
     # Whatever we do, we'll want to do it by overriding
     # ShapedArray._iter when the element type is KeyTy...
-    return (PRNGKeyArrayImpl(self._impl, k) for k in iter(self._base_array))
+    return (PRNGKeyArray(self._impl, k) for k in iter(self._base_array))
 
   def __repr__(self):
     return (f'Array({self.shape}, dtype={self.dtype.name}) overlaying:\n'
@@ -383,10 +293,17 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
       pp.nest(2, pp.brk() + pp_keys + pp.brk() + pp_impl)))
 
   def copy(self):
-    return self.__class__(self._impl, self._base_array.copy())
+    out = self.__class__(self._impl, self._base_array.copy())
+    out._consumed = self._consumed  # TODO(jakevdp): is this correct?
+    return out
 
   __hash__ = None  # type: ignore[assignment]
   __array_priority__ = 100
+
+  def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
+    raise TypeError("JAX array with PRNGKey dtype cannot be converted to a NumPy array."
+                    " Use jax.random.key_data(arr) if you wish to extract the underlying"
+                    " integer array.")
 
   # Overwritten immediately below
   @property
@@ -402,64 +319,39 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   def take(self, *_, **__)      -> PRNGKeyArray: assert False
   def transpose(self, *_, **__) -> PRNGKeyArray: assert False
 
-_set_array_base_attributes(PRNGKeyArrayImpl, include=[
+_set_array_base_attributes(PRNGKeyArray, include=[
     *(f"__{op}__" for op in _array_operators),
     'at', 'flatten', 'ravel', 'reshape',
     'squeeze', 'swapaxes', 'take', 'transpose', 'T'])
-basearray.Array.register(PRNGKeyArrayImpl)
 
-api_util._shaped_abstractify_handlers[PRNGKeyArrayImpl] = op.attrgetter('aval')
-ad_util.jaxval_zeros_likers[PRNGKeyArrayImpl] = jnp.zeros_like  # type: ignore[has-type]
 
-def prngkeyarrayimpl_flatten(x):
+def prngkeyarray_flatten(x):
   return (x._base_array,), x._impl
 
-def prngkeyarrayimpl_unflatten(impl, children):
+def prngkeyarray_unflatten(impl, children):
   base_array, = children
-  return PRNGKeyArrayImpl(impl, base_array)
+  return PRNGKeyArray(impl, base_array)
 
 tree_util_internal.dispatch_registry.register_node(
-    PRNGKeyArrayImpl, prngkeyarrayimpl_flatten, prngkeyarrayimpl_unflatten)
+    PRNGKeyArray, prngkeyarray_flatten, prngkeyarray_unflatten)
 
 
 # TODO(frostig): remove, rerouting callers directly to random_seed
-def seed_with_impl(impl: PRNGImpl, seed: int | typing.ArrayLike) -> PRNGKeyArrayImpl:
+def seed_with_impl(impl: PRNGImpl, seed: int | typing.ArrayLike) -> PRNGKeyArray:
   return random_seed(seed, impl=impl)
 
 
-def keys_shaped_array(impl, shape):
-  return core.ShapedArray(shape, KeyTy(impl))
+def keys_shaped_array(impl, shape, sharding, vma):
+  aval = core.ShapedArray(shape, KeyTy(impl), vma=vma)
+  return core.update_aval_with_sharding(aval, sharding)
 
 def base_arr_shape_to_keys_shape(impl, base_arr_shape):
   base_ndim = len(impl.key_shape)
   return base_arr_shape[:-base_ndim]
 
-def make_key_array_phys_sharding(aval, sharding, is_sharding_from_xla):
-  if dispatch.is_single_device_sharding(sharding):
-    return sharding
-  elif isinstance(sharding, PmapSharding):
-    key_shape = aval.dtype._impl.key_shape
-    trailing_sharding = [sharding_specs.NoSharding()] * len(key_shape)
-    phys_sharding_spec = sharding_specs.ShardingSpec(
-        sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
-        mesh_mapping=sharding.sharding_spec.mesh_mapping)
-    return PmapSharding(devices=sharding.devices,
-                        sharding_spec=phys_sharding_spec)
-  elif isinstance(sharding, NamedSharding):
-    key_shape = aval.dtype._impl.key_shape
-    trailing_spec = [None] * len(key_shape)
-    return NamedSharding(
-        sharding.mesh,
-        PartitionSpec(*sharding.spec, *trailing_spec))
-  elif is_sharding_from_xla:
-    return sharding
-  else:
-    hlos = sharding._to_xla_hlo_sharding(aval.ndim)
-    return GSPMDSharding(
-        sharding._device_assignment,
-        KeyTyRules.physical_hlo_sharding(aval, hlos))
 
 class KeyTyRules:
+  allow_conversion: bool = False
 
   @staticmethod
   def full(shape, fill_value, dtype):
@@ -473,23 +365,6 @@ class KeyTyRules:
     return random_wrap(key_data, impl=dtype._impl)
 
   @staticmethod
-  def make_tangent(shape, dtype):
-    physical_shape = (*shape, *dtype._impl.key_shape)
-    def not_implemented(name):
-      def func(*args):
-        raise NotImplementedError(f"Cannot call {name} on tangent of PRNG key.")
-      return func
-    impl = PRNGImpl(
-      key_shape=dtype._impl.key_shape,
-      seed=not_implemented('seed'),
-      split=not_implemented('split'),
-      random_bits=not_implemented('random_bits'),
-      fold_in=not_implemented('fold_in'),
-      name=f"{dtype._impl.name}_tangent",
-      tag=f"{dtype._impl.tag}_t")
-    return random_wrap(jnp.zeros(physical_shape, dtype='uint32'), impl=impl)
-
-  @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:
     return core.ShapedArray(dtype._impl.key_shape, jnp.dtype('uint32'))
 
@@ -498,48 +373,10 @@ class KeyTyRules:
     return val._base_array
 
   @staticmethod
-  def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
-    key_shape = aval.dtype._impl.key_shape
-    op_sharding_proto = hlo_sharding.to_proto()  # type: ignore
-    new_op_sharding = op_sharding_proto.clone()
-    tad = list(new_op_sharding.tile_assignment_dimensions)
-    suffix = [tad.pop()] if op_sharding_proto.replicate_on_last_tile_dim else []
-    tad.extend([1] * len(key_shape) + suffix)
-    new_op_sharding.tile_assignment_dimensions = tad
-    return xc.HloSharding.from_proto(new_op_sharding)
-
-  @staticmethod
-  def logical_op_sharding(aval, phys_sharding) -> XLACompatibleSharding:
-    if dispatch.is_single_device_sharding(phys_sharding):
-      return phys_sharding
-    elif isinstance(phys_sharding, PmapSharding):
-      key_shape = aval.dtype._impl.key_shape
-      logical_sharding_spec = sharding_specs.ShardingSpec(
-          sharding=phys_sharding.sharding_spec.sharding[:-len(key_shape)],
-          mesh_mapping=phys_sharding.sharding_spec.mesh_mapping)
-      return PmapSharding(devices=phys_sharding.devices,
-                          sharding_spec=logical_sharding_spec)
-    elif isinstance(phys_sharding, NamedSharding):
-      key_shape = aval.dtype._impl.key_shape
-      return pxla.create_mesh_pspec_sharding(
-          phys_sharding.mesh,
-          PartitionSpec(*phys_sharding.spec[:-len(key_shape)]))
-    else:
-      key_shape = aval.dtype._impl.key_shape
-      phys_op_sharding = phys_sharding._to_xla_hlo_sharding(
-          aval.ndim + len(key_shape)).to_proto()
-      logical_op_sharding = phys_op_sharding.clone()
-      tad = list(logical_op_sharding.tile_assignment_dimensions)
-      tad = tad[:-len(key_shape)]
-      logical_op_sharding.tile_assignment_dimensions = tad
-      return GSPMDSharding(phys_sharding._device_assignment,
-                           xc.HloSharding.from_proto(logical_op_sharding))
-
-  @staticmethod
   def result_handler(sticky_device, aval):
     def handler(_, buf):
       buf.aval = core.ShapedArray(buf.shape, buf.dtype)
-      return PRNGKeyArrayImpl(aval.dtype._impl, buf)
+      return PRNGKeyArray(aval.dtype._impl, buf)
     return handler
 
   @staticmethod
@@ -550,8 +387,7 @@ class KeyTyRules:
 
     # set up a grounded sharding (with a grounded sharding spec)
     if isinstance(sharding, (PmapSharding, NamedSharding)):
-      phys_sharding = make_key_array_phys_sharding(
-          aval, sharding, is_sharding_from_xla=False)
+      phys_sharding = physical_sharding(aval, sharding)
     else:
       assert False, f'impossible sharding {sharding} in local sharded result handler'
 
@@ -564,22 +400,19 @@ class KeyTyRules:
 
     # set up a handler that calls the physical one and wraps back up
     def handler(bufs):
-      return PRNGKeyArrayImpl(aval.dtype._impl, phys_handler(bufs))
+      return PRNGKeyArray(aval.dtype._impl, phys_handler(bufs))
 
     return handler
 
   @staticmethod
-  def global_sharded_result_handler(aval, out_sharding, committed,
-                                    is_out_sharding_from_xla):
+  def global_sharded_result_handler(aval, out_sharding, committed):
     phys_aval = core.physical_aval(aval)
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
 
-    phys_sharding = make_key_array_phys_sharding(
-        aval, out_sharding, is_out_sharding_from_xla)
-    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed,
-                                      is_out_sharding_from_xla)
+    phys_sharding = physical_sharding(aval, out_sharding)
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
     def handler(bufs):
-      return PRNGKeyArrayImpl(aval.dtype._impl, phys_handler(bufs))
+      return PRNGKeyArray(aval.dtype._impl, phys_handler(bufs))
     return handler
 
   @staticmethod
@@ -588,41 +421,36 @@ class KeyTyRules:
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
     phys_arrays = [random_unwrap(arr) for arr in arrays]
 
-    phys_sharding = make_key_array_phys_sharding(aval, sharding, False)
-    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed, False)
+    phys_sharding = physical_sharding(aval, sharding)
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
     phys_result = phys_handler(phys_arrays)
-    return PRNGKeyArrayImpl(aval.dtype._impl, phys_result)
+    return PRNGKeyArray(aval.dtype._impl, phys_result)
 
   @staticmethod
   def device_put_sharded(vals, aval, sharding, devices):
-    physical_aval = core.physical_aval(aval)
     physical_buffers = tree_util.tree_map(random_unwrap, vals)
-    physical_sharding = make_key_array_phys_sharding(aval, sharding, False)
-    physical_result = pxla.batched_device_put(physical_aval, physical_sharding, physical_buffers, list(devices))
+    physical_result = api.device_put_sharded(physical_buffers, list(devices))
     return random_wrap(physical_result, impl=aval.dtype._impl)
 
   @staticmethod
   def device_put_replicated(val, aval, sharding, devices):
     physical_aval = core.physical_aval(aval)
-    assert len(xla.aval_to_xla_shapes(physical_aval)) == 1
     physical_buf = random_unwrap(val)
-    physical_sharding = make_key_array_phys_sharding(aval, sharding, False)
-    physical_result = pxla.batched_device_put(physical_aval, physical_sharding, [physical_buf] * len(devices), devices)
+    phys_sharding = physical_sharding(aval, sharding)
+    physical_result = pxla.batched_device_put(
+        physical_aval, phys_sharding, [physical_buf] * len(devices), devices)
     return random_wrap(physical_result, impl=aval.dtype._impl)
 
+  @staticmethod
+  def tangent_dtype(_):
+    return dtypes.float0
 
-class KeyTangentTy(dtypes.ExtendedDType):
-  """A dtype to use for the tangent of a PRNGKey"""
-  _impl: PRNGImpl
-  type = dtypes.prng_key
-
-  @property
-  def _rules(self):
-    raise ValueError("Cannot perform operations on the tangent of a PRNGKey.")
-
-  @property
-  def name(self) -> str:
-    return f'key_tangent<{self._impl.tag}>'
+  # TODO(mattjj,frostig): even though the key dtype shouldn't appear in
+  # tangents, our ad.replace_float0s in custom_jvp/vjp means passing in zeros
+  # like the primal to user rules
+  @staticmethod
+  def zero(_):
+    return np.zeros((), dtypes.float0)
 
 
 class KeyTy(dtypes.ExtendedDType):
@@ -651,36 +479,26 @@ class KeyTy(dtypes.ExtendedDType):
     return hash((self.__class__, self._impl))
 
 
-
-core.pytype_aval_mappings[PRNGKeyArrayImpl] = lambda x: x.aval
-xla.pytype_aval_mappings[PRNGKeyArrayImpl] = lambda x: x.aval
-
-xla.canonicalize_dtype_handlers[PRNGKeyArrayImpl] = lambda x: x
+core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
+xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
 
 
-def key_array_shard_arg_handler(x: PRNGKeyArrayImpl, devices, indices, sharding):
-  aval = x.aval
-  key_shape = aval.dtype._impl.key_shape
-  arr = x._base_array
-
-  # TODO(yashkatariya,frostig): This assumes that the last dimensions are not
-  # sharded. This is only true when enable_custom_prng is True.
-  trailing_inds = [slice(None)] * len(key_shape)
-  phys_indices = [(*inds, *trailing_inds) for inds in indices]
-  phys_sharding = make_key_array_phys_sharding(
-      aval, sharding, is_sharding_from_xla=False)
-  return pxla.shard_arg_handlers[type(arr)](
-      arr, devices, phys_indices, phys_sharding
-  )
+def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts,
+                                copy_semantics):
+  arrs = [x._base_array for x in xs]
+  phys_shardings = [physical_sharding(x.aval, sharding)
+                    for x, sharding in zip(xs, shardings)]
+  # TODO(yashkatariya): `layouts` should be converted to physical layouts.
+  return pxla.shard_args(phys_shardings, layouts, copy_semantics, arrs)
 
 
-pxla.shard_arg_handlers[PRNGKeyArrayImpl] = key_array_shard_arg_handler
+pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
 
 
 def key_array_constant_handler(x):
   arr = x._base_array
   return mlir.get_constant_handler(type(arr))(arr)
-mlir.register_constant_handler(PRNGKeyArrayImpl, key_array_constant_handler)
+mlir.register_constant_handler(PRNGKeyArray, key_array_constant_handler)
 
 
 # -- primitives
@@ -725,7 +543,7 @@ def iterated_vmap_binary_bcast(shape1, shape2, f):
   return f
 
 
-def random_seed(seeds: int | typing.ArrayLike, impl: PRNGImpl) -> PRNGKeyArrayImpl:
+def random_seed(seeds: int | typing.ArrayLike, impl: PRNGImpl) -> PRNGKeyArray:
   # Avoid overflow error in X32 mode by first converting ints to int64.
   # This breaks JIT invariance for large ints, but supports the common
   # use-case of instantiating with Python hashes in X32 mode.
@@ -733,6 +551,8 @@ def random_seed(seeds: int | typing.ArrayLike, impl: PRNGImpl) -> PRNGKeyArrayIm
     seeds_arr = jnp.asarray(np.int64(seeds))
   else:
     seeds_arr = jnp.asarray(seeds)
+  if config.random_seed_offset.value:
+    seeds_arr += config.random_seed_offset.value
   return random_seed_p.bind(seeds_arr, impl=impl)
 
 random_seed_p = core.Primitive('random_seed')
@@ -741,12 +561,13 @@ batching.defvectorized(random_seed_p)
 
 @random_seed_p.def_abstract_eval
 def random_seed_abstract_eval(seeds_aval, *, impl):
-  return keys_shaped_array(impl, seeds_aval.shape)
+  return keys_shaped_array(impl, seeds_aval.shape, seeds_aval.sharding,
+                           seeds_aval.vma)
 
 @random_seed_p.def_impl
 def random_seed_impl(seeds, *, impl):
   base_arr = random_seed_impl_base(seeds, impl=impl)
-  return PRNGKeyArrayImpl(impl, base_arr)
+  return PRNGKeyArray(impl, base_arr)
 
 def random_seed_impl_base(seeds, *, impl):
   seed = iterated_vmap_unary(np.ndim(seeds), impl.seed)
@@ -772,13 +593,17 @@ batching.defvectorized(random_split_p)
 
 @random_split_p.def_abstract_eval
 def random_split_abstract_eval(keys_aval, *, shape):
-  return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape))
+  # TODO(yashkatariya): random_split should take sharding as an arg too so we
+  # don't choose None here?
+  new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+  return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
+                           keys_aval.sharding.update(spec=new_spec), keys_aval.vma)
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):
   base_arr = random_split_impl_base(
       keys._impl, keys._base_array, keys.ndim, shape=shape)
-  return PRNGKeyArrayImpl(keys._impl, base_arr)
+  return PRNGKeyArray(keys._impl, base_arr)
 
 def random_split_impl_base(impl, base_arr, keys_ndim, *, shape):
   split = iterated_vmap_unary(keys_ndim, lambda k: impl.split(k, shape))
@@ -798,7 +623,9 @@ mlir.register_lowering(random_split_p, random_split_lowering)
 
 
 def random_fold_in(keys, msgs):
-  return random_fold_in_p.bind(keys, jnp.asarray(msgs))
+  msgs = jnp.asarray(msgs)
+  keys, msgs = core.standard_insert_pvary(keys, msgs)
+  return random_fold_in_p.bind(keys, msgs)
 
 random_fold_in_p = core.Primitive('random_fold_in')
 ad.defjvp_zero(random_fold_in_p)
@@ -808,14 +635,16 @@ batching.defbroadcasting(random_fold_in_p)
 def random_fold_in_abstract_eval(keys_aval, msgs_aval):
   shape = lax_internal.broadcasting_shape_rule(
       'random_fold_in', keys_aval, msgs_aval)
-  named_shape = lax_utils.standard_named_shape_rule(keys_aval, msgs_aval)
-  return core.ShapedArray(shape, keys_aval.dtype, named_shape=named_shape)
+  sharding = lax_internal.broadcasting_sharding_rule(
+      'random_fold_in', keys_aval, msgs_aval)
+  vma = core.standard_vma_rule('random_fold_in', keys_aval, msgs_aval)
+  return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding, vma=vma)
 
 @random_fold_in_p.def_impl
 def random_fold_in_impl(keys, msgs):
   base_arr = random_fold_in_impl_base(
       keys._impl, keys._base_array, msgs, keys.shape)
-  return PRNGKeyArrayImpl(keys._impl, base_arr)
+  return PRNGKeyArray(keys._impl, base_arr)
 
 def random_fold_in_impl_base(impl, base_arr, msgs, keys_shape):
   fold_in = iterated_vmap_binary_bcast(
@@ -837,19 +666,7 @@ mlir.register_lowering(random_fold_in_p, random_fold_in_lowering)
 
 
 def random_bits(keys, bit_width, shape):
-  shape = core.as_named_shape(shape)
-  for name, size in shape.named_items:
-    # TODO(frostig,mattjj,apaszke): Is this real_size check necessary,
-    # and is it meant to raise a user-facing ValueError? Should it be
-    # an `assert` (or RuntimeError) instead? Why do we check it in
-    # calls to `random_bits` instead of a more common paralleism path?
-    real_size = lax.psum(1, name)
-    if real_size != size:
-      raise ValueError(f"The shape of axis {name} was specified as {size}, "
-                       f"but it really is {real_size}")
-    axis_index = lax.axis_index(name)
-    keys = random_fold_in(keys, axis_index)
-  return random_bits_p.bind(keys, bit_width=bit_width, shape=shape.positional)
+  return random_bits_p.bind(keys, bit_width=bit_width, shape=shape)
 
 random_bits_p = core.Primitive('random_bits')
 ad.defjvp_zero(random_bits_p)
@@ -859,7 +676,7 @@ batching.defvectorized(random_bits_p)
 def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
   out_shape = (*keys_aval.shape, *shape)
   out_dtype = dtypes.dtype(f'uint{bit_width}')
-  return core.ShapedArray(out_shape, out_dtype)
+  return core.ShapedArray(out_shape, out_dtype, vma=keys_aval.vma)
 
 @random_bits_p.def_impl
 def random_bits_impl(keys, *, bit_width, shape):
@@ -915,11 +732,12 @@ ad.defjvp_zero(random_wrap_p)
 @random_wrap_p.def_abstract_eval
 def random_wrap_abstract_eval(base_arr_aval, *, impl):
   shape = base_arr_shape_to_keys_shape(impl, base_arr_aval.shape)
-  return keys_shaped_array(impl, shape)
+  sharding = logical_sharding(shape, KeyTy(impl), base_arr_aval.sharding)
+  return keys_shaped_array(impl, shape, sharding, base_arr_aval.vma)
 
 @random_wrap_p.def_impl
 def random_wrap_impl(base_arr, *, impl):
-  return PRNGKeyArrayImpl(impl, base_arr)
+  return PRNGKeyArray(impl, base_arr)
 
 def random_wrap_lowering(ctx, base_arr, *, impl):
   return [base_arr]
@@ -1019,10 +837,9 @@ def _threefry2x32_abstract_eval(*args):
                     .format(args))
   if all(isinstance(arg, core.ShapedArray) for arg in args):
     shape = lax_internal.broadcasting_shape_rule(*args)
-    named_shape = core.join_named_shapes(*(a.named_shape for a in args))
-    aval = core.ShapedArray(shape, jnp.dtype(jnp.uint32), named_shape=named_shape)
+    aval = core.ShapedArray(shape, jnp.dtype(jnp.uint32))
   else:
-    aval = core.UnshapedArray(jnp.dtype(jnp.uint32))
+    raise TypeError(f"Arguments to threefry2x32 must all be arrays, got {args}")
   return (aval,) * 2
 
 
@@ -1100,7 +917,20 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   return tuple(x)
 
 
-def _threefry2x32_gpu_lowering(lowering_func, ctx, k1, k2, x1, x2):
+# Since the unrolled lowering is large, emit it as an out-of-line function.
+_threefry2x32_lowering_rule = mlir.cache_lowering(mlir.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=False),
+    multiple_results=True))
+
+_threefry2x32_cpu_lowering_rule = mlir.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=True),
+    multiple_results=True)
+
+
+def _threefry2x32_gpu_lowering_rule(ctx, k1, k2, x1, x2, *, target_name_prefix):
+  if not config.threefry_gpu_kernel_lowering.value:  # back to default lowering
+    return _threefry2x32_lowering_rule(ctx, k1, k2, x1, x2)
+
   aval_out, aval_out_2 = ctx.avals_out
   assert aval_out == aval_out_2
   k1_aval, k2_aval, x1_aval, x2_aval = ctx.avals_in
@@ -1112,40 +942,29 @@ def _threefry2x32_gpu_lowering(lowering_func, ctx, k1, k2, x1, x2):
     return mlir.broadcast_in_dim(ctx, x, aval_out,
                                  broadcast_dimensions=range(rank - len(aval.shape), rank))
 
-  out_len = reduce(op.mul, aval_out.shape, 1)
-  if not core.is_constant_dim(out_len):
-    length = mlir.eval_dynamic_shape_as_tensor(ctx, [out_len])
-    length = mlir.hlo.convert(
-        ir.RankedTensorType.get((1,), ir.IntegerType.get_signless(64)),
-        length)
-    output_shape = mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
-  else:
-    length = int(out_len)  # will be passed statically
-    output_shape = None
+  sub_ctx = ctx.replace(avals_in=(aval_out,) * 4)
+  rule = ffi.ffi_lowering(
+      f"{target_name_prefix}_threefry2x32_ffi")
+  return rule(sub_ctx, _broadcast(k1, k1_aval), _broadcast(k2, k2_aval),
+              _broadcast(x1, x1_aval), _broadcast(x2, x2_aval))
 
-  return lowering_func(
-          (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-          (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length,
-          output_shape)
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True
 threefry2x32_p.def_impl(partial(dispatch.apply_primitive, threefry2x32_p))
 threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
-mlir.register_lowering(threefry2x32_p, mlir.lower_fun(
-    partial(_threefry2x32_lowering, use_rolled_loops=False),
-    multiple_results=True))
-mlir.register_lowering(threefry2x32_p, mlir.lower_fun(
-    partial(_threefry2x32_lowering, use_rolled_loops=True),
-    multiple_results=True), platform='cpu')
+mlir.register_lowering(
+    threefry2x32_p, _threefry2x32_lowering_rule)
+mlir.register_lowering(
+    threefry2x32_p, _threefry2x32_cpu_lowering_rule, platform='cpu')
 mlir.register_lowering(
     threefry2x32_p,
-    partial(_threefry2x32_gpu_lowering, gpu_prng.cuda_threefry2x32),
+    partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='cu'),
     platform='cuda')
 mlir.register_lowering(
     threefry2x32_p,
-    partial(_threefry2x32_gpu_lowering, gpu_prng.rocm_threefry2x32),
+    partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='hip'),
     platform='rocm')
 
 
@@ -1213,8 +1032,8 @@ def bcast_iotas_to_reshaped_iota(
     mul: Callable[[core.DimSize, ir.Value], ir.Value],
     shape: core.Shape,
     iotas: Sequence[ir.Value]) -> ir.Value:
-  strides: core.Shape = (*(np.cumprod(shape[1:][::-1])[::-1]), 1)  # type: ignore
-  return reduce(add, [mul(s, i) for i, s in zip(iotas, strides)])  # type: ignore
+  strides: core.Shape = (*(np.cumprod(shape[1:][::-1])[::-1]), 1)
+  return reduce(add, [mul(s, i) for i, s in zip(iotas, strides)])
 
 def iota_2x32_shape_lowering(ctx, *, shape):
   aval_out, _ = ctx.avals_out
@@ -1227,11 +1046,11 @@ def iota_2x32_shape_lowering(ctx, *, shape):
     if core.is_constant_dim(x):
       x_const = mlir.ir_constant(np.array(x, np.dtype('uint64')))
     else:
-      x_const, = mlir.eval_dynamic_shape(ctx, (x,))
+      x_shape, = mlir.eval_dynamic_shape(ctx, (x,))
       x_const = hlo.convert(
           ir.RankedTensorType.get(
-              (),
-              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_const)
+              [],
+              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_shape)
     x_bcast = mlir.broadcast_in_dim(ctx, x_const, aval_u64,
                                     broadcast_dimensions=[])
     return mlir.hlo.multiply(x_bcast, y)
@@ -1267,21 +1086,35 @@ def threefry_2x32(keypair, count):
     msg = "threefry_2x32 requires uint32 arguments, got {}"
     raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
 
-  odd_size = count.size % 2
-  if not isinstance(odd_size, int):
-    msg = ("jax.random functions have limited support for shape polymorphism. "
-           "In particular, the product of the known dimensions must be even.")
-    raise core.InconclusiveDimensionOperation(msg)
-
-  if odd_size:
-    x = list(jnp.split(jnp.concatenate([count.ravel(), np.uint32([0])]), 2))
+  flat_count = count.ravel()
+  odd_size = flat_count.shape[0] % 2
+  if core.is_constant_dim(odd_size):
+    if odd_size:
+      x = list(jnp.split(jnp.concatenate([flat_count, np.uint32([0])]), 2))
+    else:
+      x = list(jnp.split(flat_count, 2))
   else:
-    x = list(jnp.split(count.ravel(), 2))
+    # With symbolic shapes we cannot always tell statically if odd_size is true
+    # or false, so we rewrite this without a conditional.
+    flat_count_padded = jnp.concatenate([flat_count, np.uint32([0])])
+    flat_count_padded_half_size = flat_count_padded.shape[0] // 2
+    x = [
+      lax.dynamic_slice(flat_count_padded, (0,),
+                        (flat_count_padded_half_size,)),
+      lax.dynamic_slice(flat_count_padded,
+                        (flat_count_padded_half_size,),
+                        (flat_count_padded_half_size,))
+    ]
+  assert x[0].shape == x[1].shape, (x[0].shape, x[1].shape)
 
   x = threefry2x32_p.bind(key1, key2, x[0], x[1])
   out = jnp.concatenate(x)
   assert out.dtype == np.uint32
-  return lax.reshape(out[:-1] if odd_size else out, count.shape)
+  if core.is_constant_dim(odd_size):
+    return lax.reshape(out[:-1] if odd_size else out, count.shape)
+  else:
+    out_no_padding = lax.dynamic_slice(out, (0,), (flat_count.shape[0],))
+  return lax.reshape(out_no_padding, count.shape)
 
 
 def threefry_split(key: typing.Array, shape: Shape) -> typing.Array:
@@ -1291,9 +1124,9 @@ def threefry_split(key: typing.Array, shape: Shape) -> typing.Array:
 @partial(jit, static_argnums=(1,))
 def _threefry_split(key, shape) -> typing.Array:
   if config.threefry_partitionable.value:
-    return _threefry_split_foldlike(key, shape)  # type: ignore
+    return _threefry_split_foldlike(key, shape)
   else:
-    return _threefry_split_original(key, shape)  # type: ignore
+    return _threefry_split_original(key, shape)
 
 @partial(jit, static_argnums=(1,), inline=True)
 def _threefry_split_original(key, shape) -> typing.Array:
@@ -1474,3 +1307,20 @@ unsafe_rbg_prng_impl = PRNGImpl(
     tag='urbg')
 
 register_prng(unsafe_rbg_prng_impl)
+
+
+# Register export serialization for PRNG key types.
+try:
+  from jax._src.export import serialization  # pytype: disable=import-error
+  from jax._src.export import serialization_generated as ser_flatbuf  # pytype: disable=import-error
+except ImportError:
+  # This can happen if flatbuffers is not installed, in which case export
+  # serialization is not supported and it is safe to skip the registration.
+  pass
+else:
+  serialization.register_dtype_kind(
+      KeyTy(prngs["threefry2x32"]), ser_flatbuf.DType.key_fry)
+  serialization.register_dtype_kind(
+      KeyTy(prngs["rbg"]), ser_flatbuf.DType.key_rbg)
+  serialization.register_dtype_kind(
+      KeyTy(prngs["unsafe_rbg"]), ser_flatbuf.DType.key_unsafe_rbg)

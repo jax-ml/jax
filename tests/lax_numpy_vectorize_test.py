@@ -15,13 +15,13 @@
 from functools import partial
 
 from absl.testing import absltest
+import numpy as np
 
 import jax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 class VectorizeTest(jtu.JaxTestCase):
@@ -38,6 +38,7 @@ class VectorizeTest(jtu.JaxTestCase):
       ]
     ],
   )
+  @jax.numpy_rank_promotion('allow')
   def test_matmat(self, left_shape, right_shape, result_shape):
     matmat = jnp.vectorize(jnp.dot, signature='(n,m),(m,k)->(n,k)')
     self.assertEqual(matmat(jnp.zeros(left_shape),
@@ -54,6 +55,7 @@ class VectorizeTest(jtu.JaxTestCase):
       ]
     ],
   )
+  @jax.numpy_rank_promotion('allow')
   def test_matvec(self, left_shape, right_shape, result_shape):
     matvec = jnp.vectorize(jnp.dot, signature='(n,m),(m)->(n)')
     self.assertEqual(matvec(jnp.zeros(left_shape),
@@ -69,6 +71,7 @@ class VectorizeTest(jtu.JaxTestCase):
       ]
     ],
   )
+  @jax.numpy_rank_promotion('allow')
   def test_vecmat(self, left_shape, right_shape, result_shape):
     vecvec = jnp.vectorize(jnp.dot, signature='(m),(m)->()')
     self.assertEqual(vecvec(jnp.zeros(left_shape),
@@ -166,19 +169,32 @@ class VectorizeTest(jtu.JaxTestCase):
     self.assertAllClose(x, f(x, 'foo'))
     self.assertAllClose(x, jax.jit(f, static_argnums=1)(x, 'foo'))
 
+  def test_exclude_kwargs(self):
+    @partial(np.vectorize, excluded=(2, 'func'))
+    def f_np(x, y, func=np.add):
+      assert np.ndim(x) == np.ndim(y) == 0
+      return func(x, y)
+
+    @partial(jnp.vectorize, excluded=(2, 'func'))
+    def f_jnp(x, y, func=jnp.add):
+      assert x.ndim == y.ndim == 0
+      return func(x, y)
+
+    x = np.arange(4, dtype='int32')
+    y = np.int32(2)
+
+    self.assertArraysEqual(f_np(x, y), f_jnp(x, y))
+    self.assertArraysEqual(f_np(x, y, np.power), f_jnp(x, y, jnp.power))
+    self.assertArraysEqual(f_np(x, y, func=np.power), f_jnp(x, y, func=jnp.power))
+
   def test_exclude_errors(self):
     with self.assertRaisesRegex(
         TypeError, "jax.numpy.vectorize can only exclude"):
-      jnp.vectorize(lambda x: x, excluded={'foo'})
+      jnp.vectorize(lambda x: x, excluded={1.5})
 
     with self.assertRaisesRegex(
         ValueError, r"excluded=\{-1\} contains negative numbers"):
       jnp.vectorize(lambda x: x, excluded={-1})
-
-    f = jnp.vectorize(lambda x: x, excluded={1})
-    with self.assertRaisesRegex(
-        ValueError, r"excluded=\{1\} is invalid for 1 argument\(s\)"):
-      f(1.0)
 
   def test_bad_inputs(self):
     matmat = jnp.vectorize(jnp.dot, signature='(n,m),(m,k)->(n,k)')
@@ -240,6 +256,45 @@ class VectorizeTest(jtu.JaxTestCase):
     msg = r"Cannot pass None at locations \{1\} with signature='\(k\),\(k\)->\(k\)'"
     with self.assertRaisesRegex(ValueError, msg):
       f(*args)
+
+  def test_rank_promotion_error(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/22305
+    f = jnp.vectorize(jnp.add, signature="(),()->()")
+    rank2 = jnp.zeros((10, 10))
+    rank1 = jnp.zeros(10)
+    rank0 = jnp.zeros(())
+    msg = "operands with shapes .* require rank promotion"
+    with jax.numpy_rank_promotion('raise'):
+      with self.assertRaisesRegex(ValueError, msg):
+        f(rank2, rank1)
+    with jax.numpy_rank_promotion('warn'):
+      with self.assertWarnsRegex(UserWarning, msg):
+        f(rank2, rank1)
+
+    # no warning for scalar rank promotion
+    with jax.numpy_rank_promotion('raise'):
+      f(rank2, rank0)
+      f(rank1, rank0)
+    with jax.numpy_rank_promotion('warn'):
+      f(rank2, rank0)
+      f(rank1, rank0)
+
+    # No warning when broadcasted ranks match.
+    f2 = jnp.vectorize(jnp.add, signature="(n),()->(n)")
+    with jax.numpy_rank_promotion('raise'):
+      f2(rank2, rank1)
+    with jax.numpy_rank_promotion('warn'):
+      with self.assertNoWarnings():
+        f2(rank2, rank1)
+
+  def test_non_scalar_outputs_and_default_signature(self):
+    def f(x):
+      self.assertEqual(np.shape(x), ())
+      return x + jnp.linspace(-1, 1, out_dim)
+
+    out_dim = 5
+    self.assertEqual(jnp.vectorize(f)(0.5).shape, (out_dim,))
+    self.assertEqual(jnp.vectorize(f)(jnp.ones(3)).shape, (3, out_dim))
 
 
 if __name__ == "__main__":

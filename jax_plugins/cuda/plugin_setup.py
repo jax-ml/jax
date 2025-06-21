@@ -33,10 +33,6 @@ _version_module = load_version_module(package_name)
 __version__ = _version_module._get_version_for_build()
 _cmdclass = _version_module._get_cmdclass(package_name)
 
-cudnn_version = os.environ.get("JAX_CUDNN_VERSION")
-if cudnn_version:
-  __version__ += f"+cudnn{cudnn_version.replace('.', '')}"
-
 class BinaryDistribution(Distribution):
   """This class makes 'bdist_wheel' include an ABI tag on the wheel."""
 
@@ -53,16 +49,42 @@ setup(
     author="JAX team",
     author_email="jax-dev@google.com",
     packages=[package_name],
-    python_requires=">=3.9",
+    python_requires=">=3.11",
     install_requires=[f"jax-cuda{cuda_version}-pjrt=={__version__}"],
-    url="https://github.com/google/jax",
+    extras_require={
+      'with-cuda': [
+          "nvidia-cublas-cu12>=12.1.3.1",
+          "nvidia-cuda-cupti-cu12>=12.1.105",
+          "nvidia-cuda-nvcc-cu12>=12.6.85",
+          "nvidia-cuda-runtime-cu12>=12.1.105",
+          "nvidia-cudnn-cu12>=9.8,<10.0",
+          "nvidia-cufft-cu12>=11.0.2.54",
+          "nvidia-cusolver-cu12>=11.4.5.107",
+          "nvidia-cusparse-cu12>=12.1.0.106",
+          "nvidia-nccl-cu12>=2.18.1",
+          # nvjitlink is not a direct dependency of JAX, but it is a transitive
+          # dependency via, for example, cuSOLVER. NVIDIA's cuSOLVER packages
+          # do not have a version constraint on their dependencies, so the
+          # package doesn't get upgraded even though not doing that can cause
+          # problems (https://github.com/jax-ml/jax/issues/18027#issuecomment-1756305196)
+          # Until NVIDIA add version constraints, add a version constraint
+          # here.
+          "nvidia-nvjitlink-cu12>=12.1.105",
+          # nvrtc is a transitive and undeclared dep of cudnn.
+          "nvidia-cuda-nvrtc-cu12>=12.1.55",
+          # NVSHMEM is used by Mosaic GPU collectives and can be used by XLA to
+          # speed up collectives too.
+          "nvidia-nvshmem-cu12>=3.2.5",
+      ],
+    },
+    url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
+        "Development Status :: 5 - Production/Stable",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     package_data={
         package_name: [

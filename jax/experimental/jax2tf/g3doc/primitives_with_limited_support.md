@@ -40,7 +40,7 @@ The converter has a mode in which it attempts to avoid special XLA TF ops
 (`enable_xla=False`). In this mode, some primitives have additional limitations.
 
 This table only shows errors for cases that are working in JAX (see [separate
-list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md) )
+list of unsupported or partially-supported primitives](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md) )
 
 We do not yet have support for `pmap` (with its collective primitives),
 nor for `sharded_jit` (SPMD partitioning).
@@ -56,7 +56,7 @@ We use the following abbreviations for sets of dtypes:
   * `all` = `integer`, `inexact`, `bool`
 
 More detailed information can be found in the
-[source code for the limitation specification](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/primitives_test.py).
+[source code for the limitation specification](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/tests/primitives_test.py).
 
 
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices | Affected compilation modes |

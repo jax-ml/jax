@@ -31,10 +31,6 @@ def load_version_module(pkg_path):
 _version_module = load_version_module(f"jax_plugins/xla_cuda{cuda_version}")
 __version__ = _version_module._get_version_for_build()
 
-cudnn_version = os.environ.get("JAX_CUDNN_VERSION")
-if cudnn_version:
-  __version__ += f"+cudnn{cudnn_version.replace('.', '')}"
-
 packages = find_namespace_packages(
     include=[
         package_name,
@@ -52,11 +48,12 @@ setup(
     author_email="jax-dev@google.com",
     packages=packages,
     install_requires=[],
-    url="https://github.com/google/jax",
+    url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 5 - Production/Stable",
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     package_data={
         package_name: ["xla_cuda_plugin.so"],

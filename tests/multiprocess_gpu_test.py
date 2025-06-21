@@ -17,67 +17,28 @@ import os
 import shutil
 import subprocess
 import sys
-import threading
 import unittest
 import functools
 
 from absl.testing import absltest
-from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import config
 from jax._src import core
-from jax._src import distributed
-from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
 from jax.experimental import pjit
 import jax.numpy as jnp
+
+# Used to test for mpi4py installation and skip tests if not installed
+import importlib.util
 
 try:
   import portpicker
 except ImportError:
   portpicker = None
 
-config.parse_flags_with_absl()
-
-@unittest.skipIf(not portpicker, "Test requires portpicker")
-class DistributedTest(jtu.JaxTestCase):
-
-  # TODO(phawkins): Enable after https://github.com/google/jax/issues/11222
-  # is fixed.
-  @unittest.SkipTest
-  def testInitializeAndShutdown(self):
-    if not jtu.test_device_matches(['gpu']):
-      self.skipTest('Test only works with GPUs.')
-    # Tests the public APIs. Since they use global state, we cannot use
-    # concurrency to simulate multiple tasks.
-    port = portpicker.pick_unused_port()
-    jax.distributed.initialize(coordinator_address=f"localhost:{port}",
-                               num_processes=1,
-                               process_id=0)
-    jax.distributed.shutdown()
-
-
-  @parameterized.parameters([1, 2, 4])
-  def testConcurrentInitializeAndShutdown(self, n):
-    if not jtu.test_device_matches(['gpu']):
-      self.skipTest('Test only works with GPUs.')
-    port = portpicker.pick_unused_port()
-    def task(i):
-      # We can't call the public APIs directly because they use global state.
-      state = distributed.State()
-      state.initialize(coordinator_address=f"localhost:{port}",
-                       num_processes=n,
-                       process_id=i)
-      state.shutdown()
-
-    threads = [threading.Thread(target=task, args=(i,)) for i in range(n)]
-    for thread in threads:
-      thread.start()
-    for thread in threads:
-      thread.join()
+jax.config.parse_flags_with_absl()
 
 
 @unittest.skipIf(not portpicker, "Test requires portpicker")
@@ -121,9 +82,11 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
 
       try:
         for proc in subprocesses:
-          out, _ = proc.communicate()
+          out, err = proc.communicate()
           self.assertEqual(proc.returncode, 0)
-          self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+          self.assertEqual(
+              out, f"{num_gpus_per_task},{num_gpus}", msg=f"Process failed:\n\n{err}",
+          )
       finally:
         for proc in subprocesses:
           proc.kill()
@@ -145,29 +108,17 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
         env["JAX_PORT"] = str(port)
         env["NUM_TASKS"] = str(num_tasks)
         env["TASK"] = str(task)
-        visible_devices = ",".join(
-            str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
-
-        if jtu.is_device_rocm():
-          program = (
-            'import jax, os; '
-            f'jax.config.update("jax_rocm_visible_devices", "{visible_devices}"); '
-            'jax.distributed.initialize('
-            'f\'localhost:{os.environ["JAX_PORT"]}\', '
-            'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
-            's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
-            'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
-          )
-        else:
-          program = (
-            'import jax, os; '
-            f'jax.config.update("jax_cuda_visible_devices", "{visible_devices}"); '
-            'jax.distributed.initialize('
-            'f\'localhost:{os.environ["JAX_PORT"]}\', '
-            'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
-            's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
-            'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
-          )
+        visible_devices = [
+            (task * num_gpus_per_task) + i for i in range(num_gpus_per_task)
+        ]
+        program = (
+          'import jax, os; '
+          'jax.distributed.initialize('
+          'f\'localhost:{os.environ["JAX_PORT"]}\', '
+          f'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"]), {visible_devices}); '
+          's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
+          'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
+        )
         args = [sys.executable, "-c", program]
         proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, universal_newlines=True)
@@ -202,6 +153,46 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
           '-c',
           ('import jax, os; '
           'jax.distributed.initialize(); '
+          'print(f\'{jax.local_device_count()},{jax.device_count()}\' if jax.process_index() == 0 else \'\', end="")'
+          )
+      ]
+      env = os.environ.copy()
+      # In case the job was launched via Slurm,
+      # prevent OpenMPI from detecting Slurm environment
+      env.pop('SLURM_JOBID', None)
+      proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True)
+      proc = exit_stack.enter_context(proc)
+
+      try:
+        out, _ = proc.communicate()
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+      finally:
+        proc.kill()
+
+  def test_gpu_mpi4py_distributed_initialize(self):
+    if not jtu.test_device_matches(['gpu']):
+      raise unittest.SkipTest('Tests only for GPU.')
+    if shutil.which('mpirun') is None:
+      raise unittest.SkipTest('Tests only for MPI (mpirun not found).')
+    if importlib.util.find_spec("mpi4py") is None:
+      raise unittest.SkipTest('Test of mpi4py initialize only possible with mpi4py installed.')
+
+    num_gpus = 4
+    num_gpus_per_task = 1
+
+    with contextlib.ExitStack() as exit_stack:
+      args = [
+          'mpirun',
+          '--oversubscribe',
+          '--allow-run-as-root',
+          '-n',
+          str(num_gpus),
+          sys.executable,
+          '-c',
+          ('import jax, os; '
+          'jax.distributed.initialize(spec_detection_method="mpi4py"); '
           'print(f\'{jax.local_device_count()},{jax.device_count()}\' if jax.process_index() == 0 else \'\', end="")'
           )
       ]
@@ -256,16 +247,6 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     assert [d.id for d in device_mesh.flat
            ] == [0, 2, 4, 6, 1, 3, 5, 7, 8, 10, 12, 14, 9, 11, 13, 15]
     return jax.sharding.Mesh(device_mesh, ("x", "y"))
-
-  def setUp(self):
-    super().setUp()
-    self.xmap_spmd_lowering_enabled = maps.SPMD_LOWERING.value
-    jax.config.update("experimental_xmap_spmd_lowering", True)
-
-  def tearDown(self):
-    jax.config.update("experimental_xmap_spmd_lowering",
-                      self.xmap_spmd_lowering_enabled)
-    super().tearDown()
 
   def test_gpu_multi_node_initialize_and_psum(self):
 
@@ -323,7 +304,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
 
   def test_pjit_gda_multi_input_multi_output(self):
     jax.distributed.initialize()
-    global_mesh = jtu.create_global_mesh((8, 2), ("x", "y"))
+    global_mesh = jtu.create_mesh((8, 2), ("x", "y"))
     global_input_shape = (16, 2)
     global_input_data = np.arange(
         util.prod(global_input_shape)).reshape(global_input_shape)
@@ -527,7 +508,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
   def test_pjit_gda_eval_shape(self):
     jax.distributed.initialize()
 
-    with jtu.create_global_mesh((16,), ("x")):
+    with jtu.create_mesh((16,), ("x")):
 
       @functools.partial(pjit.pjit,
                          in_shardings=jax.sharding.PartitionSpec(None),

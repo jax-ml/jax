@@ -1,4 +1,6 @@
-# Profiling JAX programs
+# Profiling computation
+
+<!--* freshness: { reviewed: '2024-03-18' } *-->
 
 ## Viewing program traces with Perfetto
 
@@ -6,12 +8,12 @@ We can use the JAX profiler to generate traces of a JAX program that can be
 visualized using the [Perfetto visualizer](https://ui.perfetto.dev). Currently,
 this method blocks the program until a link is clicked and the Perfetto UI loads
 the trace. If you wish to get profiling information without any interaction,
-check out the Tensorboard profiler below.
+check out the XProf profiler below.
 
 ```python
 with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
   # Run the operations to be profiled
-  key = jax.random.PRNGKey(0)
+  key = jax.random.key(0)
   x = jax.random.normal(key, (5000, 5000))
   y = x @ x
   y.block_until_ready()
@@ -50,7 +52,7 @@ active for a portion of your script, you can shut it down by calling
 `jax.profiler.stop_server()`.
 
 Once the script is running and after the profiler server has started, we can
-manually capture an trace by running:
+manually capture and trace by running:
 ```bash
 $ python -m jax.collect_profile <port> <duration_in_ms>
 ```
@@ -62,42 +64,46 @@ Also, by default, the program will prompt you to open a link to
 file and open a visualizer. This feature is disabled by passing in
 `--no_perfetto_link` into the command. Alternatively, you can also point
 Tensorboard to the `log_dir` to analyze the trace (see the
-"Tensorboard Profiling" section below).
+"XProf (Tensorboard Profiling)" section below).
 
 (tensorboard-profiling)=
-## TensorBoard profiling
+## XProf (TensorBoard profiling)
 
-[TensorBoard's
-profiler](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras)
-can be used to profile JAX programs. Tensorboard is a great way to acquire and
+[XProf](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras)
+can be used to profile JAX programs. XProf is a great way to acquire and
 visualize performance traces and profiles of your program, including activity on
 GPU and TPU. The end result looks something like this:
 
-![TensorBoard profiler example](_static/tensorboard_profiler.png)
+![XProf example](_static/tensorboard_profiler.png)
 
 ### Installation
 
-The TensorBoard profiler is only available with the version of TensorBoard
-bundled with TensorFlow.
-
+XProf is available as a plugin to TensorBoard, as well as an independently
+run program.
 ```shell
-pip install tensorflow tensorboard-plugin-profile
+pip install xprof
 ```
 
-If you already have TensorFlow installed, you only need to install the
-`tensorboard-plugin-profile` pip package. Be careful to only install one version
-of TensorFlow or TensorBoard, otherwise you may encounter the "duplicate
-plugins" error described {ref}`below <multiple_installs>`. See
+If you have TensorBoard installed, the `xprof` pip package will also install
+the TensorBoard Profiler plugin. Be careful to only install one version of
+TensorFlow or TensorBoard, otherwise you may encounter the "duplicate plugins"
+error described {ref}`below <multiple_installs>`. See
 <https://www.tensorflow.org/guide/profiler> for more information on installing
 TensorBoard.
+
+Profiling with the nightly version of TensorBoard requires the nightly
+XProf.
+```shell
+pip install tb-nightly xprof-nightly
+```
 
 ### Programmatic capture
 
 You can instrument your code to capture a profiler trace via the
-{func}`jax.profiler.start_trace` and {func}`jax.profiler.stop_trace`
-methods. Call {func}`~jax.profiler.start_trace` with the directory to write
-trace files to. This should be the same `--logdir` directory used to start
-TensorBoard. Then, you can use TensorBoard to view the traces.
+{func}`jax.profiler.start_trace` and {func}`jax.profiler.stop_trace` methods.
+Call {func}`~jax.profiler.start_trace` with the directory to write trace files
+to. This should be the same `--logdir` directory used to start TensorBoard.
+Then, you can use TensorBoard to view the traces.
 
 For example, to take a profiler trace:
 
@@ -107,7 +113,7 @@ import jax
 jax.profiler.start_trace("/tmp/tensorboard")
 
 # Run the operations to be profiled
-key = jax.random.PRNGKey(0)
+key = jax.random.key(0)
 x = jax.random.normal(key, (5000, 5000))
 y = x @ x
 y.block_until_ready()
@@ -126,11 +132,42 @@ alternative to `start_trace` and `stop_trace`:
 import jax
 
 with jax.profiler.trace("/tmp/tensorboard"):
-  key = jax.random.PRNGKey(0)
+  key = jax.random.key(0)
   x = jax.random.normal(key, (5000, 5000))
   y = x @ x
   y.block_until_ready()
 ```
+
+### Viewing the trace
+
+After capturing a trace, you can view it using either the standalone XProf
+tool or the TensorBoard UI. The profiler interface is the same in both cases.
+
+#### Using Standalone XProf
+
+You can launch the profiler UI directly using the standalone XProf command by
+pointing it to your log directory:
+
+```
+$ xprof --port 8791 /tmp/tensorboard
+Attempting to start XProf server:
+  Log Directory: /tmp/tensorboard
+  Port: 8791
+XProf at http://localhost:8791/ (Press CTRL+C to quit)
+```
+
+Navigate to the provided URL (e.g., http://localhost:8791/) in your browser
+to view the profile.
+
+Available traces appear in the "Runs" dropdown menu on the left. Select the
+run you're interested in, and then under the "Tools" dropdown, select
+trace_viewer. You should now see a timeline of the execution. You can use the
+WASD keys to navigate the trace, and click or drag to select events for more
+details. See
+[these TensorFlow docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)=
+for more details on using the trace viewer.
+
+#### With TensorBoard
 
 To view the trace, first start TensorBoard if you haven't already:
 
@@ -138,23 +175,17 @@ To view the trace, first start TensorBoard if you haven't already:
 $ tensorboard --logdir=/tmp/tensorboard
 [...]
 Serving TensorBoard on localhost; to expose to the network, use a proxy or pass --bind_all
-TensorBoard 2.5.0 at http://localhost:6006/ (Press CTRL+C to quit)
+TensorBoard 2.20.0 at http://localhost:6006/ (Press CTRL+C to quit)
 ```
 
-You should be able to load TensorBoard at <http://localhost:6006/> in this
-example. You can specify a different port with the `--port` flag. See
-{ref}`remote_profiling` below if running JAX on a remote server.
+You should be able to load TensorBoard at http://localhost:6006/ in this
+example. Then, select "Profile" from the dropdown menu in the upper-right,
+or navigate directly to http://localhost:6006/#profile.
 
-Then, either select "Profile" in the upper-right dropdown menu, or go directly
-to <http://localhost:6006/#profile>. Available traces appear in the "Runs"
-dropdown menu on the left. Select the run you're interested in, and then under
-"Tools", select `trace_viewer`.  You should now see a timeline of the
-execution. You can use the WASD keys to navigate the trace, and click or drag to
-select events to see more details at the bottom. See [these TensorFlow
-docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)
-for more details on using the trace viewer.
-
-You can also use the `memory_viewer`, `op_profile`, and `graph_viewer` tools.
+From there, the experience is the same as the standalone tool: available
+traces appear in the "Runs" dropdown menu on the left. Select the run
+you're interested in, and then under "Tools", select trace_viewer to see the
+timeline.
 
 ### Manual capture via TensorBoard
 
@@ -216,22 +247,101 @@ from a running program.
    You can also use the `memory_viewer`, `op_profile`, and `graph_viewer`
    tools.<br /><br />
 
-### Concurrent kernel tracing on GPU
-
-By default, traces captured on GPU in a mode that prevents CUDA kernels from
-running concurrently. This allows for more accurate kernel timings, but removes
-any concurrency between streams (for example, between compute and
-communication). To enable concurrent kernel tracing, set the environment
-variable `TF_GPU_CUPTI_FORCE_CONCURRENT_KERNEL=1` when launching the JAX
-program.
-
-
 ### Adding custom trace events
 
 By default, the events in the trace viewer are mostly low-level internal JAX
 functions. You can add your own events and functions by using
 {class}`jax.profiler.TraceAnnotation` and {func}`jax.profiler.annotate_function` in
 your code.
+
+### Configuring profiler options
+
+The `start_trace` method accepts an optional `profiler_options` parameter, which
+allows for fine-grained control over the profiler's behavior. This parameter
+should be an instance of `jax.profiler.ProfileOptions`.
+<!-- TODO: Add API documentation for jax.profiler.ProfileOptions -->
+
+For example, to disable all python and host traces:
+
+```python
+import jax
+
+options = jax.profiler.ProfileOptions()
+options.python_tracer_level = 0
+options.host_tracer_level = 0
+jax.profiler.start_trace("/tmp/tensorboard", profiler_options=options)
+
+# Run the operations to be profiled
+key = jax.random.key(0)
+x = jax.random.normal(key, (5000, 5000))
+y = x @ x
+y.block_until_ready()
+
+jax.profiler.stop_trace()
+```
+
+#### General options
+
+1.  `host_tracer_level`: Sets the trace level for host-side activities.
+
+    Supported Values:
+
+    `0`: Disables host (CPU) tracing entirely.
+
+    `1`: Enables tracing of only user-instrumented TraceMe events (this is the
+    default).
+
+    `2`: Includes level 1 traces plus high-level program execution details like
+    expensive XLA operations.
+
+    `3`: Includes level 2 traces plus more verbose, low-level program execution
+    details such as cheap XLA operations.
+
+2.  `python_tracer_level`: Controls whether Python tracing is enabled.
+
+    Supported Values:
+
+    `0`: Disables Python function call tracing.
+
+    `1`: Enables Python tracing (this is the default).
+
+#### Advanced configuration options
+
+1.  `tpu_trace_mode`: Specifies the mode for TPU tracing.
+
+    Supported Values:
+
+    `TRACE_ONLY_HOST`: This means only host-side (CPU) activities are traced,
+    and no device (TPU/GPU) traces are collected.
+
+    `TRACE_ONLY_XLA`: This means only XLA-level operations on the device are
+    traced.
+
+    `TRACE_COMPUTE`: This traces compute operations on the device.
+
+    `TRACE_COMPUTE_AND_SYNC`: This traces both compute operations and
+    synchronization events on the device.
+
+    If "tpu_trace_mode" is not provided the trace_mode defaults to
+    TRACE_ONLY_XLA.
+
+2.  `tpu_num_sparse_cores_to_trace`: Specifies the number of sparse cores to
+    trace on the TPU.
+3.  `tpu_num_sparse_core_tiles_to_trace`: Specifies the number of tiles within
+    each sparse core to trace on the TPU.
+4.  `tpu_num_chips_to_profile_per_task`: Specifies the number of TPU chips to
+    profile per task.
+
+For example:
+
+```
+options = ProfileOptions()
+options.advanced_configuration = {"tpu_trace_mode" : "TRACE_ONLY_HOST", "tpu_num_sparse_cores_to_trace" : 2}
+
+```
+
+Returns InvalidArgumentError if any unrecognized keys or option values are
+found.
 
 ### Troubleshooting
 
@@ -310,8 +420,8 @@ replace, so it may be necessary to uninstall everything and reinstall a single
 version:
 
 ```shell
-pip uninstall tensorflow tf-nightly tensorboard tb-nightly
-pip install tensorflow
+pip uninstall tensorflow tf-nightly tensorboard tb-nightly xprof xprof-nightly tensorboard-plugin-profile tbp-nightly
+pip install tensorboard xprof
 ```
 
 ## Nsight

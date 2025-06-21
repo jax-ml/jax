@@ -13,15 +13,17 @@
 # limitations under the License.
 import itertools
 
+import numpy as np
+
 from absl.testing import absltest
 
+import jax
+from jax._src import config
 from jax._src import test_util as jtu
 import jax.scipy.fft as jsp_fft
 import scipy.fft as osp_fft
 
-from jax import config
-
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 float_dtypes = jtu.dtypes.floating
 real_dtypes = float_dtypes + jtu.dtypes.integer + jtu.dtypes.boolean
@@ -51,7 +53,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     shape=[(10,), (2, 5)],
     n=[None, 1, 7, 13, 20],
     axis=[-1, 0],
-    norm=[None, 'ortho'],
+    norm=[None, 'ortho', 'backward'],
   )
   def testDct(self, shape, dtype, n, axis, norm):
     rng = jtu.rand_default(self.rng())
@@ -68,7 +70,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
      for axes in _get_dctn_test_axes(shape)
      for s in _get_dctn_test_s(shape, axes)],
     dtype=real_dtypes,
-    norm=[None, 'ortho'],
+    norm=[None, 'ortho', 'backward'],
   )
   def testDctn(self, shape, dtype, s, axes, norm):
     rng = jtu.rand_default(self.rng())
@@ -84,7 +86,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     shape=[(10,), (2, 5)],
     n=[None, 1, 7, 13, 20],
     axis=[-1, 0],
-    norm=[None, 'ortho'],
+    norm=[None, 'ortho', 'backward'],
   )
   # TODO(phawkins): these tests are failing on T4 GPUs in CI with a
   # CUDA_ERROR_ILLEGAL_ADDRESS.
@@ -104,7 +106,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
      for axes in _get_dctn_test_axes(shape)
      for s in _get_dctn_test_s(shape, axes)],
     dtype=real_dtypes,
-    norm=[None, 'ortho'],
+    norm=[None, 'ortho', 'backward'],
   )
   # TODO(phawkins): these tests are failing on T4 GPUs in CI with a
   # CUDA_ERROR_ILLEGAL_ADDRESS.
@@ -117,6 +119,16 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  def testIdctNormalizationPrecision(self):
+    # reported in https://github.com/jax-ml/jax/issues/23895
+    if not config.enable_x64.value:
+      raise self.skipTest("requires jax_enable_x64=true")
+    x = np.ones(3, dtype="float64")
+    n = 10
+    expected = osp_fft.idct(x, n=n, type=2)
+    actual = jsp_fft.idct(x, n=n, type=2)
+    self.assertArraysAllClose(actual, expected, atol=1e-14)
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

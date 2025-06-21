@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 
 from functools import partial
 import itertools
 import math
-from typing import Optional, cast
+from typing import Union, cast
 import unittest
 
 from absl.testing import absltest
@@ -31,11 +32,9 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
-from jax._src.lib import xla_client
 from jax._src.util import safe_map, safe_zip
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -73,8 +72,8 @@ class LaxVmapTest(jtu.JaxTestCase):
      for lhs_shape in [(b * batch_group_count, i * feature_group_count, 6, 7)]
      for rhs_shape in [(j * batch_group_count * feature_group_count, i, 1, 2)]],
     [dict(lhs_bdim=lhs_bdim, rhs_bdim=rhs_bdim)
-        for lhs_bdim in itertools.chain([cast(Optional[int], None)], range(5))
-        for rhs_bdim in itertools.chain([cast(Optional[int], None)], range(5))
+        for lhs_bdim in itertools.chain([cast(Union[int, None], None)], range(5))
+        for rhs_bdim in itertools.chain([cast(Union[int, None], None)], range(5))
         if (lhs_bdim, rhs_bdim) != (None, None)
     ],
     [dict(dimension_numbers=dim_nums, perms=perms)
@@ -346,6 +345,24 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
+    [dict(base_shape=base_shape, axis=axis, bdims=bdims)
+      for base_shape in [(4,), (3, 4), (2, 3, 4)]
+      for axis in range(len(base_shape))
+      for bdims in lax_test_util.all_bdims(base_shape)
+    ],
+    num_pieces=range(3),
+    dtype=lax_test_util.default_dtypes,
+  )
+  def testSplit(self, base_shape, dtype, num_pieces, axis, bdims):
+    sizes = jtu.rand_int(self.rng(), 5)((num_pieces + 1,), np.int64)
+    shape = list(base_shape)
+    shape[axis] = np.sum(sizes)
+    rng = jtu.rand_default(self.rng())
+    op = lambda x: lax.split(x, sizes, axis)
+    self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng,
+                        multiple_results=True)
+
+  @jtu.sample_product(
     [dict(shape=shape, perm=perm, bdims=bdims)
       for shape, perm in [
         [(3, 4), (1, 0)],
@@ -546,7 +563,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     ndims = len(shape)
     axes = range(ndims - fft_ndims, ndims)
     fft_lengths = tuple(shape[axis] for axis in axes)
-    op = lambda x: lax.fft(x, xla_client.FftType.FFT, fft_lengths)
+    op = lambda x: lax.fft(x, lax.FftType.FFT, fft_lengths)
     self._CheckBatching(op, 5, bdims, [shape], [np.complex64], rng,
                         rtol=1e-5)
 
@@ -566,6 +583,18 @@ class LaxVmapTest(jtu.JaxTestCase):
           ((10, 5), np.array([[0, 2], [1, 0]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
             (1, 3)),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]),
+           lax.GatherDimensionNumbers(
+               offset_dims=(), collapsed_slice_dims=(1,),
+               start_index_map=(1,), operand_batching_dims=(0,),
+               start_indices_batching_dims=(0,)),
+           (1, 1)),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           lax.GatherDimensionNumbers(
+               offset_dims=(2,), collapsed_slice_dims=(),
+               start_index_map=(2,), operand_batching_dims=(0, 1),
+               start_indices_batching_dims=(1, 0)),
+           (1, 1, 3))
       ]
       for bdims in lax_test_util.all_bdims(shape, idxs.shape)],
     dtype=lax_test_util.all_dtypes
@@ -590,6 +619,16 @@ class LaxVmapTest(jtu.JaxTestCase):
           ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
       ]
       for bdims in lax_test_util.all_bdims(arg_shape, idxs.shape, update_shape)],
     dtype=lax_test_util.float_dtypes
@@ -613,6 +652,16 @@ class LaxVmapTest(jtu.JaxTestCase):
           ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
       ]
       for bdims in lax_test_util.all_bdims(arg_shape, idxs.shape)],
     dtype=lax_test_util.float_dtypes,
@@ -661,6 +710,25 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op2, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
+    [dict(shape=shape, bdims=bdims)
+      for shape in [(8,), (3, 4, 5)]
+      for bdims in lax_test_util.all_bdims(shape)],
+    dtype=lax_test_util.default_dtypes,
+  )
+  def test_optimization_barrier_vmap(self, shape, dtype, bdims):
+    rng = jtu.rand_small(self.rng())
+    self._CheckBatching(lax.optimization_barrier, 5, bdims, (shape,), (dtype,),
+                        rng)
+
+  def test_optimization_barrier_vmap_out_axes(self):
+    x = jnp.arange(8)
+    y = x.reshape(1, 8)
+    out = jax.vmap(lax.optimization_barrier, in_axes=((0, 1),),
+                   out_axes=(0, 1))((x, y))
+    self.assertArraysEqual(out[0], x)
+    self.assertArraysEqual(out[1], y)
+
+  @jtu.sample_product(
     [dict(shape=shape, bdims=bdims, dimension=dimension, arity=arity)
       for shape in [(2, 3)]
       for dimension in [0, 1]
@@ -693,8 +761,8 @@ class LaxVmapTest(jtu.JaxTestCase):
   # TODO(b/183233858): variadic reduce-window is not implemented on XLA:GPU
   @jtu.skip_on_devices("gpu")
   def test_variadic_reduce_window(self):
-    # https://github.com/google/jax/discussions/9818 and
-    # https://github.com/google/jax/issues/9837
+    # https://github.com/jax-ml/jax/discussions/9818 and
+    # https://github.com/jax-ml/jax/issues/9837
     def normpool(x):
       norms = jnp.linalg.norm(x, axis=-1)
       idxs = jnp.arange(x.shape[0])

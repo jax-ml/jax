@@ -23,8 +23,7 @@ from jax._src import config as jax_config
 from jax._src.lib.mlir import ir
 from jax import numpy as jnp
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 def module_to_string(module: ir.Module) -> str:
@@ -82,10 +81,16 @@ class MetadataTest(jtu.JaxTestCase):
     def f(which, x):
       return jax.lax.cond(which, x, true_fun, x, false_fun)
     hlo = module_to_string(jax.jit(f).lower(True, 1.).compiler_ir())
-    self.assertRegex(hlo, r'loc\(".*cond\[linear=\(False, False\)\]"')
     self.assertRegex(hlo, r'loc\(".*cond/branch_0_fun/cos"')
     self.assertRegex(hlo, r'loc\(".*cond/branch_1_fun/sin"')
 
+  def test_argmax(self):
+    def f(x):
+      return jnp.argmax(x)
+    hlo = module_to_string(jax.jit(f).lower(jnp.arange(8.0)).compiler_ir())
+    self.assertNotRegex(hlo, r'<.* at 0x[0-9a-fA-F]+>')
+
+  @unittest.skip('b/352539562')
   def test_source_file_prefix_removal(self):
 
     def make_hlo():

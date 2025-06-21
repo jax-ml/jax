@@ -1,0 +1,58 @@
+# Copyright 2024 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+licenses(["notice"])
+
+load(
+  "//jaxlib:jax.bzl",
+  "py_library_providing_imports_info",
+  "pytype_library",
+)
+
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//:__subpackages__"],
+)
+
+exports_files([
+    "__init__.py",
+    "plugin_pyproject.toml",
+    "plugin_setup.py",
+    "pyproject.toml",
+    "setup.py",
+])
+
+cc_binary(
+    name = "pjrt_c_api_gpu_plugin.so",
+    linkopts = [
+        "-Wl,--version-script,$(location :gpu_version_script.lds)",
+        "-Wl,--no-undefined",
+    ],
+    linkshared = True,
+    deps = [
+        ":gpu_version_script.lds",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu",
+        "@xla//xla/service:gpu_plugin",
+        "@xla//xla/stream_executor:rocm_platform",
+    ],
+)
+
+py_library_providing_imports_info(
+    name = "rocm_plugin",
+    srcs = [
+        "__init__.py",
+    ],
+    data = [":pjrt_c_api_gpu_plugin.so"],
+    lib_rule = pytype_library,
+)

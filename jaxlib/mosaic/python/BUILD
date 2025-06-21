@@ -15,8 +15,21 @@
 # Mosaic Python bindings
 
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
-load("//jaxlib:jax.bzl", "py_deps")
 load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "gpu_dialect",
+    srcs = [
+        "mosaic_gpu.py",
+        "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen_enums.py",
+        "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen_ops.py",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jaxlib/mlir",
+        "//jaxlib/mlir/_mlir_libs:_mosaic_gpu_ext",
+    ],
+)
 
 gentbl_filegroup(
     name = "tpu_python_gen_raw",
@@ -65,28 +78,4 @@ py_library(
     visibility = [
         "//visibility:public",
     ],
-)
-
-py_library(
-    name = "tpu_passes",
-    srcs = [
-        "apply_vector_layout.py",
-        "infer_memref_layout.py",
-    ],
-    visibility = [
-        "//visibility:public",
-    ],
-    deps = [
-        ":layout_defs",
-        ":tpu_dialect",
-        "//jaxlib/mlir:arithmetic_dialect",
-        "//jaxlib/mlir:func_dialect",
-        "//jaxlib/mlir:ir",
-        "//jaxlib/mlir:math_dialect",
-        "//jaxlib/mlir:memref_dialect",
-        "//jaxlib/mlir:pass_manager",
-        "//jaxlib/mlir:scf_dialect",
-        "//jaxlib/mlir:stablehlo_dialect",
-        "//jaxlib/mlir:vector_dialect",
-    ] + py_deps("numpy"),
 )

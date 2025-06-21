@@ -20,7 +20,7 @@ This is more of an upgrade guide than a design doc.
 ### What's going on?
 
 A change to JAX's tracing infrastructure called “omnistaging”
-([google/jax#3370](https://github.com/google/jax/pull/3370)) was switched on in
+([jax-ml/jax#3370](https://github.com/jax-ml/jax/pull/3370)) was switched on in
 jax==0.2.0. This change improves memory performance, trace execution time, and
 simplifies jax internals, but may cause some existing code to break. Breakage is
 usually a result of buggy code, so long-term it’s best to fix the bugs, but
@@ -191,7 +191,7 @@ and potentially even fragmenting memory.
 
 (The `broadcast` that corresponds to the construction of the zeros array for
 `jnp.zeros_like(x)` is staged out because JAX is lazy about very simple
-expressions from [google/jax#1668](https://github.com/google/jax/pull/1668). After
+expressions from [jax-ml/jax#1668](https://github.com/jax-ml/jax/pull/1668). After
 omnistaging, we can remove that lazy sublanguage and simplify JAX internals.)
 
 The reason the creation of `mask` is not staged out is that, before omnistaging,
@@ -266,7 +266,7 @@ While tracing the function ex1 at ex1.py:4, this value became a tracer due to JA
 
 You can use transformation parameters such as `static_argnums` for `jit` to avoid tracing particular arguments of transformed functions.
 
-See https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-encountered-where-concrete-value-is-expected-error for more information.
+See https://docs.jax.dev/en/latest/faq.html#abstract-tracer-value-encountered-where-concrete-value-is-expected-error for more information.
 
 Encountered tracer value: Traced<ShapedArray(int32[])>with<DynamicJaxprTrace(level=0/1)>
 ```

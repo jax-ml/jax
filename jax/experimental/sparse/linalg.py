@@ -14,7 +14,9 @@
 
 """Sparse linear algebra routines."""
 
-from typing import Union, Callable
+from __future__ import annotations
+
+from collections.abc import Callable
 import functools
 
 import jax
@@ -25,18 +27,18 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 
 from jax._src import core
+from jax._src import ffi
 from jax._src.interpreters import ad
-from jax._src.lib import gpu_solver
 
 import numpy as np
 from scipy.sparse import csr_matrix, linalg
 
 
 def lobpcg_standard(
-    A: Union[jax.Array, Callable[[jax.Array], jax.Array]],
+    A: jax.Array | Callable[[jax.Array], jax.Array],
     X: jax.Array,
     m: int = 100,
-    tol: Union[jax.Array, float, None] = None):
+    tol: jax.Array | float | None = None):
   """Compute the top-k standard eigenvalues using the LOBPCG routine.
 
   LOBPCG [1] stands for Locally Optimal Block Preconditioned Conjugate Gradient.
@@ -106,7 +108,7 @@ def _lobpcg_standard_matrix(
     A: jax.Array,
     X: jax.Array,
     m: int,
-    tol: Union[jax.Array, float, None],
+    tol: jax.Array | float | None,
     debug: bool = False):
   """Computes lobpcg_standard(), possibly with debug diagnostics."""
   return _lobpcg_standard_callable(
@@ -117,7 +119,7 @@ def _lobpcg_standard_callable(
     A: Callable[[jax.Array], jax.Array],
     X: jax.Array,
     m: int,
-    tol: Union[jax.Array, float, None],
+    tol: jax.Array | float | None,
     debug: bool = False):
   """Supports generic lobpcg_standard() callable interface."""
 
@@ -130,7 +132,7 @@ def _lobpcg_standard_callable(
   _check_inputs(A, X)
 
   if tol is None:
-    tol = jnp.finfo(dt).eps
+    tol = float(jnp.finfo(dt).eps)
 
   X = _orthonormalize(X)
   P = _extend_basis(X, X.shape[1])
@@ -343,7 +345,7 @@ def _svqb(X):
   tau = jnp.finfo(X.dtype).eps * w[0]
   padded = jnp.maximum(w, tau)
 
-  # Note the the tau == 0 edge case where X was all zeros.
+  # Note the tau == 0 edge case where X was all zeros.
   sqrted = jnp.where(tau > 0, padded, 1.0) ** (-0.5)
 
   # X^T X = V diag(w) V^T, so
@@ -389,7 +391,7 @@ def _project_out(basis, U):
   #
   # Interspersing with orthonormalization isn't directly grounded in the
   # original analysis, but taken from Algorithm 5 of [3]. In practice, due to
-  # normalization, I have noticed that that the orthonormalized basis
+  # normalization, I have noticed that the orthonormalized basis
   # does not always end up as a subspace of the starting basis in practice.
   # There may be room to refine this procedure further, but the adjustment
   # in the subsequent block handles this edge case well enough for now.
@@ -531,10 +533,9 @@ def _spsolve_abstract_eval(data, indices, indptr, b, *, tol, reorder):
 
 
 def _spsolve_gpu_lowering(ctx, data, indices, indptr, b, *, tol, reorder):
-  data_aval, _, _, _, = ctx.avals_in
-  return gpu_solver.cuda_csrlsvqr(data_aval.dtype, data, indices,
-                                  indptr, b, tol, reorder)
-
+  return ffi.ffi_lowering("cusolver_csrlsvqr_ffi")(
+      ctx, data, indices, indptr, b, tol=np.float64(tol),
+      reorder=np.int32(reorder))
 
 def _spsolve_cpu_lowering(ctx, data, indices, indptr, b, tol, reorder):
   del tol, reorder
@@ -600,7 +601,9 @@ def spsolve(data, indices, indptr, b, tol=1e-6, reorder=1):
   """A sparse direct solver using QR factorization.
 
   Accepts a sparse matrix in CSR format `data, indices, indptr` arrays.
-  Currently only the CUDA GPU backend is implemented.
+  Currently only the CUDA GPU backend is implemented, the CPU backend will fall
+  back to `scipy.sparse.linalg.spsolve`. Neither the CPU nor the GPU
+  implementation support batching with `vmap`.
 
   Args:
     data : An array containing the non-zero entries of the CSR matrix.

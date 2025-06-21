@@ -12,4 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.distributed import (initialize, shutdown)
+from jax._src.distributed import (
+   initialize as initialize,
+   is_initialized as is_initialized,
+   shutdown as shutdown,
+)

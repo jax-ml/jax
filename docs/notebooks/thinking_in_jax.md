@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.15.2
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   name: python3
@@ -13,9 +13,11 @@ kernelspec:
 
 +++ {"id": "LQHmwePqryRU"}
 
-# How to Think in JAX
+# How to think in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/thinking_in_jax.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/thinking_in_jax.ipynb)
+<!--* freshness: { reviewed: '2024-04-08' } *-->
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/thinking_in_jax.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/notebooks/thinking_in_jax.ipynb)
 
 JAX provides a simple and powerful API for writing accelerated numerical code, but working effectively in JAX sometimes requires extra consideration. This document is meant to help build a ground-up understanding of how JAX operates, so that you can use it more effectively.
 
@@ -23,7 +25,7 @@ JAX provides a simple and powerful API for writing accelerated numerical code, b
 
 ## JAX vs. NumPy
 
-**Key Concepts:**
+**Key concepts:**
 
 - JAX provides a NumPy-inspired interface for convenience.
 - Through duck-typing, JAX arrays can often be used as drop-in replacements of NumPy arrays.
@@ -115,7 +117,7 @@ x[0] = 10
 
 +++ {"id": "yRYF0YgO3F4H"}
 
-For updating individual elements, JAX provides an [indexed update syntax](https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-operators) that returns an updated copy:
+For updating individual elements, JAX provides an [indexed update syntax](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html#jax-numpy-ndarray-at) that returns an updated copy:
 
 ```{code-cell} ipython3
 :id: 8zqPEAeP3UK5
@@ -130,7 +132,7 @@ print(y)
 
 ## NumPy, lax & XLA: JAX API layering
 
-**Key Concepts:**
+**Key concepts:**
 
 - `jax.numpy` is a high-level wrapper that provides a familiar interface.
 - `jax.lax` is a lower-level API that is stricter and often more powerful.
@@ -187,7 +189,7 @@ jnp.convolve(x, y)
 
 +++ {"id": "0GPqgT7S0q8r"}
 
-Under the hood, this NumPy operation is translated to a much more general convolution implemented by [`lax.conv_general_dilated`](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.conv_general_dilated.html):
+Under the hood, this NumPy operation is translated to a much more general convolution implemented by [`lax.conv_general_dilated`](https://docs.jax.dev/en/latest/_autosummary/jax.lax.conv_general_dilated.html):
 
 ```{code-cell} ipython3
 :id: pi4f6ikjzc3l
@@ -204,7 +206,7 @@ result[0, 0]
 
 +++ {"id": "7mdo6ycczlbd"}
 
-This is a batched convolution operation designed to be efficient for the types of convolutions often used in deep neural nets. It requires much more boilerplate, but is far more flexible and scalable than the convolution provided by NumPy (See [Convolutions in JAX](https://jax.readthedocs.io/en/latest/notebooks/convolutions.html) for more detail on JAX convolutions).
+This is a batched convolution operation designed to be efficient for the types of convolutions often used in deep neural nets. It requires much more boilerplate, but is far more flexible and scalable than the convolution provided by NumPy (See [Convolutions in JAX](https://docs.jax.dev/en/latest/notebooks/convolutions.html) for more detail on JAX convolutions).
 
 At their heart, all `jax.lax` operations are Python wrappers for operations in XLA; here, for example, the convolution implementation is provided by [XLA:ConvWithGeneralPadding](https://www.tensorflow.org/xla/operation_semantics#convwithgeneralpadding_convolution).
 Every JAX operation is eventually expressed in terms of these fundamental XLA operations, which is what enables just-in-time (JIT) compilation.
@@ -213,7 +215,7 @@ Every JAX operation is eventually expressed in terms of these fundamental XLA op
 
 ## To JIT or not to JIT
 
-**Key Concepts:**
+**Key concepts:**
 
 - By default JAX executes operations one at a time, in sequence.
 - Using a just-in-time (JIT) compilation decorator, sequences of operations can be optimized together and run at once.
@@ -259,7 +261,7 @@ np.allclose(norm(X), norm_compiled(X), atol=1E-6)
 
 +++ {"id": "3GvisB-CA9M8"}
 
-But due to the compilation (which includes fusing of operations, avoidance of allocating temporary arrays, and a host of other tricks), execution times can be orders of magnitude faster in the JIT-compiled case (note the use of `block_until_ready()` to account for JAX's [asynchronous dispatch](https://jax.readthedocs.io/en/latest/async_dispatch.html)):
+But due to the compilation (which includes fusing of operations, avoidance of allocating temporary arrays, and a host of other tricks), execution times can be orders of magnitude faster in the JIT-compiled case (note the use of `block_until_ready()` to account for JAX's [asynchronous dispatch](https://docs.jax.dev/en/latest/async_dispatch.html)):
 
 ```{code-cell} ipython3
 :id: 6mUB6VdDAEIY
@@ -306,7 +308,7 @@ This is because the function generates an array whose shape is not known at comp
 
 ## JIT mechanics: tracing and static variables
 
-**Key Concepts:**
+**Key concepts:**
 
 - JIT and other JAX transforms work by *tracing* a function to determine its effect on inputs of a specific shape and type.
 
@@ -415,9 +417,9 @@ Understanding which values and operations will be static and which will be trace
 
 +++ {"id": "r-RCl_wD5lI7"}
 
-## Static vs Traced Operations
+## Static vs traced operations
 
-**Key Concepts:**
+**Key concepts:**
 
 - Just as values can be either static or traced, operations can be static or traced.
 
@@ -485,4 +487,4 @@ f(x)
 
 +++ {"id": "C-QZ5d1DG-dv"}
 
-For this reason, a standard convention in JAX programs is to `import numpy as np` and `import jax.numpy as jnp` so that both interfaces are available for finer control over whether operations are performed in a static matter (with `numpy`, once at compile-time) or a traced manner (with `jax.numpy`, optimized at run-time).
+For this reason, a standard convention in JAX programs is to `import numpy as np` and `import jax.numpy as jnp` so that both interfaces are available for finer control over whether operations are performed in a static manner (with `numpy`, once at compile-time) or a traced manner (with `jax.numpy`, optimized at run-time).

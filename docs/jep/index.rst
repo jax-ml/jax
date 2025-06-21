@@ -32,7 +32,7 @@ should be linked to this issue.
 Then create a pull request that adds a file named
 `%d-{short-title}.md` - with the number being the issue number.
 
-.. _JEP label: https://github.com/google/jax/issues?q=label%3AJEP
+.. _JEP label: https://github.com/jax-ml/jax/issues?q=label%3AJEP
 
 .. toctree::
   :maxdepth: 1
@@ -51,6 +51,8 @@ Then create a pull request that adds a file named
   15856: `jax.extend`, an extensions module <15856-jex>
   17111: Efficient transposition of `shard_map` (and other maps) <17111-shmap-transpose>
   18137: Scope of JAX NumPy & SciPy Wrappers <18137-numpy-scipy-scope>
+  25516: Effort-based versioning <25516-effver>
+  28661: Supporting the `__jax_array__` protocol <28661-jax-array-protocol>
 
 
 Several early JEPs were converted in hindsight from other documentation,

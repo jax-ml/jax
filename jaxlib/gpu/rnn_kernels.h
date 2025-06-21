@@ -16,9 +16,12 @@ limitations under the License.
 #ifndef JAXLIB_GPU_RNN_KERNELS_H_
 #define JAXLIB_GPU_RNN_KERNELS_H_
 
+#include <cstddef>
+#include <utility>
+
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"
-#include "xla/service/custom_call_status.h"
+#include "xla/ffi/api/ffi.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
@@ -31,23 +34,20 @@ struct RnnDescriptor {
   int batch_size;
   int max_seq_length;
   float dropout;
-  bool bidirectional;
-  bool cudnn_allow_tf32;
-  int workspace_size;
-  int reserve_space_size;
+  int bidirectional;
+  int cudnn_allow_tf32;
+  size_t workspace_size;
+  size_t reserve_space_size;
 };
 
 // Return (workspace size, reserve space size).
-absl::StatusOr<std::pair<int, int>> RnnComputeWorkspaceReserveSpaceSizes(
+absl::StatusOr<std::pair<size_t, size_t>> RnnComputeWorkspaceReserveSpaceSizes(
     int input_size, int hidden_size, int num_layers, int batch_size,
     int max_seq_length, float dropout, bool bidirectional,
     bool cudnn_allow_tf32);
 
-void RNNForward(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status);
-
-void RNNBackward(gpuStream_t stream, void** buffers, const char* opaque,
-                 size_t opaque_len, XlaCustomCallStatus* status);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(RNNForwardFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(RNNBackwardFfi);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
 import itertools
-from typing import Any, Callable, Union
+from typing import Any
 
 import jax
 from jax._src import core
 from jax import tree_util
 from jax._src.api_util import _ensure_index, _ensure_index_tuple
-from jax.util import safe_zip
+from jax._src.util import safe_zip
 from jax._src.util import split_list, wraps
 from jax._src.traceback_util import api_boundary
 from jax.experimental.sparse._base import JAXSparse
@@ -29,7 +31,7 @@ from jax.experimental.sparse._base import JAXSparse
 is_sparse = lambda x: isinstance(x, JAXSparse)
 
 
-def flatten_fun_for_sparse_ad(fun, argnums: Union[int, tuple[int]], args: tuple[Any]):
+def flatten_fun_for_sparse_ad(fun, argnums: int | tuple[int, ...], args: tuple[Any, ...]):
   argnums_tup = _ensure_index_tuple(argnums)
   assert all(0 <= argnum < len(args) for argnum in argnums_tup)
 
@@ -65,13 +67,17 @@ def flatten_fun_for_sparse_ad(fun, argnums: Union[int, tuple[int]], args: tuple[
     return f_recons(grad_out)
 
   def postprocess_gradients(grads_out):
-    out = [reconstruct(*args) for args in safe_zip(argnums_flat1, grads_out)]
-    return out[0] if isinstance(argnums, int) else out
+    leaf_grads = [None] * tree1.num_leaves
+    for i, grad in safe_zip(argnums_flat1, grads_out):
+      leaf_grads[i] = reconstruct(i, grad)
+    grad_tree = tree_util.tree_unflatten(tree1, leaf_grads)
+    grad_tree = tuple(filter(lambda x: jax.tree.leaves(x), grad_tree))
+    return grad_tree[0] if len(grad_tree) == 1 else grad_tree
 
   return fun_flat, argnums_flat, args_flat, postprocess_gradients
 
 
-def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
                    has_aux=False, **kwargs) -> Callable[..., tuple[Any, Any]]:
   """Sparse-aware version of :func:`jax.value_and_grad`
 
@@ -79,7 +85,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   taking the gradient with respect to a :class:`jax.experimental.sparse` array, the
   gradient is computed in the subspace defined by the array's sparsity pattern.
 
-  Example:
+  Examples:
 
     >>> from jax.experimental import sparse
     >>> X = sparse.BCOO.fromdense(jnp.arange(6.))
@@ -99,7 +105,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   return value_and_grad_fun
 
 
-def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+def grad(fun: Callable, argnums: int | Sequence[int] = 0,
          has_aux=False, **kwargs) -> Callable:
   """Sparse-aware version of :func:`jax.grad`
 
@@ -107,7 +113,7 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   the gradient with respect to a :class:`jax.experimental.sparse` array, the
   gradient is computed in the subspace defined by the array's sparsity pattern.
 
-  Example:
+  Examples:
 
     >>> from jax.experimental import sparse
     >>> X = sparse.BCOO.fromdense(jnp.arange(6.))
@@ -129,7 +135,7 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   return grad_fun
 
 
-def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
            has_aux: bool = False, **kwargs) -> Callable:
   """Sparse-aware version of :func:`jax.jacfwd`
 
@@ -152,7 +158,7 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   return jacfwd_fun
 
 
-def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
            has_aux: bool = False, **kwargs) -> Callable:
   """Sparse-aware version of :func:`jax.jacrev`
 

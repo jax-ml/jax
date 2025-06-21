@@ -112,6 +112,11 @@ class DebuggerFrame:
       # then we subtract it off from the `lineno` and don't need to subtract 1
       # since both start and lineno are 1-indexed.
       offset = frame_info.lineno - max(start, 1)
+      if offset >= len(source):
+        # Sometimes we don't get a valid source/offset pair. This seems to
+        # happen sometimes when code uses eval(). If that happens, give up.
+        source = []
+        offset = None
     except OSError:
       source = []
       offset = None
@@ -161,7 +166,7 @@ def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
       debugger and in the absence of other registered debuggers, falls back to
       the CLI debugger.
     filter_frames: Whether or not to filter out JAX-internal stack frames from
-      the traceback. Since some libraries, like Flax, also make user of JAX's
+      the traceback. Since some libraries, like Flax, also make use of JAX's
       stack frame filtering system, this option can also affect whether stack
       frames from libraries are filtered.
     num_frames: The number of frames above the current stack frame to make

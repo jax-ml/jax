@@ -58,6 +58,7 @@ Operators
     clz
     collapse
     complex
+    composite
     concatenate
     conj
     conv
@@ -90,6 +91,7 @@ Operators
     erfc
     erf_inv
     exp
+    exp2
     expand_dims
     expm1
     fft
@@ -119,7 +121,9 @@ Operators
     ne
     neg
     nextafter
+    optimization_barrier
     pad
+    platform_dependent
     polygamma
     population_count
     pow
@@ -127,8 +131,15 @@ Operators
     real
     reciprocal
     reduce
+    reduce_and
+    reduce_max
+    reduce_min
+    reduce_or
     reduce_precision
+    reduce_prod
+    reduce_sum
     reduce_window
+    reduce_xor
     rem
     reshape
     rev
@@ -152,13 +163,13 @@ Operators
     slice_in_dim
     sort
     sort_key_val
+    split
     sqrt
     square
     squeeze
     sub
     tan
     tanh
-    tie_in
     top_k
     transpose
     zeros_like_array
@@ -202,7 +213,6 @@ Parallel operators
 
     all_gather
     all_to_all
-    pdot
     psum
     psum_scatter
     pmax
@@ -212,6 +222,7 @@ Parallel operators
     pshuffle
     pswapaxes
     axis_index
+    axis_size
 
 Sharding-related operators
 --------------------------
@@ -229,18 +240,23 @@ Linear algebra operators (jax.lax.linalg)
   :toctree: _autosummary
 
     cholesky
+    cholesky_update
     eig
     eigh
     hessenberg
-    lu
     householder_product
+    lu
+    lu_pivots_to_permutation
     qdwh
     qr
     schur
     svd
+    SvdAlgorithm
+    symmetric_product
     triangular_solve
     tridiagonal
     tridiagonal_solve
+
 
 Argument classes
 ----------------
@@ -249,9 +265,21 @@ Argument classes
 
 .. autoclass:: ConvDimensionNumbers
 .. autoclass:: ConvGeneralDilatedDimensionNumbers
+.. autoclass:: DotAlgorithm
+.. autoclass:: DotAlgorithmPreset
+   :members:
+   :undoc-members:
+   :member-order: bysource
+.. autoclass:: FftType
+  :members:
 .. autoclass:: GatherDimensionNumbers
 .. autoclass:: GatherScatterMode
 .. autoclass:: Precision
 .. autoclass:: PrecisionLike
+.. autoclass:: RandomAlgorithm
+  :members:
+  :member-order: bysource
 .. autoclass:: RoundingMethod
+  :members:
+  :member-order: bysource
 .. autoclass:: ScatterDimensionNumbers

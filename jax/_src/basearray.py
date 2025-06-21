@@ -14,19 +14,28 @@
 
 # Note that type annotations for this file are defined in basearray.pyi
 
-import abc
-import numpy as np
-from typing import Any, Union
+from __future__ import annotations
+
 from collections.abc import Sequence
+import sys
+from typing import Any, Union
+
+from jax._src.lib import xla_client as xc
+from jax._src.util import use_cpp_class
+import numpy as np
+
 
 # TODO(jakevdp): fix import cycles and define these.
+Device = Any
 Shard = Any
 Sharding = Any
 
 # Array is a type annotation for standard JAX arrays and tracers produced by
 # core functions in jax.lax and jax.numpy; it is not meant to include
 # future non-standard array types like KeyArray and BInt.
-class Array(abc.ABC):
+
+
+class Array:
   """Array base class for JAX
 
   ``jax.Array`` is the public interface for instance checks and type annotation
@@ -44,50 +53,48 @@ class Array(abc.ABC):
   :func:`jax.numpy.array`, :func:`jax.numpy.zeros`, :func:`jax.numpy.ones`,
   :func:`jax.numpy.full`, :func:`jax.numpy.arange`, etc.
   """
-  # Note: abstract methods for this class are defined dynamically in
-  # lax_numpy.py
   # For the sake of static type analysis, these definitions are mirrored in the
   # associated basearray.pyi file.
 
   __slots__ = ['__weakref__']
+  __hash__ = None
 
   @property
-  @abc.abstractmethod
   def dtype(self) -> np.dtype:
     """The data type (:class:`numpy.dtype`) of the array."""
+    raise NotImplementedError
 
   @property
-  @abc.abstractmethod
   def ndim(self) -> int:
     """The number of dimensions in the array."""
+    raise NotImplementedError
 
   @property
-  @abc.abstractmethod
   def size(self) -> int:
     """The total number of elements in the array."""
+    raise NotImplementedError
 
   @property
-  @abc.abstractmethod
   def shape(self) -> tuple[int, ...]:
     """The shape of the array."""
+    raise NotImplementedError
 
   # Documentation for sharding-related methods and properties defined on ArrayImpl:
-  @abc.abstractmethod
-  def addressable_data(self, index: int) -> "Array":
+  def addressable_data(self, index: int) -> Array:
     """Return an array of the addressable data at a particular index."""
+    raise NotImplementedError
 
   @property
-  @abc.abstractmethod
   def addressable_shards(self) -> Sequence[Shard]:
     """List of addressable shards."""
+    raise NotImplementedError
 
   @property
-  @abc.abstractmethod
   def global_shards(self) -> Sequence[Shard]:
     """List of global shards."""
+    raise NotImplementedError
 
   @property
-  @abc.abstractmethod
   def is_fully_addressable(self) -> bool:
     """Is this Array fully addressable?
 
@@ -99,19 +106,86 @@ class Array(abc.ABC):
     a jax.Array which is fully replicated can span across multiple hosts and is
     not fully addressable.
     """
+    raise NotImplementedError
 
   @property
-  @abc.abstractmethod
   def is_fully_replicated(self) -> bool:
     """Is this Array fully replicated?"""
+    raise NotImplementedError
 
   @property
-  @abc.abstractmethod
   def sharding(self) -> Sharding:
     """The sharding for the array."""
+    raise NotImplementedError
+
+  @property
+  def committed(self) -> bool:
+    """Whether the array is committed or not.
+
+    An array is committed when it is explicitly placed on device(s) via JAX
+    APIs. For example, `jax.device_put(np.arange(8), jax.devices()[0])` is
+    committed to device 0. While `jax.device_put(np.arange(8))` is uncommitted
+    and will be placed on the default device.
+
+    Computations involving some committed inputs will happen on the committed
+    device(s) and the result will be committed on the same device(s).
+    Invoking an operation on arguments that are committed to different device(s)
+    will raise an error.
+
+    For example:
+
+    ```
+    a = jax.device_put(np.arange(8), jax.devices()[0])
+    b = jax.device_put(np.arange(8), jax.devices()[1])
+    a + b  # Raises an error
+    ```
+
+    See https://docs.jax.dev/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
+    for more information.
+    """
+    raise NotImplementedError
+
+  @property
+  def device(self) -> Device | Sharding:
+    """Array API-compatible device attribute.
+
+    For single-device arrays, this returns a Device. For sharded arrays, this
+    returns a Sharding.
+    """
+    raise NotImplementedError
+
+  def copy_to_host_async(self):
+    """Copies an ``Array`` to the host asynchronously.
+
+    For arrays that live an an accelerator, such as a GPU or a TPU, JAX may
+    cache the value of the array on the host. Normally this happens
+    behind the scenes when the value of an on-device array is requested by the
+    user, but waiting to initiate a device-to-host copy until the value is
+    requested requires that JAX block the caller while waiting for the copy to
+    complete.
+
+    ``copy_to_host_async`` requests that JAX populate its on-host cache of an
+    array, but does not wait for the copy to complete. This may speed up a
+    future on-host access to the array's contents.
+    """
+    raise NotImplementedError
 
 
+Array = use_cpp_class(xc.Array)(Array)
 Array.__module__ = "jax"
+
+
+# StaticScalar is the Union of all scalar types that can be converted to
+# JAX arrays, and are possible to mark as static arguments.
+StaticScalar = Union[
+  np.bool_, np.number,  # NumPy scalar types
+  bool, int, float, complex,  # Python scalar types
+]
+
+if sys.version_info[:2] < (3, 14):
+  # Python 3.14 raises
+  # AttributeError: 'typing.Union' object attribute '__doc__' is read-only
+  StaticScalar.__doc__ = "Type annotation for JAX-compatible static scalars."
 
 
 # ArrayLike is a Union of all objects that can be implicitly converted to a
@@ -121,7 +195,10 @@ Array.__module__ = "jax"
 ArrayLike = Union[
   Array,  # JAX array type
   np.ndarray,  # NumPy array type
-  np.bool_, np.number,  # NumPy scalar types
-  bool, int, float, complex,  # Python scalar types
+  StaticScalar,  # valid scalars
 ]
-ArrayLike.__doc__ = "Type annotation for JAX array-like objects."
+
+if sys.version_info[:2] < (3, 14):
+  # Python 3.14 raises
+  # AttributeError: 'typing.Union' object attribute '__doc__' is read-only
+  ArrayLike.__doc__ = "Type annotation for JAX array-like objects."

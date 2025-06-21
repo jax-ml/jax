@@ -13,5 +13,5 @@
 # limitations under the License.
 
 from jax._src.custom_transpose import (
-  custom_transpose,
+  custom_transpose as custom_transpose,
 )

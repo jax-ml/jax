@@ -1,44 +1,46 @@
 name: JAX Array API
 
 on:
-  workflow_dispatch: # allows triggering the workflow run manually
-  pull_request:  # Automatically trigger on pull requests affecting particular files
+  push:
     branches:
       - main
-    paths:
-      - '**workflows/jax-array-api.yml'
-      - '**experimental/array_api/**'
+  pull_request:
+    branches:
+      - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+permissions: {}
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    runs-on: linux-x86-n2-16
+    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     strategy:
       matrix:
         python-version: [3.11]
-
+    env:
+      PYTHON: "python${{ matrix.python-version }}"
     steps:
     - name: Checkout jax
-      uses: actions/checkout@v3
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      with:
+        persist-credentials: false
     - name: Checkout array-api-tests
-      uses: actions/checkout@v3
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       with:
         repository: data-apis/array-api-tests
-        ref: '7c89cf1a42eb18d4fadecda1cac8769d0138753c'  # Latest commit as of 2023-12-07
+        ref: '2025.05.23'
         submodules: 'true'
         path: 'array-api-tests'
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
+        persist-credentials: false
     - name: Install dependencies
       run: |
-        python -m pip install .[cpu]
-        python -m pip install -r array-api-tests/requirements.txt
+        $PYTHON -m uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
-        ARRAY_API_TESTS_MODULE: jax.experimental.array_api
+        ARRAY_API_TESTS_MODULE: jax.numpy
         JAX_ENABLE_X64: 'true'
       run: |
         cd ${GITHUB_WORKSPACE}/array-api-tests
-        pytest --ci array_api_tests --max-examples=5 --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/jax/experimental/array_api/skips.txt
+        $PYTHON -m pytest -n auto array_api_tests --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/tests/array_api_skips.txt

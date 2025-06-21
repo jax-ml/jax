@@ -11,15 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for AOT compilation."""
 
 import contextlib
 import unittest
 from absl.testing import absltest
 import jax
-from jax import config
 from jax._src import core
 from jax._src import test_util as jtu
+import jax._src.lib
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.pjit import pjit
@@ -31,7 +30,7 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 prev_xla_flags = None
 
@@ -42,7 +41,7 @@ with contextlib.suppress(ImportError):
 
 class JaxAotTest(jtu.JaxTestCase):
 
-  @jtu.run_on_devices('tpu')
+  @jtu.run_on_devices('tpu', 'gpu')
   def test_pickle_pjit_lower(self):
     def fun(x):
       return x * x
@@ -112,6 +111,35 @@ class JaxAotTest(jtu.JaxTestCase):
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
 
+  def test_lower_as_text_with_and_without_debug_info(self):
+    def my_function(x):
+      return jnp.sin(x)
+
+    lowered = jax.jit(my_function).lower(42.)
+    stablehlo = lowered.as_text("stablehlo", debug_info=True)
+    self.assertRegex(stablehlo, r"sine.* loc")
+    stablehlo = lowered.as_text("stablehlo")
+    self.assertNotRegex(stablehlo, r"sine.* loc")
+
+    hlo = lowered.as_text("hlo", debug_info=True)
+    self.assertRegex(hlo, r"sine.*metadata=.*source_file=.*")
+    hlo = lowered.as_text("hlo")
+    self.assertNotRegex(hlo, r"sine.*metadata=.*source_file=.*")
+
+  @jtu.run_on_devices('gpu', 'tpu')
+  def test_mismatched_backends_raises(self):
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    x = jnp.arange(1)
+    f_lowered = f.lower(x)
+    serialized, in_tree, out_tree = serialize(f_lowered.compile())
+    with self.assertRaisesRegex(
+        ValueError,
+        'Execution devices belong to a client other than `backend`'):
+      deserialize_and_load(serialized, in_tree, out_tree, backend='cpu',
+                           execution_devices=jax.devices()[:1])
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

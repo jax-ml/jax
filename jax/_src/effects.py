@@ -47,19 +47,19 @@ dispatching a computation and on which we can block until is ready. We store
 for each thread the `RuntimeToken` returned by the last dispatched computation.
 
 For more details, see the design note:
-https://jax.readthedocs.io/en/latest/jep/10657-sequencing-effects.html.
+https://docs.jax.dev/en/latest/jep/10657-sequencing-effects.html.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Set
 from typing import Any
 
 
 class Effect:
   """A generic side-effect."""
 
-Effects = set[Effect]
+Effects = Set[Effect]
 
 class JaxprInputEffect(Effect):
   """A side-effect associated with the input of a jaxpr.
@@ -104,7 +104,7 @@ class EffectTypeSet:
     return [eff for eff in effects if not self.contains(eff)]
 
 
-no_effects: Effects = set()
+no_effects: Effects = frozenset()
 ordered_effects: EffectTypeSet = EffectTypeSet()
 
 # By default, ordered effects are not allowed in multi-device computations,
@@ -118,3 +118,5 @@ lowerable_effects: EffectTypeSet = EffectTypeSet()
 control_flow_allowed_effects: EffectTypeSet = EffectTypeSet()
 custom_derivatives_allowed_effects: EffectTypeSet = EffectTypeSet()
 remat_allowed_effects: EffectTypeSet = EffectTypeSet()
+
+partial_eval_kept_effects: EffectTypeSet = EffectTypeSet()

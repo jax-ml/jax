@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from docutils import nodes, utils
+from docutils.parsers.rst import Directive
 
 from sphinx.util.nodes import split_explicit_title
 
@@ -25,14 +26,14 @@ def jax_issue_role(name, rawtext, text, lineno, inliner, options=None,
       :jax-issue:`1234`
 
   This will output a hyperlink of the form
-  `#1234 <http://github.com/google/jax/issues/1234>`_. These links work even
+  `#1234 <http://github.com/jax-ml/jax/issues/1234>`_. These links work even
   for PR numbers.
   """
   text = text.lstrip('#')
   if not text.isdigit():
       raise RuntimeError(f"Invalid content in {rawtext}: expected an issue or PR number.")
   options = {} if options is None else options
-  url = f"https://github.com/google/jax/issues/{text}"
+  url = f"https://github.com/jax-ml/jax/issues/{text}"
   node = nodes.reference(rawtext, '#' + text, refuri=url, **options)
   return [node], []
 
@@ -45,7 +46,19 @@ def doi_role(typ, rawtext, text, lineno, inliner, options=None, content=()):
   pnode = nodes.reference(title, title, internal=False, refuri=full_url)
   return [pnode], []
 
+
+class LegacyDirective(Directive):
+  """A noop variant of the ``legacy`` directive from SciPy."""
+  has_content = True
+  node_class = nodes.admonition
+  optional_arguments = 1
+
+  def run(self):
+    return []
+
+
 def setup(app):
+  app.add_directive("legacy", LegacyDirective)
   app.add_role('jax-issue', jax_issue_role)
   app.add_role('doi', doi_role)
   return {

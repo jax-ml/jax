@@ -21,27 +21,33 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/MemAlloc.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir-c/IR.h"
 #include "mlir-c/Support.h"
 #include "mlir/CAPI/IR.h"
 #include "mlir/CAPI/Registration.h"
+#include "mlir/CAPI/Utils.h"
 #include "mlir/CAPI/Wrap.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/serde.h"
 #include "xla/array.h"
 
 // TODO(tlongeri): null pointer checks?
@@ -101,6 +107,15 @@ std::array<int64_t, 2> unwrap(MlirTpuI64TargetTuple arr) {
 }
 MlirTpuI64TargetTuple wrap(std::array<int64_t, 2> arr) {
   return {arr[0], arr[1]};
+}
+mlir::tpu::ApplyVectorLayoutContext unwrap(
+    MlirTpuApplyVectorLayoutContext ctx) {
+  return mlir::tpu::ApplyVectorLayoutContext{
+      .hardware_generation = ctx.hardware_generation,
+      .target_shape = unwrap(ctx.target_shape),
+      .mxu_shape = {ctx.mxu_shape.contracting_size,
+                    ctx.mxu_shape.non_contracting_size},
+      .max_sublanes_in_scratch = ctx.max_sublanes_in_scratch};
 }
 
 mlir::OpBuilder mlirTpuInsertionPointToOpBuilder(
@@ -295,6 +310,17 @@ bool mlirTpuVectorLayoutEquivalentTo(MlirTpuVectorLayout layout,
                                       unwrap(target_shape));
 }
 
+void mlirTpuVectorLayoutPrint(
+    MlirTpuVectorLayout layout, MlirStringCallback callback, void *userData) {
+  mlir::detail::CallbackOstream stream(callback, userData);
+  unwrap(layout)->print<llvm::raw_ostream>(stream);
+}
+
+bool mlirTpuVectorLayoutIsValid(MlirTpuVectorLayout layout,
+                          MlirTpuI64TargetTuple target_shape) {
+  return unwrap(layout)->isValid(unwrap(target_shape));
+}
+
 void mlirTpuVregDataBoundsDestroy(MlirTpuVregDataBounds data_bounds) {
   delete unwrap(data_bounds);
 }
@@ -349,8 +375,10 @@ MlirTpuValueArray mlirTpuDisassemble(MlirTpuInsertionPoint insertion_point,
                                      MlirTpuVectorLayout layout, MlirValue val,
                                      MlirTpuI64TargetTuple target_shape) {
   mlir::OpBuilder builder = mlirTpuInsertionPointToOpBuilder(insertion_point);
+  // This cast will fail and assert if the caller passed a non-vector
+  auto vector_val = mlir::cast<mlir::TypedValue<mlir::VectorType>>(unwrap(val));
   mlir::FailureOr<xla::Array<mlir::Value>> failure_or_vals =
-      mlir::tpu::disassemble(builder, *unwrap(layout), unwrap(val),
+      mlir::tpu::disassemble(builder, *unwrap(layout), vector_val,
                              unwrap(target_shape));
   if (failed(failure_or_vals)) {
     return {{nullptr, 0}, nullptr};
@@ -358,21 +386,22 @@ MlirTpuValueArray mlirTpuDisassemble(MlirTpuInsertionPoint insertion_point,
   return MlirTpuValueArrayFromXlaArray(std::move(failure_or_vals).value());
 }
 
-MlirLogicalResult mlirTpuApplyLayoutOp(int hardware_generation,
-                                       MlirOperation op,
-                                       MlirTpuI64TargetTuple target_shape) {
-  auto f = unwrap(op)->getParentOfType<mlir::func::FuncOp>();
-  CHECK(f != nullptr);
-  mlir::tpu::RewriteContext ctx{f, hardware_generation, unwrap(target_shape)};
-  return wrap(mlir::tpu::applyLayoutOp(ctx, *unwrap(op)));
+MlirLogicalResult mlirTpuApplyLayoutOp(MlirTpuApplyVectorLayoutContext ctx,
+                                       MlirOperation op) {
+  mlir::tpu::ApplyVectorLayoutContext unwrapped_ctx = unwrap(ctx);
+  return wrap(mlir::tpu::applyLayoutOp(unwrapped_ctx, *unwrap(op)));
 }
 
 MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
                           MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
-                          MlirTpuI64TargetTuple target_shape) {
+                          MlirTpuApplyVectorLayoutContext ctx) {
   mlir::OpBuilder builder = mlirTpuInsertionPointToOpBuilder(insertion_point);
-  mlir::FailureOr<mlir::Value> failure_or_new_val = mlir::tpu::relayout(
-      builder, unwrap(val), *unwrap(src), *unwrap(dst), unwrap(target_shape));
+  // This cast will fail and assert if the caller passed a non-vector
+  auto vector_val = mlir::cast<mlir::TypedValue<mlir::VectorType>>(unwrap(val));
+  auto apply_layout_ctx = unwrap(ctx);
+  mlir::FailureOr<mlir::TypedValue<mlir::VectorType>> failure_or_new_val =
+      mlir::tpu::relayout(apply_layout_ctx, builder, vector_val, *unwrap(src),
+                          *unwrap(dst));
   if (failed(failure_or_new_val)) {
     return {nullptr};
   }
@@ -380,7 +409,11 @@ MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
 }
 }
 
-#include "mlir/CAPI/Pass.h"     // IWYU pragma: keep
+MLIR_CAPI_EXPORTED void mlirTpuRegisterMosaicSerdePass() {
+  mlir::tpu::registerMosaicSerdePass();
+}
+
+#include "mlir/CAPI/Pass.h"  // IWYU pragma: keep
 #include "mlir/CAPI/Support.h"  // IWYU pragma: keep
 
 extern "C" {

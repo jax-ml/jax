@@ -16,7 +16,7 @@
 
 You likely do not mean to import this module! The optimizers in this library
 are intended as examples only. If you are looking for a fully featured optimizer
-library, two good options are JAXopt_ and Optax_.
+library, consider Optax_.
 
 This module contains some convenient optimizer definitions, specifically
 initialization and update functions, which can be used with ndarrays or
@@ -85,21 +85,21 @@ Example Usage:
     value, opt_state = step(i, opt_state)
 
 
-.. _JAXopt: https://github.com/google/jaxopt
-.. _Optax: https://github.com/deepmind/optax
+.. _Optax: https://github.com/google-deepmind/optax
 """
 
-from typing import Any, Callable, NamedTuple, Union
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 from collections import namedtuple
 import functools
 from functools import partial
 
+import jax
 import jax.numpy as jnp
 from jax._src.util import safe_zip, safe_map, unzip2
-from jax import tree_util
-from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
-                           register_pytree_node)
 
 map = safe_map
 zip = safe_zip
@@ -114,10 +114,10 @@ zip = safe_zip
 
 OptimizerState = namedtuple("OptimizerState",
                             ["packed_state", "tree_def", "subtree_defs"])
-register_pytree_node(
+jax.tree_util.register_pytree_node(
     OptimizerState,
     lambda xs: ((xs.packed_state,), (xs.tree_def, xs.subtree_defs)),
-    lambda data, xs: OptimizerState(xs[0], data[0], data[1]))  # type: ignore[index]
+    lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
 
 
 Array = Any
@@ -179,23 +179,23 @@ def optimizer(opt_maker: Callable[...,
 
     @functools.wraps(init)
     def tree_init(x0_tree):
-      x0_flat, tree = tree_flatten(x0_tree)
+      x0_flat, tree = jax.tree.flatten(x0_tree)
       initial_states = [init(x0) for x0 in x0_flat]
-      states_flat, subtrees = unzip2(map(tree_flatten, initial_states))
+      states_flat, subtrees = unzip2(map(jax.tree.flatten, initial_states))
       return OptimizerState(states_flat, tree, subtrees)
 
     @functools.wraps(update)
     def tree_update(i, grad_tree, opt_state):
       states_flat, tree, subtrees = opt_state
-      grad_flat, tree2 = tree_flatten(grad_tree)
+      grad_flat, tree2 = jax.tree.flatten(grad_tree)
       if tree2 != tree:
         msg = ("optimizer update function was passed a gradient tree that did "
                "not match the parameter tree structure with which it was "
                "initialized: parameter tree {} and grad tree {}.")
         raise TypeError(msg.format(tree, tree2))
-      states = map(tree_unflatten, subtrees, states_flat)
+      states = map(jax.tree.unflatten, subtrees, states_flat)
       new_states = map(partial(update, i), grad_flat, states)
-      new_states_flat, subtrees2 = unzip2(map(tree_flatten, new_states))
+      new_states_flat, subtrees2 = unzip2(map(jax.tree.flatten, new_states))
       for subtree, subtree2 in zip(subtrees, subtrees2):
         if subtree2 != subtree:
           msg = ("optimizer update function produced an output structure that "
@@ -206,9 +206,9 @@ def optimizer(opt_maker: Callable[...,
     @functools.wraps(get_params)
     def tree_get_params(opt_state):
       states_flat, tree, subtrees = opt_state
-      states = map(tree_unflatten, subtrees, states_flat)
+      states = map(jax.tree.unflatten, subtrees, states_flat)
       params = map(get_params, states)
-      return tree_unflatten(tree, params)
+      return jax.tree.unflatten(tree, params)
 
     return Optimizer(tree_init, tree_update, tree_get_params)
   return tree_opt_maker
@@ -550,7 +550,7 @@ def piecewise_constant(boundaries: Any, values: Any):
     return values[jnp.sum(i > boundaries)]
   return schedule
 
-def make_schedule(scalar_or_schedule: Union[float, Schedule]) -> Schedule:
+def make_schedule(scalar_or_schedule: float | Schedule) -> Schedule:
   if callable(scalar_or_schedule):
     return scalar_or_schedule
   elif jnp.ndim(scalar_or_schedule) == 0:
@@ -563,14 +563,14 @@ def make_schedule(scalar_or_schedule: Union[float, Schedule]) -> Schedule:
 
 def l2_norm(tree):
   """Compute the l2 norm of a pytree of arrays. Useful for weight decay."""
-  leaves, _ = tree_flatten(tree)
+  leaves, _ = jax.tree.flatten(tree)
   return jnp.sqrt(sum(jnp.vdot(x, x) for x in leaves))
 
 def clip_grads(grad_tree, max_norm):
   """Clip gradients stored as a pytree of arrays to maximum norm `max_norm`."""
   norm = l2_norm(grad_tree)
   normalize = lambda g: jnp.where(norm < max_norm, g, g * (max_norm / norm))
-  return tree_map(normalize, grad_tree)
+  return jax.tree.map(normalize, grad_tree)
 
 
 ### serialization utilities
@@ -597,9 +597,9 @@ def unpack_optimizer_state(opt_state):
     A pytree with JoinPoint leaves that contain a second level of pytrees.
   """
   states_flat, tree_def, subtree_defs = opt_state
-  subtrees = map(tree_unflatten, subtree_defs, states_flat)
+  subtrees = map(jax.tree.unflatten, subtree_defs, states_flat)
   sentinels = [JoinPoint(subtree) for subtree in subtrees]
-  return tree_util.tree_unflatten(tree_def, sentinels)
+  return jax.tree.unflatten(tree_def, sentinels)
 
 def pack_optimizer_state(marked_pytree):
   """Converts a marked pytree to an OptimizerState.
@@ -614,8 +614,8 @@ def pack_optimizer_state(marked_pytree):
   Returns:
     An equivalent OptimizerState to the input argument.
   """
-  sentinels, tree_def = tree_flatten(marked_pytree)
+  sentinels, tree_def = jax.tree.flatten(marked_pytree)
   assert all(isinstance(s, JoinPoint) for s in sentinels)
   subtrees = [s.subtree for s in sentinels]
-  states_flat, subtree_defs = unzip2(map(tree_flatten, subtrees))
+  states_flat, subtree_defs = unzip2(map(jax.tree.flatten, subtrees))
   return OptimizerState(states_flat, tree_def, subtree_defs)

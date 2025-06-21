@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-licenses(["notice"])
-
-load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
-  "//jaxlib:jax.bzl",
-  "if_windows",
-  "py_library_providing_imports_info",
-  "pytype_library",
+    "//jaxlib:jax.bzl",
+    "py_library_providing_imports_info",
+    "pytype_library",
 )
+
+licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
@@ -35,14 +33,20 @@ exports_files([
     "setup.py",
 ])
 
-symlink_files(
-    name = "pjrt_c_api_gpu_plugin",
-    srcs = if_windows(
-      ["@xla//xla/pjrt/c/pjrt_c_api_gpu_plugin.pyd"],
-      ["@xla//xla/pjrt/c:pjrt_c_api_gpu_plugin.so"],
-    ),
-    dst = ".",
-    flatten = True,
+cc_binary(
+    name = "pjrt_c_api_gpu_plugin.so",
+    linkopts = [
+        "-Wl,--version-script,$(location :gpu_version_script.lds)",
+        "-Wl,--no-undefined",
+    ],
+    linkshared = True,
+    deps = [
+        ":gpu_version_script.lds",
+        "//jaxlib/mosaic/gpu:custom_call",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu",
+        "@xla//xla/service:gpu_plugin",
+        "@xla//xla/stream_executor:cuda_platform",
+    ],
 )
 
 py_library_providing_imports_info(
@@ -50,6 +54,6 @@ py_library_providing_imports_info(
     srcs = [
         "__init__.py",
     ],
-    data = [":pjrt_c_api_gpu_plugin"],
+    data = [":pjrt_c_api_gpu_plugin.so"],
     lib_rule = pytype_library,
 )

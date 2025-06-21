@@ -15,12 +15,15 @@ limitations under the License.
 
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 
+#include <cstdint>
+#include <string>
+
 #include "absl/base/optimization.h"
 #include "absl/log/check.h"
-#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "jaxlib/gpu/vendor.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
@@ -312,21 +315,6 @@ absl::Status AsStatus(cufftResult error, const char* file, std::int64_t line,
   return absl::OkStatus();
 }
 #endif
-
-absl::StatusOr<std::unique_ptr<void*[]>> MakeBatchPointers(
-    gpuStream_t stream, void* buffer, void* dev_ptrs, int batch,
-    int batch_elem_size) {
-  char* ptr = static_cast<char*>(buffer);
-  auto host_ptrs = absl::make_unique<void*[]>(batch);
-  for (int i = 0; i < batch; ++i) {
-    host_ptrs[i] = ptr;
-    ptr += batch_elem_size;
-  }
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpuMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
-                     gpuMemcpyHostToDevice, stream)));
-  return std::move(host_ptrs);
-}
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

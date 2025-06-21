@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import copy
+import enum
 import hashlib
 import io
 import logging
 import os
-import struct
 import sys
+from typing import cast as type_cast
 
 from jax._src import config
 from jax._src.lib import version_str as jaxlib_version_str
@@ -52,12 +53,32 @@ def get_flag_prefixes() -> list[str]:
   return _extra_flag_prefixes
 
 
-def get(module: ir.Module,
-        devices: np.ndarray,
-        compile_options: xla_client.CompileOptions,
-        backend: xla_client.Client,
-        compression_algorithm: str = "zstandard",
-        produce_original_cache_key: bool = True) -> str:
+def custom_hook() -> str:
+  """Custom hook for any addition to the cache key.
+
+  The custom hook will be called every time get() is called and can be
+  defined to return a string that will be hashed into the cache key.
+  """
+  return ""
+
+
+class IgnoreCallbacks(enum.IntEnum):
+  # Do not remove any callback pointers from precompiled IR.
+  NO = enum.auto()
+  # Remove all callback pointers from precompiled IR.
+  ALL = enum.auto()
+  # Remove only custom_partitioning callback pointer from precompiled IR.
+  CUSTOM_PARTITIONING = enum.auto()
+
+
+def get(
+    module: ir.Module,
+    devices: np.ndarray,
+    compile_options: xla_client.CompileOptions,
+    backend: xla_client.Client,
+    compression_algorithm: str = "zstandard",
+    ignore_callbacks: IgnoreCallbacks = IgnoreCallbacks.NO,
+) -> str:
   """Creates a hashed string to use as a key to the compilation cache.
 
   Creates a cache key that is a hex-encoded string of a unique hash based on
@@ -70,44 +91,53 @@ def get(module: ir.Module,
     backend: description of the platform (e.g., TPU version)
     compression_algorithm: a string representing the compression algorithm used
       for the executable before persisting in the cache
-    produce_original_cache_key: if True, the original cache-key generation
-      algorithm is run, else the new one. This is transient; once the migration
-      is complete, this parameter and the original algorithm will be removed.
-      (New one not implemented as yet.)
+    ignore_callbacks: whether to remove the all callback pointer from the
+      computation.
 
   Typical return value example:
    'jit__psum-14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
   """
   entries = [
-      ("computation", lambda hash_obj: _hash_computation(hash_obj, module)),
-      ("jax_lib version",
-       lambda hash_obj: hash_obj.update(
-           bytes(jaxlib_version_str.encode("utf-8")))),
-      ("XLA flags",
-       lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes())),
-      ("compression",
-       lambda hash_obj: _hash_string(hash_obj, compression_algorithm)),
+      (
+          "computation",
+          lambda hash_obj: _hash_computation(
+              hash_obj, module, ignore_callbacks
+          ),
+      ),
+      (
+          "jax_lib version",
+          lambda hash_obj: hash_obj.update(
+              bytes(jaxlib_version_str.encode("utf-8"))
+          ),
+      ),
+      (
+          "backend version",
+          lambda hash_obj: _hash_platform(hash_obj, backend)
+      ),
+      (
+          "XLA flags",
+          lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes()),
+      ),
+      (
+          "compile_options",
+          lambda hash_obj: _hash_serialized_compile_options(
+              hash_obj,
+              compile_options,
+              # In case of GPU multi-process tasks we need to strip device
+              # assignment to use cache key as invariant between processes.
+              strip_device_assignment=(backend.platform == "gpu"),
+          ),
+      ),
+      (
+          "accelerator_config",
+          lambda hash_obj: _hash_accelerator_config(hash_obj, devices),
+      ),
+      (
+          "compression",
+          lambda hash_obj: _hash_string(hash_obj, compression_algorithm),
+      ),
+      ("custom_hook", lambda hash_obj: _hash_string(hash_obj, custom_hook())),
   ]
-  if produce_original_cache_key:
-    entries.append(
-        ("compile_options",
-         lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
-    )
-    entries.append(
-        ("devices", lambda hash_obj: _hash_devices(hash_obj, devices)))
-    entries.append(
-        ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
-    )
-  else:
-    entries.append(
-        ("compile_options",
-         lambda hash_obj: _hash_serialized_compile_options(
-             hash_obj, compile_options)),
-    )
-    entries.append(
-        ("accelerator_config",
-         lambda hash_obj: _hash_accelerator_config(hash_obj, devices, backend)),
-    )
 
   hash_obj = hashlib.sha256()
   for name, hashfn in entries:
@@ -136,27 +166,56 @@ def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
     )
 
 
-def _serialize_ir(m: ir.Module) -> bytes:
+def _remove_callbacks(m: ir.Module, ignore_callbacks: IgnoreCallbacks):
+  """Removes callback pointers from precompiled IR.
+
+  Python function pointers are not deterministic across executions.
+  """
+  def _update_bc_attribute(op: ir.Operation) -> ir.WalkResult:
+    if op.name == "stablehlo.custom_call" and (
+        (
+            ignore_callbacks == IgnoreCallbacks.ALL
+            and op.attributes["call_target_name"].value.endswith("callback")
+        )
+        or op.attributes["call_target_name"].value == "CustomSPMDPartitioning"
+    ):
+      op.attributes["backend_config"] = ir.StringAttr.get("REMOVED")
+    return ir.WalkResult.ADVANCE
+
+  if ignore_callbacks == IgnoreCallbacks.NO:
+    return m
+
+  m.operation.walk(_update_bc_attribute)
+  return m
+
+
+def _serialize_ir(m: ir.Module, ignore_callbacks: IgnoreCallbacks) -> bytes:
   output = io.BytesIO()
+  if ignore_callbacks != IgnoreCallbacks.NO:
+    m = _remove_callbacks(
+        type_cast(ir.Module, m.operation.clone()), ignore_callbacks
+    )
   m.operation.write_bytecode(file=output)
   return output.getvalue()
 
 
-def _canonicalize_ir(m_original: ir.Module) -> bytes:
+def _canonicalize_ir(
+    m_original: ir.Module, ignore_callbacks: IgnoreCallbacks
+) -> bytes:
   with m_original.context:
-    m = m_original.operation.clone()
+    m = type_cast(ir.Module, m_original.operation.clone())
     passes = pm.PassManager.parse(
         "builtin.module(strip-debuginfo)"
     )
     passes.run(m.operation)
-    return _serialize_ir(m)
+    return _serialize_ir(m, ignore_callbacks)
 
 
-def _hash_computation(hash_obj, module):
+def _hash_computation(hash_obj, module, ignore_callbacks: IgnoreCallbacks):
   if config.compilation_cache_include_metadata_in_key.value:
-    canonical_ir = _serialize_ir(module)
+    canonical_ir = _serialize_ir(module, ignore_callbacks)
   else:
-    canonical_ir = _canonicalize_ir(module)
+    canonical_ir = _canonicalize_ir(module, ignore_callbacks)
   hash_obj.update(canonical_ir)
 
 
@@ -165,7 +224,7 @@ def _hash_devices(hash_obj, devices: np.ndarray) -> None:
     _hash_string(hash_obj, device.device_kind)
 
 
-def _hash_accelerator_config(hash_obj, accelerators: np.ndarray, backend):
+def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
   accelerator_devices = []
   for accelerator in accelerators.flat:
     accelerator_devices.append(accelerator)
@@ -178,12 +237,44 @@ def _hash_accelerator_config(hash_obj, accelerators: np.ndarray, backend):
     # PjRtTopologyDescription as yet.
     logger.info("get (_hash_accelerator_config): unable to hash "
                 "accelerator config, falling back to hashing "
-                "devices + platform: %s (type %s)", ex, type(ex))
+                "devices %s (type %s)", ex, type(ex))
     _hash_devices(hash_obj, accelerators)
-    _hash_platform(hash_obj, backend)
 
+# LINT.IfChange(xla_flags)
+xla_flags_to_exclude_from_cache_key = [
+    "--xla_dump_compress_protos",
+    "--xla_dump_module_metadata",
+    "--xla_dump_max_hlo_modules",
+    "--xla_dump_include_timestamp",
+    "--xla_dump_hlo_pass_re",
+    "--xla_dump_hlo_module_re",
+    "--xla_dump_hlo_snapshots",
+    "--xla_dump_fusion_visualization",
+    "--xla_dump_hlo_as_url",
+    "--xla_dump_hlo_as_proto",
+    "--xla_dump_hlo_as_text",
+    "--xla_dump_hlo_as_long_text",
+    "--xla_dump_hlo_as_html",
+    "--xla_dump_hlo_as_dot",
+    "--xla_dump_to",
+    "--xla_force_host_platform_device_count",
+    "--xla_dump_disable_metadata",
+    "--xla_dump_hlo_pipeline_re",
+    "--xla_tpu_sdc_checker_streamz_metric",
+    "--xla_tpu_sdc_checker_enable_sdc_event_callbacks",
+    "--xla_tpu_sdc_checker_enable_coresweep_ng_callbacks",
+    "--xla_tpu_sdc_checker_no_logging_if_callbacks_are_present",
+    "--xla_gpu_cuda_data_dir",
+    "--xla_gpu_experimental_autotune_cache_mode",
+]
 
-def _hash_serialized_compile_options(hash_obj, compile_options_obj):
+env_override_flags_to_exclude_from_cache_key = {
+    x.strip("-") for x in xla_flags_to_exclude_from_cache_key
+}
+# LINT.ThenChange(:debug_options)
+
+def _hash_serialized_compile_options(hash_obj, compile_options_obj,
+                                     strip_device_assignment=False):
   # Do not mess with the original CompileOptions object since it is passed to
   # the compiler. Create a deep copy for the purpose of cache key generation.
   compile_options_copy = copy.deepcopy(compile_options_obj)
@@ -212,101 +303,31 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   debug_options.xla_dump_hlo_as_long_text = False
   debug_options.xla_dump_disable_metadata = False
   debug_options.xla_dump_hlo_pipeline_re = ""
+  debug_options.xla_gpu_experimental_autotune_cache_mode = 0
+
+  # Optional way to specify the cuda install path to be used by the compiler.
+  # This could possibly affect the cuda version compiled with, but this should
+  # already be included in the platform information (and might not be reflected
+  # by the cuda path regardless, since this only hashes on the directory name
+  # and not the contents). It can also cause spurious cache misses if the cuda
+  # path changes across runs despite being the same version, so we clear it
+  # here.
+  debug_options.xla_gpu_cuda_data_dir = ""
   # LINT.ThenChange(:xla_flags)
 
-  return hash_obj.update(compile_options_copy.SerializeAsString())
-
-
-def _hash_compile_options(hash_obj, compile_options_obj):
-  expected_num_compile_options = 12
-  # Ignore private and built-in methods. These can unexpectedly change and lead
-  # to false positives, e.g. when different Python versions include different
-  # built-ins.
-  num_actual_options = len(
-      [x for x in dir(compile_options_obj) if not x.startswith("_")]
-  )
-  assert num_actual_options == expected_num_compile_options, (
-      "Unexpected number of CompileOption fields: "
-      f"{num_actual_options}. This likely: means that an extra "
-      "field was added, and this function needs to be updated."
-  )
-
-  if compile_options_obj.argument_layouts is not None:
-    map(
-        lambda shape: hash_obj.update(shape.to_serialized_proto()),
-        compile_options_obj.argument_layouts,
+  compile_options_copy.env_option_overrides = [
+      flag_value
+      for flag_value in compile_options_copy.env_option_overrides
+      if flag_value[0] not in env_override_flags_to_exclude_from_cache_key
+  ]
+  if strip_device_assignment and compile_options_copy.device_assignment:
+    replica_count = compile_options_copy.device_assignment.replica_count()
+    computation_count = compile_options_copy.device_assignment.computation_count()
+    compile_options_copy.device_assignment = xla_client.DeviceAssignment.create(
+        np.arange(replica_count * computation_count).reshape(
+          [replica_count, computation_count])
     )
-  _hash_int(hash_obj, compile_options_obj.parameter_is_tupled_arguments)
-  _hash_executable_build_options(
-      hash_obj, compile_options_obj.executable_build_options
-  )
-  _hash_bool(hash_obj, compile_options_obj.tuple_arguments)
-  _hash_int(hash_obj, compile_options_obj.num_replicas)
-  _hash_int(hash_obj, compile_options_obj.num_partitions)
-  _hash_signed_int(hash_obj, compile_options_obj.profile_version)
-  if compile_options_obj.device_assignment is not None:
-    hash_obj.update(compile_options_obj.device_assignment.serialize())
-  _hash_bool(hash_obj, compile_options_obj.compile_portable_executable)
-  _hash_int(hash_obj, len(compile_options_obj.env_option_overrides))
-  for kv in compile_options_obj.env_option_overrides:
-    _hash_string(hash_obj, kv[0])
-    if isinstance(kv[1], str):
-      _hash_string(hash_obj, kv[1])
-    elif isinstance(kv[1], bool):
-      _hash_bool(hash_obj, kv[1])
-    elif isinstance(kv[1], int):
-      _hash_int(hash_obj, kv[1])
-    elif isinstance(kv[1], float):
-      _hash_float(hash_obj, kv[1])
-    else:
-      raise RuntimeError("Invalid type: %s" % repr(type(kv[1])))
-
-
-def _hash_executable_build_options(hash_obj, executable_obj):
-  expected_options = 11
-  # Ignore private and built-in methods. These can unexpectedly change and lead
-  # to false positives, e.g. when different Python versions include different
-  # built-ins.
-  actual_options = len(
-      [x for x in dir(executable_obj) if not x.startswith("_")]
-  )
-  assert actual_options == expected_options, (
-      "Unexpected number of executable_build_options fields: "
-      f"{actual_options}, expected: {expected_options}. This likely means "
-      "that an extra field was added, and this function needs to be updated."
-  )
-  if executable_obj.result_layout is not None:
-    hash_obj.update(executable_obj.result_layout.to_serialized_proto())
-  _hash_int(hash_obj, executable_obj.num_replicas)
-  _hash_int(hash_obj, executable_obj.num_partitions)
-  _hash_debug_options(hash_obj, executable_obj.debug_options)
-  if executable_obj.device_assignment is not None:
-    hash_obj.update(executable_obj.device_assignment.serialize())
-  _hash_bool(hash_obj, executable_obj.use_spmd_partitioning)
-  _hash_bool(hash_obj, executable_obj.use_auto_spmd_partitioning)
-  if executable_obj.use_auto_spmd_partitioning:
-    if executable_obj.auto_spmd_partitioning_mesh_shape is not None:
-      _hash_int_list(hash_obj, executable_obj.auto_spmd_partitioning_mesh_shape)
-    if executable_obj.auto_spmd_partitioning_mesh_ids is not None:
-      _hash_int_list(hash_obj, executable_obj.auto_spmd_partitioning_mesh_ids)
-  _hash_bool_list(
-      hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output
-  )
-  if executable_obj.fdo_profile is not None:
-    _hash_string(hash_obj, executable_obj.fdo_profile)
-
-
-def _hash_debug_options(hash_obj, debug_obj):
-  _hash_bool(hash_obj, debug_obj.xla_cpu_enable_fast_math)
-  _hash_bool(hash_obj, debug_obj.xla_cpu_fast_math_honor_infs)
-  _hash_bool(hash_obj, debug_obj.xla_cpu_fast_math_honor_nans)
-  _hash_bool(hash_obj, debug_obj.xla_cpu_fast_math_honor_division)
-  _hash_bool(hash_obj, debug_obj.xla_cpu_fast_math_honor_functions)
-  _hash_bool(hash_obj, debug_obj.xla_gpu_enable_fast_min_max)
-  _hash_int(hash_obj, debug_obj.xla_backend_optimization_level)
-  _hash_bool(hash_obj, debug_obj.xla_cpu_enable_xprof_traceme)
-  _hash_bool(hash_obj, debug_obj.xla_llvm_disable_expensive_passes)
-  _hash_bool(hash_obj, debug_obj.xla_test_all_input_layouts)
+  return hash_obj.update(compile_options_copy.SerializeAsString())
 
 
 def _hash_platform(hash_obj, backend):
@@ -316,31 +337,6 @@ def _hash_platform(hash_obj, backend):
 
 
 def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
-  # LINT.IfChange(xla_flags)
-  xla_flags_to_exclude_from_cache_key = [
-      "--xla_dump_compress_protos",
-      "--xla_dump_module_metadata",
-      "--xla_dump_max_hlo_modules",
-      "--xla_dump_include_timestamp",
-      "--xla_dump_hlo_pass_re",
-      "--xla_dump_hlo_module_re",
-      "--xla_dump_hlo_snapshots",
-      "--xla_dump_fusion_visualization",
-      "--xla_dump_hlo_as_url",
-      "--xla_dump_hlo_as_proto",
-      "--xla_dump_hlo_as_text",
-      "--xla_dump_hlo_as_long_text",
-      "--xla_dump_hlo_as_html",
-      "--xla_dump_hlo_as_dot",
-      "--xla_dump_to",
-      "--xla_force_host_platform_device_count",
-      "--xla_dump_disable_metadata",
-      "--xla_dump_hlo_pipeline_re",
-      "--xla_tpu_sdc_checker_streamz_metric",
-      "--xla_tpu_sdc_checker_enable_sdc_event_callbacks",
-  ]
-  # LINT.ThenChange(:debug_options)
-
   xla_flags = []
 
   xla_flags_env_var = os.getenv("XLA_FLAGS")
@@ -358,7 +354,7 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
 
   # N.B. all XLA flags that take an argument must use '=' and not a space
   # (e.g. --xla_force_host_platform_device_count=8) (I think).
-  for flag in xla_flags:
+  for flag in sorted(xla_flags):
     if flag.split("=")[0] in xla_flags_to_exclude_from_cache_key:
       logger.debug("Not including XLA flag in cache key: %s", flag)
       continue
@@ -366,33 +362,5 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
     _hash_string(hash_obj, flag)
 
 
-def _hash_int(hash_obj, int_var):
-  hash_obj.update(int_var.to_bytes(8, byteorder="big"))
-
-
-def _hash_float(hash_obj, float_var):
-  hash_obj.update(struct.pack("d", float_var))
-
-
-def _hash_signed_int(hash_obj, int_var):
-  hash_obj.update(int_var.to_bytes(8, byteorder="big", signed=True))
-
-
-def _hash_bool(hash_obj, bool_var):
-  hash_obj.update(bool_var.to_bytes(1, byteorder="big"))
-
-
 def _hash_string(hash_obj, str_var):
   hash_obj.update(str_var.encode("utf-8").strip())
-
-
-def _hash_bool_list(hash_obj, bool_list):
-  for b in bool_list:
-    _hash_bool(hash_obj, b)
-  _hash_int(hash_obj, len(bool_list))
-
-
-def _hash_int_list(hash_obj, int_list):
-  for i in int_list:
-    _hash_int(hash_obj, i)
-  _hash_int(hash_obj, len(int_list))

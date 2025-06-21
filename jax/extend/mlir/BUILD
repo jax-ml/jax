@@ -24,6 +24,15 @@ package(
 )
 
 pytype_strict_library(
+    name = "mlir",
+    srcs = ["__init__.py"],
+    deps = [
+        ":ir",
+        ":pass_manager",
+    ],
+)
+
+pytype_strict_library(
     name = "ir",
     srcs = ["ir.py"],
     deps = if_building_jaxlib(["//jaxlib/mlir:ir"]),

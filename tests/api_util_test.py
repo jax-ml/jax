@@ -11,17 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for jax.api_util."""
 
 import itertools as it
 from absl.testing import absltest
 from absl.testing import parameterized
+import jax
 from jax._src import api_util
 from jax import numpy as jnp
 from jax._src import test_util as jtu
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 class ApiUtilTest(jtu.JaxTestCase):
@@ -43,7 +42,8 @@ class ApiUtilTest(jtu.JaxTestCase):
             expected += (False,)
           self.assertEqual(
               expected,
-              api_util.donation_vector(donate_argnums, (), args, kwargs))
+              api_util.donation_vector(donate_argnums, (),
+                                       jax.tree.structure((args, kwargs))))
 
   @parameterized.parameters(
       ((0,), (0,)),
@@ -67,6 +67,22 @@ class ApiUtilTest(jtu.JaxTestCase):
   def test_rebase_donate_argnums(self, donate, static, expected):
     self.assertEqual(expected,
                      api_util.rebase_donate_argnums(donate, static))
+
+  def test_resolve_kwargs(self):
+    def fun(x, y, z=3):
+      return x, y, z
+    assert api_util.resolve_kwargs(fun, (1,), {"y": 2}) == (1, 2, 3)
+    assert api_util.resolve_kwargs(fun, (1, 2), {"z": 3}) == (1, 2, 3)
+    assert api_util.resolve_kwargs(
+        fun, (), {"x": 1, "y": 2, "z": 3}) == (1, 2, 3)
+
+  def test_resolve_kwargs_with_keyword(self):
+    def fun(x, y, z, *, kw=True):
+      del kw
+      return x, y, z
+    assert api_util.resolve_kwargs(fun, (1, 2), {"z": 3}) == (1, 2, 3)
+    with self.assertRaisesRegex(TypeError, "keyword arguments"):
+      api_util.resolve_kwargs(fun, (1, 2), {"z": 3, "kw": False})
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

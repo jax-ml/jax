@@ -17,25 +17,27 @@ See the back_compat_test_util module docstring for how to setup and update
 these tests.
 """
 
+from __future__ import annotations
+
 import base64
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import io
 import os
+import sys
 import tarfile
-from typing import Callable, Optional
 
 from absl.testing import absltest
-from jax import config
+import jax
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests.back_compat_testdata import tf_call_tf_function
 import jax.numpy as jnp
 import tensorflow as tf
 
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 def serialize_directory(directory_path):
@@ -56,7 +58,10 @@ def deserialize_directory(serialized_string, output_directory):
 
   # Extract the tar archive to the output directory
   with tarfile.open(fileobj=io.BytesIO(tar_data), mode="r") as tar:
-    tar.extractall(output_directory)
+    if sys.version_info[:2] < (3, 12):
+      tar.extractall(output_directory)
+    else:
+      tar.extractall(output_directory, filter='data')
 
 
 class CompatTensoflowTest(bctu.CompatTestBase):
@@ -76,13 +81,13 @@ class CompatTensoflowTest(bctu.CompatTestBase):
       return tf.identity(res, name="the_result")
 
     self.tf_func = tf_func
-    return tf_func(*data.inputs)  # type: ignore
+    return tf_func(*data.inputs)
 
   def serialize(
       self,
       func: Callable,
       data: bctu.CompatTestData,
-      polymorphic_shapes: Optional[Sequence[str]] = None,
+      polymorphic_shapes: Sequence[str] | None = None,
       allow_unstable_custom_call_targets: Sequence[str] = (),
   ):
     # We serialize as a tf.Graph
@@ -91,7 +96,7 @@ class CompatTensoflowTest(bctu.CompatTestBase):
     for op in tf_graph.get_operations():
       if op.type == "XlaCallModule":
         serialized_module = op.get_attr("module")
-        module_str = xla_extension.mlir.deserialize_portable_artifact(
+        module_str = _jax.mlir.deserialize_portable_artifact(
             serialized_module
         )
         module_version = op.get_attr("version")
@@ -125,7 +130,7 @@ class CompatTensoflowTest(bctu.CompatTestBase):
   def run_serialized(
       self,
       data: bctu.CompatTestData,
-      polymorphic_shapes: Optional[Sequence[str]] = None,
+      polymorphic_shapes: Sequence[str] | None = None,
   ):
     root_dir = self.create_tempdir()
     deserialize_directory(data.mlir_module_serialized, root_dir)

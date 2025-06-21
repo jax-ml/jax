@@ -23,12 +23,14 @@ If a saved file already exists produced on a different backend, then compare the
 currently saved file with the saved one.
 
 """
-from collections.abc import Sequence
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import os
 import re
-from typing import Callable, Optional
 import zlib
 
 from absl import app
@@ -36,12 +38,11 @@ from absl import logging
 
 import numpy.random as npr
 
-import jax
-from jax import config   # Must import before TF
-from jax.experimental import jax2tf  # Defines needed flags
-from jax._src import test_util  # Defines needed flags
+import jax # Must import before TF
+from jax.experimental import jax2tf  # Defines needed flags  # noqa: F401
+from jax._src import test_util  # Defines needed flags  # noqa: F401
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import primitive_harness
@@ -173,7 +174,7 @@ def write_and_check_harness(harness: primitive_harness.Harness,
 def write_and_check_harnesses(io: Io,
                               save_directory: str,
                               *,
-                              filter_harness: Optional[Callable[[str], bool]] = None,
+                              filter_harness: Callable[[str], bool] | None = None,
                               for_platforms: Sequence[str] = ("cpu", "tpu"),
                               verbose = False):
   logging.info("Writing and checking harnesses at %s", save_directory)

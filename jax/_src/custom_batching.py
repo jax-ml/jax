@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
 import functools
 import operator
-from typing import Callable, Optional
 
-from jax import lax
 from jax._src import api
 from jax._src import core
 from jax._src import custom_api_util
@@ -25,7 +27,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
-from jax._src.api_util import flatten_fun_nokwargs
+from jax._src import api_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters.batching import not_mapped
@@ -46,34 +48,128 @@ zip, unsafe_zip = util.safe_zip, zip
 
 @custom_api_util.register_custom_decorator_type
 class custom_vmap:
-  fun: Callable
-  vmap_rule: Optional[Callable]
+  """Customize the vmap behavior of a JAX-transformable function.
 
-  def __init__(self, fun: Callable):
+  This decorator is used to customize the behavior of a JAX function under the
+  :func:`jax.vmap` transformation. A ``custom_vmap``-decorated function will
+  mostly (see below for caveats) have the same behavior as the underlying
+  function, except when batched using :py:func:`jax.vmap`. When batched, the
+  rule defined using :py:func:`~jax.custom_batching.custom_vmap.def_vmap` will
+  be used.
+
+  For example:
+
+    >>> @jax.custom_batching.custom_vmap
+    ... def f(x, y):
+    ...   return x + y
+    ...
+    >>> @f.def_vmap
+    ... def f_vmap_rule(axis_size, in_batched, xs, ys):
+    ...   assert all(in_batched)
+    ...   assert xs.shape[0] == axis_size
+    ...   assert ys.shape[0] == axis_size
+    ...   out_batched = True
+    ...   return xs * ys, out_batched
+    ...
+    >>> xs = jnp.arange(3)
+    >>> ys = jnp.arange(1, 4)
+    >>> jax.vmap(f)(xs, ys)  # prints xs * ys instead of xs + ys
+    Array([0, 2, 6], dtype=int32)
+
+  Of note, ``custom_vmap`` functions do not support reverse-mode autodiff. To
+  customize both vmap and reverse-mode autodiff, combine ``custom_vmap`` with
+  :py:class:`jax.custom_vjp`. For example:
+
+    >>> @jax.custom_vjp
+    ... @jax.custom_batching.custom_vmap
+    ... def f(x, y):
+    ...   return jnp.sin(x) * y
+    ...
+    >>> @f.def_vmap
+    ... def f_vmap_rule(axis_size, in_batched, xs, ys):
+    ...   return jnp.cos(xs) * ys, True
+    ...
+    >>> def f_fwd(x, y):
+    ...   return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+    ...
+    >>> def f_bwd(res, g):
+    ...   cos_x, sin_x, y = res
+    ...   return (cos_x * g * y, sin_x * g)
+    ...
+    >>> f.defvjp(f_fwd, f_bwd)
+    >>> jax.vmap(f)(jnp.zeros(3), jnp.ones(3))
+    Array([1., 1., 1.], dtype=float32)
+    >>> jax.grad(f)(jnp.zeros(()), jnp.ones(()))
+    Array(1., dtype=float32)
+
+  Note that the :py:class:`jax.custom_vjp` must be on the outside, wrapping the
+  ``custom_vmap``-decorated function.
+  """
+
+  fun: Callable[..., Any]
+  vmap_rule: Callable[..., tuple[Any, Any]] | None
+
+  def __init__(self, fun: Callable[..., Any]):
     functools.update_wrapper(self, fun)
-    self.fun = fun  # type: ignore[assignment]
+    self.fun = fun
     self.vmap_rule = None
 
   __getattr__ = custom_api_util.forward_attr
 
-  def def_vmap(self, vmap_rule: Callable) -> Callable:
+  def def_vmap(
+      self,
+      vmap_rule: Callable[..., tuple[Any, Any]],
+  ) -> Callable[..., tuple[Any, Any]]:
+    """Define the vmap rule for this custom_vmap function.
+
+    Args:
+      vmap_rule: A function that implements the vmap rule. This function should
+        accept the following arguments: (1) an integer ``axis_size`` as its
+        first argument, (2) a pytree of booleans with the same structure as the
+        inputs to the function, specifying whether each argument is batched,
+        and (3) the batched arguments. It should return a tuple of the batched
+        output and a pytree of booleans with the same structure as the output,
+        specifying whether each output element is batched. See the documentation
+        for :py:func:`jax.custom_batching.custom_vmap` for some examples.
+
+    Returns:
+      This method passes the rule through, returning ``vmap_rule`` unchanged.
+    """
     self.vmap_rule = vmap_rule
     return vmap_rule
 
   @traceback_util.api_boundary
   def __call__(self, *args, **kwargs):
-    assert not kwargs
+    debug_fun = api_util.debug_info("custom_vmap fun", self.fun,
+                                    args, kwargs)
+    try:
+      args = api_util.resolve_kwargs(self.fun, args, kwargs)
+    except TypeError as e:
+      raise TypeError(
+          "The input arguments to the custom_vmap-decorated function "
+          f"{debug_fun.func_name} could not be resolved to positional-only "
+          f"arguments. Binding failed with the error:\n{e}"
+      ) from e
+
+    if not self.vmap_rule:
+      raise AttributeError(
+          f"No batching rule defined for custom_vmap function {debug_fun.func_name} "
+          "using def_vmap.")
     args_flat, in_tree = tree_flatten(args)
-    flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
-    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
-    debug = pe.debug_info(self.fun, in_tree, out_tree, False, "custom_vmap")
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+    flat_fun, out_tree = api_util.flatten_fun_nokwargs(
+        lu.wrap_init(self.fun, debug_info=debug_fun),
+        in_tree)
+    in_avals = [core.get_aval(x) for x in args_flat]
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
     assert self.vmap_rule is not None
+    debug_rule = api_util.debug_info("custom_vmap rule", self.vmap_rule,
+                                     (0, args, args), {})
     out_flat = custom_vmap_p.bind(*consts, *args_flat,
                                   call=closed_call,
-                                  rule=ClosedRule(self.vmap_rule),
+                                  rule=ClosedRule(self.vmap_rule,
+                                                  debug_rule),
                                   in_tree=in_tree,
                                   out_tree=out_tree())
     return tree_unflatten(out_tree(), out_flat)
@@ -84,9 +180,10 @@ class custom_vmap:
 # Define a class, instead of making a function closing over `rule`, so
 # that we can override __str__
 class ClosedRule:
-  def __init__(self, rule):
+  def __init__(self, rule: Callable, debug: core.DebugInfo):
     functools.update_wrapper(self, rule)
     self.rule = rule
+    self.debug = debug
 
   def __call__(self, axis_size, all_in_batched, *all_args):
     _, args = all_args
@@ -131,9 +228,9 @@ def maybe_bdim_at_front(x, bdim):
 # axes instead of accepting and matching a given spec of output axes. Assumes
 # `f` is pytree-flattened
 def vmap_unrestricted(f: lu.WrappedFun, *args, in_axes, axis_name, axis_size):
-  f, out_axes = batching.batch_subtrace(f)
-  f = batching._batch_outer(f, axis_name, axis_size, in_axes,
-                            batching.BatchTrace, None)
+  axis_data = batching.AxisData(axis_name, axis_size, None, None)
+  tag = core.TraceTag()
+  f, out_axes = batching.batch_subtrace(f, tag, axis_data, in_axes)
   outs = f.call_wrapped(*args)
   return outs, out_axes()
 
@@ -166,8 +263,11 @@ def custom_vmap_abstract_eval(*in_avals, call, **_):
   return call.out_avals
 
 
-def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree, out_tree):
-  def jvp_of_rule_rule(axis_size, in_batched, primals, tangents):
+def custom_vmap_jvp(primals, tangents, *,
+                    call: core.ClosedJaxpr,
+                    rule: ClosedRule,
+                    in_tree: tree_util.PyTreeDef, out_tree: tree_util.PyTreeDef):
+  def jvp_of_rule_rule(axis_size: int, in_batched, primals, tangents):
     in_batched_ps, in_batched_ts = in_batched
 
     mutually_batched = tree_map(operator.and_, in_batched_ps, in_batched_ts)
@@ -184,7 +284,7 @@ def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree, out_tree):
 
     # TODO(frostig): assert these also equal:
     #   treedef_tuple((in_tree, in_tree))
-    # once https://github.com/google/jax/issues/9066 is fixed
+    # once https://github.com/jax-ml/jax/issues/9066 is fixed
     assert tree_ps_ts == tree_ps_ts2
     del tree_ps_ts2
 
@@ -195,11 +295,14 @@ def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree, out_tree):
       out_mutually_batched.store(out_batched)
       return out
 
+    api_util.save_wrapped_fun_sourceinfo(to_jvp, call.jaxpr.debug_info)
     def to_vmap_over_extra_batched_dims(primals, tangents):
       return api.jvp(to_jvp, primals, tangents)
 
-    to_vmap_over_extra_batched_dims_flat, out_tree2 = flatten_fun_nokwargs(
-        lu.wrap_init(to_vmap_over_extra_batched_dims),
+    to_vmap_over_extra_batched_dims_flat, out_tree2 = api_util.flatten_fun_nokwargs(
+        lu.wrap_init(to_vmap_over_extra_batched_dims,
+                     # TODO(necula): fix the debug_info calling convention
+                     debug_info=call.jaxpr.debug_info),
         tree_ps_ts)
 
     flat_out_ps_ts, flat_out_axes = vmap_unrestricted(
@@ -265,6 +368,33 @@ def tree_merge(mask, lhs_tree, rhs_tree):
                   mask, lhs_tree, rhs_tree)
 
 def sequential_vmap(f):
+  """A special case of ``custom_vmap`` that uses a loop.
+
+  A function decorated with ``sequential_vmap`` will be called sequentially
+  within a loop when batched. This is useful for functions that don't natively
+  support batch dimensions.
+
+  For example:
+
+    >>> @jax.custom_batching.sequential_vmap
+    ... def f(x):
+    ...   jax.debug.print("{}", x)
+    ...   return x + 1
+    ...
+    >>> jax.vmap(f)(jnp.arange(3))
+    0
+    1
+    2
+    Array([1, 2, 3], dtype=int32)
+
+  Where the print statements demonstrate that this :py:func:`~jax.vmap` is being
+  generated using a loop.
+
+  See the documentation for :py:class:`~jax.custom_batching.custom_vmap` for
+  more details.
+  """
+  from jax._src.lax import control_flow  # pytype: disable=import-error
+
   f = custom_vmap(f)
 
   @f.def_vmap
@@ -276,7 +406,7 @@ def sequential_vmap(f):
       return f(*args)
 
     mapped_args, bcast_args = tree_split(in_batched, list(args))
-    out = lax.map(to_map, mapped_args)
+    out = control_flow.map(to_map, mapped_args)
     out_batched = tree_map(lambda _: True, out)
     return out, out_batched
 

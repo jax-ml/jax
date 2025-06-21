@@ -17,13 +17,13 @@ import numpy as np
 import scipy
 import scipy.optimize
 
+import jax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
 from jax import jit
-from jax import config
 import jax.scipy.optimize
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 def rosenbrock(np):
@@ -117,6 +117,7 @@ class TestBFGS(jtu.JaxTestCase):
     jax_res = jax.scipy.optimize.minimize(fun=eval_func, x0=x0, method='BFGS')
     self.assertLess(jax_res.fun, 1e-6)
 
+  @jtu.ignore_warning(category=RuntimeWarning, message='divide by zero')
   def test_minimize_bad_initial_values(self):
     # This test runs deliberately "bad" initial values to test that handling
     # of failed line search, etc. is the same across implementations

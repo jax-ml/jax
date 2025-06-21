@@ -20,16 +20,18 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.15.2
+#       jupytext_version: 1.16.4
 #   kernelspec:
 #     display_name: Python 3
 #     name: python3
 # ---
 
 # [![Open in
-# Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/autodidax.ipynb)
+# Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/autodidax.ipynb)
 
 # # Autodidax: JAX core from scratch
+#
+# <!--* freshness: { reviewed: '2024-04-08' } *-->
 #
 # Ever want to learn how JAX works, but the implementation seemed impenetrable?
 # Well, you're in luck! By reading this tutorial, you'll learn every big idea in
@@ -60,7 +62,7 @@
 # outputs, we want to override primitive application and let different values
 # flow through our program. For example, we might want to replace the
 # application of every primitive with an application of [its JVP
-# rule](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html),
+# rule](https://docs.jax.dev/en/latest/notebooks/autodiff_cookbook.html),
 # and let primal-tangent pairs flow through our program. Moreover, we want to be
 # able to compose multiple transformations, leading to stacks of interpreters.
 
@@ -121,7 +123,7 @@ def bind1(prim, *args, **params):
 # around calls to `bind`. These wrappers let us control how arguments are passed
 # to `bind`, and in particular we follow a handy internal convention: when we
 # call `bind`, we pass values representing array data as positional arguments,
-# and we pass metadata like the `axis` argument to `sum_p` via keyword. This
+# and we pass metadata like the `axis` argument to `reduce_sum_p` via keyword. This
 # calling convention simplifies some core logic (since e.g. instances of the
 # `Tracer` class to be defined below can only occur in positional arguments to
 # `bind`). The wrappers can also provide docstrings!
@@ -136,15 +138,15 @@ def bind1(prim, *args, **params):
 # +
 from collections.abc import Sequence
 from contextlib import contextmanager
-from typing import Optional, Any
+from typing import Any
 
 class MainTrace(NamedTuple):
   level: int
   trace_type: type['Trace']
-  global_data: Optional[Any]
+  global_data: Any | None
 
 trace_stack: list[MainTrace] = []
-dynamic_trace: Optional[MainTrace] = None  # to be employed in Part 3
+dynamic_trace: MainTrace | None = None  # to be employed in Part 3
 
 @contextmanager
 def new_main(trace_type: type['Trace'], global_data=None):
@@ -695,7 +697,7 @@ class Store:
 # + tags=["hide-input"]
 from collections.abc import Hashable, Iterable, Iterator
 import itertools as it
-from typing import Callable
+from collections.abc import Callable
 
 class NodeType(NamedTuple):
   name: str
@@ -1295,7 +1297,7 @@ abstract_eval_rules[broadcast_p] = broadcast_abstract_eval
 # +
 from functools import lru_cache
 
-@lru_cache()  # ShapedArrays are hashable
+@lru_cache  # ShapedArrays are hashable
 def make_jaxpr_v1(f, *avals_in):
   avals_in, in_tree = tree_flatten(avals_in)
   f, out_tree = flatten_fun(f, in_tree)
@@ -1394,7 +1396,7 @@ print(jaxpr)
 
 
 # This is precisely the issue that
-# [omnistaging](https://github.com/google/jax/pull/3370) fixed.
+# [omnistaging](https://github.com/jax-ml/jax/pull/3370) fixed.
 # We want to ensure that the `JaxprTrace` started by `make_jaxpr` is always
 # applied, regardless of whether any inputs to `bind` are boxed in corresponding
 # `JaxprTracer` instances. We can achieve this by employing the `dynamic_trace`
@@ -1410,7 +1412,7 @@ def new_dynamic(main: MainTrace):
   finally:
     dynamic_trace = prev_dynamic_trace
 
-@lru_cache()
+@lru_cache
 def make_jaxpr(f: Callable, *avals_in: ShapedArray,
                ) -> tuple[Jaxpr, list[Any], PyTreeDef]:
   avals_in, in_tree = tree_flatten(avals_in)
@@ -1517,7 +1519,7 @@ xla_call_p = Primitive('xla_call')
 
 # With any new primitive, we need to give it transformation rules, starting with
 # its evaluation rule. When we evaluate an application of the `xla_call`
-# primitive, we want to stage out out the computation to XLA. That involves
+# primitive, we want to stage out the computation to XLA. That involves
 # translating the jaxpr to an XLA HLO program, transferring the argument values
 # to the XLA device, executing the XLA program, and transferring back the
 # results. We'll cache the XLA HLO compilation so that for each `jit`ted
@@ -1542,10 +1544,15 @@ class IDHashable:
 # Next, we'll define the evaluation rule for `xla_call`:
 
 # +
+import io
+from jax.extend.mlir import ir
+from jax.extend.mlir.dialects import func
+from jax.extend.mlir.dialects import stablehlo as hlo
 from jax._src import xla_bridge as xb
-from jax._src.lib import xla_client as xc
-xe = xc._xla
-xops = xc._xla.ops
+
+class MlirContext(NamedTuple):
+  module: ir.Module
+  symbol_table: ir.SymbolTable
 
 def xla_call_impl(*args, jaxpr: Jaxpr, num_consts: int):
   consts, args = args[:num_consts], args[num_consts:]
@@ -1554,33 +1561,56 @@ def xla_call_impl(*args, jaxpr: Jaxpr, num_consts: int):
   return execute(*args)
 impl_rules[xla_call_p] = xla_call_impl
 
-@lru_cache()
+@lru_cache
 def xla_callable(hashable_jaxpr: IDHashable,
                  hashable_consts: tuple[IDHashable, ...]):
   jaxpr: Jaxpr = hashable_jaxpr.val
   typecheck_jaxpr(jaxpr)
   consts = [x.val for x in hashable_consts]
   in_avals = [v.aval for v in jaxpr.in_binders[len(consts):]]
-  c = xc.XlaBuilder('xla_call')
-  xla_consts = _xla_consts(c, consts)
-  xla_params = _xla_params(c, in_avals)
-  outs = jaxpr_subcomp(c, jaxpr, xla_consts + xla_params)
-  out = xops.Tuple(c, outs)
-  compiled = xb.get_backend(None).compile(
-    xc._xla.mlir.xla_computation_to_mlir_module(c.build(out)))
+
+  with ir.Context() as ctx, ir.Location.unknown(ctx):
+    hlo.register_dialect(ctx)
+    m = ir.Module.create()
+    c = MlirContext(m, ir.SymbolTable(m.operation))
+
+    with ir.InsertionPoint(c.module.body):
+      @func.func(*(aval_to_ir_type(aval) for aval in in_avals))
+      def main(*params):
+        return jaxpr_subcomp(c, jaxpr, _hlo_consts(consts) + params)
+
+  output = io.StringIO()
+  c.module.operation.print(file=output)
+  backend = xb.get_backend(None)
+  compiled = backend.compile_and_load(output.getvalue(), backend.devices()[:1])
   return partial(execute_compiled, compiled, [v.aval for v in jaxpr.outs])
 
-def _xla_consts(c: xe.XlaBuilder, consts: list[Any]) -> list[xe.XlaOp]:
+def _mlir_dtype(dtype: np.dtype) -> ir.Type:
+  if np.issubdtype(dtype, np.signedinteger):
+    return ir.IntegerType.get_signless(np.iinfo(dtype).bits)
+  elif dtype == np.float32:
+    return ir.F32Type.get()
+  elif dtype == np.float64:
+    return ir.F64Type.get()
+  else:
+    raise NotImplementedError("MLIR conversion not implemented for ", dtype)
+
+def aval_to_ir_type(aval: ShapedArray) -> ir.Type:
+  return ir.RankedTensorType.get(aval.shape, _mlir_dtype(aval.dtype))
+
+def _hlo_const(x: Any) -> ir.Value:
+  a = np.asarray(x)
+  if a.dtype == np.bool_:
+    return hlo.constant(ir.DenseElementsAttr.get(
+      np.packbits(a, bitorder='little'), type=ir.IntegerType.get_signless(1),
+      shape=a.shape))
+  else:
+    return hlo.constant(ir.DenseElementsAttr.get(a))
+
+def _hlo_consts(consts: list[Any]) -> list[ir.Value]:
   unique_consts = {id(cnst): cnst for cnst in consts}
-  xla_consts = {
-      id_: xops.ConstantLiteral(c, cnst) for id_, cnst in unique_consts.items()}
-  return [xla_consts[id(cnst)] for cnst in consts]
-
-def _xla_params(c: xe.XlaBuilder, avals_in: list[ShapedArray]) -> list[xe.XlaOp]:
-  return [xops.Parameter(c, i, _xla_shape(a)) for i, a in enumerate(avals_in)]
-
-def _xla_shape(aval: ShapedArray) -> xe.Shape:
-  return xc.Shape.array_shape(xc.dtype_to_etype(aval.dtype), aval.shape)
+  ir_consts = {id_: _hlo_const(cnst) for id_, cnst in unique_consts.items()}
+  return tuple(ir_consts[id(cnst)] for cnst in consts)
 
 
 # -
@@ -1590,23 +1620,25 @@ def _xla_shape(aval: ShapedArray) -> xe.Shape:
 # compiled program:
 
 # +
-def jaxpr_subcomp(c: xe.XlaBuilder, jaxpr: Jaxpr, args: list[xe.XlaOp]
-                  ) -> list[xe.XlaOp]:
-  env: dict[Var, xe.XlaOp] = {}
+def jaxpr_subcomp(c: MlirContext, jaxpr: Jaxpr, args: list[ir.Value]) -> list[ir.Value]:
+  env: dict[Var, ir.Value] = {}
 
-  def read(x: Atom) -> xe.XlaOp:
-    return env[x] if type(x) is Var else xops.Constant(c, np.asarray(x.val))
+  def read(x: Atom) -> ir.Value:
+    return env[x] if type(x) is Var else _hlo_const(np.asarray(x.val))
 
-  def write(v: Var, val: xe.XlaOp) -> None:
+  def write(v: Var, val: ir.Value) -> None:
     env[v] = val
 
   map(write, jaxpr.in_binders, args)
   for eqn in jaxpr.eqns:
     in_avals = [x.aval for x in eqn.inputs]
     in_vals = map(read, eqn.inputs)
-    rule = xla_translations[eqn.primitive]
-    out_vals = rule(c, in_avals, in_vals, **eqn.params)
-    map(write, eqn.out_binders, out_vals)
+    out_avals = [x.aval for x in eqn.out_binders]
+    rule = hlo_translations[eqn.primitive]
+    assert all(isinstance(v, ir.Value) for v in in_vals), in_vals
+    out_vals = rule(c, in_avals, out_avals, in_vals, **eqn.params)
+    assert all(isinstance(v, ir.Value) for v in out_vals), out_vals
+    map(write, eqn.out_binders, out_vals), out_vals
   return map(read, jaxpr.outs)
 
 def execute_compiled(compiled, out_avals, *args):
@@ -1622,7 +1654,7 @@ def handle_result(aval: ShapedArray, buf):
   del aval  # Unused for now
   return np.asarray(buf)
 
-xla_translations = {}
+hlo_translations = {}
 
 
 # -
@@ -1633,32 +1665,43 @@ xla_translations = {}
 # primitive:
 
 # +
-def direct_translation(op, c, in_avals, in_vals):
-  del c, in_avals
+def direct_translation(op, c, in_avals, out_avals, in_vals):
+  del c, in_avals, out_avals
   return [op(*in_vals)]
 
-xla_translations[add_p] = partial(direct_translation, xops.Add)
-xla_translations[mul_p] = partial(direct_translation, xops.Mul)
-xla_translations[neg_p] = partial(direct_translation, xops.Neg)
-xla_translations[sin_p] = partial(direct_translation, xops.Sin)
-xla_translations[cos_p] = partial(direct_translation, xops.Cos)
-xla_translations[greater_p] = partial(direct_translation, xops.Gt)
-xla_translations[less_p] = partial(direct_translation, xops.Lt)
+hlo_translations[add_p] = partial(direct_translation, hlo.add)
+hlo_translations[mul_p] = partial(direct_translation, hlo.multiply)
+hlo_translations[neg_p] = partial(direct_translation, hlo.negate)
+hlo_translations[sin_p] = partial(direct_translation, hlo.sine)
+hlo_translations[cos_p] = partial(direct_translation, hlo.cosine)
 
-def reduce_sum_translation(c, in_avals, in_vals, *, axis):
-  (x_aval,), (x,) = in_avals, in_vals
-  zero = xops.ConstantLiteral(c, np.array(0, x_aval.dtype))
-  subc = xc.XlaBuilder('add')
-  shape = _xla_shape(ShapedArray((), x_aval.dtype))
-  xops.Add(xops.Parameter(subc, 0, shape), xops.Parameter(subc, 1, shape))
-  return [xops.Reduce(c, [x], [zero], subc.build(), axis)]
-xla_translations[reduce_sum_p] = reduce_sum_translation
+def compare_translation(op, c, in_avals, out_avals, in_vals):
+  del c, out_avals
+  return [hlo.compare(*in_vals, hlo.ComparisonDirectionAttr.get(op))]
 
-def broadcast_translation(c, in_avals, in_vals, *, shape, axes):
-  x, = in_vals
+hlo_translations[greater_p] = partial(compare_translation, "GT")
+hlo_translations[less_p] = partial(compare_translation, "LT")
+
+def reduce_sum_translation(c, in_avals, out_avals, in_vals, *, axis):
+  del c
+  (x_aval,), (out_aval,), (x,) = in_avals, out_avals, in_vals
+  op = hlo.ReduceOp(
+    [aval_to_ir_type(out_aval)], [x], [_hlo_const(np.array(0, x_aval.dtype))],
+    axis)
+  scalar_type = aval_to_ir_type(ShapedArray((), x_aval.dtype))
+  reducer_region = op.body.blocks.append(scalar_type, scalar_type)
+  with ir.InsertionPoint(reducer_region):
+    hlo.return_([hlo.add(*reducer_region.arguments)])
+  return op.results
+
+hlo_translations[reduce_sum_p] = reduce_sum_translation
+
+def broadcast_translation(c, in_avals, out_avals, in_vals, *, shape, axes):
+  del c
+  (x,), (out_aval,) = in_vals, out_avals
   dims_complement = [i for i in range(len(shape)) if i not in axes]
-  return [xops.BroadcastInDim(x, shape, dims_complement)]
-xla_translations[broadcast_p] = broadcast_translation
+  return [hlo.broadcast_in_dim(aval_to_ir_type(out_aval), x, dims_complement)]
+hlo_translations[broadcast_p] = broadcast_translation
 
 
 # -
@@ -1726,7 +1769,7 @@ def xla_call_jvp_rule(primals, tangents, *, jaxpr, num_consts):
   return primals_out, tangents_out
 jvp_rules[xla_call_p] = xla_call_jvp_rule
 
-@lru_cache()
+@lru_cache
 def jvp_jaxpr(jaxpr: Jaxpr) -> tuple[Jaxpr, list[Any]]:
   def jvp_traceable(*primals_and_tangents):
     n = len(primals_and_tangents) // 2
@@ -1747,7 +1790,7 @@ def xla_call_vmap_rule(axis_size, vals_in, dims_in, *, jaxpr, num_consts):
   return outs, [0] * len(outs)
 vmap_rules[xla_call_p] = xla_call_vmap_rule
 
-@lru_cache()
+@lru_cache
 def vmap_jaxpr(jaxpr: Jaxpr, axis_size: int, bdims_in: tuple[BatchAxis, ...]
                ) -> tuple[Jaxpr, list[Any]]:
   vmap_traceable = vmap(jaxpr_as_fun(jaxpr), tuple(bdims_in))
@@ -1775,19 +1818,16 @@ def xla_call_abstract_eval_rule(*in_types, jaxpr, num_consts):
   return jaxpr_type.out_types
 abstract_eval_rules[xla_call_p] = xla_call_abstract_eval_rule
 
-def xla_call_translation(c, in_avals, in_vals, *, jaxpr, num_consts):
-  del num_consts  # Only used at top-level.
+def xla_call_translation(c, in_avals, out_avals, in_vals, *, jaxpr, num_consts):
+  del num_consts, out_avals
   # Calling jaxpr_subcomp directly would inline. We generate a Call HLO instead.
-  subc = xc.XlaBuilder('inner xla_call')
-  xla_params = _xla_params(subc, in_avals)
-  outs = jaxpr_subcomp(subc, jaxpr, xla_params)
-  subc = subc.build(xops.Tuple(subc, outs))
-  return destructure_tuple(c, xops.Call(c, subc, in_vals))
-xla_translations[xla_call_p] = xla_call_translation
-
-def destructure_tuple(c, tup):
-  num_elements = len(c.get_shape(tup).tuple_shapes())
-  return [xops.GetTupleElement(tup, i) for i in range(num_elements)]
+  with ir.InsertionPoint(c.module.body):
+    @func.func(*(aval_to_ir_type(aval) for aval in in_avals))
+    def inner_xla_call(*params):
+      return jaxpr_subcomp(c, jaxpr, params)
+    name = c.symbol_table.insert(inner_xla_call.func_op)
+  return func.CallOp(inner_xla_call.func_op, in_vals).results
+hlo_translations[xla_call_p] = xla_call_translation
 
 
 # +
@@ -2055,7 +2095,7 @@ def vspace(aval: ShapedArray) -> ShapedArray:
 
 class PartialVal(NamedTuple):
   aval: ShapedArray
-  const: Optional[Any]
+  const: Any | None
 
   @classmethod
   def known(cls, val: Any):
@@ -2119,7 +2159,7 @@ JaxprRecipe = Union[LambdaBindingRecipe, ConstRecipe, JaxprEqnRecipe]
 
 class PartialEvalTracer(Tracer):
   pval: PartialVal
-  recipe: Optional[JaxprRecipe]
+  recipe: JaxprRecipe | None
 
   def __init__(self, trace, pval, recipe):
     self._trace = trace
@@ -2148,7 +2188,7 @@ class PartialEvalTracer(Tracer):
 # representing unknown outputs, we need avals, which we get from the abstract
 # eval rules. (Notice that tracers reference `JaxprEqnRecipe`s, and
 # `JaxprEqnRecipe`s reference tracers; we avoid circular garbage by using
-# weakrefs.)
+# `weakref`s.)
 #
 # That `process_primitive` logic applies to most primitives, but `xla_call_p`
 # requires recursive treatment. So we special-case its rule in a
@@ -2320,7 +2360,7 @@ def xla_call_partial_eval(trace, tracers, *, jaxpr, num_consts):
 partial_eval_rules[xla_call_p] = xla_call_partial_eval
 
 def partial_eval_jaxpr(jaxpr: Jaxpr, in_unknowns: list[bool],
-                       instantiate: Optional[list[bool]] = None,
+                       instantiate: list[bool] | None = None,
                        ) -> tuple[Jaxpr, Jaxpr, list[bool], int]:
   env: dict[Var, bool] = {}
   residuals: set[Var] = set()
@@ -2583,7 +2623,7 @@ def xla_call_transpose_rule(cts, *invals, jaxpr, num_consts):
   return [next(outs) if undef else None for undef in undef_primals]
 transpose_rules[xla_call_p] = xla_call_transpose_rule
 
-@lru_cache()
+@lru_cache
 def transpose_jaxpr(jaxpr: Jaxpr, undef_primals: tuple[bool, ...]
                     ) -> tuple[Jaxpr, list[Any]]:
   avals_in, avals_out = typecheck_jaxpr(jaxpr)
@@ -2798,7 +2838,7 @@ print(out)
 
 # Notice that we're not currently supporting the case where the predicate value
 # itself is batched. In mainline JAX, we handle this case by transforming the
-# conditional to a [select primitive](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.select.html).
+# conditional to a [select primitive](https://docs.jax.dev/en/latest/_autosummary/jax.lax.select.html).
 # That transformation is semantically correct so long as `true_fun` and
 # `false_fun` do not involve any side-effecting primitives.
 #
@@ -2843,28 +2883,18 @@ def cond_abstract_eval(pred_type, *in_types, true_jaxpr, false_jaxpr):
   return jaxpr_type.out_types
 abstract_eval_rules[cond_p] = cond_abstract_eval
 
-def cond_translation(c, in_avals, in_vals, *, true_jaxpr, false_jaxpr):
+def cond_translation(c, in_avals, out_avals, in_vals, *, true_jaxpr, false_jaxpr):
   del in_avals  # Unused
   pred, *in_vals = in_vals
-  flat_vals, in_tree = tree_flatten(in_vals)
-  operand = xops.Tuple(c, flat_vals)
-  operand_shape = c.get_shape(operand)
 
-  def make_comp(name: str, jaxpr: Jaxpr) -> xe.XlaComputation:
-    c = xc.XlaBuilder(name)
-    operand = xops.Parameter(c, 0, operand_shape)
-    operands = tree_unflatten(in_tree, destructure_tuple(c, operand))
-    outs = jaxpr_subcomp(c, jaxpr, operands)
-    return c.build(xops.Tuple(c, outs))
+  op = hlo.IfOp([aval_to_ir_type(aval) for aval in out_avals], pred)
+  with ir.InsertionPoint(op.true_branch.blocks.append()):
+    hlo.return_(jaxpr_subcomp(c, true_jaxpr, in_vals))
+  with ir.InsertionPoint(op.false_branch.blocks.append()):
+    hlo.return_(jaxpr_subcomp(c, false_jaxpr, in_vals))
+  return op.results
 
-  true_comp = make_comp('true_fn', true_jaxpr)
-  false_comp = make_comp('false_fn', false_jaxpr)
-
-  int_etype = xc.dtype_to_etype(np.dtype('int32'))
-  out = xops.Conditional(xops.ConvertElementType(pred, int_etype),
-                         [false_comp, true_comp], [operand] * 2)
-  return destructure_tuple(c, out)
-xla_translations[cond_p] = cond_translation
+hlo_translations[cond_p] = cond_translation
 # -
 
 out = jit(lambda: cond(False, lambda: 1, lambda: 2))()

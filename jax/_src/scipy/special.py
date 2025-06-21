@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from functools import partial
 import operator
-from typing import cast, Any, Optional
+from typing import cast, Any
 
 import numpy as np
-import scipy.special as osp_special
 
 import jax.numpy as jnp
 from jax import jit
@@ -25,118 +26,471 @@ from jax import jvp
 from jax import vmap
 from jax import lax
 
+from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import deprecations
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
-from jax._src.numpy.util import _wraps
 from jax._src.ops import special as ops_special
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
+from jax._src.nn.functions import softmax as nn_softmax
+from jax._src.nn.functions import log_softmax as nn_log_softmax
 
 
-@_wraps(osp_special.gammaln, module='scipy.special')
 def gammaln(x: ArrayLike) -> Array:
+  r"""Natural log of the absolute value of the gamma function.
+
+  JAX implementation of :obj:`scipy.special.gammaln`.
+
+  .. math::
+
+     \mathrm{gammaln}(x) = \log(|\Gamma(x)|)
+
+  Where :math:`\Gamma` is the :func:`~jax.scipy.special.gamma` function.
+
+  Args:
+    x: arraylike, real valued.
+
+  Returns:
+    array containing the values of the log-gamma function
+
+  See Also:
+    - :func:`jax.scipy.special.gammaln`: the natural log of the gamma function
+    - :func:`jax.scipy.special.gammasgn`: the sign of the gamma function
+
+  Notes:
+    ``gammaln`` does not support complex-valued inputs.
+  """
   x, = promote_args_inexact("gammaln", x)
   return lax.lgamma(x)
 
 
-@_wraps(osp_special.gamma, module='scipy.special', lax_description="""\
-The JAX version only accepts real-valued inputs.""")
-def gamma(x: ArrayLike) -> Array:
-  x, = promote_args_inexact("gamma", x)
-  # Compute the sign for negative x, matching the semantics of scipy.special.gamma
+@jit
+def gammasgn(x: ArrayLike) -> Array:
+  r"""Sign of the gamma function.
+
+  JAX implementation of :obj:`scipy.special.gammasgn`.
+
+  .. math::
+
+    \mathrm{gammasgn}(x) = \begin{cases}
+      +1 & \Gamma(x) > 0 \\
+      -1 & \Gamma(x) < 0
+    \end{cases}
+
+  Where :math:`\Gamma` is the :func:`~jax.scipy.special.gamma` function.
+  Because :math:`\Gamma(x)` is never zero, no condition is required for this case.
+
+  * if :math:`x = -\infty`, NaN is returned.
+  * if :math:`x = \pm 0`, :math:`\pm 1` is returned.
+  * if :math:`x` is a negative integer, NaN is returned. The sign of gamma
+    at a negative integer depends on from which side the pole is approached.
+  * if :math:`x = \infty`, :math:`1` is returned.
+  * if :math:`x` is NaN, NaN is returned.
+
+  Args:
+    x: arraylike, real valued.
+
+  Returns:
+    array containing the sign of the gamma function
+
+  See Also:
+    - :func:`jax.scipy.special.gamma`: the gamma function
+    - :func:`jax.scipy.special.gammaln`: the natural log of the gamma function
+  """
+  x, = promote_args_inexact("gammasgn", x)
+  typ = x.dtype.type
   floor_x = lax.floor(x)
-  sign = jnp.where((x > 0) | (x == floor_x), 1.0, (-1.0) ** floor_x)
-  return sign * lax.exp(lax.lgamma(x))
-
-betaln = _wraps(
-    osp_special.betaln,
-    module='scipy.special',
-    update_doc=False
-)(_betaln_impl)
+  x_negative = x < 0
+  return jnp.select(
+    [(x_negative & (x == floor_x)) | jnp.isnan(x),
+     (x_negative & (floor_x % 2 != 0)) | ((x == 0) & jnp.signbit(x))],
+    [typ(np.nan), typ(-1.0)],
+    typ(1.0))
 
 
-@_wraps(osp_special.factorial, module='scipy.special')
+def gamma(x: ArrayLike) -> Array:
+  r"""The gamma function.
+
+  JAX implementation of :obj:`scipy.special.gamma`.
+
+  The gamma function is defined for :math:`\Re(z)>0` as
+
+  .. math::
+
+     \mathrm{gamma}(z) = \Gamma(z) = \int_0^\infty t^{z-1}e^{-t}\mathrm{d}t
+
+  and is extended by analytic continuation to arbitrary complex values `z`.
+  For positive integers `n`, the gamma function is related to the
+  :func:`~jax.scipy.special.factorial` function via the following identity:
+
+  .. math::
+
+     \Gamma(n) = (n - 1)!
+
+  * if :math:`z = -\infty`, NaN is returned.
+  * if :math:`x = \pm 0`, :math:`\pm \infty` is returned.
+  * if :math:`x` is a negative integer, NaN is returned. The sign of gamma
+    at a negative integer depends on from which side the pole is approached.
+  * if :math:`x = \infty`, :math:`\infty` is returned.
+  * if :math:`x` is NaN, NaN is returned.
+
+  Args:
+    x: arraylike, real valued.
+
+  Returns:
+    array containing the values of the gamma function
+
+  See Also:
+    - :func:`jax.scipy.special.factorial`: the factorial function.
+    - :func:`jax.scipy.special.gammaln`: the natural log of the gamma function
+    - :func:`jax.scipy.special.gammasgn`: the sign of the gamma function
+
+  Notes:
+    Unlike the scipy version, JAX's ``gamma`` does not support complex-valued
+    inputs.
+  """
+  x, = promote_args_inexact("gamma", x)
+  return gammasgn(x) * lax.exp(lax.lgamma(x))
+
+
+def betaln(a: ArrayLike, b: ArrayLike) -> Array:
+  r"""Natural log of the absolute value of the beta function
+
+  JAX implementation of :obj:`scipy.special.betaln`.
+
+  .. math::
+
+     \mathrm{betaln}(a, b) = \log B(a, b)
+
+  where :math:`B` is the :func:`~jax.scipy.special.beta` function.
+
+  Args:
+    a: arraylike, real-valued.  Parameter *a* of the beta distribution.
+    b: arraylike, real-valued.  Parameter *b* of the beta distribution.
+
+  Returns:
+    array containing the values of the log-beta function
+
+  See Also:
+    :func:`jax.scipy.special.beta`
+  """
+  a, b = promote_args_inexact("betaln", a, b)
+  return _betaln_impl(a, b)
+
+
 def factorial(n: ArrayLike, exact: bool = False) -> Array:
+  r"""Factorial function
+
+  JAX implementation of :obj:`scipy.special.factorial`
+
+  .. math::
+
+     \mathrm{factorial}(n) = n! = \prod_{k=1}^n k
+
+  Args:
+    n: arraylike, values for which factorial will be computed elementwise
+    exact: bool, only ``exact=False`` is supported.
+
+  Returns:
+    array containing values of the factorial.
+
+  Notes:
+    This computes the float-valued factorial via the :func:`~jax.scipy.special.gamma`
+    function. JAX does not support exact factorials, because it is not particularly
+    useful: above ``n=20``, the exact result cannot be represented by 64-bit integers,
+    which are the largest integers available to JAX.
+
+  See Also:
+    :func:`jax.scipy.special.gamma`
+  """
   if exact:
     raise NotImplementedError("factorial with exact=True")
   n, = promote_args_inexact("factorial", n)
   return jnp.where(n < 0, 0, lax.exp(lax.lgamma(n + 1)))
 
 
-@_wraps(osp_special.beta, module='scipy.special')
-def beta(x: ArrayLike, y: ArrayLike) -> Array:
-  x, y = promote_args_inexact("beta", x, y)
-  return lax.exp(betaln(x, y))
+def beta(a: ArrayLike, b: ArrayLike) -> Array:
+  r"""The beta function
+
+  JAX implementation of :obj:`scipy.special.beta`.
+
+  .. math::
+
+     \mathrm{beta}(a, b) = B(a, b) = \frac{\Gamma(a)\Gamma(b)}{\Gamma(a + b)}
+
+  where :math:`\Gamma` is the :func:`~jax.scipy.special.gamma` function.
+
+  Args:
+    a: arraylike, real-valued. Parameter *a* of the beta distribution.
+    b: arraylike, real-valued. Parameter *b* of the beta distribution.
+
+  Returns:
+    array containing the values of the beta function.
+
+  See Also:
+    - :func:`jax.scipy.special.gamma`
+    - :func:`jax.scipy.special.betaln`
+  """
+  a, b = promote_args_inexact("beta", a, b)
+  sign = gammasgn(a) * gammasgn(b) * gammasgn(a + b)
+  return sign * lax.exp(betaln(a, b))
 
 
-@_wraps(osp_special.betainc, module='scipy.special')
 def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
+  r"""The regularized incomplete beta function.
+
+  JAX implementation of :obj:`scipy.special.betainc`.
+
+  .. math::
+
+     \mathrm{betainc}(a, b, x) = B(a, b)\int_0^x t^{a-1}(1-t^{b-1})\mathrm{d}t
+
+  where :math:`B(a, b)` is the :func:`~jax.scipy.special.beta` function.
+
+  Args:
+    a: arraylike, real-valued. Parameter *a* of the beta distribution.
+    b: arraylike, real-valued. Parameter *b* of the beta distribution.
+    x: arraylike, real-valued. Upper limit of the integration.
+
+  Returns:
+    array containing values of the betainc function
+
+  See Also:
+    - :func:`jax.scipy.special.beta`
+    - :func:`jax.scipy.special.betaln`
+  """
   a, b, x = promote_args_inexact("betainc", a, b, x)
   return lax.betainc(a, b, x)
 
 
-@_wraps(osp_special.digamma, module='scipy.special', lax_description="""\
-The JAX version only accepts real-valued inputs.""")
 def digamma(x: ArrayLike) -> Array:
+  r"""The digamma function
+
+  JAX implementation of :obj:`scipy.special.digamma`.
+
+  .. math::
+
+     \mathrm{digamma}(z) = \psi(z) = \frac{\mathrm{d}}{\mathrm{d}z}\log \Gamma(z)
+
+  where :math:`\Gamma(z)` is the :func:`~jax.scipy.special.gamma` function.
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the digamma function.
+
+  Notes:
+    The JAX version of `digamma` accepts real-valued inputs.
+
+  See also:
+    - :func:`jax.scipy.special.gamma`
+    - :func:`jax.scipy.special.polygamma`
+  """
   x, = promote_args_inexact("digamma", x)
   return lax.digamma(x)
 
 
-@_wraps(osp_special.gammainc, module='scipy.special', update_doc=False)
 def gammainc(a: ArrayLike, x: ArrayLike) -> Array:
+  r"""The regularized lower incomplete gamma function.
+
+  JAX implementation of :obj:`scipy.special.gammainc`.
+
+  .. math::
+
+     \mathrm{gammainc}(x; a) = \frac{1}{\Gamma(a)}\int_0^x t^{a-1}e^{-t}\mathrm{d}t
+
+  where :math:`\Gamma(a)` is the :func:`~jax.scipy.special.gamma` function.
+
+  Args:
+    a: arraylike, real-valued. Positive shape parameter of the gamma distribution.
+    x: arraylike, real-valued. Non-negative upper limit of integration
+
+  Returns:
+    array containing values of the gammainc function.
+
+  See Also:
+    - :func:`jax.scipy.special.gamma`
+    - :func:`jax.scipy.special.gammaincc`
+  """
   a, x = promote_args_inexact("gammainc", a, x)
   return lax.igamma(a, x)
 
 
-@_wraps(osp_special.gammaincc, module='scipy.special', update_doc=False)
 def gammaincc(a: ArrayLike, x: ArrayLike) -> Array:
+  r"""The regularized upper incomplete gamma function.
+
+  JAX implementation of :obj:`scipy.special.gammaincc`.
+
+  .. math::
+
+     \mathrm{gammaincc}(x; a) = \frac{1}{\Gamma(a)}\int_x^\infty t^{a-1}e^{-t}\mathrm{d}t
+
+  where :math:`\Gamma(a)` is the :func:`~jax.scipy.special.gamma` function.
+
+  Args:
+    a: arraylike, real-valued. Positive shape parameter of the gamma distribution.
+    x: arraylike, real-valued. Non-negative lower limit of integration
+
+  Returns:
+    array containing values of the gammaincc function.
+
+  See Also:
+    - :func:`jax.scipy.special.gamma`
+    - :func:`jax.scipy.special.gammainc`
+  """
   a, x = promote_args_inexact("gammaincc", a, x)
   return lax.igammac(a, x)
 
 
-@_wraps(osp_special.erf, module='scipy.special', skip_params=["out"],
-        lax_description="Note that the JAX version does not support complex inputs.")
 def erf(x: ArrayLike) -> Array:
+  r"""The error function
+
+  JAX implementation of :obj:`scipy.special.erf`.
+
+  .. math::
+
+     \mathrm{erf}(x) = \frac{2}{\sqrt\pi} \int_{0}^x e^{-t^2} \mathrm{d}t
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the error function.
+
+  Notes:
+     The JAX version only supports real-valued inputs.
+
+  See also:
+    - :func:`jax.scipy.special.erfc`
+    - :func:`jax.scipy.special.erfinv`
+  """
   x, = promote_args_inexact("erf", x)
   return lax.erf(x)
 
 
-@_wraps(osp_special.erfc, module='scipy.special', update_doc=False)
 def erfc(x: ArrayLike) -> Array:
+  r"""The complement of the error function
+
+  JAX implementation of :obj:`scipy.special.erfc`.
+
+  .. math::
+
+     \mathrm{erfc}(x) = \frac{2}{\sqrt\pi} \int_{x}^\infty e^{-t^2} \mathrm{d}t
+
+  This is the complement of the error function :func:`~jax.scipy.special.erf`,
+  ``erfc(x) = 1 - erf(x)``.
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the complement of the error function.
+
+  Notes:
+     The JAX version only supports real-valued inputs.
+
+  See also:
+    - :func:`jax.scipy.special.erf`
+    - :func:`jax.scipy.special.erfinv`
+  """
   x, = promote_args_inexact("erfc", x)
   return lax.erfc(x)
 
 
-@_wraps(osp_special.erfinv, module='scipy.special')
 def erfinv(x: ArrayLike) -> Array:
+  """The inverse of the error function
+
+  JAX implementation of :obj:`scipy.special.erfinv`.
+
+  Returns the inverse of :func:`~jax.scipy.special.erf`.
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the inverse error function.
+
+  Notes:
+     The JAX version only supports real-valued inputs.
+
+  See also:
+    - :func:`jax.scipy.special.erf`
+    - :func:`jax.scipy.special.erfc`
+  """
   x, = promote_args_inexact("erfinv", x)
   return lax.erf_inv(x)
 
 
 @custom_derivatives.custom_jvp
-@_wraps(osp_special.logit, module='scipy.special', update_doc=False)
 def logit(x: ArrayLike) -> Array:
+  r"""The logit function
+
+  JAX implementation of :obj:`scipy.special.logit`.
+
+  .. math::
+
+     \mathrm{logit}(p) = \log\frac{p}{1 - p}
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the logit function.
+  """
   x, = promote_args_inexact("logit", x)
   return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
 logit.defjvps(
     lambda g, ans, x: lax.div(g, lax.mul(x, lax.sub(_lax_const(x, 1), x))))
 
 
-@_wraps(osp_special.expit, module='scipy.special', update_doc=False)
 def expit(x: ArrayLike) -> Array:
+  r"""The logistic sigmoid (expit) function
+
+  JAX implementation of :obj:`scipy.special.expit`.
+
+  .. math::
+
+     \mathrm{expit}(x) = \frac{1}{1 + e^{-x}}
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the expit function.
+  """
   x, = promote_args_inexact("expit", x)
   return lax.logistic(x)
 
 
-logsumexp = _wraps(osp_special.logsumexp, module='scipy.special')(ops_special.logsumexp)
+logsumexp = ops_special.logsumexp
 
 
 @custom_derivatives.custom_jvp
-@_wraps(osp_special.xlogy, module='scipy.special')
 def xlogy(x: ArrayLike, y: ArrayLike) -> Array:
+  """Compute x*log(y), returning 0 for x=0.
+
+  JAX implementation of :obj:`scipy.special.xlogy`.
+
+  This is defined to return zero when :math:`(x, y) = (0, 0)`, with a custom
+  derivative rule so that automatic differentiation is well-defined at this point.
+
+  Args:
+    x: arraylike, real-valued.
+    y: arraylike, real-valued.
+
+  Returns:
+    array containing xlogy values.
+
+  See also:
+    :func:`jax.scipy.special.xlog1py`
+  """
   # Note: xlogy(0, 0) should return 0 according to the function documentation.
   x, y = promote_args_inexact("xlogy", x, y)
   x_ok = x != 0.
@@ -151,8 +505,24 @@ xlogy.defjvp(_xlogy_jvp)
 
 
 @custom_derivatives.custom_jvp
-@_wraps(osp_special.xlog1py, module='scipy.special', update_doc=False)
 def xlog1py(x: ArrayLike, y: ArrayLike) -> Array:
+  """Compute x*log(1 + y), returning 0 for x=0.
+
+  JAX implementation of :obj:`scipy.special.xlog1py`.
+
+  This is defined to return 0 when :math:`(x, y) = (0, -1)`, with a custom
+  derivative rule so that automatic differentiation is well-defined at this point.
+
+  Args:
+    x: arraylike, real-valued.
+    y: arraylike, real-valued.
+
+  Returns:
+    array containing xlog1py values.
+
+  See also:
+    :func:`jax.scipy.special.xlogy`
+  """
   # Note: xlog1py(0, -1) should return 0 according to the function documentation.
   x, y = promote_args_inexact("xlog1py", x, y)
   x_ok = x != 0.
@@ -177,15 +547,62 @@ def _xlogx_jvp(primals, tangents):
 _xlogx.defjvp(_xlogx_jvp)
 
 
-@_wraps(osp_special.entr, module='scipy.special')
 def entr(x: ArrayLike) -> Array:
+  r"""The entropy function
+
+  JAX implementation of :obj:`scipy.special.entr`.
+
+  .. math::
+
+     \mathrm{entr}(x) = \begin{cases}
+       -x\log(x) & x > 0 \\
+       0 & x = 0\\
+       -\infty & \mathrm{otherwise}
+     \end{cases}
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing entropy values.
+
+  See also:
+    - :func:`jax.scipy.special.kl_div`
+    - :func:`jax.scipy.special.rel_entr`
+  """
   x, = promote_args_inexact("entr", x)
   return lax.select(lax.lt(x, _lax_const(x, 0)),
                     lax.full_like(x, -np.inf),
                     lax.neg(_xlogx(x)))
 
-@_wraps(osp_special.multigammaln, update_doc=False)
+
 def multigammaln(a: ArrayLike, d: ArrayLike) -> Array:
+  r"""The natural log of the multivariate gamma function.
+
+  JAX implementation of :func:`scipy.special.multigammaln`.
+
+  .. math::
+
+     \mathrm{multigammaln}(a, d) = \log\Gamma_d(a)
+
+  where
+
+  .. math::
+
+     \Gamma_d(a) = \pi^{d(d-1)/4}\prod_{i=1}^d\Gamma(a-(i-1)/2)
+
+  and :math:`\Gamma(x)` is the :func:`~jax.scipy.special.gamma` function.
+
+  Args:
+    a: arraylike, real-valued.
+    d: int, the dimension of the integration space.
+
+  Returns:
+    array containing values of the log-multigamma function.
+
+  See also:
+    - :func:`jax.scipy.special.gamma`
+  """
   d = core.concrete_or_error(int, d, "d argument of multigammaln")
   a, d_ = promote_args_inexact("multigammaln", a, d)
 
@@ -199,49 +616,76 @@ def multigammaln(a: ArrayLike, d: ArrayLike) -> Array:
   return res + constant
 
 
-@_wraps(osp_special.kl_div, module="scipy.special")
 def kl_div(
     p: ArrayLike,
     q: ArrayLike,
 ) -> Array:
-    p, q = promote_args_inexact("kl_div", p, q)
-    zero = _lax_const(p, 0.0)
-    both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
-    one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
+  r"""The Kullback-Leibler divergence.
 
-    safe_p = jnp.where(both_gt_zero_mask, p, 1)
-    safe_q = jnp.where(both_gt_zero_mask, q, 1)
+  JAX implementation of :obj:`scipy.special.kl_div`.
 
-    log_val = lax.sub(
-        lax.add(
-            lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q)),
-            safe_q,
-        ),
-        safe_p,
-    )
-    result = jnp.where(
-        both_gt_zero_mask, log_val, jnp.where(one_zero_mask, q, np.inf)
-    )
-    return result
+  .. math::
+
+     \mathrm{kl\_div}(p, q) = \begin{cases}
+       p\log(p/q)-p+q & p>0,q>0\\
+       q & p=0,q\ge 0\\
+       \infty & \mathrm{otherwise}
+    \end{cases}
+
+  Args:
+    p: arraylike, real-valued.
+    q: arraylike, real-valued.
+
+  Returns:
+    array of KL-divergence values
+
+  See also:
+    - :func:`jax.scipy.special.entr`
+    - :func:`jax.scipy.special.rel_entr`
+  """
+  p, q = promote_args_inexact("kl_div", p, q)
+  return rel_entr(p, q) - p + q
 
 
-@_wraps(osp_special.rel_entr, module="scipy.special")
 def rel_entr(
     p: ArrayLike,
     q: ArrayLike,
 ) -> Array:
-    p, q = promote_args_inexact("rel_entr", p, q)
-    zero = _lax_const(p, 0.0)
-    both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
-    one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
+  r"""The relative entropy function.
 
-    safe_p = jnp.where(both_gt_zero_mask, p, 1)
-    safe_q = jnp.where(both_gt_zero_mask, q, 1)
-    log_val = lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q))
-    result = jnp.where(
-        both_gt_zero_mask, log_val, jnp.where(one_zero_mask, q, jnp.inf)
-    )
-    return result
+  JAX implementation of :obj:`scipy.special.rel_entr`.
+
+  .. math::
+
+     \mathrm{rel\_entr}(p, q) = \begin{cases}
+       p\log(p/q) & p>0,q>0\\
+       0 & p=0,q\ge 0\\
+       \infty & \mathrm{otherwise}
+    \end{cases}
+
+  Args:
+    p: arraylike, real-valued.
+    q: arraylike, real-valued.
+
+  Returns:
+    array of relative entropy values.
+
+  See also:
+    - :func:`jax.scipy.special.entr`
+    - :func:`jax.scipy.special.kl_div`
+  """
+  p, q = promote_args_inexact("rel_entr", p, q)
+  zero = _lax_const(p, 0.0)
+  both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
+  one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
+
+  safe_p = jnp.where(both_gt_zero_mask, p, 1)
+  safe_q = jnp.where(both_gt_zero_mask, q, 1)
+  log_val = lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q))
+  result = jnp.where(
+      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, zero, jnp.inf)
+  )
+  return result
 
 # coefs of (2k)! / B_{2k} where B are bernoulli numbers
 # those numbers are obtained using https://www.wolframalpha.com
@@ -266,8 +710,23 @@ _BERNOULLI_COEFS = [
 
 
 @custom_derivatives.custom_jvp
-@_wraps(osp_special.zeta, module='scipy.special')
-def zeta(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array:
+def zeta(x: ArrayLike, q: ArrayLike | None = None) -> Array:
+  r"""The Hurwitz zeta function.
+
+  JAX implementation of :func:`scipy.special.zeta`. JAX does not implement
+  the Riemann zeta function (i.e. ``q = None``).
+
+  .. math::
+
+     \zeta(x, q) = \sum_{n=0}^\infty \frac{1}{(n + q)^x}
+
+  Args:
+    x: arraylike, real-valued
+    q: arraylike, real-valued
+
+  Returns:
+    array of zeta function values
+  """
   if q is None:
     raise NotImplementedError(
       "Riemann zeta function not implemented; pass q != None to compute the Hurwitz Zeta function.")
@@ -277,7 +736,7 @@ def zeta(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array:
 
 # There is no general closed-form derivative for the zeta function, so we compute
 # derivatives via a series expansion
-def _zeta_series_expansion(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array:
+def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   if q is None:
     raise NotImplementedError(
       "Riemann zeta function not implemented; pass q != None to compute the Hurwitz Zeta function.")
@@ -299,18 +758,38 @@ def _zeta_series_expansion(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array
   m = jnp.expand_dims(np.arange(2 * M, dtype=M.dtype), tuple(range(s.ndim)))
   s_over_a = (s_ + m) / (a_ + N)
   T1 = jnp.cumprod(s_over_a, -1)[..., ::2]
-  T1 = jnp.clip(T1, a_max=jnp.finfo(dtype).max)
+  T1 = jnp.clip(T1, max=jnp.finfo(dtype).max)
   coefs = np.expand_dims(np.array(_BERNOULLI_COEFS[:T1.shape[-1]], dtype=dtype),
                          tuple(range(a.ndim)))
   T1 = T1 / coefs
   T = T0 * (dtype(0.5) + T1.sum(-1))
   return S + I + T
 
-zeta.defjvp(partial(jvp, _zeta_series_expansion))  # type: ignore[arg-type]
+zeta.defjvp(partial(jvp, _zeta_series_expansion))
 
 
-@_wraps(osp_special.polygamma, module='scipy.special', update_doc=False)
 def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
+  r"""The polygamma function.
+
+  JAX implementation of :func:`scipy.special.polygamma`.
+
+  .. math::
+
+     \mathrm{polygamma}(n, x) = \psi^{(n)}(x) = \frac{\mathrm{d}^n}{\mathrm{d}x^n}\log \Gamma(x)
+
+  where :math:`\Gamma` is the :func:`~jax.scipy.special.gamma` function.
+
+  Args:
+    n: arraylike, integer-valued. The order of the derivative.
+    x: arraylike, real-valued. The value at which to evaluate the function.
+
+  Returns:
+    array
+
+  See also:
+    - :func:`jax.scipy.special.gamma`
+    - :func:`jax.scipy.special.digamma`
+  """
   assert jnp.issubdtype(lax.dtype(n), jnp.integer)
   n_arr, x_arr = promote_args_inexact("polygamma", n, x)
   return lax.polygamma(n_arr, x_arr)
@@ -396,6 +875,8 @@ _LOGNDTR_FLOAT32_UPPER = np.array(5, np.float32)
 def ndtr(x: ArrayLike) -> Array:
   r"""Normal distribution function.
 
+  JAX implementation of :obj:`scipy.special.ndtr`.
+
   Returns the area under the Gaussian probability density function, integrated
   from minus infinity to x:
 
@@ -442,11 +923,13 @@ def _ndtr(x: ArrayLike) -> Array:
 def ndtri(p: ArrayLike) -> Array:
   r"""The inverse of the CDF of the Normal distribution function.
 
+  JAX implementation of :obj:`scipy.special.ndtri`.
+
   Returns `x` such that the area under the PDF from :math:`-\infty` to `x` is equal
   to `p`.
 
   A piece-wise rational approximation is done for the function.
-  This is a based on the implementation in netlib.
+  This is based on the implementation in netlib.
 
   Args:
     p: an array of type `float32`, `float64`.
@@ -538,7 +1021,7 @@ def _ndtri(p: ArrayLike) -> Array:
   # later on. The result from the computation when p == 0 is not used so any
   # number that doesn't result in NaNs is fine.
   sanitized_mcp = jnp.where(
-      maybe_complement_p <= dtype(0.),
+      maybe_complement_p == dtype(0.),
       jnp.full(shape, dtype(0.5)),
       maybe_complement_p)
 
@@ -568,15 +1051,24 @@ def _ndtri(p: ArrayLike) -> Array:
                 jnp.where(z >= dtype(8.0), x_for_small_p, x_otherwise))
 
   x = jnp.where(p > dtype(1. - np.exp(-2.)), x, -x)
-  infinity = jnp.full(shape, dtype(np.inf))
-  x_nan_replaced = jnp.where(
-      p <= dtype(0.0), -infinity, jnp.where(p >= dtype(1.0), infinity, x))
-  return x_nan_replaced
+  with config.debug_infs(False):
+    infinity = jnp.full(shape, dtype(np.inf))
+    x = jnp.where(
+        p == dtype(0.0), -infinity, jnp.where(p == dtype(1.0), infinity, x))
+  if not isinstance(x, core.Tracer):
+    try:
+      dispatch.check_special("ndtri", [x])
+    except api_util.InternalFloatingPointError as e:
+      raise FloatingPointError(
+          f"invalid value ({e.ty}) encountered in ndtri.") from None
+  return x
 
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
 def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   r"""Log Normal distribution function.
+
+  JAX implementation of :obj:`scipy.special.log_ndtr`.
 
   For details of the Normal distribution function see `ndtr`.
 
@@ -723,23 +1215,103 @@ def _norm_logpdf(x):
   log_normalizer = _lax_const(x, _norm_logpdf_constant)
   return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
 
-@_wraps(osp_special.i0e, module='scipy.special')
+
 def i0e(x: ArrayLike) -> Array:
+  r"""Exponentially scaled modified bessel function of zeroth order.
+
+  JAX implementation of :obj:`scipy.special.i0e`.
+
+  .. math::
+
+     \mathrm{i0e}(x) = e^{-|x|} I_0(x)
+
+  where :math:`I_0(x)` is the modified Bessel function :func:`~jax.scipy.special.i0`.
+
+  Args:
+    x: array, real-valued
+
+  Returns:
+    array of bessel function values.
+
+  See also:
+    - :func:`jax.scipy.special.i0`
+    - :func:`jax.scipy.special.i1`
+    - :func:`jax.scipy.special.i1e`
+  """
   x, = promote_args_inexact("i0e", x)
   return lax.bessel_i0e(x)
 
-@_wraps(osp_special.i0, module='scipy.special')
+
 def i0(x: ArrayLike) -> Array:
+  r"""Modified bessel function of zeroth order.
+
+  JAX implementation of :obj:`scipy.special.i0`.
+
+  .. math::
+
+     \mathrm{i0}(x) = I_0(x) = \sum_{k=0}^\infty \frac{(x^2/4)^k}{(k!)^2}
+
+  Args:
+    x: array, real-valued
+
+  Returns:
+    array of bessel function values.
+
+  See also:
+    - :func:`jax.scipy.special.i0e`
+    - :func:`jax.scipy.special.i1`
+    - :func:`jax.scipy.special.i1e`
+  """
   x, = promote_args_inexact("i0", x)
   return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i0e(x))
 
-@_wraps(osp_special.i1e, module='scipy.special')
+
 def i1e(x: ArrayLike) -> Array:
+  r"""Exponentially scaled modified bessel function of first order.
+
+  JAX implementation of :obj:`scipy.special.i1e`.
+
+  .. math::
+
+     \mathrm{i1e}(x) = e^{-|x|} I_1(x)
+
+  where :math:`I_1(x)` is the modified Bessel function :func:`~jax.scipy.special.i1`.
+
+  Args:
+    x: array, real-valued
+
+  Returns:
+    array of bessel function values
+
+  See also:
+    - :func:`jax.scipy.special.i0`
+    - :func:`jax.scipy.special.i0e`
+    - :func:`jax.scipy.special.i1`
+  """
   x, = promote_args_inexact("i1e", x)
   return lax.bessel_i1e(x)
 
-@_wraps(osp_special.i1, module='scipy.special')
+
 def i1(x: ArrayLike) -> Array:
+  r"""Modified bessel function of first order.
+
+  JAX implementation of :obj:`scipy.special.i1`.
+
+  .. math::
+
+     \mathrm{i1}(x) = I_1(x) = \frac{1}{2}x\sum_{k=0}^\infty\frac{(x^2/4)^k}{k!(k+1)!}
+
+  Args:
+    x: array, real-valued
+
+  Returns:
+    array of bessel function values
+
+  See also:
+    - :func:`jax.scipy.special.i0`
+    - :func:`jax.scipy.special.i0e`
+    - :func:`jax.scipy.special.i1e`
+  """
   x, = promote_args_inexact("i1", x)
   return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i1e(x))
 
@@ -824,7 +1396,7 @@ def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
 def _gen_recurrence_mask(
     l_max: int, is_normalized: bool, dtype: Any
 ) -> tuple[Array, Array]:
-  """Generates mask for recurrence relation on the remaining entries.
+  """Generates a mask for recurrence relation on the remaining entries.
 
   The remaining entries are with respect to the diagonal and offdiagonal
   entries.
@@ -979,7 +1551,7 @@ def _gen_associated_legendre(l_max: int,
   `Y_l^m(θ, φ) = N_l^m * P_l^m(cos(θ)) * exp(i m φ)`, where `N_l^m` is the
   normalization factor and θ and φ are the colatitude and longitude,
   respectively. `N_l^m` is chosen in the way that the spherical harmonics form
-  a set of orthonormal basis function of L^2(S^2). For the computational
+  a set of orthonormal basis functions of L^2(S^2). For the computational
   efficiency of spherical harmonics transform, the normalization factor is
   used in the computation of the ALFs. In addition, normalizing `P_l^m`
   avoids overflow/underflow and achieves better numerical stability. Three
@@ -1003,7 +1575,7 @@ def _gen_associated_legendre(l_max: int,
       operation, `W` is a diagonal matrix containing the quadrature weights,
       and `I` is the identity matrix. The Gauss-Chebyshev points are equally
       spaced, which only provide approximate discrete orthogonality. The
-      Driscoll & Healy qudarture points are equally spaced and provide the
+      Driscoll & Healy quadrature points are equally spaced and provide the
       exact discrete orthogonality. The number of sampling points is required to
       be twice as the number of frequency points (modes) in the Driscoll & Healy
       approach, which enables FFT and achieves a fast spherical harmonics
@@ -1170,19 +1742,19 @@ def lpmn_values(m: int, n: int, z: Array, is_normalized: bool) -> Array:
 
 
 @partial(jit, static_argnums=(4,))
-def _sph_harm(m: Array,
-              n: Array,
+def _sph_harm(n: Array,
+              m: Array,
               theta: Array,
               phi: Array,
               n_max: int) -> Array:
   """Computes the spherical harmonics."""
 
-  cos_colatitude = jnp.cos(phi)
+  cos_colatitude = jnp.cos(theta)
 
   legendre = _gen_associated_legendre(n_max, cos_colatitude, True)
   legendre_val = legendre.at[abs(m), n, jnp.arange(len(n))].get(mode="clip")
 
-  angle = abs(m) * theta
+  angle = abs(m) * phi
   vandermonde = lax.complex(jnp.cos(angle), jnp.sin(angle))
   harmonics = lax.complex(legendre_val * jnp.real(vandermonde),
                           legendre_val * jnp.imag(vandermonde))
@@ -1195,12 +1767,69 @@ def _sph_harm(m: Array,
   return harmonics
 
 
+def sph_harm_y(n: Array,
+               m: Array,
+               theta: Array,
+               phi: Array,
+               diff_n: int | None = None,
+               n_max: int | None = None) -> Array:
+  r"""Computes the spherical harmonics.
+
+  The JAX version has one extra argument `n_max`, the maximum value in `n`.
+
+  The spherical harmonic of degree `n` and order `m` can be written as
+  :math:`Y_n^m(\theta, \phi) = N_n^m * P_n^m(\cos \theta) * \exp(i m \phi)`,
+  where :math:`N_n^m = \sqrt{\frac{\left(2n+1\right) \left(n-m\right)!}
+  {4 \pi \left(n+m\right)!}}` is the normalization factor and :math:`\theta` and
+  :math:`\phi` are the colatitude and longitude, respectively. :math:`N_n^m` is
+  chosen in the way that the spherical harmonics form a set of orthonormal basis
+  functions of :math:`L^2(S^2)`.
+
+  Args:
+    n: The degree of the harmonic; must have `n >= 0`. The standard notation for
+      degree in descriptions of spherical harmonics is `l (lower case L)`. We
+      use `n` here to be consistent with `scipy.special.sph_harm_y`. Return
+      values for `n < 0` are undefined.
+    m: The order of the harmonic; must have `|m| <= n`. Return values for
+      `|m| > n` are undefined.
+    theta: The polar (colatitudinal) coordinate; must be in [0, pi].
+    phi: The azimuthal (longitudinal) coordinate; must be in [0, 2*pi].
+    diff_n: Unsupported by JAX.
+    n_max: The maximum degree `max(n)`. If the supplied `n_max` is not the true
+      maximum value of `n`, the results are clipped to `n_max`. For example,
+      `sph_harm(m=jnp.array([2]), n=jnp.array([10]), theta, phi, n_max=6)`
+      actually returns
+      `sph_harm(m=jnp.array([2]), n=jnp.array([6]), theta, phi, n_max=6)`
+  Returns:
+    A 1D array containing the spherical harmonics at (m, n, theta, phi).
+  """
+  if diff_n is not None:
+    raise NotImplementedError(
+        "The 'diff_n' argument to jax.scipy.special.sph_harm_y is not supported.")
+
+  if jnp.isscalar(theta):
+    theta = jnp.array([theta])
+
+  if n_max is None:
+    n_max = np.max(n)
+  n_max = core.concrete_or_error(
+      int, n_max, 'The `n_max` argument of `jnp.scipy.special.sph_harm` must '
+      'be statically specified to use `sph_harm` within JAX transformations.')
+
+  return _sph_harm(n, m, theta, phi, n_max)
+
+
 def sph_harm(m: Array,
              n: Array,
              theta: Array,
              phi: Array,
-             n_max: Optional[int] = None) -> Array:
+             n_max: int | None = None) -> Array:
   r"""Computes the spherical harmonics.
+
+  Note:
+    This function is deprecated, and :func:`~jax.scipy.special.sph_harm_y`
+    should be used instead, noting that the order of ``m`` and ``n`` are
+    reversed, and definitions of ``theta`` and ``phi`` are swapped.
 
   The JAX version has one extra argument `n_max`, the maximum value in `n`.
 
@@ -1214,7 +1843,7 @@ def sph_harm(m: Array,
 
   Args:
     m: The order of the harmonic; must have `|m| <= n`. Return values for
-      `|m| > n` ara undefined.
+      `|m| > n` are undefined.
     n: The degree of the harmonic; must have `n >= 0`. The standard notation for
       degree in descriptions of spherical harmonics is `l (lower case L)`. We
       use `n` here to be consistent with `scipy.special.sph_harm`. Return
@@ -1224,22 +1853,21 @@ def sph_harm(m: Array,
     n_max: The maximum degree `max(n)`. If the supplied `n_max` is not the true
       maximum value of `n`, the results are clipped to `n_max`. For example,
       `sph_harm(m=jnp.array([2]), n=jnp.array([10]), theta, phi, n_max=6)`
-      acutually returns
+      actually returns
       `sph_harm(m=jnp.array([2]), n=jnp.array([6]), theta, phi, n_max=6)`
   Returns:
     A 1D array containing the spherical harmonics at (m, n, theta, phi).
   """
-
-  if jnp.isscalar(phi):
-    phi = jnp.array([phi])
-
-  if n_max is None:
-    n_max = np.max(n)
-  n_max = core.concrete_or_error(
-      int, n_max, 'The `n_max` argument of `jnp.scipy.special.sph_harm` must '
-      'be statically specified to use `sph_harm` within JAX transformations.')
-
-  return _sph_harm(m, n, theta, phi, n_max)
+  # Added 2025-01-06.
+  # TODO(dfm): Remove after deprecation period.
+  deprecations.warn(
+      "jax-scipy-special-sph-harm",
+      ("jax.scipy.special.sph_harm is deprecated. Please use "
+       "jax.scipy.special.sph_harm_y instead, noting that the order of `m` and "
+       "`n` are reversed, and definitions of `theta` and `phi` are swapped."),
+      stacklevel=2,
+  )
+  return sph_harm_y(n, m, phi, theta, n_max=n_max)
 
 
 # exponential integrals
@@ -1457,8 +2085,25 @@ def _expi_neg(x: Array) -> Array:
 
 @custom_derivatives.custom_jvp
 @jit
-@_wraps(osp_special.expi, module='scipy.special')
 def expi(x: ArrayLike) -> Array:
+  r"""Exponential integral function.
+
+  JAX implementation of :obj:`scipy.special.expi`
+
+  .. math::
+
+     \mathrm{expi}(x) = \int_{-\infty}^x \frac{e^t}{t} \mathrm{d}t
+
+  Args:
+    x: arraylike, real-valued
+
+  Returns:
+    array of expi values
+
+  See also:
+    - :func:`jax.scipy.special.expn`
+    - :func:`jax.scipy.special.exp1`
+  """
   x_arr, = promote_args_inexact("expi", x)
   return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
 
@@ -1471,10 +2116,9 @@ def expi_jvp(primals, tangents):
   return expi(x), jnp.exp(x) / x * x_dot
 
 
-def _expn1(n: int, x_in: ArrayLike) -> Array:
+def _expn1(x: Array, n: Array) -> Array:
   # exponential integral En
   _c = _lax_const
-  x = jnp.asarray(x_in)
   MACHEP = jnp.finfo(x.dtype).eps
 
   zero = _c(x, 0.0)
@@ -1509,7 +2153,7 @@ def _expn1(n: int, x_in: ArrayLike) -> Array:
   return d["z"] ** r * psi / jnp.exp(gammaln(t)) - d["ans"]
 
 
-def _expn2(n: int, x: Array) -> Array:
+def _expn2(x: Array, n: Array) -> Array:
   # x > 1.
   _c = _lax_const
   BIG = _c(x, 1.44115188075855872e17)
@@ -1560,7 +2204,7 @@ def _expn2(n: int, x: Array) -> Array:
   return d["ans"] * jnp.exp(-x)
 
 
-def _expn3(n: int, x: Array) -> Array:
+def _expn3(x: Array, n: Array) -> Array:
   # n >= 5000
   _c = _lax_const
   one = _c(x, 1.0)
@@ -1575,9 +2219,27 @@ def _expn3(n: int, x: Array) -> Array:
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
 @jnp.vectorize
-@_wraps(osp_special.expn, module='scipy.special')
 @jit
 def expn(n: ArrayLike, x: ArrayLike) -> Array:
+  r"""Generalized exponential integral function.
+
+  JAX implementation of :obj:`scipy.special.expn`.
+
+  .. math::
+
+     \mathrm{expn}(x) = E_n(x) = x^{n-1}\int_x^\infty\frac{e^{-t}}{t^n}\mathrm{d}t
+
+  Args:
+    n: arraylike, real-valued
+    x: arraylike, real-valued
+
+  Returns:
+    array of expn values
+
+  See also:
+    - :func:`jax.scipy.special.expi`
+    - :func:`jax.scipy.special.exp1`
+  """
   n, x = promote_args_inexact("expn", n, x)
   _c = _lax_const
   zero = _c(x, 0)
@@ -1596,11 +2258,11 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
     jnp.inf,
     one / n1,  # prevent div by zero
     jnp.exp(-x) / x,
-    partial(_expn3, n),
-    partial(_expn2, n),
-    partial(_expn1, n),
+    _expn3,
+    _expn2,
+    _expn1,
   ]
-  ret = jnp.piecewise(x, conds, vals)
+  ret = jnp.piecewise(x, conds, vals, n=n)
   return ret
 
 
@@ -1613,8 +2275,26 @@ def expn_jvp(n, primals, tangents):
   )
 
 
-@_wraps(osp_special.exp1, module="scipy.special")
-def exp1(x: ArrayLike, module='scipy.special') -> Array:
+def exp1(x: ArrayLike) -> Array:
+  r"""Exponential integral function.
+
+  JAX implementation of :obj:`scipy.special.exp1`
+
+  .. math::
+
+     \mathrm{exp1}(x) = E_1(x) = x^{n-1}\int_x^\infty\frac{e^{-t}}{t}\mathrm{d}t
+
+
+  Args:
+    x: arraylike, real-valued
+
+  Returns:
+    array of exp1 values
+
+  See also:
+    - :func:`jax.scipy.special.expi`
+    - :func:`jax.scipy.special.expn`
+  """
   x, = promote_args_inexact("exp1", x)
   # Casting because custom_jvp generic does not work correctly with mypy.
   return cast(Array, expn(1, x))
@@ -1673,13 +2353,15 @@ def _spence(x: Array) -> Array:
 
 
 def spence(x: Array) -> Array:
-  r"""
-  Spence's function, also known as the dilogarithm for real values.
+  r"""Spence's function, also known as the dilogarithm for real values.
+
+  JAX implementation of :obj:`scipy.special.spence`.
+
   It is defined to be:
 
   .. math::
-    \begin{equation}
-    \int_1^z \frac{\log(t)}{1 - t}dt
+    \mathrm{spence}(x) = \begin{equation}
+    \int_1^x \frac{\log(t)}{1 - t}dt
     \end{equation}
 
   Unlike the SciPy implementation, this is only defined for positive
@@ -1704,7 +2386,7 @@ def spence(x: Array) -> Array:
     -\int_0^z \frac{\log(1 - t)}{t}dt
     \end{equation}
 
-  this is our spence(1 - z).
+  This is our spence(1 - z).
   """
   x = jnp.asarray(x)
   dtype = lax.dtype(x)
@@ -1714,8 +2396,21 @@ def spence(x: Array) -> Array:
   return _spence(x)
 
 
-@_wraps(osp_special.bernoulli, module='scipy.special')
 def bernoulli(n: int) -> Array:
+  """Generate the first N Bernoulli numbers.
+
+  JAX implementation of :func:`scipy.special.bernoulli`.
+
+  Args:
+    n: integer, the number of Bernoulli terms to generate.
+
+  Returns:
+    Array containing the first ``n`` Bernoulli numbers.
+
+  Notes:
+    ``bernoulli`` generates numbers using the :math:`B_n^-` convention,
+    such that :math:`B_1=-1/2`.
+  """
   # Generate Bernoulli numbers using the Chowla and Hartung algorithm.
   n = core.concrete_or_error(operator.index, n, "Argument n of bernoulli")
   if n < 0:
@@ -1732,10 +2427,27 @@ def bernoulli(n: int) -> Array:
 
 
 @custom_derivatives.custom_jvp
-@_wraps(osp_special.poch, module='scipy.special', lax_description="""\
-The JAX version only accepts positive and real inputs.""")
 def poch(z: ArrayLike, m: ArrayLike) -> Array:
-  # Factorial definition when m is close to an integer, otherwise gamma definition.
+  r"""The Pochammer symbol.
+
+  JAX implementation of :obj:`scipy.special.poch`.
+
+  .. math::
+
+     \mathrm{poch}(z, m) = (z)_m = \frac{\Gamma(z + m)}{\Gamma(z)}
+
+  where :math:`\Gamma(z)` is the :func:`~jax.scipy.special.gamma` function.
+
+  Args:
+    z: arraylike, real-valued
+    m: arraylike, real-valued
+
+  Returns:
+    array of Pochammer values.
+
+  Notes:
+    The JAX version supports only real-valued inputs.
+  """
   z, m = promote_args_inexact("poch", z, m)
 
   return jnp.where(m == 0., jnp.array(1, dtype=z.dtype), gamma(z + m) / gamma(z))
@@ -1772,6 +2484,8 @@ def _hyp1f1_serie(a, b, x):
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term
@@ -1783,7 +2497,7 @@ def _hyp1f1_serie(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-8)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 1, 1, a / b * x
 
@@ -1797,6 +2511,8 @@ def _hyp1f1_asymptotic(a, b, x):
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term
@@ -1808,7 +2524,7 @@ def _hyp1f1_asymptotic(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-8)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 1, 1, (b - a) * (1 - a) / x
   serie = lax.while_loop(cond, body, init)[0]
@@ -1824,6 +2540,8 @@ def _hyp1f1_a_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term * (digamma(a + k) - digamma(a))
@@ -1835,7 +2553,7 @@ def _hyp1f1_a_derivative(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-15)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 0, 1, a / b * x
 
@@ -1850,6 +2568,8 @@ def _hyp1f1_b_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term * (digamma(b) - digamma(b + k))
@@ -1861,7 +2581,7 @@ def _hyp1f1_b_derivative(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-15)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 0, 1, a / b * x
 
@@ -1881,17 +2601,33 @@ def _hyp1f1_x_derivative(a, b, x):
 @custom_derivatives.custom_jvp
 @jit
 @jnp.vectorize
-@_wraps(osp_special.hyp1f1, module='scipy.special', lax_description="""\
-The JAX version only accepts positive and real inputs. Values of a, b and x
-leading to high values of 1F1 might be erroneous, considering enabling double
-precision. Convention for a = b = 0 is 1, unlike in scipy's implementation.""")
-def hyp1f1(a, b, x):
+def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
+  r"""The 1F1 hypergeometric function.
+
+  JAX implementation of :obj:`scipy.special.hyp1f1`.
+
+  .. math::
+
+     \mathrm{hyp1f1}(a, b, x) = {}_1F_1(x;a, b) = \sum_{k=0}^\infty \frac{(a)_k}{(b)_kk!}x^k
+
+  where :math:`(\cdot)_k` is the Pochammer symbol (refer to :func:`~jax.scipy.special.poch`).
+
+  The JAX version only accepts positive and real inputs. Values of ``a``, ``b``,
+  and ``x``, leading to high values of 1F1 may lead to erroneous results;
+  consider enabling double precision in this case. The convention for
+  ``a = b = 0`` is ``1``, unlike in scipy's implementation.
+
+  Args:
+    a: arraylike, real-valued
+    b: arraylike, real-valued
+    x: arraylike, real-valued
+
+  Returns:
+    array of 1F1 values.
   """
-  Implementation of the 1F1 hypergeometric function for real valued inputs
-  Backed by https://doi.org/10.48550/arXiv.1407.7786
-  There is room for improvement in the implementation using recursion to
-  evaluate lower values of hyp1f1 when a or b or both are > 60-80
-  """
+  # This is backed by https://doi.org/10.48550/arXiv.1407.7786
+  # There is room for improvement in the implementation using recursion to
+  # evaluate lower values of hyp1f1 when a or b or both are > 60-80
   a, b, x = promote_args_inexact('hyp1f1', a, b, x)
 
   result = lax.cond(lax.abs(x) < 100, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
@@ -1909,3 +2645,326 @@ hyp1f1.defjvps(
   lambda b_dot, primal_out, a, b, x: _hyp1f1_b_derivative(a, b, x) * b_dot,
   lambda x_dot, primal_out, a, b, x: _hyp1f1_x_derivative(a, b, x) * x_dot
 )
+
+
+def _hyp2f1_terminal(a, b, c, x):
+  """
+  The Taylor series representation of the 2F1 hypergeometric function
+  terminates when either a or b is a non-positive integer. See Eq. 4.1 and
+  Taylor Series Method (a) from PEARSON, OLVER & PORTER 2014
+  https://doi.org/10.48550/arXiv.1407.7786
+  """
+  # Ensure that between a and b, the negative integer parameter with the greater
+  # absolute value - that still has a magnitude less than the absolute value of
+  # c if c is non-positive - is used for the upper limit in the loop.
+  eps = jnp.finfo(x.dtype).eps * 50
+  ib = jnp.round(b)
+  mask = jnp.logical_and(
+      b < a,
+      jnp.logical_and(
+        jnp.abs(b - ib) < eps,
+        jnp.logical_not(
+          jnp.logical_and(
+            c % 1 == 0,
+            jnp.logical_and(
+              c <= 0,
+              c > b
+            )
+          )
+        )
+      )
+    )
+  orig_a = a
+  a = jnp.where(mask, b, a)
+  b = jnp.where(mask, orig_a, b)
+
+  a = jnp.abs(a)
+
+  def body(i, state):
+    serie, term = state
+
+    term *= -(a - i + 1) / (c + i - 1) * (b + i - 1) / i * x
+    serie += term
+
+    return serie, term
+
+  init = (jnp.array(1, dtype=x.dtype), jnp.array(1, dtype=x.dtype))
+
+  return lax.fori_loop(jnp.array(1, dtype=a.dtype),
+                       a + 1,
+                       body,
+                       init)[0]
+
+
+def _hyp2f1_serie(a, b, c, x):
+  """
+  Compute the 2F1 hypergeometric function using the Taylor expansion.
+  See Eq. 4.1 from PEARSON, OLVER & PORTER 2014
+  https://doi.org/10.48550/arXiv.1407.7786
+  """
+  rtol = jnp.finfo(x.dtype).eps
+
+  def body(state):
+    serie, k, term = state
+
+    serie += term
+    term *= (a + k - 1) * (b + k - 1) / (c + k - 1) / k * x
+    k += 1
+
+    return serie, k, term
+
+  def cond(state):
+    serie, k, term = state
+
+    return (k < 250) & (lax.abs(term) > rtol * lax.abs(serie))
+
+  init = (jnp.array(0, dtype=x.dtype),
+          jnp.array(1, dtype=x.dtype),
+          jnp.array(1, dtype=x.dtype))
+
+  return lax.while_loop(cond, body, init)[0]
+
+
+def _hyp2f1_terminal_or_serie(a, b, c, x):
+  """
+  Check for recurrence relations along with whether or not the series
+  terminates. True recursion is not possible; however, the recurrence
+  relation may still be approximated.
+  See 4.6.1. Recurrence Relations from PEARSON, OLVER & PORTER 2014
+  https://doi.org/10.48550/arXiv.1407.7786
+  """
+  eps = jnp.finfo(x.dtype).eps * 50
+
+  d = c - a - b
+
+  ia = jnp.round(a)
+  ib = jnp.round(b)
+  id = jnp.round(d)
+
+  neg_int_a = jnp.logical_and(a <= 0, jnp.abs(a - ia) < eps)
+  neg_int_b = jnp.logical_and(b <= 0, jnp.abs(b - ib) < eps)
+  neg_int_a_or_b = jnp.logical_or(neg_int_a, neg_int_b)
+  not_neg_int_a_or_b = jnp.logical_not(neg_int_a_or_b)
+
+  index = jnp.where(jnp.logical_and(x > 0.9, not_neg_int_a_or_b),
+        jnp.where(jnp.abs(d - id) >= eps, 0, 1),
+        jnp.where(neg_int_a_or_b, 2, 0))
+
+  return lax.select_n(index,
+                      _hyp2f1_serie(a, b, c, x),
+                      _hyp2f1_digamma_transform(a, b, c, x),
+                      _hyp2f1_terminal(a, b, c, x))
+
+
+def _hyp2f1_digamma_transform(a, b, c, x):
+  """
+  Digamma transformation of the 2F1 hypergeometric function.
+  See AMS55 #15.3.10, #15.3.11, #15.3.12
+  """
+  rtol = jnp.finfo(x.dtype).eps
+
+  d = c - a - b
+  s = 1 - x
+  rd = jnp.round(d)
+
+  e = jnp.where(rd >= 0, d, -d)
+  d1 = jnp.where(rd >= 0, d, jnp.array(0, dtype=d.dtype))
+  d2 = jnp.where(rd >= 0, jnp.array(0, dtype=d.dtype), d)
+  ard = jnp.where(rd >= 0, rd, -rd).astype('int32')
+
+  ax = jnp.log(s)
+
+  y = digamma(1.0) + digamma(1.0 + e) - digamma(a + d1) - digamma(b + d1) - ax
+  y /= gamma(e + 1.0)
+
+  p = (a + d1) * (b + d1) * s / gamma(e + 2.0)
+
+  def cond(state):
+    _, _, _, _, _, _, q, _, _, t, y = state
+
+    return jnp.logical_and(
+      t < 250,
+      jnp.abs(q) >= rtol * jnp.abs(y)
+    )
+
+  def body(state):
+    a, ax, b, d1, e, p, q, r, s, t, y = state
+
+    r = digamma(1.0 + t) + digamma(1.0 + t + e) - digamma(a + t + d1) \
+        - digamma(b + t + d1) - ax
+    q = p * r
+    y += q
+    p *= s * (a + t + d1) / (t + 1.0)
+    p *= (b + t + d1) / (t + 1.0 + e)
+    t += 1.0
+
+    return a, ax, b, d1, e, p, q, r, s, t, y
+
+  init = (a, ax, b, d1, e, p, y, jnp.array(0, dtype=x.dtype), s,
+          jnp.array(1, dtype=x.dtype), y)
+  _, _, _, _, _, _, q, r, _, _, y = lax.while_loop(cond, body, init)
+
+  def compute_sum(y):
+    y1 = jnp.array(1, dtype=x.dtype)
+    t = jnp.array(0, dtype=x.dtype)
+    p = jnp.array(1, dtype=x.dtype)
+
+    def for_body(i, state):
+      a, b, d2, e, p, s, t, y1 = state
+
+      r = 1.0 - e + t
+      p *= s * (a + t + d2) * (b + t + d2) / r
+      t += 1.0
+      p /= t
+      y1 += p
+
+      return a, b, d2, e, p, s, t, y1
+
+    init_val = a, b, d2, e, p, s, t, y1
+    y1 = lax.fori_loop(1, ard, for_body, init_val)[-1]
+
+    p = gamma(c)
+    y1 *= gamma(e) * p / (gamma(a + d1) * gamma(b + d1))
+    y *= p / (gamma(a + d2) * gamma(b + d2))
+
+    y = jnp.where((ard & 1) != 0, -y, y)
+    q = s ** rd
+
+    return jnp.where(rd > 0, y * q + y1, y + y1 * q)
+
+  return jnp.where(
+    rd == 0,
+    y * gamma(c) / (gamma(a) * gamma(b)),
+    compute_sum(y)
+  )
+
+
+@jit
+@jnp.vectorize
+def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
+  r"""The 2F1 hypergeometric function.
+
+  JAX implementation of :obj:`scipy.special.hyp2f1`.
+
+  .. math::
+
+     \mathrm{hyp2f1}(a, b, c, x) = {}_2F_1(a; b; c; x) = \sum_{k=0}^\infty \frac{(a)_k(b)_k}{(c)_k}\frac{x^k}{k!}
+
+  where :math:`(\cdot)_k` is the Pochammer symbol.
+
+  The JAX version only accepts positive and real inputs. Values of
+  ``a``, ``b``, ``c``, and ``x`` leading to high values of 2F1 may
+  lead to erroneous results; consider enabling double precision in this case.
+
+  Args:
+    a: arraylike, real-valued
+    b: arraylike, real-valued
+    c: arraylike, real-valued
+    x: arraylike, real-valued
+
+  Returns:
+    array of 2F1 values.
+  """
+  # This is backed by https://doi.org/10.48550/arXiv.1407.7786
+  a, b, c, x = promote_args_inexact('hyp2f1', a, b, c, x)
+  eps = jnp.finfo(x.dtype).eps * 50
+
+  d = c - a - b
+  s = 1 - x
+  ca = c - a
+  cb = c - b
+
+  id = jnp.round(d)
+  ica = jnp.round(ca)
+  icb = jnp.round(cb)
+
+  neg_int_ca = jnp.logical_and(ca <= 0, jnp.abs(ca - ica) < eps)
+  neg_int_cb = jnp.logical_and(cb <= 0, jnp.abs(cb - icb) < eps)
+  neg_int_ca_or_cb = jnp.logical_or(neg_int_ca, neg_int_cb)
+
+  index = jnp.where(jnp.logical_or(x == 0, jnp.logical_and(jnp.logical_or(a == 0, b == 0), c != 0)), 0,
+            jnp.where(jnp.logical_or(c == 0, jnp.logical_and(c < 0, c % 1 == 0)), 1,
+              jnp.where(jnp.logical_and(d <= -1, jnp.logical_not(jnp.logical_and(jnp.abs(d - id) >= eps, s < 0))), 2,
+                jnp.where(jnp.logical_and(d <= 0, x == 1), 1,
+                  jnp.where(jnp.logical_and(x < 1, b == c), 3,
+                    jnp.where(jnp.logical_and(x < 1, a == c), 4,
+                      jnp.where(x > 1, 1,
+                        jnp.where(x == 1, 5, 6))))))))
+
+  return lax.select_n(index,
+                      jnp.array(1, dtype=x.dtype),
+                      jnp.array(jnp.inf, dtype=x.dtype),
+                      s ** d * _hyp2f1_terminal_or_serie(ca, cb, c, x),
+                      s ** (-a),
+                      s ** (-b),
+                      gamma(c) * gamma(d) / (gamma(ca) * gamma(cb)),
+                      _hyp2f1_terminal_or_serie(a, b, c, x))
+
+
+def softmax(x: ArrayLike,
+            /,
+            *,
+            axis: int | tuple[int, ...] | None = None,
+            ) -> Array:
+  r"""Softmax function.
+
+  JAX implementation of :func:`scipy.special.softmax`.
+
+  Computes the function which rescales elements to the range :math:`[0, 1]`
+  such that the elements along :code:`axis` sum to :math:`1`.
+
+  .. math ::
+    \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+
+  Args:
+    x : input array
+    axis: the axis or axes along which the softmax should be computed. The
+      softmax output summed across these dimensions should sum to :math:`1`.
+
+  Returns:
+    An array of the same shape as ``x``.
+
+  Note:
+    If any input values are ``+inf``, the result will be all ``NaN``: this
+    reflects the fact that ``inf / inf`` is not well-defined in the context of
+    floating-point math.
+
+  See also:
+    :func:`log_softmax`
+  """
+  return nn_softmax(x, axis=axis)
+
+
+def log_softmax(x: ArrayLike,
+                /,
+                *,
+                axis: int | tuple[int, ...] | None = None,
+                ) -> Array:
+  r"""Log-Softmax function.
+
+  JAX implementation of :func:`scipy.special.log_softmax`
+
+  Computes the logarithm of the :code:`softmax` function, which rescales
+  elements to the range :math:`[-\infty, 0)`.
+
+  .. math ::
+    \mathrm{log\_softmax}(x)_i = \log \left( \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+    \right)
+
+  Args:
+    x : input array
+    axis: the axis or axes along which the :code:`log_softmax` should be
+      computed.
+
+  Returns:
+    An array of the same shape as ``x``
+
+  Note:
+    If any input values are ``+inf``, the result will be all ``NaN``: this
+    reflects the fact that ``inf / inf`` is not well-defined in the context of
+    floating-point math.
+
+  See also:
+    :func:`softmax`
+  """
+  return nn_log_softmax(x, axis=axis)

@@ -1,8 +1,23 @@
+/* Copyright 2023 The JAX Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
 #ifndef JAXLIB_GPU_TRITON_H_
 #define JAXLIB_GPU_TRITON_H_
 
+#include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <tuple>
 #include <variant>
@@ -24,12 +39,17 @@ class ModuleImage;
 class Kernel {
  public:
   Kernel(std::string kernel_name, uint32_t num_warps, uint32_t shared_mem_bytes,
-         std::string ptx, std::string ttir, int compute_capability);
+         std::string ptx, std::string ttir, int compute_capability,
+         uint32_t cluster_dim_0, uint32_t cluster_dim_1,
+         uint32_t cluster_dim_2);
 
   absl::Status Launch(gpuStream_t stream, uint32_t grid[3], void** params);
 
   static Kernel FromProto(const jax_triton::TritonKernel& proto);
   jax_triton::TritonKernel ToProto() const;
+
+  // Returns true if we can launch the kernel without crashing.
+  bool CanLaunchOnDevice(gpuDevice_t) const;
 
  private:
   std::string kernel_name_;
@@ -38,6 +58,7 @@ class Kernel {
   std::string ptx_;
   std::string ttir_;
   int compute_capability_;
+  uint32_t cluster_dims_[3];
 
   ModuleImage* module_image_ = nullptr;
 };
@@ -68,6 +89,9 @@ class KernelCall {
       const jax_triton::TritonKernelCall& proto);
   jax_triton::TritonKernelCall ToProto() const;
 
+  // Returns true if we can launch the kernel without crashing.
+  bool CanLaunchOnDevice(gpuDevice_t) const;
+
  private:
   Kernel kernel_;
   uint32_t grid_[3];
@@ -83,10 +107,12 @@ class AutotunedKernelCall {
 
   AutotunedKernelCall(
       std::string name, std::vector<Config> configs,
-      std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases);
+      std::vector<std::tuple<size_t,
+      size_t, size_t>> input_output_aliases);
 
   static absl::StatusOr<KernelCall> Autotune(AutotunedKernelCall kernel_call,
-                                             gpuStream_t stream, void** buffers);
+                                             gpuStream_t stream,
+                                             void** buffers);
 
   static absl::StatusOr<AutotunedKernelCall> FromProto(
       const jax_triton::TritonAutotunedKernelCall& proto);

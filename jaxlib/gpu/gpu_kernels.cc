@@ -16,56 +16,70 @@ limitations under the License.
 // This file is not used by JAX itself, but exists to assist with running
 // JAX-generated HLO code from outside of JAX.
 
-#include "jaxlib/gpu/blas_kernels.h"
-#include "jaxlib/gpu/lu_pivot_kernels.h"
+#include "jaxlib/gpu/linalg_kernels.h"
 #include "jaxlib/gpu/prng_kernels.h"
-#include "jaxlib/gpu/solver_kernels.h"
+#include "jaxlib/gpu/rnn_kernels.h"
+#include "jaxlib/gpu/solver_kernels_ffi.h"
 #include "jaxlib/gpu/sparse_kernels.h"
 #include "jaxlib/gpu/triton_kernels.h"
 #include "jaxlib/gpu/vendor.h"
+#include "xla/ffi/api/c_api.h"
+#include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_target_registry.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 namespace {
 
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cublas_getrf_batched", GetrfBatched,
-                                         "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cu_lu_pivots_to_permutation",
-                                         LuPivotsToPermutation, "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cu_threefry2x32", ThreeFry2x32,
-                                         "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_getrf", Getrf, "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_geqrf", Geqrf, "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_csrlsvqr", Csrlsvqr, "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_orgqr", Orgqr, "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_syevd", Syevd, "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_syevj", Syevj, "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_gesvd", Gesvd, "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_gesvdj", Gesvdj, "CUDA");
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cudnn_rnn", "CUDA", RNNForwardFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cudnn_rnn_bwd", "CUDA",
+                         RNNBackwardFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_getrf_ffi", "CUDA",
+                         GetrfFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_syrk_ffi", "CUDA",
+                         SyrkFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_geqrf_ffi", "CUDA",
+                         GeqrfFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_csrlsvqr_ffi", "CUDA",
+                         CsrlsvqrFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_orgqr_ffi", "CUDA",
+                         OrgqrFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_syevd_ffi", "CUDA",
+                         SyevdFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_sytrd_ffi", "CUDA",
+                         SytrdFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_gesvd_ffi", "CUDA",
+                         GesvdFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_gesvdj_ffi", "CUDA",
+                         GesvdjFfi);
 
-#if JAX_CUSPARSE_11300
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_csr_todense", CsrToDense,
-                                         "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_csr_fromdense", CsrFromDense,
-                                         "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_csr_matvec", CsrMatvec,
-                                         "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_csr_matmat", CsrMatmat,
-                                         "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_coo_todense", CooToDense,
-                                         "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_coo_fromdense", CooFromDense,
-                                         "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_coo_matvec", CooMatvec,
-                                         "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_coo_matmat", CooMatmat,
-                                         "CUDA");
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_cholesky_update_ffi", "CUDA",
+                         CholeskyUpdateFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_lu_pivots_to_permutation",
+                         "CUDA", LuPivotsToPermutation);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_threefry2x32_ffi", "CUDA",
+                         ThreeFry2x32Ffi);
+
+#if JAX_GPU_HAVE_SPARSE
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusparse_csr_todense_ffi", "CUDA",
+                         CsrToDenseFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusparse_csr_fromdense_ffi", "CUDA",
+                         CsrFromDenseFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusparse_csr_matvec_ffi", "CUDA",
+                         CsrMatvecFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusparse_csr_matmat_ffi", "CUDA",
+                         CsrMatmatFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusparse_coo_todense_ffi", "CUDA",
+                         CooToDenseFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusparse_coo_fromdense_ffi", "CUDA",
+                         CooFromDenseFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusparse_coo_matvec_ffi", "CUDA",
+                         CooMatvecFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusparse_coo_matmat_ffi", "CUDA",
+                         CooMatmatFfi);
 #endif
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_gtsv2_f32", gtsv2_f32,
-                                         "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_gtsv2_f64", gtsv2_f64,
-                                         "CUDA");
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusparse_gtsv2_ffi", "CUDA",
+                         kGtsv2);
 
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("triton_kernel_call", TritonKernelCall,
                                          "CUDA");

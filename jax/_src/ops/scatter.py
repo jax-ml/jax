@@ -14,10 +14,12 @@
 
 # Helpers for indexed updates.
 
-from collections.abc import Sequence
-import sys
-from typing import Callable, Optional, Union
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from typing import Any, Union
 import warnings
+from functools import partial
 
 import numpy as np
 
@@ -26,25 +28,28 @@ from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import sharding
+from jax._src import tree_util
 from jax._src import util
 from jax._src.lax import lax as lax_internal
+from jax._src.numpy import indexing
+from jax._src.pjit import auto_axes
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
 from jax._src.typing import Array, ArrayLike
 
 
-if sys.version_info >= (3, 10):
-    from types import EllipsisType
-    SingleIndex = Union[None, int, slice, Sequence[int], Array, EllipsisType]
-else:
-    SingleIndex = Union[None, int, slice, Sequence[int], Array]
+from types import EllipsisType
+SingleIndex = int | slice | Sequence[int] | Array | EllipsisType | None
 Index = Union[SingleIndex, tuple[SingleIndex, ...]]
 Scalar = Union[complex, float, int, np.number]
 
 
-def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
-                    unique_indices, mode=None, normalize_indices=True):
+def _scatter_update(x: ArrayLike, idx: Index, y: ArrayLike, scatter_op: Callable[..., Array],
+                    indices_are_sorted: bool, unique_indices: bool,
+                    mode: lax.GatherScatterMode | str | None = None, normalize_indices: bool = True,
+                    out_sharding: sharding.Sharding | None = None):
   """Helper for indexed updates.
 
   Computes the value of x that would result from computing::
@@ -74,18 +79,27 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
 
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
-  treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx, x.shape)
-  return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                       indices_are_sorted, unique_indices, mode,
-                       normalize_indices)
+  treedef, static_idx, dynamic_idx = indexing.split_index_for_jit(idx, x.shape)
+
+  internal_scatter = partial(
+      _scatter_impl, scatter_op=scatter_op, treedef=treedef,
+      static_idx=static_idx, indices_are_sorted=indices_are_sorted,
+      unique_indices=unique_indices, mode=mode,
+      normalize_indices=normalize_indices)
+  if out_sharding is not None:
+    return auto_axes(internal_scatter, out_sharding=out_sharding
+                     )(x, y, dynamic_idx)
+  return internal_scatter(x, y, dynamic_idx)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(2, 3, 4))
-def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                  indices_are_sorted, unique_indices, mode,
-                  normalize_indices):
+def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
+                  scatter_op: Callable[..., Array],
+                  treedef: tree_util.PyTreeDef, static_idx: tuple[Any, ...],
+                  indices_are_sorted: bool, unique_indices: bool,
+                  mode: lax.GatherScatterMode | str | None, normalize_indices: bool):
   dtype = lax.dtype(x)
   weak_type = dtypes.is_weakly_typed(x)
 
@@ -98,9 +112,9 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
       "In future JAX releases this will result in an error.",
       FutureWarning)
 
-  idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = jnp._index_to_gather(jnp.shape(x), idx,
-                                 normalize_indices=normalize_indices)
+  idx = indexing.merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
+  indexer = indexing.index_to_gather(np.shape(x), idx,
+                                     normalize_indices=normalize_indices)
 
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
   # to handle cases like zeros(0)[array([], int32)].
@@ -111,25 +125,31 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
 
   # Broadcast `y` to the slice output shape.
   y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
-  # Collapse any `None`/`jnp.newaxis` dimensions.
+  # Collapse any `None`/`np.newaxis` dimensions.
   y = jnp.squeeze(y, axis=indexer.newaxis_dims)
   if indexer.reversed_y_dims:
     y = lax.rev(y, indexer.reversed_y_dims)
+
+  if indexer.scalar_bool_dims:
+    x = lax.expand_dims(x, indexer.scalar_bool_dims)
 
   # Transpose the gather dimensions into scatter dimensions (cf.
   # lax._gather_transpose_rule)
   dnums = lax.ScatterDimensionNumbers(
     update_window_dims=indexer.dnums.offset_dims,
     inserted_window_dims=indexer.dnums.collapsed_slice_dims,
-    scatter_dims_to_operand_dims=indexer.dnums.start_index_map
+    scatter_dims_to_operand_dims=indexer.dnums.start_index_map,
+    operand_batching_dims=indexer.dnums.operand_batching_dims,
+    scatter_indices_batching_dims=indexer.dnums.start_indices_batching_dims,
   )
   out = scatter_op(
     x, indexer.gather_indices, y, dnums,
     indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
     unique_indices=indexer.unique_indices or unique_indices,
     mode=mode)
+  if indexer.scalar_bool_dims:
+    out = lax.squeeze(out, indexer.scalar_bool_dims)
   return lax_internal._convert_element_type(out, dtype, weak_type)
-
 
 
 def _get_identity(op, dtype):
@@ -141,14 +161,14 @@ def _get_identity(op, dtype):
   elif op is lax.scatter_min:
     if dtype == dtypes.bool_:
       return True
-    elif jnp.issubdtype(dtype, jnp.integer):
-      return jnp.iinfo(dtype).max
+    elif dtypes.issubdtype(dtype, np.integer):
+      return dtypes.iinfo(dtype).max
     return float('inf')
   elif op is lax.scatter_max:
     if dtype == dtypes.bool_:
       return False
-    elif jnp.issubdtype(dtype, jnp.integer):
-      return jnp.iinfo(dtype).min
+    elif dtypes.issubdtype(dtype, np.integer):
+      return dtypes.iinfo(dtype).min
     return -float('inf')
   else:
     raise ValueError(f"Unrecognized op: {op}")
@@ -158,12 +178,12 @@ def _segment_update(name: str,
                     data: ArrayLike,
                     segment_ids: ArrayLike,
                     scatter_op: Callable,
-                    num_segments: Optional[int] = None,
+                    num_segments: int | None = None,
                     indices_are_sorted: bool = False,
                     unique_indices: bool = False,
-                    bucket_size: Optional[int] = None,
-                    reducer: Optional[Callable] = None,
-                    mode: Optional[lax.GatherScatterMode] = None) -> Array:
+                    bucket_size: int | None = None,
+                    reducer: Callable | None = None,
+                    mode: lax.GatherScatterMode | str | None = None) -> Array:
   check_arraylike(name, data, segment_ids)
   mode = lax.GatherScatterMode.FILL_OR_DROP if mode is None else mode
   data = jnp.asarray(data)
@@ -171,7 +191,7 @@ def _segment_update(name: str,
   dtype = data.dtype
   if num_segments is None:
     num_segments = np.max(segment_ids) + 1
-  num_segments = core.concrete_or_error(int, num_segments, "segment_sum() `num_segments` argument.")
+  num_segments = core.concrete_dim_or_error(num_segments, "segment_sum() `num_segments` argument.")
   if num_segments is not None and num_segments < 0:
     raise ValueError("num_segments must be non-negative.")
 
@@ -198,11 +218,11 @@ def _segment_update(name: str,
 
 def segment_sum(data: ArrayLike,
                 segment_ids: ArrayLike,
-                num_segments: Optional[int] = None,
+                num_segments: int | None = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
-                bucket_size: Optional[int] = None,
-                mode: Optional[lax.GatherScatterMode] = None) -> Array:
+                bucket_size: int | None = None,
+                mode: lax.GatherScatterMode | str | None = None) -> Array:
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's `segment_sum
@@ -253,11 +273,11 @@ def segment_sum(data: ArrayLike,
 
 def segment_prod(data: ArrayLike,
                  segment_ids: ArrayLike,
-                 num_segments: Optional[int] = None,
+                 num_segments: int | None = None,
                  indices_are_sorted: bool = False,
                  unique_indices: bool = False,
-                 bucket_size: Optional[int] = None,
-                 mode: Optional[lax.GatherScatterMode] = None) -> Array:
+                 bucket_size: int | None = None,
+                 mode: lax.GatherScatterMode | str | None = None) -> Array:
   """Computes the product within segments of an array.
 
   Similar to TensorFlow's `segment_prod
@@ -267,8 +287,7 @@ def segment_prod(data: ArrayLike,
     data: an array with the values to be reduced.
     segment_ids: an array with integer dtype that indicates the segments of
       `data` (along its leading axis) to be reduced. Values can be repeated and
-      need not be sorted. Values outside of the range [0, num_segments) are
-      dropped and do not contribute to the result.
+      need not be sorted.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
@@ -278,11 +297,11 @@ def segment_prod(data: ArrayLike,
     indices_are_sorted: whether ``segment_ids`` is known to be sorted.
     unique_indices: whether `segment_ids` is known to be free of duplicates.
     bucket_size: size of bucket to group indices into. ``segment_prod`` is
-      performed on each bucket separately to improve numerical stability of
-      addition. Default ``None`` means no bucketing.
+      performed on each bucket separately to improve numerical stability.
+      Default ``None`` means no bucketing.
     mode: a :class:`jax.lax.GatherScatterMode` value describing how
       out-of-bounds indices should be handled. By default, values outside of the
-      range [0, num_segments) are dropped and do not contribute to the sum.
+      range [0, num_segments) are dropped and do not contribute to the result.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
@@ -309,11 +328,11 @@ def segment_prod(data: ArrayLike,
 
 def segment_max(data: ArrayLike,
                 segment_ids: ArrayLike,
-                num_segments: Optional[int] = None,
+                num_segments: int | None = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
-                bucket_size: Optional[int] = None,
-                mode: Optional[lax.GatherScatterMode] = None) -> Array:
+                bucket_size: int | None = None,
+                mode: lax.GatherScatterMode | str | None = None) -> Array:
   """Computes the maximum within segments of an array.
 
   Similar to TensorFlow's `segment_max
@@ -323,8 +342,7 @@ def segment_max(data: ArrayLike,
     data: an array with the values to be reduced.
     segment_ids: an array with integer dtype that indicates the segments of
       `data` (along its leading axis) to be reduced. Values can be repeated and
-      need not be sorted. Values outside of the range [0, num_segments) are
-      dropped and do not contribute to the result.
+      need not be sorted.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
@@ -337,7 +355,7 @@ def segment_max(data: ArrayLike,
       performed on each bucket separately. Default ``None`` means no bucketing.
     mode: a :class:`jax.lax.GatherScatterMode` value describing how
       out-of-bounds indices should be handled. By default, values outside of the
-      range [0, num_segments) are dropped and do not contribute to the sum.
+      range [0, num_segments) are dropped and do not contribute to the result.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
@@ -364,11 +382,11 @@ def segment_max(data: ArrayLike,
 
 def segment_min(data: ArrayLike,
                 segment_ids: ArrayLike,
-                num_segments: Optional[int] = None,
+                num_segments: int | None = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
-                bucket_size: Optional[int] = None,
-                mode: Optional[lax.GatherScatterMode] = None) -> Array:
+                bucket_size: int | None = None,
+                mode: lax.GatherScatterMode | str | None = None) -> Array:
   """Computes the minimum within segments of an array.
 
   Similar to TensorFlow's `segment_min
@@ -378,8 +396,7 @@ def segment_min(data: ArrayLike,
     data: an array with the values to be reduced.
     segment_ids: an array with integer dtype that indicates the segments of
       `data` (along its leading axis) to be reduced. Values can be repeated and
-      need not be sorted. Values outside of the range [0, num_segments) are
-      dropped and do not contribute to the result.
+      need not be sorted.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
@@ -392,7 +409,7 @@ def segment_min(data: ArrayLike,
       performed on each bucket separately. Default ``None`` means no bucketing.
     mode: a :class:`jax.lax.GatherScatterMode` value describing how
       out-of-bounds indices should be handled. By default, values outside of the
-      range [0, num_segments) are dropped and do not contribute to the sum.
+      range [0, num_segments) are dropped and do not contribute to the result.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the

@@ -24,13 +24,17 @@ import jax
 from jax._src.lib import check_jaxlib_version
 from jax._src import test_util as jtu
 
-# This is a subset of the full PEP440 pattern; for example we skip pre & post releases
+# This is a subset of the full PEP440 pattern; for example we skip post releases
 VERSION_PATTERN = re.compile(r"""
-  ^                                   # start of string
-  (?P<version>[0-9]+\.[0-9]+\.[0-9]+) # main version; like '0.4.16'
-  (?:\.dev(?P<dev>[0-9]+))?           # optional dev version; like '.dev20230908'
-  (?:\+(?P<local>[a-zA-Z0-9_]+))?     # optional local version; like '+g6643af3c3'
-  $                                   # end of string
+  ^                                    # start of string
+  (?P<version>[0-9]+\.[0-9]+\.[0-9]+)  # main version; like '0.4.16'
+  (?:
+      (?:rc(?P<rc>[0-9]+))?             # optional rc version; like 'rc1'
+      |                                 # or
+      (?:\.dev(?P<dev>[0-9]+))?         # optional dev version; like '.dev20230908'
+  )?
+  (?:\+(?P<local>[a-zA-Z0-9_.]+))?     # optional local version; like '+g6643af3c3'
+  $                                    # end of string
 """, re.VERBOSE)
 
 
@@ -61,11 +65,12 @@ def assert_no_subprocess_call():
 
 
 @contextlib.contextmanager
-def assert_subprocess_call():
+def assert_subprocess_call(stdout: bytes | None = None):
   """Run code, asserting that subprocess.Popen *is* called at least once."""
   with mock.patch("subprocess.Popen") as mock_Popen:
+    mock_Popen.return_value.communicate.return_value = (stdout, b"")
     yield
-  mock_Popen.assert_called()
+  mock_Popen.return_value.communicate.assert_called()
 
 
 class JaxVersionTest(unittest.TestCase):
@@ -103,6 +108,7 @@ class JaxVersionTest(unittest.TestCase):
     self.assertEqual(version, "1.2.3.dev4567")
     self.assertValidVersion(version)
 
+  @jtu.thread_unsafe_test()  # Setting environment variables is not thread-safe.
   @patch_jax_version("1.2.3", None)
   def testBuildVersionFromEnvironment(self):
     # This test covers build-time construction of version strings in the
@@ -126,7 +132,7 @@ class JaxVersionTest(unittest.TestCase):
       self.assertValidVersion(version)
 
     with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE=None,
-                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY="1"):
+                     JAX_NIGHTLY=None, JAXLIB_NIGHTLY="1"):
       with assert_no_subprocess_call():
         version = jax.version._get_version_for_build()
       datestring = datetime.date.today().strftime("%Y%m%d")
@@ -134,17 +140,66 @@ class JaxVersionTest(unittest.TestCase):
       self.assertValidVersion(version)
 
     with jtu.set_env(JAX_RELEASE="1", JAXLIB_RELEASE=None,
-                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
+                     JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
       with assert_no_subprocess_call():
         version = jax.version._get_version_for_build()
+      self.assertFalse(jax.version._is_prerelease())
       self.assertEqual(version, base_version)
       self.assertValidVersion(version)
 
     with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE="1",
-                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
+                     JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
       with assert_no_subprocess_call():
         version = jax.version._get_version_for_build()
+      self.assertFalse(jax.version._is_prerelease())
       self.assertEqual(version, base_version)
+      self.assertValidVersion(version)
+
+    with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE=None,
+                     JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None,
+                     JAX_CUSTOM_VERSION_SUFFIX="test"):
+      with assert_subprocess_call(stdout=b"1731433958-1c0f1076e"):
+        version = jax.version._get_version_for_build()
+      self.assertTrue(version.startswith(f"{base_version}.dev"))
+      self.assertTrue(version.endswith("test"))
+      self.assertValidVersion(version)
+
+    with jtu.set_env(
+        JAX_RELEASE=None,
+        JAXLIB_RELEASE=None,
+        JAX_NIGHTLY=None,
+        JAXLIB_NIGHTLY="1",
+        WHEEL_VERSION_SUFFIX=".dev20250101+1c0f1076erc1",
+    ):
+      with assert_no_subprocess_call():
+        version = jax.version._get_version_for_build()
+      self.assertEqual(version, f"{base_version}.dev20250101+1c0f1076erc1")
+      self.assertValidVersion(version)
+
+    with jtu.set_env(
+        JAX_RELEASE="1",
+        JAXLIB_RELEASE=None,
+        JAX_NIGHTLY=None,
+        JAXLIB_NIGHTLY=None,
+        WHEEL_VERSION_SUFFIX="rc0",
+    ):
+      with assert_no_subprocess_call():
+        version = jax.version._get_version_for_build()
+      self.assertTrue(jax.version._is_prerelease())
+      self.assertEqual(version, f"{base_version}rc0")
+      self.assertValidVersion(version)
+
+    with jtu.set_env(
+        JAX_RELEASE=None,
+        JAXLIB_RELEASE="1",
+        JAX_NIGHTLY=None,
+        JAXLIB_NIGHTLY=None,
+        WHEEL_VERSION_SUFFIX="rc0",
+    ):
+      with assert_no_subprocess_call():
+        version = jax.version._get_version_for_build()
+      self.assertTrue(jax.version._is_prerelease())
+      self.assertEqual(version, f"{base_version}rc0")
       self.assertValidVersion(version)
 
   def testVersions(self):

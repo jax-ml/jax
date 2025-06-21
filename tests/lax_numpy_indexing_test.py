@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 
 import enum
 from functools import partial
 import itertools
 import typing
-from typing import Any, Optional
+from typing import Any
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -34,7 +35,6 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import lax as lax_internal
-from jax._src.util import NumpyComplexWarning
 
 config.parse_flags_with_absl()
 
@@ -54,7 +54,7 @@ all_dtypes = default_dtypes + jtu.dtypes.boolean
 class IndexSpec(typing.NamedTuple):
   shape: tuple[int, ...]
   indexer: Any
-  out_shape: Optional[tuple[int, ...]] = None
+  out_shape: tuple[int, ...] | None = None
 
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
@@ -398,6 +398,14 @@ MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS = [
     IndexSpec(shape=(3, 4), indexer=(Ellipsis, np.array(1, dtype=np.int32)),
               out_shape=(3,)),
   ]),
+  ("EllipsisWithArrayIndices", [
+    IndexSpec(shape=(3, 4, 5), indexer=(np.array([0, 1]), ..., np.array([0, 1])),
+              out_shape=(2, 4)),
+    IndexSpec(shape=(3, 4, 5), indexer=(slice(None), np.array([0, 1]), ..., np.array([0, 1])),
+              out_shape=(2, 3)),
+    IndexSpec(shape=(3, 4, 5), indexer=(slice(None), ..., np.array([0, 1]), np.array([0, 1])),
+              out_shape=(3, 2)),
+  ]),
 ]
 
 
@@ -495,7 +503,7 @@ class IndexingTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op_idx, args_maker)
 
   def testIndexApplyBatchingBug(self):
-    # https://github.com/google/jax/issues/16655
+    # https://github.com/jax-ml/jax/issues/16655
     arr = jnp.array([[1, 2, 3, 4, 5, 6]])
     ind = jnp.array([3])
     func = lambda a, i: a.at[i].apply(lambda x: x - 1)
@@ -504,7 +512,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, expected)
 
   def testIndexUpdateScalarBug(self):
-    # https://github.com/google/jax/issues/14923
+    # https://github.com/jax-ml/jax/issues/14923
     a = jnp.arange(10.)
     out = a.at[0].apply(jnp.cos)
     self.assertArraysEqual(out, a.at[0].set(1))
@@ -834,7 +842,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testBoolean1DIndexingWithEllipsis(self):
-    # Regression test for https://github.com/google/jax/issues/8412
+    # Regression test for https://github.com/jax-ml/jax/issues/8412
     x = np.arange(24).reshape(4, 3, 2)
     idx = (..., np.array([True, False]))
     ans = jnp.array(x)[idx]
@@ -842,7 +850,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testBoolean1DIndexingWithEllipsis2(self):
-    # Regression test for https://github.com/google/jax/issues/9050
+    # Regression test for https://github.com/jax-ml/jax/issues/9050
     x = np.arange(3)
     idx = (..., np.array([True, False, True]))
     ans = jnp.array(x)[idx]
@@ -874,15 +882,6 @@ class IndexingTest(jtu.JaxTestCase):
     x = np.zeros(3)
     i = np.array([True, True, False])
     self.assertRaises(IndexError, lambda: jax.jit(lambda x, i: x[i])(x, i))
-
-  def testScalarBooleanIndexingNotImplemented(self):
-    msg = "JAX arrays do not support boolean scalar indices"
-    with self.assertRaisesRegex(TypeError, msg):
-      jnp.arange(4)[True]
-    with self.assertRaisesRegex(TypeError, msg):
-      jnp.arange(4)[False]
-    with self.assertRaisesRegex(TypeError, msg):
-      jnp.arange(4)[..., True]
 
   def testIssue187(self):
     x = jnp.ones((5, 5))
@@ -926,6 +925,20 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
     self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
 
+    # Indexing with `Ellipsis` is not lowered to `gather` ...
+    jaxpr = jax.make_jaxpr(lambda x: x[..., 0])(jnp.ones((3, 4, 5)))
+    self.assertLen((jaxpr.jaxpr.eqns), 2)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
+    # ... even when the ellipsis expands to no dimensions.
+    jaxpr = jax.make_jaxpr(lambda x: x[..., 0:1])(jnp.ones((3,)))
+    self.assertLen((jaxpr.jaxpr.eqns), 1)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.slice_p)
+    jaxpr = jax.make_jaxpr(lambda x: x[0:1, ...])(jnp.ones((3,)))
+    self.assertLen((jaxpr.jaxpr.eqns), 1)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.slice_p)
+
     # Simple reverses lower to lax.rev_p
     jaxpr = jax.make_jaxpr(lambda x: x[:, ::-1])(jnp.ones((3, 4)))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
@@ -938,7 +951,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
 
   def testTrivialGatherIsntGenerated(self):
-    # https://github.com/google/jax/issues/1621
+    # https://github.com/jax-ml/jax/issues/1621
     jaxpr = jax.make_jaxpr(lambda x: x[:, None])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertNotIn('gather', str(jaxpr))
@@ -990,14 +1003,14 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testBooleanIndexingShapeMismatch(self):
-    # Regression test for https://github.com/google/jax/issues/7329
+    # Regression test for https://github.com/jax-ml/jax/issues/7329
     x = jnp.arange(4)
     idx = jnp.array([True, False])
     with self.assertRaisesRegex(IndexError, "boolean index did not match shape.*"):
       x[idx]
 
   def testBooleanIndexingWithNone(self):
-    # Regression test for https://github.com/google/jax/issues/18542
+    # Regression test for https://github.com/jax-ml/jax/issues/18542
     x = jnp.arange(6).reshape(2, 3)
     idx = (None, jnp.array([True, False]))
     ans = x[idx]
@@ -1005,7 +1018,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   def testBooleanIndexingWithNoneAndEllipsis(self):
-    # Regression test for https://github.com/google/jax/issues/18542
+    # Regression test for https://github.com/jax-ml/jax/issues/18542
     x = jnp.arange(6).reshape(2, 3)
     mask = jnp.array([True, False, False])
     ans = x[None, ..., mask]
@@ -1013,7 +1026,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   def testBooleanIndexingWithEllipsisAndNone(self):
-    # Regression test for https://github.com/google/jax/issues/18542
+    # Regression test for https://github.com/jax-ml/jax/issues/18542
     x = jnp.arange(6).reshape(2, 3)
     mask = jnp.array([True, False, False])
     ans = x[..., None, mask]
@@ -1032,6 +1045,74 @@ class IndexingTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @parameterized.parameters(
+      [(3,), (0,)],
+      [(3, 4), (0,)],
+      [(3, 4), (0, 4)],
+      [(3, 4), (3, 0)],
+      [(3, 4, 5), (3, 0)],
+  )
+  def testEmptyBooleanIndexing(self, x_shape, m_shape):
+    # Regression test for https://github.com/jax-ml/jax/issues/22886
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(x_shape, np.int32), np.empty(m_shape, dtype=bool)]
+
+    np_fun = lambda x, m: np.asarray(x)[np.asarray(m)]
+    jnp_fun = lambda x, m: jnp.asarray(x)[jnp.asarray(m)]
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      shape=[(2, 3, 4, 5)],
+      idx=[
+        np.index_exp[True],
+        np.index_exp[False],
+        np.index_exp[..., True],
+        np.index_exp[..., False],
+        np.index_exp[0, :2, True],
+        np.index_exp[0, :2, False],
+        np.index_exp[:2, 0, True],
+        np.index_exp[:2, 0, False],
+        np.index_exp[:2, np.array([0, 2]), True],
+        np.index_exp[np.array([1, 0]), :, True],
+        np.index_exp[True, :, True, :, np.array(True)],
+      ]
+  )
+  def testScalarBooleanIndexing(self, shape, idx):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.int32)]
+    np_fun = lambda x: np.asarray(x)[idx]
+    jnp_fun = lambda x: jnp.asarray(x)[idx]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      shape=[(2, 3, 4, 5)],
+      update_ndim=[0, 1, 2],
+      idx=[
+        np.index_exp[True],
+        np.index_exp[False],
+        np.index_exp[..., True],
+        np.index_exp[..., False],
+        np.index_exp[0, :2, True],
+        np.index_exp[0, :2, False],
+        np.index_exp[:2, 0, True],
+        np.index_exp[:2, 0, False],
+        np.index_exp[:2, np.array([0, 2]), True],
+        np.index_exp[np.array([1, 0]), :, True],
+        np.index_exp[True, :, True, :, np.array(True)],
+      ]
+  )
+  def testScalarBoolUpdate(self, shape, idx, update_ndim):
+    update_shape = np.zeros(shape)[idx].shape[-update_ndim:]
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.int32), rng(update_shape, np.int32)]
+    def np_fun(x, update):
+      x = np.array(x, copy=True)
+      x[idx] = update
+      return x
+    jnp_fun = lambda x, update: jnp.asarray(x).at[idx].set(update)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
   def testFloatIndexingError(self):
     BAD_INDEX_TYPE_ERROR = "Indexer must have integer or boolean type, got indexer with type"
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
@@ -1046,6 +1127,10 @@ class IndexingTest(jtu.JaxTestCase):
       jnp.zeros(2).at[0.].add(1.)
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
       jnp.zeros(2).at[0.].set(1.)
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      jnp.zeros((2, 2))[jnp.arange(2), 1.0]
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      jnp.zeros((2, 2))[jnp.arange(2), 1 + 1j]
 
   def testStrIndexingError(self):
     msg = "JAX does not support string indexing"
@@ -1054,7 +1139,48 @@ class IndexingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       jnp.zeros((2, 3))[:, 'abc']
 
-  def testIndexOutOfBounds(self):  # https://github.com/google/jax/issues/2245
+  @jtu.sample_product(
+    mode=["promise_in_bounds", "fill", "clip", "drop"],
+    wrap_negative_indices=[True, False],
+    shape=[(5,), (10,)],
+    idx_shape=[(5,)],
+  )
+  def testWrapNegativeIndices1D(self, mode, wrap_negative_indices, shape, idx_shape):
+    """Test the behavior of the wrap_negative_indices parameter in array.at[...].get()"""
+    fill_value = 99
+
+    data_rng = jtu.rand_default(self.rng())
+    idx_rng = jtu.rand_uniform(self.rng(), low=-12, high=12)
+
+    args_maker = lambda: [data_rng(shape, 'float32'), idx_rng(idx_shape, 'int32')]
+
+    def jnp_fun(data, idx):
+      return jnp.array(data).at[idx].get(
+        mode=mode,
+        fill_value=fill_value,
+        wrap_negative_indices=wrap_negative_indices)
+
+    def np_fun(data, idx):
+      if wrap_negative_indices:
+        idx = np.where(idx < 0, idx + len(data), idx)
+      out_of_bound = (idx < 0) | (idx >= len(data))
+      safe_idx = np.where(out_of_bound, 0, idx)
+      result = data[safe_idx]
+      if mode in ["fill", "drop"]:
+        result = np.where(out_of_bound, fill_value, result)
+      elif mode in ["promise_in_bounds", "clip"]:
+        result = np.where(idx < 0, data[0],
+                          np.where(idx >= len(data), data[-1],
+                                   result))
+      else:
+        raise ValueError(f"Unrecognized mode {mode!r}")
+      return result
+
+    tol = 1E-4 if jtu.test_device_matches(["tpu"]) else None
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, tol=tol)
+
+  def testIndexOutOfBounds(self):  # https://github.com/jax-ml/jax/issues/2245
     x = jnp.arange(5, dtype=jnp.int32) + 1
     self.assertAllClose(x, x[:10])
 
@@ -1100,7 +1226,7 @@ class IndexingTest(jtu.JaxTestCase):
       out = x.at[0].set(y)
       self.assertEqual(x.dtype, out.dtype)
 
-    @jtu.ignore_warning(category=NumpyComplexWarning,
+    @jtu.ignore_warning(category=np.exceptions.ComplexWarning,
                         message="Casting complex values to real")
     def _check_warns(x_type, y_type, msg):
       with self.assertWarnsRegex(FutureWarning, msg):
@@ -1157,8 +1283,11 @@ class IndexingTest(jtu.JaxTestCase):
   def testWrongNumberOfIndices(self):
     with self.assertRaisesRegex(
         IndexError,
-        "Too many indices for array: array has ndim of 1, "
-        "but was indexed with 2 non-None/Ellipsis indices"):
+        "Too many indices: 0-dimensional array indexed with 1 regular index."):
+      jnp.array(1)[0]
+    with self.assertRaisesRegex(
+        IndexError,
+        "Too many indices: 1-dimensional array indexed with 2 regular indices."):
       jnp.zeros(3)[:, 5]
 
 
@@ -1183,7 +1312,7 @@ def _can_cast(from_, to):
 
 
 def _compatible_dtypes(op, dtype, inexact=False):
-  if op == UpdateOps.ADD:
+  if op == UpdateOps.ADD or op == UpdateOps.SUB:
     return [dtype]
   elif inexact:
     return [dt for dt in float_dtypes if _can_cast(dt, dtype)]
@@ -1194,40 +1323,52 @@ def _compatible_dtypes(op, dtype, inexact=False):
 class UpdateOps(enum.Enum):
   UPDATE = 0
   ADD = 1
-  MUL = 2
-  DIV = 3
-  POW = 4
-  MIN = 5
-  MAX = 6
+  SUB = 2
+  MUL = 3
+  DIV = 4
+  POW = 5
+  MIN = 6
+  MAX = 7
 
   def np_fn(op, indexer, x, y):
     x = x.copy()
-    x[indexer] = {
-      UpdateOps.UPDATE: lambda: y,
-      UpdateOps.ADD: lambda: x[indexer] + y,
-      UpdateOps.MUL: lambda: x[indexer] * y,
-      UpdateOps.DIV: jtu.ignore_warning(category=RuntimeWarning)(
-        lambda: x[indexer] / y.astype(x.dtype)),
-      UpdateOps.POW: jtu.ignore_warning(category=RuntimeWarning)(
-        lambda: x[indexer] ** y.astype(x.dtype)),
-      UpdateOps.MIN: lambda: np.minimum(x[indexer], y),
-      UpdateOps.MAX: lambda: np.maximum(x[indexer], y),
-    }[op]()
+    if op == UpdateOps.UPDATE:
+      x[indexer] = y
+    elif op == UpdateOps.ADD:
+      np.add.at(x, indexer, y)
+    elif op == UpdateOps.SUB:
+      np.subtract.at(x, indexer, y)
+    elif op == UpdateOps.MUL:
+      np.multiply.at(x, indexer, y)
+    elif op == UpdateOps.DIV:
+      with jtu.ignore_warning(category=RuntimeWarning):
+        np.divide.at(x, indexer, y)
+    elif op == UpdateOps.POW:
+      with jtu.ignore_warning(category=RuntimeWarning):
+        np.power.at(x, indexer, y)
+    elif op == UpdateOps.MIN:
+      np.minimum.at(x, indexer, y.astype(x.dtype))
+    elif op == UpdateOps.MAX:
+      np.maximum.at(x, indexer, y.astype(x.dtype))
+    else:
+      raise ValueError(f"{op=}")
     return x
 
   def jax_fn(op, indexer, x, y, indices_are_sorted=False,
-             unique_indices=False, mode=None):
+             unique_indices=False, mode=None, wrap_negative_indices=True):
     x = jnp.array(x)
     return {
       UpdateOps.UPDATE: x.at[indexer].set,
       UpdateOps.ADD: x.at[indexer].add,
+      UpdateOps.SUB: x.at[indexer].subtract,
       UpdateOps.MUL: x.at[indexer].multiply,
       UpdateOps.DIV: x.at[indexer].divide,
       UpdateOps.POW: x.at[indexer].power,
       UpdateOps.MIN: x.at[indexer].min,
       UpdateOps.MAX: x.at[indexer].max,
     }[op](y, indices_are_sorted=indices_are_sorted,
-          unique_indices=unique_indices, mode=mode)
+          unique_indices=unique_indices, mode=mode,
+          wrap_negative_indices=wrap_negative_indices)
 
   def dtypes(op):
     if op == UpdateOps.UPDATE:
@@ -1341,6 +1482,52 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       self._CompileAndCheck(jax_fn, args_maker)
 
   @jtu.sample_product(
+    op=UpdateOps,
+    mode=["fill", "clip"],
+    wrap_negative_indices=[True, False],
+    shape=[(5,), (10,)],
+    update_shape=[(5,)],
+  )
+  def testWrapNegativeIndices1D(self, op, mode, wrap_negative_indices, shape, update_shape):
+    rng = jtu.rand_default(self.rng())
+    idx_rng = jtu.rand_unique_int(self.rng(), high=shape[0])
+
+    def args_maker():
+      data = rng(shape, 'float32').round(1)
+      update = rng(update_shape, 'float32').round(1)
+      # we need indices to be unique, so we generate unique values in [0, N)
+      # and then subtract N from half of them. To test out-of-bound behavior
+      # we push the bottom and top index out-of-bounds
+      idx = idx_rng(update_shape, 'int32')
+      idx = np.where(rng(update_shape, bool), idx, idx - shape[0])
+      idx[idx == shape[0] - 1] = shape[0] + 2  # out-of-bound positive
+      idx[idx == -shape[0]] = -(shape[0] + 2)  # out-of-bound negative
+      return data, idx, update
+
+    def jnp_fun(data, idx, values):
+      return UpdateOps.jax_fn(op, idx, data, values,
+                              mode=mode,
+                              wrap_negative_indices=wrap_negative_indices)
+
+    def np_fun(data, idx, values):
+      if wrap_negative_indices:
+        idx = np.where(idx < 0, idx + len(data), idx)
+      if mode in ["fill", "drop", "promise_in_bounds"]:
+        ok = (idx >= 0) & (idx < len(data))
+        idx = idx[ok]
+        values = values[ok]
+      elif mode == "clip":
+        idx = np.where(idx < 0, 0, idx)
+        idx = np.where(idx >= len(data), len(data) - 1, idx)
+      else:
+        raise ValueError(f"Unrecognized mode {mode!r}")
+      return UpdateOps.np_fn(op, idx, data, values)
+
+    tol = 1E-4 if jtu.test_device_matches(["tpu"]) else None
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, tol=tol)
+
+  @jtu.sample_product(
     [dict(name=name, mode=mode, shape=shape, indexer=indexer,
           update_shape=update_shape)
      for mode in [None] + MODES
@@ -1351,7 +1538,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
      for update_shape in _broadcastable_shapes(index_shape)
     ],
     [dict(op=op, dtype=dtype, update_dtype=update_dtype)
-     for op in [UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE]
+     for op in [UpdateOps.ADD, UpdateOps.SUB, UpdateOps.MUL, UpdateOps.UPDATE]
      for dtype in float_dtypes
      for update_dtype in _compatible_dtypes(op, dtype, inexact=True)
     ],
@@ -1378,8 +1565,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       ],
       [dict(op=op, dtype=dtype, update_dtype=update_dtype)
       for op in (
-        [UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE] if unique_indices
-        else [UpdateOps.ADD])
+        [UpdateOps.ADD, UpdateOps.SUB, UpdateOps.MUL, UpdateOps.UPDATE]
+        if unique_indices
+        else [UpdateOps.ADD, UpdateOps.SUB])
       for dtype in float_dtypes
       for update_dtype in _compatible_dtypes(op, dtype, inexact=True)
       ],
@@ -1444,7 +1632,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     expected = jnp.array([5, 2, 3, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    # test with negative segment ids and without without explicit num_segments
+    # test with negative segment ids and without explicit num_segments
     # such as num_segments is defined by the smaller index.
     segment_ids = jnp.array([3, 3, 3, 4, 5, 5, -7, -6])
     ans = ops.segment_sum(data, segment_ids)
@@ -1544,7 +1732,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   def testIndexDtypeError(self):
-    # https://github.com/google/jax/issues/2795
+    # https://github.com/jax-ml/jax/issues/2795
     jnp.array(1)  # get rid of startup warning
     with self.assertNoWarnings():
       jnp.zeros(5).at[::2].set(1)
@@ -1578,13 +1766,13 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       x.at[normalize(idx)].set(0)
 
   def testIndexedUpdateAliasingBug(self):
-    # https://github.com/google/jax/issues/7461
+    # https://github.com/jax-ml/jax/issues/7461
     fn = lambda x: x.at[1:].set(1 + x[:-1])
     y = jnp.zeros(8)
     self.assertArraysEqual(fn(y), jax.jit(fn)(y))
 
   def testScatterValuesCastToTargetDType(self):
-    # https://github.com/google/jax/issues/15505
+    # https://github.com/jax-ml/jax/issues/15505
     a = jnp.zeros(1, dtype=jnp.uint32)
     val = 2**32 - 1  # too large for int32
 
@@ -1593,6 +1781,18 @@ class IndexedUpdateTest(jtu.JaxTestCase):
 
     c = a.at[0].set(val)
     self.assertEqual(int(c[0]), val)
+
+  def testGradOfVmapOfScatter(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/25878
+    def f(x, i):
+      return x.at[i].get(mode='clip')
+
+    x = jnp.array([1.0])
+    i = jnp.array([1])  # out-of-bound index
+    expected = jnp.array([[1.0]])
+
+    self.assertArraysEqual(jax.jacrev(f)(x, i), expected)
+    self.assertArraysEqual(jax.jacrev(jax.vmap(f, (None, 0)))(x, i), expected)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

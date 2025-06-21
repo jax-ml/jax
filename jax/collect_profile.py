@@ -11,26 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from __future__ import annotations
+
 import argparse
 import gzip
 import os
 import pathlib
 import tempfile
 
-from typing import Optional
-
 # pytype: disable=import-error
 from jax._src import profiler as jax_profiler
 try:
-  from tensorflow.python.profiler import profiler_v2 as profiler
-  from tensorflow.python.profiler import profiler_client
-except ImportError:
-  raise ImportError("This script requires `tensorflow` to be installed.")
-try:
-  from tensorboard_plugin_profile.convert import raw_to_tool_data as convert
+  from xprof.convert import _pywrap_profiler_plugin
+  from xprof.convert import raw_to_tool_data as convert
 except ImportError:
   raise ImportError(
-      "This script requires `tensorboard_plugin_profile` to be installed.")
+      "This script requires `xprof` to be installed.")
 # pytype: enable=import-error
 
 
@@ -65,16 +62,16 @@ parser.add_argument("--python_tracer_level", default=1,
                     help="Profiler Python tracer level", type=int)
 
 def collect_profile(port: int, duration_in_ms: int, host: str,
-                    log_dir: Optional[str], host_tracer_level: int,
+                    log_dir: os.PathLike | str | None, host_tracer_level: int,
                     device_tracer_level: int, python_tracer_level: int,
                     no_perfetto_link: bool):
-  options = profiler.ProfilerOptions(
-      host_tracer_level=host_tracer_level,
-      device_tracer_level=device_tracer_level,
-      python_tracer_level=python_tracer_level,
-  )
+  options = {
+      "host_tracer_level": host_tracer_level,
+      "device_tracer_level": device_tracer_level,
+      "python_tracer_level": python_tracer_level,
+  }
   log_dir_ = pathlib.Path(log_dir if log_dir is not None else tempfile.mkdtemp())
-  profiler_client.trace(
+  _pywrap_profiler_plugin.trace(
       f"{host}:{port}",
       str(log_dir_),
       duration_in_ms,
@@ -90,13 +87,13 @@ def collect_profile(port: int, duration_in_ms: int, host: str,
                    in root_trace_folder.iterdir()]
   latest_folder = max(trace_folders, key=os.path.getmtime)
   xplane = next(latest_folder.glob("*.xplane.pb"))
-  result, _ = convert.xspace_to_tool_data([xplane], "trace_viewer^", {})
+  result, _ = convert.xspace_to_tool_data([xplane], "trace_viewer", {})
 
   with gzip.open(str(latest_folder / "remote.trace.json.gz"), "wb") as fp:
     fp.write(result.encode("utf-8"))
 
   if not no_perfetto_link:
-    path = jax_profiler._write_perfetto_trace_file(str(log_dir_))
+    path = jax_profiler._write_perfetto_trace_file(log_dir_)
     jax_profiler._host_perfetto_trace_file(path)
 
 def main(args):

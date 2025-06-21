@@ -13,9 +13,14 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.scipy.stats.expon import (
+  cdf as cdf,
+  logcdf as logcdf,
   logpdf as logpdf,
+  logsf as logsf,
   pdf as pdf,
+  ppf as ppf,
+  sf as sf,
 )

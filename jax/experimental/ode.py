@@ -28,8 +28,10 @@ Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 
 from functools import partial
 import operator as op
+from collections.abc import Callable
 
 import jax
+from jax import api_util
 import jax.numpy as jnp
 from jax._src import core
 from jax import custom_derivatives
@@ -44,15 +46,16 @@ map = safe_map
 zip = safe_zip
 
 
-def ravel_first_arg(f, unravel):
-  return ravel_first_arg_(lu.wrap_init(f), unravel).call_wrapped
+def ravel_first_arg(f: Callable, unravel, debug_info: core.DebugInfo):
+  return ravel_first_arg_(lu.wrap_init(f, debug_info=debug_info),
+                          unravel).call_wrapped
 
-@lu.transformation
-def ravel_first_arg_(unravel, y_flat, *args):
+@lu.transformation2
+def ravel_first_arg_(f, unravel, y_flat, *args):
   y = unravel(y_flat)
-  ans = yield (y,) + args, {}
+  ans = f(y, *args)
   ans_flat, _ = ravel_pytree(ans)
-  yield ans_flat
+  return ans_flat
 
 def interp_fit_dopri(y0, y1, k, dt):
   # Fit a polynomial to the results of a Runge-Kutta step.
@@ -179,9 +182,10 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf, hmax=jn
   return _odeint_wrapper(converted, rtol, atol, mxstep, hmax, y0, t, *args, *consts)
 
 @partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
-def _odeint_wrapper(func, rtol, atol, mxstep, hmax, y0, ts, *args):
+def _odeint_wrapper(func: Callable, rtol, atol, mxstep, hmax, y0, ts, *args):
   y0, unravel = ravel_pytree(y0)
-  func = ravel_first_arg(func, unravel)
+  debug = api_util.debug_info("odeint", func, args, {})
+  func = ravel_first_arg(func, unravel, debug)
   out = _odeint(func, rtol, atol, mxstep, hmax, y0, ts, *args)
   return jax.vmap(unravel)(out)
 
@@ -201,7 +205,7 @@ def _odeint(func, rtol, atol, mxstep, hmax, y0, ts, *args):
       next_t = t + dt
       error_ratio = mean_error_ratio(next_y_error, rtol, atol, y, next_y)
       new_interp_coeff = interp_fit_dopri(y, next_y, k, dt)
-      dt = jnp.clip(optimal_step_size(dt, error_ratio), a_min=0., a_max=hmax)
+      dt = jnp.clip(optimal_step_size(dt, error_ratio), min=0., max=hmax)
 
       new = [i + 1, next_y, next_f, next_t, dt,      t, new_interp_coeff]
       old = [i + 1,      y,      f,      t, dt, last_t,     interp_coeff]
@@ -210,11 +214,11 @@ def _odeint(func, rtol, atol, mxstep, hmax, y0, ts, *args):
     _, *carry = lax.while_loop(cond_fun, body_fun, [0] + carry)
     _, _, t, _, last_t, interp_coeff = carry
     relative_output_time = (target_t - last_t) / (t - last_t)
-    y_target = jnp.polyval(interp_coeff, relative_output_time.astype(interp_coeff.dtype))
+    y_target = jnp.polyval(interp_coeff, relative_output_time.astype(interp_coeff.dtype))  # pytype: disable=attribute-error
     return carry, y_target
 
   f0 = func_(y0, ts[0])
-  dt = jnp.clip(initial_step_size(func_, ts[0], y0, 4, rtol, atol, f0), a_min=0., a_max=hmax)
+  dt = jnp.clip(initial_step_size(func_, ts[0], y0, 4, rtol, atol, f0), min=0., max=hmax)
   interp_coeff = jnp.array([y0] * 5)
   init_carry = [y0, f0, ts[0], dt, ts[0], interp_coeff]
   _, ys = lax.scan(scan_fun, init_carry, ts[1:])

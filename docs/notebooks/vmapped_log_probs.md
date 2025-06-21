@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.15.2
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -14,9 +14,11 @@ kernelspec:
 
 +++ {"id": "6umP1IKf4Dg6"}
 
-# Autobatching for Bayesian Inference
+# Autobatching for Bayesian inference
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/vmapped_log_probs.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/vmapped_log_probs.ipynb)
+<!--* freshness: { reviewed: '2024-04-08' } *-->
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/vmapped_log_probs.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/notebooks/vmapped_log_probs.ipynb)
 
 This notebook demonstrates a simple Bayesian inference example where autobatching makes user code easier to write, easier to read, and less likely to include bugs.
 
@@ -25,17 +27,10 @@ Inspired by a notebook by @davmre.
 ```{code-cell} ipython3
 :id: 8RZDkfbV3zdR
 
-import functools
-import itertools
-import re
-import sys
-import time
-
-from matplotlib.pyplot import *
+import matplotlib.pyplot as plt
 
 import jax
 
-from jax import lax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import random
@@ -190,7 +185,7 @@ batched_log_joint = jax.jit(jax.vmap(log_joint))
 def elbo(beta_loc, beta_log_scale, epsilon):
     beta_sample = beta_loc + jnp.exp(beta_log_scale) * epsilon
     return jnp.mean(batched_log_joint(beta_sample), 0) + jnp.sum(beta_log_scale - 0.5 * np.log(2*np.pi))
- 
+
 elbo = jax.jit(elbo)
 elbo_val_and_grad = jax.jit(jax.value_and_grad(elbo, argnums=(0, 1)))
 ```
@@ -210,7 +205,7 @@ def normal_sample(key, shape):
 
 normal_sample = jax.jit(normal_sample, static_argnums=(1,))
 
-key = random.PRNGKey(10003)
+key = random.key(10003)
 
 beta_loc = jnp.zeros(num_features, jnp.float32)
 beta_log_scale = jnp.zeros(num_features, jnp.float32)
@@ -238,19 +233,13 @@ Coverage isn't quite as good as we might like, but it's not bad, and nobody said
 :id: zt1NBLoVHtOG
 :outputId: fb159795-e6e7-497c-e501-9933ec761af4
 
-figure(figsize=(7, 7))
-plot(true_beta, beta_loc, '.', label='Approximated Posterior Means')
-plot(true_beta, beta_loc + 2*jnp.exp(beta_log_scale), 'r.', label='Approximated Posterior $2\sigma$ Error Bars')
-plot(true_beta, beta_loc - 2*jnp.exp(beta_log_scale), 'r.')
+plt.figure(figsize=(7, 7))
+plt.plot(true_beta, beta_loc, '.', label='Approximated Posterior Means')
+plt.plot(true_beta, beta_loc + 2*jnp.exp(beta_log_scale), 'r.', label=r'Approximated Posterior $2\sigma$ Error Bars')
+plt.plot(true_beta, beta_loc - 2*jnp.exp(beta_log_scale), 'r.')
 plot_scale = 3
-plot([-plot_scale, plot_scale], [-plot_scale, plot_scale], 'k')
-xlabel('True beta')
-ylabel('Estimated beta')
-legend(loc='best')
-```
-
-```{code-cell} ipython3
-:id: _bXdOlvUEJl0
-
-
+plt.plot([-plot_scale, plot_scale], [-plot_scale, plot_scale], 'k')
+plt.xlabel('True beta')
+plt.ylabel('Estimated beta')
+plt.legend(loc='best')
 ```

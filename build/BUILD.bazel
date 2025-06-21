@@ -1,0 +1,94 @@
+# Copyright 2024 The Jax Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+load("@python//:defs.bzl", "compile_pip_requirements")
+load("@python_version_repo//:py_version.bzl", "REQUIREMENTS")
+load("@rules_python//python:py_library.bzl", "py_library")
+load("//jaxlib:jax.bzl", "all_py_deps")
+
+licenses(["notice"])
+
+COMMON_REQUIREMENTS = [
+    "requirements.in",
+    "test-requirements.txt",
+]
+
+# It isn't possible to constraint based on free-threaded vs non-free threaded
+# in a requirements file. So we do it by having two separate sets of requirement
+# files and two sets of build rules.
+FREETHREADING_REQUIREMENTS = COMMON_REQUIREMENTS + [
+    "freethreading-requirements.txt",
+]
+NON_FREETHREADING_REQUIREMENTS = COMMON_REQUIREMENTS + [
+    "nonfreethreading-requirements.txt",
+]
+
+COMBOS = [
+    ("", NON_FREETHREADING_REQUIREMENTS),
+    ("_ft", FREETHREADING_REQUIREMENTS),
+]
+
+[
+    compile_pip_requirements(
+        name = "requirements" + suffix,
+        extra_args = [
+            "--allow-unsafe",
+            "--build-isolation",
+            "--rebuild",
+        ],
+        srcs = requirements,
+        requirements_txt = REQUIREMENTS,
+        generate_hashes = True,
+    )
+    for suffix, requirements in COMBOS
+]
+
+[
+    compile_pip_requirements(
+        name = "requirements_nightly" + suffix,
+        extra_args = [
+            "--allow-unsafe",
+            "--build-isolation",
+            "--extra-index-url=https://pypi.anaconda.org/scientific-python-nightly-wheels/simple",
+            "--pre",
+            "--upgrade",
+        ],
+        srcs = requirements,
+        requirements_txt = REQUIREMENTS,
+        generate_hashes = False,
+    )
+    for suffix, requirements in COMBOS
+]
+
+[
+    compile_pip_requirements(
+        name = "requirements_dev" + suffix,
+        extra_args = [
+            "--allow-unsafe",
+            "--build-isolation",
+            "--upgrade",
+            "--rebuild",
+        ],
+        srcs = requirements,
+        requirements_txt = REQUIREMENTS,
+        generate_hashes = False,
+    )
+    for suffix, requirements in COMBOS
+]
+
+py_library(
+    name = "all_py_deps",
+    deps = all_py_deps(["zstandard", "tensorstore"]),
+)

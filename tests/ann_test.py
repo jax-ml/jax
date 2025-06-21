@@ -23,9 +23,7 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 
-from jax import config
-
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 ignore_jit_of_pmap_warning = partial(
     jtu.ignore_warning,message=".*jit-of-pmap.*")
@@ -181,7 +179,7 @@ class AnnTest(jtu.JaxTestCase):
 
 
   def test_vmap_after(self):
-    batch = 4
+    batch = 8
     qy_size = 128
     db_size = 1024
     feature_dim = 32

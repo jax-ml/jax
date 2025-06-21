@@ -15,25 +15,26 @@
 import collections
 from functools import partial
 import operator
+from typing import Any
+from collections.abc import Callable
 
-import jax
-from jax.tree_util import (tree_flatten, treedef_children, tree_leaves,
-                           tree_unflatten, treedef_tuple)
 from jax._src import ad_util
+from jax._src import api
+from jax._src import api_util
 from jax._src import core
+from jax._src import custom_derivatives
 from jax._src import linear_util as lu
-from jax._src.core import raise_to_shaped
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
-from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
+from jax._src.tree_util import (tree_flatten, treedef_children, tree_leaves,
+                                tree_unflatten, treedef_tuple)
 from jax._src.util import split_list, safe_map
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
-    _abstractify,
     _check_tree,
     _initial_style_jaxpr,
     )
@@ -49,8 +50,12 @@ def _split_root_args(args, const_lengths):
 
 
 @api_boundary
-def custom_root(f, initial_guess, solve, tangent_solve, has_aux=False):
-  """Differentiably solve for a roots of a function.
+def custom_root(f: Callable,
+                initial_guess: Any,
+                solve: Callable[[Callable, Any], Any],
+                tangent_solve: Callable[[Callable, Any], Any],
+                has_aux=False):
+  """Differentiably solve for the roots of a function.
 
   This is a low-level routine, mostly intended for internal use in JAX.
   Gradients of custom_root() are defined with respect to closed-over variables
@@ -88,23 +93,32 @@ def custom_root(f, initial_guess, solve, tangent_solve, has_aux=False):
     implicit differentiation assuming ``f(solve(f, initial_guess)) == 0``.
   """
   guess_flat, in_args_tree = tree_flatten((initial_guess,))
-  guess_avals = tuple(_map(_abstractify, guess_flat))
+  guess_avals = tuple(_map(core.get_aval, guess_flat))
+  f_debug = api_util.debug_info("custom_root", f, (initial_guess,), {})
   f_jaxpr, f_consts, out_tree = _initial_style_jaxpr(
-      f, in_args_tree, guess_avals)
+      f, in_args_tree, guess_avals, f_debug)
 
   in_tree, = treedef_children(in_args_tree)
   _check_tree("f", "initial_guess", out_tree, in_tree, False)
 
+  solve_debug = api_util.debug_info("custom_root solve", solve,
+                                    (f, initial_guess), {},
+                                    static_argnums=(0,))
   solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
-      partial(solve, f), in_args_tree, guess_avals)
+      partial(solve, f), in_args_tree, guess_avals, solve_debug)
   _check_tree("solve", "initial_guess", solution_tree, in_tree, has_aux)
 
   def linearize_and_solve(x, b):
-    unchecked_zeros, f_jvp = jax.linearize(f, x)
+    unchecked_zeros, f_jvp = api.linearize(f, x)
     return tangent_solve(f_jvp, b)
 
+  tangent_solve_debug = api_util.debug_info("custom_root tangent_solve",
+                                            tangent_solve,
+                                            (f, initial_guess), {},
+                                            static_argnums=(0,))
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
-      linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2)
+      linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2,
+      tangent_solve_debug)
   _check_tree("tangent_solve", "x", out_tree, in_tree, False)
 
   all_consts = [f_consts, solve_consts, l_and_s_consts]
@@ -116,7 +130,7 @@ def custom_root(f, initial_guess, solve, tangent_solve, has_aux=False):
   return tree_unflatten(solution_tree, solution_flat)
 
 
-@partial(jax.custom_jvp, nondiff_argnums=(0, 1))
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0, 1))
 def _custom_root(const_lengths, jaxprs, *args):
   params, initial_guess = _split_root_args(args, const_lengths)
   solution = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + initial_guess))
@@ -146,13 +160,14 @@ def _root_jvp(const_lengths, jaxprs, primals, tangents):
   linearize_and_solve = partial(
       core.jaxpr_as_fun(jaxprs.l_and_s), *params.l_and_s)
   f_at_solution = lambda *params: f(*params, *solution)
-  _, rhs = ad.jvp(lu.wrap_init(f_at_solution)).call_wrapped(
+  _, rhs = ad.jvp(lu.wrap_init(f_at_solution,
+                               debug_info=jaxprs.f.jaxpr.debug_info)).call_wrapped(
       params.f, params_dot.f)
   solution_dot = _map(
       operator.neg, linearize_and_solve(*solution, *rhs))
   # append aux, create symbolic zero tangents for the aux values
   solution += aux
-  solution_dot += _map(lax.zeros_like_array, aux)
+  solution_dot += _map(ad_util.zeros_like_jaxval, aux)
 
   return solution, solution_dot
 
@@ -170,7 +185,7 @@ def _split_linear_solve_args(args, const_lengths):
 
 
 def _transpose_one_output(linear_fun, primals):
-  transpose_fun = jax.linear_transpose(linear_fun, primals)
+  transpose_fun = api.linear_transpose(linear_fun, primals)
   def transposed_fun(x):
     (y,) = transpose_fun(x)
     return y
@@ -192,7 +207,11 @@ def _check_shapes(func_name, expected_name, actual, expected):
 
 @api_boundary
 def custom_linear_solve(
-    matvec, b, solve, transpose_solve=None, symmetric=False, has_aux=False):
+    matvec: Callable,
+    b: Any,
+    solve: Callable[[Callable, Any], Any],
+    transpose_solve: Callable[[Callable, Any], Any] | None = None,
+    symmetric=False, has_aux=False):
   """Perform a matrix-free linear solve with implicitly defined gradients.
 
   This function allows for overriding or defining gradients for a linear
@@ -231,7 +250,7 @@ def custom_linear_solve(
     transpose_solve = solve
 
   b_flat, in_args_tree = tree_flatten((b,))
-  b_avals = tuple(_map(_abstractify, b_flat))
+  b_avals = tuple(_map(core.get_aval, b_flat))
 
   tree, = treedef_children(in_args_tree)
 
@@ -248,21 +267,29 @@ def custom_linear_solve(
 
     return f_aux if has_aux else f
 
+  matvec_debug = api_util.debug_info("custom_linear_solve",
+                                     matvec, (b,), {})
   # no auxiliary data assumed for matvec
   matvec_jaxpr, matvec_consts, out_tree = _initial_style_jaxpr(
       _shape_checked(matvec, "matvec", False), in_args_tree, b_avals,
-      'custom_linear_solve')
+      matvec_debug)
   _check_tree("matvec", "b", out_tree, tree, False)
 
+  solve_debug = api_util.debug_info("custom_linear_solve solve",
+                                    solve, (matvec, b), {},
+                                    static_argnums=(0,))
   solve_jaxpr, solve_consts, out_tree = _initial_style_jaxpr(
       _shape_checked(partial(solve, matvec), "solve", has_aux), in_args_tree, b_avals,
-      'custom_linear_solve')
+      solve_debug)
   _check_tree("solve", "b", out_tree, tree, has_aux)
 
   if transpose_solve is None:
     vecmat_jaxpr = tr_solve_jaxpr = None
     vecmat_consts = tr_solve_consts = []
   else:
+    transpose_solve_debug = api_util.debug_info(
+        "custom_linear_solve transpose_solve", transpose_solve,
+        (matvec, b), {}, static_argnums=(0,))
     if symmetric:
       vecmat = matvec
       vecmat_jaxpr = matvec_jaxpr
@@ -270,12 +297,12 @@ def custom_linear_solve(
     else:
       vecmat = _transpose_one_output(matvec, b)
       vecmat_jaxpr, vecmat_consts, out_tree = _initial_style_jaxpr(
-          vecmat, in_args_tree, b_avals, 'custom_linear_solve')
+          vecmat, in_args_tree, b_avals, transpose_solve_debug)
       assert out_tree == tree
 
     tr_solve_jaxpr, tr_solve_consts, out_tree = _initial_style_jaxpr(
         _shape_checked(partial(transpose_solve, vecmat), "transpose_solve", has_aux),
-        in_args_tree, b_avals, 'custom_linear_solve')
+        in_args_tree, b_avals, transpose_solve_debug)
     _check_tree("transpose_solve", "b", out_tree, tree, has_aux)
 
   all_consts = [matvec_consts, vecmat_consts, solve_consts, tr_solve_consts]
@@ -283,24 +310,24 @@ def custom_linear_solve(
   jaxprs = _LinearSolveTuple(
       matvec_jaxpr, vecmat_jaxpr, solve_jaxpr, tr_solve_jaxpr)
 
-  out_flat = linear_solve_p.bind(
-      *(_flatten(all_consts) + b_flat),
-      const_lengths=const_lengths, jaxprs=jaxprs)
+  args = _flatten(all_consts) + b_flat
+  args = core.standard_insert_pvary(*args)
+  out_flat = linear_solve_p.bind(*args, const_lengths=const_lengths, jaxprs=jaxprs)
 
   return tree_unflatten(out_tree, out_flat)
 
 
 def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
   args_to_raise = args[sum(const_lengths):]
-
   # raise aux_args to shaped arrays as well if present
   # number of aux args is the difference in out_avals
   # of solve and matvec (since they map to the same vector space)
-
   num_aux = len(jaxprs.solve.out_avals) - len(jaxprs.matvec.out_avals)
   if num_aux > 0:
     args_to_raise += tuple(jaxprs.solve.out_avals[-num_aux:])
-  return _map(raise_to_shaped, args_to_raise)
+  out_vma = core.standard_vma_rule('linear_solve', *args_to_raise)
+  return (tuple(a.update(vma=out_vma) for a in args_to_raise),
+          jaxprs.solve.effects)
 
 
 def _custom_linear_solve_impl(*args, const_lengths, jaxprs):
@@ -309,15 +336,17 @@ def _custom_linear_solve_impl(*args, const_lengths, jaxprs):
   return x
 
 
-def _tangent_linear_map(func, params, params_dot, *x):
+def _tangent_linear_map(func: Callable, params, params_dot,
+                        debug_info: core.DebugInfo,
+                        *x):
   """Compute the tangent of a linear map.
 
   Assuming ``func(*params, *x)`` is linear in ``x`` and computes ``A @ x``,
   this function computes ``∂A @ x``.
   """
   assert any(type(p) is not ad_util.Zero for p in params_dot)
-  zeros = _map(ad_util.Zero.from_value, x)
-  _, out_tangent = ad.jvp(lu.wrap_init(func)).call_wrapped(
+  zeros = _map(ad_util.Zero.from_primal_value, x)
+  _, out_tangent = ad.jvp(lu.wrap_init(func, debug_info=debug_info)).call_wrapped(
       params + list(x), params_dot + zeros)
   return out_tangent
 
@@ -344,7 +373,8 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs):
     rhs = b_dot
   else:
     matvec_tangents = _tangent_linear_map(
-        core.jaxpr_as_fun(jaxprs.matvec), params.matvec, params_dot.matvec, *x_leaves)
+        core.jaxpr_as_fun(jaxprs.matvec), params.matvec, params_dot.matvec,
+        jaxprs.matvec.jaxpr.debug_info, *x_leaves)
     rhs = _map(ad.add_tangents, b_dot, _map(operator.neg, matvec_tangents))
 
   x_dot = linear_solve_p.bind(*(_flatten(params) + rhs), **kwargs)
@@ -352,7 +382,7 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs):
   # split into x tangents and aux tangents (these become zero)
   dx_leaves, daux_leaves = split_list(x_dot, [num_x_leaves])
 
-  daux_leaves = _map(ad_util.Zero.from_value, daux_leaves)
+  daux_leaves = _map(ad_util.Zero.from_primal_value, daux_leaves)
 
   x_dot = dx_leaves + daux_leaves
 
@@ -376,8 +406,7 @@ def _linear_solve_transpose_rule(cotangent, *primals, const_lengths, jaxprs):
   return [None] * sum(const_lengths) + cotangent_b
 
 
-def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
-                                args, dims, const_lengths, jaxprs):
+def _linear_solve_batching_rule(axis_data, args, dims, const_lengths, jaxprs):
   orig_bat = [d is not batching.not_mapped for d in dims]
 
   params, b = _split_linear_solve_args(args, const_lengths)
@@ -397,15 +426,13 @@ def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   for i in range(1 + len(orig_b_bat) + len(solve.out_avals)):
     # Apply vecmat and solve -> new batched parts of x
     solve_jaxpr_batched, solve_x_bat = batching.batch_jaxpr(
-        solve, axis_size, solve_bat + b_bat, instantiate=x_bat,
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        solve, axis_data, solve_bat + b_bat, instantiate=x_bat)
     if vecmat is None:
       vecmat_jaxpr_batched = None
       x_bat_out = solve_x_bat
     else:
       vecmat_jaxpr_batched, vecmat_x_bat = batching.batch_jaxpr(
-          vecmat, axis_size, vecmat_bat + b_bat, instantiate=b_bat,
-          axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+          vecmat, axis_data, vecmat_bat + b_bat, instantiate=b_bat)
       # batch all aux data by default
       x_bat_out = _map(operator.or_, vecmat_x_bat + [True] * num_aux, solve_x_bat)
     # keep a slice of only the linear operator part of solve's avals
@@ -413,15 +440,13 @@ def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
 
     # Apply matvec and solve_t -> new batched parts of b
     matvec_jaxpr_batched, matvec_b_bat = batching.batch_jaxpr(
-        matvec, axis_size, matvec_bat + x_bat_noaux, instantiate=b_bat,
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        matvec, axis_data, matvec_bat + x_bat_noaux, instantiate=b_bat)
     if solve_t is None:
       solve_t_jaxpr_batched = None
       b_bat_out = _map(operator.or_, matvec_b_bat, orig_b_bat)
     else:
       solve_t_jaxpr_batched, solve_t_b_aux_bat = batching.batch_jaxpr(
-          solve_t, axis_size, solve_t_bat + x_bat_noaux, instantiate=x_bat_out,
-          axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+          solve_t, axis_data, solve_t_bat + x_bat_noaux, instantiate=x_bat_out)
       assert len(solve_t_b_aux_bat) == len(orig_b_bat) + num_aux
       solve_t_b_bat, _ = split_list(solve_t_b_aux_bat, [len(orig_b_bat)])
       b_bat_out = _map(lambda m, s, o: m or s or o, matvec_b_bat, solve_t_b_bat,
@@ -445,7 +470,8 @@ def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   ]
   # Broadcast out b if necessary
   new_b = [
-      batching.broadcast(x, axis_size, 0) if now_bat and not was_bat else
+      batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
+      if now_bat and not was_bat else
       batching.moveaxis(x, d, 0) if now_bat and d != 0 else x
       for x, d, was_bat, now_bat in zip(b, b_dims, orig_b_bat, b_bat)
   ]
@@ -458,15 +484,14 @@ def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   return outs, out_dims
 
 
-linear_solve_p = core.AxisPrimitive('custom_linear_solve')
+linear_solve_p = core.Primitive('custom_linear_solve')
 linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
-linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
+linear_solve_p.def_effectful_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
 xla.register_initial_style_primitive(linear_solve_p)
 mlir.register_lowering(
     linear_solve_p, mlir.lower_fun(_custom_linear_solve_impl,
                                    multiple_results=True))
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
-batching.axis_primitive_batchers[linear_solve_p] = partial(_linear_solve_batching_rule, None)
-batching.spmd_axis_primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
+batching.fancy_primitive_batchers[linear_solve_p] = _linear_solve_batching_rule

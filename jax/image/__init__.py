@@ -21,7 +21,7 @@ JAX, such as `PIX`_.
 """
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.image.scale import (
   resize as resize,

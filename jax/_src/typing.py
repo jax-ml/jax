@@ -21,28 +21,45 @@ exported at `jax.typing`. Until then, the contents here should be considered uns
 and may change without notice.
 
 To see the proposal that led to the development of these tools, see
-https://github.com/google/jax/pull/11859/.
+https://github.com/jax-ml/jax/pull/11859/.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+import enum
+import typing
 from typing import Any, Protocol, Union
-import numpy as np
 
 from jax._src.basearray import (
-    Array as Array,
     ArrayLike as ArrayLike,
+    Array as Array,
+    StaticScalar as StaticScalar,
 )
+import numpy as np
 
 DType = np.dtype
 
 # TODO(jakevdp, froystig): make ExtendedDType a protocol
 ExtendedDType = Any
 
+
+@typing.runtime_checkable
 class SupportsDType(Protocol):
   @property
-  def dtype(self) -> DType: ...
+  def dtype(self, /) -> DType: ...
+
+class SupportsShape(Protocol):
+  @property
+  def shape(self, /) -> tuple[int, ...]: ...
+
+class SupportsSize(Protocol):
+  @property
+  def size(self, /) -> int: ...
+
+class SupportsNdim(Protocol):
+  @property
+  def ndim(self, /) -> int: ...
 
 # DTypeLike is meant to annotate inputs to np.dtype that return
 # a valid JAX dtype. It's different than numpy.typing.DTypeLike
@@ -77,3 +94,15 @@ class DuckTypedArray(Protocol):
 # JAX array (i.e. not including future non-standard array types like KeyArray and BInt).
 # It's different than np.typing.ArrayLike in that it doesn't accept arbitrary sequences,
 # nor does it accept string data.
+
+# We use a class for deprecated args to avoid using Any/object types which can
+# introduce complications and mistakes in static analysis
+class DeprecatedArg:
+  def __repr__(self):
+    return "Deprecated"
+
+# Mirror of dlpack.h enum
+class DLDeviceType(enum.IntEnum):
+  kDLCPU = 1
+  kDLCUDA = 2
+  kDLROCM = 10

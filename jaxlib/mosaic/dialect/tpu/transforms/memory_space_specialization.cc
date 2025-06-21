@@ -13,12 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <vector>
+
 #include "absl/log/check.h"
-#include "mlir/include/mlir/IR/Attributes.h"
-#include "mlir/include/mlir/IR/BuiltinTypes.h"
-#include "mlir/include/mlir/IR/Value.h"
-#include "mlir/include/mlir/Support/LLVM.h"
-#include "mlir/include/mlir/Support/LogicalResult.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Value.h"
+#include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
 namespace mlir {
@@ -70,11 +72,23 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
     to_update.pop_back();
     // Here we only have to handle the operations allowed on refs with
     // unspecified memory space.
+    if (auto op = dyn_cast<tpu::ReinterpretCastOp>(some_op)) {
+      updateResultFrom(op, op.getInput().getType());
+      continue;
+    }
     if (auto op = dyn_cast<tpu::MemRefSliceOp>(some_op)) {
       updateResultFrom(op, op.getMemRef().getType());
       continue;
     }
     if (auto op = dyn_cast<tpu::MemRefSqueezeOp>(some_op)) {
+      updateResultFrom(op, op.getInput().getType());
+      continue;
+    }
+    if (auto op = dyn_cast<tpu::MemRefBitcastOp>(some_op)) {
+      updateResultFrom(op, op.getInput().getType());
+      continue;
+    }
+    if (auto op = dyn_cast<tpu::MemRefReshapeOp>(some_op)) {
       updateResultFrom(op, op.getInput().getType());
       continue;
     }
@@ -86,6 +100,9 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
       continue;  // Nothing to do.
     }
     if (auto op = dyn_cast<tpu::WaitDMAOp>(some_op)) {
+      continue;  // Nothing to do.
+    }
+    if (auto op = dyn_cast<tpu::WaitDMA2Op>(some_op)) {
       continue;  // Nothing to do.
     }
     some_op->emitOpError(

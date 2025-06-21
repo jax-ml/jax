@@ -9,8 +9,11 @@ Classes
 .. currentmodule:: jax.stages
 
 .. autoclass:: Wrapped
-   :members: lower
+   :members: trace, lower
    :special-members: __call__
+
+.. autoclass:: Traced
+   :members: jaxpr, out_info, lower
 
 .. autoclass:: Lowered
    :members: in_tree, out_tree, compile, as_text, compiler_ir, cost_analysis

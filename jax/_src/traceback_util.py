@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+from collections.abc import Callable
 import functools
 import os
-import sys
 import traceback
 import types
-from typing import Any, Callable, Optional, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from jax._src import config
 from jax._src import util
-from jax._src.lib import xla_extension
 
 
 C = TypeVar("C", bound=Callable[..., Any])
@@ -53,8 +54,10 @@ def _path_starts_with(path: str, path_prefix: str) -> bool:
     return False
 
 def include_frame(f: types.FrameType) -> bool:
-  return not any(_path_starts_with(f.f_code.co_filename, path)
-                 for path in _exclude_paths)
+  return include_filename(f.f_code.co_filename)
+
+def include_filename(filename: str) -> bool:
+  return not any(_path_starts_with(filename, path) for path in _exclude_paths)
 
 # When scanning stack traces, we might encounter frames from cpython that are
 # removed from printed stack traces, such as frames from parts of importlib. We
@@ -67,7 +70,7 @@ def _add_tracebackhide_to_hidden_frames(tb: types.TracebackType):
     if not include_frame(f):
       f.f_locals["__tracebackhide__"] = True
 
-def filter_traceback(tb: types.TracebackType) -> Optional[types.TracebackType]:
+def filter_traceback(tb: types.TracebackType) -> types.TracebackType | None:
   out = None
   # Scan the traceback and collect relevant frames.
   frames = list(traceback.walk_tb(tb))
@@ -135,7 +138,7 @@ def _running_under_ipython() -> bool:
 
 def _ipython_supports_tracebackhide() -> bool:
   """Returns true if the IPython version supports __tracebackhide__."""
-  import IPython  # type: ignore
+  import IPython  # pytype: disable=import-error
   return IPython.version_info[:2] >= (7, 17)
 
 def _filtering_mode() -> str:
@@ -188,25 +191,10 @@ def api_boundary(fun: C) -> C:
         tb = e.__traceback__
         filtered_tb = filter_traceback(tb)
         e.with_traceback(filtered_tb)
-        # In Python < 3.11, there seems to be no way to alter the currently
-        # raised exception traceback, except via the C API. The interpreter
-        # keeps a copy of the traceback (exc_traceback) that is separate to the
-        # __traceback__ of exc_value. Python 3.11 removes exc_traceback and
-        # just setting __traceback__ is enough. Since it is no longer needed,
-        # the XLA extension no longer defines a traceback-replacing method at
-        # Python 3.11 and onward.
-        if hasattr(xla_extension, "replace_thread_exc_traceback"):
-          # TODO(kidger): remove this line once Python 3.11 is the minimum supported
-          # version.
-          xla_extension.replace_thread_exc_traceback(filtered_tb)
-        if sys.version_info >= (3, 11) and mode == "quiet_remove_frames":
+        if mode == "quiet_remove_frames":
           e.add_note("--------------------\n" + _simplified_tb_msg)
         else:
-          if mode == "quiet_remove_frames":
-            # TODO(kidger): remove `SimplifiedTraceback` once Python 3.11 is the minimum
-            # supported version.
-            jax_error = SimplifiedTraceback()
-          elif mode == "remove_frames":
+          if mode == "remove_frames":
             msg = format_exception_only(e)
             msg = f'{msg}\n\n{_jax_message_append}'
             jax_error = UnfilteredStackTrace(msg)

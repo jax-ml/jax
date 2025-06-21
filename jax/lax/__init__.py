@@ -13,12 +13,15 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.lax.lax import (
   DotDimensionNumbers as DotDimensionNumbers,
+  RaggedDotDimensionNumbers as RaggedDotDimensionNumbers,
   Precision as Precision,
   PrecisionLike as PrecisionLike,
+  DotAlgorithm as DotAlgorithm,
+  DotAlgorithmPreset as DotAlgorithmPreset,
   RandomAlgorithm as RandomAlgorithm,
   RoundingMethod as RoundingMethod,
   abs as abs,
@@ -70,6 +73,7 @@ from jax._src.lax.lax import (
   collapse as collapse,
   complex as complex,
   complex_p as complex_p,
+  composite as composite,
   concatenate as concatenate,
   concatenate_p as concatenate_p,
   conj as conj,
@@ -89,7 +93,6 @@ from jax._src.lax.lax import (
   dot_general as dot_general,
   dot_general_p as dot_general_p,
   dtype as dtype,
-  dtypes as _deprecated_dtypes,
   eq as eq,
   eq_p as eq_p,
   eq_to_p as eq_to_p,
@@ -118,7 +121,6 @@ from jax._src.lax.lax import (
   iota_p as iota_p,
   is_finite as is_finite,
   is_finite_p as is_finite_p,
-  itertools as _deprecated_itertools,
   le as le,
   le_p as le_p,
   le_to_p as le_to_p,
@@ -137,8 +139,6 @@ from jax._src.lax.lax import (
   min_p as min_p,
   mul as mul,
   mul_p as mul_p,
-  naryop as _deprecated_naryop,
-  naryop_dtype_rule as _deprecated_naryop_dtype_rule,
   ne as ne,
   ne_p as ne_p,
   neg as neg,
@@ -146,6 +146,8 @@ from jax._src.lax.lax import (
   nextafter as nextafter,
   nextafter_p as nextafter_p,
   not_p as not_p,
+  optimization_barrier as optimization_barrier,
+  optimization_barrier_p as optimization_barrier_p,
   or_p as or_p,
   outfeed as outfeed,
   outfeed_p as outfeed_p,
@@ -156,19 +158,28 @@ from jax._src.lax.lax import (
   population_count_p as population_count_p,
   pow as pow,
   pow_p as pow_p,
+  ragged_dot as ragged_dot,
+  ragged_dot_general as ragged_dot_general,
   real as real,
   real_p as real_p,
   reciprocal as reciprocal,
   reduce as reduce,
+  reduce_and as reduce_and,
   reduce_and_p as reduce_and_p,
+  reduce_max as reduce_max,
   reduce_max_p as reduce_max_p,
+  reduce_min as reduce_min,
   reduce_min_p as reduce_min_p,
+  reduce_or as reduce_or,
   reduce_or_p as reduce_or_p,
   reduce_p as reduce_p,
   reduce_precision as reduce_precision,
   reduce_precision_p as reduce_precision_p,
+  reduce_prod as reduce_prod,
   reduce_prod_p as reduce_prod_p,
+  reduce_sum as reduce_sum,
   reduce_sum_p as reduce_sum_p,
+  reduce_xor as reduce_xor,
   reduce_xor_p as reduce_xor_p,
   rem as rem,
   rem_p as rem_p,
@@ -187,6 +198,7 @@ from jax._src.lax.lax import (
   select as select,
   select_n as select_n,
   select_n_p as select_n_p,
+  shape_as_value as shape_as_value,
   shift_left as shift_left,
   shift_left_p as shift_left_p,
   shift_right_arithmetic as shift_right_arithmetic,
@@ -202,15 +214,14 @@ from jax._src.lax.lax import (
   sort as sort,
   sort_key_val as sort_key_val,
   sort_p as sort_p,
+  split as split,
+  split_p as split_p,
   sqrt as sqrt,
   sqrt_p as sqrt_p,
   square as square,
+  square_p as square_p,
   squeeze as squeeze,
   squeeze_p as squeeze_p,
-  standard_abstract_eval as _deprecated_standard_abstract_eval,
-  standard_naryop as _deprecated_standard_naryop,
-  standard_primitive as _deprecated_standard_primitive,
-  standard_unop as _deprecated_standard_unop,
   stop_gradient as stop_gradient,
   sub as sub,
   sub_p as sub_p,
@@ -218,13 +229,10 @@ from jax._src.lax.lax import (
   tan_p as tan_p,
   tanh as tanh,
   tanh_p as tanh_p,
-  tie_in as tie_in,
   top_k as top_k,
   top_k_p as top_k_p,
   transpose as transpose,
   transpose_p as transpose_p,
-  unop as _deprecated_unop,
-  unop_dtype_rule as _deprecated_unop_dtype_rule,
   xor_p as xor_p,
   zeros_like_array as zeros_like_array,
 )
@@ -253,7 +261,6 @@ from jax._src.lax.special import (
   polygamma as polygamma,
   polygamma_p as polygamma_p,
   random_gamma_grad as random_gamma_grad,
-  random_gamma_grad_p as random_gamma_grad_p,
   regularized_incomplete_beta_p as regularized_incomplete_beta_p,
   zeta as zeta,
   zeta_p as zeta_p,
@@ -285,6 +292,8 @@ from jax._src.lax.slicing import (
   scatter_mul as scatter_mul,
   scatter_mul_p as scatter_mul_p,
   scatter_p as scatter_p,
+  scatter_sub as scatter_sub,
+  scatter_sub_p as scatter_sub_p,
   slice as slice,
   slice_in_dim as slice_in_dim,
   slice_p as slice_p,
@@ -334,7 +343,6 @@ from jax._src.lax.control_flow import (
   linear_solve_p as linear_solve_p,
   map as map,
   scan as scan,
-  scan_bind as scan_bind,
   scan_p as scan_p,
   switch as switch,
   while_loop as while_loop,
@@ -344,14 +352,18 @@ from jax._src.lax.control_flow import (
 from jax._src.lax.fft import (
   fft as fft,
   fft_p as fft_p,
+  FftType as FftType,
 )
 from jax._src.lax.parallel import (
   all_gather as all_gather,
+  all_gather_invariant as all_gather_invariant,
   all_gather_p as all_gather_p,
   all_to_all as all_to_all,
   all_to_all_p as all_to_all_p,
   axis_index as axis_index,
   axis_index_p as axis_index_p,
+  axis_size as axis_size,
+  pbroadcast as pbroadcast,
   pmax as pmax,
   pmax_p as pmax_p,
   pmean as pmean,
@@ -359,13 +371,18 @@ from jax._src.lax.parallel import (
   pmin_p as pmin_p,
   ppermute as ppermute,
   ppermute_p as ppermute_p,
+  psend as psend,
+  precv as precv,
   pshuffle as pshuffle,
   psum as psum,
   psum_p as psum_p,
   psum_scatter as psum_scatter,
   pswapaxes as pswapaxes,
-  pdot as pdot,
-  xeinsum as xeinsum,
+  ragged_all_to_all as ragged_all_to_all,
+  ragged_all_to_all_p as ragged_all_to_all_p,
+)
+from jax._src.core import (
+    pvary as pvary,
 )
 from jax._src.lax.other import (
   conv_general_dilated_local as conv_general_dilated_local,
@@ -383,65 +400,49 @@ from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
 
+import jax._src.lax.lax
 
 _deprecations = {
-  # Added October 6 2023
-  "dtypes": (
-    "jax.lax.dtypes is deprecated: import jax.dtypes directly.",
-    _deprecated_dtypes,
-  ),
-  "itertools": (
-    "jax.lax.itertools is deprecated: import itertools directly.",
-    _deprecated_itertools,
-  ),
-  "naryop": (
-    "jax.lax.naryop is an internal API and has been deprecated.",
-    _deprecated_naryop,
-  ),
-  "naryop_dtype_rule": (
-    "jax.lax.naryop_dtype_rule is an internal API and has been deprecated.",
-    _deprecated_naryop_dtype_rule,
-  ),
-  "standard_abstract_eval": (
-    "jax.lax.standard_abstract_eval is an internal API and has been deprecated.",
-    _deprecated_standard_abstract_eval,
-  ),
-  "standard_naryop": (
-    "jax.lax.standard_naryop is an internal API and has been deprecated.",
-    _deprecated_standard_naryop,
-  ),
-  "standard_primitive": (
-    "jax.lax.standard_primitive is an internal API and has been deprecated.",
-    _deprecated_standard_primitive,
-  ),
-  "standard_unop": (
-    "jax.lax.standard_unop is an internal API and has been deprecated.",
-    _deprecated_standard_unop,
-  ),
-  "unop": (
-    "jax.lax.unop is an internal API and has been deprecated.",
-    _deprecated_unop,
-  ),
-  "unop_dtype_rule": (
-    "jax.lax.unop_dtype_rule is an internal API and has been deprecated.",
-    _deprecated_unop_dtype_rule,
-  ),
+    "infeed": (
+        (
+            "jax.lax.infeed was deprecated in JAX v0.6.0 and will be removed in"
+            " JAX v0.7.0."
+        ),
+        jax._src.lax.lax.infeed,
+    ),
+    "infeed_p": (
+        (
+            "jax.lax.infeed_p was deprecated in JAX v0.6.0 and will be removed"
+            " in JAX v0.7.0."
+        ),
+        jax._src.lax.lax.infeed_p,
+    ),
+    "outfeed": (
+        (
+            "jax.lax.outfeed was deprecated in JAX v0.6.0 and will be removed"
+            " in JAX v0.7.0."
+        ),
+        jax._src.lax.lax.outfeed,
+    ),
+    "outfeed_p": (
+        (
+            "jax.lax.outfeed_p was deprecated in JAX v0.6.0 and will be removed"
+            " in JAX v0.7.0."
+        ),
+        jax._src.lax.lax.outfeed_p,
+    ),
 }
 
 import typing as _typing
+
 if _typing.TYPE_CHECKING:
-  dtypes = _deprecated_dtypes,
-  itertools = _deprecated_itertools,
-  naryop = _deprecated_naryop,
-  naryop_dtype_rule = _deprecated_naryop_dtype_rule,
-  standard_abstract_eval = _deprecated_standard_abstract_eval,
-  standard_naryop = _deprecated_standard_naryop,
-  standard_primitive = _deprecated_standard_primitive,
-  standard_unop = _deprecated_standard_unop,
-  unop = _deprecated_unop,
-  unop_dtype_rule = _deprecated_unop_dtype_rule,
+  infeed = jax._src.lax.lax.infeed
+  infeed_p = jax._src.lax.lax.infeed_p
+  outfeed = jax._src.lax.lax.outfeed
+  outfeed_p = jax._src.lax.lax.outfeed_p
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing

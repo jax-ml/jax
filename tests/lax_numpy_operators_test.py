@@ -56,6 +56,7 @@ bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
 inexact_dtypes = float_dtypes + complex_dtypes
 number_dtypes = float_dtypes + complex_dtypes + int_dtypes + unsigned_dtypes
+real_dtypes = float_dtypes + int_dtypes + unsigned_dtypes
 all_dtypes = number_dtypes + bool_dtypes
 
 
@@ -76,14 +77,15 @@ def _valid_dtypes_for_shape(shape, dtypes):
 OpRecord = collections.namedtuple(
   "OpRecord",
   ["name", "nargs", "dtypes", "shapes", "rng_factory", "diff_modes",
-   "test_name", "check_dtypes", "tolerance", "inexact", "kwargs"])
+   "test_name", "check_dtypes", "tolerance", "inexact", "kwargs", "alias"])
 
 def op_record(name, nargs, dtypes, shapes, rng_factory, diff_modes,
               test_name=None, check_dtypes=True,
-              tolerance=None, inexact=False, kwargs=None):
+              tolerance=None, inexact=False, kwargs=None,
+              alias=None):
   test_name = test_name or name
   return OpRecord(name, nargs, dtypes, shapes, rng_factory, diff_modes,
-                  test_name, check_dtypes, tolerance, inexact, kwargs)
+                  test_name, check_dtypes, tolerance, inexact, kwargs, alias)
 
 JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("abs", 1, all_dtypes,
@@ -124,6 +126,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("negative", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("nextafter", 2, [f for f in float_dtypes if f != jnp.bfloat16],
               all_shapes, jtu.rand_default, ["rev"], inexact=True, tolerance=0),
+    op_record("spacing", 1, float_dtypes, all_shapes, jtu.rand_default, ["rev"],
+              inexact=True, tolerance=0),
     op_record("not_equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
     op_record("array_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
     op_record("array_equiv", 2, number_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
@@ -168,6 +172,20 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
               inexact=True, tolerance={np.complex64: 2E-2, np.complex128: 2E-12}),
     op_record("arctanh", 1, number_dtypes, all_shapes, jtu.rand_small, ["rev"],
               inexact=True, tolerance={np.float64: 1e-9}),
+    op_record("asin", 1, number_dtypes, all_shapes, jtu.rand_small, ["rev"],
+              inexact=True, tolerance={np.complex128: 2e-15}, alias="arcsin"),
+    op_record("acos", 1, number_dtypes, all_shapes, jtu.rand_small, ["rev"],
+              inexact=True, alias="arccos"),
+    op_record("atan", 1, number_dtypes, all_shapes, jtu.rand_small, ["rev"],
+              inexact=True, alias="arctan"),
+    op_record("atan2", 2, float_dtypes, all_shapes, jtu.rand_small, ["rev"],
+              inexact=True, check_dtypes=False, alias="arctan2"),
+    op_record("asinh", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
+              inexact=True, tolerance={np.complex64: 2E-4, np.complex128: 2E-14}, alias="arcsinh"),
+    op_record("acosh", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
+              inexact=True, tolerance={np.complex64: 2E-2, np.complex128: 2E-12}, alias="arccosh"),
+    op_record("atanh", 1, number_dtypes, all_shapes, jtu.rand_small, ["rev"],
+              inexact=True, tolerance={np.float64: 1e-9}, alias="arctanh"),
 ]
 
 JAX_COMPOUND_OP_RECORDS = [
@@ -205,7 +223,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("fmod", 2, default_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("heaviside", 2, default_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
-    op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default, [],
+    op_record("hypot", 2, real_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
     op_record("kron", 2, number_dtypes, nonempty_shapes, jtu.rand_default, []),
     op_record("outer", 2, number_dtypes, all_shapes, jtu.rand_default, []),
@@ -240,6 +258,8 @@ JAX_COMPOUND_OP_RECORDS = [
               tolerance={dtypes.bfloat16: 4e-2, np.float16: 2e-2,
                          np.float64: 1e-12}),
     op_record("positive", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
+    op_record("pow", 2, number_dtypes, all_shapes, jtu.rand_positive, ["rev"],
+              tolerance={np.complex128: 1e-14}, check_dtypes=False, alias="power"),
     op_record("power", 2, number_dtypes, all_shapes, jtu.rand_positive, ["rev"],
               tolerance={np.complex128: 1e-14}, check_dtypes=False),
     op_record("rad2deg", 1, float_dtypes, all_shapes, jtu.rand_default, []),
@@ -255,7 +275,9 @@ JAX_COMPOUND_OP_RECORDS = [
               []),
     op_record("rint", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
-    op_record("sign", 1, number_dtypes, all_shapes, jtu.rand_some_inf_and_nan, []),
+    # numpy < 2.0.0 has a different convention for complex sign.
+    op_record("sign", 1, real_dtypes if jtu.numpy_version() < (2, 0, 0) else number_dtypes,
+              all_shapes, jtu.rand_some_inf_and_nan, []),
     # numpy 1.16 has trouble mixing uint and bfloat16, so we test these separately.
     op_record("copysign", 2, default_dtypes + unsigned_dtypes,
               all_shapes, jtu.rand_some_inf_and_nan, [], check_dtypes=False),
@@ -293,6 +315,8 @@ JAX_COMPOUND_OP_RECORDS = [
 JAX_BITWISE_OP_RECORDS = [
     op_record("bitwise_and", 2, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_fullrange, []),
+    op_record("bitwise_invert", 1, int_dtypes + unsigned_dtypes, all_shapes,
+              jtu.rand_fullrange, [], alias='bitwise_not'),
     op_record("bitwise_not", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_fullrange, []),
     op_record("invert", 1, int_dtypes + unsigned_dtypes, all_shapes,
@@ -401,6 +425,17 @@ def _shapes_are_equal_length(shapes):
   return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
 
 
+def _get_testcase_name(index, params):
+  dtypes = "_".join(str(dt.__name__) for dt in  params['dtypes'])
+  name = params['op_name'] if "op_name" in params else params["name"]
+  return f"{index}_{name}_{dtypes}"
+
+
+def _create_named_parameters(iter_params):
+  for i, params in enumerate(iter_params):
+    yield dict(params, **{'testcase_name': _get_testcase_name(i, params)})
+
+
 class JaxNumpyOperatorTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy operators."""
 
@@ -414,11 +449,11 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
               for a in out]
     return f
 
-  @parameterized.parameters(itertools.chain.from_iterable(
+  @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(op_name=rec.name, rng_factory=rec.rng_factory,
             check_dtypes=rec.check_dtypes, tolerance=rec.tolerance,
-            inexact=rec.inexact, kwargs=rec.kwargs or {})],
+            inexact=rec.inexact, kwargs=rec.kwargs or {}, alias=rec.alias)],
       [dict(shapes=shapes, dtypes=dtypes)
         for shapes in filter(
           _shapes_are_broadcast_compatible,
@@ -427,11 +462,11 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes))],
     )
     for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
-                               JAX_COMPOUND_OP_RECORDS)))
+                              JAX_COMPOUND_OP_RECORDS))))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testOp(self, op_name, rng_factory, shapes, dtypes, check_dtypes,
-             tolerance, inexact, kwargs):
-    np_op = partial(getattr(np, op_name), **kwargs)
+             tolerance, inexact, kwargs, alias):
+    np_op = partial(getattr(np, op_name) if hasattr(np, op_name) else getattr(np, alias), **kwargs)
     jnp_op = partial(getattr(jnp, op_name), **kwargs)
     np_op = jtu.ignore_warning(category=RuntimeWarning,
                                message="invalid value.*")(np_op)
@@ -443,8 +478,8 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
     if jtu.test_device_matches(["tpu"]) and op_name in (
         "arccosh", "arcsinh", "sinh", "cosh", "tanh", "sin", "cos", "tan",
-        "log", "log1p", "log2", "log10", "exp", "expm1", "exp2", "power",
-        "logaddexp", "logaddexp2", "i0"):
+        "log", "log1p", "log2", "log10", "exp", "expm1", "exp2", "pow",
+        "power", "logaddexp", "logaddexp2", "i0", "acosh", "asinh"):
       tol = jtu.join_tolerance(tol, 1e-4)
     tol = functools.reduce(jtu.join_tolerance,
                            [tolerance, tol, jtu.default_tolerance()])
@@ -455,7 +490,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_op, args_maker, check_dtypes=check_dtypes,
                             atol=tol, rtol=tol)
 
-  @parameterized.parameters(itertools.chain.from_iterable(
+  @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(name=rec.name, rng_factory=rec.rng_factory, tol=rec.tolerance)],
       [dict(shapes=shapes, dtypes=dtypes)
@@ -465,7 +500,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
         for dtypes in itertools.product(
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes))],
     )
-    for rec in JAX_OPERATOR_OVERLOADS))
+    for rec in JAX_OPERATOR_OVERLOADS)))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testOperatorOverload(self, name, rng_factory, shapes, dtypes, tol):
     rng = rng_factory(self.rng())
@@ -476,7 +511,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CompileAndCheck(fun, args_maker, atol=tol, rtol=tol)
 
-  @parameterized.parameters(itertools.chain.from_iterable(
+  @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(name=rec.name, rng_factory=rec.rng_factory,
             op_tolerance=rec.tolerance)],
@@ -487,7 +522,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
         for dtypes in itertools.product(
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes))],
     )
-    for rec in JAX_RIGHT_OPERATOR_OVERLOADS))
+    for rec in JAX_RIGHT_OPERATOR_OVERLOADS)))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testRightOperatorOverload(self, name, rng_factory, shapes, dtypes,
                                 op_tolerance):
@@ -557,9 +592,9 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       with self.assertRaises(TypeError):
         op(arg, other)
 
-  @parameterized.parameters(itertools.chain.from_iterable(
+  @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory)],
+      [dict(name=rec.name, rng_factory=rec.rng_factory, alias=rec.alias)],
       shapes=filter(
         _shapes_are_broadcast_compatible,
         itertools.combinations_with_replacement(rec.shapes, rec.nargs)),
@@ -567,10 +602,10 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
         _dtypes_are_compatible_for_bitwise_ops,
         itertools.combinations_with_replacement(rec.dtypes, rec.nargs)),
     )
-    for rec in JAX_BITWISE_OP_RECORDS))
+    for rec in JAX_BITWISE_OP_RECORDS)))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
-  def testBitwiseOp(self, name, rng_factory, shapes, dtypes):
-    np_op = getattr(np, name)
+  def testBitwiseOp(self, name, rng_factory, shapes, dtypes, alias):
+    np_op = getattr(np, name) if hasattr(np, name) else getattr(np, alias)
     jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
@@ -602,7 +637,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       for dtypes in itertools.product(
         *(_valid_dtypes_for_shape(s, int_dtypes_no_uint64) for s in shapes))
     ],
-    op=[jnp.left_shift, jnp.right_shift],
+    op=[jnp.left_shift, jnp.bitwise_left_shift, jnp.right_shift, jnp.bitwise_right_shift],
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testShiftOpAgainstNumpy(self, op, dtypes, shapes):
@@ -621,11 +656,33 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     shift_rng = jtu.rand_int(self.rng(), high=max(info.bits, shift_info.bits))
     args_maker = lambda: (x_rng(shapes[0], dtype), shift_rng(shapes[1], shift_dtype))
 
-    np_op = getattr(np, op.__name__)
+    if jtu.numpy_version() < (2, 0, 0) and op.__name__ in ("bitwise_left_shift", "bitwise_right_shift"):
+      # numpy < 2.0.0 does not have bitwise shift functions.
+      op_name = op.__name__.removeprefix("bitwise_")
+    else:
+      op_name = op.__name__
+
+    np_op = getattr(np, op_name)
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CompileAndCheck(op, args_maker)
       self._CheckAgainstNumpy(np_op, op, args_maker)
+
+  # This test can be deleted once we test against NumPy 2.0.
+  @jtu.sample_product(
+      shape=all_shapes,
+      dtype=complex_dtypes
+  )
+  def testSignComplex(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    if jtu.numpy_version() >= (2, 0, 0):
+      np_fun = np.sign
+    else:
+      np_fun = lambda x: (x / np.where(x == 0, 1, abs(x))).astype(np.result_type(x))
+    jnp_fun = jnp.sign
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   def testDeferToNamedTuple(self):
     class MyArray(NamedTuple):
@@ -642,9 +699,37 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self.assertIsInstance(jax.jit(operator.mul)(b, a), MyArray)
 
   def testI0Grad(self):
-    # Regression test for https://github.com/google/jax/issues/11479
+    # Regression test for https://github.com/jax-ml/jax/issues/11479
     dx = jax.grad(jax.numpy.i0)(0.0)
     self.assertArraysEqual(dx, 0.0)
+
+  @jtu.sample_product(
+      shape=all_shapes,
+      dtype=default_dtypes,
+  )
+  def testSpacingIntegerInputs(self, shape, dtype):
+    rng = jtu.rand_int(self.rng(), low=-64, high=64)
+    args_maker = lambda: [rng(shape, dtype)]
+    computation_dtype = jnp.spacing(rng(shape, dtype)).dtype
+    np_func = lambda x: np.spacing(np.array(x).astype(computation_dtype))
+    self._CheckAgainstNumpy(np_func, jnp.spacing, args_maker, check_dtypes=True, tol=0)
+    self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
+
+  @jtu.sample_product(dtype = float_dtypes)
+  @jtu.skip_on_devices("tpu")
+  def testSpacingSubnormals(self, dtype):
+    zero = np.array(0, dtype=dtype)
+    inf = np.array(np.inf, dtype=dtype)
+    x = [zero]
+    for i in range(5):
+      x.append(np.nextafter(x[-1], -inf))  # negative denormals
+    x = x[::-1]
+    for i in range(5):
+      x.append(np.nextafter(x[-1], inf))  # positive denormals
+    x = np.array(x, dtype=dtype)
+    args_maker = lambda: [x]
+    self._CheckAgainstNumpy(np.spacing, jnp.spacing, args_maker, check_dtypes=True, tol=0)
+    self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
 
 
 if __name__ == "__main__":

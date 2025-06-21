@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.15.2
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   name: python3
@@ -13,24 +13,24 @@ kernelspec:
 
 +++ {"id": "LqiaKasFjH82"}
 
-# Custom derivative rules for JAX-transformable Python functions
+# Custom derivative rules
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb)
+<!--* freshness: { reviewed: '2024-04-08' } *-->
 
-*mattjj@ Mar 19 2020, last updated Oct 14 2020*
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb)
 
 There are two ways to define differentiation rules in JAX:
 
 1. using `jax.custom_jvp` and `jax.custom_vjp` to define custom differentiation rules for Python functions that are already JAX-transformable; and
 2. defining new `core.Primitive` instances along with all their transformation rules, for example to call into functions from other systems like solvers, simulators, or general numerical computing systems.
 
-This notebook is about #1. To read instead about #2, see the [notebook on adding primitives](https://jax.readthedocs.io/en/latest/notebooks/How_JAX_primitives_work.html).
+This notebook is about #1. To read instead about #2, see the [notebook on adding primitives](https://docs.jax.dev/en/latest/notebooks/How_JAX_primitives_work.html).
 
-For an introduction to JAX's automatic differentiation API, see [The Autodiff Cookbook](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html). This notebook assumes some familiarity with [jax.jvp](https://jax.readthedocs.io/en/latest/jax.html#jax.jvp) and [jax.grad](https://jax.readthedocs.io/en/latest/jax.html#jax.grad), and the mathematical meaning of JVPs and VJPs.
+For an introduction to JAX's automatic differentiation API, see [The Autodiff Cookbook](https://docs.jax.dev/en/latest/notebooks/autodiff_cookbook.html). This notebook assumes some familiarity with [jax.jvp](https://docs.jax.dev/en/latest/jax.html#jax.jvp) and [jax.grad](https://docs.jax.dev/en/latest/jax.html#jax.grad), and the mathematical meaning of JVPs and VJPs.
 
 +++ {"id": "9Fg3NFNY-2RY"}
 
-## TL;DR
+## Summary
 
 +++ {"id": "ZgMNRtXyWIW8"}
 
@@ -106,7 +106,7 @@ def f(x, y):
   return jnp.sin(x) * y
 
 def f_fwd(x, y):
-# Returns primal output and residuals to be used in backward pass by f_bwd.
+  # Returns primal output and residuals to be used in backward pass by f_bwd.
   return f(x, y), (jnp.cos(x), jnp.sin(x), y)
 
 def f_bwd(res, g):
@@ -143,7 +143,6 @@ Say we want to write a function called `log1pexp`, which computes $x \mapsto \lo
 :id: 6lWbTvs40ET-
 :outputId: 8caff99e-add1-4c70-ace3-212c0c5c6f4e
 
-import jax.numpy as jnp
 
 def log1pexp(x):
   return jnp.log(1. + jnp.exp(x))
@@ -522,7 +521,7 @@ def fixed_point_rev(f, res, x_star_bar):
                              (a, x_star, x_star_bar),
                              x_star_bar))
   return a_bar, jnp.zeros_like(x_star)
-  
+
 def rev_iter(f, packed, u):
   a, x_star, x_star_bar = packed
   _, vjp_x = vjp(lambda x: f(a, x), x_star)
@@ -963,7 +962,6 @@ print(grad(f)(3.))
 :id: s1Pn_qCIODcF
 :outputId: 423d34e0-35b8-4b57-e89d-f70f20e28ea9
 
-from jax import vjp
 
 y, f_vjp = vjp(f, 3.)
 print(y)
@@ -1013,7 +1011,7 @@ def debug_fwd(x):
   return x, x
 
 def debug_bwd(x, g):
-  import pdb; pdb.set_trace()
+  pdb.set_trace()
   return g
 
 debug.defvjp(debug_fwd, debug_bwd)
@@ -1050,7 +1048,7 @@ Array(-0.91113025, dtype=float32)
 
 ### Working with `list` / `tuple` / `dict` containers (and other pytrees)
 
-You should expect standard Python containers like lists, tuples, namedtuples, and dicts to just work, along with nested versions of those. In general, any [pytrees](https://jax.readthedocs.io/en/latest/pytrees.html) are permissible, so long as their structures are consistent according to the type constraints. 
+You should expect standard Python containers like lists, tuples, namedtuples, and dicts to just work, along with nested versions of those. In general, any [pytrees](https://docs.jax.dev/en/latest/pytrees.html) are permissible, so long as their structures are consistent according to the type constraints. 
 
 Here's a contrived example with `jax.custom_jvp`:
 

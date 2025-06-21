@@ -20,11 +20,11 @@ body:
       * If you prefer a non-templated issue report, click [here][Raw report].
 
 
-      [Discussions]: https://github.com/google/jax/discussions
+      [Discussions]: https://github.com/jax-ml/jax/discussions
 
-      [issue search]: https://github.com/google/jax/search?q=is%3Aissue&type=issues
+      [issue search]: https://github.com/jax-ml/jax/search?q=is%3Aissue&type=issues
 
-      [Raw report]: http://github.com/google/jax/issues/new
+      [Raw report]: https://github.com/jax-ml/jax/issues/new?template=none
 - type: textarea
   attributes:
     label: Description
@@ -38,28 +38,14 @@ body:
       ```
   validations:
     required: true
-- type: input
-  attributes:
-    label: What jax/jaxlib version are you using?
-    description: >
-      Include the output of `import jax, jaxlib; print(jax.__version__, jaxlib.__version__)`
-    placeholder: For example jax v0.3.0, jaxlib v0.3.0
-- type: input
-  attributes:
-    label: Which accelerator(s) are you using?
-    placeholder: CPU/GPU/TPU
-- type: input
-  attributes:
-    label: Additional system info?
-    description: >
-      Include the output of `import platform, sys, numpy; print(numpy.__version__); print(sys.version); print(platform.uname())`
-    placeholder: Python version, OS (Linux/Mac/Windows/WSL), etc.
 - type: textarea
   attributes:
-    label: NVIDIA GPU info
+    label: System info (python version, jaxlib version, accelerator, etc.)
     description: >-
-      If you are using an NVIDIA GPU, what is the output of the `nvidia-smi` command?
+      Include the output of `import jax; jax.print_environment_info()`
     placeholder: |
       ```
       ...
       ```
+  validations:
+    required: true

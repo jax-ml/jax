@@ -78,8 +78,8 @@ to JAX which have relatively complex implementations which are difficult to vali
 and introduce outsized maintenance burdens; an example is {func}`jax.scipy.special.bessel_jn`:
 as of the writing of this JEP, its current implementation is a non-straightforward
 iterative approximation that has
-[convergence issues in some domains](https://github.com/google/jax/issues/12402#issuecomment-1384828637),
-and [proposed fixes](https://github.com/google/jax/pull/17038/files) introduce further
+[convergence issues in some domains](https://github.com/jax-ml/jax/issues/12402#issuecomment-1384828637),
+and [proposed fixes](https://github.com/jax-ml/jax/pull/17038/files) introduce further
 complexity. Had we more carefully weighed the complexity and robustness of the
 implementation when accepting the contribution, we may have chosen not to accept this
 contribution to the package.
@@ -140,7 +140,7 @@ incompatible with JAX’s computation model. We instead focus on {mod}`jax.rando
 which offers similar functionality using a counter-based PRNG.
 
 #### ❌ `numpy.ma` & `numpy.polynomial`
-The {mod}`numpy.ma` andd {mod}`numpy.polynomial` submodules are mostly concerned with
+The {mod}`numpy.ma` and {mod}`numpy.polynomial` submodules are mostly concerned with
 providing object-oriented interfaces to computations that can be expressed via other
 functional means (Axis 5); for this reason, we deem them out-of-scope for JAX.
 
@@ -187,7 +187,7 @@ evaluations. {func}`jax.experimental.ode.odeint` is related, but rather limited 
 under any active development.
 
 JAX does currently include {func}`jax.scipy.integrate.trapezoid`, but this is only because
-{func}`numpy.trapz` was recently deprecated in favor of this. For any particular inputs,
+{func}`numpy.trapz` was recently deprecated in favor of this. For any particular input,
 its implementation could be replaced with one line of {mod}`jax.numpy` expressions, so
 it’s not a particularly useful API to provide.
 

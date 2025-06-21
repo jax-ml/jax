@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.15.2
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -14,9 +14,11 @@ kernelspec:
 
 +++ {"id": "TVT_MVvc02AA"}
 
-# Generalized Convolutions in JAX
+# Generalized convolutions in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/convolutions.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/convolutions.ipynb)
+<!--* freshness: { reviewed: '2024-04-08' } *-->
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/convolutions.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/notebooks/convolutions.ipynb)
 
 JAX provides a number of interfaces to compute convolutions across data, including:
 
@@ -29,7 +31,7 @@ For basic convolution operations, the `jax.numpy` and `jax.scipy` operations are
 
 +++ {"id": "ewZEn2X12-Ng"}
 
-## Basic One-dimensional Convolution
+## Basic one-dimensional convolution
 
 Basic one-dimensional convolution is implemented by {func}`jax.numpy.convolve`, which provides a JAX interface for {func}`numpy.convolve`. Here is a simple example of 1D smoothing implemented via a convolution:
 
@@ -43,7 +45,7 @@ from jax import random
 import jax.numpy as jnp
 import numpy as np
 
-key = random.PRNGKey(1701)
+key = random.key(1701)
 
 x = jnp.linspace(0, 10, 500)
 y = jnp.sin(x) + 0.2 * random.normal(key, shape=(500,))
@@ -63,7 +65,7 @@ For more information, see the {func}`jax.numpy.convolve` documentation, or the d
 
 +++ {"id": "5ndvLDIH4rv6"}
 
-## Basic N-dimensional Convolution
+## Basic N-dimensional convolution
 
 For *N*-dimensional convolution, {func}`jax.scipy.signal.convolve` provides a similar interface to that of {func}`jax.numpy.convolve`, generalized to *N* dimensions.
 
@@ -73,18 +75,18 @@ For example, here is a simple approach to de-noising an image based on convoluti
 :id: Jk5qdnbv6QgT
 :outputId: 292205eb-aa09-446f-eec2-af8c23cfc718
 
-from scipy import misc
+from scipy import datasets
 import jax.scipy as jsp
 
 fig, ax = plt.subplots(1, 3, figsize=(12, 5))
 
 # Load a sample image; compute mean() to convert from RGB to grayscale.
-image = jnp.array(misc.face().mean(-1))
+image = jnp.array(datasets.face().mean(-1))
 ax[0].imshow(image, cmap='binary_r')
 ax[0].set_title('original')
 
 # Create a noisy version by adding random Gaussian noise
-key = random.PRNGKey(1701)
+key = random.key(1701)
 noisy_image = image + 50 * random.normal(key, image.shape)
 ax[1].imshow(noisy_image, cmap='binary_r')
 ax[1].set_title('noisy')
@@ -103,7 +105,7 @@ Like in the one-dimensional case, we use `mode='same'` to specify how we would l
 
 +++ {"id": "bxuUjFVG-v1h"}
 
-## General Convolutions
+## General convolutions
 
 +++ {"id": "0pcn2LeS-03b"}
 
@@ -154,7 +156,7 @@ plt.imshow(img[0]);
 
 These are the simple convenience functions for convolutions
 
-️⚠️ The convenience `lax.conv`, `lax.conv_with_general_padding` helper function assume __NCHW__ images and __OIHW__ kernels.
+️⚠️ The convenience `lax.conv`, `lax.conv_with_general_padding` helper functions assume __NCHW__ images and __OIHW__ kernels.
 
 ```{code-cell} ipython3
 :id: kppxbxpZW0nb
@@ -177,7 +179,7 @@ plt.imshow(np.array(out)[0,0,:,:]);
 
 out = lax.conv_with_general_padding(
   jnp.transpose(img,[0,3,1,2]),    # lhs = NCHW image tensor
-  jnp.transpose(kernel,[2,3,0,1]), # rhs = IOHW conv kernel tensor
+  jnp.transpose(kernel,[3,2,0,1]), # rhs = OIHW conv kernel tensor
   (1, 1),  # window strides
   ((2,2),(2,2)), # general padding 2x2
   (1,1),  # lhs/image dilation
@@ -208,7 +210,7 @@ The important argument is the 3-tuple of axis layout arguments:
 :outputId: d5a569b3-febc-4832-f725-1d5e8fd31b9b
 
 dn = lax.conv_dimension_numbers(img.shape,     # only ndim matters, not shape
-                                kernel.shape,  # only ndim matters, not shape 
+                                kernel.shape,  # only ndim matters, not shape
                                 ('NHWC', 'HWIO', 'NHWC'))  # the important bit
 print(dn)
 ```
@@ -361,8 +363,8 @@ You aren't limited to 2D convolutions, a simple 1D demo is below:
 :outputId: 67c46ace-6adc-4c47-c1c7-1f185be5fd4b
 
 # 1D kernel - WIO layout
-kernel = jnp.array([[[1, 0, -1], [-1,  0,  1]], 
-                    [[1, 1,  1], [-1, -1, -1]]], 
+kernel = jnp.array([[[1, 0, -1], [-1,  0,  1]],
+                    [[1, 1,  1], [-1, -1, -1]]],
                     dtype=jnp.float32).transpose([2,1,0])
 # 1D data - NWC layout
 data = np.zeros((1, 200, 2), dtype=jnp.float32)
@@ -404,8 +406,8 @@ import matplotlib as mpl
 # Random 3D kernel - HWDIO layout
 kernel = jnp.array([
   [[0, 0,  0], [0,  1,  0], [0,  0,   0]],
-  [[0, -1, 0], [-1, 0, -1], [0,  -1,  0]], 
-  [[0, 0,  0], [0,  1,  0], [0,  0,   0]]], 
+  [[0, -1, 0], [-1, 0, -1], [0,  -1,  0]],
+  [[0, 0,  0], [0,  1,  0], [0,  0,   0]]],
   dtype=jnp.float32)[:, :, :, jnp.newaxis, jnp.newaxis]
 
 # 3D data - NHWDC layout
@@ -428,7 +430,6 @@ out = lax.conv_general_dilated(data,    # lhs = image tensor
 print("out shape: ", out.shape)
 
 # Make some simple 3d density plots:
-from mpl_toolkits.mplot3d import Axes3D
 def make_alpha(cmap):
   my_cmap = cmap(jnp.arange(cmap.N))
   my_cmap[:,-1] = jnp.linspace(0, 1, cmap.N)**3

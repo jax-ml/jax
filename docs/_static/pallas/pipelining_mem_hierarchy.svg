@@ -1,0 +1,30 @@
+<svg width="600" height="200" viewBox="0 0 600 200" xmlns="http://www.w3.org/2000/svg">
+
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:rgb(255,0,0);" />
+      <stop offset="100%" style="stop-color:rgb(0,0,255);" />
+    </linearGradient>
+  </defs>
+
+  <path d="M 50 100 L 70 90 L 530 90 L 550 100 L 530 110 L 70 110 Z"
+        fill="url(#grad1)"
+        stroke="black"
+        stroke-width="1"/>
+
+  <text x="127.5" y="80" text-anchor="middle" font-family="sans-serif" font-size="14">Registers</text>
+  <text x="242.5" y="80" text-anchor="middle" font-family="sans-serif" font-size="14">SRAM/Caches</text>
+  <text x="357.5" y="80" text-anchor="middle" font-family="sans-serif" font-size="14">DRAM/HBM</text>
+  <text x="472.5" y="80" text-anchor="middle" font-family="sans-serif" font-size="14">Network</text>
+
+  <text x="127.5" y="130" text-anchor="middle" font-family="sans-serif" font-size="12">Fastest</text>
+  <text x="242.5" y="130" text-anchor="middle" font-family="sans-serif" font-size="12">Fast</text>
+  <text x="357.5" y="130" text-anchor="middle" font-family="sans-serif" font-size="12">Slow</text>
+  <text x="472.5" y="130" text-anchor="middle" font-family="sans-serif" font-size="12">Slowest</text>
+
+  <text x="127.5" y="145" text-anchor="middle" font-family="sans-serif" font-size="10">Lowest Capacity</text>
+  <text x="242.5" y="145" text-anchor="middle" font-family="sans-serif" font-size="10">Low Capacity</text>
+  <text x="357.5" y="145" text-anchor="middle" font-family="sans-serif" font-size="10">High Capacity</text>
+  <text x="472.5" y="145" text-anchor="middle" font-family="sans-serif" font-size="10">Highest Capacity</text>
+
+</svg>

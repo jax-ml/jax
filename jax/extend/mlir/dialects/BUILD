@@ -24,6 +24,24 @@ package(
 )
 
 pytype_strict_library(
+    name = "dialects",
+    srcs = ["__init__.py"],
+    deps = [
+        ":arithmetic_dialect",
+        ":builtin_dialect",
+        ":chlo_dialect",
+        ":func_dialect",
+        ":math_dialect",
+        ":memref_dialect",
+        ":scf_dialect",
+        ":sdy_dialect",
+        ":sparse_tensor_dialect",
+        ":stablehlo_dialect",
+        ":vector_dialect",
+    ],
+)
+
+pytype_strict_library(
     name = "arithmetic_dialect",
     srcs = ["arith.py"],
     deps = if_building_jaxlib(["//jaxlib/mlir:arithmetic_dialect"]),
@@ -60,12 +78,6 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "mhlo_dialect",
-    srcs = ["mhlo.py"],
-    deps = if_building_jaxlib(["//jaxlib/mlir:mhlo_dialect"]),
-)
-
-pytype_strict_library(
     name = "scf_dialect",
     srcs = ["scf.py"],
     deps = if_building_jaxlib(["//jaxlib/mlir:scf_dialect"]),
@@ -75,6 +87,12 @@ pytype_strict_library(
     name = "sparse_tensor_dialect",
     srcs = ["sparse_tensor.py"],
     deps = if_building_jaxlib(["//jaxlib/mlir:sparse_tensor_dialect"]),
+)
+
+pytype_strict_library(
+    name = "sdy_dialect",
+    srcs = ["sdy.py"],
+    deps = if_building_jaxlib(["//jaxlib/mlir:sdy_dialect"]),
 )
 
 pytype_strict_library(

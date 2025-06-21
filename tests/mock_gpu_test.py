@@ -17,32 +17,33 @@ import math
 
 from absl.testing import absltest
 import jax
-from jax import config
+from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
 import numpy as np
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
+NUM_SHARDS = 4
 
 
-@jtu.run_on_devices('gpu')
+@jtu.with_global_config(mock_num_gpu_processes=NUM_SHARDS)
+@jtu.thread_unsafe_test_class()
 class MockGPUTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    jax.config.update('use_mock_gpu_client', True)
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Mocking devices only works on the GPU backend.")
 
-  def tearDown(self):
-    jax.config.update('use_mock_gpu_client', False)
-    jax.config.update('mock_num_gpus', 1)
-    super().tearDown()
+  @jtu.skip_under_pytest("Test must run in an isolated process")
+  def testMockDeviceCount(self):
+    self.assertEqual(jax.device_count(), jax.local_device_count() * NUM_SHARDS)
 
+  @jtu.skip_under_pytest("Test must run in an isolated process")
   def testMockWithSharding(self):
-    num_shards = 16
-    jax.config.update('mock_num_gpus', num_shards)
-    mesh = jtu.create_global_mesh((num_shards,), ('x',))
+    mesh = jax.sharding.Mesh(jax.devices(), ('x',))
     @partial(
         jax.jit,
         in_shardings=NamedSharding(mesh, P('x',)),
@@ -52,13 +53,23 @@ class MockGPUTest(jtu.JaxTestCase):
       z = x @ y
       return z @ y
 
-    shape = (64, 64)
+    shape = (1024, 1024)
     x = jnp.arange(math.prod(shape)).reshape(shape).astype(np.float32)
     y = x + 1
     f_lowered = f.lower(x, y)
     hlo = f_lowered.compiler_ir()
-    self.assertIn('sharding = "{devices=[16,1]<=[16]}"', str(hlo))
 
+    mocked_count = NUM_SHARDS * jax.local_device_count()
+    if config.use_shardy_partitioner.value:
+      self.assertIn(
+          'sharding = #sdy.sharding<@mesh, [{"x"}, {}]>}',
+          str(hlo)
+      )
+    else:
+      self.assertIn(
+          f'sharding = "{{devices=[{mocked_count},1]<=[{mocked_count}]}}"',
+          str(hlo)
+      )
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

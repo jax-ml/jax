@@ -17,32 +17,75 @@
 load(
     "//jaxlib:jax.bzl",
     "py_deps",
-    "py_library_providing_imports_info",
     "pytype_strict_library",
 )
-load("@rules_python//python:defs.bzl", "py_library")
 
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//:__subpackages__",
+        "//jax:internal",
     ],
 )
 
-py_library_providing_imports_info(
-    name = "triton",
-    srcs = ["__init__.py"],
-    lib_rule = pytype_strict_library,
+pytype_strict_library(
+    name = "core",
+    srcs = [
+        "__init__.py",
+        "core.py",
+    ],
+    deps = ["//jax/_src/pallas"],
+)
+
+pytype_strict_library(
+    name = "primitives",
+    srcs = ["primitives.py"],
     deps = [
         ":lowering",
+        "//jax",
+        "//jax:ad_util",
+        "//jax:api_util",
+        "//jax:core",
+        "//jax:mlir",
+        "//jax:partial_eval",
+        "//jax:source_info_util",
+        "//jax:util",
         "//jax/_src/lib",
-    ],
+        "//jax/_src/pallas",
+    ] + py_deps("numpy"),
 )
 
-py_library(
+pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
     deps = [
         "//jax",
-    ] + py_deps("jax_triton"),
+        "//jax:ad_util",
+        "//jax:api",
+        "//jax:api_util",
+        "//jax:config",
+        "//jax:core",
+        "//jax:custom_derivatives",
+        "//jax:lax",
+        "//jax:mlir",
+        "//jax:partial_eval",
+        "//jax:source_info_util",
+        "//jax:state_types",
+        "//jax:util",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "pallas_call_registration",
+    srcs = ["pallas_call_registration.py"],
+    deps = [
+        ":core",
+        ":lowering",
+        "//jax",
+        "//jax:core",
+        "//jax:mlir",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+    ],
 )

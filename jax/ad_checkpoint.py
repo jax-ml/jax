@@ -13,14 +13,14 @@
 # limitations under the License.
 
 from jax._src.ad_checkpoint import (
-  checkpoint,
-  checkpoint_policies,
-  checkpoint_name,
-  print_saved_residuals,
-  remat,
+  checkpoint as checkpoint,
+  checkpoint_policies as checkpoint_policies,
+  checkpoint_name as checkpoint_name,
+  print_saved_residuals as print_saved_residuals,
+  remat as remat,
 )
 from jax._src.interpreters.partial_eval import (
-  Recompute,
-  Saveable,
-  Offloadable,
+  Recompute as Recompute,
+  Saveable as Saveable,
+  Offloadable as Offloadable,
 )

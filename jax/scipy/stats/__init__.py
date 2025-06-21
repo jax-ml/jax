@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax.scipy.stats import bernoulli as bernoulli
 from jax.scipy.stats import beta as beta
@@ -38,6 +38,6 @@ from jax.scipy.stats import betabinom as betabinom
 from jax.scipy.stats import gennorm as gennorm
 from jax.scipy.stats import truncnorm as truncnorm
 from jax._src.scipy.stats.kde import gaussian_kde as gaussian_kde
-from jax._src.scipy.stats._core import mode as mode, rankdata as rankdata
+from jax._src.scipy.stats._core import mode as mode, rankdata as rankdata, sem as sem
 from jax.scipy.stats import vonmises as vonmises
 from jax.scipy.stats import wrapcauchy as wrapcauchy

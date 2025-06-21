@@ -22,7 +22,7 @@ load(
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = ["//jax:internal"],
 )
 
 py_library_providing_imports_info(
@@ -31,6 +31,8 @@ py_library_providing_imports_info(
         "__init__.py",
         "mlir/__init__.py",
         "mlir/dialects/__init__.py",
+        "mosaic_gpu.py",
+        "triton.py",
     ],
     lib_rule = pytype_strict_library,
     visibility = ["//jax:internal"] + jax_visibility("lib"),
@@ -38,22 +40,5 @@ py_library_providing_imports_info(
         "//jax:version",
     ] + if_building_jaxlib([
         "//jaxlib",
-        "//jaxlib:cpu_feature_guard",
-        "//jaxlib:utils",
-        "//jaxlib/mlir/_mlir_libs:register_jax_dialects",
-        "//jaxlib/mlir:arithmetic_dialect",
-        "//jaxlib/mlir:builtin_dialect",
-        "//jaxlib/mlir:chlo_dialect",
-        "//jaxlib/mlir:func_dialect",
-        "//jaxlib/mlir:ir",
-        "//jaxlib/mlir:math_dialect",
-        "//jaxlib/mlir:memref_dialect",
-        "//jaxlib/mlir:mhlo_dialect",
-        "//jaxlib/mlir:pass_manager",
-        "//jaxlib/mlir:scf_dialect",
-        "//jaxlib/mlir:sparse_tensor_dialect",
-        "//jaxlib/mlir:stablehlo_dialect",
-        "//jaxlib/mlir:vector_dialect",
-        # xla_client
     ]),
 )

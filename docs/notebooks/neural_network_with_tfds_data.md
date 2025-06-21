@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.15.2
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -34,15 +34,17 @@ limitations under the License.
 
 +++ {"id": "B_XlLLpcWjkA"}
 
-# Training a Simple Neural Network, with tensorflow/datasets Data Loading
+# Training a simple neural network, with tensorflow/datasets data loading
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/neural_network_with_tfds_data.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/neural_network_with_tfds_data.ipynb)
+<!--* freshness: { reviewed: '2024-05-03' } *-->
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/neural_network_with_tfds_data.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/notebooks/neural_network_with_tfds_data.ipynb)
 
 _Forked from_ `neural_network_and_data_loading.ipynb`
 
-![JAX](https://raw.githubusercontent.com/google/jax/main/images/jax_logo_250px.png)
+![JAX](https://raw.githubusercontent.com/jax-ml/jax/main/images/jax_logo_250px.png)
 
-Let's combine everything we showed in the [quickstart notebook](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use `tensorflow/datasets` data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library :P).
+Let's combine everything we showed in the [quickstart](https://docs.jax.dev/en/latest/quickstart.html) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use `tensorflow/datasets` data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library :P).
 
 Of course, you can use JAX with any API that is compatible with NumPy to make specifying the model a bit more plug-and-play. Here, just for explanatory purposes, we won't use any neural network libraries or special APIs for building our model.
 
@@ -79,7 +81,7 @@ step_size = 0.01
 num_epochs = 10
 batch_size = 128
 n_targets = 10
-params = init_network_params(layer_sizes, random.PRNGKey(0))
+params = init_network_params(layer_sizes, random.key(0))
 ```
 
 +++ {"id": "BtoNk_yxWtIw"}
@@ -102,7 +104,7 @@ def predict(params, image):
   for w, b in params[:-1]:
     outputs = jnp.dot(w, activations) + b
     activations = relu(outputs)
-  
+
   final_w, final_b = params[-1]
   logits = jnp.dot(final_w, activations) + final_b
   return logits - logsumexp(logits)
@@ -117,7 +119,7 @@ Let's check that our prediction function only works on single images.
 :outputId: ce9d86ed-a830-4832-e04d-10d1abb1fb8a
 
 # This works on single examples
-random_flattened_image = random.normal(random.PRNGKey(1), (28 * 28,))
+random_flattened_image = random.normal(random.key(1), (28 * 28,))
 preds = predict(params, random_flattened_image)
 print(preds.shape)
 ```
@@ -127,7 +129,7 @@ print(preds.shape)
 :outputId: f43bbc9d-bc8f-4168-ee7b-79ee9d33f245
 
 # Doesn't work with a batch
-random_flattened_images = random.normal(random.PRNGKey(1), (10, 28 * 28))
+random_flattened_images = random.normal(random.key(1), (10, 28 * 28))
 try:
   preds = predict(params, random_flattened_images)
 except TypeError:
@@ -162,7 +164,7 @@ At this point, we have all the ingredients we need to define our neural network 
 def one_hot(x, k, dtype=jnp.float32):
   """Create a one-hot encoding of x of size k."""
   return jnp.array(x[:, None] == jnp.arange(k), dtype)
-  
+
 def accuracy(params, images, targets):
   target_class = jnp.argmax(targets, axis=1)
   predicted_class = jnp.argmax(batched_predict(params, images), axis=1)
@@ -181,7 +183,7 @@ def update(params, x, y):
 
 +++ {"id": "umJJGZCC2oKl"}
 
-## Data Loading with `tensorflow/datasets`
+## Data loading with `tensorflow/datasets`
 
 JAX is laser-focused on program transformations and accelerator-backed NumPy, so we don't include data loading or munging in the JAX library. There are already a lot of great data loaders out there, so let's just use them instead of reinventing anything. We'll use the `tensorflow/datasets` data loader.
 
@@ -227,7 +229,7 @@ print('Test:', test_images.shape, test_labels.shape)
 
 +++ {"id": "xxPd6Qw3Z98v"}
 
-## Training Loop
+## Training loop
 
 ```{code-cell} ipython3
 :id: X2DnZo3iYj18

@@ -12,19 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import abc
+from __future__ import annotations
+
 from collections.abc import Sequence
-from typing import Optional
 
 import jax
 from jax.experimental import mesh_utils
 from jax._src.lib import xla_client as xc
+from jax._src.lib import _jax
 from jax._src import xla_bridge as xb
 
 Device = xc.Device
 
 
-class TopologyDescription(abc.ABC):
+class TopologyDescription:
   def __init__(self, devices: list[Device]):
     self.devices: list[Device] = devices
 
@@ -34,7 +35,7 @@ def get_attached_topology(platform=None) -> TopologyDescription:
 
 
 def get_topology_desc(
-    topology_name: str = "", platform: Optional[str] = None, **kwargs
+    topology_name: str = "", platform: str | None = None, **kwargs
 ) -> TopologyDescription:
   if platform == "tpu" or platform is None:
     return TopologyDescription(
@@ -42,9 +43,15 @@ def get_topology_desc(
             topology_name, **kwargs
         )._make_compile_only_devices()
     )
-  raise NotImplementedError(
-      "get_topology_desc(platform=%s) is not implemented" % repr(platform)
-  )
+  try:
+    topology = xb.make_pjrt_topology(platform, topology_name, **kwargs)
+    return TopologyDescription(topology._make_compile_only_devices())
+  except _jax.XlaRuntimeError as e:
+    msg, *_ = e.args
+    if msg.startswith("UNIMPLEMENTED"):
+      raise NotImplementedError(msg) from e
+    else:
+      raise
 
 
 # -- future mesh_utils --

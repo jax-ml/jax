@@ -14,7 +14,7 @@
 
 ## What’s going on?
 
-As of [#11830](https://github.com/google/jax/pull/11830) we're switching on a new implementation of {func}`jax.checkpoint`, aka {func}`jax.remat` (the two names are aliases of one another). **For most code, there will be no changes.** But there may be some observable differences in edge cases; see [What are the possible issues after the upgrade?](#what-are-the-possible-issues-after-the-upgrade)
+As of [#11830](https://github.com/jax-ml/jax/pull/11830) we're switching on a new implementation of {func}`jax.checkpoint`, aka {func}`jax.remat` (the two names are aliases of one another). **For most code, there will be no changes.** But there may be some observable differences in edge cases; see [What are the possible issues after the upgrade?](#what-are-the-possible-issues-after-the-upgrade)
 
 
 ## How can I disable the change, and go back to the old behavior for now?
@@ -29,7 +29,7 @@ If you need to revert to the old implementation, **please reach out** on a GitHu
 
 As of `jax==0.3.17` the `jax_new_checkpoint` config option is no longer
 available. If you have an issue, please reach out on [the issue
-tracker](https://github.com/google/jax/issues) so we can help fix it!
+tracker](https://github.com/jax-ml/jax/issues) so we can help fix it!
 
 
 ## Why are we doing this?
@@ -82,7 +82,7 @@ The old `jax.checkpoint` implementation was forced to save the value of `a`, whi
 
 ### Significantly less Python overhead in some cases
 
-The new `jax.checkpoint` incurs significantly less Python overhead in some cases. [Simple overhead benchmarks](https://github.com/google/jax/blob/88636d2b649bfa31fa58a30ea15c925f35637397/benchmarks/api_benchmark.py#L511-L539) got 10x faster. These overheads only arise in eager op-by-op execution, so in the common case of using a `jax.checkpoint` under a `jax.jit` or similar the speedups aren't relevant. But still, nice!
+The new `jax.checkpoint` incurs significantly less Python overhead in some cases. [Simple overhead benchmarks](https://github.com/jax-ml/jax/blob/88636d2b649bfa31fa58a30ea15c925f35637397/benchmarks/api_benchmark.py#L511-L539) got 10x faster. These overheads only arise in eager op-by-op execution, so in the common case of using a `jax.checkpoint` under a `jax.jit` or similar the speedups aren't relevant. But still, nice!
 
 
 ### Enabling new JAX features by simplifying internals

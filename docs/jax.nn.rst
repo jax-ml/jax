@@ -22,6 +22,8 @@ Activation functions
     relu6
     sigmoid
     softplus
+    sparse_plus
+    sparse_sigmoid
     soft_sign
     silu
     swish
@@ -37,6 +39,8 @@ Activation functions
     gelu
     glu
     squareplus
+    mish
+    identity
 
 Other functions
 ---------------
@@ -49,3 +53,7 @@ Other functions
     logsumexp
     standardize
     one_hot
+    dot_product_attention
+    scaled_matmul
+    get_scaled_dot_general_config
+    scaled_dot_general
