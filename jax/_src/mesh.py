@@ -214,6 +214,9 @@ class _BaseMesh:
     return dict(safe_zip(self.axis_names, self._axis_types))
 
 
+def _unpicke_mesh(devices, axis_names, axis_types):
+  return Mesh(devices, axis_names, axis_types)
+
 _mesh_object_dict = {}  # type: ignore
 
 
@@ -254,7 +257,7 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
   axis_names: tuple[MeshAxisName, ...]
 
   def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
-              axis_names: str | Sequence[MeshAxisName], *,
+              axis_names: str | Sequence[MeshAxisName],
               axis_types: tuple[AxisType, ...] | None = None):
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices)
@@ -288,8 +291,7 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
     return self
 
   def __reduce__(self):
-    return (type(self), (self.devices, self.axis_names),
-            {'axis_types': self._axis_types})
+    return (_unpicke_mesh, (self.devices, self.axis_names, self._axis_types))
 
   def __eq__(self, other):
     # This is a performance optimization. Comparing thousands of devices
@@ -455,7 +457,7 @@ class AbstractMesh(_BaseMesh):
   """
 
   def __init__(self, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
-               *, axis_types: AxisType | tuple[AxisType, ...] | None = None):
+               axis_types: AxisType | tuple[AxisType, ...] | None = None):
     self.axis_sizes = axis_sizes
     self.axis_names = axis_names
     self._size = math.prod(self.axis_sizes) if self.axis_sizes else 0

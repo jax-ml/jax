@@ -1123,9 +1123,8 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
 
 
 def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
-              *, devices: Sequence[xc.Device] | None = None,
-              axis_types: tuple[mesh_lib.AxisType, ...] | None = None
-              ) -> mesh_lib.Mesh:
+              axis_types: tuple[mesh_lib.AxisType, ...] | None = None,
+              *, devices: Sequence[xc.Device] | None = None) -> mesh_lib.Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
 
   This function attempts to automatically compute a good mapping from a set of
@@ -1158,11 +1157,11 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   Args:
     axis_shapes: Shape of the mesh. For example, axis_shape=(4, 2)
     axis_names: Names of the mesh axes. For example, axis_names=('x', 'y')
-    devices: Optional keyword only argument, that allows you to specify the
-      devices you want to create a mesh with.
-    axis_types: and optional tuple of :class:`jax.sharding.AxisType` entries
+    axis_types: Optional tuple of :class:`jax.sharding.AxisType` entries
       corresponding to the ``axis_names``. See `Explicit Sharding`_ for more
       information.
+    devices: Optional keyword only argument, that allows you to specify the
+      devices you want to create a mesh with.
 
   Returns:
     A :class:`jax.sharding.Mesh` object.

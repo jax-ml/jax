@@ -1448,7 +1448,7 @@ def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
     return jax.sharding.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
-    return jax.make_mesh(mesh_shape, axis_names, axis_types=axis_types)
+    return jax.make_mesh(mesh_shape, axis_names, axis_types)
 
 class _cached_property:
   null = object()
