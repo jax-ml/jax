@@ -3011,6 +3011,9 @@ def _reshard_abstract_eval(aval, dst_sharding):
 reshard_p.def_abstract_eval(_reshard_abstract_eval)
 
 def _reshard_impl(x, dst_sharding):
+  cur_concrete_mesh = mesh_lib.get_concrete_mesh()
+  if cur_concrete_mesh is not None and not cur_concrete_mesh.is_multi_process:
+    return api.device_put(x, dst_sharding.spec)
   return dispatch.apply_primitive(reshard_p, x, dst_sharding=dst_sharding)
 reshard_p.def_impl(_reshard_impl)
 

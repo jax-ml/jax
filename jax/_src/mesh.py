@@ -364,8 +364,6 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
   def empty(self):
     return self.size == 0
 
-  # TODO(emilyaf): Remove this when the `enable_empty_arrays` flag is
-  # removed.
   @functools.cached_property
   def is_multi_process(self):
     return self.devices.size != len(self.local_devices)
