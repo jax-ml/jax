@@ -806,146 +806,266 @@ LogicalResult canonicalize_vector_transpose(const CanonicalizeContext &ctx,
   return success();
 }
 
+static vector::LoadOp findLoadThroughShapePreserving(Value val,
+                                                     int maxDepth = 12) {
+  int depth = 0;
+  while (depth++ < maxDepth) {
+    if (auto load = dyn_cast<vector::LoadOp>(val.getDefiningOp())) return load;
+
+    Operation *def = val.getDefiningOp();
+    if (!def) {
+      break;
+    }
+
+    if (auto sc = dyn_cast<vector::ShapeCastOp>(def)) {
+      val = sc.getSource();
+      continue;
+    }
+
+    if (def->getNumResults() == 1 && def->getResult(0).hasOneUse()) {
+      auto resVT = cast<VectorType>(def->getResultTypes()[0]);
+      auto oprVT = cast<VectorType>(def->getOperand(0).getType());
+      if (resVT && oprVT && resVT.getShape() == oprVT.getShape()) {
+        val = def->getOperand(0);
+        continue;
+      }
+    }
+    break;
+  }
+  return nullptr;
+}
+
+// Finds the split point for a reshape that collapses a suffix of dimensions.
+// For a reshape from src_shape to tgt_shape, identifies if the pattern is
+// (P..., S_1, S_2, ...) -> (P..., T_collapsed) where P is a common prefix and
+// product(S_i) == T_collapsed. Handles leading dimensions of size 1.
+// Returns the index in src_shape where the collapsing suffix begins.
+std::optional<int> findCollapseSplitPoint(ArrayRef<int64_t> src_shape,
+                                          ArrayRef<int64_t> tgt_shape) {
+  int s = 0, t = 0;
+  // drop leading 1s
+  while (s < src_shape.size() && src_shape[s] == 1) {
+    ++s;
+  }
+  while (t < tgt_shape.size() && tgt_shape[t] == 1) {
+    ++t;
+  }
+
+  int s_prefix_end = s, t_prefix_end = t;
+  while (s_prefix_end < src_shape.size() && t_prefix_end < tgt_shape.size() &&
+         src_shape[s_prefix_end] == tgt_shape[t_prefix_end]) {
+    ++s_prefix_end;
+    ++t_prefix_end;
+  }
+
+  int non1_tgt_suffix = 0;
+  for (int i = t_prefix_end; i < tgt_shape.size(); ++i) {
+    if (tgt_shape[i] != 1) {
+      ++non1_tgt_suffix;
+    }
+  }
+  if (non1_tgt_suffix > 1) {
+    return std::nullopt;
+  }
+
+  int64_t src_prod = 1;
+  for (int i = s_prefix_end; i < src_shape.size(); ++i) {
+    if (src_shape[i] == 0) {
+      return std::nullopt;
+    }
+    src_prod *= src_shape[i];
+  }
+  int64_t tgt_prod = 1;
+  for (int i = t_prefix_end; i < tgt_shape.size(); ++i) {
+    if (tgt_shape[i] == 0) {
+      return std::nullopt;
+    }
+    tgt_prod *= tgt_shape[i];
+  }
+  if (src_prod != tgt_prod) {
+    return std::nullopt;
+  }
+  return s_prefix_end;
+}
+
 LogicalResult canonicalize_reshape(const CanonicalizeContext &ctx,
                                    Operation &raw_op) {
   auto op = cast<vector::ShapeCastOp>(raw_op);
-  // We can canonicalize some reshape(load(x)) -> strided load + ALU ops.
-  auto src = op.getSource();
-  auto src_ty = src.getType();
-  auto tgt_ty = op.getType();
-  if (auto load_op = src.getDefiningOp<vector::LoadOp>()) {
-    // Pattern match (..., M, N, 128) -> (..., M, N * 128).
-    // This reshape can be folded into the load for any dtype and tiling
-    // as long as the minormost dim is 128 and N is aligned to packing. The
-    // pseudo code is:
-    // ```
-    // src_ref: (M, N, 128) with src_ty
-    //
-    // def load_to_reshape(src_ref):
-    //   b_ref = src_ref.bitcast(i32) # i32[M, N / packing, 128]
-    //   r_ref = b_ref.reshape(M * N / packing, 128)
-    //   chunks = []
-    //   for i in range(N / packing):
-    //     v = r_ref[i::N / packing, :] # i32[M, 128]
-    //     for j in range(packing):
-    //       chunk = v >> (j * bitwidth)
-    //       chunks.append(chunk)
-    //   res = concat(chunks, axis=-1) # i32[M, N * 128]
-    //   # int_src_ty refers to int type with the same bitwidth as src_ty.
-    //   res = res.astype(int_src_ty) # Trigger i32 -> int_src_ty packing.
-    //   return bitcast(res, src_ty) # src_ty[M, N * 128]
-    // ```
-    // TODO(jevinjiang): we can extend this to support folding more dims to last
-    // dim not just last 2 dims.
-    auto bitwidth = src_ty.getElementTypeBitWidth();
-    auto packing = 32 / bitwidth;
-    if (packing <= 0) {
-      return op.emitOpError("Unsupported bitwidth = ") << bitwidth;
-    }
-    // Memref bitcast is not supported if HW generation is below 4. We don't
-    // return failure because we will rely on vector reshape.
-    if ((ctx.hardware_generation < 4 && packing > 1) ||
-        (ctx.hardware_generation == 4 && packing > 2)) {
-      return success();
-    }
-    auto ref = load_op.getBase();
-    auto indices = load_op.getIndices();
-    auto ref_shape = ref.getType().getShape();
-    auto src_shape = src_ty.getShape();
-    auto tgt_shape = tgt_ty.getShape();
-    int ref_rank = ref_shape.size();
-    int src_rank = src_shape.size();
-    int tgt_rank = tgt_shape.size();
-    if (ref_rank != src_rank) {
-      return op.emitOpError("Loaded vector rank and memref rank mismatch");
-    }
-    // Check the memref's eligibility.
-    if (!isContiguousMemref(ref) || ref_rank <= 2 ||
-        // TODO(jevinjiang): add support for partial load on last 2 dims where
-        // last 2 indices are not necessarily 0 or load shape is not full.
-        getIntConst(indices[ref_rank - 1]) != 0 ||
-        getIntConst(indices[ref_rank - 2]) != 0 ||
-        ref_shape[ref_rank - 1] != src_shape[src_rank - 1] ||
-        ref_shape[ref_rank - 2] != src_shape[src_rank - 2]) {
-      return success();
-    }
-    // Check the reshape's eligibility.
-    if (src_rank != tgt_rank + 1 || src_shape[src_rank - 2] % packing != 0 ||
-        src_shape[src_rank - 1] != ctx.target_shape[1] ||
-        src_shape[src_rank - 2] * src_shape[src_rank - 1] !=
-            tgt_shape[tgt_rank - 1]) {
-      return success();
-    }
-    // At this point, the pattern is matched.
-    ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
-    auto loc = op.getLoc();
-    // First, we bitcast and reshape src ref from (..., M, N, 128) to
-    // i32(..., M * N / packing, 128).
-    SmallVector<int64_t> bitcast_shape(ref_shape);
-    // TODO(jevinjiang): once we have memref pad op, we can use ceiling
-    // division to ref_shape[ref_rank - 2] and packing to get sublane_cnt.
-    CHECK_EQ(ref_shape[ref_rank - 2] % packing, 0);
-    auto i32_2nd_minor_size = ref_shape[ref_rank - 2] / packing;
-    bitcast_shape[ref_rank - 2] = i32_2nd_minor_size;
-    auto i32_ref = builder.create<tpu::MemRefBitcastOp>(
-        MemRefType::get(bitcast_shape, builder.getI32Type()), ref);
 
-    SmallVector<int64_t> reshape_shape(ref_shape.begin(),
-                                       ref_shape.begin() + tgt_rank);
-    reshape_shape[tgt_rank - 1] = ctx.target_shape[1];
-    reshape_shape[tgt_rank - 2] = ref_shape[ref_rank - 3] * i32_2nd_minor_size;
-    auto reshape_ref = builder.create<tpu::MemRefReshapeOp>(
-        MemRefType::get(reshape_shape, builder.getI32Type()), i32_ref);
+  Value src = op.getSource();
 
-    // We also need to transform the indices while transforming the memref.
-    SmallVector<Value> new_indices(indices.begin(), indices.begin() + tgt_rank);
-    new_indices[tgt_rank - 1] = IdxConst(0, builder, loc);
-    new_indices[tgt_rank - 2] = builder.create<arith::MulIOp>(
-        builder.getIndexType(), indices[ref_rank - 3],
-        IdxConst(i32_2nd_minor_size, builder, loc));
-    // Then, we strided load the bitcasted ref by stride (N / packing).
-    int stride = i32_2nd_minor_size;
-    // Expect to hold src_shape[src_rank - 2] number of chunks which have the
-    // shape (..., src_shape[src_rank - 3], 128) and wait to be concatenated
-    // along the last dim.
-    SmallVector<Value> chunks(src_shape[src_rank - 2]);
-    SmallVector<int64_t> chunk_shape(tgt_shape);
-    chunk_shape[tgt_rank - 1] = ctx.target_shape[1];
-    SmallVector<int32_t> strides(tgt_rank, 1);
-    strides[tgt_rank - 2] = stride;
-    auto tgt_2nd_minor_idx = new_indices[tgt_rank - 2];
-    for (int i = 0; i < stride; ++i) {
-      new_indices[tgt_rank - 2] = builder.create<arith::AddIOp>(
-          builder.getIndexType(), tgt_2nd_minor_idx, IdxConst(i, builder, loc));
-      auto chunk = builder.create<tpu::StridedLoadOp>(
-          VectorType::get(chunk_shape, builder.getI32Type()), reshape_ref,
-          new_indices, strides);
-      for (int j = 0; j < packing; ++j) {
-        int idx = i * packing + j;
-        chunks[idx] = builder.create<arith::ShRUIOp>(
-            chunk.getType(), chunk,
-            I32Const(j * bitwidth, chunk_shape, builder, loc));
-      }
-    }
-    // Concatenate the chunks along the last dim to get i32(..., M, N * 128).
-    CHECK_GT(chunks.size(), 0);
-    Value i32_tgt = chunks[0];
-    if (chunks.size() > 1) {
-      i32_tgt = builder.create<tpu::ConcatenateOp>(
-          VectorType::get(tgt_shape, builder.getI32Type()), chunks,
-          /*dimension=*/tgt_rank - 1);
-    }
-    Value tgt = i32_tgt;
-    // Convert to target dtype.
-    if (packing > 1) {
-      tgt = builder.create<arith::TruncIOp>(
-          VectorType::get(tgt_shape, builder.getIntegerType(bitwidth)),
-          i32_tgt);
-    }
-    tgt = builder.create<arith::BitcastOp>(tgt_ty, tgt);
-    op.replaceAllUsesWith(tgt);
-    op.erase();
+  auto src_ty_opt = dyn_cast_if_present<VectorType>(src.getType());
+  if (!src_ty_opt) {
+    return success();
   }
+  auto src_ty = cast<VectorType>(src.getType());
+  auto tgt_ty = op.getResult().getType();
+
+  vector::LoadOp load_op = findLoadThroughShapePreserving(src);
+  if (!load_op) {
+    return success();
+  }
+
+  auto ref = load_op.getBase();
+
+  auto memref_ty_opt = dyn_cast_if_present<MemRefType>(ref.getType());
+  if (!memref_ty_opt) {
+    return success();
+  }
+  auto memref_ty = cast<MemRefType>(ref.getType());
+  auto ref_shape = memref_ty.getShape();
+  int ref_rank = memref_ty.getRank();
+  int src_rank = src_ty.getRank();
+
+  if (!isContiguousMemref(ref)) {
+    return success();
+  }
+
+  int rank_diff = ref_rank - src_rank;
+  if (rank_diff < 0) {
+    return success();
+  }
+  auto indices = load_op.getIndices();
+  for (int i = 0; i < rank_diff; ++i) {
+    if (ref_shape[i] != 1 || getIntConst(indices[i]) != 0) {
+      return success();
+    }
+  }
+  for (int i = 0; i < src_rank; ++i) {
+    if (ref_shape[i + rank_diff] != src_ty.getShape()[i] ||
+        getIntConst(indices[i + rank_diff]) != 0) {
+      return success();
+    }
+  }
+
+  const int64_t lane = ctx.target_shape[1];
+  bool src_has_lane = (src_ty.getShape().back() == lane);
+  bool tgt_has_lane = (tgt_ty.getShape().back() == lane);
+  if (src_has_lane == tgt_has_lane) {
+    return success();
+  }
+  bool is_expand = src_ty.getShape().size() < tgt_ty.getShape().size();
+  if (is_expand) {
+    // Note(mvoz): we actually should consider supporting this case, but it
+    // requires a bit more work. Right now, the pattern we are focusing on
+    // optimizing is always a collapse after load.
+    return success();
+  }
+
+  auto split_opt =
+      src_has_lane
+          ? findCollapseSplitPoint(src_ty.getShape(), tgt_ty.getShape())
+          : findCollapseSplitPoint(tgt_ty.getShape(), src_ty.getShape());
+  if (!split_opt) {
+    return success();
+  }
+  int split_point = *split_opt;
+
+  int bitwidth = src_ty.getElementTypeBitWidth();
+  int packing = 32 / bitwidth;
+  int64_t sublane_prod = 1;
+  if (src_has_lane) {
+    auto shape = src_ty.getShape();
+    for (int i = split_point; i < (int)shape.size() - 1; ++i) {
+      sublane_prod *= shape[i];
+    }
+  } else {
+    if (src_ty.getShape().back() % lane) {
+      return success();
+    }
+    sublane_prod = src_ty.getShape().back() / lane;
+    int64_t check = 1;
+    for (int i = split_point; i < (int)tgt_ty.getShape().size() - 1; ++i) {
+      check *= tgt_ty.getShape()[i];
+    }
+    if (check != sublane_prod) {
+      return success();
+    }
+  }
+  if (sublane_prod == 0 || sublane_prod % packing) {
+    return success();
+  }
+
+  int64_t i32_sublane_size = sublane_prod / packing;
+
+  ImplicitLocOpBuilder b(op->getLoc(), op.getOperation());
+  auto loc = op.getLoc();
+  auto i32_type = b.getI32Type();
+
+  SmallVector<int64_t> prefix_dims(ref_shape.begin(),
+                                   ref_shape.begin() + split_point + rank_diff);
+
+  SmallVector<int64_t> ref_mr_shape = prefix_dims;
+  ref_mr_shape.push_back(sublane_prod);
+  ref_mr_shape.push_back(lane);
+
+  Value reshaped_ref = b.create<tpu::MemRefReshapeOp>(
+      MemRefType::get(ref_mr_shape, memref_ty.getElementType()), ref);
+
+  SmallVector<int64_t> i32_mr_shape = prefix_dims;
+  i32_mr_shape.push_back(i32_sublane_size);
+  i32_mr_shape.push_back(lane);
+  Value i32_view = b.create<tpu::MemRefBitcastOp>(
+      MemRefType::get(i32_mr_shape, i32_type), reshaped_ref);
+
+  SmallVector<int64_t> chunk_shape = prefix_dims;
+  chunk_shape.push_back(1);
+  chunk_shape.push_back(lane);
+  auto chunk_ty = VectorType::get(chunk_shape, i32_type);
+  int stride_dim = i32_mr_shape.size() - 2;
+  SmallVector<int32_t> strides(i32_mr_shape.size(), 1);
+  strides[stride_dim] = i32_sublane_size;
+
+  SmallVector<Value> unpacked_chunks;
+  unpacked_chunks.reserve(sublane_prod);
+
+  // NOTE(mvoz): Expansion loops sublane outer, packing inner
+  for (int i = 0; i < i32_sublane_size; ++i) {
+    SmallVector<Value> idx(i32_mr_shape.size(), IdxConst(0, b, loc));
+    idx[stride_dim] = IdxConst(i, b, loc);
+    Value slice =
+        b.create<tpu::StridedLoadOp>(chunk_ty, i32_view, idx, strides);
+    SmallVector<int64_t> collapse_shape = prefix_dims;
+    collapse_shape.push_back(lane);
+    Value collapsed = b.create<vector::ShapeCastOp>(
+        VectorType::get(collapse_shape, i32_type), slice);
+
+    for (int p = 0; p < packing; ++p) {
+      unpacked_chunks.push_back(b.create<arith::ShRUIOp>(
+          collapsed.getType(), collapsed,
+          I32Const(p * bitwidth, collapse_shape, b, loc)));
+    }
+  }
+
+  Value i32_flat;
+  if (unpacked_chunks.size() == 1) {
+    i32_flat = unpacked_chunks.front();
+  } else {
+    SmallVector<int64_t> concat_shape = prefix_dims;
+    int concat_dim;
+    concat_shape.push_back(lane * sublane_prod);
+    concat_dim = concat_shape.size() - 1;
+    i32_flat = b.create<tpu::ConcatenateOp>(
+        VectorType::get(concat_shape, i32_type), unpacked_chunks, concat_dim);
+  }
+
+  Value final_vec = i32_flat;
+  if (packing > 1) {
+    final_vec = b.create<arith::TruncIOp>(
+        VectorType::get(cast<VectorType>(i32_flat.getType()).getShape(),
+                        b.getIntegerType(bitwidth)),
+        i32_flat);
+  }
+  final_vec = b.create<arith::BitcastOp>(
+      VectorType::get(cast<VectorType>(final_vec.getType()).getShape(),
+                      tgt_ty.getElementType()),
+      final_vec);
+  if (final_vec.getType() != tgt_ty) {
+    final_vec = b.create<vector::ShapeCastOp>(tgt_ty, final_vec);
+  }
+
+  op.replaceAllUsesWith(final_vec);
+  op.erase();
   return success();
 }
 
