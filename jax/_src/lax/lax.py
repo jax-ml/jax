@@ -5279,8 +5279,7 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
       raise core.ShardingTypeError(
           'Contracting dimensions are sharded and it is ambiguous how the'
           ' output should be sharded. Please specify the output sharding via'
-          ' the `out_sharding` parameter of einsum. Or reshard your input via'
-          ' `jax.sharding.reshard` so that the dot is conflict free.'
+          ' the `out_sharding` parameter.'
           f' Got {lhs_contracting_spec=} and {rhs_contracting_spec=}')
 
   return _dot_general_sharding_computation(
@@ -7151,7 +7150,7 @@ def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
       else:
         raise core.ShardingTypeError(
             'This reshape is not supported. Please specify the sharding of the'
-            ' output via the `sharding` argument of jax.lax.reshape. Got'
+            ' output via the `out_sharding` argument of jax.lax.reshape. Got'
             f' operand shape: {operand}, new sizes: {new_sizes}')
     else:
       new_spec.append(sp)
@@ -7175,7 +7174,7 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
       else:
         raise core.ShardingTypeError(
             'This reshape is not supported. Please specify the sharding of the'
-            ' output via the `sharding` argument of jax.lax.reshape. Got'
+            ' output via the `out_sharding` argument of jax.lax.reshape. Got'
             f' operand shape: {operand}, new sizes: {new_sizes}')
     else:
       new_spec.append(next(op_spec))
