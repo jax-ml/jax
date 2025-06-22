@@ -69,6 +69,7 @@ jax_multiplatform_test(
         "//jax:pallas_gpu_ops",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax:shard_map",
     ] + py_deps([
         "numpy",
         "absl/testing",

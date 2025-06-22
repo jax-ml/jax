@@ -303,7 +303,6 @@ py_library_providing_imports_info(
         "_src/interpreters/__init__.py",
         "_src/prng.py",
         "_src/random.py",
-        "_src/shard_map.py",
     ] + glob(
         [
             "*.py",
@@ -404,6 +403,7 @@ py_library_providing_imports_info(
         ":profiler",
         ":public_test_util",
         ":shard_alike",
+        ":shard_map",
         ":sharding",
         ":sharding_impls",
         ":sharding_specs",
@@ -1230,6 +1230,7 @@ pytype_strict_library(
         ":jax",
         ":pallas",
         ":pallas_tpu",
+        ":shard_map",
     ] + py_deps("numpy"),
 )
 
@@ -1432,6 +1433,35 @@ pytype_strict_library(
         ":util",
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "shard_map",
+    srcs = ["_src/shard_map.py"],
+    deps = [
+        ":ad",
+        ":ad_util",
+        ":api",
+        ":api_util",
+        ":batching",
+        ":config",
+        ":core",
+        ":dtypes",
+        ":effects",
+        ":lax",
+        ":layout",
+        ":mesh",
+        ":mlir",
+        ":partial_eval",
+        ":sharding",
+        ":sharding_impls",
+        ":source_info_util",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

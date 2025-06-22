@@ -23,14 +23,11 @@ from typing import Any, TypeVar, Union
 
 import numpy as np
 
-import jax
-import jax.numpy as jnp
-from jax.sharding import NamedSharding, PartitionSpec
 from jax._src import ad_util
+from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
-from jax._src import debugging
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
@@ -38,13 +35,15 @@ from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
-from jax._src.core import pvary
-from jax._src.core import Tracer, typeof
+from jax._src import xla_bridge as xb
+from jax._src.api import _shared_code_pmap, _prepare_pmap
+from jax._src.core import pvary, Tracer, typeof
 from jax._src.mesh import (AbstractMesh, Mesh, AxisType, use_abstract_mesh,
                            get_abstract_mesh, get_concrete_mesh)
-from jax._src.api import _shared_code_pmap, _prepare_pmap
+from jax._src.lax import lax, parallel as lax_parallel
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo, sdy
+from jax._src.sharding_impls import NamedSharding, PartitionSpec
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,
                            as_hashable_function, memoize, partition_list,
                            merge_lists, split_list, subs_list2,
@@ -54,12 +53,9 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import ad
-from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
-                           tree_structure, tree_leaves, keystr)
-from jax._src.tree_util import (broadcast_prefix, prefix_errors, PyTreeDef,
-                                generate_key_paths, KeyPath)
-from jax.experimental.multihost_utils import (host_local_array_to_global_array,
-                                              global_array_to_host_local_array)
+from jax._src.tree_util import (
+    broadcast_prefix, keystr, prefix_errors, generate_key_paths, tree_flatten,
+    tree_leaves, tree_map, tree_structure, tree_unflatten, KeyPath, PyTreeDef)
 
 P = PartitionSpec
 
@@ -1012,9 +1008,9 @@ def _run_shmap(f, mesh, manual_axes, args, vmas, check_vma, context_mesh):
 
 def _unmatch_spec(mesh: Mesh, check_vma, in_spec, x: JaxType, context_mesh
                   ) -> JaxType:
-  with (core.eval_context(), jax.disable_jit(False),
+  with (core.eval_context(), api.disable_jit(False),
         use_abstract_mesh(context_mesh)):
-    return jax.jit(HashablePartial(_unmatch, mesh, check_vma, in_spec))(x)
+    return api.jit(HashablePartial(_unmatch, mesh, check_vma, in_spec))(x)
 
 def _unmatch(mesh, check_vma, in_spec, x):
   if check_vma:
@@ -1047,15 +1043,15 @@ class _RepError(Exception):
 def _match_spec(mesh: Mesh, check_vma, src_pspec: PartitionSpec,
                 dst_pspec: PartitionSpec, x: JaxType) -> JaxType:
   fn = HashablePartial(_match, mesh, check_vma, src_pspec, dst_pspec)
-  with core.eval_context(), jax.disable_jit(False):
-    return jax.jit(fn, out_shardings=NamedSharding(mesh, dst_pspec))(x)
+  with core.eval_context(), api.disable_jit(False):
+    return api.jit(fn, out_shardings=NamedSharding(mesh, dst_pspec))(x)
 
 def _match(mesh, check_vma, src_pspec, dst_pspec, x):
   return shard_map(_rem_singleton, mesh=mesh, in_specs=src_pspec,
                    out_specs=dst_pspec, check_vma=check_vma)(x)
 
-def _rem_singleton(x): return jnp.squeeze(x, axis=0)
-def _add_singleton(x): return jnp.expand_dims(x, axis=0)
+def _rem_singleton(x): return lax.squeeze(x, [0])
+def _add_singleton(x): return lax.expand_dims(x, [0])
 
 def _maybe_check_special(outs):
   if not config.debug_nans.value and not config.debug_infs.value: return
@@ -1109,9 +1105,9 @@ class ShardMapTrace(core.Trace):
       f = HashablePartial(
           _prim_applier, prim, self.check, tuple(params.items()), self.mesh,
           in_specs, out_specs)
-      with (core.eval_context(), jax.disable_jit(False), jax.debug_nans(False),
-            jax.debug_infs(False), use_abstract_mesh(self.context_mesh)):
-        out_vals = jax.jit(f)(*in_vals)
+      with (core.eval_context(), api.disable_jit(False), config.debug_nans(False),
+            config.debug_infs(False), use_abstract_mesh(self.context_mesh)):
+        out_vals = api.jit(f)(*in_vals)
       _maybe_check_special(out_vals)
     if prim.multiple_results:
       out_vma = (out_vma if isinstance(out_vma, (list, tuple))
@@ -1205,25 +1201,6 @@ def _prim_applier(prim, check_vma, params_tup, mesh, in_specs, out_specs, *args)
                    check_vma=check_vma)(*args)
 
 eager_rules: dict[core.Primitive, Callable] = {}
-
-
-# TODO(mattjj): working around an apparent XLA or PjRt bug, remove eventually
-def _debug_callback_eager_rule(
-    mesh,
-    *args,
-    callback: Callable[..., Any],
-    effect: debugging.DebugEffect,
-    partitioned: bool,
-):
-  del effect
-  with core.eval_context():
-    all_blocks = zip(*map(list, args))
-  for (idx, device), blocks in zip(np.ndenumerate(mesh.devices), all_blocks):
-    callback(*blocks)
-  return []
-
-
-eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
 
 def _device_put_eager_rule(mesh, *xs, srcs, devices, copy_semantics):
   del mesh, srcs, copy_semantics
@@ -1494,7 +1471,7 @@ def _promote_scalar_residuals_lin(f, linearize_outs_thunk, *args, **kwargs):
   num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
   residuals = ans[:num_res_out]
   primals = ans[num_res_out:]
-  residuals = [jax.lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+  residuals = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
                for x in residuals]
   return *residuals, *primals
 
@@ -1504,7 +1481,7 @@ def _promote_scalar_residuals(f: Callable, *args, **kwargs):
   which = [f1 is None and f2 is None and not v.aval.shape
            for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
   jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
-  out_consts = [jax.lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+  out_consts = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
                 for x in out_consts]
   return jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env)
 
@@ -1559,7 +1536,7 @@ def _shard_map_transpose(out_cts, *args,
     _, in_ct_specs = partition_list(in_undef, in_specs)
     in_cts = [ad.Zero(_unshard_aval(mesh, check_vma, sp, x.aval))
               if type(x) is ad.Zero else x if check_vma
-              else jax.lax.psum(x, tuple(_unmentioned2(mesh, sp, manual_axes)))
+              else lax_parallel.psum(x, tuple(_unmentioned2(mesh, sp, manual_axes)))
               for sp, x in zip(in_ct_specs, in_cts)]
     res_zeros = [ad_util.zero_from_primal(r) for r in res]
     return merge_lists(in_undef, res_zeros, in_cts)
@@ -1586,7 +1563,7 @@ def _shard_map_transpose(out_cts, *args,
     try:
       # TODO(mattjj): Remove this and do `fun_trans.call_wrapped(out_cts, args)`
       # in eager mode so that output of shmap are not manual.
-      with jax.disable_jit(True):
+      with api.disable_jit(True):
         _ = shard_map_p.bind(
             fun_trans_flat, *all_args, mesh=mesh, in_specs=tuple(new_in_specs),
             out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
@@ -1772,6 +1749,8 @@ pe.dce_rules[shard_map_p] = _shard_map_dce
 def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
          static_broadcasted_argnums=(), devices=None, backend=None,
          axis_size=None, donate_argnums=(), global_arg_shapes=None):
+  # TODO(vanderplas): move these definitions into jax._src and avoid local import.
+  import jax.experimental.multihost_utils as mhu  # pytype: disable=import-error
   devices = tuple(devices) if devices is not None else devices
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
@@ -1784,9 +1763,9 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     mesh = Mesh(_get_devices(p, backend), (axis_name,))
     _pmapped, in_specs, out_specs = _cached_shard_map(
         p.flat_fun, mesh, p.in_axes_flat, p.out_axes_thunk, axis_name)
-    flat_global_args = host_local_array_to_global_array(
+    flat_global_args = mhu.host_local_array_to_global_array(
         p.flat_args, mesh, list(in_specs))
-    jitted_f = jax.jit(
+    jitted_f = api.jit(
         _pmapped,
         donate_argnums=[i for i, val in enumerate(p.donated_invars) if val])
     return jitted_f, flat_global_args, p.out_tree, mesh, out_specs
@@ -1795,7 +1774,7 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     (jitted_f, flat_global_args, out_tree, mesh,
      out_specs) = infer_params(*args, **kwargs)
     outs = jitted_f(*flat_global_args)
-    outs = global_array_to_host_local_array(outs, mesh, out_specs())
+    outs = mhu.global_array_to_host_local_array(outs, mesh, out_specs())
     return tree_unflatten(out_tree(), outs)
 
   def lower(*args, **kwargs):
@@ -1818,10 +1797,10 @@ def _cached_shard_map(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
 
 @lu.transformation2
 def _handle_reshapes(f, in_axes, out_axes_thunk, *args, **kwargs):
-  args = tree_map(lambda x, ax: x if ax is None else jnp.squeeze(x, axis=ax),
+  args = tree_map(lambda x, ax: x if ax is None else lax.squeeze(x, [ax]),
                   list(args), list(in_axes))
   out = f(*args)
-  return tree_map(lambda x, ax: x if ax is None else jnp.expand_dims(x, axis=ax),
+  return tree_map(lambda x, ax: x if ax is None else lax.expand_dims(x, [ax]),
                   list(out), list(out_axes_thunk()))
 
 def _axis_to_spec(axis_name, ax):
@@ -1835,9 +1814,9 @@ def _axis_to_spec(axis_name, ax):
 
 def _get_devices(p, backend):
   if backend is not None and p.devices is None:
-    devs = jax.devices(backend=backend)
+    devs = xb.devices(backend=backend)
   else:
-    devs = jax.devices() if p.devices is None else p.devices
-  if jax.process_count() > 1:
+    devs = xb.devices() if p.devices is None else p.devices
+  if xb.process_count() > 1:
     return devs[:p.global_axis_size]
   return devs[:p.local_axis_size]
