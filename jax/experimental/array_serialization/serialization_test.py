@@ -38,7 +38,7 @@ from jax._src.export._export import (
     deserialization_registry as node_deserialization_registry)
 from jax._src.export._export import (
     serialization_registry as node_serialization_registry)
-from jax._src.layout import DeviceLocalLayout as DLL
+from jax._src.layout import Layout as DLL
 from jax._src.layout import Format
 from jax.experimental.array_serialization import pytree_serialization
 from jax.experimental.array_serialization import serialization
@@ -625,8 +625,8 @@ class CheckpointTest(jtu.JaxTestCase):
 
     out_format = jax.jit(lambda x: x.T, out_shardings=Format(DLL.AUTO)).lower(
         arr).compile().output_formats
-    self.assertEqual(arr.format.device_local_layout.major_to_minor,
-                     out_format.device_local_layout.major_to_minor[::-1])
+    self.assertEqual(arr.format.layout.major_to_minor,
+                     out_format.layout.major_to_minor[::-1])
 
     ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
     ckpt_path = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/first').full_path)

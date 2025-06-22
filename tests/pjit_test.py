@@ -57,7 +57,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding, parse_flatten_op_sharding)
 from jax._src.pjit import (pjit, mesh_cast, use_auto_axes, use_explicit_axes,
                            _pjit_lower_cached)
-from jax._src.layout import Format, DeviceLocalLayout as DLL
+from jax._src.layout import Format, Layout as DLL
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType

@@ -2804,9 +2804,9 @@ class ShapeDtypeStruct:
           f" `jax.experimental.layout.Format`. Got {sharding} of type"
           f" {type(sharding)}.")
     if (isinstance(sharding, Format) and
-        isinstance(sharding.device_local_layout, AutoLayout)):
+        isinstance(sharding.layout, AutoLayout)):
       raise TypeError(
-          "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
+          "`Layout.AUTO` cannot be used in place of a device-local"
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")
     if isinstance(sharding, Format):
       self.sharding = sharding.sharding
@@ -2821,7 +2821,7 @@ class ShapeDtypeStruct:
       self.sharding = NamedSharding(cur_mesh, sharding)
     else:
       self.sharding = sharding
-    self._dll = (sharding.device_local_layout if isinstance(sharding, Format)
+    self._dll = (sharding.layout if isinstance(sharding, Format)
                  else None)
     self.weak_type = weak_type
     if vma is not None and not isinstance(vma, (set, frozenset)):

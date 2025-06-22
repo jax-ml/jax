@@ -30,7 +30,7 @@ class AutoLayout:
     return "AUTO"
 
 
-class DeviceLocalLayout:
+class Layout:
   major_to_minor: tuple[int, ...]
   _tiling: tuple[tuple[int, ...], ...] | None
   _sub_byte_element_size_in_bits: int
@@ -47,13 +47,13 @@ class DeviceLocalLayout:
   @staticmethod
   def from_pjrt_layout(pjrt_layout: xc.PjRtLayout):
     xla_layout = pjrt_layout._xla_layout()
-    return DeviceLocalLayout(xla_layout.minor_to_major()[::-1],  # pytype: disable=wrong-arg-types
-                             xla_layout.tiling(),  # type: ignore[arg-type]
-                             xla_layout.element_size_in_bits())
+    return Layout(xla_layout.minor_to_major()[::-1],  # pytype: disable=wrong-arg-types
+                  xla_layout.tiling(),  # type: ignore[arg-type]
+                  xla_layout.element_size_in_bits())
 
   def __repr__(self):
     return (
-        f'DeviceLocalLayout(major_to_minor={self.major_to_minor},'
+        f'Layout(major_to_minor={self.major_to_minor},'
         f' _tiling={self._tiling},'
         f' _sub_byte_element_size_in_bits={self._sub_byte_element_size_in_bits})'
     )
@@ -63,7 +63,7 @@ class DeviceLocalLayout:
                   self._sub_byte_element_size_in_bits))
 
   def __eq__(self, other):
-    if not isinstance(other, DeviceLocalLayout):
+    if not isinstance(other, Layout):
       return False
     return (self.major_to_minor == other.major_to_minor and
             self._tiling == other._tiling and
@@ -90,32 +90,32 @@ class DeviceLocalLayout:
           f' Got major_to_minor={self.major_to_minor} and shape={aval_shape}')
 
 
-LayoutOptions = Union[DeviceLocalLayout, None, AutoLayout]  # pytype: disable=invalid-annotation
+LayoutOptions = Union[Layout, None, AutoLayout]  # pytype: disable=invalid-annotation
 ShardingOptions = Union[Sharding, None, AutoSharding]
 
 
 class Format:
-  __slots__ = ['device_local_layout', 'sharding']
+  __slots__ = ['layout', 'sharding']
 
-  def __init__(self, device_local_layout: LayoutOptions = None,
+  def __init__(self, layout: LayoutOptions = None,
                sharding: ShardingOptions = None):
     # If layout is concrete and sharding is not, error.
-    if (isinstance(device_local_layout, DeviceLocalLayout) and
+    if (isinstance(layout, Layout) and
         (sharding is None or isinstance(sharding, AutoSharding))):
       raise ValueError(
           'Sharding has to be concrete when layout is of type'
-          f' {type(device_local_layout)}. Please pass a'
+          f' {type(layout)}. Please pass a'
           ' `jax.sharding.NamedSharding` or'
           ' `jax.sharding.SingleDeviceSharding` to the sharding argument. Got'
           f' sharding {sharding}'
       )
     if not isinstance(
-        device_local_layout, (DeviceLocalLayout, type(None), AutoLayout)):
+        layout, (Layout, type(None), AutoLayout)):
       raise TypeError(
-          'Invalid value received for the device_local_layout argument.'
-          ' Expected values are `None`, `DeviceLocalLayout.AUTO` or an'
-          f' instance of `DeviceLocalLayout`. Got {device_local_layout} of'
-          f' type {type(device_local_layout)}'
+          'Invalid value received for the layout argument.'
+          ' Expected values are `None`, `Layout.AUTO` or an'
+          f' instance of `Layout`. Got {layout} of'
+          f' type {type(layout)}'
       )
     if not isinstance(
         sharding, (Sharding, type(None), AutoSharding)):
@@ -124,22 +124,22 @@ class Format:
           ' are `None`, `pjit.AUTO` or an instance of `jax.Sharding`. Got'
           f' {sharding} of type {type(sharding)}')
 
-    self.device_local_layout = device_local_layout
+    self.layout = layout
     self.sharding = sharding
 
+  # TODO(yashkatariya): Remove this
   @property
-  def dll(self):
-    return self.device_local_layout
+  def device_local_layout(self):
+    return self.layout
 
   def __repr__(self):
-    return (f'Layout(device_local_layout={self.device_local_layout},'
-            f' sharding={self.sharding})')
+    return f'Format(layout={self.layout}, sharding={self.sharding})'
 
   def __hash__(self):
-    return hash((self.device_local_layout, self.sharding))
+    return hash((self.layout, self.sharding))
 
   def __eq__(self, other):
     if not isinstance(other, Format):
       return False
-    return (self.device_local_layout == other.device_local_layout and
+    return (self.layout == other.layout and
             self.sharding == other.sharding)

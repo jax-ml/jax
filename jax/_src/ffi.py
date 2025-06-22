@@ -32,7 +32,7 @@ from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.layout import DeviceLocalLayout
+from jax._src.layout import Layout
 from jax._src.lib import jaxlib
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
@@ -40,7 +40,7 @@ from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
                              Shape)
 
 map, unsafe_map = util.safe_map, map
-FfiLayoutOptions = Sequence[int] | DeviceLocalLayout | None
+FfiLayoutOptions = Sequence[int] | Layout | None
 
 
 def register_ffi_target(
@@ -144,7 +144,7 @@ def _convert_layout_for_lowering(
   """Convert a layout to the minor-to-major order used by the custom call API."""
   if layout is None:
     return tuple(reversed(range(len(_aval_shape(aval)))))
-  elif isinstance(layout, DeviceLocalLayout):
+  elif isinstance(layout, Layout):
     if layout._tiling is not None:
       raise ValueError("The FFI does not support layouts with tiling")
     return layout.major_to_minor[::-1]
@@ -168,7 +168,7 @@ def build_ffi_lowering_function(
 
   Note that layouts passed to this function as tuples should be in
   minor-to-major order (as expected by XLA) rather than major-to-minor as used
-  by :func:`~jax.ffi.ffi_call` and ``DeviceLocalLayout``.
+  by :func:`~jax.ffi.ffi_call` and ``Layout``.
 
   If keyword arguments are passed to the lowering rule, these are treated as
   attributes, and added to `backend_config`.
@@ -243,7 +243,7 @@ def ffi_lowering(
 
   Note that layouts passed to this function as tuples should be in
   minor-to-major order (as expected by XLA) rather than major-to-minor as used
-  by :func:`~jax.ffi.ffi_call` and ``DeviceLocalLayout``.
+  by :func:`~jax.ffi.ffi_call` and ``Layout``.
 
   If keyword arguments are passed to the lowering rule, these are treated as
   attributes, and added to `backend_config`.
@@ -309,7 +309,7 @@ def _convert_layouts_for_ffi_call(
   return tuple(
       _convert_layout_for_lowering(
           aval,
-          layout if layout is None or isinstance(layout, DeviceLocalLayout)
+          layout if layout is None or isinstance(layout, Layout)
           else layout[::-1]
       )
       for aval, layout in zip(avals, layouts))
@@ -392,7 +392,7 @@ def ffi_call(
       :func:`~jax.vmap` as described above.
     input_layouts: a sequence of layouts for each input argument. In each case,
       the layout can be (a) ``None`` indicating that this input is in default
-      row-major order, (b) a ``DeviceLocalLayout`` specifying the axis order,
+      row-major order, (b) a ``Layout`` specifying the axis order,
       or (c) a sequence of integers specifying the major-to-minor axis
       ordering. Users who are familiar with XLA layouts should note that this
       function expects layouts in major-to-minor order instead of the

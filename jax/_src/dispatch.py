@@ -45,7 +45,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.api_util import InternalFloatingPointError
-from jax._src.layout import DeviceLocalLayout, Format
+from jax._src.layout import Layout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
@@ -538,14 +538,14 @@ def _device_put_impl(
 
   if isinstance(device, Format):
     l = device
-    dll = l.device_local_layout
-    x_dll = x.format.device_local_layout if hasattr(x, 'format') else None
+    dll = l.layout
+    x_dll = x.format.layout if hasattr(x, 'format') else None
     if dll is None and l.sharding is None:
       return _device_put_sharding_impl(x, aval, l.sharding, copy)
     if (not isinstance(l.sharding, Sharding) or
-        not isinstance(dll, (DeviceLocalLayout, type(None)))):
+        not isinstance(dll, (Layout, type(None)))):
       raise ValueError(
-          "sharding and device_local_layout in `Layout` instance should be"
+          "sharding and layout in `Layout` instance should be"
           f" concrete. Got layout: {l} for input {aval.str_short()}")
     if (getattr(x, 'format', None) == l and getattr(x, '_committed', False) and
         copy == CopySemantics.ALIAS):

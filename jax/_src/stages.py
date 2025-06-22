@@ -46,7 +46,7 @@ from jax._src import tree_util
 from jax._src import typing
 from jax._src import util
 from jax._src.sharding_impls import UnspecifiedValue, AUTO
-from jax._src.layout import Format, DeviceLocalLayout
+from jax._src.layout import Format, Layout
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
@@ -477,7 +477,7 @@ class Compiled(Stage):
   def output_formats(self):
     layouts_flat = self._executable._xla_out_layouts
     shardings_flat = self._executable._out_shardings
-    assert all(isinstance(l, DeviceLocalLayout) for l in layouts_flat)
+    assert all(isinstance(l, Layout) for l in layouts_flat)
     formats_flat = [Format(l, s) for l, s in zip(layouts_flat, shardings_flat)]
     return tree_util.tree_unflatten(self.out_tree, formats_flat)  # pytype: disable=attribute-error
 
