@@ -33,6 +33,13 @@ from jax._src.mesh import (
     get_abstract_mesh as get_abstract_mesh,
 )
 
+from jax._src.pjit import (
+    reshard as reshard,
+    auto_axes as auto_axes,
+    explicit_axes as explicit_axes,
+)
+
+
 _deprecations = {
     # Added April 11, 2025.
     "PositionalSharding": (

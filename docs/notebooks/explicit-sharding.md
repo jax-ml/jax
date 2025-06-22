@@ -56,7 +56,7 @@ import jax
 import numpy as np
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P, AxisType, set_mesh, get_abstract_mesh
-from jax.experimental.shard import reshard, auto_axes, explicit_axes
+from jax.sharding import reshard, auto_axes, explicit_axes
 
 jax.config.update('jax_num_cpu_devices', 8)
 ```

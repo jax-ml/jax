@@ -5280,7 +5280,7 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
           'Contracting dimensions are sharded and it is ambiguous how the'
           ' output should be sharded. Please specify the output sharding via'
           ' the `out_sharding` parameter of einsum. Or reshard your input via'
-          ' `jax.experimental.shard.reshard` so that the dot is conflict free.'
+          ' `jax.sharding.reshard` so that the dot is conflict free.'
           f' Got {lhs_contracting_spec=} and {rhs_contracting_spec=}')
 
   return _dot_general_sharding_computation(

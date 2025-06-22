@@ -40,7 +40,8 @@ from jax import lax
 from jax._src.lax import lax as lax_internal
 from jax.lax import with_sharding_constraint
 from jax._src import prng
-from jax.sharding import PartitionSpec as P, Mesh
+from jax.sharding import (PartitionSpec as P, Mesh, auto_axes, explicit_axes,
+                          reshard)
 from jax.experimental import multihost_utils
 from jax._src.shard_map import shard_map
 from jax._src.compilation_cache import is_persistent_cache_enabled
@@ -54,8 +55,7 @@ from jax._src import sharding_impls
 from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
-from jax._src.pjit import (pjit, mesh_cast, auto_axes, explicit_axes,
-                           use_auto_axes, use_explicit_axes, reshard,
+from jax._src.pjit import (pjit, mesh_cast, use_auto_axes, use_explicit_axes,
                            _pjit_lower_cached)
 from jax._src.layout import Format, DeviceLocalLayout as DLL
 from jax._src.named_sharding import DuplicateSpecError
