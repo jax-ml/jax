@@ -7950,6 +7950,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.arange(8, dtype='int8'), P('x',))
     f(x)  # doesn't crash
 
+  @parameterized.named_parameters(
+      ('mesh1', (1, 4)),
+      ('mesh2', (2, 2)),
+  )
+  def test_reshape_merge_replicated(self, axis_sizes):
+    mesh = jtu.create_mesh(axis_sizes, ('x', 'y'),
+                           axis_types=(AxisType.Explicit,) * 2)
+    with jax.sharding.use_mesh(mesh):
+      np_inp = np.ones((8,4,4))
+      arr = jax.device_put(np_inp, P(None, None, 'x'))
+      out = jnp.reshape(arr, (-1, arr.shape[-1]))
+      self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
