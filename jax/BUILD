@@ -300,7 +300,6 @@ py_library_providing_imports_info(
         "_src/debugging.py",
         "_src/dlpack.py",
         "_src/error_check.py",
-        "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
         "_src/prng.py",
         "_src/random.py",
@@ -385,6 +384,7 @@ py_library_providing_imports_info(
         ":environment_info",
         ":export",
         ":ffi",
+        ":flatten_util",
         ":hashable_array",
         ":internal_mesh_utils",
         ":jaxpr_util",
@@ -946,6 +946,19 @@ pytype_strict_library(
         ":util",
         ":xla_bridge",
         "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "flatten_util",
+    srcs = [
+        "_src/flatten_util.py",
+    ],
+    deps = [
+        ":dtypes",
+        ":lax",
+        ":tree_util",
+        ":util",
     ] + py_deps("numpy"),
 )
 
