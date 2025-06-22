@@ -23,7 +23,6 @@ from typing import overload, Any, Literal, Protocol, Union
 
 import numpy as np
 
-from jax import lax
 from jax._src import api
 from jax._src import config
 from jax._src import core
@@ -32,18 +31,18 @@ from jax._src import dtypes
 from jax._src.numpy.util import (
     _broadcast_to, ensure_arraylike,
     promote_dtypes_inexact, promote_dtypes_numeric, _where)
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import control_flow
+from jax._src.lax import lax as lax
 from jax._src.lax import other as lax_other
+from jax._src.lax import parallel as lax_parallel
+from jax._src.lax import slicing as lax_slicing
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike, DeprecatedArg
-from jax._src.util import (
-    canonicalize_axis as _canonicalize_axis, maybe_named_axis,
-    set_module)
+from jax._src.util import canonicalize_axis, maybe_named_axis, set_module
 
 
 export = set_module('jax.numpy')
 
 _all = builtins.all
-_lax_const = lax_internal._const
 
 
 Axis = Union[int, Sequence[int], None]
@@ -56,8 +55,8 @@ def _isscalar(element: Any) -> bool:
 def _moveaxis(a: ArrayLike, source: int, destination: int) -> Array:
   # simplified version of jnp.moveaxis() for local use.
   a = ensure_arraylike("moveaxis", a)
-  source = _canonicalize_axis(source, np.ndim(a))
-  destination = _canonicalize_axis(destination, np.ndim(a))
+  source = canonicalize_axis(source, np.ndim(a))
+  destination = canonicalize_axis(destination, np.ndim(a))
   perm = [i for i in range(np.ndim(a)) if i != source]
   perm.insert(destination, source)
   return lax.transpose(a, perm)
@@ -154,7 +153,7 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
   else:
     result = lax.reduce(a, init_val, op, dims)
   if initial is not None:
-    initial_arr = lax.convert_element_type(initial, lax_internal.asarray(a).dtype)
+    initial_arr = lax.convert_element_type(initial, lax.asarray(a).dtype)
     if initial_arr.shape != ():
       raise ValueError("initial value must be a scalar. "
                        f"Got array of shape {initial_arr.shape}")
@@ -164,7 +163,7 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
   return lax.convert_element_type(result, dtype or result_dtype)
 
 def _canonicalize_axis_allow_named(x, rank):
-  return maybe_named_axis(x, lambda i: _canonicalize_axis(i, rank), lambda name: name)
+  return maybe_named_axis(x, lambda i: canonicalize_axis(i, rank), lambda name: name)
 
 def _reduction_dims(a: ArrayLike, axis: Axis):
   if axis is None:
@@ -231,7 +230,7 @@ def _reduce_sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   return _reduction(a, "sum", lax.add, 0, preproc=_cast_to_numeric,
                     bool_op=lax.bitwise_or, upcast_f16_for_computation=(dtype is None),
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
-                    initial=initial, where_=where, parallel_reduce=lax.psum,
+                    initial=initial, where_=where, parallel_reduce=lax_parallel.psum,
                     promote_integers=promote_integers)
 
 
@@ -404,7 +403,7 @@ def _reduce_max(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
   return _reduction(a, "max", lax.max, -np.inf, has_identity=False,
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
-                    initial=initial, where_=where, parallel_reduce=lax.pmax)
+                    initial=initial, where_=where, parallel_reduce=lax_parallel.pmax)
 
 
 @export
@@ -487,7 +486,7 @@ def _reduce_min(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
   return _reduction(a, "min", lax.min, np.inf, has_identity=False,
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
-                    initial=initial, where_=where, parallel_reduce=lax.pmin)
+                    initial=initial, where_=where, parallel_reduce=lax_parallel.pmin)
 
 
 @export
@@ -682,7 +681,7 @@ def any(a: ArrayLike, axis: Axis = None, out: None = None,
 def _reduce_bitwise_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                         out: None = None, keepdims: bool = False,
                         initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
-  arr = lax_internal.asarray(a)
+  arr = lax.asarray(a)
   init_val = np.array(-1).astype(dtype or arr.dtype)
   return _reduction(arr, name="reduce_bitwise_and", op=lax.bitwise_and, init_val=init_val, preproc=_require_integer,
                     axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
@@ -793,7 +792,7 @@ def _axis_size(a: ArrayLike, axis: int | Sequence[int]):
   size = 1
   a_shape = np.shape(a)
   for a in axis_seq:
-    size *= maybe_named_axis(a, lambda i: a_shape[i], lax.axis_size)
+    size *= maybe_named_axis(a, lambda i: a_shape[i], lax_parallel.axis_size)
   return size
 
 
@@ -989,9 +988,9 @@ def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
     if axis is None:
       pass
     elif isinstance(axis, Sequence):
-      axis = tuple(_canonicalize_axis(d, a_ndim) for d in axis)
+      axis = tuple(canonicalize_axis(d, a_ndim) for d in axis)
     else:
-      axis = _canonicalize_axis(axis, a_ndim)
+      axis = canonicalize_axis(axis, a_ndim)
 
     if a_shape != weights_shape:
       # Make sure the dimensions work out
@@ -1115,7 +1114,7 @@ def _var(a: Array, axis: Axis = None, dtype: DTypeLike | None = None,
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
   computation_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
-  a = lax_internal.asarray(a).astype(computation_dtype)
+  a = lax.asarray(a).astype(computation_dtype)
   a_mean = mean(a, axis, dtype=computation_dtype, keepdims=True, where=where)
   centered = lax.sub(a, a_mean)
   if dtypes.issubdtype(computation_dtype, np.complexfloating):
@@ -1348,7 +1347,7 @@ def count_nonzero(a: ArrayLike, axis: Axis = None,
            [3]], dtype=int32)
   """
   a = ensure_arraylike("count_nonzero", a)
-  return sum(lax.ne(a, _lax_const(a, 0)), axis=axis,
+  return sum(lax.ne(a, lax._const(a, 0)), axis=axis,
              dtype=dtypes.canonicalize_dtype(int), keepdims=keepdims)
 
 
@@ -1361,11 +1360,11 @@ def _nan_reduction(a: ArrayLike, name: str, jnp_reduction: Callable[..., Array],
   if not dtypes.issubdtype(dtypes.dtype(a), np.inexact):
     return jnp_reduction(a, axis=axis, keepdims=keepdims, where=where, **kwargs)
 
-  out = jnp_reduction(_where(lax_internal._isnan(a), _reduction_init_val(a, init_val), a),
+  out = jnp_reduction(_where(lax._isnan(a), _reduction_init_val(a, init_val), a),
                       axis=axis, keepdims=keepdims, where=where, **kwargs)
   if nan_if_all_nan:
-    return _where(all(lax_internal._isnan(a), axis=axis, keepdims=keepdims),
-                  _lax_const(a, np.nan), out)
+    return _where(all(lax._isnan(a), axis=axis, keepdims=keepdims),
+                  lax._const(a, np.nan), out)
   else:
     return out
 
@@ -1791,7 +1790,7 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
   else:
     dtypes.check_user_dtype_supported(dtype, "mean")
     dtype = dtypes.canonicalize_dtype(dtype)
-  nan_mask = lax_internal.bitwise_not(lax_internal._isnan(a))
+  nan_mask = lax.bitwise_not(lax._isnan(a))
   normalizer = sum(nan_mask, axis=axis, dtype=dtype, keepdims=keepdims, where=where)
   td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims, where=where), normalizer)
   return td
@@ -1881,19 +1880,19 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
   computation_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
-  a = lax_internal.asarray(a).astype(computation_dtype)
+  a = lax.asarray(a).astype(computation_dtype)
   a_mean = nanmean(a, axis, dtype=computation_dtype, keepdims=True, where=where)
 
-  centered = _where(lax_internal._isnan(a), 0, lax.sub(a, a_mean))  # double-where trick for gradients.
+  centered = _where(lax._isnan(a), 0, lax.sub(a, a_mean))  # double-where trick for gradients.
   if dtypes.issubdtype(centered.dtype, np.complexfloating):
     centered = lax.real(lax.mul(centered, lax.conj(centered)))
   else:
     centered = lax.square(centered)
 
-  normalizer = sum(lax_internal.bitwise_not(lax_internal._isnan(a)),
+  normalizer = sum(lax.bitwise_not(lax._isnan(a)),
                    axis=axis, keepdims=keepdims, where=where)
   normalizer = normalizer - ddof
-  normalizer_mask = lax.le(normalizer, lax_internal._zero(normalizer))
+  normalizer_mask = lax.le(normalizer, lax._zero(normalizer))
   result = sum(centered, axis, keepdims=keepdims, where=where)
   result = _where(normalizer_mask, np.nan, result)
   divisor = _where(normalizer_mask, 1, normalizer)
@@ -2001,10 +2000,10 @@ def _cumulative_reduction(
 
   a_shape = list(np.shape(a))
   num_dims = len(a_shape)
-  axis = _canonicalize_axis(axis, num_dims)
+  axis = canonicalize_axis(axis, num_dims)
 
   if fill_nan:
-    a = _where(lax_internal._isnan(a), _lax_const(a, fill_value), a)
+    a = _where(lax._isnan(a), lax._const(a, fill_value), a)
 
   a_type: DType = dtypes.dtype(a)
   result_type: DTypeLike = dtypes.dtype(dtype or a)
@@ -2013,7 +2012,7 @@ def _cumulative_reduction(
   result_type = dtypes.canonicalize_dtype(result_type)
 
   if a_type != np.bool_ and dtype == np.bool_:
-    a = lax_internal.asarray(a).astype(np.bool_)
+    a = lax.asarray(a).astype(np.bool_)
 
   a = lax.convert_element_type(a, result_type)
   result = reduction(a, axis)
@@ -2058,7 +2057,7 @@ def cumsum(a: ArrayLike, axis: int | None = None,
     Array([[ 1,  3,  6],
            [ 4,  9, 15]], dtype=int32)
   """
-  return _cumulative_reduction("cumsum", lax.cumsum, a, axis, dtype, out)
+  return _cumulative_reduction("cumsum", control_flow.cumsum, a, axis, dtype, out)
 
 
 @export
@@ -2094,7 +2093,7 @@ def cumprod(a: ArrayLike, axis: int | None = None,
     Array([[  1,   2,   6],
            [  4,  20, 120]], dtype=int32)
   """
-  return _cumulative_reduction("cumprod", lax.cumprod, a, axis, dtype, out)
+  return _cumulative_reduction("cumprod", control_flow.cumprod, a, axis, dtype, out)
 
 
 @export
@@ -2143,7 +2142,7 @@ def nancumsum(a: ArrayLike, axis: int | None = None,
     Array([[ 1.,  3.,  3.],
            [ 4.,  4., 10.]], dtype=float32)
   """
-  return _cumulative_reduction("nancumsum", lax.cumsum, a, axis, dtype, out,
+  return _cumulative_reduction("nancumsum", control_flow.cumsum, a, axis, dtype, out,
                                fill_nan=True, fill_value=0)
 
 
@@ -2192,7 +2191,7 @@ def nancumprod(a: ArrayLike, axis: int | None = None,
     Array([[ 1.,  2.,  2.],
            [ 4.,  4., 24.]], dtype=float32)
   """
-  return _cumulative_reduction("nancumprod", lax.cumprod, a, axis, dtype, out,
+  return _cumulative_reduction("nancumprod", control_flow.cumprod, a, axis, dtype, out,
                                fill_nan=True, fill_value=1)
 
 
@@ -2200,7 +2199,7 @@ def nancumprod(a: ArrayLike, axis: int | None = None,
 def _cumsum_with_promotion(a: ArrayLike, axis: int | None = None,
            dtype: DTypeLike | None = None, out: None = None) -> Array:
   """Utility function to compute cumsum with integer promotion."""
-  return _cumulative_reduction("_cumsum_with_promotion", lax.cumsum,
+  return _cumulative_reduction("_cumsum_with_promotion", control_flow.cumsum,
                                a, axis, dtype, out, promote_integers=True)
 
 
@@ -2253,14 +2252,14 @@ def cumulative_sum(
         "explicit value. The axis argument is only optional for one-dimensional "
         "arrays.")
 
-  axis = _canonicalize_axis(axis, x.ndim)
+  axis = canonicalize_axis(axis, x.ndim)
   dtypes.check_user_dtype_supported(dtype)
   out = _cumsum_with_promotion(x, axis=axis, dtype=dtype)
   if include_initial:
     zeros_shape = list(x.shape)
     zeros_shape[axis] = 1
-    out = lax_internal.concatenate(
-      [lax_internal.full(zeros_shape, 0, dtype=out.dtype), out],
+    out = lax.concatenate(
+      [lax.full(zeros_shape, 0, dtype=out.dtype), out],
       dimension=axis)
   return out
 
@@ -2314,14 +2313,14 @@ def cumulative_prod(
         "explicit value. The axis argument is only optional for one-dimensional "
         "arrays.")
 
-  axis = _canonicalize_axis(axis, x.ndim)
+  axis = canonicalize_axis(axis, x.ndim)
   dtypes.check_user_dtype_supported(dtype)
-  out = _cumulative_reduction("cumulative_prod", lax.cumprod, x, axis, dtype)
+  out = _cumulative_reduction("cumulative_prod", control_flow.cumprod, x, axis, dtype)
   if include_initial:
     zeros_shape = list(x.shape)
     zeros_shape[axis] = 1
-    out = lax_internal.concatenate(
-      [lax_internal.full(zeros_shape, 1, dtype=out.dtype), out],
+    out = lax.concatenate(
+      [lax.full(zeros_shape, 1, dtype=out.dtype), out],
       dimension=axis)
   return out
 
@@ -2382,7 +2381,7 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
       ("The interpolation= argument to 'quantile' is deprecated. "
        "Use 'method=' instead."), stacklevel=2)
     method = interpolation
-  return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, False)
+  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, False)
 
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
 @export
@@ -2441,7 +2440,7 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
       ("The interpolation= argument to 'nanquantile' is deprecated. "
        "Use 'method=' instead."), stacklevel=2)
     method = interpolation
-  return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, True)
+  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, True)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
               method: str, keepdims: bool, squash_nans: bool) -> Array:
@@ -2459,7 +2458,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   elif isinstance(axis, tuple):
     keepdim = list(a.shape)
     nd = a.ndim
-    axis = tuple(_canonicalize_axis(ax, nd) for ax in axis)
+    axis = tuple(canonicalize_axis(ax, nd) for ax in axis)
     if len(set(axis)) != len(axis):
       raise ValueError('repeated axis')
     for ax in axis:
@@ -2473,9 +2472,9 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     do_not_touch_shape = tuple(x for idx,x in enumerate(a.shape) if idx not in axis)
     touch_shape = tuple(x for idx,x in enumerate(a.shape) if idx in axis)
     a = lax.reshape(a, do_not_touch_shape + (math.prod(touch_shape),), dimensions)
-    axis = _canonicalize_axis(-1, a.ndim)
+    axis = canonicalize_axis(-1, a.ndim)
   else:
-    axis = _canonicalize_axis(axis, a.ndim)
+    axis = canonicalize_axis(axis, a.ndim)
 
   q_shape = q.shape
   q_ndim = q.ndim
@@ -2485,21 +2484,21 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   a_shape = a.shape
 
   if squash_nans:
-    a = _where(lax_internal._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
+    a = _where(lax._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
     a = lax.sort(a, dimension=axis)
-    counts = sum(lax_internal.bitwise_not(lax_internal._isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)
+    counts = sum(lax.bitwise_not(lax._isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)
     shape_after_reduction = counts.shape
     q = lax.expand_dims(
       q, tuple(range(q_ndim, len(shape_after_reduction) + q_ndim)))
     counts = lax.expand_dims(counts, tuple(range(q_ndim)))
-    q = lax.mul(q, lax.sub(counts, _lax_const(q, 1)))
+    q = lax.mul(q, lax.sub(counts, lax._const(q, 1)))
     low = lax.floor(q)
     high = lax.ceil(q)
     high_weight = lax.sub(q, low)
-    low_weight = lax.sub(_lax_const(high_weight, 1), high_weight)
+    low_weight = lax.sub(lax._const(high_weight, 1), high_weight)
 
-    low = lax.max(_lax_const(low, 0), lax.min(low, counts - 1))
-    high = lax.max(_lax_const(high, 0), lax.min(high, counts - 1))
+    low = lax.max(lax._const(low, 0), lax.min(low, counts - 1))
+    high = lax.max(lax._const(high, 0), lax.min(high, counts - 1))
     low = lax.convert_element_type(low, int)
     high = lax.convert_element_type(high, int)
     out_shape = q_shape + shape_after_reduction
@@ -2514,32 +2513,32 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     high_value = a[tuple(index)]
   else:
     with config.debug_nans(False):
-      a = _where(any(lax_internal._isnan(a), axis=axis, keepdims=True), np.nan, a)
+      a = _where(any(lax._isnan(a), axis=axis, keepdims=True), np.nan, a)
     a = lax.sort(a, dimension=axis)
-    n = lax.convert_element_type(a_shape[axis], lax_internal._dtype(q))
+    n = lax.convert_element_type(a_shape[axis], lax._dtype(q))
     q = lax.mul(q, n - 1)
     low = lax.floor(q)
     high = lax.ceil(q)
     high_weight = lax.sub(q, low)
-    low_weight = lax.sub(_lax_const(high_weight, 1), high_weight)
+    low_weight = lax.sub(lax._const(high_weight, 1), high_weight)
 
-    low = lax.clamp(_lax_const(low, 0), low, n - 1)
-    high = lax.clamp(_lax_const(high, 0), high, n - 1)
+    low = lax.clamp(lax._const(low, 0), low, n - 1)
+    high = lax.clamp(lax._const(high, 0), high, n - 1)
     low = lax.convert_element_type(low, int)
     high = lax.convert_element_type(high, int)
 
     slice_sizes = list(a_shape)
     slice_sizes[axis] = 1
-    dnums = lax.GatherDimensionNumbers(
+    dnums = lax_slicing.GatherDimensionNumbers(
       offset_dims=tuple(range(
         q_ndim,
         len(a_shape) + q_ndim if keepdims else len(a_shape) + q_ndim - 1)),
       collapsed_slice_dims=() if keepdims else (axis,),
       start_index_map=(axis,))
-    low_value = lax.gather(a, low[..., None], dimension_numbers=dnums,
-                           slice_sizes=slice_sizes)
-    high_value = lax.gather(a, high[..., None], dimension_numbers=dnums,
-                            slice_sizes=slice_sizes)
+    low_value = lax_slicing.gather(a, low[..., None], dimension_numbers=dnums,
+                                   slice_sizes=slice_sizes)
+    high_value = lax_slicing.gather(a, high[..., None], dimension_numbers=dnums,
+                                    slice_sizes=slice_sizes)
     if q_ndim == 1:
       low_weight = lax.broadcast_in_dim(low_weight, low_value.shape,
                                         broadcast_dimensions=(0,))
@@ -2554,10 +2553,10 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   elif method == "higher":
     result = high_value
   elif method == "nearest":
-    pred = lax.le(high_weight, _lax_const(high_weight, 0.5))
+    pred = lax.le(high_weight, lax._const(high_weight, 0.5))
     result = lax.select(pred, low_value, high_value)
   elif method == "midpoint":
-    result = lax.mul(lax.add(low_value, high_value), _lax_const(low_value, 0.5))
+    result = lax.mul(lax.add(low_value, high_value), lax._const(low_value, 0.5))
   else:
     raise ValueError(f"{method=!r} not recognized")
   if keepdims and keepdim:
