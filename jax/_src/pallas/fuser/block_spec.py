@@ -842,6 +842,7 @@ register_binop_rule(lax.xor_p)
 register_binop_rule(lax.and_p)
 register_binop_rule(lax.shift_right_logical_p)
 register_binop_rule(ad_util.add_any_p)
+register_binop_rule(lax.pow_p)
 
 
 @register_eval_rule(lax.select_n_p)
@@ -1365,9 +1366,13 @@ def _broadcast_in_dim_usage_rule(ctx, used_out: set[Usage], **params):
 
 @register_eval_rule(lax.broadcast_in_dim_p)
 def _broadcast_in_dim_eval_rule(
-    eval_ctx: KernelEvalContext, x, broadcast_dimensions, **params
+    eval_ctx: KernelEvalContext, x, broadcast_dimensions, shape, **params
 ):
   del params  # Unused.
+  in_shape = eval_ctx.avals_in[0].shape  # pytype: disable=attribute-error
+  if in_shape == shape:
+    # Dummy broadcast
+    return x
   shape = tuple(map(_block_size, eval_ctx.out_block_specs[0].block_shape))
   dims = tuple(
       d - sum(s is None for s in shape[:d])
@@ -2034,6 +2039,7 @@ register_binop_push_rule(lax.lt_p)
 register_binop_push_rule(lax.eq_p)
 register_binop_push_rule(lax.gt_p)
 register_binop_push_rule(lax.and_p)
+register_binop_push_rule(lax.pow_p)
 register_binop_push_rule(ad_util.add_any_p)
 
 
