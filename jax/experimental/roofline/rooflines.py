@@ -670,3 +670,19 @@ def _reduce_sum_p_roofline(
       # as accumulator.)
       unfused_hbm_bytes=int(x.dtype.itemsize * (x.size + result_size)),
   )
+
+@roofline.register_roofline(lax.select_n_p)
+def _select_n_p_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  (x, *_) = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
+
+  return roofline.RooflineResult(
+      unfused_flops=out.size,
+      unfused_hbm_bytes=(
+          x.dtype.itemsize * x.size + out.dtype.itemsize * out.size
+      ),
+  )
