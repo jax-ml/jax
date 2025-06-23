@@ -493,7 +493,7 @@ class BufferedRef(BufferedRefBase):
           _current_slot_reg=None,
           window_ref=memory_space((2,) + block_shape, dtype),
           accum_ref=accum_ref,
-          current_slot=SMEM((1,), jnp.int32),
+          current_slot=SMEM((1,), jnp.uint32),
           sem_recvs=(
               None
               if buffer_type is BufferType.OUTPUT
@@ -568,7 +568,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def next_slot_index(self):
     """Index in double buffer corresponding to the next slot."""
-    return lax.rem(self.current_slot_index + 1, 2)
+    return lax.rem(self.current_slot_index + 1, jnp.uint32(2))
 
   def bind_existing_ref(self, window_ref, indices):
     """For handling VMEM references, the pipeline aliases the existing ref."""
