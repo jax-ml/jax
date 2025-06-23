@@ -840,7 +840,6 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
     raise AttributeError(
-        self,
         f"The 'sharding' attribute is not available on {self._error_repr()}."
         f"{self._origin_msg()}")
 
@@ -856,7 +855,7 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
-    raise AttributeError(self,
+    raise AttributeError(
       f"The 'device' attribute is not available on {self._error_repr()}."
       f"{self._origin_msg()}")
 
@@ -928,7 +927,6 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 
     if name == 'sharding':
       raise AttributeError(
-        self,
         f"The 'sharding' attribute is not available on {self._error_repr()}."
         f"{self._origin_msg()}")
 
@@ -980,14 +978,14 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   @property
   def block_until_ready(self):
     # Raise AttributeError for backward compatibility with hasattr() and getattr() checks.
-    raise AttributeError(self,
+    raise AttributeError(
       f"The 'block_until_ready' method is not available on {self._error_repr()}."
       f"{self._origin_msg()}")
 
   @property
   def copy_to_host_async(self):
     # Raise AttributeError for backward compatibility with hasattr() and getattr() checks.
-    raise AttributeError(self,
+    raise AttributeError(
       f"The 'copy_to_host_async' method is not available on {self._error_repr()}."
       f"{self._origin_msg()}")
 
