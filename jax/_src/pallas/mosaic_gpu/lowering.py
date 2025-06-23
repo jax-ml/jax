@@ -314,7 +314,9 @@ def _run_scoped_resource_estimator(
       else:
         packing = 1
       layout = tcgen05._infer_tmem_layout(aval.shape, packing=packing)
-      cols_used = layout.cols_in_shape(aval.shape)
+      cols_used = layout.cols_in_shape(
+          aval.shape, mgpu_utils.dtype_to_ir_type(aval.dtype)
+      )
       cols_used = tcgen05._alloc_ncols(cols_used, exact=False)
       if aval.collective:
         rs += Resources(tmem_collective_scratch_cols=cols_used)
@@ -452,7 +454,8 @@ class ModuleContext:
       packing = 1
     if layout is None:
       layout = tcgen05._infer_tmem_layout(struct.shape, packing=packing)
-    unpadded_cols_used = layout.cols_in_shape(struct.shape)
+    mlir_dtype = mgpu_utils.dtype_to_ir_type(struct.dtype)
+    unpadded_cols_used = layout.cols_in_shape(struct.shape, mlir_dtype)
     cols_used = tcgen05._alloc_ncols(unpadded_cols_used, exact_cols)
     if collective:
       off = arith_dialect.addi(
@@ -466,7 +469,7 @@ class ModuleContext:
     tmem_ref = tcgen05.TMEMRef(
         address=off,
         shape=struct.shape,
-        dtype=mgpu_utils.dtype_to_ir_type(struct.dtype),
+        dtype=mlir_dtype,
         layout=layout)
     if collective:
       self.tmem_collective_used_cols += cols_used
