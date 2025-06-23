@@ -22,8 +22,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     starting in v0.7.x. This raised a DeprecationWarning in v0.6.x.
   * The minimum Python version is now 3.11. 3.11 will remain the minimum
     supported version until July 2026.
-  * `Layout`, `.layout`, `.input_layouts` and `.output_layouts` have been
-    renamed to `Format`, `.format`, `.input_formats` and `.output_formats` in JAX
+  * Layout API renames:
+    * `Layout`, `.layout`, `.input_layouts` and `.output_layouts` have been
+      renamed to `Format`, `.format`, `.input_formats` and `.output_formats`
+    * `DeviceLocalLayout`, `.device_local_layout` have been renamed to `Layout`
+      and `.layout`
 
 ## JAX 0.6.2 (June 17, 2025)
 

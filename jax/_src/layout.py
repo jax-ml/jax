@@ -127,11 +127,6 @@ class Format:
     self.layout = layout
     self.sharding = sharding
 
-  # TODO(yashkatariya): Remove this
-  @property
-  def device_local_layout(self):
-    return self.layout
-
   def __repr__(self):
     return f'Format(layout={self.layout}, sharding={self.sharding})'
 
