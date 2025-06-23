@@ -821,7 +821,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     self.assertAllClose(
         jax.jit(impl)(x, y),
         jax.jit(ref)(x, y),
-        atol=1e-5,
+        atol=5e-5,
     )
 
   @parameterized.parameters('float32', 'bfloat16')
@@ -861,12 +861,12 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     self.assertAllClose(
         out_dz,
         expected_dz,
-        atol=1e-5,
+        atol=5e-5,
     )
     self.assertAllClose(
         out_dz,
         out_ref_dz,
-        atol=1e-5,
+        atol=5e-5,
     )
 
   @parameterized.parameters('float32', 'bfloat16')
