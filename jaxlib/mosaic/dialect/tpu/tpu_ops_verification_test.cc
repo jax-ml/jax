@@ -94,6 +94,15 @@ class TpuOpsVerificationTest : public ::testing::Test {
     return Create<memref::AllocaOp>(GetMemRefType(shape, i32(), memory_space))
         .getMemref();
   }
+
+  Value ConstantI32Vector(ArrayRef<int64_t> shape, ArrayRef<int32_t> values) {
+    return Create<arith::ConstantOp>(
+               /*result=*/VectorType::get(shape, i32()),
+               /*value=*/dyn_cast<TypedAttr>(
+                   builder().getDenseI32ArrayAttr(values)))
+        .getResult();
+  }
+
   ImplicitLocOpBuilder& builder() { return builder_; }
 
  private:
@@ -176,16 +185,14 @@ TEST_F(TpuOpsVerificationTest,
 TEST_F(TpuOpsVerificationTest, VectorLoadValidMaskSucceeds) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
   Value memref = AllocaI32({8, 128});
-  auto mask = Create<arith::ConstantOp>(
-      /*result=*/VectorType::get({8, 1}, i32()),
-      /*value=*/dyn_cast<TypedAttr>(
-          builder().getDenseI32ArrayAttr({1, 1, 1, 1, 1, 1, 1, 1})));
+  Value mask = ConstantI32Vector(/*shape=*/{8, 1},
+                                 /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8, 128}, i32()),
       /*base=*/memref,
       /*indices=*/ValueRange{c0, c0},
       /*strides=*/builder().getDenseI32ArrayAttr({}),
-      /*mask=*/mask.getResult());
+      /*mask=*/mask);
 
   ASSERT_OK(VerifyOp(vl));
 }
@@ -194,16 +201,14 @@ TEST_F(TpuOpsVerificationTest, VectorLoadMaskInvalidResultBitWidth) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
   auto memref = Create<memref::AllocaOp>(
       MemRefType::get({8, 128}, builder().getI64Type()));
-  auto mask = Create<arith::ConstantOp>(
-      /*result=*/VectorType::get({8, 1}, i32()),
-      /*value=*/dyn_cast<TypedAttr>(
-          builder().getDenseI32ArrayAttr({1, 1, 1, 1, 1, 1, 1, 1})));
+  Value mask = ConstantI32Vector(/*shape=*/{8, 1},
+                                 /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8, 128}, builder().getI64Type()),
       /*base=*/memref.getMemref(),
       /*indices=*/ValueRange{c0, c0},
       /*strides=*/builder().getDenseI32ArrayAttr({}),
-      /*mask=*/mask.getResult());
+      /*mask=*/mask);
 
   ASSERT_THAT(
       VerifyOp(vl),
@@ -216,15 +221,14 @@ TEST_F(TpuOpsVerificationTest,
        VectorLoadMaskNotBroadcastableToResultShapeInvalidMinor) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
   Value memref = AllocaI32({8, 128});
-  auto mask = Create<arith::ConstantOp>(
-      /*result=*/VectorType::get({8, 2}, i32()),
-      /*value=*/dyn_cast<TypedAttr>(builder().getDenseI32ArrayAttr({1})));
+  Value mask = ConstantI32Vector(/*shape=*/{8, 2},
+                                 /*values=*/{1});
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8, 128}, i32()),
       /*base=*/memref,
       /*indices=*/ValueRange{c0, c0},
       /*strides=*/builder().getDenseI32ArrayAttr({}),
-      /*mask=*/mask.getResult());
+      /*mask=*/mask);
 
   ASSERT_THAT(
       VerifyOp(vl),
@@ -237,15 +241,14 @@ TEST_F(TpuOpsVerificationTest,
        VectorLoadMaskNotBroadcastableToResultShapeInvalidMajor) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
   Value memref = AllocaI32({8, 128});
-  auto mask = Create<arith::ConstantOp>(
-      /*result=*/VectorType::get({5, 1}, i32()),
-      /*value=*/dyn_cast<TypedAttr>(builder().getDenseI32ArrayAttr({1})));
+  Value mask = ConstantI32Vector(/*shape=*/{5, 1},
+                                 /*values=*/{1});
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8, 128}, i32()),
       /*base=*/memref,
       /*indices=*/ValueRange{c0, c0},
       /*strides=*/builder().getDenseI32ArrayAttr({}),
-      /*mask=*/mask.getResult());
+      /*mask=*/mask);
 
   ASSERT_THAT(
       VerifyOp(vl),
