@@ -7963,6 +7963,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = jnp.reshape(arr, (-1, arr.shape[-1]))
       self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
 
+  @config.numpy_dtype_promotion('standard')
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_lax_switch_vmap(self, mesh):
+    batch_idx = jnp.array([0, 1, 2, 4])
+    val = jax.numpy.ones((), dtype=jnp.float32)
+    batch_idx_shard = reshard(batch_idx, P('x'))
+
+    def switch_fun(val, index):
+      def branch(args):
+        val_, index_ = args
+        return val_ + index_
+      branches = [branch for _ in range(5)]
+      out = jax.lax.switch(index, branches, (val, index))
+      return out
+
+    vmap_switch_fun = jax.vmap(switch_fun, in_axes=(None, 0), out_axes=0)
+    vmap_switch_fun(val, batch_idx_shard)  # doesn't crash
+    jax.jit(vmap_switch_fun)(val, batch_idx_shard)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
