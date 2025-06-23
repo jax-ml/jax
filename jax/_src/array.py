@@ -39,6 +39,7 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, Layout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
@@ -1206,13 +1207,16 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         raise NotImplementedError(
             "Cannot reshard an input that is not fully addressable")
     else:
-      devices = sharding._addressable_device_assignment
+      devices = sharding._internal_device_list.addressable_device_list
       if same_indices and same_layout:
         # Add a placeholder result that will be filled in later.
         results.append(None)
         # Accumulate arguments to `batched_copy_array_to_devices_with_sharding`.
         batch_xs.append(x)
-        batch_devs.append(list(devices))
+        if jaxlib_extension_version >= 356:
+          batch_devs.append(devices)
+        else:
+          batch_devs.append(list(devices))
         batch_shardings.append(sharding)
         batch_indices.append(i)
         batch_cs.append(cs)
