@@ -19,14 +19,11 @@ from __future__ import annotations
 import collections
 from collections.abc import Callable, Generator, MutableMapping, Sequence
 import itertools
-import logging
 import math
 from typing import Any
 
 from jax._src import xla_bridge as xb
 import numpy as np
-
-logger = logging.getLogger(__name__)
 
 _TPU_V2 = 'TPU v2'
 _TPU_V3 = 'TPU v3'
@@ -80,18 +77,12 @@ def _tpu_v2_v3_create_device_mesh(
     **unused_kwargs,
 ) -> np.ndarray:
   if len(devices) == 8:
-    logger.info(
-        'Reordering mesh to physical ring order on single-tray TPU v2/v3.'
-    )
     device_mesh = np.asarray(devices)
     device_mesh = device_mesh[np.array(_TRAY_RING_ORDER)]
     device_mesh = device_mesh.reshape(mesh_shape)
     return device_mesh
   elif mesh_shape[-1] == 8:
     device_mesh = np.asarray(devices).reshape(mesh_shape)
-    logger.info(
-        'Reordering mesh to physical ring order on each TPU v2/v3 tray.'
-    )
     perm = np.array(_TRAY_RING_ORDER)
     device_mesh = device_mesh[..., perm]
     return device_mesh
