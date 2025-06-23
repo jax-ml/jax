@@ -1333,14 +1333,12 @@ LogicalResult ConcatenateOp::verify() {
 }
 
 LogicalResult LogOp::verify() {
-  FailureOr<std::optional<CoreType>> logging_core_type_maybe =
-      GetCoreTypeOfParentFunc(**this);
-  if (failed(logging_core_type_maybe)) {
-    return failure();
+  FailureOr<CoreType> logging_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(logging_core)) {
+    return logging_core;
   }
-  CoreType logging_core_type = logging_core_type_maybe->value_or(CoreType::kTc);
-  bool is_sc_core = logging_core_type == CoreType::kScScalarSubcore ||
-                    logging_core_type == CoreType::kScVectorSubcore;
+  bool is_sc_core = *logging_core == CoreType::kScScalarSubcore ||
+                    *logging_core == CoreType::kScVectorSubcore;
   if (is_sc_core && getFormattedAttr() != nullptr &&
       getFormattedAttr().getValue()) {
     return emitOpError("Formatted logging is not supported on SC");
@@ -1354,16 +1352,15 @@ LogicalResult LogOp::verify() {
       return emitOpError("SC logging only supports memrefs or scalars");
     }
   }
-  switch (logging_core_type) {
+  switch (*logging_core) {
     case CoreType::kTc:
     case CoreType::kScScalarSubcore:
       return success();
     case CoreType::kScVectorSubcore:
       return emitOpError("Log op is not supported on the SC vector subcore");
   }
-  return emitOpError(
-      absl::StrFormat("Unexpected core type: %s",
-                      stringifyCoreType(logging_core_type_maybe->value())));
+  return emitOpError(absl::StrFormat("Unexpected core type: %s",
+                                     stringifyCoreType(*logging_core)));
 }
 
 LogicalResult WeirdOp::verify() {

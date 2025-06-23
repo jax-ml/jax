@@ -79,13 +79,13 @@ void TPUDialect::initialize() {
   return mlir::cast<CoreTypeAttr>(attr).getValue();
 }
 
-FailureOr<std::optional<CoreType>> GetCoreTypeOfParentFunc(Operation &op) {
+FailureOr<CoreType> GetCoreTypeOfParentFunc(Operation &op) {
   mlir::Operation *func_op = op.getParentOfType<mlir::func::FuncOp>();
   if (func_op == nullptr) {
     return op.emitError() << "Operation " << op.getName()
                           << " is not inside a func.func";
   }
-  return TPUDialect::GetCoreTypeAttr(func_op);
+  return TPUDialect::GetCoreTypeAttr(func_op).value_or(CoreType::kTc);
 }
 
 void VectorLayoutAttr::print(AsmPrinter &printer) const {
