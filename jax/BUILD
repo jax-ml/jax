@@ -299,7 +299,6 @@ py_library_providing_imports_info(
         "_src/checkify.py",
         "_src/debugging.py",
         "_src/dlpack.py",
-        "_src/error_check.py",
         "_src/interpreters/__init__.py",
         "_src/prng.py",
         "_src/random.py",
@@ -381,6 +380,7 @@ py_library_providing_imports_info(
         ":earray",
         ":effects",
         ":environment_info",
+        ":error_check",
         ":export",
         ":ffi",
         ":flatten_util",
@@ -898,6 +898,24 @@ pytype_strict_library(
     deps = [
         ":version",
         ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "error_check",
+    srcs = ["_src/error_check.py"],
+    deps = [
+        ":core",
+        ":export",
+        ":lax",
+        ":mesh",
+        ":shard_map",
+        ":sharding_impls",
+        ":source_info_util",
+        ":traceback_util",
+        ":tree_util",
+        ":typing",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
