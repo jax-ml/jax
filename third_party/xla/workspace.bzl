@@ -14,15 +14,7 @@
 
 # buildifier: disable=module-docstring
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
-
-# To update XLA to a new revision,
-# a) update XLA_COMMIT to the new git commit hash
-# b) get the sha256 hash of the commit by running:
-#    curl -L https://github.com/openxla/xla/archive/<git hash>.tar.gz | sha256sum
-#    and update XLA_SHA256 with the result.
-
-XLA_COMMIT = "a0e986abfa199216c5470d01480ac1d0e5d6f24a"
-XLA_SHA256 = "41b2c160674827fe85f26089c4e5ceae22e36cc8c2513297f033457a5eb85278"
+load("//third_party/xla:revision.bzl", "XLA_COMMIT", "XLA_SHA256")
 
 def repo():
     tf_http_archive(
