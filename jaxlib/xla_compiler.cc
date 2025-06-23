@@ -416,7 +416,7 @@ nb::ndarray<> LiteralToNdarray(Literal& obj) {
         "Creating an array from a tiled Literal is not supported.");
   }
 
-  if (!LayoutUtil::IsDenseArray(shape)) {
+  if (!shape.IsArray()) {
     throw XlaRuntimeError(
         "Creating an array is only supported for dense Literals.");
   }
