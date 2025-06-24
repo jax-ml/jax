@@ -734,28 +734,16 @@ class TMEMRef:
       raise NotImplementedError
     if utils.bitwidth(self.dtype) not in {16, 32}:
       raise NotImplementedError(f"Unsupported dtype: {self.dtype}")
-    if self.layout == tmem_default_layout(packing=1):
-      packing = 1
-      default_fa_layout = LAYOUT
-    elif self.layout == tmem_default_layout(packing=2):
-      packing = 2
-      default_fa_layout = LAYOUT
-    elif self.layout == tmem_half_lane_layout(self.shape[1], packing=1):
-      packing = 1
-      default_fa_layout = fa.WGMMA_LAYOUT
-    elif self.layout == tmem_half_lane_layout(self.shape[1], packing=2):
-      packing = 2
-      default_fa_layout = fa.WGMMA_LAYOUT
-    elif self.layout == tmem_m64_collective_layout(self.shape[1], packing=1):
-      packing = 1
-      default_fa_layout = fa_m64_collective_layout(self.shape[1])
-    elif self.layout == tmem_m64_collective_layout(self.shape[1], packing=2):
-      packing = 2
-      default_fa_layout = fa_m64_collective_layout(self.shape[1])
-    else:
-      raise ValueError(f"TMEM layout {self.layout} is not supported")
+    packing = self.layout.vector_length
     if layout is None:
-      layout = default_fa_layout
+      if self.layout == tmem_default_layout(packing=packing):
+        layout = LAYOUT
+      elif self.layout == tmem_half_lane_layout(self.shape[1], packing=packing):
+        layout = fa.WGMMA_LAYOUT
+      elif self.layout == tmem_m64_collective_layout(self.shape[1], packing=packing):
+        layout = fa_m64_collective_layout(self.shape[1])
+      else:
+        raise ValueError(f"TMEM layout {self.layout} is not supported")
     regs_shape = layout.registers_shape(self.shape)
     if regs_shape[0] != 1:  # We'll need to issue multiple loads below.
       raise NotImplementedError("Loading multiple row tiles")
