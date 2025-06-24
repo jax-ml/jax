@@ -142,7 +142,12 @@ def mma(
     element_type2 = a.dtype
     if m != 128:
       raise ValueError(f"Only M=128 is supported for MMA with A in TMEM, but got M={m}")
-    if a.layout != (expected_layout := _infer_tmem_layout(a.shape, packing=2)):
+    # Watch out: this layout must be consistent with D's layout (up to packing).
+    expected_packing = 32 // utils.bitwidth(element_type)
+    expected_layout = _infer_tmem_layout(
+        a.shape, collective, packing=expected_packing
+    )
+    if a.layout != expected_layout:
       raise ValueError(
           f"A layout mismatch: expected {expected_layout}, got {a.layout}"
       )
@@ -171,18 +176,21 @@ def mma(
       )
     n_lane_groups = 1
   elif m == 64:
+    # Watch out: this layout must be consistent with A's layout (up to packing).
     # 2CTA M=128 instruction uses a different TMEM layout than 1CTA M=64.
-    if collective:
-      raise NotImplementedError("M=64 with collective MMA is not supported yet")
-    if d.layout != (expected_d_layout := tmem_half_lane_layout(n * num_cta, packing=1)):
+    expected_d_layout = _infer_tmem_layout(d.shape, collective, packing=1)
+    if d.layout != expected_d_layout:
       raise ValueError(
           f"Accumulator layout mismatch: expected {expected_d_layout}, got {d.layout}"
       )
-    n_lane_groups = 2
-    # We can't split N into groups if we would partition it below the tile size.
-    # TODO: We only need to check this if N is the minormost dim in B.
-    if 8 * swizzle // utils.bitwidth(element_type) > n // n_lane_groups:
-      raise ValueError("Swizzle is too big for MMA with M=64. Try lowering it.")
+    if collective:
+      n_lane_groups = 1
+    else:
+      n_lane_groups = 2
+      # We can't split N into groups if we would partition it below the tile size.
+      # TODO: We only need to check this if N is the minormost dim in B.
+      if 8 * swizzle // utils.bitwidth(element_type) > n // n_lane_groups:
+        raise ValueError("Swizzle is too big for MMA with M=64. Try lowering it.")
   else:
     raise ValueError(f"Only M=128 and M=64 are supported for MMA, but got M={m}")
   f32 = ir.F32Type.get()
@@ -557,7 +565,7 @@ class TMEMLayout(fa.TiledLayout):
     return math.prod(shape) // TMEM_ROWS // self.vector_length
 
 
-def _infer_tmem_layout(shape: tuple[int, int], packing: int = 1) -> TMEMLayout:
+def _infer_tmem_layout(shape: tuple[int, int], collective: bool, packing: int) -> TMEMLayout:
   if len(shape) != 2:
     raise ValueError(f"TMEM can only represent 2D shapes, got {shape}")
   if packing > 8 or packing.bit_count() != 1:
@@ -570,12 +578,16 @@ def _infer_tmem_layout(shape: tuple[int, int], packing: int = 1) -> TMEMLayout:
   if shape[0] == TMEM_ROWS:
     return tmem_default_layout(packing)
   elif shape[0] == TMEM_ROWS // 2:
-    return tmem_half_lane_layout(shape[1], packing)
+    if collective:
+      return tmem_m64_collective_layout(shape[1], packing)
+    else:
+      return tmem_half_lane_layout(shape[1], packing)
   else:
     raise ValueError(f"Unsupported shape: {shape}")
 
 
 def tmem_default_layout(packing: int = 1):
+  """A TMEM layout used for 1CTA MMA with M=128 and 2CTA MMA with M=256."""
   if packing > 8 or packing.bit_count() != 1:
     raise ValueError(f"Packing must be <= 8 and a power of 2, got: {packing}")
   return TMEMLayout(
@@ -587,6 +599,7 @@ def tmem_default_layout(packing: int = 1):
 
 
 def tmem_half_lane_layout(columns, packing: int = 1):
+  """A TMEM layout used for 1CTA MMA with M=64."""
   if packing > 8 or packing.bit_count() != 1:
     raise ValueError(f"Packing must be <= 8 and a power of 2, got: {packing}")
   if columns % 16:
@@ -599,6 +612,38 @@ def tmem_half_lane_layout(columns, packing: int = 1):
       )),
       warp_dims=(-5,),
       lane_dims=(-4, -3),
+      vector_dim=-1,
+  )
+
+
+def tmem_m64_collective_layout(columns, packing: int = 1):
+  """A TMEM layout used for 2CTA MMA with M=128."""
+  if packing > 8 or packing.bit_count() != 1:
+    raise ValueError(f"Packing must be <= 8 and a power of 2, got: {packing}")
+  if columns % 16:
+    raise ValueError(f"Columns must be a multiple of 16, got: {columns}")
+  return TMEMLayout(
+      fa.Tiling((
+          (TMEM_ROWS // 2, columns),
+          (fa.WARP_SIZE, columns // 2),
+          (packing,),
+      )),
+      warp_dims=(-4, -5,),
+      lane_dims=(-3,),
+      vector_dim=-1,
+  )
+
+
+def fa_m64_collective_layout(columns):
+  """The register layout for transfers to/from tmem_m64_collective_layout."""
+  if columns % 8:
+    raise ValueError(f"Columns must be a multiple of 8, got: {columns}")
+  return fa.TiledLayout(
+      fa.Tiling((
+          (TMEM_ROWS // 2, columns), (fa.WARP_SIZE, columns // 2), (8, 8), (2,)
+      )),
+      warp_dims=(-6, -7),
+      lane_dims=(-3, -2),
       vector_dim=-1,
   )
 
@@ -639,7 +684,7 @@ class TMEMRef:
         raise ValueError(
             "collective argument must be provided when TMEM layout is inferred"
         )
-      layout = _infer_tmem_layout(shape, collective)
+      layout = _infer_tmem_layout(shape, collective, packing=1)
     else:
       layout.check_type(shape, dtype)
     # TODO: Do we have to do this??
@@ -701,6 +746,12 @@ class TMEMRef:
     elif self.layout == tmem_half_lane_layout(self.shape[1], packing=2):
       packing = 2
       default_fa_layout = fa.WGMMA_LAYOUT
+    elif self.layout == tmem_m64_collective_layout(self.shape[1], packing=1):
+      packing = 1
+      default_fa_layout = fa_m64_collective_layout(self.shape[1])
+    elif self.layout == tmem_m64_collective_layout(self.shape[1], packing=2):
+      packing = 2
+      default_fa_layout = fa_m64_collective_layout(self.shape[1])
     else:
       raise ValueError(f"TMEM layout {self.layout} is not supported")
     if layout is None:
@@ -724,6 +775,12 @@ class TMEMRef:
       assert raw_registers.shape[0] == 4
       registers = np.concatenate([raw_registers[:2], raw_registers[2:]], axis=1)
       registers = registers.T.reshape(regs_shape)
+    elif layout == fa_m64_collective_layout(self.shape[1]) and self.layout == tmem_m64_collective_layout(self.shape[1], packing=packing):
+      regs_shape = layout.registers_shape(self.shape)
+      # We take half the columns, because they are split over halves of TMEM.
+      registers = _load_32xcols(
+          self.address, self.shape[1] // 2, self.dtype, packing
+      ).reshape(regs_shape)
     else:
       raise ValueError(
           f"Loads from TMEM layout {self.layout} to register layout"
@@ -763,6 +820,8 @@ class TMEMRef:
       registers = value.registers.T.reshape(2, -1)
       registers = np.concatenate(np.split(registers, 2, axis=1), axis=0)
       _store_32xcols(self.address, registers, packing)
+    elif value.layout == fa_m64_collective_layout(self.shape[1]) and self.layout == tmem_m64_collective_layout(self.shape[1], packing=packing):
+      _store_32xcols(self.address, value.registers.reshape(4, -1), packing)
     else:
       raise ValueError(
           f"Storing from register layout {value.layout} to TMEM layout"

@@ -1120,17 +1120,21 @@ class TCGen05Test(TestCase):
   @parameterized.product(
       jax_dtype_packing=[(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2)],
       reg_tmem_layout_m=[
-          (tcgen05.LAYOUT, lambda _, p: tcgen05.tmem_default_layout(p), 128),
-          (fa.WGMMA_LAYOUT, tcgen05.tmem_half_lane_layout, 64),
+          (lambda _: tcgen05.LAYOUT, lambda _, p: tcgen05.tmem_default_layout(p), 128),
+          (lambda _: fa.WGMMA_LAYOUT, tcgen05.tmem_half_lane_layout, 64),
+          (tcgen05.fa_m64_collective_layout, tcgen05.tmem_m64_collective_layout, 64),
       ],
   )
   def test_load_store_tmem_swizzle(self, jax_dtype_packing, reg_tmem_layout_m):
     jax_dtype, packing = jax_dtype_packing
-    reg_layout, tmem_layout_f, m = reg_tmem_layout_m
+    reg_layout_f, tmem_layout_f, m = reg_tmem_layout_m
     swizzle = 128
     in_mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
     swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
     tiling = (8, swizzle_elems)
+    # SMEM store planning for FA is too complicated for too long N...
+    n = 128 if jax_dtype != jnp.float32 else 64
+    reg_layout = reg_layout_f(n)
 
     def kernel(ctx, input, output, scratch):
       smem, barrier, tmem = scratch
@@ -1151,11 +1155,11 @@ class TCGen05Test(TestCase):
       )
       ctx.await_async_copy(0)
 
-    x = self.prng.uniform(-1, 1, (m, 128)).astype(jax_dtype)
+    x = self.prng.uniform(-1, 1, (m, n)).astype(jax_dtype)
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x.shape, tiling), jax_dtype),
         mgpu.TMABarrier(),
-        mgpu.TMEM(x.shape, jax_dtype, layout=tmem_layout_f(128, packing)),
+        mgpu.TMEM(x.shape, jax_dtype, layout=tmem_layout_f(n, packing)),
     ]
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
@@ -1469,22 +1473,21 @@ class TCGen05Test(TestCase):
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16,),
       out_jax_dtype=(jnp.float32,),
-      m=(256,),  # TODO(apaszke): 64, 192, 256
+      m=(128, 256),  # TODO(apaszke): 192, 256
       n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
-      k_steps=(1, 2),
       swizzle=(32, 64, 128,),
   )
   def test_mma_collective(
       self,
       m,
       n,
-      k_steps,
       swizzle,
       lhs_transpose,
       rhs_transpose,
       in_jax_dtype,
       out_jax_dtype,
   ):
+    k_steps = 2  # Reducing to 1 can be helpful while debugging.
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       raise self.skipTest("Only f16 input is supported for f16 output.")
 
@@ -1552,7 +1555,7 @@ class TCGen05Test(TestCase):
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
         mgpu.TMABarrier(3),
-        mgpu.TMEM((128, n), out_jax_dtype, collective=True),
+        mgpu.TMEM((m_block_tile, n), out_jax_dtype, collective=True),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (2, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape, cluster=(2, 1, 1)

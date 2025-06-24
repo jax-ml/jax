@@ -2483,7 +2483,7 @@ class FragmentedArray:
     if any(
         len(dim_shape) != 1 for dim_shape in tiled_nested_shape[-layout.tiled_tiling_rank :]
     ):
-      raise NotImplementedError("Memory and register tiling incompatible")
+      raise NotImplementedError("Memory and register tiling too complicated")
     tiled_shape = list(itertools.chain.from_iterable(tiled_nested_shape))
     elem_tiled_strides = list(itertools.chain.from_iterable(tiled_nested_strides))
     lane_shape = [
