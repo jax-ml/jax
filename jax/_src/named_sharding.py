@@ -367,6 +367,11 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArray, mesh):
 @cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
+  if self.spec.unreduced or self.spec.reduced:
+    raise ValueError(
+        'unreduced/reduced only works with the shardy partitioner. Please use'
+        " `jax.config.update('jax_use_shardy_partitioner', True)` to switch"
+        ' shardy on.')
   mesh_shape = self.mesh.shape
   array_mapping = get_array_mapping(self.spec)
   mesh_axis_pos = {name: i for i, name in enumerate(self.mesh.axis_names)}
