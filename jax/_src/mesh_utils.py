@@ -164,7 +164,7 @@ def _v5p_create_device_mesh(
       devices,
       key=lambda d: tuple(reversed(getattr(d, "coords", (0, 0, 0)))))
 
-  if bound_x == bound_y == 2 and bound_z == 2:
+  if bound_x == bound_y == bound_z == 2 and len(devices) == 8:
     device_mesh = np.asarray(sequential_devices)
     device_mesh = device_mesh[np.array(_V5P_2x2x2_ORDER)]
     device_mesh = device_mesh.reshape(mesh_shape)
