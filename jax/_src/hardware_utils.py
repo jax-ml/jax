@@ -40,6 +40,8 @@ class TpuVersion(enum.IntEnum):
   v5e = 5
   # TPU v6e
   v6e = 6
+  # TPU7x
+  tpu7x = 7
 
 
 _TPU_PCI_DEVICE_IDS = {
@@ -49,6 +51,7 @@ _TPU_PCI_DEVICE_IDS = {
     '0x0062': TpuVersion.v5p,
     '0x0063': TpuVersion.v5e,
     '0x006f': TpuVersion.v6e,
+    '0x0076': TpuVersion.tpu7x,
 }
 
 def num_available_tpu_chips_and_device_id():
