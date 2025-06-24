@@ -140,6 +140,8 @@ def mma(
   if isinstance(a, TMEMRef):
     m, k2 = a.shape
     element_type2 = a.dtype
+    if m != 128:
+      raise ValueError(f"Only M=128 is supported for MMA with A in TMEM, but got M={m}")
     if a.layout != (expected_layout := _infer_tmem_layout(a.shape, packing=2)):
       raise ValueError(
           f"A layout mismatch: expected {expected_layout}, got {a.layout}"
@@ -162,10 +164,27 @@ def mma(
     raise ValueError(
         f"Accumulator shape mismatch: expected {(m, n * num_cta)}, got {d.shape}"
     )
-  if d.layout != (expected_d_layout := tmem_default_layout(packing=1)):
-    raise ValueError(
-        f"Accumulator layout mismatch: expected {expected_d_layout}, got {d.layout}"
-    )
+  if m == 128:
+    if d.layout != (expected_d_layout := tmem_default_layout(packing=1)):
+      raise ValueError(
+          f"Accumulator layout mismatch: expected {expected_d_layout}, got {d.layout}"
+      )
+    n_lane_groups = 1
+  elif m == 64:
+    # 2CTA M=128 instruction uses a different TMEM layout than 1CTA M=64.
+    if collective:
+      raise NotImplementedError("M=64 with collective MMA is not supported yet")
+    if d.layout != (expected_d_layout := tmem_half_lane_layout(n * num_cta, packing=1)):
+      raise ValueError(
+          f"Accumulator layout mismatch: expected {expected_d_layout}, got {d.layout}"
+      )
+    n_lane_groups = 2
+    # We can't split N into groups if we would partition it below the tile size.
+    # TODO: We only need to check this if N is the minormost dim in B.
+    if 8 * swizzle // utils.bitwidth(element_type) > n // n_lane_groups:
+      raise ValueError("Swizzle is too big for MMA with M=64. Try lowering it.")
+  else:
+    raise ValueError(f"Only M=128 and M=64 are supported for MMA, but got M={m}")
   f32 = ir.F32Type.get()
   f16 = ir.F16Type.get()
   s32 = ir.IntegerType.get_signless(32)
@@ -195,19 +214,19 @@ def mma(
 
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.
-  m_group_elems = d.layout.base_tile_shape[0]
-  if m_group_elems != 128:
-    raise NotImplementedError("Only 128-row accumulators supported for now")
+  m_group_elems = m  # We have already verified M is supported above.
   k_group_elems = swizzle // utils.bytewidth(element_type)
   if n % 8:
     raise ValueError(f"N must be a multiple of 8, got: {n}")
   if n.bit_count() != 1:
     raise ValueError(f"N must be a power of 2, got: {n}")
+  # TODO: We could relax those constraints if we have multiple n_lane_groups,
+  # since we will be unrolling the instructions anyway.
   if collective and n > 128:
     raise ValueError("Only N <= 128 are supported for collective MMA")
   elif n > 512:
     raise ValueError("Only N <= 512 are supported for MMA")
-  n_group_elems = min(n, 256 // num_cta)
+  n_group_elems = min(n // n_lane_groups, 256 // num_cta)
   if m % m_group_elems:
     raise ValueError(f"M must be a multiple of {m_group_elems}, got: {m}")
   if k % k_group_elems:
@@ -252,6 +271,9 @@ def mma(
   # Step 4. Issue the instructions.
   true = arith.constant(ir.IntegerType.get_signless(1), 1)
   n_collective_group_elems = n_group_elems * num_cta
+  n_col_groups = n_groups // n_lane_groups
+  assert d.layout.base_tile_shape[0] % 4 == 0
+  lanes_per_n_group = d.layout.base_tile_shape[0] // 4
   for mi, ni, ki in np.ndindex(m_groups, n_groups, k_groups):
     if isinstance(a, TMEMRef):
       a_mk = a.slice(slice(None), utils.ds(ki * k_group_elems, k_group_elems)).address
@@ -263,10 +285,13 @@ def mma(
     if m_groups != 1:
       raise NotImplementedError("D needs to be sliced")
     acc = accumulate if ki == 0 else true
+    ni_lane_group, ni_col = ni // n_col_groups, ni % n_col_groups
+    d_offset = (
+        ((ni_lane_group * lanes_per_n_group) << 16)
+        + ni_col * n_collective_group_elems
+    )
     _do_mma(
-        arith.addi(
-            d.address, arith.constant(i32, ni * n_collective_group_elems)
-        ),
+        arith.addi(d.address, arith.constant(i32, d_offset)),
         a_mk,
         b_nk,
         d_type=d.dtype,
@@ -544,6 +569,8 @@ def _infer_tmem_layout(shape: tuple[int, int], packing: int = 1) -> TMEMLayout:
     )
   if shape[0] == TMEM_ROWS:
     return tmem_default_layout(packing)
+  elif shape[0] == TMEM_ROWS // 2:
+    return tmem_half_lane_layout(shape[1], packing)
   else:
     raise ValueError(f"Unsupported shape: {shape}")
 
@@ -557,6 +584,24 @@ def tmem_default_layout(packing: int = 1):
       lane_dims=(-2,),
       vector_dim=-1,
   )
+
+
+def tmem_half_lane_layout(columns, packing: int = 1):
+  if packing > 8 or packing.bit_count() != 1:
+    raise ValueError(f"Packing must be <= 8 and a power of 2, got: {packing}")
+  if columns % 16:
+    raise ValueError(f"Columns must be a multiple of 16, got: {columns}")
+  return TMEMLayout(
+      fa.Tiling((
+          (TMEM_ROWS // 2, columns),
+          (fa.WARP_SIZE // 2, columns // 2),
+          (packing,),
+      )),
+      warp_dim=-5,
+      lane_dims=(-4, -3),
+      vector_dim=-1,
+  )
+
 
 @dataclasses.dataclass(frozen=True)
 class TMEMRef:
@@ -607,6 +652,8 @@ class TMEMRef:
     base_idx, slice_shape, is_squeezed = utils.parse_indices(idxs, self.shape)
     if any(is_squeezed):
       raise ValueError("TMEM can only be sliced, not indexed")
+    if base_idx == [0] * len(base_idx) and slice_shape == list(self.shape):
+      return self  # Trival slice
     if self.layout == tmem_default_layout(packing=1):
       packing = 1
     elif self.layout == tmem_default_layout(packing=2):
@@ -637,31 +684,50 @@ class TMEMRef:
         dtype=self.dtype,
     )
 
-  def load(self, layout: fa.TiledLayout = LAYOUT, is_signed: bool | None = None):
+  def load(self, layout: fa.TiledLayout | None = None, is_signed: bool | None = None):
     if self.shape[1] % 8:
       raise NotImplementedError
     if utils.bitwidth(self.dtype) not in {16, 32}:
       raise NotImplementedError(f"Unsupported dtype: {self.dtype}")
     if self.layout == tmem_default_layout(packing=1):
       packing = 1
+      default_fa_layout = LAYOUT
     elif self.layout == tmem_default_layout(packing=2):
       packing = 2
+      default_fa_layout = LAYOUT
+    elif self.layout == tmem_half_lane_layout(self.shape[1], packing=1):
+      packing = 1
+      default_fa_layout = fa.WGMMA_LAYOUT
+    elif self.layout == tmem_half_lane_layout(self.shape[1], packing=2):
+      packing = 2
+      default_fa_layout = fa.WGMMA_LAYOUT
     else:
       raise ValueError(f"TMEM layout {self.layout} is not supported")
-    if layout == LAYOUT:
-      regs_shape = layout.registers_shape(self.shape)
+    if layout is None:
+      layout = default_fa_layout
+    regs_shape = layout.registers_shape(self.shape)
+    if regs_shape[0] != 1:  # We'll need to issue multiple loads below.
+      raise NotImplementedError("Loading multiple row tiles")
+    if layout == LAYOUT and self.layout == tmem_default_layout(packing=packing):
       registers = _load_32xcols(
           self.address, self.shape[1], self.dtype, packing
       ).T.reshape(regs_shape)
-    elif layout == TMEM_NATIVE_LAYOUT:
-      regs_shape = layout.registers_shape(self.shape)
+    elif layout == TMEM_NATIVE_LAYOUT and self.layout == tmem_default_layout(packing=packing):
       registers = _load_32xcols_native(
           self.address, self.shape[1], self.dtype, packing
       ).reshape(regs_shape)
+    elif layout == fa.WGMMA_LAYOUT and self.layout == tmem_half_lane_layout(self.shape[1], packing=packing):
+      # Load half the columns, since they are folded over lanes.
+      raw_registers = _load_32xcols(
+          self.address, self.shape[1] // 2, self.dtype, packing
+      )
+      assert raw_registers.shape[0] == 4
+      registers = np.concatenate([raw_registers[:2], raw_registers[2:]], axis=1)
+      registers = registers.T.reshape(regs_shape)
     else:
       raise ValueError(
-          "TMEM loads can only produce results in the tcgen05 layouts"
-          f" ({LAYOUT} and {TMEM_NATIVE_LAYOUT}), but got: {layout}"
+          f"Loads from TMEM layout {self.layout} to register layout"
+          f" {layout} are not supported"
       )
     return fa.FragmentedArray(
         _registers=registers, _layout=layout, _is_signed=is_signed
@@ -684,24 +750,23 @@ class TMEMRef:
           f"Stored array has dtype {value.mlir_dtype}, but TMEM has dtype"
           f" {self.dtype}"
       )
-    if self.layout == tmem_default_layout(packing=1):
-      packing = 1
-    elif self.layout == tmem_default_layout(packing=2):
-      packing = 2
-    else:
-      raise ValueError(f"TMEM layout {self.layout} is not supported")
-    if value.layout == LAYOUT:
+    packing = self.layout.vector_length
+    if value.layout == LAYOUT and self.layout == tmem_default_layout(packing=packing):
       _store_32xcols(
           self.address, value.registers.T.reshape((4, -1)), packing
       )
-    elif value.layout == TMEM_NATIVE_LAYOUT:
+    elif value.layout == TMEM_NATIVE_LAYOUT and self.layout == tmem_default_layout(packing=packing):
       _store_32xcols_native(
           self.address, value.registers.reshape(-1), packing
       )
+    elif value.layout == fa.WGMMA_LAYOUT and self.layout == tmem_half_lane_layout(self.shape[1], packing=packing):
+      registers = value.registers.T.reshape(2, -1)
+      registers = np.concatenate(np.split(registers, 2, axis=1), axis=0)
+      _store_32xcols(self.address, registers, packing)
     else:
       raise ValueError(
-          f"Stored array has layout {value.layout}, but only tcgen05.LAYOUT and"
-          " tcgen05.TMEM_NATIVE_LAYOUT are supported"
+          f"Storing from register layout {value.layout} to TMEM layout"
+          f" {self.layout} is not supported"
       )
 
   def _debug_print(self):
