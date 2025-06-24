@@ -229,6 +229,8 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       ("on_main_thread", True),
       ("on_non_main_thread", False),
   )
+  # Cannot run concurrently with other tests using `colocated_python._testing_global_state`.
+  @jtu.thread_unsafe_test()
   def test_sequential_execution(self, on_main_thread: bool):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = np.array(1)
@@ -253,18 +255,16 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       return x
 
     @colocated_python.colocated_python
-    def cleanup():
+    def cleanup(x: jax.Array) -> jax.Array:
       if "_testing_global_state" in colocated_python.__dict__:
         del colocated_python._testing_global_state
+      return x
 
     # Specify out_specs_fn so that their executions are asynchronously
     # dispatched.
     func0 = func0.specialize(out_specs_fn=lambda x: x)
     func1 = func1.specialize(out_specs_fn=lambda x: x)
     func2 = func2.specialize(out_specs_fn=lambda x: x)
-
-    # cleanup needs specialization because they do not have input arguments.
-    cleanup = cleanup.specialize(devices=cpu_devices[:1])
 
     def calls(x: jax.Array) -> None:
       # No explicit blocking before making the next call.
@@ -282,8 +282,10 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         t.join()
       # Executions should succeed without an error.
     finally:
-      cleanup()
+      jax.block_until_ready(cleanup(x))
 
+  # Cannot run concurrently with other tests using `colocated_python._testing_global_state`.
+  @jtu.thread_unsafe_test()
   def test_concurrent_execution(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = np.array(1)
@@ -301,16 +303,14 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       return x
 
     @colocated_python.colocated_python
-    def cleanup():
+    def cleanup(x: jax.Array) -> jax.Array:
       if "_testing_global_state" in colocated_python.__dict__:
         del colocated_python._testing_global_state
+      return x
 
     # Specify out_specs_fn so that their executions are asynchronously
     # dispatched.
     func = func.specialize(out_specs_fn=lambda x: x)
-
-    # cleanup needs specialization because they do not have input arguments.
-    cleanup = cleanup.specialize(devices=cpu_devices[:1])
 
     try:
       jax.block_until_ready(init(x))
@@ -327,7 +327,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       t3.join()
       # Executions should succeed without a deadlock.
     finally:
-      cleanup()
+      jax.block_until_ready(cleanup(x))
 
   def test_inputs_with_different_device_orders(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())[:2]
@@ -516,9 +516,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       make_zero = make_zero.specialize(devices=cpu_devices)
       jax.block_until_ready(make_zero())
 
+  # Cannot run concurrently with other tests using `colocated_python._testing_global_state`.
+  @jtu.thread_unsafe_test()
   def test_object_lifecycle(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
+    x = jax.device_put(np.array(0), sharding)
 
     @colocated_python.colocated_python_class
     class Object:
@@ -545,15 +548,15 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       return jax.device_put(np.array(destroyed), sharding)
 
     @colocated_python.colocated_python
-    def cleanup():
+    def cleanup(x: jax.Array) -> jax.Array:
       if "_testing_initialized" in colocated_python.__dict__:
         del colocated_python._testing_initialized
       if "_testing_destroyed" in colocated_python.__dict__:
         del colocated_python._testing_destroyed
+      return x
 
     check_initialized = check_initialized.specialize(devices=cpu_devices[:1])
     check_destroyed = check_destroyed.specialize(devices=cpu_devices[:1])
-    cleanup = cleanup.specialize(devices=cpu_devices[:1])
 
     try:
       # Object initialization is deferred until the first method call.
@@ -567,7 +570,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.assertEqual(jax.device_get(check_initialized()), False)
       self.assertEqual(jax.device_get(check_destroyed()), False)
     finally:
-      cleanup()
+      jax.block_until_ready(cleanup(x))
 
     try:
       # Object initialization is deferred until the first method call.
@@ -586,7 +589,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.assertEqual(jax.device_get(check_initialized()), True)
       self.assertEqual(jax.device_get(check_destroyed()), True)
     finally:
-      cleanup()
+      jax.block_until_ready(cleanup(x))
 
   def test_stateful_object(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
