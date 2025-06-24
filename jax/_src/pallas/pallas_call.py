@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping, Sequence
 import enum
 from functools import partial, reduce
 import types
-from typing import Any, cast
+from typing import Any
 
 import jax
 from jax import lax
@@ -1661,7 +1661,7 @@ def _pallas_call(
       )
     if backend is not None:
       raise ValueError("If `mesh` is specified, then `backend` must be `None`.")
-    backend = cast(Backend, mesh.backend)
+    backend = mesh.backend
 
   grid_spec, dynamic_grid_bounds = pallas_core.unzip_dynamic_grid_bounds(grid_spec)
   # TODO(necula): this canonicalization may be convenient for some usage

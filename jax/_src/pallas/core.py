@@ -1329,7 +1329,7 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
 class Mesh(Protocol):
 
   @property
-  def backend(self) -> str:
+  def backend(self) -> Backend:
     ...
 
   @property
