@@ -298,9 +298,12 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
 
   if in_specs is not None:
     _check_specs(SpecErrorType.input, in_specs, axis_names)
+    _check_unreduced(SpecErrorType.input, mesh, axis_names, in_specs)
   if not callable(out_specs):
     _check_specs(SpecErrorType.out, out_specs, axis_names)
+    _check_unreduced(SpecErrorType.out, mesh, axis_names, out_specs)
   return mesh, axis_names
+
 
 def _manual_spec(manual_axes, spec: P) -> P:
   out = []  # type: ignore
@@ -316,12 +319,32 @@ def _manual_spec(manual_axes, spec: P) -> P:
       out.append(None if len(temp) == 0 else tuple(temp))
     else:
       out.append(s if s in manual_axes else None)
-  return P(*out)
+  return P(*out, unreduced=spec.unreduced, reduced=spec.reduced)
 
 
 # Error checking and messages
 
 SpecErrorType = enum.Enum('SpecErrorType', ['input', 'out'])
+
+def _check_unreduced(error_type, mesh, manual_axes, specs):
+  prefix = 'in' if error_type == SpecErrorType.input else 'out'
+  full_manual = frozenset(mesh.axis_names) == manual_axes
+  specs_flat, _ = tree_flatten(specs)
+  for s in specs_flat:
+    if not s.unreduced:
+      continue
+    if not full_manual:
+      raise NotImplementedError(
+          f"unreduced can only be passed to {prefix}_specs when shard_map is in"
+          f" full manual mode. Got mesh axis names {mesh.axis_names},"
+          f" manual_axes: {manual_axes}, specs: {s}. Please file a bug"
+          " at https://github.com/jax-ml/jax/issues.")
+    if not all(mesh._name_to_type[u] == AxisType.Explicit for u in s.unreduced):
+      raise ValueError(
+          f"unreduced in {prefix}_specs {s} can only be used when the mesh"
+          " passed to shard_map contains axis names all of type `Explicit`."
+          f" Got mesh {mesh}")
+
 
 def _check_specs(error_type: SpecErrorType, specs: Any, manual_axes) -> None:
   if error_type == SpecErrorType.input and specs is None:
@@ -685,9 +708,10 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
   new_shape = tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
   manual_mesh = _as_manual_mesh(mesh, manual_axes | set(mesh.manual_axes))
-  new_sharding = NamedSharding(manual_mesh, aval.sharding.spec)
+  new_spec = aval.sharding.spec.update(unreduced=frozenset(), reduced=frozenset())
+  new_sharding = aval.sharding.update(mesh=manual_mesh, spec=new_spec)
   vma = _spec_to_vma(spec) if check_vma else frozenset()
-  vma = vma | aval.vma
+  vma = vma | aval.vma | aval.sharding.spec.unreduced
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
@@ -714,12 +738,13 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
         name_s = name_s if isinstance(name_s, tuple) else (name_s,)
         aval_s = aval_s if isinstance(aval_s, tuple) else (aval_s,)
         out_spec.append(name_s + aval_s)
-    out_spec = PartitionSpec(*out_spec)
+    out_spec = PartitionSpec(*out_spec, unreduced=spec.unreduced,
+                             reduced=spec.reduced)
   new_mesh = (mesh.abstract_mesh if get_abstract_mesh().empty else
               get_abstract_mesh())
   new_sharding = NamedSharding(new_mesh, out_spec)
   manual_axes = set(new_mesh.manual_axes)
-  vma = (frozenset(v for v in aval.vma if v in manual_axes)
+  vma = (frozenset(v for v in aval.vma | out_spec.unreduced if v in manual_axes)
          if check_vma else frozenset())
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
@@ -963,7 +988,7 @@ def _vma_to_spec(mesh, vma):
 
 def _spec_to_vma(spec):
   return frozenset(p for s in spec if s is not None
-                   for p in (s if isinstance(s, tuple) else (s,)))
+                   for p in (s if isinstance(s, tuple) else (s,))) | spec.unreduced
 
 def order_wrt_mesh(mesh, x):
   return tuple(a for a in mesh.axis_names if a in x)

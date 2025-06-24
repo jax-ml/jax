@@ -63,6 +63,7 @@ class PartitionSpec:
           "`reduced` argument of PartitionSpec should be of type"
           f" `frozenset` or `set`. Got type {type(reduced)}")
     self.unreduced = frozenset(unreduced)
+    # See the description of https://github.com/jax-ml/jax/pull/29381
     self.reduced = frozenset(reduced)
     # `__init__` is implemented in C++ so this check happens in C++
     # _check(self._partitions, self.unreduced, self.reduced)

@@ -2223,6 +2223,91 @@ class ShardMapTest(jtu.JaxTestCase):
     jtu.check_grads(f, (list(jnp.arange(float(num_args))[:,None]),), order=1,
                     modes=['rev'], atol=1e-3, rtol=1e-3)
 
+  @config.use_shardy_partitioner(True)
+  @jtu.with_explicit_mesh((2, 2), ('data', 'seq'))
+  def test_shmap_unreduced_custom_vjp_bwd(self, mesh):
+    np_inp1 = np.arange(64.).reshape(8, 4, 2)
+    np_inp2 = np.arange(12.).reshape(2, 6)
+    arr1 = jax.device_put(np_inp1, P('data', 'seq', None))
+    arr2 = jax.device_put(np_inp2, P('seq', None))
+
+    @jax.custom_vjp
+    def f(x, y):
+      @shard_map(in_specs=P('seq', None), out_specs=P(None, None))
+      def ag(a):
+        self.assertEqual(a.aval.vma, {'seq'})
+        self.assertEqual(a.aval.sharding.spec.unreduced, frozenset())
+        out = lax.all_gather_invariant(a, axis_name='seq', tiled=True)
+        self.assertEqual(out.aval.vma, frozenset())
+        self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
+        return out
+
+      y2 = ag(y)
+      return jnp.einsum('btd,df->btf', x, y2)
+
+    def f_fwd(x, y):
+      return f(x, y), (x, y)
+
+    def f_bwd(res, g):
+      x, y = res
+
+      @shard_map(out_specs=P('seq', None, unreduced={'data'}))
+      def rs(a):
+        self.assertEqual(a.aval.vma, {'data', 'seq'})
+        out = lax.psum_scatter(a, axis_name='seq', tiled=True)
+        self.assertEqual(out.aval.vma, {'data', 'seq'})
+        return out
+
+      @shard_map(out_specs=P('seq', None))
+      def ar(a):
+        self.assertEqual(a.aval.vma, {'data', 'seq'})
+        out = lax.psum(a, axis_name='data')
+        self.assertEqual(out.aval.vma, {'seq'})
+        return out
+
+      x_bar = jnp.einsum('btf,df->btd', g, y, out_sharding=P('data', 'seq', None))
+      y_bar_ = jnp.einsum('btd,btf->df', x, g,
+                          out_sharding=P(None, None, unreduced={'data', 'seq'}))
+      self.assertEqual(y_bar_.aval.sharding.spec.unreduced, {'data', 'seq'})
+
+      y_bar = rs(y_bar_)
+      self.assertEqual(y_bar.aval.sharding.spec.unreduced, {'data'})
+
+      y_bar = ar(y_bar)
+      self.assertEqual(y_bar.aval.sharding.spec.unreduced, frozenset())
+
+      return (x_bar, y_bar)
+
+    f.defvjp(f_fwd, f_bwd)
+    f = jax.jit(f)
+
+    f(arr1, arr2)  # doesn't crash
+
+    out1, out2 = jax.jit(jax.grad(lambda x, y: jnp.sin(f(x, y).sum()),
+                                  argnums=(0, 1)))(arr1, arr2)
+
+    with jax.sharding.use_mesh(jtu.create_mesh((1,), 'x')):
+      ex_out1, ex_out2 = jax.jit(jax.grad(lambda x, y: jnp.sin((x @ y).sum()),
+                                          argnums=(0, 1)))(np_inp1, np_inp2)
+    self.assertArraysAllClose(ex_out1, out1)
+    self.assertArraysAllClose(ex_out2, out2)
+
+  def test_shmap_auto_unreduced_error(self):
+    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
+    with self.assertRaisesRegex(
+        ValueError,
+        'unreduced.*can only be used when the mesh passed to shard_map contains'
+        ' axis names all of type `Explicit`'):
+      shard_map(lambda x: x, mesh=mesh, in_specs=P(unreduced={'x'}),
+                out_specs=P())(np.arange(8))
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        'unreduced can only be passed to in_specs when shard_map is in full'
+        ' manual mode'):
+      shard_map(lambda x: x, mesh=mesh, in_specs=P(unreduced={'x'}),
+                  out_specs=P(), axis_names={'x'})(np.arange(8))
+
   def test_partial_auto(self):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))
 

@@ -1955,7 +1955,9 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
                       else None)
   new_unreduced = {u for u in spec.unreduced
                    if mesh._name_to_type[u] == AxisType.Explicit}
-  return P(*new_spec, unreduced=new_unreduced)
+  new_reduced = {u for u in spec.reduced
+                 if mesh._name_to_type[u] == AxisType.Explicit}
+  return P(*new_spec, unreduced=new_unreduced, reduced=new_reduced)
 
 def _maybe_modify_sharding(sharding, ndim):
   if len(sharding.spec) == 0 or all(s is None for s in sharding.spec):
@@ -2015,7 +2017,7 @@ def str_short_aval(shape, dtype, mesh, spec, vma,
   dt_str = dt_str.replace('void', 'float0')
   shapestr = _get_shape_sharding_str(shape, spec)
   mesh_axes = f'({mesh._axis_types_dict})' if mesh_axis_types else ''
-  vma_ur = _vma_ur_str(vma, spec.unreduced)
+  vma_ur = _vma_ur_str(vma, spec.unreduced, spec.reduced)
   return f'{dt_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
 @cache(max_size=4096, trace_context_in_key=False)
@@ -2137,15 +2139,16 @@ def _get_shape_sharding_str(shape, spec):
 def _create_str(x, prefix):
   x_str = f"{','.join(i for i in x)}"
   x_str = x_str if len(x) == 1 else f"({x_str})"
-  return f"{prefix}:{x_str}"
+  return f"{prefix}:{x_str}, "
 
-def _vma_ur_str(vma, unreduced):
-  if not vma and not unreduced:
+def _vma_ur_str(vma, unreduced, reduced):
+  if not vma and not unreduced and not reduced:
     return ''
   vma_str = _create_str(vma, 'V') if vma else ''
   ur_str = _create_str(unreduced, 'U') if unreduced else ''
-  sep = ', ' if vma and unreduced else ''
-  return f"{{{vma_str}{sep}{ur_str}}}"
+  red_str = _create_str(reduced, 'R') if reduced else ''
+  m_str = f"{vma_str}{ur_str}{red_str}".rstrip(', ')
+  return f"{{{m_str}}}"
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
@@ -2155,10 +2158,11 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
   else:
     return primal_dtype
 
+def primal_spec_to_cotangent_spec(spec):
+  return P(*spec, unreduced=spec.reduced, reduced=spec.unreduced)
+
 def primal_sharding_to_cotangent_sharding(sharding):
-  new_spec = P(*sharding.spec, unreduced=sharding.spec.reduced,
-               reduced=sharding.spec.unreduced)
-  return sharding.update(spec=new_spec)
+  return sharding.update(spec=primal_spec_to_cotangent_spec(sharding.spec))
 
 def pvary(x, axis_name):
   if not axis_name:
@@ -2175,6 +2179,8 @@ pvary_p.def_impl(lambda *args, axes, axis_index_groups: args)
 def _pvary_abstract_eval(*args, axes, axis_index_groups):
   if not config._check_vma.value:
     return args
+  if any(a.sharding.spec.unreduced for a in args):
+    raise NotImplementedError('unreduced rule for pvary is not implemented.')
   assert isinstance(axes, tuple)
   arg_vma = [a.vma for a in args]
   # If there is intersection between arg_vma and axes, error
