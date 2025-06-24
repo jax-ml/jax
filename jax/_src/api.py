@@ -325,8 +325,8 @@ def disable_jit(disable: bool = True):
   ...   print("Value of y is", y)
   ...   return y + 3
   ...
-  >>> print(f(jax.numpy.array([1, 2, 3])))  # doctest:+ELLIPSIS
-  Value of y is Traced<int32[3]>with<DynamicJaxprTrace...>
+  >>> print(f(jax.numpy.array([1, 2, 3])))
+  Value of y is JitTracer<int32[3]>
   [5 7 9]
 
   Here ``y`` has been abstracted by :py:func:`jit` to a :py:class:`ShapedArray`,
