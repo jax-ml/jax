@@ -96,7 +96,7 @@ def is_strided_fragmented_layout(attr: ir.Attribute) -> bool:
 
 _tiled_layout_attr_pattern = re.compile(
     r"^#mosaic_gpu.TiledLayout<\[(?P<tiling>.*)\],"
-    r" warp_dim\s*=\s*(?P<warp_dim>.+),"
+    r" warp_dims\s*=\s*\[(?P<warp_dims>.*)\],"
     r" lane_dims\s*=\s*\[(?P<lane_dims>.*)\],"
     r" vector_dim\s*=\s*(?P<vector_dim>[-\d]+)>$"
 )
@@ -114,13 +114,15 @@ def to_tiled_layout_attr(
 
   tile_str = lambda tile: "[" + ", ".join(str(d) for d in tile) + "]"
   tiling = "[" + ", ".join(tile_str(tile) for tile in layout.tiling.tiles) + "]"
+  warp_dims = (
+      "[" + ",".join(_int_or_replicated(d) for d in layout.warp_dims) + "]"
+  )
   lane_dims = (
       "[" + ",".join(_int_or_replicated(d) for d in layout.lane_dims) + "]"
   )
 
   return ir.Attribute.parse(
-      f"#mosaic_gpu.TiledLayout<{tiling},"
-      f" warp_dim={_int_or_replicated(layout.warp_dim)},"
+      f"#mosaic_gpu.TiledLayout<{tiling}, warp_dims={warp_dims},"
       f" lane_dims={lane_dims}, vector_dim={layout.vector_dim}>"
   )
 
@@ -163,7 +165,10 @@ def from_tiled_layout_attr(
   tiles = tuple(tuple(map(int, ts.split(","))) for ts in tile_strings)
   return fa.TiledLayout(
       tiling=fa.Tiling(tiles),
-      warp_dim=_int_or_replicated(match.group("warp_dim")),
+      warp_dims=tuple(
+          _int_or_replicated(s.strip())
+          for s in match.group("warp_dims").split(",")
+      ),
       lane_dims=tuple(
           _int_or_replicated(s.strip())
           for s in match.group("lane_dims").split(",")

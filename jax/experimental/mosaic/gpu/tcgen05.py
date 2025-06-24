@@ -49,7 +49,7 @@ COL_LAYOUT = fa.TCGEN05_COL_LAYOUT
 # a multiple of 32-bits, even when the data is 16-bits.
 TMEM_NATIVE_LAYOUT = fa.TiledLayout(
     fa.Tiling(((128, 2), (32, 2))),
-    warp_dim=-4,
+    warp_dims=(-4,),
     lane_dims=(-2,),
     vector_dim=-1,
 )
@@ -532,7 +532,7 @@ class TMEMLayout(fa.TiledLayout):
   """Represents the way a shape is laid out in TMEM.
 
   The layout describes how the shape is split across the 128 rows (lanes) of
-  TMEM. We reinterpret warp_dim as the partitioning of TMEM into 4 banks, each
+  TMEM. We reinterpret warp_dims as the partitioning of TMEM into 4 banks, each
   accessible from a single warp. The 32 lanes inside each bank are assigned
   consecutive elements from lane_dims. The data within each lane is linearized
   in row-major order, with each vector padded up to 32 bits (wider vectors are
@@ -580,7 +580,7 @@ def tmem_default_layout(packing: int = 1):
     raise ValueError(f"Packing must be <= 8 and a power of 2, got: {packing}")
   return TMEMLayout(
       fa.Tiling(((TMEM_ROWS, 8), (fa.WARP_SIZE, packing))),
-      warp_dim=-4,
+      warp_dims=(-4,),
       lane_dims=(-2,),
       vector_dim=-1,
   )
@@ -597,7 +597,7 @@ def tmem_half_lane_layout(columns, packing: int = 1):
           (fa.WARP_SIZE // 2, columns // 2),
           (packing,),
       )),
-      warp_dim=-5,
+      warp_dims=(-5,),
       lane_dims=(-4, -3),
       vector_dim=-1,
   )

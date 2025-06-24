@@ -4025,6 +4025,7 @@ if hp is not None:
     assert math.prod(initial_tile) >= 128
     tiles = [initial_tile]
     dim_offset = len(initial_tile)
+    # TODO: Generate layouts with multiple warp dims
     warp_dim = fa.Replicated(4)
     if draw(hps.booleans()):
       warp_dim = draw(
@@ -4076,7 +4077,7 @@ if hp is not None:
     vector_dim = vector_dim - dim_offset
     return fa.TiledLayout(
         tiling=fa.Tiling(tuple(map(tuple, tiles))),
-        warp_dim=warp_dim,
+        warp_dims=(warp_dim,),
         lane_dims=lane_dims,
         vector_dim=vector_dim,
         _check_canonical=False,

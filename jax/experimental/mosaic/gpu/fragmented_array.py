@@ -280,16 +280,13 @@ class TiledLayout:
   the dimension indices. All dimension indices must be negative and should refer
   to the dimensions after tiling is applied.
 
-  Note that warp_dim and vector_dim could be sets as well, but we don't have a
-  usecase for that yet.
-
   To better understand this layout, consider the example of WGMMA-related tiling
   from https://docs.nvidia.com/cuda/parallel-thread-execution/#wgmma-64n16-d as
   applied to a 128x128 array. The corresponding TiledLayout has a tiling of:
 
       (64, 8)(16, 8)(8, 8)(1, 2)
 
-  and warp_dim=-8, lane_dims=(-4, -3), vector_dim=-1.
+  and warp_dims=(-8,), lane_dims=(-4, -3), vector_dim=-1.
 
   We begin by applying the tiling (note that it always applies to a suffix):
 
@@ -301,8 +298,8 @@ class TiledLayout:
     2  16   4  1   2  1  8  8              (1, 2)
     2  16   4  1   2  1  8  4  1  2
 
-  The last expression is our final shape. At this stage, we're ready to
-  interpret the dimensions: warp_dim=-8 means that the 8-th dimension from the
+  The last expression is our final shape. At this stage, we're ready to partition
+  the dimensions: warp_dims=(-8,) means that the 8-th dimension from the
   end is partitioned over 4 warps in a warpgroup (and so it must be of size 4).
   lane_dims=(-4, -3) indicate that those two dimensions are partitioned over
   the lanes within a warp (their product must be equal to 32, i.e. warp size).
@@ -316,7 +313,7 @@ class TiledLayout:
   by a single (logical) register.
   """
   tiling: Tiling
-  warp_dim: int | Replicated
+  warp_dims: tuple[int | Replicated, ...]  # major-to-minor
   lane_dims: tuple[int | Replicated, ...]  # major-to-minor
   vector_dim: int
   # Whether to enforce that the layout is canonical. Users of `TiledLayout`
@@ -330,21 +327,25 @@ class TiledLayout:
       raise ValueError("Tiling must have at least one tile")
     min_shape = self.tiling.tiles[0]
     min_tiled_shape = self.tiling.tile_shape(min_shape)
-    dims_set = {*self.partitioned_lane_dims, self.vector_dim}
-    if partitions_warp_dim := not isinstance(self.warp_dim, Replicated):
-      dims_set.add(self.warp_dim)
-    if len(dims_set) != len(self.partitioned_lane_dims) + 1 + partitions_warp_dim:
+    dims_set = {
+        *self.partitioned_warp_dims, *self.partitioned_lane_dims, self.vector_dim,
+    }
+    if len(dims_set) != len(self.partitioned_warp_dims) + len(self.partitioned_lane_dims) + 1:
       raise ValueError
     for d in dims_set:
       if d >= 0:
         raise ValueError("All dimensions must be negative")
       if d < -(len(min_tiled_shape) - len(min_shape)):
         raise ValueError("Dimension out of range")
-    if isinstance(self.warp_dim, Replicated):
-      if self.warp_dim.times != WARPS_IN_WARPGROUP:
-        raise ValueError
-    elif min_tiled_shape[self.warp_dim] != WARPS_IN_WARPGROUP:
-      raise ValueError
+    warp_dims_prod = math.prod(
+        d.times if isinstance(d, Replicated) else min_tiled_shape[d]
+        for d in self.warp_dims
+    )
+    if warp_dims_prod != WARPS_IN_WARPGROUP:
+      raise ValueError(
+          "The product of warp dims does not equal the number of warps in a"
+          " warpgroup"
+      )
     lane_dims_prod = math.prod(
         d.times if isinstance(d, Replicated) else min_tiled_shape[d]
         for d in self.lane_dims
@@ -355,6 +356,12 @@ class TiledLayout:
       canonical_layout = self.canonicalize()
       if self != canonical_layout:
         raise ValueError(f"{self} is not canonical.")
+
+  @functools.cached_property
+  def partitioned_warp_dims(self) -> tuple[int, ...]:
+    return tuple(
+      d for d in self.warp_dims if not isinstance(d, Replicated)
+    )
 
   @functools.cached_property
   def partitioned_lane_dims(self) -> tuple[int, ...]:
@@ -418,8 +425,8 @@ class TiledLayout:
   def registers_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
     """Returns the shape of the register array needed to represent an array of the given logical shape."""
     tiled_shape = list(self.tiling.tile_shape(shape))
-    if not isinstance(self.warp_dim, Replicated):
-      tiled_shape[self.warp_dim] = 1
+    for d in self.partitioned_warp_dims:
+      tiled_shape[d] = 1
     for d in self.partitioned_lane_dims:
       tiled_shape[d] = 1
     tiled_shape[self.vector_dim] = 1
@@ -432,51 +439,46 @@ class TiledLayout:
     """
     tiled_tiling = self.tiled_tiling_shape
     shape = list(shape)
-    if not isinstance(self.warp_dim, Replicated):
-      shape[self.warp_dim] = WARPS_IN_WARPGROUP
+    for d in self.partitioned_warp_dims:
+      shape[d] = tiled_tiling[d]
     for d in self.partitioned_lane_dims:
       shape[d] = tiled_tiling[d]
     shape[self.vector_dim] = tiled_tiling[self.vector_dim]
     return self.tiling.untile_shape(tuple(shape))
 
-  def _full_lane_indices(self) -> tuple[ir.Value, ...]:
+  def _delinearize_index(
+      self, idx: ir.Value, dims: tuple[int | Replicated, ...]
+  ) -> tuple[ir.Value, ...]:
     i32 = ir.IntegerType.get_signless(32)
     tiled_shape = self.tiled_tiling_shape
-    lanes_shape = tuple(
+    dims_shape = tuple(
         d.times if isinstance(d, Replicated) else tiled_shape[d]
-        for d in self.lane_dims
+        for d in dims
     )
-    assert math.prod(lanes_shape) == WARP_SIZE
-    lane_strides = utils.get_contiguous_strides(lanes_shape)
-    lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
-    lane_indices = tuple(
-        arith.remui(arith.divui(lane_idx, c(stride, i32)), c(size, i32))
-        for stride, size in zip(lane_strides, lanes_shape)
+    dims_strides = utils.get_contiguous_strides(dims_shape)
+    dims_indices = tuple(
+        arith.remui(arith.divui(idx, c(stride, i32)), c(size, i32))
+        for stride, size in zip(dims_strides, dims_shape)
     )
-    return lane_indices
-
-  def lane_indices(self) -> tuple[ir.Value, ...]:
-    i32 = ir.IntegerType.get_signless(32)
-    tiled_shape = self.tiled_tiling_shape
-    lane_indices = self._full_lane_indices()
     full_indices = [arith.constant(i32, 0)] * len(tiled_shape)
-    for d, i in zip(self.lane_dims, lane_indices):
+    for d, i in zip(dims, dims_indices):
       if isinstance(d, Replicated):
         continue
       full_indices[d] = i
     return tuple(full_indices)
 
+  def lane_indices(self) -> tuple[ir.Value, ...]:
+    i32 = ir.IntegerType.get_signless(32)
+    lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
+    return self._delinearize_index(lane_idx, self.lane_dims)
+
   def warp_indices(self) -> tuple[ir.Value, ...]:
     i32 = ir.IntegerType.get_signless(32)
-    tiled_shape_rank = len(self.tiled_tiling_shape)
-    indices = [arith.constant(i32, 0)] * tiled_shape_rank
-    if not isinstance(self.warp_dim, Replicated):
-      warp_idx = arith.remui(
-          arith.divui(utils.thread_idx(), c(WARP_SIZE, i32)),
-          c(WARPS_IN_WARPGROUP, i32),
-      )
-      indices[self.warp_dim] = warp_idx
-    return tuple(indices)
+    warp_idx = arith.remui(
+        arith.divui(utils.thread_idx(), c(WARP_SIZE, i32)),
+        c(WARPS_IN_WARPGROUP, i32),
+    )
+    return self._delinearize_index(warp_idx, self.warp_dims)
 
   def remove_dimension(self, dim: int) -> TiledLayout:
     if dim < 0 or dim >= len(self.tiling.tiles[0]):
@@ -500,7 +502,10 @@ class TiledLayout:
         return d + dim_offsets[d]
     return TiledLayout(
         new_tiling,
-        replace_tiled_dim(self.warp_dim, WARPS_IN_WARPGROUP),
+        tuple(
+            d if isinstance(d, Replicated) else replace_tiled_dim(d, tiled_shape[d])
+            for d in self.warp_dims
+        ),
         tuple(
             d if isinstance(d, Replicated) else replace_tiled_dim(d, tiled_shape[d])
             for d in self.lane_dims
@@ -530,14 +535,14 @@ class TiledLayout:
     # whenever possible. For instance, say we have
     #
     #   shape=(4, 32, 1, 1, 1, 1, 1)
-    #   warp_dim=-7,
+    #   warp_dims=(-7,),
     #   lane_dims=(-6,)
     #   vector_dim=-1
     #
     # and we want to canonicalize this to
     #
     #   shape=(4, 32, 1)
-    #   warp_dim=-3,
+    #   warp_dims=(-3,),
     #   lane_dims=(-2,)
     #   vector_dim=-1.
     #
@@ -545,8 +550,8 @@ class TiledLayout:
     #
     #   rev_removed_dims=[False, True, True, True, True, False, False]
     #
-    # which will yield offsets `4` for `warp_dim`, `4` for `lane_dims[0]`, and
-    # `0` for `vector_dim`.
+    # which will yield offsets `4` for `warp_dims[0]`, `4` for `lane_dims[0]`,
+    # and `0` for `vector_dim`.
     for d in reversed(self.tiled_tiling_shape):
       if offset >= 0 and d == canonical_tiled_tiling_shape[offset]:
         rev_removed_dims.append(False)
@@ -562,7 +567,7 @@ class TiledLayout:
 
     return TiledLayout(
         canonical_tiling,
-        replace_tiled_dim(self.warp_dim),
+        tuple(replace_tiled_dim(d) for d in self.warp_dims),
         tuple(replace_tiled_dim(d) for d in self.lane_dims),
         replace_tiled_dim(self.vector_dim),
         _check_canonical=True
@@ -697,13 +702,13 @@ FragmentedLayout = WGSplatFragLayout | WGStridedFragLayout | TiledLayout
 
 WGMMA_COL_LAYOUT = TiledLayout(
     Tiling(((8,), (2,))),
-    warp_dim=Replicated(4),
+    warp_dims=(Replicated(4),),
     lane_dims=(Replicated(8), -2),
     vector_dim=-1,
 )
 WGMMA_ROW_LAYOUT = TiledLayout(
     Tiling(((64,), (16,), (8,), (1,))),
-    warp_dim=-4,
+    warp_dims=(-4,),
     lane_dims=(-2, Replicated(4)),
     vector_dim=-1,
 )
@@ -723,7 +728,7 @@ WGMMA_ROW_LAYOUT = TiledLayout(
 #          ...
 WGMMA_LAYOUT = TiledLayout(
     Tiling(((64, 8), (16, 8), (8, 8), (2,))),
-    warp_dim=-7,
+    warp_dims=(-7,),
     lane_dims=(-3, -2),
     vector_dim=-1,
 )
@@ -742,7 +747,7 @@ WGMMA_LAYOUT = TiledLayout(
 # only requires a single warp shuffle (plus permutes local to each thread).
 WGMMA_LAYOUT_UPCAST_2X = TiledLayout(
     Tiling(((64, 16), (16, 16), (8, 16), (8,), (4,))),
-    warp_dim=-8,
+    warp_dims=(-8,),
     lane_dims=(-4, -2, -3),
     vector_dim=-1,
 )
@@ -754,7 +759,7 @@ WGMMA_LAYOUT_UPCAST_2X = TiledLayout(
 # 5 and 6, etc. that WGMMA_LAYOUT_UPCAST_2X does).
 WGMMA_LAYOUT_UPCAST_4X = TiledLayout(
     Tiling(((64, 32), (16, 32), (8, 32), (8,))),
-    warp_dim=-7,
+    warp_dims=(-7,),
     lane_dims=(-3, -2),
     vector_dim=-1,
 )
@@ -781,7 +786,7 @@ WGMMA_LAYOUT_UPCAST_4X = TiledLayout(
 # very cheap (one shuffle and permute suffices to change between those layouts).
 WGMMA_TRANSPOSED_LAYOUT = TiledLayout(
     Tiling(((64, 8), (16, 8), (8, 8), (2, 2), (2, 1))),
-    warp_dim=-10,
+    warp_dims=(-10,),
     lane_dims=(-6, -3, -5),
     vector_dim=-2,
 )
@@ -789,7 +794,7 @@ WGMMA_TRANSPOSED_LAYOUT = TiledLayout(
 # Like WGMMA_LAYOUT, only each warp holds a 32xN strip instead of 16xN.
 TCGEN05_LAYOUT = TiledLayout(
     Tiling(((128, 8), (32, 8), (8, 8), (2,))),
-    warp_dim=-7,
+    warp_dims=(-7,),
     lane_dims=(-3, -2),
     vector_dim=-1,
 )
@@ -797,7 +802,7 @@ TCGEN05_LAYOUT = TiledLayout(
 # WGMMA_LAYOUT.
 TCGEN05_ROW_LAYOUT = TiledLayout(
     Tiling(tiles=((128,), (32,), (8,), (1,))),
-    warp_dim=-4,
+    warp_dims=(-4,),
     lane_dims=(-2, Replicated(times=4)),
     vector_dim=-1,
 )
@@ -805,7 +810,7 @@ TCGEN05_ROW_LAYOUT = TiledLayout(
 # WGMMA_LAYOUT.
 TCGEN05_COL_LAYOUT = TiledLayout(
     Tiling(tiles=((8,), (2,))),
-    warp_dim=Replicated(times=4),
+    warp_dims=(Replicated(times=4),),
     lane_dims=(Replicated(times=8), -2),
     vector_dim=-1,
 )
@@ -1893,7 +1898,7 @@ class FragmentedArray:
         # We reinterpret the data as a tiled layout. We're reducing it all anyway.
         layout = TiledLayout(
             tiling=Tiling(((128 * vec_size,), (32 * vec_size,), (vec_size,))),
-            warp_dim=-3,
+            warp_dims=(-3,),
             lane_dims=(-2,),
             vector_dim=-1,
         )
@@ -1983,10 +1988,9 @@ class FragmentedArray:
               reduction_size //= 2
         assert lane_stride == WARP_SIZE, lane_stride
       # Reduce across warps in the warpgroup, if necessary.
-      if (
-          not isinstance(layout.warp_dim, Replicated)
-          and reduced_dims[layout.warp_dim]
-      ):
+      if any(reduced_dims[d] for d in layout.partitioned_warp_dims):
+        if not all(reduced_dims[d] for d in layout.partitioned_warp_dims):
+          raise NotImplementedError("Reductions between subsets of warps")
         if scratch is None:
           raise ValueError(
               "scratch must be provided when cross-warp reduction is required"
@@ -2490,10 +2494,8 @@ class FragmentedArray:
     ]
     if elem_tiled_strides[layout.vector_dim] != 1:
       raise ValueError("Stride of the vectorized dimension should be 1")
-    for d in (*layout.partitioned_lane_dims, layout.vector_dim):
+    for d in (*layout.partitioned_warp_dims, *layout.partitioned_lane_dims, layout.vector_dim):
       tiled_shape[d] = 1
-    if not isinstance(layout.warp_dim, Replicated):
-      tiled_shape[layout.warp_dim] = 1
 
     element_bits = mgpu.bitwidth(dtype)
     if (layout.vector_length * element_bits) % 8 != 0:
@@ -2715,7 +2717,7 @@ def plan_tiled_transfer(
   transfer_alignment = math.gcd(*(
       s
       for i, (s, d) in enumerate_negative(list(zip(tiled_strides, tiled_shape)))
-      if d > 1 or i in {layout.warp_dim, *layout.lane_dims}
+      if d > 1 or i in {*layout.warp_dims, *layout.lane_dims}
   ))
   if (
       swizzle_tile_elems % transfer_alignment
