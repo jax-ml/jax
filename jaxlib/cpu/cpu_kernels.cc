@@ -16,8 +16,6 @@ limitations under the License.
 // This file is not used by JAX itself, but exists to assist with running
 // JAX-generated HLO code from outside of JAX.
 
-#include <complex>
-
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/cpu/sparse_kernels.h"
 #include "xla/ffi/api/c_api.h"
