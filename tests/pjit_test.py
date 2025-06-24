@@ -2015,6 +2015,21 @@ class ArrayPjitTest(jtu.JaxTestCase):
         self.assertArraysEqual(s.data, input_data[s.index])
       self.assertArraysEqual(out._value, input_data)
 
+  def test_close_over_sharded_constant(self):
+    self.skipTest("TODO(necula): fix this test")
+    mesh = jtu.create_mesh((8,), ('x',))
+    sharded_const = jax.device_put(
+        jax.random.split(jax.random.key(0), (len(jax.devices()), 1024)),
+        NamedSharding(mesh, P('x')))
+    @jax.jit
+    def f():
+      return sharded_const
+
+    hlo_size = len(str(f.lower().compiler_ir()))
+    self.assertLessEqual(hlo_size, 300)  # The constant is not embedded in the code
+    res = f()
+    self.assertLen(res.addressable_shards, 8)
+
   def test_unspecified_out_axis_resources(self):
 
     def _checks(out, input_data):
