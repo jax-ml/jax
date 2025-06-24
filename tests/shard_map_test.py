@@ -281,6 +281,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("gpu")
   def test_psend_precv_basic_with_no_deadlock_cycle(self):
+    self.skipTest("b/427494298: re-enable this test when stableHLO changes land")
     mesh = jtu.create_mesh((8,), 'x')
     a = jax.device_put(
         jnp.arange(8 * 8).reshape((8, 8)),
@@ -343,6 +344,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("gpu")
   def test_psend_precv_reverse(self):
+    self.skipTest("b/427494298: re-enable this test when stableHLO changes land")
     mesh = jtu.create_mesh((8,), 'x')
     a = jax.device_put(
         jnp.arange(8 * 8).reshape((8, 8)),
