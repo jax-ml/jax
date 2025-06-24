@@ -305,7 +305,6 @@ py_library_providing_imports_info(
     ] + glob(
         [
             "*.py",
-            "_src/cudnn/**/*.py",
             "_src/debugger/**/*.py",
             "_src/image/**/*.py",
             "_src/nn/**/*.py",
@@ -367,6 +366,7 @@ py_library_providing_imports_info(
         ":compute_on",
         ":config",
         ":core",
+        ":cudnn",
         ":custom_api_util",
         ":custom_batching",
         ":custom_dce",
@@ -1567,7 +1567,7 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
-pytype_strict_library(
+py_library_providing_imports_info(
     name = "numpy",
     srcs = glob([
         "_src/numpy/**/*.py",
@@ -1871,6 +1871,27 @@ pytype_library(
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],
+)
+
+pytype_strict_library(
+    name = "cudnn",
+    srcs = glob(["_src/cudnn/**/*.py"]),
+    deps = [
+        ":api",
+        ":batching",
+        ":core",
+        ":custom_derivatives",
+        ":custom_partitioning",
+        ":dtypes",
+        ":lax",
+        ":mlir",
+        ":numpy",
+        ":sharding_impls",
+        ":tree_util",
+        ":typing",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_library(

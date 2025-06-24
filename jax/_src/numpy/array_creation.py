@@ -24,7 +24,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
-from jax._src.numpy.array import asarray
+from jax._src.numpy.array_constructors import asarray
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.sharding import Sharding

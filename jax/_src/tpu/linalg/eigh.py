@@ -35,7 +35,7 @@ import numpy as np
 import jax
 from jax._src import core
 from jax._src import dtypes
-import jax._src.numpy.lax_numpy as jnp
+from jax._src import numpy as jnp
 import jax._src.numpy.linalg as jnp_linalg
 from jax._src.interpreters import mlir
 from jax._src.numpy import tensor_contractions
@@ -157,7 +157,7 @@ def _projector_subspace(P, H, n, rank, maxiter=2, swap=False):
   X = _mask(X, (n, rank))
 
   H_norm = jnp_linalg.norm(H)
-  thresh = 10.0 * float(jnp.finfo(X.dtype).eps) * H_norm
+  thresh = 10.0 * float(dtypes.finfo(X.dtype).eps) * H_norm
 
   # First iteration skips the matmul.
   def body_f_after_matmul(X):
@@ -448,7 +448,7 @@ def _eigh_work(H, n, termination_size, subset_by_index):
     # handle matrices with clusters of eigenvalues, including rank deficient
     # matrices. See Nakatsukasa and Higham section 5.2.
     norm = jnp_linalg.norm(H)
-    eps = jnp.asarray(jnp.finfo(H.dtype).eps, dtype=norm.dtype)
+    eps = jnp.asarray(dtypes.finfo(H.dtype).eps, dtype=norm.dtype)
     off_diag_norm = jnp_linalg.norm(
         H - jnp.diag(jnp.diag(ufuncs.real(H)).astype(H.dtype)))
     nearly_diagonal = off_diag_norm <= 5 * eps * norm
@@ -495,7 +495,7 @@ def _eigh_work(H, n, termination_size, subset_by_index):
   def loop_body(state):
     agenda, blocks, eigenvectors = state
     (offset, b), agenda = agenda.pop()
-    which = jnp.where(buckets < b, jnp.iinfo(np.int32).max, buckets)
+    which = jnp.where(buckets < b, dtypes.iinfo(np.int32).max, buckets)
     choice = jnp.argmin(which)
     return lax.switch(choice, branches, offset, b, agenda, blocks, eigenvectors)
 

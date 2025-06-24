@@ -24,7 +24,7 @@ from jax._src.dtypes import (
     isdtype as isdtype,
 )
 
-from jax._src.numpy.array import (
+from jax._src.numpy.array_constructors import (
     array as array,
     asarray as asarray,
 )

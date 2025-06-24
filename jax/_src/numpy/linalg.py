@@ -29,6 +29,7 @@ from jax._src import deprecations
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
+from jax._src.numpy import array_creation
 from jax._src.numpy import einsum
 from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy as jnp
@@ -560,7 +561,7 @@ def _slogdet_jvp(primals, tangents):
     sign_dot = (ans_dot - ufuncs.real(ans_dot).astype(ans_dot.dtype)) * sign
     ans_dot = ufuncs.real(ans_dot)
   else:
-    sign_dot = jnp.zeros_like(sign)
+    sign_dot = array_creation.zeros_like(sign)
   return (sign, ans), (sign_dot, ans_dot)
 
 _slogdet_lu.defjvp(_slogdet_jvp)
@@ -642,18 +643,18 @@ def _cofactor_solve(a: ArrayLike, b: ArrayLike) -> tuple[Array, Array]:
   permutation = jnp.broadcast_to(permutation, (*batch_dims, a_shape[-1]))
   iotas = jnp.ix_(*(lax.iota(np.int32, b) for b in (*batch_dims, 1)))
   # filter out any matrices that are not full rank
-  d = jnp.ones(x.shape[:-1], x.dtype)
+  d = array_creation.ones(x.shape[:-1], x.dtype)
   d = lax_linalg.triangular_solve(lu, d, left_side=True, lower=False)
   d = reductions.any(ufuncs.logical_or(ufuncs.isnan(d), ufuncs.isinf(d)), axis=-1)
   d = jnp.tile(d[..., None, None], d.ndim*(1,) + x.shape[-2:])
-  x = jnp.where(d, jnp.zeros_like(x), x)  # first filter
+  x = jnp.where(d, array_creation.zeros_like(x), x)  # first filter
   x = x[iotas[:-1] + (permutation, slice(None))]
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
                                   unit_diagonal=True)
   x = jnp.concatenate((x[..., :-1, :] * partial_det[..., -1, None, None],
                       x[..., -1:, :]), axis=-2)
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
-  x = jnp.where(d, jnp.zeros_like(x), x)  # second filter
+  x = jnp.where(d, array_creation.zeros_like(x), x)  # second filter
 
   return partial_det[..., -1], x
 
@@ -975,7 +976,7 @@ def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) 
   arr, = promote_dtypes_inexact(a)
   m, n = arr.shape[-2:]
   if m == 0 or n == 0:
-    return jnp.empty(arr.shape[:-2] + (n, m), arr.dtype)
+    return array_creation.empty(arr.shape[:-2] + (n, m), arr.dtype)
   arr = ufuncs.conj(arr)
   if rtol is None:
     max_rows_cols = max(arr.shape[-2:])
@@ -1387,9 +1388,9 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
   m, n = a.shape
   dtype = a.dtype
   if a.size == 0:
-    s = jnp.empty(0, dtype=a.dtype)
+    s = array_creation.empty(0, dtype=a.dtype)
     rank = jnp.array(0, dtype=int)
-    x = jnp.empty((n, *b.shape[1:]), dtype=a.dtype)
+    x = array_creation.empty((n, *b.shape[1:]), dtype=a.dtype)
   else:
     if rcond is None:
       rcond = float(jnp.finfo(dtype).eps) * max(n, m)

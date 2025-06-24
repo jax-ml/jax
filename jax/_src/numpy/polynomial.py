@@ -24,10 +24,10 @@ from jax._src import dtypes
 from jax._src import core
 from jax._src.lax import control_flow
 from jax._src.lax import lax
+from jax._src.numpy.array_creation import full, ones, zeros
 from jax._src.numpy.lax_numpy import (
     arange, argmin, array, atleast_1d, concatenate, convolve,
-    diag, finfo, full, ones, roll, trim_zeros,
-    trim_zeros_tol, vander, zeros)
+    diag, finfo, roll, trim_zeros, trim_zeros_tol, vander)
 from jax._src.numpy.tensor_contractions import dot, outer
 from jax._src.numpy.ufuncs import maximum, true_divide, sqrt
 from jax._src.numpy.reductions import all

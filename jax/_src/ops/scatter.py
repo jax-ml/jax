@@ -26,6 +26,7 @@ import numpy as np
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import numpy as jnp
 from jax._src import sharding
 from jax._src import tree_util
 from jax._src import util
@@ -33,7 +34,6 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.numpy import indexing
 from jax._src.pjit import auto_axes
-from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
 from jax._src.typing import Array, ArrayLike

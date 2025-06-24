@@ -18,21 +18,24 @@ import json
 import math
 from typing import TypedDict
 
-import jax
-from jax import dtypes
 from jax._src import core
+from jax._src import custom_derivatives
 from jax._src import dispatch
+from jax._src import dtypes
+from jax._src import numpy as jnp
+from jax._src import xla_bridge
 from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.lax import parallel as lax_parallel
 from jax._src.lib import cuda_versions
-from jax._src import xla_bridge
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-import jax.numpy as jnp
-from jax.sharding import NamedSharding, PartitionSpec
+from jax._src.sharding_impls import NamedSharding, PartitionSpec
+from jax._src.typing import Array
 
-Array = jnp.ndarray
+import numpy as np
+
 
 class FP8Params(TypedDict):
   amax_dQ: float  # Amax of gradient of query
@@ -94,9 +97,9 @@ def should_export_dbias(bias_shape, query_shape, layout) -> bool:
 
 def get_large_negative_number(dtype):
   # temp WAR as cuDNN has a bug for subtraction between two large negative value
-  if dtype == jnp.bfloat16:
+  if dtype == np.dtype('bfloat16'):
     return jnp.asarray(-2 << 40, dtype=dtype)
-  elif dtype == jnp.float16:
+  elif dtype == np.dtype('float16'):
     return jnp.asarray(-2 << 14, dtype=dtype)
   else:
     raise ValueError("Unsupported dtype for inputs.")
@@ -288,7 +291,7 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
   check_eq(q_rank, k_rank, v_rank, "QKV rank")
 
   q_dtype, k_dtype, v_dtype = query.dtype, key.dtype, value.dtype
-  if q_dtype not in [jnp.bfloat16, jnp.float16, jnp.float8_e4m3fn, jnp.float8_e5m2]:
+  if q_dtype not in [np.float16, dtypes.bfloat16, dtypes.float8_e4m3fn, dtypes.float8_e5m2]:
     raise NotImplementedError(f"Q must be fp16/bf16/fp8_e4m3fn/fp8_e5m2, got {q_dtype}")
   check_eq(q_dtype, k_dtype, v_dtype, "QKV dtype")
 
@@ -339,7 +342,7 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
     if tensor is not None:
       dtype = tensor.dtype
       rank = len(tensor.shape)
-      if dtype != jnp.int32:
+      if dtype != np.dtype('int32'):
         raise ValueError(f"{name} must have int32 datatype, got {dtype}")
       if rank != expected_rank:
         raise ValueError(f"{name} must have a rank of {expected_rank}, got {rank}")
@@ -413,7 +416,7 @@ def check_cudnn_version():
 def check_compute_capability(capability):
   if not 'cuda' in xla_bridge.get_backend().platform_version:
     return False
-  d, *_ = jax.local_devices(backend="gpu")
+  d, *_ = xla_bridge.local_devices(backend="gpu")
   target = tuple(int(x) for x in capability.split("."))
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current >= target
@@ -421,7 +424,7 @@ def check_compute_capability(capability):
 def is_cuda_compute_capability_equal(capability):
   if not 'cuda' in xla_bridge.get_backend().platform_version:
     return False
-  d, *_ = jax.local_devices(backend="gpu")
+  d, *_ = xla_bridge.local_devices(backend="gpu")
   target = tuple(int(x) for x in capability.split("."))
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current == target
@@ -513,7 +516,7 @@ def _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key):
     batch = offsets.shape[0]
     offsets = jnp.where(
         offsets >= 0,
-        offsets + (jnp.arange(batch, dtype=offsets.dtype) * max_seq)[..., jnp.newaxis],
+        offsets + (jnp.arange(batch, dtype=offsets.dtype) * max_seq)[..., np.newaxis],
         offsets,
     )
     return offsets
@@ -590,7 +593,7 @@ def _dot_product_attention_fwd_abstract(
   if is_training:
     return (
       core.ShapedArray(output_shape, query_dtype),  # output
-      core.ShapedArray(softmax_stat_shape, jnp.float32),  # softmax_stat
+      core.ShapedArray(softmax_stat_shape, np.float32),  # softmax_stat
     )
   else:
     return (
@@ -1058,7 +1061,7 @@ def _dot_product_attention_bwd_partition(
       query_spec = arg_shardings[0].spec
       batch_spec = query_spec[0]
       local_dbias = grads[3]
-      global_dbias = jax.lax.psum(local_dbias, batch_spec)
+      global_dbias = lax_parallel.psum(local_dbias, batch_spec)
       grads = grads[:3] + [global_dbias]
     return grads
   return mesh, sharded_impl, out_shardings, arg_shardings
@@ -1152,7 +1155,7 @@ dispatch.prim_requires_devices_during_lowering.add(
   _dot_product_attention_bwd_p_wrapper
 )
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(10, 11, 12, 13, 14, 15, 16, 17, 18))
+@functools.partial(custom_derivatives.custom_vjp, nondiff_argnums=(10, 11, 12, 13, 14, 15, 16, 17, 18))
 def _dot_product_attention(query: Array,
                            key: Array,
                            value: Array,
@@ -1317,15 +1320,15 @@ def _dot_product_attention_fp8_fwd_abstract(
   if is_training:
     return (
       core.ShapedArray(output_shape, query_dtype),
-      core.ShapedArray((1,1,1,1), jnp.float32),
-      core.ShapedArray((1,1,1,1), jnp.float32),
-      core.ShapedArray(softmax_stat_shape, jnp.float32),
+      core.ShapedArray((1,1,1,1), np.float32),
+      core.ShapedArray((1,1,1,1), np.float32),
+      core.ShapedArray(softmax_stat_shape, np.float32),
     )
   else:
     return (
       core.ShapedArray(output_shape, query_dtype),
-      core.ShapedArray((1,1,1,1), jnp.float32),
-      core.ShapedArray((1,1,1,1), jnp.float32),
+      core.ShapedArray((1,1,1,1), np.float32),
+      core.ShapedArray((1,1,1,1), np.float32),
     )
 
 def _dot_product_attention_fp8_bwd_abstract(
@@ -1343,10 +1346,10 @@ def _dot_product_attention_fp8_bwd_abstract(
     core.ShapedArray(query.shape, query_dtype),
     core.ShapedArray(key.shape, key_dtype),
     core.ShapedArray(value.shape, value_dtype),
-    core.ShapedArray(amax_shape, jnp.float32),
-    core.ShapedArray(amax_shape, jnp.float32),
-    core.ShapedArray(amax_shape, jnp.float32),
-    core.ShapedArray(amax_shape, jnp.float32),
+    core.ShapedArray(amax_shape, np.float32),
+    core.ShapedArray(amax_shape, np.float32),
+    core.ShapedArray(amax_shape, np.float32),
+    core.ShapedArray(amax_shape, np.float32),
   )
 
 def _dot_product_attention_fp8_fwd_cuda_lowering(
@@ -1741,7 +1744,7 @@ dispatch.prim_requires_devices_during_lowering.add(
   _dot_product_attention_fp8_bwd_p_wrapper
 )
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(4, 5, 6, 7))
+@functools.partial(custom_derivatives.custom_vjp, nondiff_argnums=(4, 5, 6, 7))
 def _dot_product_attention_fp8(query: Array,
                                key: Array,
                                value: Array,
@@ -1764,7 +1767,7 @@ def combine_bias_and_mask(bias, mask, dtype):
     bias = bias.reshape((1,) * (4 - len(bias.shape)) + bias.shape)
 
   if mask is not None:
-    if mask.dtype == jnp.bool:
+    if mask.dtype == np.dtype('bool'):
       large_negative_number = get_large_negative_number(dtype)
       mask = jnp.where(mask, jnp.asarray(0, dtype), large_negative_number)
     # reshape mask to have 4D shape

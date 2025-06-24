@@ -17,23 +17,26 @@ import json
 import operator
 from functools import partial, reduce
 
-# Third-party imports
-import jax
-import jax.numpy as jnp
 import numpy as np
-from jax import custom_vjp, lax
-from jax._src import core, dispatch, dtypes
+
+from jax._src import api
+from jax._src import core
+from jax._src import dispatch
+from jax._src import dtypes
+from jax._src import numpy as jnp
+from jax._src import tree_util
+from jax._src.custom_derivatives import custom_vjp
 from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
-from jax._src.lax.lax import ranges_like, remaining
-from jax._src.typing import DTypeLike
 from jax._src.interpreters import mlir
-from jax.interpreters.mlir import ir
-from jax.sharding import NamedSharding
-from jax.sharding import PartitionSpec as P
+from jax._src.interpreters.mlir import ir
+from jax._src.lax import lax
+from jax._src.lax import parallel as lax_parallel
+from jax._src.lax.lax import ranges_like, remaining
+from jax._src.typing import Array, DTypeLike
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 
 
-Array = jnp.ndarray
 block_scaled_dot_name = "__op$block_scaled_dot"
 
 @dataclass
@@ -190,7 +193,7 @@ def _get_output_sharding(mesh, shardings):
 def _scaled_matmul_infer_sharding_from_operands(
     preferred_element_type, mesh, shapes, output_shape
   ):
-  shardings = jax.tree.map(lambda x: x.sharding, shapes)
+  shardings = tree_util.tree_map(lambda x: x.sharding, shapes)
   _check_shardings(shardings)
 
   return _get_output_sharding(mesh, shardings)
@@ -228,7 +231,7 @@ def supported_in_sharding(mesh, shardings):
 def _scaled_matmul_partition(
     preferred_element_type, mesh, shapes, output_shape
   ):
-  shardings = jax.tree.map(lambda x: x.sharding, shapes)
+  shardings = tree_util.tree_map(lambda x: x.sharding, shapes)
   _check_shardings(shardings)
 
   lhs, rhs = shardings[0], shardings[1]
@@ -239,11 +242,11 @@ def _scaled_matmul_partition(
   def _scaled_matmul_impl_partition(a, b, a_scale, b_scale):
     z = _scaled_matmul_impl(a, b, a_scale, b_scale, preferred_element_type)
     if use_reduce_scatter:
-        z = jax.lax.psum_scatter(
+        z = lax_parallel.psum_scatter(
             z, lhs_k_spec, scatter_dimension=2, tiled=True
         )
     if use_all_reduce:
-        z = jax.lax.psum(z, lhs_k_spec)
+        z = lax_parallel.psum(z, lhs_k_spec)
     return z
 
   out_shardings = _get_output_sharding(mesh, shardings)
@@ -310,13 +313,13 @@ batching.primitive_batchers[_scaled_matmul_p_wrapper] = _scaled_matmul_batcher
 batching.primitive_batchers[_scaled_matmul_p] = _scaled_matmul_batcher
 
 
-@partial(jax.jit, static_argnames=("preferred_element_type",))
+@partial(api.jit, static_argnames=("preferred_element_type",))
 def _scaled_matmul(
     lhs: Array,
     rhs: Array,
     lhs_scales: Array,
     rhs_scales: Array,
-    preferred_element_type: DTypeLike = jnp.float32,
+    preferred_element_type: DTypeLike = np.dtype('float32'),
   ) -> Array:
   output = _scaled_matmul_p_wrapper.bind(
       lhs, rhs, lhs_scales, rhs_scales,
@@ -329,7 +332,7 @@ def scaled_matmul_wrapper(
     rhs: Array,
     lhs_scales: Array,
     rhs_scales: Array,
-    preferred_element_type: DTypeLike = jnp.float32,
+    preferred_element_type: DTypeLike = np.dtype('float32'),
 ) -> Array:
     """
     Performs scaled matrix multiplication between two 3D arrays, with scaling
@@ -450,7 +453,7 @@ def compute_dot_output_shape(
 
 
 def cast_to_e8m0_with_rounding_up(x):
-  temp = x.astype(jnp.float32).view(jnp.uint32)
+  temp = x.astype(np.float32).view(np.uint32)
   exp = temp >> 23
   mant = temp & 0x7FFFFF
   is_ru = jnp.logical_and(
@@ -458,17 +461,17 @@ def cast_to_e8m0_with_rounding_up(x):
       ~jnp.logical_and((exp == 0), (mant <= 0x400000))
   )
   exp = jnp.where(is_ru, exp + 1, exp)
-  new_x = exp.astype(jnp.uint8)
+  new_x = exp.astype(np.uint8)
   return new_x
 
 
 def e8m0_to_dtype(x, dtype):
-  temp = x.astype(jnp.uint32)
+  temp = x.astype(np.uint32)
   exp = temp << 23
-  new_x = exp.view(jnp.float32)
-  near_zero_value = 2**-15 if dtype == jnp.float16 else 2**-127
+  new_x = exp.view(np.float32)
+  near_zero_value = 2**-15 if dtype == np.float16 else 2**-127
   new_x = jnp.where(
-      new_x == 0, jnp.array(near_zero_value, jnp.float32), new_x
+      new_x == 0, jnp.array(near_zero_value, np.float32), new_x
   )
   return new_x.astype(dtype)
 
@@ -481,21 +484,21 @@ def quantize(x, config):
   x = x.reshape(x_new_shape)  # shape = (B, M, K / block_size, block_size)
 
   amax = jnp.max(jnp.abs(x), axis=-1, keepdims=True)
-  MAX = jnp.finfo(config.data_type).max.astype(x.dtype)
+  MAX = dtypes.finfo(config.data_type).max.astype(x.dtype)
   scales = amax / MAX  # shape = (B, M, K / block_size, 1)
 
   if config.mode == "mxfp8":
-    assert config.scale_type == jnp.float8_e8m0fnu
+    assert config.scale_type == dtypes.float8_e8m0fnu
     scales_q = cast_to_e8m0_with_rounding_up(scales)
     scaled_x = x / e8m0_to_dtype(scales_q, scales.dtype)
   elif config.mode == "nvfp4":
-    assert config.scale_type == jnp.float8_e4m3fn
-    assert config.global_scale.dtype == jnp.float32
-    SCALE_MAX = jnp.finfo(config.scale_type).max.astype(x.dtype)
+    assert config.scale_type == dtypes.float8_e4m3fn
+    assert config.global_scale.dtype == np.float32
+    SCALE_MAX = dtypes.finfo(config.scale_type).max.astype(x.dtype)
 
     scales_q = jnp.clip(scales / config.global_scale, 0, SCALE_MAX)
-    scales_q = jax.lax.optimization_barrier(scales_q.astype(config.scale_type))
-    scaled_x = x / scales_q.astype(jnp.float32)
+    scales_q = lax.optimization_barrier(scales_q.astype(config.scale_type))
+    scaled_x = x / scales_q.astype(np.float32)
   else:
     raise ValueError(f"Unrecognized mode: {config.mode}.")
 
@@ -531,7 +534,7 @@ def scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
 
   out_dtype = preferred_element_type
   if configs[0].mode == 'nvfp4':
-    out_dtype = jnp.float32
+    out_dtype = np.float32
 
   out = scaled_matmul_wrapper(
       lhs_q, rhs_q, lhs_scales, rhs_scales, preferred_element_type=out_dtype
@@ -645,8 +648,8 @@ def scaled_dot_bwd(dimension_numbers, preferred_element_type, configs, res, g):
   # are zeroed out; otherwise, they pass through unchanged.
   if configs[2].mode == "nvfp4":
     assert rhs.dtype == lhs.dtype
-    MAX = jnp.finfo(configs[0].data_type).max.astype(lhs.dtype)
-    SCALE_MAX = jnp.finfo(configs[0].scale_type).max.astype(lhs.dtype)
+    MAX = dtypes.finfo(configs[0].data_type).max.astype(lhs.dtype)
+    SCALE_MAX = dtypes.finfo(configs[0].scale_type).max.astype(lhs.dtype)
     grad_lhs = jnp.where(jnp.abs(lhs) <= configs[0].global_scale * MAX * SCALE_MAX, grad_lhs, 0)
     grad_rhs = jnp.where(jnp.abs(rhs) <= configs[1].global_scale * MAX * SCALE_MAX, grad_rhs, 0)
 
@@ -684,10 +687,10 @@ def _ensure_batch_dim(lhs, rhs, dimension_numbers):
 
 def scaled_dot_general_wrapper(
     lhs, rhs, dimension_numbers,
-    preferred_element_type=jnp.float32,
+    preferred_element_type=np.float32,
     configs: list[BlockScaleConfig] | None=None,
   ):
-  if preferred_element_type not in (jnp.float32, jnp.bfloat16, jnp.float16):
+  if preferred_element_type not in (np.dtype('float32'), np.dtype('bfloat16'), np.dtype('float16')):
     msg = ('Only support preferred_element_type in (f32, bf16, f16), but got '
             '{preferred_element_type}')
     raise TypeError(msg)
@@ -695,8 +698,8 @@ def scaled_dot_general_wrapper(
     mxfp8_config = BlockScaleConfig(
         mode='mxfp8',
         block_size=32,
-        data_type=jnp.float8_e4m3fn,
-        scale_type=jnp.float8_e8m0fnu,
+        data_type=dtypes.float8_e4m3fn,
+        scale_type=dtypes.float8_e8m0fnu,
         global_scale=None,
         infer_only=False
     )

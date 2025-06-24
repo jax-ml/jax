@@ -40,6 +40,7 @@ from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import array_api_metadata
+from jax._src.numpy import array_creation
 from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import tensor_contractions
@@ -541,7 +542,7 @@ def _view(self: Array, dtype: DTypeLike | None = None, type: None = None) -> Arr
   if lax_numpy.issubdtype(self.dtype, np.complexfloating):
     new_shape = (*self.shape[:-1], self.shape[-1] * 2)
     new_dtype = lax_numpy.finfo(self.dtype).dtype
-    self = (lax_numpy.zeros(new_shape, new_dtype)
+    self = (array_creation.zeros(new_shape, new_dtype)
              .at[..., 0::2].set(self.real)
              .at[..., 1::2].set(self.imag))
     return _view(self, dtype)
@@ -925,7 +926,7 @@ class _IndexUpdateRef:
     """
     return ufuncs.divide(
       self.array,
-      scatter._scatter_update(lax_numpy.ones_like(self.array), self.index, values,
+      scatter._scatter_update(array_creation.ones_like(self.array), self.index, values,
                               lax_slicing.scatter_mul,
                               indices_are_sorted=indices_are_sorted,
                               unique_indices=unique_indices, mode=mode,
@@ -944,7 +945,7 @@ class _IndexUpdateRef:
     """
     return ufuncs.power(
       self.array,
-      scatter._scatter_update(lax_numpy.ones_like(self.array), self.index, values,
+      scatter._scatter_update(array_creation.ones_like(self.array), self.index, values,
                               lax_slicing.scatter_mul,
                               indices_are_sorted=indices_are_sorted,
                               unique_indices=unique_indices, mode=mode,

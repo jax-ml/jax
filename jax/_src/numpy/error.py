@@ -21,7 +21,7 @@ import numpy as np
 from jax._src import config
 from jax._src import dtypes
 from jax._src import error_check as error_check_lib
-from jax._src.numpy import array
+from jax._src.numpy import array_constructors
 from jax._src.numpy import array_creation
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
@@ -110,7 +110,7 @@ def _check_precondition_oob_gather(
   if config.error_checking_behavior_oob.value == "ignore":
     return
 
-  shape = array.array(shape, dtype='int32')
+  shape = array_constructors.array(shape, dtype='int32')
   error_check_lib.set_error_if(
       ufuncs.logical_or(
           reductions.min(gather_indices) < -shape,
@@ -130,10 +130,10 @@ def _check_precondition_oob_dynamic_slice(
   if config.error_checking_behavior_oob.value == "ignore":
     return
 
-  shape = array.array(shape, dtype='int32')
-  start_indices = array.array(start_indices, dtype='int32')
-  slice_sizes = array.array(slice_sizes, dtype='int32')
-  allow_negative_indices = array.array(allow_negative_indices, dtype='bool')
+  shape = array_constructors.array(shape, dtype='int32')
+  start_indices = array_constructors.array(start_indices, dtype='int32')
+  slice_sizes = array_constructors.array(slice_sizes, dtype='int32')
+  allow_negative_indices = array_constructors.array(allow_negative_indices, dtype='bool')
 
   lower_bound = lax_numpy.where(allow_negative_indices, -shape, 0)
   error_check_lib.set_error_if(

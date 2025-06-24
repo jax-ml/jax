@@ -49,14 +49,13 @@ from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import special as lax_special
 from jax._src.lib import xla_client as xc
-from jax._src.numpy.array import array, asarray
+from jax._src.numpy.array_constructors import array, asarray
+from jax._src.numpy import array_creation
 from jax._src.numpy import indexing
 from jax._src.numpy import reductions
 from jax._src.numpy import tensor_contractions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
-from jax._src.numpy.array_creation import (empty, empty_like, full, linspace,
-                                           ones, ones_like, zeros, zeros_like)
 from jax._src.numpy.sorting import argsort, sort
 from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import (
@@ -835,7 +834,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
   range = (where(reductions.ptp(range) == 0, range[0] - 0.5, range[0]),
            where(reductions.ptp(range) == 0, range[1] + 0.5, range[1]))
   assert range is not None
-  return linspace(range[0], range[1], bins_int + 1, dtype=dtype)
+  return array_creation.linspace(range[0], range[1], bins_int + 1, dtype=dtype)
 
 
 @export
@@ -903,7 +902,7 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
   if weights is None:
     a, _ = util.ensure_arraylike("histogram", a, bins)
     a, = util.promote_dtypes_inexact(a)
-    weights = ones_like(a)
+    weights = array_creation.ones_like(a)
   else:
     a, _, weights = util.ensure_arraylike("histogram", a, bins, weights)
     if np.shape(a) != np.shape(weights):
@@ -913,7 +912,7 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
   bin_edges = histogram_bin_edges(a, bins, range, weights)
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
-  counts = zeros(len(bin_edges), weights.dtype).at[bin_idx].add(weights)[1:]
+  counts = array_creation.zeros(len(bin_edges), weights.dtype).at[bin_idx].add(weights)[1:]
   if density:
     bin_widths = diff(bin_edges)
     counts = counts / bin_widths / counts.sum()
@@ -2270,7 +2269,7 @@ def resize(a: ArrayLike, new_shape: Shape) -> Array:
 
   new_size = math.prod(new_shape)
   if arr.size == 0 or new_size == 0:
-    return zeros_like(arr, shape=new_shape)
+    return array_creation.zeros_like(arr, shape=new_shape)
 
   repeats = ceil_of_ratio(new_size, arr.size)
   arr = tile(arr, repeats)[:new_size]
@@ -2978,7 +2977,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     weights = np.array(1, dtype=dtypes.int_)
   elif np.shape(x) != np.shape(weights):
     raise ValueError("shape of weights must match shape of x.")
-  return zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights, mode='drop')
+  return array_creation.zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights, mode='drop')
 
 @overload
 def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]: ...
@@ -3745,7 +3744,7 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
     "The size argument of jnp.nonzero must be statically specified "
     "to use jnp.nonzero within JAX transformations.")
   if arr.size == 0 or calculated_size == 0:
-    return tuple(zeros(calculated_size, int) for dim in arr.shape)
+    return tuple(array_creation.zeros(calculated_size, int) for dim in arr.shape)
   flat_indices = reductions.cumsum(
       bincount(reductions.cumsum(mask), length=calculated_size))
   strides: np.ndarray = (np.cumprod(arr.shape[::-1])[::-1] // arr.shape).astype(flat_indices.dtype)
@@ -4087,7 +4086,7 @@ def _pad_linear_ramp(array: Array, pad_width: PadValue[int],
   for axis in range(np.ndim(array)):
     edge_before = lax_slicing.slice_in_dim(array, 0, 1, axis=axis)
     edge_after = lax_slicing.slice_in_dim(array, -1, None, axis=axis)
-    ramp_before = linspace(
+    ramp_before = array_creation.linspace(
         start=end_values[axis][0],
         stop=edge_before.squeeze(axis), # Dimension is replaced by linspace
         num=pad_width[axis][0],
@@ -4097,7 +4096,7 @@ def _pad_linear_ramp(array: Array, pad_width: PadValue[int],
     )
     ramp_before = lax._convert_element_type(
         ramp_before, weak_type=dtypes.is_weakly_typed(array))
-    ramp_after = linspace(
+    ramp_after = array_creation.linspace(
         start=end_values[axis][1],
         stop=edge_after.squeeze(axis), # Dimension is replaced by linspace
         num=pad_width[axis][1],
@@ -4159,10 +4158,10 @@ def _pad_empty(array: Array, pad_width: PadValue[int]) -> Array:
   # Note: jax.numpy.empty = jax.numpy.zeros
   for i in range(np.ndim(array)):
     shape_before = array.shape[:i] + (pad_width[i][0],) + array.shape[i + 1:]
-    pad_before = empty_like(array, shape=shape_before)
+    pad_before = array_creation.empty_like(array, shape=shape_before)
 
     shape_after = array.shape[:i] + (pad_width[i][1],) + array.shape[i + 1:]
-    pad_after = empty_like(array, shape=shape_after)
+    pad_after = array_creation.empty_like(array, shape=shape_after)
     array = lax.concatenate([pad_before, array, pad_after], dimension=i)
   return array
 
@@ -6420,7 +6419,7 @@ def _repeat(a: ArrayLike, *, repeats: ArrayLike, axis: int | None = None,
   # Special case when a is a scalar.
   if arr.ndim == 0:
     if np.shape(repeats) == (1,):
-      return full([total_repeat_length], arr)
+      return array_creation.full([total_repeat_length], arr)
     else:
       raise ValueError('`repeat` with a scalar parameter `a` is only '
       'implemented for scalar values of the parameter `repeats`.')
@@ -6443,7 +6442,7 @@ def _repeat(a: ArrayLike, *, repeats: ArrayLike, axis: int | None = None,
   # Cumsum to get indices of new number in repeated tensor, e.g. [0, 1, 3, 3]
   scatter_indices = reductions.cumsum(exclusive_repeats)
   # Scatter these onto a zero buffer, e.g. [1,1,0,2,0,0,0,0]
-  block_split_indicators = zeros([total_repeat_length], dtype='int32')
+  block_split_indicators = array_creation.zeros([total_repeat_length], dtype='int32')
   block_split_indicators = block_split_indicators.at[scatter_indices].add(1)
   # Cumsum again to get scatter indices for repeat, e.g. [0,1,1,3,3,3,3,3]
   gather_indices = reductions.cumsum(block_split_indicators) - 1
@@ -6627,7 +6626,7 @@ def tril(m: ArrayLike, k: int = 0) -> Array:
     raise ValueError("Argument to jax.numpy.tril must be at least 2D")
   N, M = m_shape[-2:]
   mask = tri(N, M, k=k, dtype=bool)
-  return lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
+  return lax.select(lax.broadcast(mask, m_shape[:-2]), m, array_creation.zeros_like(m))
 
 
 @export
@@ -6694,7 +6693,7 @@ def triu(m: ArrayLike, k: int = 0) -> Array:
     raise ValueError("Argument to jax.numpy.triu must be at least 2D")
   N, M = m_shape[-2:]
   mask = tri(N, M, k=k - 1, dtype=bool)
-  return lax.select(lax.broadcast(mask, m_shape[:-2]), zeros_like(m), m)
+  return lax.select(lax.broadcast(mask, m_shape[:-2]), array_creation.zeros_like(m), m)
 
 
 @export
@@ -6759,7 +6758,7 @@ def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int 
 
   # Mask out the diagonal and reduce.
   a = where(eye(a_shape[axis1], a_shape[axis2], k=offset, dtype=bool),
-            a, zeros_like(a))
+            a, array_creation.zeros_like(a))
   return reductions.sum(a, axis=(-2, -1), dtype=dtype)
 
 
@@ -6809,7 +6808,7 @@ def mask_indices(n: int,
     >>> jnp.mask_indices(3, mask_func)
     (Array([0, 1, 1, 2, 2], dtype=int32), Array([0, 0, 1, 0, 2], dtype=int32))
   """
-  i, j = nonzero(mask_func(ones((n, n)), k), size=size)
+  i, j = nonzero(mask_func(array_creation.ones((n, n)), k), size=size)
   return (i, j)
 
 
@@ -6878,7 +6877,7 @@ def triu_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array
   n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
   k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
   m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
-  i, j = nonzero(triu(ones((n, m)), k=k), size=_triu_size(n, m, k))
+  i, j = nonzero(triu(array_creation.ones((n, m)), k=k), size=_triu_size(n, m, k))
   return i, j
 
 
@@ -6937,7 +6936,7 @@ def tril_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array
   n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
   k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
   m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
-  i, j = nonzero(tril(ones((n, m)), k=k), size=_triu_size(m, n, -k))
+  i, j = nonzero(tril(array_creation.ones((n, m)), k=k), size=_triu_size(m, n, -k))
   return i, j
 
 
@@ -7358,7 +7357,7 @@ def _diag(v: Array, k: int):
     zero = lambda x: lax.full_like(x, shape=(), fill_value=0)
     n = v_shape[0] + abs(k)
     v = lax.pad(v, zero(v), ((max(0, k), max(0, -k), 0),))
-    return where(eye(n, k=k, dtype=bool), v, zeros_like(v))
+    return where(eye(n, k=k, dtype=bool), v, array_creation.zeros_like(v))
   elif len(v_shape) == 2:
     return diagonal(v, offset=k)
   else:
@@ -7410,7 +7409,7 @@ def diagflat(v: ArrayLike, k: int = 0) -> Array:
   v_ravel = ravel(v)
   v_length = len(v_ravel)
   adj_length = v_length + abs(k)
-  res = zeros(adj_length*adj_length, dtype=v_ravel.dtype)
+  res = array_creation.zeros(adj_length*adj_length, dtype=v_ravel.dtype)
   i = arange(0, adj_length-abs(k))
   if (k >= 0):
     fi = i+k+i*adj_length
@@ -7461,7 +7460,7 @@ def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
       DeprecationWarning, stacklevel=2)
   nz = (filt_arr == 0)
   if reductions.all(nz):
-    return empty(0, filt_arr.dtype)
+    return array_creation.empty(0, filt_arr.dtype)
   start: Array | int = argmin(nz) if 'f' in trim.lower() else 0
   end: Array | int = argmin(nz[::-1]) if 'b' in trim.lower() else 0
   return filt_arr[start:len(filt_arr) - end]
@@ -7472,7 +7471,7 @@ def trim_zeros_tol(filt, tol, trim='fb'):
     "Error arose in the `filt` argument of trim_zeros_tol()")
   nz = (ufuncs.abs(filt) < tol)
   if reductions.all(nz):
-    return empty(0, _dtype(filt))
+    return array_creation.empty(0, _dtype(filt))
   start = argmin(nz) if 'f' in trim.lower() else 0
   end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
   return filt[start:len(filt) - end]
@@ -7738,18 +7737,18 @@ def insert(arr: ArrayLike, obj: ArrayLike | slice, values: ArrayLike,
     index = ravel(indices)[0]
     if indices.ndim == 0:
       values_arr = moveaxis(values_arr, 0, axis)
-    indices = full(values_arr.shape[axis], index)
+    indices = array_creation.full(values_arr.shape[axis], index)
   n_input = a.shape[axis]
   n_insert = broadcast_shapes(indices.shape, (values_arr.shape[axis],))[0]
   out_shape = list(a.shape)
   out_shape[axis] += n_insert
-  out = zeros_like(a, shape=tuple(out_shape))
+  out = array_creation.zeros_like(a, shape=tuple(out_shape))
 
   indices = where(indices < 0, indices + n_input, indices)
   indices = clip(indices, 0, n_input)
 
   values_ind = indices.at[argsort(indices)].add(arange(n_insert, dtype=indices.dtype))
-  arr_mask = ones(n_input + n_insert, dtype=bool).at[values_ind].set(False)
+  arr_mask = array_creation.ones(n_input + n_insert, dtype=bool).at[values_ind].set(False)
   arr_ind = where(arr_mask, size=n_input)[0]
 
   out = out.at[(slice(None),) * axis + (values_ind,)].set(values_arr)
@@ -7985,10 +7984,10 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
 
   a0 = a[..., 0]
   a1 = a[..., 1]
-  a2 = a[..., 2] if a.shape[-1] == 3 else zeros_like(a0)
+  a2 = a[..., 2] if a.shape[-1] == 3 else array_creation.zeros_like(a0)
   b0 = b[..., 0]
   b1 = b[..., 1]
-  b2 = b[..., 2] if b.shape[-1] == 3 else zeros_like(b0)
+  b2 = b[..., 2] if b.shape[-1] == 3 else array_creation.zeros_like(b0)
   c = array([a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0])
   return moveaxis(c, 0, axisc)
 
@@ -9269,7 +9268,7 @@ def _searchsorted_via_sort(sorted_arr: Array, query: Array, side: str, dtype: ty
   working_dtype = np.dtype('int32') if sorted_arr.size + query.size < np.iinfo(np.int32).max else np.dtype('int64')
   def _rank(x):
     idx = lax.iota(working_dtype, x.shape[0])
-    return zeros_like(idx).at[argsort(x)].set(idx)
+    return array_creation.zeros_like(idx).at[argsort(x)].set(idx)
   query_flat = query.ravel()
   if side == 'left':
     index = _rank(lax.concatenate([query_flat, sorted_arr], 0))[:query.size]
@@ -9364,7 +9363,7 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
     a = a[sorter]
   dtype = np.dtype('int32') if a.shape[0] <= np.iinfo(np.int32).max else np.dtype('int64')
   if a.shape[0] == 0:
-    return zeros_like(v, dtype=dtype)
+    return array_creation.zeros_like(v, dtype=dtype)
   impl = {
       'scan': partial(_searchsorted_via_scan, False),
       'scan_unrolled': partial(_searchsorted_via_scan, True),
@@ -9419,7 +9418,7 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False,
   if bins_arr.ndim != 1:
     raise ValueError(f"digitize: bins must be a 1-dimensional array; got {bins=}")
   if bins_arr.shape[0] == 0:
-    return zeros_like(x, dtype=np.int32)
+    return array_creation.zeros_like(x, dtype=np.int32)
   side = 'right' if not right else 'left'
   kwds: dict[str, str] = {} if method is None else {'method': method}
   return where(
@@ -9519,7 +9518,8 @@ def _piecewise(x: Array, condlist: Array, consts: dict[int, ArrayLike],
                *args, **kw) -> Array:
   funcdict = dict(funcs)
   funclist = [consts.get(i, funcdict.get(i)) for i in range(len(condlist) + 1)]
-  indices = argmax(reductions.cumsum(concatenate([zeros_like(condlist[:1]), condlist], 0), 0), 0)
+  indices = argmax(reductions.cumsum(concatenate(
+      [array_creation.zeros_like(condlist[:1]), condlist], 0), 0), 0)
   dtype = _dtype(x)
   def _call(f):
     return lambda x: f(x, *args, **kw).astype(dtype)
