@@ -38,7 +38,7 @@ _deprecations = {
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  to_dlpack = jax._src.dlpack.to_dlpack
+  pass
 else:
   __getattr__ = jax._src.deprecations.deprecation_getattr(
       __name__, _deprecations

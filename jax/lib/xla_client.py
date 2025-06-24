@@ -156,7 +156,6 @@ import typing as _typing
 
 if _typing.TYPE_CHECKING:
   get_topology_for_devices = _xc.get_topology_for_devices
-  heap_profile = _heap_profile
   mlir_api_version = 58
   Client = _xc.Client
   CompileOptions = _xc.CompileOptions

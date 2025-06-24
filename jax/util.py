@@ -104,20 +104,8 @@ _deprecations = {
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
+  # TODO(jakevdp): migrate downstream users and remove this.
   HashableFunction = jax._src.util.HashableFunction
-  as_hashable_function = jax._src.util.as_hashable_function
-  cache = jax._src.util.cache
-  safe_map = jax._src.util.safe_map
-  safe_zip = jax._src.util.safe_zip
-  split_dict = jax._src.util.split_dict
-  split_list = jax._src.util.split_list
-  split_list_checked = jax._src.util.split_list_checked
-  split_merge = jax._src.util.split_merge
-  subvals = jax._src.util.subvals
-  toposort = jax._src.util.toposort
-  unzip2 = jax._src.util.unzip2
-  wrap_name = jax._src.util.wrap_name
-  wraps = jax._src.util.wraps
 else:
   __getattr__ = jax._src.deprecations.deprecation_getattr(
       __name__, _deprecations

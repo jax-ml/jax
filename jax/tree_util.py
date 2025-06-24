@@ -86,7 +86,7 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  from jax._src.tree_util import build_tree as build_tree
+  pass
 else:
   from jax._src.deprecations import deprecation_getattr
   __getattr__ = deprecation_getattr(__name__, _deprecations)

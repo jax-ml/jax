@@ -128,26 +128,14 @@ _deprecations = {
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  Device = _jax.Device
-  DistributedRuntimeClient = _jax.DistributedRuntimeClient
-  HloModule = _jax.HloModule
   HloPrintOptions = _jax.HloPrintOptions
-  OpSharding = _jax.OpSharding
   PjitFunction = _jax.PjitFunction
-  PjitFunctionCache = _jax.PjitFunctionCache
   PmapFunction = _jax.PmapFunction
-
-  get_distributed_runtime_client = _jax.get_distributed_runtime_client
-  get_distributed_runtime_service = _jax.get_distributed_runtime_service
   hlo_module_cost_analysis = _jax.hlo_module_cost_analysis
   hlo_module_to_dot_graph = _jax.hlo_module_to_dot_graph
   ifrt_proxy = _jax.ifrt_proxy
-  jax_jit = _jax.jax_jit
   mlir = _jax.mlir
-  pmap_lib = _jax.pmap_lib
   profiler = jax._src.lib._profiler
-  pytree = _jax.pytree
-
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 
