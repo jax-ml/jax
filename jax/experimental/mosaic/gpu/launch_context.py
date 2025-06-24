@@ -22,7 +22,6 @@ import math
 from typing import Any, Literal
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
-from jax._src import lib as jaxlib
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
@@ -465,41 +464,38 @@ class LaunchContext:
         )
         # TODO(apaszke): Better verification (e.g. slice is non-zero)
         # TODO(apaszke): We always know strides statically.
-        if jaxlib.version < (0, 5, 4):
-          dtype_or_bitwidth = c(utils.bitwidth(ref_ty.element_type), i64)
-        else:
-          if isinstance(ref_ty.element_type, ir.IntegerType):
-            if reduction_op is not None:
-              raise ValueError(
-                  f"TMA with reduction_op={reduction_op} is not supported with Integers"
-              )
-            bitwidth = utils.bitwidth_impl(ref_ty.element_type)
-            if bitwidth == 4:
-              tma_dtype = 0
-            elif bitwidth == 8:
-              tma_dtype = 1
-            elif bitwidth == 16:
-              tma_dtype = 2
-            elif bitwidth == 32:
-              tma_dtype = 3
-            elif bitwidth == 64:
-              tma_dtype = 4
-            else:
-              raise ValueError(f"Unsupported integer bitwidth: {bitwidth}")
-          elif ir.F16Type.isinstance(ref_ty.element_type):
-            tma_dtype = 5
-          elif ir.F32Type.isinstance(ref_ty.element_type):
-            tma_dtype = 6
-          elif ir.BF16Type.isinstance(ref_ty.element_type):
-            tma_dtype = 7
-          # We treat 8 bit floats as 8 bit integers
-          elif ir.Float8E5M2Type.isinstance(ref_ty.element_type):
+        if isinstance(ref_ty.element_type, ir.IntegerType):
+          if reduction_op is not None:
+            raise ValueError(
+                f"TMA with reduction_op={reduction_op} is not supported with Integers"
+            )
+          bitwidth = utils.bitwidth_impl(ref_ty.element_type)
+          if bitwidth == 4:
+            tma_dtype = 0
+          elif bitwidth == 8:
             tma_dtype = 1
-          elif ir.Float8E4M3FNType.isinstance(ref_ty.element_type):
-            tma_dtype = 1
+          elif bitwidth == 16:
+            tma_dtype = 2
+          elif bitwidth == 32:
+            tma_dtype = 3
+          elif bitwidth == 64:
+            tma_dtype = 4
           else:
-            raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")
-          dtype_or_bitwidth = c(tma_dtype, i64)
+            raise ValueError(f"Unsupported integer bitwidth: {bitwidth}")
+        elif ir.F16Type.isinstance(ref_ty.element_type):
+          tma_dtype = 5
+        elif ir.F32Type.isinstance(ref_ty.element_type):
+          tma_dtype = 6
+        elif ir.BF16Type.isinstance(ref_ty.element_type):
+          tma_dtype = 7
+        # We treat 8 bit floats as 8 bit integers
+        elif ir.Float8E5M2Type.isinstance(ref_ty.element_type):
+          tma_dtype = 1
+        elif ir.Float8E4M3FNType.isinstance(ref_ty.element_type):
+          tma_dtype = 1
+        else:
+          raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")
+        dtype_or_bitwidth = c(tma_dtype, i64)
         args = [
             host_ptr,
             base_ptr,

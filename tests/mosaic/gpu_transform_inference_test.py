@@ -19,7 +19,6 @@
 from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
-from jax._src import lib as jaxlib
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
@@ -561,10 +560,6 @@ class TransformInferenceTest(parameterized.TestCase):
     # First the in_transforms of user_op0 have to be propagated up to
     # subview_op0. Then they have to be propagated down and resolved. Finally
     # all subview ops need to have the same transforms.
-
-    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.2.
-    if jaxlib.version < (0, 6, 2):
-      self.skipTest("Test requires jaxlib version >= 0.6.2")
 
     subview_op0, subview_op1, subview_op2, subview_op3 = None, None, None, None
     user_op0 = None

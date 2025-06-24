@@ -28,7 +28,6 @@ from absl.testing import absltest, parameterized
 import jax
 from jax._src import config
 from jax._src import dtypes
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -3722,10 +3721,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         transforms.append(mgpu_dialect.SwizzleTransformAttr.get(swizzle))
 
       if transforms:
-        # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.2.
-        if jaxlib.version < (0, 6, 2):
-          self.skipTest("Test requires jaxlib version >= 0.6.2")
-
         sub_smem_ref = mgpu_dialect.with_transforms(
             sub_smem_ref,
             transforms=ir.ArrayAttr.get(transforms),
