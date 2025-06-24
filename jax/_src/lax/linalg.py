@@ -834,9 +834,16 @@ def _cholesky_cpu_lowering(ctx, operand):
                         "SIGNED")
   return [_replace_not_ok_with_nan(ctx, batch_dims, ok, result, out_aval)]
 
+def _cholesky_batching_rule(batched_args, batch_dims):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.moveaxis(x, bd, 0)
+  return cholesky(x), 0
 
 cholesky_p = standard_linalg_primitive(
     (_float | _complex,), (2,), _cholesky_shape_rule, "cholesky")
+# _cholesky_batching_rule override ensures we call symmetrize:
+batching.primitive_batchers[cholesky_p] = _cholesky_batching_rule
 ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
 mlir.register_lowering(cholesky_p, _cholesky_lowering)
 mlir.register_lowering(cholesky_p, _cholesky_cpu_lowering, platform="cpu")
