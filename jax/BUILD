@@ -309,7 +309,6 @@ py_library_providing_imports_info(
             "_src/debugger/**/*.py",
             "_src/image/**/*.py",
             "_src/nn/**/*.py",
-            "_src/numpy/**/*.py",
             "_src/ops/**/*.py",
             "_src/scipy/**/*.py",
             "_src/third_party/**/*.py",
@@ -394,6 +393,7 @@ py_library_providing_imports_info(
         ":mlir",
         ":monitoring",
         ":named_sharding",
+        ":numpy",
         ":op_shardings",
         ":partial_eval",
         ":partition_spec",
@@ -1565,6 +1565,35 @@ pytype_strict_library(
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "numpy",
+    srcs = glob([
+        "_src/numpy/**/*.py",
+    ]) + [
+        "_src/ops/scatter.py",
+    ],
+    deps = [
+        ":api",
+        ":api_util",
+        ":config",
+        ":core",
+        ":custom_derivatives",
+        ":deprecations",
+        ":dtypes",
+        ":error_check",
+        ":export",
+        ":lax",
+        ":mesh",
+        ":sharding",
+        ":sharding_impls",
+        ":tree_util",
+        ":typing",
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy") + py_deps("opt_einsum"),
 )
 
 pytype_strict_library(

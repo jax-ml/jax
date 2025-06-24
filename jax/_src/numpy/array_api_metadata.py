@@ -40,7 +40,7 @@ def __array_namespace__(self, *, api_version: None | str = None) -> ModuleType:
     raise ValueError(f"{api_version=!r} is not available; "
                      f"available versions are: {[__array_api_version__]}")
   import jax.numpy  # pytype: disable=import-error
-  return jax.numpy
+  return jax.numpy  # pytype: disable=module-attr
 
 
 def __array_namespace_info__() -> ArrayNamespaceInfo:
