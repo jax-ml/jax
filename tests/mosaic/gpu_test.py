@@ -1326,7 +1326,7 @@ class TCGen05Test(TestCase):
     lhs_tiling = rhs_tiling = (8, swizzle_elems)
 
     def kernel(ctx, lhs, rhs, out, scratch):
-      lhs_smem, rhs_smem, barriers, acc = scratch
+      lhs_smem, rhs_smem, barriers, mma_barrier, acc = scratch
       lhs_transform = (mgpu.TileTransform(lhs_tiling),)
       if lhs_transpose_tiles:
         lhs_transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
@@ -1362,7 +1362,7 @@ class TCGen05Test(TestCase):
             acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
         )
         tcgen05.commit_arrive(barriers[2])
-      barriers[2].wait(for_tensor_core=True)
+      mma_barrier.wait(for_tensor_core=True)
       is_signed = True if jnp.issubdtype(in_jax_dtype, jnp.integer) else None
       acc.load(is_signed=is_signed).store_untiled(out, optimized=False)
 
@@ -1386,7 +1386,8 @@ class TCGen05Test(TestCase):
     scratch_shape = [
         jax.ShapeDtypeStruct(lhs_smem_shape, in_jax_dtype),
         jax.ShapeDtypeStruct(rhs_smem_shape, in_jax_dtype),
-        mgpu.TMABarrier(3),
+        mgpu.TMABarrier(2),
+        mgpu.Barrier(1),
         mgpu.TMEM((m, n), out_jax_dtype),
     ]
     z = mgpu.as_gpu_kernel(
@@ -1416,7 +1417,7 @@ class TCGen05Test(TestCase):
     lhs_tiling = rhs_tiling = (8, swizzle_elems)
 
     def kernel(ctx, lhs, rhs, out, scratch):
-      lhs_smem, rhs_smem, barriers, acc, lhs_tmem = scratch
+      lhs_smem, rhs_smem, barriers, mma_barrier, acc, lhs_tmem = scratch
       ctx.async_copy(
           src_ref=lhs,
           dst_ref=lhs_smem,
@@ -1444,7 +1445,7 @@ class TCGen05Test(TestCase):
             acc, lhs_tmem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
         )
         tcgen05.commit_arrive(barriers[2])
-      barriers[2].wait(for_tensor_core=True)
+      mma_barrier.wait(for_tensor_core=True)
       acc.load().store_untiled(out, optimized=False)
 
     x_shape = (m, k)
@@ -1455,7 +1456,8 @@ class TCGen05Test(TestCase):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
-        mgpu.TMABarrier(3),
+        mgpu.TMABarrier(2),
+        mgpu.Barrier(1),
         mgpu.TMEM((128, n), out_jax_dtype),
         mgpu.TMEM((128, k), in_jax_dtype, packing=2),
     ]
@@ -1501,7 +1503,7 @@ class TCGen05Test(TestCase):
     tiling = (8, swizzle_elems)
 
     def kernel(ctx, lhs, rhs, out, scratch):
-      lhs_smem, rhs_smem, barriers, acc = scratch
+      lhs_smem, rhs_smem, barriers, mma_barrier, acc = scratch
       block_id = gpu.cluster_block_id(gpu.Dimension.x)
       ctx.async_copy(
           src_ref=lhs,
@@ -1534,7 +1536,7 @@ class TCGen05Test(TestCase):
             acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False, collective=True
         )
         tcgen05.commit_arrive(barriers[2], collective=True, ctx=ctx)
-      barriers[2].wait(for_tensor_core=True)
+      mma_barrier.wait(for_tensor_core=True)
       m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
       acc.load().store_untiled(memref_slice(out, m_slice), optimized=False)
 
@@ -1554,7 +1556,8 @@ class TCGen05Test(TestCase):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
-        mgpu.TMABarrier(3),
+        mgpu.TMABarrier(2),
+        mgpu.Barrier(1),
         mgpu.TMEM((m_block_tile, n), out_jax_dtype, collective=True),
     ]
     z = mgpu.as_gpu_kernel(
@@ -1595,7 +1598,7 @@ class TCGen05Test(TestCase):
     tiling = (8, swizzle_elems)
 
     def kernel(ctx, lhs, rhs, out, scratch):
-      lhs_smem, rhs_smem, barriers, cluster_barrier, acc, lhs_tmem = scratch
+      lhs_smem, rhs_smem, barriers, mma_barrier, cluster_barrier, acc, lhs_tmem = scratch
       block_id = gpu.cluster_block_id(gpu.Dimension.x)
       ctx.async_copy(
           src_ref=lhs,
@@ -1647,7 +1650,7 @@ class TCGen05Test(TestCase):
             collective=True,
         )
         tcgen05.commit_arrive(barriers[2], collective=True, ctx=ctx)
-      barriers[2].wait(for_tensor_core=True)
+      mma_barrier.wait(for_tensor_core=True)
       m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
       acc.load().store_untiled(memref_slice(out, m_slice), optimized=False)
 
@@ -1668,7 +1671,8 @@ class TCGen05Test(TestCase):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
-        mgpu.TMABarrier(3),
+        mgpu.TMABarrier(2),
+        mgpu.Barrier(1),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.TMEM((128, n), out_jax_dtype, collective=True),
         mgpu.TMEM((128, k), in_jax_dtype, collective=True, packing=2),
