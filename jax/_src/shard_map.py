@@ -38,8 +38,9 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.core import pvary, Tracer, typeof
-from jax._src.mesh import (AbstractMesh, Mesh, AxisType, use_abstract_mesh,
-                           get_abstract_mesh, get_concrete_mesh)
+from jax._src.mesh import (AbstractMesh, Mesh, BaseMesh, AxisType,
+                           use_abstract_mesh, get_abstract_mesh,
+                           get_concrete_mesh)
 from jax._src.lax import lax, parallel as lax_parallel
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo, sdy
@@ -1727,7 +1728,7 @@ def _all_mesh_names_except_spmd(
                if name not in spmd_names and name in manual_axes)
 
 def _all_newly_manual_mesh_names(
-    mesh: Mesh, manual_axes: frozenset[AxisName]) -> tuple[AxisName, ...]:
+    mesh: BaseMesh, manual_axes: frozenset[AxisName]) -> tuple[AxisName, ...]:
   axis_env = core.get_axis_env()
   vmap_spmd_names = set(axis_env.spmd_axis_names)
   if not (ctx_mesh := get_abstract_mesh()).empty:

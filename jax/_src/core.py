@@ -350,8 +350,13 @@ class JaxprEqnContext:
   __slots__ = ['compute_type', 'threefry_partitionable', 'xla_metadata',
                'cur_abstract_mesh']
 
+  compute_type: str | None
+  threefry_partitionable: bool
+  xla_metadata: dict[str, Any] | None
+  cur_abstract_mesh: mesh_lib.AbstractMesh
+
   def __init__(self, compute_type: str | None, threefry_partitionable: bool,
-               xla_metadata=None):
+               xla_metadata: dict[str, Any] | None = None):
     self.compute_type = compute_type
     self.threefry_partitionable = threefry_partitionable
     self.cur_abstract_mesh = mesh_lib.get_abstract_mesh()
@@ -368,6 +373,21 @@ class JaxprEqnContext:
         f"cur_abstract_mesh={self.cur_abstract_mesh}, "
         f"xla_metadata={self.xla_metadata})"
     )
+
+  def __hash__(self):
+    return hash((
+        self.compute_type,
+        self.threefry_partitionable,
+        self.cur_abstract_mesh,
+        None if self.xla_metadata is None
+        else tuple(sorted(self.xla_metadata.items())),
+    ))
+
+  def __eq__(self, other):
+    return (self.compute_type == other.compute_type and
+            self.threefry_partitionable == other.threefry_partitionable and
+            self.cur_abstract_mesh == other.cur_abstract_mesh and
+            self.xla_metadata == other.xla_metadata)
 
 
 class JaxprEqn:

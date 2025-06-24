@@ -52,7 +52,7 @@ def update_metadata(a, b: dict[str, Any]):
   return XlaMetadata(filter_nones(val))
 
 
-def current_xla_metadata():
+def current_xla_metadata() -> dict[str, Any] | None:
   metadata = config.xla_metadata_context_manager.value
   return None if metadata is None else metadata.val
 

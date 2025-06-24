@@ -138,7 +138,7 @@ def any_axis_types_match(axis_types, ty: AxisType) -> bool:
   return any(t == ty for t in axis_types)
 
 
-class _BaseMesh:
+class BaseMesh:
   axis_names: tuple[MeshAxisName, ...]
   shape_tuple: tuple[tuple[str, int], ...]
   _axis_types: tuple[AxisType, ...]
@@ -220,7 +220,7 @@ def _unpicke_mesh(devices, axis_names, axis_types):
 _mesh_object_dict = {}  # type: ignore
 
 
-class Mesh(_BaseMesh, contextlib.ContextDecorator):
+class Mesh(BaseMesh, contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
 
   See the Distributed arrays and automatic parallelization tutorial
@@ -435,7 +435,7 @@ class _ThreadResourcesLocalState(threading.local):
 thread_resources = _ThreadResourcesLocalState()
 
 
-class AbstractMesh(_BaseMesh):
+class AbstractMesh(BaseMesh):
   """AbstractMesh contains only axis names and axis sizes.
 
   It does not contain concrete devices compared to `jax.sharding.Mesh`. You
@@ -572,7 +572,7 @@ class UseAbstractMeshContextManager:
 
 use_abstract_mesh = UseAbstractMeshContextManager
 
-def get_abstract_mesh():
+def get_abstract_mesh() -> AbstractMesh:
   val = jax_config.abstract_mesh_context_manager.value
   return empty_abstract_mesh if val is None else val
 
