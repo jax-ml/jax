@@ -2062,13 +2062,6 @@ def get_vma(vma, mesh):
   return vma
 
 
-class SingleSideCollectiveEffect(effects.Effect):
-  __str__ = lambda _: "one-sided communication"
-
-
-single_side_collective_effect = SingleSideCollectiveEffect()
-effects.control_flow_allowed_effects.add_type(SingleSideCollectiveEffect)
-
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'sharding', 'vma']  # inherits slots from parent
   array_abstraction_level = 2

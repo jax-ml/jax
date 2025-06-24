@@ -1177,6 +1177,13 @@ batching.fancy_primitive_batchers[ppermute_p] = _ppermute_batcher
 batching.skippable_batchers[ppermute_p] = partial(_names_in_param, 'axis_name')
 
 
+class SingleSideCollectiveEffect(core.Effect):
+  __str__ = lambda _: "one-sided communication"
+
+
+single_side_collective_effect = SingleSideCollectiveEffect()
+core.effects.control_flow_allowed_effects.add_type(SingleSideCollectiveEffect)
+
 def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
   if ("cuda" not in ctx.module_context.platforms):
     raise NotImplementedError("psend is currently only implemented on GPUs")
@@ -1201,14 +1208,14 @@ def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
   return [send_op.results]
 
 
-mlir.lowerable_effects.add_type(core.SingleSideCollectiveEffect)
+mlir.lowerable_effects.add_type(SingleSideCollectiveEffect)
 
 
 def _psend_abstract_eval(x, *, axis_name, **params):
   _check_axis_names(axis_name)
   return abstract_token, {
       *map(core.NamedAxisEffect, axis_name),
-      core.SingleSideCollectiveEffect(),
+      SingleSideCollectiveEffect(),
   }
 
 
@@ -1253,7 +1260,7 @@ def _precv_abstract_eval(
     token, *, out_shape, axis_name, **params
 ):
   return out_shape, {*map(core.NamedAxisEffect, axis_name),
-                     core.SingleSideCollectiveEffect()}
+                     SingleSideCollectiveEffect()}
 
 precv_p = core.Primitive("precv")
 precv_p.multiple_results = False
