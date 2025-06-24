@@ -59,6 +59,7 @@ from jax._src.pjit import (pjit, mesh_cast, use_auto_axes, use_explicit_axes,
                            _pjit_lower_cached)
 from jax._src.layout import Format, Layout as DLL
 from jax._src.named_sharding import DuplicateSpecError
+from jax._src.lib import jaxlib_extension_version
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
@@ -3772,6 +3773,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_jit_mul_sum_sharding_preserved(self):
+    if jaxlib_extension_version < 356:
+      self.skipTest('Requires jax_lib_extension_version >= 356.')
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     ns = NamedSharding(mesh, P('x'))
     gs = GSPMDSharding(tuple(mesh.devices.flat), ns._to_xla_hlo_sharding(2))
