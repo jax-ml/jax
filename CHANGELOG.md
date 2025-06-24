@@ -16,6 +16,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features:
+  * Added {func}`jax.nn.min_max_normalize`, which implements min-max normalization.
+
 * Breaking changes:
   * {func}`jax.jit` now requires `fun` to be passed by position, and additional
     arguments to be passed by keyword. Doing otherwise will result in an error

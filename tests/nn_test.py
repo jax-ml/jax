@@ -621,6 +621,27 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     self.assertAllClose(out_masked, out_filtered)
 
+  def testMinMaxNormalizeWhereMask(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    m = jnp.array([True, False, True, True])
+    x_filtered = jnp.take(x, jnp.array([0, 2, 3]))
+
+    out_masked = jnp.take(nn.min_max_normalize(x, where=m), jnp.array([0, 2, 3]))
+    out_filtered = nn.min_max_normalize(x_filtered)
+
+    self.assertAllClose(out_masked, out_filtered)
+
+  def testMinMaxNormalize(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    m = jnp.array([True, False, True, True])
+    y = nn.min_max_normalize(x, where=m)
+
+    y_min = y.min(where=m, initial=jnp.inf)
+    y_max = y.max(where=m, initial=-jnp.inf)
+
+    self.assertAllClose(y_min, 0.0)
+    self.assertAllClose(y_max, 1.0)
+
   def testOneHot(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3)
     expected = jnp.array([[1., 0., 0.],
