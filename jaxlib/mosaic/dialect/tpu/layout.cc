@@ -18,8 +18,10 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -29,7 +31,10 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Sequence.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -43,6 +48,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
+#include "xla/util.h"
 
 namespace mlir::tpu {
 
@@ -115,6 +121,11 @@ class SingleRowVRegBounds : public VRegDataBounds {
     return target_shape[0] * target_shape[1] * layout_.packing();
   }
 
+  int64_t getEntriesPerSublane(
+      const std::array<int64_t, 2> target_shape) const {
+    return target_shape[1] * layout_.packing();
+  }
+
   // See base class.
   bool maskVariesAlong(
       const Direction direction,
@@ -123,6 +134,7 @@ class SingleRowVRegBounds : public VRegDataBounds {
       return false;
     }
     const int64_t entries_per_vreg = getEntriesPerVreg(target_shape);
+    const int64_t entries_per_sublane = getEntriesPerSublane(target_shape);
     switch (direction) {
       case Direction::kSublanes:
         return start_offset_ >= target_shape[1] ||
@@ -130,8 +142,19 @@ class SingleRowVRegBounds : public VRegDataBounds {
       case Direction::kLanes:
         return true;
       case Direction::kSubelements:
-        return start_offset_ % layout_.packing() != 0 ||
-               stop_offset_ % layout_.packing() != 0;
+        // Masks are wrapped from the lowest position of the sublane to the
+        // highest position of the sublane. Therefore, as long as the offsets
+        // are not sublane-aligned, the mask varies along subelements.
+        //
+        // For example, given target_shape = [2, 6], packing = 2 and
+        // [start_offset, stop_offset) = [0, 10), the mask is
+        // [
+        //   [T|T, T|T, T|T, T|T, F|T, F|T],
+        //   [F|F, F|F, F|F, F|F, F|F, F|F]
+        // ]
+        // where "|" is the separator between subelements.
+        return start_offset_ % entries_per_sublane ||
+               stop_offset_ % entries_per_sublane;
     }
   }
 
@@ -139,31 +162,176 @@ class SingleRowVRegBounds : public VRegDataBounds {
   FailureOr<TypedValue<VectorType>> getVectorMask(
       OpBuilder& builder, const Location loc, const int generation,
       const std::array<int64_t, 2> target_shape) const override {
-    if (maskVariesAlong(Direction::kSubelements, target_shape)) {
-      return emitError(loc, "Not implemented: masked along subelements");
-    }
     const auto i32_vreg = VectorType::get(target_shape, builder.getI32Type());
-    const auto getI32VregConstant = [&](const int32_t v) {
+    const auto getI32VregConstant = [&](const uint64_t v) {
       return builder.create<arith::ConstantOp>(
-          loc, i32_vreg, DenseElementsAttr::get(i32_vreg, v));
+          loc, i32_vreg,
+          DenseElementsAttr::get(
+              i32_vreg,
+              builder.getIntegerAttr(builder.getI32Type(), APInt(32, v))));
     };
-    if (layout_.bitwidth() != 32 &&
-        (start_offset_ % (target_shape[1] * layout_.packing()) != 0 ||
-         stop_offset_ % (target_shape[1] * layout_.packing()) != 0)) {
-      return emitError(loc, "Not implemented: offset not aligned to sublanes");
+    const int64_t entries_per_sublane = getEntriesPerSublane(target_shape);
+    if (layout_.bitwidth() == 32 ||
+        (start_offset_ % (entries_per_sublane) == 0 &&
+         stop_offset_ % (entries_per_sublane) == 0)) {
+      // Fast path for sublane-aligned offsets.
+      const Value start = getI32VregConstant(start_offset_ / layout_.packing());
+      const Value end = getI32VregConstant(stop_offset_ / layout_.packing());
+      const Value iota = builder.create<tpu::IotaOp>(loc, i32_vreg, nullptr);
+      return cast<TypedValue<VectorType>>(
+          builder
+              .create<arith::AndIOp>(
+                  loc,
+                  builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge,
+                                                iota, start),
+                  builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
+                                                iota, end))
+              .getResult());
     }
-    const Value start = getI32VregConstant(start_offset_ / layout_.packing());
-    const Value end = getI32VregConstant(stop_offset_ / layout_.packing());
-    const Value iota = builder.create<tpu::IotaOp>(loc, i32_vreg, nullptr);
-    return cast<TypedValue<VectorType>>(
-        builder
-            .create<arith::AndIOp>(
-                loc,
-                builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge,
-                                              iota, start),
-                builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
-                                              iota, end))
-            .getResult());
+
+    auto boundIdxConst =
+        std::bind(IdxConst, std::placeholders::_1, builder, loc);
+
+    const int64_t start_full_sublane =
+        llvm::divideCeil(start_offset_, entries_per_sublane);
+    const auto [start_sublane, offset_in_start_sublane] =
+        std::div(start_offset_, entries_per_sublane);
+    const auto [last_sublane, offset_in_last_sublane] =
+        std::div(stop_offset_, entries_per_sublane);
+    llvm::SmallVector<Value> masks;
+
+    // Creates a rectangular mask for the given sublane-lane range and
+    // returns it as an i32 bitmask.
+    auto create_mask = [&](std::array<int64_t, 2> start,
+                           std::array<int64_t, 2> end) {
+      auto mask_vty = VectorType::get(target_shape, builder.getI1Type());
+      Value mask = builder.create<tpu::CreateMaskOp>(
+          loc, mask_vty,
+          ValueRange{boundIdxConst(start[0]), boundIdxConst(start[1])},
+          ValueRange{boundIdxConst(end[0]), boundIdxConst(end[1])});
+      return builder.create<arith::SelectOp>(
+          loc, mask, getI32VregConstant(0xFFFFFFFF), getI32VregConstant(0));
+    };
+
+    // Similar to `create_mask`, but returns a bitmask that only covers the
+    // given subelements.
+    auto create_subelement_mask = [&](std::array<int64_t, 2> start,
+                                      std::array<int64_t, 2> end,
+                                      ArrayRef<int64_t> subelement_indices) {
+      Value mask = create_mask(start, end);
+      uint32_t bmask = 0;
+      const uint32_t subelement_bmask =
+          xla::LsbMask<uint32_t>(layout_.bitwidth());
+      for (int64_t subelement_index : subelement_indices) {
+        bmask |= subelement_bmask << (subelement_index * layout_.bitwidth());
+      }
+      return builder.create<arith::AndIOp>(loc, mask,
+                                           getI32VregConstant(bmask));
+    };
+
+    // If offsets are not sublane-aligned, the mask is composed of three parts:
+    //
+    // 1. Sublane mask that cover all lanes.
+    // 2. First sublane mask
+    // 3. Last sublane mask
+    //
+    // For example, given target_shape = [6, 6], packing = 2 and
+    // [start_offset, stop_offset) = [10, 55), the expected mask is
+    // [
+    //   [F|F, F|F, F|F, F|F, T|F, T|F],  <----- 2.
+    //   [T|T, T|T, T|T, T|T, T|T, T|T],  <---+
+    //   [T|T, T|T, T|T, T|T, T|T, T|T],  <---|- 1.
+    //   [T|T, T|T, T|T, T|T, T|T, T|T],  <---+
+    //   [T|T, F|T, F|T, F|T, F|T, F|T],  <----- 3.
+    //   [F|F, F|F, F|F, F|F, F|F, F|F]
+    // ]
+    // where "|" is the separator between subelements.
+
+    // Mask 1.
+    if (start_full_sublane < last_sublane) {
+      masks.push_back(create_mask({start_full_sublane, 0},
+                                  {last_sublane, target_shape[1]}));
+    }
+
+    // Mask 2.
+    if (offset_in_start_sublane != 0) {
+      // On the first sublane, mask [start_offset, stop_offset).
+      const int64_t start_offset = offset_in_start_sublane;
+      const int64_t stop_offset = start_sublane == last_sublane
+                                      ? offset_in_last_sublane
+                                      : entries_per_sublane;
+      // The mask is split into three parts:
+      //
+      // a. For `start_subelement_idx`, mask lanes [start_subelement_lane,
+      //  target_shape[1])].
+      // b. For subelement indices in [start_subelement_idx + 1,
+      //  stop_subelement_idx), mask all lanes.
+      // c. For `stop_subelement_idx`, mask lanes [0, stop_subelement_lane].
+      //
+      // We may only need a. if offsets fit in a single subelement, and c. may
+      // be omitted if `stop_subelement_lane` is 0.
+      auto [start_subelement_idx, start_subelement_lane] =
+          std::div(start_offset, target_shape[1]);
+      const auto [stop_subelement_idx, stop_subelement_lane] =
+          std::div(stop_offset, target_shape[1]);
+      if (start_subelement_idx == stop_subelement_idx) {
+        masks.push_back(create_subelement_mask(
+            {start_sublane, start_subelement_lane},
+            {start_sublane + 1, stop_subelement_lane}, {start_subelement_idx}));
+      } else {
+        if (start_subelement_lane != 0) {
+          // When `start_subelement_idx` occupies all lanes, it can be folded
+          // into b. too.
+          masks.push_back(create_subelement_mask(
+              {start_sublane, start_subelement_lane},
+              {start_sublane + 1, target_shape[1]}, {start_subelement_idx}));
+          ++start_subelement_idx;
+        }
+        masks.push_back(create_subelement_mask(
+            {start_sublane, 0}, {start_sublane + 1, target_shape[1]},
+            llvm::to_vector(llvm::seq<int64_t>(start_subelement_idx,
+                                               stop_subelement_idx))));
+        if (stop_subelement_lane != 0) {
+          masks.push_back(create_subelement_mask(
+              {start_sublane, 0}, {start_sublane + 1, stop_subelement_lane},
+              {stop_subelement_idx}));
+        }
+      }
+    }
+
+    // Mask 3. It is only needed if mask 2 doesn't cover it.
+    if (offset_in_last_sublane != 0 &&
+        (start_sublane != last_sublane || offset_in_start_sublane == 0)) {
+      const auto [max_subelement_idx_on_all_lanes, last_subelement_lane] =
+          std::div(offset_in_last_sublane, target_shape[1]);
+      // On the last sublane, the lowest subelement positions must be filled
+      // first before wrapping to the higher ones.
+      if (max_subelement_idx_on_all_lanes != 0) {
+        // Subelement indices less than `max_subelement_idx_on_all_lanes` occupy
+        // all lanes on `last_sublane`.
+        // This generates [F|T, F|T, F|T, F|T, F|T, F|T] given the above
+        // example.
+        masks.push_back(create_subelement_mask(
+            {last_sublane, 0}, {last_sublane + 1, target_shape[1]},
+            llvm::to_vector(
+                llvm::seq<int64_t>(0, max_subelement_idx_on_all_lanes))));
+      }
+      if (last_subelement_lane != 0) {
+        // Subelement index equal to `max_subelement_idx_on_all_lanes` occupies
+        // only some lanes on `last_sublane`.
+        // This generates [T|F, F|F, F|F, F|F, F|F, F|F] given the above
+        // example.
+        masks.push_back(create_subelement_mask(
+            {last_sublane, 0}, {last_sublane + 1, last_subelement_lane},
+            {max_subelement_idx_on_all_lanes}));
+      }
+    }
+
+    // OR all masks together.
+    return cast<TypedValue<VectorType>>(std::reduce(
+        masks.begin() + 1, masks.end(), masks.front(), [&](Value a, Value b) {
+          return builder.create<arith::OrIOp>(loc, a, b);
+        }));
   }
 
   // See base class.
