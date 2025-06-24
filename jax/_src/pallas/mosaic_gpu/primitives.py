@@ -2056,11 +2056,35 @@ def _type_check_mgpu(v, ty):
     case (Layout() , mgpu.FragmentedArray()) | (ParameterizedLayout(), mgpu.FragmentedArray()):
       if ty.to_mgpu() != v.layout:
         raise ValueError(f"Unexpected layout for {v} (expected: {ty})")
+    case (ShapeDtypeStruct(), ir.Value()) if ir.VectorType.isinstance(v.type):
+      # This case happens when using Warpgroup semantics.
+      vector_type = ir.VectorType(v.type)
+      el_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
+      if vector_type.element_type != el_dtype:
+        raise ValueError(
+            f"Array dtype mismatch: expected {vector_type.element_type} got"
+            f" {el_dtype}."
+        )
+      if list(ty.shape) != vector_type.shape:
+        raise ValueError(
+            f"Array shape mismatch: expected {ty.shape} got"
+            f" {vector_type.shape}."
+        )
+      # Do not check the layout, as it will be inferred later.
+    case (Layout(), ir.Value()) if ir.VectorType.isinstance(v.type):
+      # This case happens when using Warpgroup semantics.
+      # Do not check the layout, as it will be inferred later.
+      pass
+    case (ParameterizedLayout(), ir.Value()) if ir.VectorType.isinstance(v.type):
+      # This case happens when using Warpgroup semantics.
+      # Do not check the layout, as it will be inferred later.
+      pass
     case _:
       raise ValueError(f"Unexpected type {ty} for value {v}")
 
 
 @lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Warpgroup)
 def _inline_mgpu_lowering_rule(
     ctx: lowering.LoweringRuleContext,
     *flat_args_and_transforms,

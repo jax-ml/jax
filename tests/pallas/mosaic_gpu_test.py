@@ -32,6 +32,9 @@ from jax import export
 from jax import lax
 from jax._src import checkify
 from jax._src import test_util as jtu
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
@@ -42,6 +45,7 @@ from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
 from jax._src.state import types as state_types
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
+import jax.experimental.mosaic.gpu.utils as mgpu_utils
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
@@ -384,7 +388,6 @@ class PallasCallTest(PallasTest):
 
   def test_inline_mgpu(self):
     dtype = jnp.dtype(jnp.bfloat16)
-    self.skip_if_wg_semantics()
     shape = (128, 128)
     tile = (64, 128 // dtype.itemsize)
     tiled_shape = mgpu.tile_shape(shape, tile)
@@ -394,11 +397,14 @@ class PallasCallTest(PallasTest):
     key = jax.random.key(0)
     x = (jax.random.uniform(key, (2, *shape)) * 42).astype(dtype)
 
-    transforms = (
-        plgpu.TilingTransform(tile),
-        plgpu.TransposeTransform((0, 2, 1, 3, 4)),
-        plgpu.SwizzleTransform(128),
-    )
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+      transforms = ()
+    else:
+      transforms = (
+          plgpu.TilingTransform(tile),
+          plgpu.TransposeTransform((0, 2, 1, 3, 4)),
+          plgpu.SwizzleTransform(128),
+      )
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
@@ -418,40 +424,68 @@ class PallasCallTest(PallasTest):
       plgpu.barrier_wait(barrier)
       # Add an indexer at the end.
       sliced_smem_ref = smem_ref.at[0]
+      if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+        inline_mgpu_transforms = ()
+      else:
+        inline_mgpu_transforms = (
+            plgpu.TilingTransform(tile),
+            plgpu.TransposeTransform((1, 0, 2, 3)),
+            plgpu.SwizzleTransform(128),
+        )
       @plgpu.inline_mgpu(
-          arg_types=(plgpu.RefType((
-              plgpu.TilingTransform(tile),
-              plgpu.TransposeTransform((1, 0, 2, 3)),
-              plgpu.SwizzleTransform(128),
-          )),),
+          arg_types=(plgpu.RefType(inline_mgpu_transforms),),
           return_type=plgpu.ShapeDtypeStruct(
               shape, dtype, layout=plgpu.Layout.WGMMA
           ),
       )
       def foo(ctx, smem_ref):
         del ctx
-        assert smem_ref.type.shape == tiled_shape_t, (smem_ref.type, tiled_shape_t)
-        x = mgpu.FragmentedArray.load_tiled(smem_ref, swizzle=128)
-        y = mgpu.FragmentedArray.splat(
-            mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
-        )
-        return (x + y)
+        if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+          assert smem_ref.type.shape == list(shape), (smem_ref.type, shape)
+          zero_index = arith.constant(ir.IndexType.get(), 0)
+          zero_vector_indices = [zero_index] * len(shape)
+          el_ty = mgpu_utils.dtype_to_ir_type(dtype)
+          ty = ir.VectorType.get(shape, el_ty)
+          x = vector.load(ty, smem_ref, zero_vector_indices)
+          y = vector.splat(ty, mgpu.c(1, el_ty))
+          return arith.addf(x, y)
+        else:
+          assert smem_ref.type.shape == tiled_shape_t, (smem_ref.type, tiled_shape_t)
+          x = mgpu.FragmentedArray.load_tiled(smem_ref, swizzle=128)
+          y = mgpu.FragmentedArray.splat(
+              mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
+          )
+          return (x + y)
 
       arr = foo(sliced_smem_ref)
       @plgpu.inline_mgpu(arg_types=(plgpu.Layout.WGMMA, plgpu.RefType(transforms), plgpu.RefType()))
       def store(ctx, arr, smem_ref, o_ref):
         sliced_smem_ref = mgpu.memref_slice(smem_ref, (0,))
-        arr.store_tiled(sliced_smem_ref, swizzle=128)
+        if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+          zero_index = arith.constant(ir.IndexType.get(), 0)
+          zero_vector_indices = [zero_index] * len(shape)
+          vector.store(arr, sliced_smem_ref, zero_vector_indices)
+        else:
+          arr.store_tiled(sliced_smem_ref, swizzle=128)
+
         mgpu.commit_shared()
-        ctx.async_copy(
-            src_ref=sliced_smem_ref,
-            dst_ref=o_ref,
-            swizzle=128,
-            gmem_transform=(
-                mgpu.TileTransform(tile),
-                mgpu.TransposeTransform((1, 0, 2, 3)),
-            ),
-        )
+
+        if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+          zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+          mgpu.dialect.async_store(
+              sliced_smem_ref, o_ref, [zero_i32] * len(shape), slice_lengths=shape
+          )
+        else:
+          ctx.async_copy(
+              src_ref=sliced_smem_ref,
+              dst_ref=o_ref,
+              swizzle=128,
+              gmem_transform=(
+                  mgpu.TileTransform(tile),
+                  mgpu.TransposeTransform((1, 0, 2, 3)),
+              ),
+          )
+
         ctx.await_async_copy(0)
 
       # This time we slice inside the inline_mgpu body.
@@ -2062,7 +2096,6 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
-        mgpu_primitives.inline_mgpu_p,
         mgpu_primitives.broadcasted_iota_p,
         mgpu_primitives.load_p,
         mgpu_primitives.tcgen05_mma_p,
