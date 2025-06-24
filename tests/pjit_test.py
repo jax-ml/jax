@@ -7960,6 +7960,27 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.arange(8, dtype='int8'), P('x',))
     f(x)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_dot_empty_mesh_lhs_rhs(self, mesh):
+    np_inp = np.ones((2, 2))
+    arr = jax.device_put(np.ones((2, 2)), P('x'))
+
+    @jax.jit
+    def f(x, y):
+      return jnp.dot(x, y)
+
+    out = f(np_inp, arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None)))
+
+    def g(x, y):
+      return jnp.sum(f(x, y))
+
+    jax.jit(jax.grad(g))(np_inp, arr)  # doesn't crash
+
+    out2 = f(arr, np_inp)
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P('x', None)))
+    jax.jit(jax.grad(g))(arr, np_inp)  # doesn't crash
+
   @parameterized.named_parameters(
       ('mesh1', (1, 4)),
       ('mesh2', (2, 2)),

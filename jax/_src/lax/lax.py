@@ -5238,7 +5238,8 @@ def _check_specs_match(lhs_spec, rhs_spec, msg):
 def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
                                out_sharding):
-  if lhs.sharding.mesh != rhs.sharding.mesh:
+  if (not lhs.sharding.mesh.empty and not rhs.sharding.mesh.empty and
+      lhs.sharding.mesh != rhs.sharding.mesh):
     raise core.ShardingTypeError(
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
@@ -5282,8 +5283,12 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
           ' the `out_sharding` parameter.'
           f' Got {lhs_contracting_spec=} and {rhs_contracting_spec=}')
 
+  if lhs.sharding.mesh.empty and not rhs.sharding.mesh.empty:
+    mesh = rhs.sharding.mesh
+  else:
+    mesh = lhs.sharding.mesh
   return _dot_general_sharding_computation(
-      lhs.sharding.spec, rhs.sharding.spec, dimension_numbers, lhs.sharding.mesh)
+      lhs.sharding.spec, rhs.sharding.spec, dimension_numbers, mesh)
 
 def _dot_general_sharding_computation(lhs_spec, rhs_spec,
                                       dimension_numbers, mesh):
