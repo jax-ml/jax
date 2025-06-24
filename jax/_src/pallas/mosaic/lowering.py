@@ -222,10 +222,11 @@ class LoweringRuleContext:
     return self.lowering_context.forward_compatible
 
 
-def _memory_space_to_tpu_memory_space(memory_space: AnyMemorySpace | None
-                                      ) -> TPUMemorySpace:
+def _memory_space_to_tpu_memory_space(
+    memory_space: AnyMemorySpace | None,
+) -> TPUMemorySpace | pallas_core.MemorySpace:
   if memory_space == jax_core.MemorySpace.Device:
-    return TPUMemorySpace.ANY
+    return pallas_core.MemorySpace.ANY
 
   match memory_space:
     case None:
@@ -233,8 +234,7 @@ def _memory_space_to_tpu_memory_space(memory_space: AnyMemorySpace | None
       # specified
       return TPUMemorySpace.VMEM
     case pallas_core.MemorySpace.ANY:
-      # Map the general ANY memory space to TPU ANY memory space
-      return TPUMemorySpace.ANY
+      return memory_space
     case pallas_core.MemorySpace.HOST:
       return TPUMemorySpace.HOST
     case (
@@ -253,7 +253,12 @@ def _memory_space_to_tpu_memory_space(memory_space: AnyMemorySpace | None
 def _memory_space_to_mosaic_attribute(memory_space: AnyMemorySpace | None
                                       ) -> ir.Attribute:
   tpu_memory_space = _memory_space_to_tpu_memory_space(memory_space)
-  return ir.Attribute.parse(f"#tpu.memory_space<{tpu_memory_space}>")
+  match tpu_memory_space:
+    case pallas_core.MemorySpace.ANY:
+      memory_space_str = "any"
+    case _:
+      memory_space_str = str(tpu_memory_space)
+  return ir.Attribute.parse(f"#tpu.memory_space<{memory_space_str}>")
 
 def _dtype_to_ir_type(dtype: DTypeLike,
                       is_kernel_boundary: bool = False) -> ir.Type:
@@ -616,7 +621,7 @@ def _check_block_mappings(
           "rank >= 1. " + err_details())
 
     if (
-        (memory_space == tpu_core.MemorySpace.ANY
+        (memory_space == pallas_core.MemorySpace.ANY
          or memory_space == tpu_core.MemorySpace.HBM)
         and not bm.has_trivial_window()
     ):
@@ -758,7 +763,7 @@ def lower_jaxpr_to_module(
       tpu_memory_space = _memory_space_to_tpu_memory_space(
           bm.block_aval.memory_space)
       if (
-          tpu_memory_space == tpu_core.MemorySpace.ANY
+          tpu_memory_space == pallas_core.MemorySpace.ANY
           or tpu_memory_space == tpu_core.MemorySpace.HBM
           or tpu_memory_space == tpu_core.MemorySpace.SEMAPHORE
       ):
