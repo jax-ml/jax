@@ -21,6 +21,7 @@ import jax.dlpack
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 from jax._src import config
+from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
 from jax._src.lib import version as jaxlib_version
 
@@ -41,7 +42,8 @@ except ImportError:
   tf = None
 
 
-dlpack_dtypes = sorted(jax.dlpack.SUPPORTED_DTYPES, key=lambda x: x.__name__)
+dlpack_dtypes = sorted([dt.type for dt in  dlpack_src.SUPPORTED_DTYPES_SET],
+                       key=lambda x: x.__name__)
 
 # These dtypes are not supported by neither NumPy nor TensorFlow, therefore
 # we list them separately from ``jax.dlpack.SUPPORTED_DTYPES``.
@@ -64,12 +66,8 @@ if jaxlib_version >= (0, 5, 3):
       if (dtype := getattr(jnp, name, None))
   ]
 
-numpy_dtypes = sorted(
-    [dt for dt in jax.dlpack.SUPPORTED_DTYPES if dt != jnp.bfloat16],
-    key=lambda x: x.__name__)
-
+numpy_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]
 cuda_array_interface_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]
-
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (2, 3, 4)]
 empty_array_shapes = []
 empty_array_shapes += [(0,), (0, 4), (3, 0),]
@@ -337,6 +335,8 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cuda")
   def testCaiToJax(self, shape, dtype):
+    dtype = np.dtype(dtype)
+
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
 
@@ -370,7 +370,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     class CAIWithStrides:
       __cuda_array_interface__ = cai.copy()
       __cuda_array_interface__["version"] = 3
-      strides = (dtype.dtype.itemsize,) if shape else ()
+      strides = (dtype.itemsize,) if shape else ()
       for s in reversed(shape[1:]):
         strides = (strides[0] * s, *strides)
       __cuda_array_interface__['strides'] = strides

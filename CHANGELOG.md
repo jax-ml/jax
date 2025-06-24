@@ -27,6 +27,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
       renamed to `Format`, `.format`, `.input_formats` and `.output_formats`
     * `DeviceLocalLayout`, `.device_local_layout` have been renamed to `Layout`
       and `.layout`
+* Deprecations:
+  * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new
+    {func}`jax.dlpack.is_supported_dtype` function.
 
 ## JAX 0.6.2 (June 17, 2025)
 
