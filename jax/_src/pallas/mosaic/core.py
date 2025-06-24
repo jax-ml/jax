@@ -83,10 +83,13 @@ class CompilerParams(pallas_core.CompilerParams):
     collective_id: Indicates which barrier semaphore to use for the kernel. Note
       that using the same collective_id does not guarantee that the same barrier
       semaphore will be allocated between kernels.
+    has_side_effects: Set to True to prevent kernel being CSEd by XLA.
+    flags: A dictionary of command line flags for the kernel.
     internal_scratch_in_bytes: The size of the internal scratch space used by
       Mosaic.
-    flags: A dictionary of command line flags for the kernel.
     serialization_format: The serialization format for the kernel body.
+    kernel_type: Specify if the kernel is meant to run on TensorCore or one of
+      the SparseCores
     disable_bounds_checks: Disable bounds checks in the kernel.
   """
   BACKEND: ClassVar[pallas_core.Backend] = "mosaic_tpu"
