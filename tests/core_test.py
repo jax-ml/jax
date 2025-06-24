@@ -394,6 +394,45 @@ class CoreTest(jtu.JaxTestCase):
     self.assertLen(e1.outvars, 1)  # only primal out, no residuals
     self.assertEqual(e1.outvars[0].aval.shape, (3, 3))  # only primal out shape
 
+  def test_tracer_reprs(self):
+    def f(x):
+      nonlocal x_repr
+      x_repr = repr(x)
+      return x.sum()
+    x_repr = ""
+
+    jax.jit(f)(jnp.arange(10.0, dtype='float32'))
+    self.assertEqual(x_repr, "JitTracer<float32[10]>")
+
+    jax.vmap(f)(jnp.arange(20, dtype='int32'))
+    self.assertEqual(x_repr, "VmapTracer<int32[]>")
+
+    jax.grad(f)(jnp.float16(1.0))
+    self.assertEqual(x_repr, "GradTracer<float16[]>")
+
+    jax.jacrev(f)(jnp.arange(12, dtype='float32'))
+    self.assertEqual(x_repr, "GradTracer<float32[12]>")
+
+    jax.jacfwd(f)(jnp.arange(14, dtype='float32'))
+    self.assertEqual(x_repr, "GradTracer<float32[14]>")
+
+  def test_verbose_tracer_reprs(self):
+    # Verbose reprs, avaiable via tracer._pretty_print()
+    def f(x):
+      nonlocal x_repr
+      x_repr = x._pretty_print(verbose=True).format()
+      return x.sum()
+    x_repr = ""
+
+    jax.jit(f)(jnp.arange(10.0, dtype='float32'))
+    self.assertRegex(x_repr, r"^Traced<float32\[10\]>with<DynamicJaxprTrace>")
+
+    jax.vmap(f)(jnp.arange(20, dtype='int32'))
+    self.assertRegex(x_repr, r"^Traced<int32\[\]>with<BatchTrace>")
+
+    jax.grad(f)(jnp.float16(1.0))
+    self.assertRegex(x_repr, r"^Traced<float16\[\]>with<JVPTrace>")
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTypeChecks(jtu.JaxTestCase):

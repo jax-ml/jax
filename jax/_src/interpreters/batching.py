@@ -405,6 +405,9 @@ class BatchTracer(Tracer):
     self.batch_dim = batch_dim
     self.source_info = source_info
 
+  def _short_repr(self):
+    return f"VmapTracer<{self.aval}>"
+
   @property
   def aval(self):
     aval = core.get_aval(self.val)
