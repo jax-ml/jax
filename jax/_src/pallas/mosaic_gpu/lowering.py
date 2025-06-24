@@ -306,9 +306,9 @@ def _run_scoped_resource_estimator(
     elif aval.memory_space == gpu_core.TMEM:
       if len(aval.shape) != 2:
         raise ValueError(f"TMEM allocations must be 2D. Got {aval.shape}")
-      if aval.shape[0] % tcgen05.TMEM_ROWS != 0:
+      if aval.shape[0] not in (64, 128):
         raise ValueError(
-            f"TMEM shape[0] must be a multiple of 128. Got {aval.shape[0]}.")
+            f"TMEM shape[0] must be 64 or 128. Got {aval.shape[0]}.")
       if aval.packed:
         packing = 4 // aval.dtype.itemsize
       else:

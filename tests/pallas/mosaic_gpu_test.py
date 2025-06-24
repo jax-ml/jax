@@ -2596,20 +2596,24 @@ class PallasCallSm100ATest(PallasSm100ATest):
     expected = jnp.broadcast_to(expected, (128, 128))
     np.testing.assert_array_equal(x_result, expected)
 
-  @parameterized.product(shape=[(128, 128)],
+  @parameterized.product(m=[64, 128],
+                         n=[64, 128, 256],
                          swizzle=[128, 64, 32],
                          dtype=[jnp.float16, jnp.bfloat16],
                          lhs_tmem=[False, True],
                          transpose_rhs=[False, True],
                          transpose_lhs=[False, True])
-  def test_simple_matmul(self, shape, swizzle,
-                         dtype=jnp.float16,
-                         lhs_tmem=False,
-                         transpose_lhs=False,
-                         transpose_rhs=False):
+  def test_simple_matmul(
+      self, m, n, swizzle, dtype, lhs_tmem, transpose_lhs, transpose_rhs
+  ):
     self.skip_if_wg_semantics()
     if transpose_lhs and lhs_tmem:
-      self.skipTest("TMEM transpose not supported.")
+      self.skipTest("TMEM transpose not supported")
+    if n * jnp.dtype(dtype).itemsize <= swizzle:
+      self.skipTest("swizzle too big")
+    if lhs_tmem and m == 64:
+      self.skipTest("m=64 not supported for LHS in TMEM")
+    k = 128
     # Test a matmul with a single block.
     swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
     transforms = (
@@ -2625,7 +2629,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
         b_smem = plgpu.transpose_ref(b_smem, (1, 0))
       if lhs_tmem:
         lhs_ref = a_tmem_ref
-        lhs_ref[...] = plgpu.load(a_smem, (), layout=plgpu.Layout.TCGEN05)
+        layout = plgpu.Layout.TCGEN05 if m == 128 else plgpu.Layout.WGMMA
+        lhs_ref[...] = plgpu.load(a_smem, (), layout=layout)
         plgpu.commit_tmem()
       else:
         lhs_ref = a_smem
@@ -2641,12 +2646,12 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.wait_smem_to_gmem(0)
 
     scratch_shapes = [
-        plgpu.TMEM(shape, jnp.float32, packed=False),
-        plgpu.SMEM(shape, dtype, transforms=transforms),
+        plgpu.TMEM((m, n), jnp.float32, packed=False),
+        plgpu.SMEM((m, n), dtype, transforms=transforms),
         plgpu.Barrier(for_tensor_core=True),
     ]
     if lhs_tmem:
-      scratch_shapes.append(plgpu.TMEM(shape, dtype, packed=True))
+      scratch_shapes.append(plgpu.TMEM((m, k), dtype, packed=True))
     else:
       scratch_shapes.append(None)
 
@@ -2657,11 +2662,13 @@ class PallasCallSm100ATest(PallasSm100ATest):
             plgpu.BlockSpec(transforms=transforms, memory_space=plgpu.SMEM),
         ),
         out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
-        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
         scratch_shapes=scratch_shapes,
     )
-    x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
-    y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
+    lhs_shape = (k, m) if transpose_lhs else (m, k)
+    rhs_shape = (n, k) if transpose_rhs else (k, n)
+    x = jax.random.uniform(jax.random.key(0), shape=lhs_shape, dtype=dtype)
+    y = jax.random.uniform(jax.random.key(1), shape=rhs_shape, dtype=dtype)
     result = f(x, y)
     if transpose_lhs:
       x = jnp.transpose(x, (1, 0))
