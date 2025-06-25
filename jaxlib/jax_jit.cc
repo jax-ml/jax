@@ -233,7 +233,6 @@ std::string CallSignature::DebugString() const {
       absl::StrJoin(configs, ", ", py_object_formatter));
 }
 
-
 size_t HashShardingForJit(nb::handle sharding) {
   auto type = sharding.type();
 
@@ -252,11 +251,18 @@ size_t HashShardingForJit(nb::handle sharding) {
     return absl::Hash<void*>()(single_device_sharding->device().ptr());
   }
 
-  return nb::hash(sharding);
+  try {
+    return nb::hash(sharding);
+  } catch (const nb::python_error& e) {
+    // Gracefully handle non-hashable sharding. We cannot let a C++ exception
+    // escape because this hash function may have been called from a code that
+    // disables C++ exception support.
+    return 0;
+  }
 }
 
 bool EqualShardingsForJit(nb::handle a, nb::handle b) {
-  if (a.ptr() == b.ptr()){
+  if (a.ptr() == b.ptr()) {
     return true;
   }
 
