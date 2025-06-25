@@ -17,6 +17,7 @@ import itertools as it
 from collections.abc import Sequence
 import numpy as np
 
+from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import core, util
 from jax._src import ops
@@ -41,6 +42,7 @@ from jax.experimental import roofline
 _FMA_FLOPS_FACTOR = 2
 
 for prim in it.chain(
+  ad_checkpoint.__dict__.values(),
   ad_util.__dict__.values(),
   ann.__dict__.values(),
   control_flow.__dict__.values(),
