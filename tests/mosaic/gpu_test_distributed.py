@@ -25,7 +25,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import memref
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
-from jax.experimental import shard
 from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
@@ -107,7 +106,7 @@ class ProfilerTest(TestCase):
     )
     with jax.sharding.use_mesh(mesh):
       x_np = np.arange(64 * 64, dtype=jnp.float32).reshape(64, 64)
-      x = shard.reshard(x_np, P("x"))
+      x = jax.sharding.reshard(x_np, P("x"))
       y = jax.jit(
           jax.shard_map(
               lambda x: mgpu.as_gpu_kernel(
@@ -141,7 +140,7 @@ class ProfilerTest(TestCase):
         (2,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
     )
     with jax.sharding.use_mesh(mesh):
-      sem = shard.reshard(jnp.zeros((1,), dtype=jnp.int32), P())
+      sem = jax.sharding.reshard(jnp.zeros((1,), dtype=jnp.int32), P())
       out_sem = jax.jit(
           jax.shard_map(
               mgpu.as_gpu_kernel(

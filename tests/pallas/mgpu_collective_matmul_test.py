@@ -27,7 +27,6 @@ from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.pallas.ops.gpu import collective_matmul_mgpu
-from jax.experimental import shard
 import jax.numpy as jnp
 import numpy as np
 
@@ -97,8 +96,8 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     k1, k2 = random.split(random.key(1234), num=2)
     lhs = random.normal(k1, (num_devices * m_shard, k), dtype)
     rhs = random.normal(k2, (k, num_devices * n_shard), dtype)
-    lhs = shard.reshard(lhs, P("x", None))
-    rhs = shard.reshard(rhs, P(None, "x"))
+    lhs = jax.sharding.reshard(lhs, P("x", None))
+    rhs = jax.sharding.reshard(rhs, P(None, "x"))
 
     def run(body):
       out = jax.jit(

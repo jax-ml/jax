@@ -20,11 +20,7 @@ import numpy as np
 import numpy.random as npr
 import jax
 from jax import jit, grad
-from jax.experimental.shard import reshard
-from jax.sharding import (
-  PartitionSpec as P,
-  AxisType,
-)
+from jax.sharding import PartitionSpec as P, AxisType, reshard
 from jax.scipy.special import logsumexp
 import jax.numpy as jnp
 import datasets
