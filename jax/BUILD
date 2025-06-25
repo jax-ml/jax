@@ -1794,12 +1794,6 @@ pytype_library(
 )
 
 pytype_library(
-    name = "experimental_shard",
-    srcs = ["experimental/shard.py"],
-    deps = [":jax"],
-)
-
-pytype_library(
     name = "experimental_sparse",
     srcs = glob(
         [
