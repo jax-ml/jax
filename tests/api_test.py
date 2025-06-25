@@ -4546,11 +4546,14 @@ class APITest(jtu.JaxTestCase):
       return x
 
     state = jnp.arange(5, dtype=jnp.uint32)
-    inner_fn(state)
-    outer_fn(state)
 
+    outer_fn(state)
+    outer_fn(state)
     self.assertEqual(inner_count, 1)
     self.assertEqual(outer_count, 1)
+
+    inner_fn(state)
+    self.assertEqual(inner_count, 2)  # retraced when top-level
 
   def test_grad_conj_symbolic_zeros(self):
     # https://github.com/jax-ml/jax/issues/15400

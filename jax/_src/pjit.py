@@ -136,7 +136,8 @@ class PjitInfo(NamedTuple):
 
 
 def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
-  p, args_flat = _infer_params(fun, jit_info, args, kwargs)
+  p, args_flat = _infer_params(fun, jit_info, args, kwargs,
+                               core.trace_state_clean())
 
   for arg in args_flat:
     dispatch.check_arg(arg)
@@ -333,7 +334,8 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
 @api_boundary
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
-  p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
+  p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs,
+                               core.trace_state_clean())
   donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
   args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
   lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
@@ -349,7 +351,8 @@ def jit_lower(jit_func, *args, **kwargs):
 
 @api_boundary
 def jit_eval_shape(jit_func, *args, **kwargs):
-  p, _ = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
+  p, _ = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs,
+                       core.trace_state_clean())
   out_shardings = [None if isinstance(s, UnspecifiedValue) else s
                    for s in p.params['out_shardings']]
   out = []
@@ -526,6 +529,7 @@ def _infer_params_impl(
     dbg: core.DebugInfo,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
+    top_level_jit: bool,
     in_avals: tuple[core.AbstractValue, ...] | None,
 ) -> tuple[PjitParams, list[Any]]:
   util.test_event("pjit._infer_params_impl", fun)
@@ -604,7 +608,7 @@ def _infer_params_impl(
   attr_token = _attr_cache_index(flat_fun, in_type)
 
   jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
-      flat_fun, in_type, attr_token, IgnoreKey(ji.inline))
+      flat_fun, in_type, attr_token, IgnoreKey(ji.inline), top_level_jit)
 
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
@@ -671,22 +675,25 @@ def _infer_params_cached(
     signature: jax_jit.ArgumentSignature,
     in_avals: tuple[core.AbstractValue, ...],
     ctx_mesh: mesh_lib.Mesh | None,
+    top_level_jit: bool
 ) -> InferParamsCacheEntry:
   return InferParamsCacheEntry()
 
 
 def _infer_params(
-    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
+    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any],
+    top_level_jit: bool
   ) -> tuple[PjitParams, list[Any]]:
   if ji.use_resource_env:  # pjit
     phys_mesh = mesh_lib.thread_resources.env.physical_mesh
     with (_internal_use_concrete_mesh(phys_mesh),
           mesh_lib.use_abstract_mesh(phys_mesh.abstract_mesh)):
-      return _infer_params_internal(fun, ji, args, kwargs)
-  return _infer_params_internal(fun, ji, args, kwargs)
+      return _infer_params_internal(fun, ji, args, kwargs, top_level_jit)
+  return _infer_params_internal(fun, ji, args, kwargs, top_level_jit)
 
 def _infer_params_internal(
-    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
+    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any],
+    top_level_jit: bool
   ) -> tuple[PjitParams, list[Any]]:
   ctx_mesh = mesh_lib.get_concrete_mesh()
   dbg = debug_info(
@@ -697,18 +704,19 @@ def _infer_params_internal(
   any_boxes = any(isinstance(x, (Box, List)) for x in tree_leaves((args, kwargs)))
   if config.dynamic_shapes.value or any_boxes:  # don't use the cache
     p, args_flat = _infer_params_impl(fun, ji, ctx_mesh, dbg,
-                                      args, kwargs, in_avals=None)
+                                      args, kwargs, top_level_jit,
+                                      in_avals=None)
     return p, p.consts + args_flat
 
   signature, dynargs = jax_jit.parse_arguments(
       args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
       ji.static_argnames, tree_util.default_registry)
   avals = _infer_input_type(fun, dbg, dynargs)
-  entry = _infer_params_cached(fun, ji, signature, avals, ctx_mesh)
+  entry = _infer_params_cached(fun, ji, signature, avals, ctx_mesh, top_level_jit)
 
   if entry.pjit_params is None:
     p, args_flat = _infer_params_impl(
-        fun, ji, ctx_mesh, dbg, args, kwargs, in_avals=avals)
+        fun, ji, ctx_mesh, dbg, args, kwargs, top_level_jit, in_avals=avals)
     if p.attrs_tracked or p.box_data or p.params['jaxpr'].jaxpr.is_high:
       return p, p.consts + args_flat
     entry.pjit_params = p
@@ -1137,9 +1145,9 @@ def diff_tracing_cache_keys(
     different size for the explanation that is shown to the user.
   """
   (fun_transforms_k, fun_params_k, fun_in_type_k,
-   (arg_in_type_k, arg_attr_data_k, arg_inline_k), ctx_k) = k
+   (arg_in_type_k, arg_attr_data_k, arg_inline_k, arg_top_level_k), ctx_k) = k
   (fun_transforms_ok, fun_params_ok, fun_in_type_ok,
-   (arg_in_type_ok, arg_attr_data_ok, arg_inline_ok), ctx_ok) = oldk
+   (arg_in_type_ok, arg_attr_data_ok, arg_inline_ok, arg_top_level_ok), ctx_ok) = oldk
 
   diffs: list[tuple[str, int]] = []  # each difference with its size
   def unavailable(key_field: str, what_k, what_ok):
@@ -1313,6 +1321,8 @@ def diff_tracing_cache_keys(
     unavailable("arg_attr_data", arg_attr_data_k, arg_attr_data_ok)
   if arg_inline_k != arg_inline_ok:
     unavailable("arg_inline", arg_inline_k, arg_inline_ok)
+  if arg_top_level_k != arg_top_level_ok:
+    unavailable("arg_top_level", arg_top_level_k, arg_top_level_ok)
   if ctx_k != ctx_ok:
     assert len(ctx_k) == len(ctx_ok)
     idxs = [f"  [{i}]: now {c_k} and before {c_ok}"
@@ -1395,7 +1405,8 @@ def _create_pjit_jaxpr(
     fun: lu.WrappedFun,
     in_type: core.InputType | Sequence[core.AbstractValue],
     attr_data: int,
-    ignored_inline: IgnoreKey
+    ignored_inline: IgnoreKey,
+    top_level_jit: bool
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str, Any]]]]:
   util.test_event("create_pjit_jaxpr")
@@ -1420,7 +1431,8 @@ def _create_pjit_jaxpr(
 
   # TODO(mattjj,yashkatariya): if we take the 'true' path then we *must* fall
   # off the C++ dispatch fast path for correctness. Ensure that happens.
-  if any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in consts):
+  # TODO(necula): refactor the behavior specific to top_level_jit higher up the stack
+  if not top_level_jit or any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in consts):
     closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
     final_consts = consts
   else:

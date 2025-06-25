@@ -882,11 +882,10 @@ class DebugInfoTest(jtu.JaxTestCase):
         x, y,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=x,y, result_paths=result",
-            "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=result",
+            "traced_for=jit, fun=my_g, arg_names=,u,v, result_paths=result",
         ],
         expected_lowering_lines=[
             re.compile(r".*func.func public @main\(%arg0: tensor<8xf..> loc\(\"x\"\)\)"),
-            re.compile(r".*call @my_g\(%arg.\) : \(tensor<8xf..>\)"),
         ]
     )
 
@@ -1389,10 +1388,10 @@ class DebugInfoTest(jtu.JaxTestCase):
     if config.use_direct_linearize.value:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
-          "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
+          "traced_for=jit, fun=my_f, arg_names=,x,as_, result_paths=,",
+          "traced_for=jit, fun=my_f, arg_names=,,, result_paths=result[0],result[1]",
           "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
-          "traced_for=jit, fun=my_f, arg_names=as_,,, result_paths=result[0],result[1]",
           "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
@@ -1402,10 +1401,10 @@ class DebugInfoTest(jtu.JaxTestCase):
     else:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
-          "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=result[0],result[1]",
+          "traced_for=jit, fun=my_f, arg_names=,x,as_, result_paths=result[0],result[1]",
+          "traced_for=jit, fun=my_f, arg_names=,,,x,as_, result_paths=result[0],result[1]",
           "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
-          "traced_for=jit, fun=my_f, arg_names=,,x,as_, result_paths=result[0],result[1]",
           "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
           "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
