@@ -1049,6 +1049,8 @@ def dot_product_attention(
     is_causal: bool = False,
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
+    query_seq_offsets: ArrayLike | None = None,
+    key_value_seq_offsets: ArrayLike | None = None,
     local_window_size: int | tuple[int, int] | None = None,
     implementation: Literal['xla', 'cudnn'] | None = None) -> Array:
   r"""Scaled dot product attention function.
@@ -1099,6 +1101,10 @@ def dot_product_attention(
       :code:`(B)`
     key_value_seq_lengths: `int32` array of sequence lengths for key and value;
       shape :code:`(B)`
+    query_seq_offsets: `int32` array of sequence offsets for the query; shape
+      :code:`(B)`. Currently only supported on the 'cudnn' implementation.
+    key_value_seq_offsets: `int32` array of sequence offsets for the query;
+      shape :code:`(B)`. Currently only supported on the 'cudnn' implementation.
     local_window_size: Window sizes to make self attention to attend to each
       token's local window. If set, this specifies the (left_window_size,
       right_window_size) for each token. E.g., if local_window_size == (3, 2)
@@ -1131,6 +1137,10 @@ def dot_product_attention(
     query_seq_lengths = jnp.asarray(query_seq_lengths)
   if key_value_seq_lengths is not None:
     key_value_seq_lengths = jnp.asarray(key_value_seq_lengths)
+  if query_seq_offsets is not None:
+    query_seq_offsets = jnp.asarray(query_seq_offsets)
+  if key_value_seq_offsets is not None:
+    key_value_seq_offsets = jnp.asarray(key_value_seq_offsets)
   if isinstance(local_window_size, int):
     local_window_size = (local_window_size, local_window_size)
 
@@ -1155,6 +1165,10 @@ def dot_product_attention(
                          'query_seq_lengths')
   _check_shape_and_dtype(key_value_seq_lengths, [B], jnp.int32,
                          'key_value_seq_lengths')
+  _check_shape_and_dtype(query_seq_offsets, [B], jnp.int32,
+                         'query_seq_offsets')
+  _check_shape_and_dtype(key_value_seq_offsets, [B], jnp.int32,
+                         'key_value_seq_offsets')
   if query_arr.shape[-2] % K != 0:
     raise ValueError(f"The number of query heads must be a multiple of "
                      f"key/value heads, but got {query_arr.shape[-2]} vs {K}")
@@ -1203,7 +1217,8 @@ def dot_product_attention(
 
       out = cudnn_dot_product_attention(
           query_arr, key_arr, value_arr, bias, mask, query_seq_lengths,
-          key_value_seq_lengths, scale=scale_val, mask_type=mask_type,
+          key_value_seq_lengths, query_seq_offsets, key_value_seq_offsets,
+          scale=scale_val, mask_type=mask_type,
           sliding_window_length=sliding_window,
       )
     case None:
