@@ -164,3 +164,5 @@ class PartitionSpec:
     return self.update(partitions=out)
 
 PartitionSpec.__module__ = 'jax.sharding'
+
+P = PartitionSpec

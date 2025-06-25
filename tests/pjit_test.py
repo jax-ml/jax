@@ -5039,7 +5039,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_basic_mul(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
-    s = NamedSharding(mesh, P('x', 'y'))
+    s = NamedSharding(mesh, jax.P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
     def f(x):
@@ -5084,11 +5084,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_fully_replicated_array_mul(self, mesh):
     np_inp1 = np.arange(16).reshape(8, 2)
-    s = NamedSharding(mesh, P('x', 'y'))
+    s = NamedSharding(mesh, jax.P('x', 'y'))
     arr1 = jax.device_put(np_inp1, s)
 
     np_inp2 = np.arange(2).reshape(1, 2)
-    arr2 = jax.device_put(np_inp2, NamedSharding(mesh, P(None, None)))
+    arr2 = jax.device_put(np_inp2, NamedSharding(mesh, jax.P(None, None)))
 
     @jax.jit
     def f(x, y):
@@ -5101,11 +5101,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, (np_inp1 * np_inp2))
 
-    out = f(arr1, jax.device_put(np_inp1, NamedSharding(mesh, P(('x',), ('y',)))))
+    out = f(arr1, jax.device_put(
+        np_inp1, NamedSharding(mesh, jax.P(('x',), ('y',)))))
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, (np_inp1 * np_inp1))
 
-    out = f(arr1, jax.device_put(np_inp2, NamedSharding(mesh, P())))
+    out = f(arr1, jax.device_put(np_inp2, NamedSharding(mesh, jax.P())))
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, (np_inp1 * np_inp2))
 
@@ -5116,12 +5117,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         core.ShardingTypeError,
         "mul got incompatible shardings for broadcasting"):
-      g(arr1, jax.device_put(np_inp1, NamedSharding(mesh, P('y', 'x'))))
+      g(arr1, jax.device_put(np_inp1, NamedSharding(mesh, jax.P('y', 'x'))))
 
     with self.assertRaisesRegex(
         core.ShardingTypeError,
         "mul got incompatible shardings for broadcasting"):
-      g(arr1, jax.device_put(np_inp1, NamedSharding(mesh, P(('x', 'y')))))
+      g(arr1, jax.device_put(np_inp1, NamedSharding(mesh, jax.P(('x', 'y')))))
 
   @parameterized.named_parameters(
       ('x_y', P('x', None), P(None, 'y'), P('x', 'y'), None),

@@ -130,6 +130,7 @@ from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap
 from jax._src.sharding_impls import NamedSharding as NamedSharding
 from jax._src.sharding_impls import make_mesh as make_mesh
+from jax._src.partition_spec import P as P
 
 from jax._src.shard_map import shard_map as shard_map
 
