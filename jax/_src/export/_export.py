@@ -43,7 +43,7 @@ from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.lib.mlir.dialects import func as func_dialect, sdy
 from jax._src import mesh
 from jax._src import pjit
 from jax._src import sharding
@@ -693,8 +693,7 @@ def _export_lowered(
   # Shardy was used during lowering if we can find the Shardy mesh in the
   # module. Note that the mesh should have been lifted by the
   # `sdy-lift-inlined-meshes` pass in mlir.py.
-  shardy_enabled = _jax.sdy.lowered_with_shardy(
-      mlir.module_to_bytecode(mlir_module))
+  shardy_enabled = has_sdy_meshes_in_frontend_attrs(mlir_module)
 
   mlir_module_serialized = _module_to_bytecode(mlir_module)
 
@@ -1420,29 +1419,49 @@ def _call_exported_impl(*args, exported: Exported):
 
 call_exported_p.def_impl(_call_exported_impl)
 
+
+def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
+  if "mesh" not in symtab:
+    return mesh_lib.empty_abstract_mesh
+  mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)
+  axes = [sdy.MeshAxisAttr(a) for a in mesh_attr.axes]
+  if not axes:
+    return mesh_lib.empty_abstract_mesh
+  axes_sizes = tuple(a.size for a in axes)
+  axes_names = tuple(a.name for a in axes)
+  return mesh_lib.AbstractMesh(axes_sizes, axes_names)
+
+
+def has_sdy_meshes_in_frontend_attrs(submodule: ir.Module) -> bool:
+  if "mhlo.frontend_attributes" not in submodule.operation.attributes:
+    return False
+  frontend_attributes = submodule.operation.attributes[
+      "mhlo.frontend_attributes"
+  ]
+  return "xla.sdy.meshes" in frontend_attributes
+
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             exported: Exported):
   if exported.uses_global_constants:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
   submodule = ir.Module.parse(exported.mlir_module())
 
-  submodule_bc = mlir.module_to_bytecode(submodule)
-  shardy_enabled = _jax.sdy.lowered_with_shardy(submodule_bc)
+  shardy_enabled = has_sdy_meshes_in_frontend_attrs(submodule)
   if shardy_enabled:
-    submodule = ir.Module.parse(
-        _jax.sdy.sdy_round_trip_import_shardings(submodule_bc)
-    )
+    with submodule.context:
+      # TODO(b/422690222): remove this pass once the bug is fixed.
+      pipeline = passmanager.PassManager.parse(
+          'builtin.module(xla-sdy-round-trip-import-shardy-attrs)')
+      pipeline.run(submodule.operation)
 
   with submodule.context:
     pipeline = passmanager.PassManager.parse(
         'builtin.module(sdy-lift-inlined-meshes)')
     pipeline.run(submodule.operation)
-
   mesh = None
+  symtab = ir.SymbolTable(submodule.operation)
   if shardy_enabled:
-    sdy_mesh_axes = _jax.sdy.get_mesh(mlir.module_to_bytecode(submodule))
-    mesh = (mesh_lib.AbstractMesh(*list(zip(*sdy_mesh_axes))[::-1])
-            if sdy_mesh_axes else mesh_lib.empty_abstract_mesh)
+    mesh = get_mesh_from_symbol(symtab)
 
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.ShardingContext):
@@ -1482,7 +1501,6 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
         wrap_with_sharding(ctx, x, x_aval, x_sharding)
         for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings_hlo))
 
-  symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
   # is valid.

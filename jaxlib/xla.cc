@@ -52,7 +52,6 @@ limitations under the License.
 #include "jaxlib/ifrt_proxy.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
-#include "jaxlib/sdy.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/distributed/client.h"
@@ -604,7 +603,6 @@ NB_MODULE(_jax, m) {
   jax::BuildPjitSubmodule(m);
   BuildTracebackSubmodule(m);
   BuildMlirSubmodule(m);
-  BuildSdySubmodule(m);
   BuildCustomCallShardingPybindAPI(m);
   jax::BuildFfiSubmodule(m);
 #if defined(__linux__)
