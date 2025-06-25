@@ -184,17 +184,30 @@ class PyTransferServer {
     } else {
       auto tmp = xla::ValueOrThrow(
           AllocateAlignedMemory(xfer_size * max_num_parallel_copies));
+#if JAX_IFRT_VERSION_NUMBER >= 11
       SlabAllocator uallocator(xla::ValueOrThrow(MapPjrtMemory(
                                    pjrt_client, tmp->data(), tmp->size(), tmp)),
                                xfer_size);
+#else
+      SlabAllocator uallocator(xla::ValueOrThrow(MapPjrtMemory(
+                                   client, tmp->data(), tmp->size(), tmp)),
+                               xfer_size);
+#endif
       std::optional<SlabAllocator> pinned_allocator;
       if (supports_pinned_allocator) {
         auto tmp = xla::ValueOrThrow(
             AllocateNetworkPinnedMemory(xfer_size * max_num_parallel_copies));
+#if JAX_IFRT_VERSION_NUMBER >= 11
         pinned_allocator.emplace(
             xla::ValueOrThrow(
                 MapPjrtMemory(pjrt_client, tmp->data(), tmp->size(), tmp)),
             xfer_size);
+#else
+        pinned_allocator.emplace(
+            xla::ValueOrThrow(
+                MapPjrtMemory(client, tmp->data(), tmp->size(), tmp)),
+            xfer_size);
+#endif
       }
       factory = xla::ValueOrThrow(CreateSocketBulkTransportFactory(
           transport_addresses, pinned_allocator, uallocator));
@@ -202,9 +215,15 @@ class PyTransferServer {
 
     server_ = std::make_shared<SocketServer>();
 
+#if JAX_IFRT_VERSION_NUMBER >= 11
     TF_ASSIGN_OR_RETURN(
         auto mem, AllocateAndMapPjrtMemory(
                       pjrt_client, max_num_parallel_copies * xfer_size * 2));
+#else
+    TF_ASSIGN_OR_RETURN(
+        auto mem, AllocateAndMapPjrtMemory(
+                      client, max_num_parallel_copies * xfer_size * 2));
+#endif
     premapped_copier_ = std::make_shared<PremappedCopierState>(
         mem, max_num_parallel_copies, xfer_size);
     xfer_size_ = xfer_size;
