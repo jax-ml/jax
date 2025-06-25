@@ -848,14 +848,31 @@ if not MYPY:
 else:
   LoweringRule = Any
 
-_lowerings: dict[core.Primitive, LoweringRule] = {}
-_platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRule]]
+@dataclasses.dataclass(frozen=True)
+class LoweringRuleEntry:
+  rule: LoweringRule
+  inline: bool
+
+_lowerings: dict[core.Primitive, LoweringRuleEntry] = {}
+_platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRuleEntry]]
 _platform_specific_lowerings = collections.defaultdict(dict)
 
 def register_lowering(prim: core.Primitive, rule: LoweringRule,
-                      platform: str | None = None):
+                      platform: str | None = None, inline: bool = True) -> None:
+  """Registers a lowering rule for a primitive.
+
+  Args:
+    prim: The primitive to register the rule for.
+    rule: The lowering rule to register.
+    platform: The platform to register the rule for. If None, this is a common
+      rule applicable to all platforms. Platform-specific rules take precedence
+      over common rules.
+    inline: Whether to emit the lowering inline. If False, the lowering will be
+      emitted in a separate function, called by similar instances of the
+      lowering.
+  """
   if platform is None:
-    _lowerings[prim] = rule
+    _lowerings[prim] = LoweringRuleEntry(rule, inline)
   else:
     if not xb.is_known_platform(platform):
       known_platforms = sorted(xb.known_platforms())
@@ -868,8 +885,7 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     # TODO(phawkins): fix up users to specify either "cuda" or "rocm" and remove
     # this expansion.
     for p in xb.expand_platform_alias(platform):
-      _platform_specific_lowerings[p][prim] = rule
-  return rule
+      _platform_specific_lowerings[p][prim] = LoweringRuleEntry(rule, inline)
 
 
 def flatten_ir_values(xs: Iterable[IrValues]) -> list[ir.Value]:
@@ -2019,10 +2035,12 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         # First the platform-specific rules
         for p in _platforms_for_eqn_ctx(eqn.ctx) or ctx.platforms:
           if eqn.primitive in _platform_specific_lowerings[p]:
-            platform_rules[p] = _platform_specific_lowerings[p][eqn.primitive]
+            r = _platform_specific_lowerings[p][eqn.primitive]
+            platform_rules[p] = r.rule if r.inline else cache_lowering(r.rule)
         # Now the default rule
         if eqn.primitive in _lowerings:
-          default_rule = _lowerings[eqn.primitive]
+          r = _lowerings[eqn.primitive]
+          default_rule = r.rule if r.inline else cache_lowering(r.rule)
 
       effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
       tokens_in = tokens.subset(effects)
@@ -2789,6 +2807,8 @@ def cache_lowering(f):
   and parameters, a new call to the original function will be added, without
   emitting a new function. We allow for different lowering for the same
   primitive for different platforms in the same module.
+
+  Users should not call this, instead pass inline=False to register_lowering.
   """
   @functools.wraps(f)
   def cached_lowering(ctx, *args, **params):

@@ -2849,8 +2849,9 @@ def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
   def register_lowering(fn, platform=None):
     mlir.register_lowering(
         reducer_p,
-        mlir.cache_lowering(mlir.lower_fun(fn, multiple_results=False)),
-        platform=platform)
+        mlir.lower_fun(fn, multiple_results=False),
+        platform=platform,
+        inline=False)
 
   # For jax-metal, until reduce_window legalization is better supported.
   register_lowering(partial(associative_scan, reduce_fn), 'METAL')

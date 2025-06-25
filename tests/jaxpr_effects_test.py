@@ -294,7 +294,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def tearDown(self):
     super().tearDown()
     dispatch.runtime_tokens.clear()
-    mlir.register_lowering(effect_p, self._old_lowering)
+    mlir._lowerings[effect_p] = self._old_lowering
 
   def test_can_lower_lowerable_effect(self):
     @jax.jit

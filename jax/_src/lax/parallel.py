@@ -2327,7 +2327,8 @@ psum_invariant_p.multiple_results = True
 psum_invariant_p.def_impl(psum_p.impl)
 psum_invariant_p.def_effectful_abstract_eval(
     partial(_psum_invariant_abstract_eval, psum_invariant_p.name))
-mlir.register_lowering(psum_invariant_p, mlir._lowerings[psum_p])
+mlir.register_lowering(psum_invariant_p,
+                       partial(_allreduce_lowering, lax.add_p, lax.reduce_sum))
 batching.fancy_primitive_batchers[psum_invariant_p] = partial(
     _batched_reduction_collective, psum_invariant_p,
     lambda v, axis_size: axis_size * v)

@@ -4520,8 +4520,6 @@ def _integer_pow_lowering(ctx, x, *, y):
     out = hlo.divide(mlir.full_like_aval(ctx, 1, ctx.avals_in[0]), x)
   else:
     lowering = mlir.lower_fun(_integer_pow, multiple_results=False)
-    if builtins.abs(y) >= 3:
-      lowering = mlir.cache_lowering(lowering)
     out, = lowering(ctx, x, y=y)
   aval_out, = ctx.avals_out
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
@@ -7837,14 +7835,23 @@ argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
 batching.defreducer(argmax_p, _get_max_identity)
 ad.defjvp_zero(argmax_p)
 
-mlir.register_lowering(argmin_p, mlir.cache_lowering(
-    mlir.lower_fun(partial(_compute_argminmax, lt, _get_min_identity),
-                   multiple_results=False)))
+mlir.register_lowering(
+    argmin_p,
+    mlir.lower_fun(
+        partial(_compute_argminmax, lt, _get_min_identity),
+        multiple_results=False,
+    ),
+    inline=False,
+)
 
-mlir.register_lowering(argmax_p, mlir.cache_lowering(
-    mlir.lower_fun(partial(_compute_argminmax, gt, _get_max_identity),
-                   multiple_results=False)))
-
+mlir.register_lowering(
+    argmax_p,
+    mlir.lower_fun(
+        partial(_compute_argminmax, gt, _get_max_identity),
+        multiple_results=False,
+    ),
+    inline=False,
+)
 
 def _reduce_logical_shape_rule(operand, *, axes):
   if operand.dtype != np.bool_ and not np.issubdtype(operand.dtype, np.integer):
