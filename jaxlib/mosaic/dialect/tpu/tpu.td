@@ -837,6 +837,41 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let hasVerifier = 1;
 }
 
+// tpu.enqueue_indirect_dma copies data between HBM and VMEM using indirect
+// HBM offsets.
+//
+// If the source is in HBM and the target is in VMEM, performs a gather from the
+// source (operand) at the offsets to the target (gather result).
+// If the source is in VMEM and the target is in HBM, performs a scatter of the
+// source (updates) to the target (operand) at the offsets.
+//
+// source          : Memref to copy from.
+// target          : Memref to copy to.
+// offsets         : Gather or scatter offsets.
+// semaphore       : Semaphore to wait on; receive semaphore for scatter, send semaphore for gather.
+// add             : If true, add source values to target values. Otherwise, overwrite.
+// offset_filter   : If set, don't write values at offsets whose value is equal to
+//                   the filter value.
+def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma"> {
+  let arguments = (ins
+    AnyMemRef:$source,
+    AnyMemRef:$target,
+    AnyTypeOf<[MemRefOf<[I32]>, VectorOfRankAndType<[1], [I32]>]>:$offsets,
+    MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
+    DefaultValuedAttr<BoolAttr, "false">:$add,
+    OptionalAttr<I32Attr>:$offset_filter
+  );
+  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    LogicalResult verifyGather(MemRefType operand_ty,
+                               ArrayRef<int64_t> offsets_shape,
+                               MemRefType result_ty);
+    LogicalResult verifyScatter(MemRefType updates_ty,
+                                ArrayRef<int64_t> offsets_shape,
+                                MemRefType operand_ty);
+  }];
+}
+
 def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   let arguments = (ins
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,

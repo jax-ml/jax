@@ -16,11 +16,15 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
@@ -1199,6 +1203,180 @@ LogicalResult EnqueueDMAOp::verify() {
         "Not implemented: non-zero priority is not supported for remote DMA");
   }
   return success();
+}
+
+LogicalResult EnqueueIndirectDMAOp::verifyGather(
+    MemRefType operand_ty, ArrayRef<int64_t> offsets_shape,
+    MemRefType result_ty) {
+  // We've already thrown an error if the target is not VMEM. so this is just a
+  // sanity check.
+  CHECK(HasMemorySpace(result_ty, MemorySpace::kVmem));
+  uint64_t offsets_rank = offsets_shape.size();
+  // Slice [o0, .., on] out of [o0, .., on, s0, .., sm].
+  ArrayRef<int64_t> result_offset_dims =
+      result_ty.getShape().take_front(offsets_rank);
+  // Slice [s0, .., sm] out of [o0, .., on, s0, .., sm].
+  ArrayRef<int64_t> result_slice_dims =
+      result_ty.getShape().drop_front(offsets_rank);
+  // Slice [s0, .., sm] out of [z0, .., zn, s0, .., sm].
+  ArrayRef<int64_t> operand_slice_dims =
+      operand_ty.getShape().drop_front(offsets_rank);
+  uint64_t slice_rank = operand_slice_dims.size();
+
+  const std::string result_shape_str =
+      absl::StrJoin(result_ty.getShape(), ", ");
+
+  // Make sure that the output shape is such that there is one output slice per
+  // offset.
+  // offsets shape : [o0, .., on]
+  // result shape  : [o'0, .., o'n, s0, .., sm]
+  // [o0, .., on] == [o'0, .., o'n]
+  if (!absl::c_equal(offsets_shape, result_offset_dims)) {
+    return emitOpError("Offsets shape (")
+           << absl::StrJoin(offsets_shape, ", ")
+           << ") must match the majormost dimensions of the target (gather "
+              "result) shape ("
+           << result_shape_str << ")";
+  }
+
+  // At each offset, we are copying an ND slice of data. Make sure that the
+  // slice shape is the same in the operand and the output for the gather, and
+  // in the updates and the operand for the scatter.
+  // Operand shape : [z0, .., zn, s0, .., sm]
+  // Result shape :  [o0, .., on, s'0, .., s'm]
+  // [s0, .., sm] == [s'0, .., s'm]
+  if (!absl::c_equal(operand_slice_dims, result_slice_dims)) {
+    const std::string plural = slice_rank == 1 ? "" : "s";
+    return emitOpError(absl::StrFormat(
+        "%d minormost dimension%s of the source (gather operand) shape (%s) "
+        "must match the minormost dimension%s of the target (gather result) "
+        "shape (%s)",
+        slice_rank, plural, absl::StrJoin(operand_ty.getShape(), ", "), plural,
+        result_shape_str));
+  }
+  return success();
+}
+
+LogicalResult EnqueueIndirectDMAOp::verifyScatter(
+    MemRefType updates_ty, ArrayRef<int64_t> offsets_shape,
+    MemRefType operand_ty) {
+  // We've already thrown an error if the source is not VMEM. so this is just a
+  // sanity check.
+  CHECK(HasMemorySpace(updates_ty, MemorySpace::kVmem));
+  uint64_t offsets_rank = offsets_shape.size();
+  // Slice [o0, .., on] out of [o0, .., on, s0, .., sm].
+  ArrayRef<int64_t> updates_offset_dims =
+      updates_ty.getShape().take_front(offsets_rank);
+  // Slice [s0, .., sm] out of [o0, .., on, s0, .., sm].
+  ArrayRef<int64_t> updates_slice_dims =
+      updates_ty.getShape().drop_front(offsets_rank);
+  // Slice [s0, .., sm] out of [z0, .., zn, s0, .., sm].
+  ArrayRef<int64_t> operand_slice_dims =
+      operand_ty.getShape().drop_front(offsets_rank);
+  uint64_t slice_rank = operand_slice_dims.size();
+
+  const std::string updates_shape_str =
+      absl::StrJoin(updates_ty.getShape(), ", ");
+
+  // Make sure that there is one slice of updates per offset
+  // offsets shape : [o0, .., on]
+  // updates shape : [o'0, .., o'n, s0, .., sm]
+  // [o0, .., on] == [o'0, .., o'n]
+  if (!absl::c_equal(offsets_shape, updates_offset_dims)) {
+    return emitOpError("Offsets shape (")
+           << absl::StrJoin(offsets_shape, ", ")
+           << ") must match the majormost dimensions of the source "
+              "(scatter updates) shape ("
+           << updates_shape_str << ")";
+  }
+
+  // At each offset, we are copying an ND slice of data. Make sure that the
+  // slice shape is the same in the operand and the output for the gather, and
+  // in the updates and the operand for the scatter.
+  // Updates shape : [o0, .., on, s0, .., sm]
+  // Operand shape : [z0, .., zn, s'0, .., s'm]
+  // [s0, .., sm] == [s'0, .., s'm]
+  if (!absl::c_equal(operand_slice_dims, updates_slice_dims)) {
+    const std::string plural = slice_rank == 1 ? "" : "s";
+    return emitOpError(absl::StrFormat(
+        "%d minormost dimension%s of the source (scatter updates) shape (%s) "
+        "must match the minormost dimension%s of the target (scatter operand) "
+        "shape (%s)",
+        slice_rank, plural, updates_shape_str, plural,
+        absl::StrJoin(operand_ty.getShape(), ", ")));
+  }
+  return success();
+}
+
+namespace {
+bool HasHbmOrVmemSharedMemorySpace(MemRefType ty) {
+  return HasMemorySpace(ty, MemorySpace::kHbm) ||
+         HasMemorySpace(ty, MemorySpace::kVmemShared);
+}
+}  // namespace
+
+LogicalResult EnqueueIndirectDMAOp::verify() {
+  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core)) {
+    return issuing_core;
+  }
+  if (issuing_core != CoreType::kScVectorSubcore) {
+    return emitOpError(
+        "Enqueue indirect DMA is supported only on the SC vector subcore");
+  }
+
+
+  const MemRefType source_ty = getMemRefType(getSource());
+  const MemRefType target_ty = getMemRefType(getTarget());
+
+  if (source_ty.getElementType() != target_ty.getElementType()) {
+    return emitOpError("Source and target element type mismatch");
+  }
+
+  bool is_gather = false;
+  bool is_scatter = false;
+  if (HasHbmOrVmemSharedMemorySpace(source_ty) &&
+      HasMemorySpace(target_ty, MemorySpace::kVmem)) {
+    is_gather = true;
+  } else if (HasMemorySpace(source_ty, MemorySpace::kVmem) &&
+             HasHbmOrVmemSharedMemorySpace(target_ty)) {
+    is_scatter = true;
+  } else {
+    return emitOpError(
+        "The transfer must be between HBM and VMEM, or between VMEM_SHARED and "
+        "VMEM");
+  }
+  CHECK(is_gather != is_scatter);
+
+  const Value offsets = getOffsets();
+  ArrayRef<int64_t> offsets_shape;
+  if (auto offsets_ty = dyn_cast<MemRefType>(offsets.getType());
+      offsets_ty != nullptr) {
+    if (!HasMemorySpace(offsets_ty, MemorySpace::kVmem)) {
+      return emitOpError("Offsets memref must be in VMEM");
+    }
+    offsets_shape = offsets_ty.getShape();
+  } else if (auto offsets_ty = dyn_cast<VectorType>(offsets.getType());
+             offsets_ty != nullptr) {
+    offsets_shape = offsets_ty.getShape();
+  } else {
+    return emitOpError("Offsets must be a memref or vector type");
+  }
+
+  if (MemRefType sem_ty = getMemRefType(getSemaphore());
+      sem_ty.getRank() != 0) {
+    return emitOpError("Semaphore must be rank 0");
+  }
+
+  if (is_gather) {
+    return verifyGather(/*operand_ty=*/source_ty,
+                        /*offsets_shape=*/offsets_shape,
+                        /*result_ty=*/target_ty);
+  }
+  CHECK(is_scatter);
+  return verifyScatter(/*updates_ty=*/source_ty,
+                       /*offsets_shape=*/offsets_shape,
+                       /*operand_ty=*/target_ty);
 }
 
 // TODO(b/395630795): Remove after 2025-08-10.
