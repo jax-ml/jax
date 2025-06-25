@@ -179,8 +179,7 @@ are described briefly in the sections below.
 
 JAX's CI builds rely on XLA, but use different versions depending on the type of
 build. To ensure stability and reproducibility, nightly and release builds use a
-pinned XLA version specified in the JAX
-[workspace](https://github.com/jax-ml/jax/blob/34a2f0ca4a8f8a26d9a056f8785f412bd156dc23/third_party/xla/workspace.bzl#L24-L25).
+pinned XLA version specified in the JAX workspace defined in [revision.bzl](https://github.com/jax-ml/jax/blob/b8b8c308a88060a3db63fa69c5cb7d8d7f1c5078/third_party/xla/revision.bzl#L23-L24).
 
 However, to keep JAX compatible with the latest XLA developments, presubmit and
 postsubmit builds utilize the most recent XLA version. This is done by

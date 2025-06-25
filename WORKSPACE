@@ -1,4 +1,4 @@
-# The XLA commit is determined by third_party/xla/workspace.bzl.
+# The XLA commit is determined by third_party/xla/revision.bzl.
 load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
 
 jax_xla_workspace()
