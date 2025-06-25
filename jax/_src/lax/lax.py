@@ -1788,8 +1788,8 @@ def _trace_composite_to_jaxpr(fun: Callable,
         "closes over a value that is involved in a JAX transformation. "
         "Any values that aren't explicitly known at compile time must be "
         "explicitly passed as arguments to the composite.")
-  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-  return closed_jaxpr, out_tree
+  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
+  return closed_jaxpr, consts, out_tree
 
 
 def composite(
@@ -1872,7 +1872,7 @@ def composite(
           "explicitly passed as arguments to the composite."
           "\n\nNote: If you are passing jax arrays as attributes, use numpy "
           "arrays instead.")
-    closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
+    closed_jaxpr, consts, out_tree = _trace_composite_to_jaxpr(
         partial(decomposition, **kwargs), in_tree, in_avals, name, debug_info
     )
     attributes = []
@@ -1882,9 +1882,9 @@ def composite(
           HashableArray(v) if isinstance(v, np.ndarray) else v for v in leaves
       )
       attributes.append((k, leaves, treedef))
-    flat_args = core.standard_insert_pvary(*flat_args)
+    flat_consts_and_args = core.standard_insert_pvary(*consts, *flat_args)
     out_flat = composite_p.bind(
-        *flat_args,
+        *flat_consts_and_args,
         name=name,
         attributes=tuple(attributes),
         version=version,

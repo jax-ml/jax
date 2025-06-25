@@ -2072,7 +2072,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_consts, arg_names=x, result_paths=result",
-            "traced_for=composite, fun=my_consts, arg_names=x, result_paths=result",
+            "traced_for=composite, fun=my_consts, arg_names=,x, result_paths=result",
         ],
         expected_tracer_debug_infos=[
             "traced_for=composite, fun=my_consts, arg_names=x, from x"])

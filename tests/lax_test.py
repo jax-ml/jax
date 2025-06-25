@@ -4807,7 +4807,7 @@ class CompositeTest(jtu.JaxTestCase):
     # The constant must not appear as an extra input argument to the composite.
     mlir_module = jax.jit(partial(my_consts, scale=scale)).lower(x).as_text()
     self.assertIn(
-        "@my.consts(%arg0: tensor<3xf32>) -> tensor<3xf32>", mlir_module
+        "@my.consts(%arg0: tensor<3xf32>, %arg1: tensor<3xf32>) -> tensor<3xf32>", mlir_module
     )
 
   def test_composite_with_tracer_consts(self):
