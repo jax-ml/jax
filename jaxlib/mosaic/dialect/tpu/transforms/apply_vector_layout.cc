@@ -7097,30 +7097,31 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> retileWithScratch(
 
 FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
     RewriteContext &ctx, OpBuilder &builder, const Location loc, VectorType vty,
-    const VectorLayout src, xla::Array<Value> vregs,
+    VectorLayout src, xla::Array<Value> vregs,
     const std::array<int64_t, 2> dst_tiling,
     const LayoutOffsets dst_offsets_hint) {
   bool has_enough_scratch = ctx.max_sublanes_in_scratch >=
                             ctx.target_shape[0] * (ctx.target_shape[0] + 1);
   const auto &target_shape = ctx.target_shape;
-  const std::array<int64_t, 2> src_tiling = src.tiling();
-  if (src_tiling == dst_tiling) {
+  if (src.tiling() == dst_tiling) {
     return std::pair(src, std::move(vregs));
   }
-  const LayoutOffsets src_offsets =
-      src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
-  const std::array<int64_t, 2> tiled_ishape =
-      src.getImplicitTiledDims(vty.getShape(), 1);
-  const int packing = src.packing();
-  const int8_t bitwidth = src.bitwidth();
-  const std::array<int64_t, 2> dst_vreg_slice =
-      VectorLayout::vregSlice(ctx.target_shape, bitwidth, dst_tiling);
   // TODO(tlongeri): Using canonical vs non-canonical offsets can change the
   // value of try_replicate rows, and it breaks some tests. It doesn't make
   // sense that we have different behavior for equivalent layouts, though. We
   // need better logic for picking the relayout strategy.
   const bool try_replicate_rows =
       src.offsets()[0].has_value() && !dst_offsets_hint[0].has_value();
+  // Canonicalize offsets
+  src = VectorLayout(src.bitwidth(),
+                     src.getCanonicalOffsets(vty.getShape(), ctx.target_shape),
+                     src.tiling(), src.implicit_dim());
+  const std::array<int64_t, 2> tiled_ishape =
+      src.getImplicitTiledDims(vty.getShape(), 1);
+  const int packing = src.packing();
+  const int8_t bitwidth = src.bitwidth();
+  const std::array<int64_t, 2> dst_vreg_slice =
+      VectorLayout::vregSlice(ctx.target_shape, bitwidth, dst_tiling);
 
   // Fully replicated offsets are handled efficiently elsewhere (in relayout)
   CHECK(src.offsets()[0].has_value() || src.offsets()[1].has_value());
@@ -7182,10 +7183,11 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   // This retiling is one-to-many vregs.
   // TODO(tlongeri): Large-to-small retiling with replicated minor is analogous
   // to this.
-  if (src_tiling[1] == ctx.target_shape[1] &&
+  if (src.tiling()[1] == ctx.target_shape[1] &&
       dst_tiling[1] == ctx.target_shape[1] &&
-      dst_tiling[0] % src_tiling[0] == 0 &&
-      (!src_offsets[0].has_value() || (packing == 1 && tiled_ishape[0] == 1)) &&
+      dst_tiling[0] % src.tiling()[0] == 0 &&
+      (!src.offsets()[0].has_value() ||
+       (packing == 1 && tiled_ishape[0] == 1)) &&
       // This relayout relies on gathers, which are cheap on newer generations,
       // so we always use it for them.
       // TODO(tlongeri): Once we have it, probably also prefer the
@@ -7211,9 +7213,9 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       const int64_t dst_col_idx = *(dst_idx.end() - 1);
       const int64_t base_dst_tile_idx = dst_col_idx * dst_tiles_per_vreg;
       const int64_t base_src_tile_idx =
-          src_offsets[1].has_value()
+          src.offsets()[1].has_value()
               ? base_dst_tile_idx +
-                    (*src_offsets[1] - *dst_minor_offset) / src_tiling[1]
+                    (*src.offsets()[1] - *dst_minor_offset) / src.tiling()[1]
               : 0;
       // The following should be true from our choice of minor offset:
       DCHECK_EQ(base_src_tile_idx % dst_tiles_per_vreg, 0);
@@ -7229,7 +7231,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
         // degenerates to a broadcast when dst_tiling is native, which can
         // be cheaper than an arbitrary gather (for some hardware gens).
         const int64_t src_sublane_in_tile =
-            src_offsets[0].value_or(0) / packing;
+            src.offsets()[0].value_or(0) / packing;
         const int64_t src_sublane =
             src_tile_idx_in_vreg * src_sublanes_per_tile + src_sublane_in_tile;
         gather_pattern.push_back(src_sublane);
@@ -7246,19 +7248,17 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   }
   // (8,128) <-> (8 * packing,128) tiling change for packed type.
   if (ctx.hardware_generation >= 4 && bitwidth < 32 && 32 % bitwidth == 0 &&
-      ((src_tiling == ctx.target_shape &&
+      ((src.tiling() == ctx.target_shape &&
         dst_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * packing,
                                              ctx.target_shape[1]}) ||
        (dst_tiling == ctx.target_shape &&
-        src_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * packing,
-                                             ctx.target_shape[1]}))) {
+        src.tiling() == std::array<int64_t, 2>{ctx.target_shape[0] * packing,
+                                               ctx.target_shape[1]}))) {
     // Note: for int4, retiling with scratch is always faster.
     if (bitwidth != 4 || !has_enough_scratch) {
-      FAILUREOR_ASSIGN_OR_RETURN(auto unpacked_layout_and_vregs,
+      FAILUREOR_ASSIGN_OR_RETURN(std::tie(src, vregs),
                                  unpack_vregs(src, vregs, ctx.target_shape));
-      auto &[unpacked_layout, unpacked_vregs] = unpacked_layout_and_vregs;
-      return pack_vregs(unpacked_layout, unpacked_vregs, dst_tiling,
-                        dst_offsets_hint);
+      return pack_vregs(src, vregs, dst_tiling, dst_offsets_hint);
     }
   }
   // Handle retiling from (1, 128 * packing) to (packing, 128) for
@@ -7273,23 +7273,22 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   // match corresponding elements without shifting. It's just that
   // the tiles are not adjacent (no contiguous vreg slice).
   if (bitwidth < 32 && 32 % bitwidth == 0 &&
-      src_tiling == std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
+      src.tiling() ==
+          std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
       dst_tiling == std::array<int64_t, 2>{packing, ctx.target_shape[1]}) {
     FAILUREOR_ASSIGN_OR_RETURN(
-        auto unpacked_layout_and_vregs,
+        std::tie(src, vregs),
         unpack_vregs(src, vregs, {1, ctx.target_shape[1]}));
-    auto &[unpacked_layout, unpacked_vregs] = unpacked_layout_and_vregs;
-    return pack_vregs(unpacked_layout, unpacked_vregs, dst_tiling,
-                      dst_offsets_hint);
+    return pack_vregs(src, vregs, dst_tiling, dst_offsets_hint);
   }
-  if (src_tiling[1] == target_shape[1] && dst_tiling[1] == target_shape[1]) {
+  if (src.tiling()[1] == target_shape[1] && dst_tiling[1] == target_shape[1]) {
     // All clauses in the and expression are based on performance benchmarking.
     bool use_alu = !has_enough_scratch ||
-                   (ctx.hardware_generation >= 5 && src_tiling[0] != packing &&
-                    dst_tiling[0] != packing);
+                   (ctx.hardware_generation >= 5 &&
+                    src.tiling()[0] != packing && dst_tiling[0] != packing);
 
     if (use_alu) {
-      if (src_tiling[0] > dst_tiling[0] &&
+      if (src.tiling()[0] > dst_tiling[0] &&
           // retileToReducedSublanes does not support offset changes
           src.offsets()[0].value_or(0) < dst_vreg_slice[0] &&
           src.offsets()[1].value_or(0) < dst_vreg_slice[1]) {
