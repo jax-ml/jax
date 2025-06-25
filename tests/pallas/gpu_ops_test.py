@@ -229,6 +229,24 @@ class FusedAttentionTest(PallasBaseTest):
       head_dim=(32, 64, 72, 128,),
       block_sizes=(
           (
+              ("block_q", 64),
+              ("block_k", 64),
+              ("block_q_dkv", 16),
+              ("block_kv_dkv", 16),
+              ("block_q_dq", 16),
+              ("block_kv_dq", 64),
+          ),
+          (
+              ("block_q", 32),
+              ("block_k", 32),
+              ("block_q_dkv", 32),
+              ("block_kv_dkv", 32),
+              ("block_q_dq", 32),
+              ("block_kv_dq", 32),
+          ),
+      )
+      if jtu.is_device_rocm else (
+          (
               ("block_q", 128),
               ("block_k", 128),
               ("block_q_dkv", 32),
