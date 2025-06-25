@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
@@ -632,21 +633,34 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     // Python types (np_int64, np_float64, np_complex128).
     (*p)[dtypes.np_bool.ptr()] = HandleNumpyScalar<bool>;
     (*p)[dtypes.np_int4.ptr()] = HandleNumpyScalar<xla::s4>;
+#if JAX_IFRT_VERSION_NUMBER >= 11
+    (*p)[dtypes.np_int2.ptr()] = HandleNumpyScalar<xla::s2>;
+#else
     if (dtypes.np_int2.has_value()) {
       (*p)[dtypes.np_int2->ptr()] = HandleNumpyScalar<xla::s2>;
     }
+#endif
     (*p)[dtypes.np_int8.ptr()] = HandleNumpyScalar<int8_t>;
     (*p)[dtypes.np_int16.ptr()] = HandleNumpyScalar<int16_t>;
     (*p)[dtypes.np_int32.ptr()] = HandleNumpyScalar<int32_t>;
     (*p)[dtypes.np_int64.ptr()] = HandleNumpyScalar<int64_t, int32_t>;
+#if JAX_IFRT_VERSION_NUMBER >= 11
+    (*p)[dtypes.np_uint2.ptr()] = HandleNumpyScalar<xla::u2>;
+#else
     if (dtypes.np_uint2.has_value()) {
       (*p)[dtypes.np_uint2->ptr()] = HandleNumpyScalar<xla::u2>;
     }
+#endif
     (*p)[dtypes.np_uint4.ptr()] = HandleNumpyScalar<xla::u4>;
     (*p)[dtypes.np_uint8.ptr()] = HandleNumpyScalar<uint8_t>;
     (*p)[dtypes.np_uint16.ptr()] = HandleNumpyScalar<uint16_t>;
     (*p)[dtypes.np_uint32.ptr()] = HandleNumpyScalar<uint32_t>;
     (*p)[dtypes.np_uint64.ptr()] = HandleNumpyScalar<uint64_t, uint32_t>;
+#if JAX_IFRT_VERSION_NUMBER >= 11
+    (*p)[dtypes.np_float4_e2m1fn.ptr()] = HandleNumpyScalar<tsl::float4_e2m1fn>;
+    (*p)[dtypes.np_float8_e3m4.ptr()] = HandleNumpyScalar<tsl::float8_e3m4>;
+    (*p)[dtypes.np_float8_e4m3.ptr()] = HandleNumpyScalar<tsl::float8_e4m3>;
+#else
     if (dtypes.np_float4_e2m1fn.has_value()) {
       (*p)[dtypes.np_float4_e2m1fn->ptr()] =
           HandleNumpyScalar<tsl::float4_e2m1fn>;
@@ -657,6 +671,7 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     if (dtypes.np_float8_e4m3.has_value()) {
       (*p)[dtypes.np_float8_e4m3->ptr()] = HandleNumpyScalar<tsl::float8_e4m3>;
     }
+#endif
     (*p)[dtypes.np_float8_e4m3fn.ptr()] = HandleNumpyScalar<tsl::float8_e4m3fn>;
     (*p)[dtypes.np_float8_e4m3b11fnuz.ptr()] =
         HandleNumpyScalar<tsl::float8_e4m3b11fnuz>;
@@ -665,10 +680,15 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
         HandleNumpyScalar<tsl::float8_e4m3fnuz>;
     (*p)[dtypes.np_float8_e5m2fnuz.ptr()] =
         HandleNumpyScalar<tsl::float8_e5m2fnuz>;
+#if JAX_IFRT_VERSION_NUMBER >= 11
+    (*p)[dtypes.np_float8_e8m0fnu.ptr()] =
+        HandleNumpyScalar<tsl::float8_e8m0fnu>;
+#else
     if (dtypes.np_float8_e8m0fnu.has_value()) {
       (*p)[dtypes.np_float8_e8m0fnu->ptr()] =
           HandleNumpyScalar<tsl::float8_e8m0fnu>;
     }
+#endif
     (*p)[dtypes.np_bfloat16.ptr()] = HandleNumpyScalar<bfloat16>;
     (*p)[dtypes.np_float16.ptr()] = HandleNumpyScalar<half>;
     (*p)[dtypes.np_float32.ptr()] = HandleNumpyScalar<float>;
@@ -855,6 +875,11 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         (*p)[dtypes.np_uint16.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint32.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint64.ptr()] = np_uint64_handler;
+#if JAX_IFRT_VERSION_NUMBER >= 11
+        (*p)[dtypes.np_float4_e2m1fn.ptr()] = numpy_array_handler;
+        (*p)[dtypes.np_float8_e3m4.ptr()] = numpy_array_handler;
+        (*p)[dtypes.np_float8_e4m3.ptr()] = numpy_array_handler;
+#else
         // TODO(upwind): Explore if we can remove std::optional for these types
         // in xla/python/types.h and xla/python/types.cc
         if (dtypes.np_float4_e2m1fn.has_value()) {
@@ -866,14 +891,19 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         if (dtypes.np_float8_e4m3.has_value()) {
           (*p)[dtypes.np_float8_e4m3->ptr()] = numpy_array_handler;
         }
+#endif
         (*p)[dtypes.np_float8_e4m3fn.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3b11fnuz.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3fnuz.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e5m2.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e5m2fnuz.ptr()] = numpy_array_handler;
+#if JAX_IFRT_VERSION_NUMBER >= 11
+        (*p)[dtypes.np_float8_e8m0fnu.ptr()] = numpy_array_handler;
+#else
         if (dtypes.np_float8_e8m0fnu.has_value()) {
           (*p)[dtypes.np_float8_e8m0fnu->ptr()] = numpy_array_handler;
         }
+#endif
         (*p)[dtypes.np_float16.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_bfloat16.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float32.ptr()] = numpy_array_handler;
