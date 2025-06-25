@@ -836,16 +836,22 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let hasVerifier = 1;
 }
 
-def TPU_WaitDMA2Op : TPU_Op<"wait_dma2"> {
+def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   let arguments = (ins
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
     AnyMemRef:$src,
-    AnyMemRef:$dst
+    AnyMemRef:$dst,
+    Optional<I32>:$device_id, // For remote DMAs
+    Optional<I32>:$core_id // For megacore
   );
   let hasVerifier = 1;
+  // A backward-compatible builder that sets `device_id` and `core_id` to nullptr.
+  let builders = [
+    OpBuilder<(ins "Value":$semaphore, "Value":$src, "Value":$dst)>
+  ];
 }
 
-// TODO(mvoz): Remove once a month has passed. b/395630795
+// TODO(b/395630795): Remove after 2025-08-10.
 def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
   let arguments = (ins
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,

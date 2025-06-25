@@ -128,19 +128,19 @@ mlir::LogicalResult RunSerde(
         op->getLoc(), *new_name, op->getResultTypes(), op->getOperands(),
         op->getAttrs(), nullptr, op->getSuccessors(), op->getRegions());
     // Downgrade the op to the target version, if needed.
+    bool downgrade_failed = false;
     if (serialize && version != serialize_version) {
       if (const auto rule = downgrade_rules.find(op->getName().getStringRef());
           rule != downgrade_rules.end()) {
-        if (rule->second(new_op, serialize_version).failed()) {
-          return mlir::WalkResult::interrupt();
-        }
+        downgrade_failed = rule->second(new_op, serialize_version).failed();
       }
     }
     op->getBlock()->getOperations().insertAfter(mlir::Block::iterator(op),
                                                 new_op);
     op->replaceAllUsesWith(new_op->getResults());
     op->erase();
-    return mlir::WalkResult::advance();
+    return downgrade_failed ? mlir::WalkResult::interrupt()
+                            : mlir::WalkResult::advance();
   });
   return result.wasInterrupted() ? mlir::failure() : mlir::success();
 }

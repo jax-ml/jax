@@ -3662,10 +3662,17 @@ def _dma_start_lowering_rule(
 @register_lowering_rule(tpu_primitives.dma_wait_p)
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: primitives.DeviceIdType):
-  del device_id_type
-  (src, src_transforms, dst, transforms, sem, sem_transforms, _, _, _) = (
-      tree_util.tree_unflatten(tree, args)
-  )
+  (
+      src,
+      src_transforms,
+      dst,
+      transforms,
+      sem,
+      sem_transforms,
+      _,
+      _,
+      device_id,
+  ) = tree_util.tree_unflatten(tree, args)
   (src_aval, _, dst_aval, _, sem_aval, _, _, _, _) = tree_util.tree_unflatten(
       tree, ctx.avals_in
   )
@@ -3674,19 +3681,14 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   src, _ = _transform_ref(src, src_aval.dtype, src_aval.shape, src_transforms)
   dst, _ = _transform_ref(dst, dst_aval.dtype, ref_block_shape, transforms)
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
-  if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 2, 12):
-    # TODO(mvoz): Remove once six months have passed. b/395630795
-    if hasattr(src_aval, "memory_space"):
-      src_memory_space = _memory_space_to_mosaic_attribute(src_aval.memory_space)
-      smem_space = ir.Attribute.parse("#tpu.memory_space<smem>")
-      src_is_smem = src_memory_space == smem_space
-      wait_ref = src if src_is_smem else dst
-    else:
-      wait_ref = dst
-    # Legacy instruction backwards compatibility.
-    tpu.wait_dma(sem, wait_ref)
-  else:
+
+  if device_id is not None:
+    device_id = _device_id_to_logical(ctx, device_id, device_id_type)
+
+  if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 7, 27):
     tpu.wait_dma2(sem, src, dst)
+  else:
+    tpu.wait_dma2(sem, src, dst, device_id=device_id)
   return []
 
 

@@ -40,7 +40,7 @@ constexpr StringRef kMangledDialect = "stable_mosaic.";
 constexpr StringRef kVersionAttrName = "stable_mosaic.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in tpu_custom_call.py in a month!
-constexpr int kVersion = 6;
+constexpr int kVersion = 7;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -150,6 +150,41 @@ LogicalResult iota_downgrade(Operation* op, int version) {
   return success();
 }
 
+LogicalResult wait_dma2_upgrade(Operation* op, int version) {
+  if (version < 7) {
+    if (op->getNumOperands() != 3) {
+      return op->emitError("Unexpected operand count in tpu.wait_dma2: ")
+             << op->getNumOperands();
+    }
+    op->setAttr(
+      OpTrait::AttrSizedOperandSegments<
+          EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+      mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 1, 0, 0}));
+  }
+  return success();
+}
+
+LogicalResult wait_dma2_downgrade(Operation* op, int version) {
+  if (version < 3) {
+    return op->emitError("Downgrade to version ") << version << " unsupported";
+  }
+  if (version < 7) {
+    auto operands = op->getAttrOfType<mlir::DenseI32ArrayAttr>(
+      OpTrait::AttrSizedOperandSegments<
+          EnqueueDMAOp>::getOperandSegmentSizeAttr());
+    if (!operands || operands.size() != 5) {
+      return op->emitError("Missing or invalid AttrSizedOperandSegments");
+    }
+    if (operands[3] || operands[4]) {
+      return op->emitError("Downgrade to version ")
+             << version << " impossible: device_id and/or core_id is set";
+    }
+    op->removeAttr(OpTrait::AttrSizedOperandSegments<
+                   EnqueueDMAOp>::getOperandSegmentSizeAttr());
+  }
+  return success();
+}
+
 LogicalResult semaphore_signal_upgrade(Operation* op, int version) {
   // Added AttrSizedOperandSegments and core_id in version 2.
   if (version < 2) {
@@ -224,6 +259,7 @@ LogicalResult vector_multi_dim_reduce_downgrade(Operation* op, int version) {
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {EnqueueDMAOp::getOperationName(), enqueue_dma_upgrade},
+      {WaitDMA2Op::getOperationName(), wait_dma2_upgrade},
       {DynamicGatherOp::getOperationName(), dynamic_gather_upgrade},
       {IotaOp::getOperationName(), iota_upgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_upgrade},
@@ -236,6 +272,7 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
 const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {EnqueueDMAOp::getOperationName(), enqueue_dma_downgrade},
+      {WaitDMA2Op::getOperationName(), wait_dma2_downgrade},
       {DynamicGatherOp::getOperationName(), dynamic_gather_downgrade},
       {IotaOp::getOperationName(), iota_downgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_downgrade},

@@ -1201,7 +1201,7 @@ LogicalResult EnqueueDMAOp::verify() {
   return success();
 }
 
-// TODO(mvoz): Remove once a month has passed. b/395630795
+// TODO(b/395630795): Remove after 2025-08-10.
 LogicalResult WaitDMAOp::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
@@ -1209,6 +1209,12 @@ LogicalResult WaitDMAOp::verify() {
     return failure();
   }
   return success();
+}
+
+void WaitDMA2Op::build(OpBuilder &builder, OperationState &state,
+                       Value semaphore, Value src, Value dst) {
+  build(builder, state, semaphore, src, dst, /*device_id=*/nullptr,
+        /*core_id=*/nullptr);
 }
 
 LogicalResult WaitDMA2Op::verify() {
