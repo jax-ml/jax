@@ -2490,6 +2490,57 @@ class PallasCallSm100ATest(PallasSm100ATest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(x_result, x + 1)
 
+  def test_tmem_ref_aliasing(self):
+    self.skip_if_wg_semantics()
+    swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(128),
+    )
+    @functools.partial(
+        self.kernel,
+        out_shape=jnp.zeros((128, 128), jnp.float32),
+        scratch_shapes=[
+            plgpu.RefUnion(
+              [plgpu.TMEM((128, 32), jnp.float32),
+               plgpu.TMEM((128, 32), jnp.float32)],
+              plgpu.TMEM((128, 64), jnp.float32),
+            ),
+            plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
+            plgpu.Barrier(),
+        ],
+        num_threads=1,
+        thread_name="x",
+    )
+    def kernel(x_ref, y_ref, aliased_ref, smem_ref, barrier_ref):
+      tmem_128x32a, tmem_128x32b, tmem_128x64 = aliased_ref
+      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      # Test tmem_128x32 a and b
+      x_val = plgpu.load(smem_ref.at[:, 0:32], (), layout=plgpu.Layout.TCGEN05)
+      tmem_128x32a[...] = x_val + 1
+      plgpu.commit_tmem()
+      smem_ref[:, 0:32] = tmem_128x32a[...]
+
+      x_val = plgpu.load(smem_ref.at[:, 32:64], (), layout=plgpu.Layout.TCGEN05)
+      tmem_128x32b[...] = x_val + 1
+      plgpu.commit_tmem()
+      smem_ref[:, 32:64] = tmem_128x32b[...]
+
+      # Test tmem_128x64
+      x_val = plgpu.load(smem_ref.at[:, 64:128], (), layout=plgpu.Layout.TCGEN05)
+      tmem_128x64[...] = x_val + 1
+      plgpu.commit_tmem()
+      smem_ref[:, 64:128] = tmem_128x64[...]
+
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem_ref, y_ref)
+      plgpu.wait_smem_to_gmem(0)
+    x = jax.random.uniform(
+        jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
+    x_result = jax.block_until_ready(kernel(x))
+    np.testing.assert_array_equal(x_result, x + 1)
+
   def test_tmem_column_slicing(self):
     self.skip_if_wg_semantics()
     swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
@@ -2891,6 +2942,82 @@ class PallasCallSm100ATest(PallasSm100ATest):
     x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
     y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
     result_128, result_64 = f(x.T, y)
+    np.testing.assert_allclose(result_128, x @ y, rtol=1e-3)
+    np.testing.assert_allclose(result_64, x[:, :64] @ y[:64, :], rtol=1e-3)
+
+  @parameterized.parameters(
+      (128, jnp.float16)
+  )
+  def test_matmul_with_tmem_aliasing(self, swizzle, dtype):
+    # Perform a 128x128 @ 128x128 matmul and a 128x64 @ 64x128 matmul
+    # using aliased Refs pointing to the same TMEM address.
+    self.skip_if_wg_semantics()
+    shape = (128, 128)
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+
+    def kernel(a_gmem, b_gmem, out_gmem128, out_gmem64,
+        a_smem, b_smem, out_smem, tma_barrier, mma_barrier, aliased_refs):
+      plgpu.copy_gmem_to_smem(a_gmem, a_smem, tma_barrier)
+      plgpu.barrier_wait(tma_barrier)
+      plgpu.copy_gmem_to_smem(b_gmem, b_smem, tma_barrier)
+      plgpu.barrier_wait(tma_barrier)
+      acc_128, lhs_128, lhs_64, acc_64, _ = aliased_refs
+
+      # Do 128x128 @ 128x128 matmul
+      lhs_128[...] = plgpu.load(a_smem, (), layout=plgpu.Layout.TCGEN05)
+      plgpu.commit_tmem()
+      plgpu.tcgen05_mma(acc_128,
+                        lhs_128,
+                        b_smem,
+                        mma_barrier,
+                        accumulate=False)
+      plgpu.barrier_wait(mma_barrier)
+      out_smem[...] = acc_128[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(out_smem, out_gmem128)
+      plgpu.wait_smem_to_gmem(0)
+
+      # Do 128x64 @ 64x128 matmul
+      lhs_64[...] = plgpu.load(a_smem.at[:, 0:64], (),
+                               layout=plgpu.Layout.TCGEN05)
+      plgpu.commit_tmem()
+      plgpu.tcgen05_mma(acc_64,
+                        lhs_64,
+                        b_smem.at[0:64, :],
+                        mma_barrier,
+                        accumulate=False)
+      plgpu.barrier_wait(mma_barrier)
+      out_smem[...] = acc_64[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(out_smem, out_gmem64)
+      plgpu.wait_smem_to_gmem(0)
+
+    f = plgpu.kernel(
+        kernel,
+        out_shape=[jax.ShapeDtypeStruct(shape, dtype),
+                   jax.ShapeDtypeStruct(shape, dtype)],
+        scratch_shapes=[
+          plgpu.SMEM(shape, dtype, transforms=transforms),  # a_smem
+          plgpu.SMEM(shape, dtype, transforms=transforms),  # b_smem
+          plgpu.SMEM(shape, dtype, transforms=transforms),  # out_smem
+          plgpu.Barrier(),  # tma_barrier
+          plgpu.Barrier(for_tensor_core=True),  # mma_barrier
+          plgpu.RefUnion(   # aliased_refs
+            [plgpu.TMEM((128, 128), jnp.float32), # acc
+              plgpu.TMEM((128, 128), dtype, packed=True)],  # lhs
+            [plgpu.TMEM((128, 64), dtype, packed=True),  # lhs
+             plgpu.TMEM((128, 128), jnp.float32)],  # acc
+             plgpu.TMEM((128, 128), jnp.float32)  # unused
+          ),
+        ],
+    )
+    x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
+    y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
+    result_128, result_64 = f(x, y)
     np.testing.assert_allclose(result_128, x @ y, rtol=1e-3)
     np.testing.assert_allclose(result_64, x[:, :64] @ y[:64, :], rtol=1e-3)
 

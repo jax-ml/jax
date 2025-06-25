@@ -1276,7 +1276,8 @@ def tcgen05_mma(acc: _Ref,
         f"LHS and RHS have incompatible shapes. LHS: {a.shape}. RHS: {b.shape}.")
 
   if isinstance(acc, pallas_core.TransformedRef):
-    acc_transforms_leaves, acc_transforms_tree = jax.tree.flatten(acc.transforms)
+    acc_transforms_leaves, acc_transforms_tree = jax.tree.flatten(
+        acc.transforms)
     acc = acc.ref
   else:
     acc_transforms_leaves, acc_transforms_tree = [], None
@@ -1404,14 +1405,17 @@ def _tcgen05_mma_lowering(
           gpu_core.TransposeRef((1, 0)),
       ):
         lhs_transpose = True
+      case () if isinstance(a_ref, tcgen05.TMEMRef):
+        lhs_tiling = None  # type: ignore
       case _:
         raise NotImplementedError(
             f"Unsupported transforms: {a_transforms}."
         )
-    swizzle_elems = lhs_swizzle // a_dtype.itemsize
-    if lhs_tiling != (8, swizzle_elems):
-      raise ValueError("MMA lhs tiling does not fit swizzle. "
-                       f"{lhs_tiling=} expected={(8, swizzle_elems)}")
+    if not isinstance(a_ref, tcgen05.TMEMRef):
+      swizzle_elems = lhs_swizzle // a_dtype.itemsize  # type: ignore
+      if lhs_tiling != (8, swizzle_elems):
+        raise ValueError("MMA lhs tiling does not fit swizzle. "
+                        f"{lhs_tiling=} expected={(8, swizzle_elems)}")
 
   assert b_transforms_tree is not None
   b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
