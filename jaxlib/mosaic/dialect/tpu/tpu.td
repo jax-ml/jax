@@ -903,6 +903,9 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
     Optional<I32>:$offset_filter,
     DefaultValuedAttr<BoolAttr, "false">:$add
   );
+  let assemblyFormat = [{
+    $source `to` $target `at` $offsets `,` `semaphore` $semaphore (`offset_filter` $offset_filter^)? attr-dict `:` type($source) `,` type($target) `,` type($offsets) `,` type($semaphore)
+    }];
   let hasVerifier = 1;
   let extraClassDeclaration = extraBaseClassDeclaration # [{
     LogicalResult verifyGather(MemRefType operand_ty,
@@ -954,6 +957,9 @@ def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma">, IndirectDMAOp {
     AnyMemRef:$src,
     AnyMemRef:$dst
   );
+  let assemblyFormat = [{
+    $src `to` $dst `,` `semaphore` $semaphore attr-dict `:` type($src) `,` type($dst) `,` type($semaphore)
+    }];
   let hasVerifier = 1;
   let extraClassDeclaration = extraBaseClassDeclaration;
 }
