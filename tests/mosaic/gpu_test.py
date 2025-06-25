@@ -1470,6 +1470,109 @@ class TCGen05Test(TestCase):
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
 
   @parameterized.product(
+      in_jax_dtype=(jnp.float8_e5m2, jnp.float8_e4m3fn),
+      m=(128,),  # TODO(apaszke): 256
+      n=(128,),  # TODO(apaszke): 128, 256, 192, other non-power-of-2
+  )
+  def test_mma_block_scaled(self, m, n, in_jax_dtype):
+    out_jax_dtype = jnp.float32
+    scale_jax_dtype = jnp.int32
+    swizzle = 128
+    k_steps = 1
+    if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
+      self.skipTest("Only f16 input is supported for f16 output.")
+
+    in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
+    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
+    k = swizzle_elems * k_steps
+    lhs_tiling = rhs_tiling = (8, swizzle_elems)
+
+    def kernel(ctx, lhs, rhs, out, scratch):
+      lhs_smem, rhs_smem, barriers, acc, lhs_scale, rhs_scale = scratch
+      ctx.async_copy(
+          src_ref=lhs,
+          dst_ref=lhs_smem,
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(lhs_tiling),
+          barrier=barriers[0],
+      )
+      ctx.async_copy(
+          src_ref=rhs,
+          dst_ref=rhs_smem,
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(rhs_tiling),
+          barrier=barriers[1],
+      )
+      barriers[0].wait()
+      barriers[1].wait()
+      tcgen05.commit_tmem()
+      # The scales are an e8m0 format with a bias of 127. To compute the real
+      # value, take the uint8 value of each byte, subtract 127, and raise 2 to
+      # the integer power. So e.g. 127 represents 1, 126 represents 1/2, and
+      # 128 represents 2.
+      a_v = 126 | 127 << 8 | 128 << 16 | 129 << 24  # 1/2, 1, 2, 4
+      a_scale_value = c(a_v, ir.IntegerType.get_signless(32))
+      lhs_scale.store(
+          fa.FragmentedArray.splat(
+              a_scale_value,
+              lhs_scale.shape,
+              layout=tcgen05.TMEM_NATIVE_LAYOUT,
+              is_signed=False,
+          )
+      )
+      b_v = 128 | 126 << 8 | 127 << 16 | 129 << 24  # 2, 1/2, 1, 4
+      b_scale_value = c(b_v, ir.IntegerType.get_signless(32))
+      rhs_scale.store(
+          fa.FragmentedArray.splat(
+              b_scale_value,
+              rhs_scale.shape,
+              layout=tcgen05.TMEM_NATIVE_LAYOUT,
+              is_signed=False,
+          )
+      )
+      tcgen05.commit_tmem()
+      with mgpu.single_thread():
+        tcgen05.mma(
+            acc,
+            lhs_smem,
+            rhs_smem,
+            a_swizzle=swizzle,
+            b_swizzle=swizzle,
+            a_scale=lhs_scale,
+            b_scale=rhs_scale,
+            accumulate=False,
+        )
+        tcgen05.commit_arrive(barriers[2])
+      barriers[2].wait(for_tensor_core=True)
+      acc.load().store_untiled(out, optimized=False)
+
+    x_shape = (m, k)
+    x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
+    y_shape = (k, n)
+    y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
+        jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
+        mgpu.TMABarrier(3),
+        mgpu.TMEM((128, n), out_jax_dtype),  # Accumulator
+        mgpu.TMEM((128, 4), scale_jax_dtype),  # A scale
+        mgpu.TMEM((128, 4), scale_jax_dtype),  # B scale
+    ]
+    z = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
+    )(x, y)
+    x32, y32 = x.astype(np.float32), y.astype(np.float32)
+    a_scales = np.asarray([1/2, 1, 2, 4], dtype=np.float32)
+    a_scales = np.repeat(a_scales, 32)
+    b_scales = np.asarray([2, 1/2, 1, 4], dtype=np.float32)
+    b_scales = np.repeat(b_scales, 32)
+    ref = (x32 * a_scales) @ (y32 * b_scales[:, None])
+    atol = 2e-2 if out_jax_dtype == jnp.float16 else 2e-5
+    rtol = 8e-4 if out_jax_dtype == jnp.float16 else 1e-7
+    np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
+
+  @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16,),
