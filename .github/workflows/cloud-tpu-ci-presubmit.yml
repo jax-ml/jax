@@ -69,12 +69,16 @@ jobs:
           $JAXCI_PYTHON -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
       - name: Run Bazel Tests
         run: |
+          git clone --depth=1 https://github.com/openxla/xla.git $(pwd)/xla
+          export JAXCI_XLA_GIT_DIR=$(pwd)/xla
+
           SRCDIR=$(pwd)
           # Run bazel test, room for improvement by either using prebuilt jaxlib, using a cache, or using an RBE instance
           # Test envs must be passed in due to not having access to the TPU metadata information
           bazel test \
             --config=ci_linux_x86_64 \
             --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft \
+            --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
             --@rules_python//python/config_settings:py_freethreaded='yes' \
             --run_under $SRCDIR/build/parallel_accelerator_execute.sh \
             --test_env=JAX_ACCELERATOR_COUNT=8 \
@@ -103,7 +107,6 @@ jobs:
             --test_env=TPU_TOPOLOGY_ALT="$TPU_TOPOLOGY_WRAP" \
             --test_env=VBAR_CONTROL_SERVICE_URL="$VBAR_CONTROL_SERVICE_URL" \
             -- //tests:tpu_tests
-
             # Copy tpu logs to tranisent bucket
             ./ci/copy_logs.sh
   run-pytest-tpu:

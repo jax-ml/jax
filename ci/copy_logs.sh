@@ -25,10 +25,7 @@ if [ ! -f "WORKSPACE" ] && [ ! -f "WORKSPACE.bazel" ]; then
     exit 1
 fi
 
-
-# --- Main Logic ---
-
-echo "🚀 Starting Bazel test log upload to GCS..."
+echo "Starting Bazel test log upload to GCS..."
 echo "Destination Bucket: $GCS_BUCKET"
 
 # Get the path to the bazel-out directory. We use XDG_CACHE_HOME if set as it doesn't require starting bazel and is much quicker
