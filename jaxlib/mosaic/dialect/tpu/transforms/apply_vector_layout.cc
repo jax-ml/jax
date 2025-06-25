@@ -805,14 +805,13 @@ struct PackUnpackSpec {
 
 // Get the spec describing the packing/unpacking operation.
 // See comments in PackUnpackSpec for more info.
-// The op parameter is purely for error reporting.
 // Note: Mismatched replication is forbidden. To drop replication, materialize
 // the offsets before or after passing the layouts to getPackUnpackSpec.
 // - For pack, it is more efficient to materialize them *before* packing, as it
 //   allows skipping "don't care" parts.
 // - For unpack, it is more efficient to materialize them *after* unpacking, as
 //   it allows reusing the same unpacked parts.
-FailureOr<PackUnpackSpec> getPackUnpackSpec(RewriteContext &ctx, Operation &op,
+FailureOr<PackUnpackSpec> getPackUnpackSpec(RewriteContext &ctx, Location loc,
                                             const VectorLayout &unpacked_layout,
                                             const VectorLayout &packed_layout) {
   const std::array<int64_t, 2> unpacked_vreg_slice =
@@ -824,8 +823,8 @@ FailureOr<PackUnpackSpec> getPackUnpackSpec(RewriteContext &ctx, Operation &op,
   const int unpacked_sublanes_per_tile =
       unpacked_layout.sublanesPerTile(ctx.target_shape);
   if (unpacked_layout.implicit_dim() != packed_layout.implicit_dim()) {
-    return op.emitOpError(
-        "Not implemented: Trunc/ext changes implicit dimension");
+    return emitError(loc,
+                     "Not implemented: Trunc/ext changes implicit dimension");
   }
   for (const auto &[unpacked_offset, packed_offset, unpacked_slice_size] :
        llvm::zip_equal(unpacked_offsets, packed_offsets, unpacked_vreg_slice)) {
@@ -833,16 +832,16 @@ FailureOr<PackUnpackSpec> getPackUnpackSpec(RewriteContext &ctx, Operation &op,
       // Replicated to replicated is okay
     } else if (unpacked_offset.has_value() && packed_offset.has_value()) {
       if (*unpacked_offset != *packed_offset % unpacked_slice_size) {
-        return op.emitOpError("Not implemented: Misaligned offsets");
+        return emitError(loc, "Not implemented: Misaligned offsets");
       }
     } else {
-      return op.emitOpError("Not implemented: Mismatched replication");
+      return emitError(loc, "Not implemented: Mismatched replication");
     }
   }
   if (packed_vreg_slice[0] % unpacked_vreg_slice[0] != 0 ||
       packed_vreg_slice[1] % unpacked_vreg_slice[1] != 0) {
     // The packed vreg slice should be a union of whole unpacked vreg slices
-    return op.emitOpError("Not implemented: Unsupported tiling change");
+    return emitError(loc, "Not implemented: Unsupported tiling change");
   }
   // How many rows and columns of unpacked vregs we are packing into one packed
   // vreg:
@@ -870,7 +869,8 @@ FailureOr<PackUnpackSpec> getPackUnpackSpec(RewriteContext &ctx, Operation &op,
     } else if (unpacked_sublanes_per_tile == ctx.target_shape[0]) {
       row_pack_format = PackFormat::kCompressed;
     } else {
-      return op.emitOpError(
+      return emitError(
+          loc,
           "Not implemented: Tiling change requires interleaving tiles that are "
           "not one sublane or one full vreg");
     }
@@ -891,8 +891,8 @@ FailureOr<PackUnpackSpec> getPackUnpackSpec(RewriteContext &ctx, Operation &op,
     // This could be handled, in some cases, by using interleaved packing across
     // vreg columns, but we never use tilings like this. An example where we
     // could use interleaved packing is (8, 128) f32 -> (8, 256) bf16.
-    return op.emitOpError(
-        "Not implemented: Truncating to increasing minor tile size");
+    return emitError(
+        loc, "Not implemented: Truncating to increasing minor tile size");
   }
   // The format for packing *across* multiple columns in the vreg array
   // (different minor index):
@@ -901,7 +901,8 @@ FailureOr<PackUnpackSpec> getPackUnpackSpec(RewriteContext &ctx, Operation &op,
   if (vreg_rows != 1 && vreg_cols != 1 && row_pack_format != col_pack_format) {
     // TODO(b/384274392): We can alternate interleaved and compressed packing
     //                    but how should we expose it in tpu.pack_subelements?
-    return op.emitOpError(
+    return emitError(
+        loc,
         "Not implemented: Tiling change requires mixed compressed and "
         "interleaved packing");
   }
@@ -919,22 +920,21 @@ FailureOr<PackUnpackSpec> getPackUnpackSpec(RewriteContext &ctx, Operation &op,
                         pack_format};
 }
 
-template <typename OpTy>
-FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
-                                              OpBuilder &builder, OpTy op,
-                                              const VectorLayout &layout_in,
-                                              const VectorLayout &layout_out) {
-  const auto result_ty = cast<VectorType>(op.getResult().getType());
-  auto source = cast<TypedValue<VectorType>>(op.getIn());
+FailureOr<xla::Array<Value>> unpackVregs(RewriteContext &ctx,
+                                         OpBuilder &builder, Location loc,
+                                         const xla::Array<Value> &input_vregs,
+                                         VectorType input_ty,
+                                         VectorType result_ty,
+                                         const VectorLayout &layout_in,
+                                         const VectorLayout &layout_out) {
+  CHECK(input_ty.getShape() == result_ty.getShape());
+  CHECK(input_vregs.dimensions() == layout_in.tileArrayImplicitShape(
+                                        input_ty.getShape(), ctx.target_shape));
   auto output_vregs_shape =
       layout_out.tileArrayImplicitShape(result_ty.getShape(), ctx.target_shape);
   FAILUREOR_ASSIGN_OR_RETURN(
-      xla::Array<Value> input_vregs,
-      disassemble(builder, layout_in, source, ctx.target_shape,
-                  /*use_implicit_shape=*/true));
-  FAILUREOR_ASSIGN_OR_RETURN(
       const PackUnpackSpec spec,
-      getPackUnpackSpec(ctx, *op, /*unpacked_layout=*/layout_out,
+      getPackUnpackSpec(ctx, loc, /*unpacked_layout=*/layout_out,
                         /*packed_layout=*/layout_in));
   const auto &[vreg_rows, vreg_cols, row_vreg_offset, col_vreg_offset,
                pack_format] = spec;
@@ -954,11 +954,34 @@ FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
     // The vreg_part is computed under the assumption that vregs are packed
     // across rows first and then columns.
     const int64_t vreg_part = col % vreg_cols * vreg_rows + row % vreg_rows;
-    *v = builder.create<UnpackSubelementsOp>(op.getLoc(), res_vreg_ty,
-                                             input_vregs(input_idxs), vreg_part,
-                                             pack_format);
+    *v = builder.create<UnpackSubelementsOp>(
+        loc, res_vreg_ty, input_vregs(input_idxs), vreg_part, pack_format);
   });
   return output_vregs;
+}
+
+template <typename OpTy>
+FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
+                                              OpBuilder &builder, OpTy op,
+                                              const VectorLayout &layout_in,
+                                              const VectorLayout &layout_out) {
+  auto operand = cast<TypedValue<VectorType>>(op.getOperand());
+  auto result_ty = cast<VectorType>(op.getType());
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> input_vregs,
+      disassemble(builder, layout_in, operand, ctx.target_shape,
+                  /*use_implicit_shape=*/true));
+  ScopedDiagnosticHandler handler(op.getContext(), [op](Diagnostic &diag) {
+    // Follows behavior of Operation::emitError()
+    if (op->getContext()->shouldPrintOpOnDiagnostic()) {
+      diag.attachNote(op->getLoc())
+          .append("see current operation: ")
+          .appendOp(*op, OpPrintingFlags().printGenericOpForm());
+    }
+    return failure();
+  });
+  return unpackVregs(ctx, builder, op.getLoc(), input_vregs, operand.getType(),
+                     result_ty, layout_in, layout_out);
 }
 
 LogicalResult arith_extf_rule(RewriteContext &ctx, Operation &op,
@@ -1057,24 +1080,23 @@ LogicalResult arith_extui_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
-template <typename OpTy>
-LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
-                                 const VectorLayout &layout_in,
-                                 const VectorLayout &layout_out) {
-  ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
-  auto source = cast<TypedValue<VectorType>>(op.getOperand());
-  auto result_ty = cast<VectorType>(op.getResult().getType());
+FailureOr<xla::Array<Value>> packVregs(RewriteContext &ctx, OpBuilder &builder,
+                                       Location loc,
+                                       const xla::Array<Value> &input_vregs,
+                                       VectorType input_ty,
+                                       VectorType result_ty,
+                                       const VectorLayout &layout_in,
+                                       const VectorLayout &layout_out) {
+  CHECK(input_ty.getShape() == result_ty.getShape());
+  CHECK(input_vregs.dimensions() == layout_in.tileArrayImplicitShape(
+                                        input_ty.getShape(), ctx.target_shape));
   auto output_vregs_shape =
       layout_out.tileArrayImplicitShape(result_ty.getShape(), ctx.target_shape);
-  FAILUREOR_ASSIGN_OR_RETURN(
-      xla::Array<Value> input_vregs,
-      disassemble(builder, layout_in, source, ctx.target_shape,
-                  /*use_implicit_shape=*/true));
   xla::Array<Value> output_vregs(output_vregs_shape);
 
   FAILUREOR_ASSIGN_OR_RETURN(
       const PackUnpackSpec spec,
-      getPackUnpackSpec(ctx, *op, /*unpacked_layout=*/layout_in,
+      getPackUnpackSpec(ctx, loc, /*unpacked_layout=*/layout_in,
                         /*packed_layout=*/layout_out));
   const auto &[vreg_rows, vreg_cols, row_vreg_offset, col_vreg_offset,
                pack_format] = spec;
@@ -1126,8 +1148,36 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
         }
       }
     }
-    *v = builder.create<PackSubelementsOp>(res_vreg_ty, parts, pack_format);
+    *v =
+        builder.create<PackSubelementsOp>(loc, res_vreg_ty, parts, pack_format);
   });
+  return output_vregs;
+}
+
+template <typename OpTy>
+LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
+                                 const VectorLayout &layout_in,
+                                 const VectorLayout &layout_out) {
+  OpBuilder builder(op);
+  auto operand = cast<TypedValue<VectorType>>(op.getOperand());
+  auto result_ty = cast<VectorType>(op.getResult().getType());
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> input_vregs,
+      disassemble(builder, layout_in, operand, ctx.target_shape,
+                  /*use_implicit_shape=*/true));
+  ScopedDiagnosticHandler handler(op.getContext(), [op](Diagnostic &diag) {
+    // Follows behavior of Operation::emitError()
+    if (op->getContext()->shouldPrintOpOnDiagnostic()) {
+      diag.attachNote(op->getLoc())
+          .append("see current operation: ")
+          .appendOp(*op, OpPrintingFlags().printGenericOpForm());
+    }
+    return failure();
+  });
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> output_vregs,
+      packVregs(ctx, builder, op.getLoc(), input_vregs, operand.getType(),
+                result_ty, layout_in, layout_out));
   op.replaceAllUsesWith(assemble(builder, result_ty, layout_out,
                                  std::move(output_vregs), ctx.target_shape,
                                  /*use_implicit_shape=*/true)
@@ -7075,6 +7125,58 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   // Fully replicated offsets are handled efficiently elsewhere (in relayout)
   CHECK(src.offsets()[0].has_value() || src.offsets()[1].has_value());
 
+  auto unpacked_elem_ty = vty.getElementType().isSignlessInteger()
+                              ? static_cast<Type>(builder.getI32Type())
+                              : static_cast<Type>(builder.getF32Type());
+  auto unpacked_vty = VectorType::get(vty.getShape(), unpacked_elem_ty);
+  auto unpack_vregs = [&](const VectorLayout packed_layout,
+                          const xla::Array<Value> &packed_vregs,
+                          const std::array<int64_t, 2> unpacked_tiling)
+      -> FailureOr<std::pair<VectorLayout, xla::Array<Value>>> {
+    const std::array<int64_t, 2> unpacked_vreg_slice =
+        VectorLayout::vregSlice(ctx.target_shape, 32, unpacked_tiling);
+    LayoutOffsets unpacked_offsets;
+    for (int i : {0, 1}) {
+      if (packed_layout.offsets()[i]) {
+        unpacked_offsets[i] =
+            *packed_layout.offsets()[i] % unpacked_vreg_slice[i];
+      }
+    }
+    const VectorLayout unpacked_layout(32, unpacked_offsets, unpacked_tiling,
+                                       packed_layout.implicit_dim());
+    FAILUREOR_ASSIGN_OR_RETURN(
+        xla::Array<Value> unpacked_vregs,
+        unpackVregs(ctx, builder, loc, packed_vregs,
+                    /*input_ty=*/vty, /*result_ty=*/unpacked_vty, packed_layout,
+                    unpacked_layout));
+    return std::pair(unpacked_layout, std::move(unpacked_vregs));
+  };
+  auto pack_vregs = [&](const VectorLayout unpacked_layout,
+                        const xla::Array<Value> &unpacked_vregs,
+                        const std::array<int64_t, 2> packed_tiling,
+                        const LayoutOffsets offset_hints)
+      -> FailureOr<std::pair<VectorLayout, xla::Array<Value>>> {
+    const std::array<int64_t, 2> unpacked_vreg_slice =
+        unpacked_layout.vregSlice(ctx.target_shape);
+    LayoutOffsets packed_offsets;
+    for (int i : {0, 1}) {
+      // Pick the offset hint if it aligned modulo the vreg slice.
+      if (offset_hints[i] && unpacked_layout.offsets()[i] &&
+          *offset_hints[i] % unpacked_vreg_slice[i] ==
+              *unpacked_layout.offsets()[i]) {
+        packed_offsets[i] = *offset_hints[i];
+      } else {
+        packed_offsets[i] = unpacked_layout.offsets()[i];
+      }
+    }
+    const VectorLayout packed_layout(bitwidth, packed_offsets, packed_tiling,
+                                     unpacked_layout.implicit_dim());
+    FAILUREOR_ASSIGN_OR_RETURN(
+        xla::Array<Value> packed_vregs,
+        packVregs(ctx, builder, loc, unpacked_vregs, /*input_ty=*/unpacked_vty,
+                  /*result_ty=*/vty, unpacked_layout, packed_layout));
+    return std::pair(packed_layout, std::move(packed_vregs));
+  };
   // Handle replicating small-to-large retiling for (a) replicated 2nd minor or
   // (b) 32-bit single-row.
   // This retiling is one-to-many vregs.
@@ -7143,67 +7245,20 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
     return std::pair(dst, std::move(retiled));
   }
   // (8,128) <-> (8 * packing,128) tiling change for packed type.
-  if (ctx.hardware_generation >= 4 &&
-      src_offsets[0].value_or(0) < dst_vreg_slice[0] &&
-      src_offsets[1].value_or(0) < dst_vreg_slice[1] && bitwidth < 32 &&
-      32 % bitwidth == 0 &&
+  if (ctx.hardware_generation >= 4 && bitwidth < 32 && 32 % bitwidth == 0 &&
       ((src_tiling == ctx.target_shape &&
         dst_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * packing,
                                              ctx.target_shape[1]}) ||
        (dst_tiling == ctx.target_shape &&
         src_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * packing,
                                              ctx.target_shape[1]}))) {
-    // TODO(tlongeri): This relayout is just ext + trunc. Refactor.
     // Note: for int4, retiling with scratch is always faster.
     if (bitwidth != 4 || !has_enough_scratch) {
-      // Note: The code below does not work when src is replicated and dst is
-      // not, since it relies on the src vreg array shape to know how many tiles
-      // to pack in dst, and vreg array shapes with materialized offsets are
-      // unfortunately not equal to vreg array shapes with replicated offsets.
-      VectorLayout dst(src.bitwidth(), src.offsets(), dst_tiling,
-                       src.implicit_dim());
-      xla::Array<Value> retiled(
-          dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-      VectorType vreg_x32 =
-          vty.getElementType().isSignlessInteger()
-              ? VectorType::get(target_shape, builder.getI32Type())
-              : VectorType::get(target_shape, builder.getF32Type());
-      // For each output vreg we collect `packing` registers from the moving dim
-      // (sublanes or lanes), while using the other vreg dim to determine which
-      // part of each register to use (the parts dim).
-      const int parts_dim = src_tiling[0] < dst_tiling[0] ? 1 : 2;
-      const int moving_dim = src_tiling[0] < dst_tiling[0] ? 2 : 1;
-      retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-        const int vreg_part = *(idx.end() - parts_dim) % packing;
-        SmallVector<Value, 8> parts;
-        parts.reserve(packing);
-        SmallVector<int64_t> src_idx(idx.begin(), idx.end());
-        *(src_idx.end() - parts_dim) /= packing;
-        if (!dst.offsets()[2 - moving_dim].has_value()) {
-          *(src_idx.end() - moving_dim) = 0;
-          // Make sure we set all parts of the output vreg to make it replicated
-          parts.append(packing, builder.create<tpu::UnpackSubelementsOp>(
-                                    loc, vreg_x32, vregs(src_idx), vreg_part,
-                                    tpu::PackFormat::kCompressed));
-        } else {
-          *(src_idx.end() - moving_dim) *= packing;
-          for (int i = 0; i < packing; ++i) {
-            if (*(src_idx.end() - moving_dim) <
-                *(vregs.dimensions().end() - moving_dim)) {
-              parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
-                  loc, vreg_x32, vregs(src_idx), vreg_part,
-                  tpu::PackFormat::kCompressed));
-              ++*(src_idx.end() - moving_dim);
-            } else {
-              parts.push_back(nullptr);
-            }
-          }
-        }
-        *tile = builder.create<tpu::PackSubelementsOp>(
-            loc, cast<VectorType>(vregs.begin()->getType()), parts,
-            tpu::PackFormat::kCompressed);
-      });
-      return std::pair(dst, std::move(retiled));
+      FAILUREOR_ASSIGN_OR_RETURN(auto unpacked_layout_and_vregs,
+                                 unpack_vregs(src, vregs, ctx.target_shape));
+      auto &[unpacked_layout, unpacked_vregs] = unpacked_layout_and_vregs;
+      return pack_vregs(unpacked_layout, unpacked_vregs, dst_tiling,
+                        dst_offsets_hint);
     }
   }
   // Handle retiling from (1, 128 * packing) to (packing, 128) for
@@ -7217,95 +7272,15 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   // interesting if the next step is a retile, since we can also
   // match corresponding elements without shifting. It's just that
   // the tiles are not adjacent (no contiguous vreg slice).
-  if (src_offsets[0].value_or(0) < dst_vreg_slice[0] &&
-      src_offsets[1].value_or(0) < dst_vreg_slice[1] && bitwidth < 32 &&
-      32 % bitwidth == 0 &&
+  if (bitwidth < 32 && 32 % bitwidth == 0 &&
       src_tiling == std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
       dst_tiling == std::array<int64_t, 2>{packing, ctx.target_shape[1]}) {
-    // TODO(tlongeri): This relayout is just ext + trunc. Refactor.
-    // To illustrate, consider a 2 x 16 16-bit shape laid out in vregs of
-    // 4 sublanes and 2 lanes (this is convenient for to keep the example small
-    // yet non-trivial) with (1, 4) tiling. We will relayout to (2, 2) tiling.
-    //
-    // The vreg slice is 1 x 16, that is, the vreg contains the data for a
-    // 1 x 16 window of the logical shape.
-    //
-    // [a b c d e f g h i j k l m n o p] -> vreg 1
-    // [A B C D E F G H I J K L M N O P] -> vreg 2
-    //
-    // Note: we support multiple vregs per row of the logical shape, but we use
-    //       one here just to keep the example small.
-    //
-    // When we do a compressed unpack, the resulting vregs effectively have a
-    // tiling of (1, 2) and cover a vreg slice of 1 x 8 logical elements.
-    //
-    // [a b c d e f g h] -> vreg 1, part 1   [i j k l m n o p] -> vreg 1, part 2
-    // [A B C D E F G H] -> vreg 2, part 1   [I J K L M N O P] -> vreg 2, part 2
-    //
-    // It is clear that if combine vreg 1, part 1 and vreg 2, part 1 we get data
-    // that covers a 2 x 8 vreg slice. Note, however, that we will have to mind
-    // the internal ordering of the vreg.
-    //
-    // [a b c d e f g h                      [i j k l m n o p
-    //  A B C D E F G H] -> new vreg 1        I J K L M N O P] -> new vreg 2
-    //
-    // To see if we can get the right internal ordering that we need for (2, 2)
-    // tiling, let's break new vreg 1 into (1, 2) rows, which correspond to
-    // sublanes when unpacked and half-sublanes when packed.
-    //
-    // [(a b) (c d) (e f) (g h)
-    //  (A B) (C D) (E F) (G H)]
-    //
-    // The sublane order for the vreg parts is [(a b) (c d) ...] for vreg 1,
-    // part 1 and [(A B) (C D) ...] for vreg 2, part 1.
-    //
-    // The desired half-sublane order, for packed (2, 2) tiling, is
-    // [(a b) (A B) (c d) (C D) ...]. That is, traverse down each column before
-    // moving to the next one. This is exactly an interleaving of the sublanes
-    // of the vreg parts.
-
-    // Note: The code below does not work when src is replicated and dst is
-    // not, since it relies on the src vreg array shape to know how many tiles
-    // to pack in dst, and vreg array shapes with materialized offsets are
-    // unfortunately not equal to vreg array shapes with replicated offsets.
-    VectorLayout dst(src.bitwidth(), src.offsets(), dst_tiling,
-                     src.implicit_dim());
-    xla::Array<Value> retiled(
-        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-    const VectorType vreg_x32 =
-        vty.getElementType().isSignlessInteger()
-            ? VectorType::get(target_shape, builder.getI32Type())
-            : VectorType::get(target_shape, builder.getF32Type());
-    retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-      SmallVector<Value> parts;
-      parts.reserve(packing);
-      SmallVector<int64_t> src_idx(toArrayRef(idx));
-      const int64_t vreg_part = *(src_idx.end() - 1) % packing;
-      *(src_idx.end() - 1) /= packing;
-      if (!dst.offsets()[0].has_value()) {
-        *(src_idx.end() - 2) = 0;
-        // Make sure we set all parts of the output vreg to make it replicated
-        parts.append(packing, builder.create<tpu::UnpackSubelementsOp>(
-                                  loc, vreg_x32, vregs(src_idx), vreg_part,
-                                  tpu::PackFormat::kCompressed));
-      } else {
-        *(src_idx.end() - 2) *= packing;
-        for (int i = 0; i < packing; ++i) {
-          if (*(src_idx.end() - 2) < *(vregs.dimensions().end() - 2)) {
-            parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
-                loc, vreg_x32, vregs(src_idx), vreg_part,
-                tpu::PackFormat::kCompressed));
-            ++*(src_idx.end() - 2);
-          } else {
-            parts.push_back(nullptr);
-          }
-        }
-      }
-      *tile = builder.create<tpu::PackSubelementsOp>(
-          loc, cast<VectorType>(vregs.begin()->getType()), parts,
-          tpu::PackFormat::kInterleaved);
-    });
-    return std::pair(dst, std::move(retiled));
+    FAILUREOR_ASSIGN_OR_RETURN(
+        auto unpacked_layout_and_vregs,
+        unpack_vregs(src, vregs, {1, ctx.target_shape[1]}));
+    auto &[unpacked_layout, unpacked_vregs] = unpacked_layout_and_vregs;
+    return pack_vregs(unpacked_layout, unpacked_vregs, dst_tiling,
+                      dst_offsets_hint);
   }
   if (src_tiling[1] == target_shape[1] && dst_tiling[1] == target_shape[1]) {
     // All clauses in the and expression are based on performance benchmarking.
