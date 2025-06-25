@@ -8013,6 +8013,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     vmap_switch_fun(val, batch_idx_shard)  # doesn't crash
     jax.jit(vmap_switch_fun)(val, batch_idx_shard)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_lax_switch_vmap_random(self, mesh):
+    @partial(jax.vmap, in_axes=(None, 0,0))
+    def flip_state_scalar(key, state, index):
+      def add_rng_to(_):
+        return jax.random.uniform(key, shape=(), minval=0.0, maxval=1.0)
+
+      branches = [add_rng_to for _ in range(state.shape[0])]
+      new_state = jax.lax.switch(index, branches, state)
+      return new_state
+
+    batch_states = reshard(jnp.zeros((4, 5)), P('x'))
+    batch_idxs = reshard(jnp.array([0, 1, 2, 4]), P('x'))
+    key = jax.random.key(42)
+
+    flip_state_scalar(key, batch_states, batch_idxs)  # doesn't crash
+    jax.jit(flip_state_scalar)(key, batch_states, batch_idxs)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

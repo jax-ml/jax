@@ -1078,7 +1078,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
                           api_name: str, check_mesh_consistency: bool = True
                           ) -> NamedSharding | None:
   if sharding is None:
-    return sharding
+    return None
   if isinstance(sharding, NamedSharding) and sharding.mesh.empty:
     return None
 

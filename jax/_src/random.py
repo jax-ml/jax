@@ -34,6 +34,8 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import prng
 from jax._src import xla_bridge
+from jax._src.mesh import get_abstract_mesh
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.api import jit, vmap
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -384,10 +386,19 @@ def bits(key: ArrayLike,
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding(out_sharding, "bits")
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "bits", shape)
   bit_width = dtype.itemsize * 8
   return maybe_auto_axes(_random_bits, out_sharding,
                          bit_width=bit_width, shape=shape)(key)
+
+
+def canonicalize_sharding_for_samplers(out_sharding, name, shape):
+  out_sharding = canonicalize_sharding(out_sharding, name)
+  cur_mesh = get_abstract_mesh()
+  if cur_mesh._are_all_axes_explicit and out_sharding is None and not shape:
+    # when shape is empty i.e. scalar, we can choose a replicated sharding.
+    out_sharding = NamedSharding(cur_mesh, P())
+  return out_sharding
 
 
 def uniform(key: ArrayLike,
@@ -414,14 +425,14 @@ def uniform(key: ArrayLike,
   key, _ = _check_prng_key("uniform", key)
   dtypes.check_user_dtype_supported(dtype)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding(out_sharding, "uniform")
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "uniform", shape)
 
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   return maybe_auto_axes(_uniform, out_sharding,
-                         shape=shape,dtype=dtype)(key, minval, maxval)
+                         shape=shape, dtype=dtype)(key, minval, maxval)
 
 @partial(jit, static_argnums=(3, 4))
 def _uniform(key, minval, maxval, shape, dtype) -> Array:
@@ -490,7 +501,7 @@ def randint(key: ArrayLike,
   dtypes.check_user_dtype_supported(dtype)
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding(out_sharding, "randint")
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "randint", shape)
   return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype)(
       key, minval, maxval)
 
@@ -742,7 +753,7 @@ def normal(key: ArrayLike,
   """
   key, _ = _check_prng_key("normal", key)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding(out_sharding, "normal")
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "normal", shape)
   dtypes.check_user_dtype_supported(dtype)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
