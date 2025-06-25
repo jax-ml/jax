@@ -609,7 +609,7 @@ if hasattr(mgpu, "BroadcastInDimOp"):
     if (operand_fa.layout == fa.WGMMA_ROW_LAYOUT and broadcast_dims == [0]):
       out = operand_fa.broadcast_minor(out_ty.shape[1])
     elif (operand_fa.layout == fa.WGMMA_COL_LAYOUT and broadcast_dims == [1]):
-      out = operand_fa.broadcast_major(out_ty.shape[0])
+      out = operand_fa.broadcast_in_dim(out_ty.shape, (1,), fa.WGMMA_LAYOUT)
     else:
       raise NotImplementedError(
           "Broadcast in dim with non-trivial broadcast dimensions is not"

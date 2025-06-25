@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence, Callable
 import dataclasses
-import enum
 import functools
 import itertools
 import math
@@ -26,7 +25,6 @@ from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
-from jax._src import frozen_dict
 from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
@@ -56,6 +54,8 @@ WARPGROUP_SIZE = 128
 
 
 _Ref = pallas_core.AbstractMemoryRef | state_types.TransformedRef
+Layout = gpu_core.Layout
+ParameterizedLayout = gpu_core.ParameterizedLayout
 
 
 def _check_ref(
@@ -70,89 +70,11 @@ def _check_ref(
     )
 
 
-load_p = jax_core.Primitive("load")
-
-@load_p.def_effectful_abstract_eval
-def _load_abstract_eval(src, *avals_flat, args_tree, layout, optimized):
-  del layout, optimized  # Unused.
-  transforms = args_tree.unflatten(avals_flat)
-  dtype = lowering._transform_dtype(src.dtype, transforms)
-  return (
-      jax_core.ShapedArray(transforms[-1].get_indexer_shape(), dtype),
-      {state.ReadEffect(0)},
-  )
-
-@lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Lane)
-def _load_p_lowering_rule(
-    ctx: lowering.LoweringRuleContext, x_ref, *leaves, args_tree, layout, optimized
-):
-  if not isinstance(x_ref, ir.Value) or not ir.MemRefType.isinstance(x_ref.type):
-    raise TypeError(f"Can only load from references (got {x_ref}).")
-
-  out_aval = ctx.avals_out[0]
-
-  transforms = jax.tree.unflatten(args_tree, leaves)
-  x_ref, transforms = lowering._handle_transforms(ctx, x_ref, transforms)
-
-  if layout is not None:
-    layout = layout.to_mgpu()
-
-  is_signed = mgpu_utils.is_signed(out_aval.dtype)
-  match transforms:
-    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
-      if tiling != (8, swizzle // out_aval.dtype.itemsize):
-        raise NotImplementedError("Tiling does not fit swizzle")
-      return mgpu.FragmentedArray.load_tiled(
-          x_ref,
-          is_signed=is_signed,
-          swizzle=swizzle,
-          layout=layout,
-      )
-    case ():
-      # Handle scalar indexing.
-      if not out_aval.shape:
-        is_signed = mgpu_utils.is_signed(out_aval.dtype)
-        val = memref_dialect.load(x_ref, [])
-        return mgpu.FragmentedArray.splat(
-            val, shape=(), layout=layout, is_signed=is_signed
-        )
-      match layout:
-        case (
-            mgpu.WGMMA_ROW_LAYOUT
-            | mgpu.WGMMA_COL_LAYOUT
-            | mgpu.TCGEN05_ROW_LAYOUT
-            | mgpu.TCGEN05_COL_LAYOUT
-        ):
-          return mgpu.FragmentedArray.load_untiled(
-              x_ref,
-              is_signed=is_signed,
-              layout=layout,
-              swizzle=16,
-              optimized=optimized,
-          )
-        case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
-          ref_ty = ir.MemRefType(x_ref.type)
-          if shape != tuple(ref_ty.shape):
-            raise ValueError(
-                f"Unsupported shape {shape}, (expected {tuple(ref_ty.shape)})"
-            )
-          return mgpu.FragmentedArray.load_strided(
-              x_ref, is_signed=is_signed, vec_size=vec_size,
-          )
-        case None:
-          return mgpu.FragmentedArray.load_strided(x_ref, is_signed=is_signed)
-        case _:
-          raise NotImplementedError(f"Unsupported layout: {layout}")
-    case _:
-      raise NotImplementedError(f"Unsupported transforms: {transforms}")
-
-
 def load(
     src: _Ref,
     idx,
     *,
     layout: Layout | ParameterizedLayout | None = None,
-    optimized: bool = True,
 ) -> jax.Array:
   """Loads from a reference into an array with the specified layout.
 
@@ -160,25 +82,14 @@ def load(
     src: The reference to load from. Can be either in SMEM or GMEM.
     idx: The index to load from.
     layout: The optional layout to use for the resulting array.
-    optimized: If True, a compilation error will be raised if no optimized
-      implementation for the load is available.
 
   Returns:
     The loaded array.
   """
-  src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, idx, "load", force_trailing_indexer=True,
-  )
-  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
-      src_transforms
-  )
-  return load_p.bind(
-      src,
-      *flat_src_transforms,
-      args_tree=src_transforms_treedef,
-      layout=layout,
-      optimized=optimized,
-  )
+  result = src[idx]
+  if layout is not None:
+    result = gpu_core.layout_cast(result, layout)
+  return result
 
 
 copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
@@ -1523,99 +1434,6 @@ def commit_tmem():
   commit_tmem_p.bind()
 
 
-class Layout(enum.Enum):
-  #: [m, n] matrix, where m % 64 == 0 == n % 8.
-  WGMMA = enum.auto()
-  #: [m] matrix, where m % 64 == 0.
-  WGMMA_ROW = enum.auto()
-  #: [n] matrix, where n % 8 == 0.
-  WGMMA_COL = enum.auto()
-  WGMMA_TRANSPOSED = enum.auto()
-
-  WG_SPLAT = enum.auto()
-  WG_STRIDED = enum.auto()
-
-  TCGEN05 = enum.auto()
-  TCGEN05_ROW = enum.auto()
-  TCGEN05_COL = enum.auto()
-
-  def __call__(self, *args, **kwargs) -> ParameterizedLayout:
-    return ParameterizedLayout(self, args, kwargs)
-
-  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
-    def check_no_args():
-      if args or kwargs:
-        raise ValueError(f"Can't instantiate {self} with arguments.")
-
-    match self:
-      case Layout.WGMMA_TRANSPOSED:
-        check_no_args()
-        return mgpu.WGMMA_TRANSPOSED_LAYOUT
-      case Layout.WGMMA:
-        check_no_args()
-        return mgpu.WGMMA_LAYOUT
-      case Layout.WGMMA_ROW:
-        check_no_args()
-        return mgpu.WGMMA_ROW_LAYOUT
-      case Layout.WGMMA_COL:
-        check_no_args()
-        return mgpu.WGMMA_COL_LAYOUT
-      case Layout.WG_SPLAT:
-        return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
-      case Layout.WG_STRIDED:
-        return mgpu.WGStridedFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
-      case Layout.TCGEN05:
-        check_no_args()
-        return mgpu.TCGEN05_LAYOUT
-      case Layout.TCGEN05_ROW:
-        check_no_args()
-        return mgpu.TCGEN05_ROW_LAYOUT
-      case Layout.TCGEN05_COL:
-        check_no_args()
-        return mgpu.TCGEN05_COL_LAYOUT
-
-@dataclasses.dataclass(frozen=True)
-class ParameterizedLayout:
-  layout_cls: Layout
-  args: Sequence[Any]
-  kwargs: Any
-
-  def __post_init__(self):
-    object.__setattr__(self, "args", tuple(self.args))
-    object.__setattr__(self, "kwargs", frozen_dict.FrozenDict(self.kwargs))
-
-  def to_mgpu(self) -> mgpu.FragmentedLayout:
-    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
-
-
-layout_cast_p = jax_core.Primitive("layout_cast")
-
-
-@layout_cast_p.def_abstract_eval
-def _layout_cast_abstract_eval(x, new_layout):
-  del new_layout  # Unused.
-  return x
-
-
-@lowering.register_lowering_rule(layout_cast_p, mgpu.LoweringSemantics.Lane)
-def _layout_cast_lowering(ctx: lowering.LoweringRuleContext, x, *, new_layout):
-  del ctx  # Unused.
-  return x.to_layout(new_layout.to_mgpu())
-
-
-@lowering.register_lowering_rule(layout_cast_p, mgpu.LoweringSemantics.Warpgroup)
-def _layout_cast_lowering_wg(
-    ctx: lowering.LoweringRuleContext, x, *, new_layout
-):
-  del ctx  # Unused.
-  return mgpu.dialect.layout_cast(x, mgpu.to_layout_attr(new_layout.to_mgpu()))
-
-
-def layout_cast(x: Any, new_layout: Layout | ParameterizedLayout):
-  """Casts the layout of the given array."""
-  return layout_cast_p.bind(x, new_layout=new_layout)
-
-
 set_max_registers_p = jax_core.Primitive("set_max_registers_p")
 set_max_registers_p.multiple_results = True
 
@@ -1671,41 +1489,6 @@ def commit_smem():
   commit_smem_p.bind()
 
 
-broadcasted_iota_p = jax_core.Primitive("broadcasted_iota")
-
-@broadcasted_iota_p.def_abstract_eval
-def _broadcasted_iota_abstract_eval(dtype, shape, dimension, layout):
-  del layout, dimension
-  return jax_core.ShapedArray(shape, dtype)
-
-
-@lowering.register_lowering_rule(
-    broadcasted_iota_p, mgpu.LoweringSemantics.Lane)
-def _broadcasted_iota_lowering(
-    ctx: lowering.LoweringRuleContext, dtype, shape, dimension, layout
-):
-  del ctx  # Unused.
-  mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
-  if ir.FloatType.isinstance(mlir_dtype):
-    i32 = ir.IntegerType.get_signless(32)
-    cast = lambda x: arith_dialect.uitofp(
-        mlir_dtype, arith_dialect.index_cast(i32, x)
-    )
-  else:
-    cast = lambda x: arith_dialect.index_cast(mlir_dtype, x)
-  is_signed = mgpu_utils.is_signed(dtype)
-  return mgpu.FragmentedArray.splat(
-      llvm_dialect.mlir_undef(mlir_dtype),
-      shape,
-      layout.to_mgpu(),
-      is_signed=is_signed,
-  ).foreach(
-      lambda _, idx: cast(idx[dimension]),
-      create_array=True,
-      is_signed=is_signed,
-  )
-
-
 def broadcasted_iota(
     dtype: jax.typing.DTypeLike,
     shape: Sequence[int],
@@ -1713,9 +1496,10 @@ def broadcasted_iota(
     *,
     layout: Layout | None = None,
 ) -> jax.Array:
-  return broadcasted_iota_p.bind(
-      dtype=jnp.dtype(dtype), shape=shape, dimension=dimension, layout=layout
-  )
+  result = jax.lax.broadcasted_iota(dtype, shape, dimension)
+  if layout is not None:
+    result = gpu_core.layout_cast(result, layout)
+  return result
 
 
 jaxpr_call_p = jax_core.Primitive("jaxpr_call")

@@ -2088,47 +2088,66 @@ class FragmentedArray:
     )
 
   def broadcast_minor(self, n):
-    if self.layout == WGMMA_ROW_LAYOUT:
-      output_layout = WGMMA_LAYOUT
-    elif self.layout == TCGEN05_ROW_LAYOUT:
-      output_layout = TCGEN05_LAYOUT
-    else:
-      raise NotImplementedError(self.layout)
+    if len(self.shape) != 1:
+      raise ValueError("Broadcast minor is only supported for 1D arrays")
     if n % 8:
-      raise ValueError("Number of columns must be divisible by 8")
-    reg_shape = output_layout.registers_shape((self.shape[0], n))
-    new_regs = np.empty(reg_shape, dtype=object)
-    dtype = self.mlir_dtype
-    i0 = arith.constant(ir.IndexType.get(), 0)
-    for (row_tile, _, row_subtile, *__), reg in np.ndenumerate(self.registers):
-      tile = [slice(None)] * len(new_regs.shape)
-      tile[0] = row_tile
-      tile[4] = row_subtile
-      new_regs[tuple(tile)] = vector.splat(
-          ir.VectorType.get((output_layout.vector_length,), dtype),
-          vector.extractelement(reg, position=i0),
-      )
-    return FragmentedArray(
-        _registers=new_regs, _layout=output_layout, _is_signed=self.is_signed
-    )
-
-  def broadcast_major(self, m):
-    if self.layout == WGMMA_COL_LAYOUT:
-      output_layout = WGMMA_LAYOUT
-    elif self.layout == TCGEN05_COL_LAYOUT:
-      output_layout = TCGEN05_LAYOUT
+      raise ValueError(f"The broadcast dimension must be a multiple of 8, got {n}")
+    if self.layout == WGMMA_ROW_LAYOUT:
+      new_layout = WGMMA_LAYOUT
+    elif self.layout == TCGEN05_ROW_LAYOUT:
+      new_layout = TCGEN05_LAYOUT
     else:
       raise NotImplementedError(self.layout)
-    if m % 64:
-      raise ValueError("Number of rows must be divisible by 64")
-    reg_shape = output_layout.registers_shape((m, self.shape[0]))
-    new_regs = np.empty(reg_shape, dtype=object)
-    for (col_tile, *_), reg in np.ndenumerate(self.registers):
-      tile = [slice(None)] * len(new_regs.shape)
-      tile[1] = col_tile
-      new_regs[tuple(tile)] = reg
+    return self.broadcast_in_dim((self.shape[0], n), (0,), new_layout)
+
+  def broadcast_in_dim(self, shape, source_dimensions, layout: FragmentedLayout):
+    for i, target_dim in enumerate(source_dimensions):
+      if self.shape[i] != shape[target_dim]:
+        raise ValueError(
+            f"Dimension {i} has size {self.shape[i]} in source shape and"
+            f" {shape[target_dim]} in shape after broadcast"
+        )
+    if isinstance(self.layout, WGSplatFragLayout):
+      if isinstance(layout, WGSplatFragLayout):
+        if layout.shape != shape:
+          raise ValueError(
+              f"Layout shape {layout.shape} does not match broadcast shape {shape}"
+          )
+        return FragmentedArray(
+            _registers=self.registers, _layout=layout, _is_signed=self.is_signed,
+        )
+      # TODO: Support splat to other layouts
+    if not isinstance(self.layout, TiledLayout) or not isinstance(layout, TiledLayout):
+      raise NotImplementedError(self.layout, layout)
+    if any(d1 >= d2 for d1, d2 in zip(source_dimensions, source_dimensions[1:])):
+      raise NotImplementedError("source_dimensions must be strictly increasing")
+    new_dimensions = set(range(len(shape))) - set(source_dimensions)
+    expected_layout = layout.reduce(new_dimensions)
+    if expected_layout != self.layout:
+      raise ValueError(
+          "Source and destination layouts aren't compatible for a broadcast"
+      )
+    new_registers_shape = layout.registers_shape(shape)
+    pre_broadcast_registers_shape = list(new_registers_shape)
+    for new_dim in new_dimensions:
+      for i, is_new in enumerate(layout.tiling.tile_dimension(new_dim)):
+        if is_new:
+          pre_broadcast_registers_shape[i] = 1
+    # The broadcast for all dims but the vector_dim amounts to repeating the
+    # registers along the new dimensions. Along the vector_dim, we actually need
+    # to extend the vector length to change the type of the registers.
+    if layout.vector_length != self.layout.vector_length:
+      assert self.layout.vector_length == 1
+      registers = np.empty_like(self.registers)
+      for idx, reg in np.ndenumerate(self.registers):
+        registers[idx] = utils.vector_concat([reg] * layout.vector_length)
+    else:
+      registers = self.registers
+    new_registers = np.broadcast_to(
+        registers.reshape(pre_broadcast_registers_shape), new_registers_shape,
+    )
     return FragmentedArray(
-        _registers=new_regs, _layout=output_layout, _is_signed=self.is_signed
+        _registers=new_registers, _layout=layout, _is_signed=self.is_signed,
     )
 
   def select(self, on_true, on_false):
@@ -2316,6 +2335,8 @@ class FragmentedArray:
         tiled_shape = ref_ty.shape
         if len(tiled_shape) % 2:
           raise ValueError("Tiled reference must have even rank")
+        if len(tiled_shape) < 2:
+          raise ValueError("Tiled reference must have at least two dimensions")
         tiling = Tiling((tiled_shape[len(tiled_shape) // 2 :],))
         shape = tiling.untile_shape(tiled_shape)
         zero = (
@@ -2459,8 +2480,11 @@ class FragmentedArray:
     ref_tiling_shape = tuple(ref_ty.shape[ref_logical_rank:])
     ref_tiling = Tiling((ref_tiling_shape,))
     ref_strides, _ = ref_ty.get_strides_and_offset()
-    if ref_tiling.untile_shape(tuple(ref_ty.shape)) != shape:
-      raise ValueError()
+    if (ref_logical_shape := ref_tiling.untile_shape(tuple(ref_ty.shape))) != shape:
+      raise ValueError(
+          f"The reference has untiled shape of {ref_logical_shape} while the"
+          f" register array has shape {shape}"
+      )
     nested_ref_shape = tuple(
         (ref_ty.shape[i], ref_ty.shape[i + ref_logical_rank])
         if ref_ty.shape[i + ref_logical_rank] != 1 else (ref_ty.shape[i],)

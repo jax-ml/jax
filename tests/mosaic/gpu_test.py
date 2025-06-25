@@ -2605,7 +2605,9 @@ class FragmentedArrayTest(TestCase):
   def test_reduce(self, op, m=64, n=32):
     def kernel(ctx, dst, _):
       iota = iota_tensor(m, n, jnp.float32)
-      iota.reduce(op, axis=1).broadcast_minor(n).store_untiled(dst, optimized=False)
+      iota.reduce(op, axis=1).broadcast_in_dim(
+          (m, n), (0,), mgpu.WGMMA_LAYOUT
+      ).store_untiled(dst, optimized=False)
     out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
@@ -2641,7 +2643,7 @@ class FragmentedArrayTest(TestCase):
       t = mgpu.FragmentedArray.splat(
           v, (128,), mgpu.WGMMA_ROW_LAYOUT
       )
-      t.broadcast_minor(32).store_untiled(dst, optimized=False)
+      t.broadcast_in_dim((128, 32), (0,), mgpu.WGMMA_LAYOUT).store_untiled(dst, optimized=False)
     out_shape = jax.ShapeDtypeStruct((128, 32), jnp.float32)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
@@ -2732,7 +2734,7 @@ class FragmentedArrayTest(TestCase):
       t = mgpu.FragmentedArray.load_untiled(
           gmem_input, layout=mgpu.WGMMA_COL_LAYOUT, optimized=False
       )
-      t.broadcast_major(m).store_untiled(gmem_output, optimized=False)
+      t.broadcast_in_dim((m, n), (1,), mgpu.WGMMA_LAYOUT).store_untiled(gmem_output, optimized=False)
 
     inp = self.prng.uniform(-1, 1, (n,)).astype(jnp.float16)
     out_shape = jax.ShapeDtypeStruct((m, n), jnp.float16)
@@ -4281,6 +4283,41 @@ if hp is not None:
         )()
         iota = np.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
         np.testing.assert_array_equal(result, iota[slices])
+      run()
+
+    def test_broadcast(self):
+      @hps.composite
+      def strategy(draw):
+        shape, layout = draw(shape_and_tiled_layout(vector_transfer=True))
+        rank = len(shape)
+        broadcast_dims = draw(
+            hps.sets(hps.integers(0, rank - 1), min_size=1, max_size=rank - 1)
+        )
+        dtype = draw(hps.sampled_from([jnp.float32, jnp.bfloat16]))
+        return shape, layout, tuple(broadcast_dims), dtype
+
+      @hp.given(strategy())
+      def run(args):
+        out_shape, out_layout, broadcast_dims, dtype = args
+        in_shape = list(out_shape)
+        for d in sorted(broadcast_dims, reverse=True):
+          del in_shape[d]
+        in_layout = out_layout.reduce(broadcast_dims)
+        dims = tuple(d for d in range(len(out_shape)) if d not in broadcast_dims)
+        def kernel(ctx, src, dst, scratch):
+          del ctx, scratch  # Unused.
+          arr = fa.FragmentedArray.load_untiled(src, layout=in_layout, optimized=False)
+          arr.broadcast_in_dim(out_shape, dims, out_layout).store_untiled(dst, optimized=False)
+        x = jax.random.normal(jax.random.key(1234), in_shape, dtype)
+        out_type = jax.ShapeDtypeStruct(out_shape, dtype)
+        try:
+          result = mgpu.as_gpu_kernel(
+              kernel, (1, 1, 1), (128, 1, 1), x, out_type, ()
+          )(x)
+        except NotImplementedError:
+          hp.assume(False)
+          return
+        np.testing.assert_array_equal(result, jax.lax.broadcast_in_dim(x, out_shape, dims))
       run()
 
 
