@@ -1472,22 +1472,12 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     num_devices = axis_context.axis_env.nreps
   else:
     raise NotImplementedError(type(axis_context))
-  if num_devices != exported.nr_devices:
-    # In some special cases we allow running with a different number of devices
-    # than the function was exported for.
-    err_msg = ""
-    if exported.nr_devices != 1:
-      err_msg = "the function was exported for more than 1 device."
-    elif (_check_module(submodule, disabled_checks=(), shardy_enabled=shardy_enabled)
-          or any(s is not None and not s.is_replicated()
-                 for s in exported.in_shardings_hlo + exported.out_shardings_hlo)):
-      err_msg = "the function contains non-replicated sharding annotations."
-    if err_msg:
-      raise ValueError(
+  if num_devices != exported.nr_devices and exported.nr_devices != 1:
+    raise ValueError(
         f"Function {exported.fun_name} was exported for "
         f"{exported.nr_devices} devices and is called in a context with "
-        f"{num_devices} devices. This is disallowed because: {err_msg}"
-      )
+        f"{num_devices} devices, which is not allowed."
+    )
 
   # Apply in_shardings
   if shardy_enabled:

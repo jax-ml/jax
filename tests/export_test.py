@@ -1250,7 +1250,7 @@ class JaxExportTest(jtu.JaxTestCase):
     res_exported = exp.call(b)
     self.assertAllClose(res_native, res_exported)
 
-  def test_call_with_different_no_of_devices_error_has_in_shardings(self):
+  def test_call_with_different_no_of_devices_in_shardings_success(self):
     if jax.local_device_count() < 2:
       self.skipTest("Need at least 2 devices")
 
@@ -1263,6 +1263,7 @@ class JaxExportTest(jtu.JaxTestCase):
     a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
         (jax.device_count(), 10)
     )
+    res_native = f_with_sharding(a)
     exp = get_exported(f_with_sharding)(a)
     self.assertEqual(exp.nr_devices, 1)
 
@@ -1270,11 +1271,33 @@ class JaxExportTest(jtu.JaxTestCase):
     run_mesh = Mesh(run_devices, "i")
     b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
 
+    res_exported = exp.call(b)
+    self.assertAllClose(res_native, res_exported)
+
+  def test_call_with_different_no_of_devices_in_shardings_error(self):
+    if jax.local_device_count() < 3:
+      self.skipTest("Need at least 3 devices")
+
+    mesh_1 = Mesh(jax.local_devices()[:2], "i")
+    @functools.partial(pjit.pjit,
+                       in_shardings=NamedSharding(mesh_1, P("i")))
+    def f_with_sharding(x):
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
+        (jax.device_count(), 10)
+    )
+    exp = get_exported(f_with_sharding)(a)
+    self.assertEqual(exp.nr_devices, 2)
+
+    run_devices = jax.local_devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
     with self.assertRaisesRegex(
         ValueError,
-        "Function .* was exported for 1 devices and is called in a "
-        f"context with {jax.local_device_count()} devices.* function contains "
-        "non-replicated sharding annotations"):
+        "Function .* was exported for 2 devices and is called in a "
+        f"context with {jax.local_device_count()} devices"):
       exp.call(b)
 
   def test_call_with_different_no_of_devices_pmap(self):
@@ -1296,7 +1319,7 @@ class JaxExportTest(jtu.JaxTestCase):
     res_exported = jax.pmap(exp.call)(b)
     self.assertAllClose(res_native, res_exported[0])
 
-  def test_call_with_different_no_of_devices_error_has_sharding_constraint(self):
+  def test_call_with_different_no_of_devices_sharding_constraint_success(self):
     if jax.device_count() < 2:
       self.skipTest("Need at least 2 devices")
 
@@ -1309,6 +1332,7 @@ class JaxExportTest(jtu.JaxTestCase):
     a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
         (jax.device_count(), 10)
     )
+    res_native = f_with_sharding(a)
     exp = get_exported(f_with_sharding)(a)
     self.assertEqual(exp.nr_devices, 1)
 
@@ -1316,11 +1340,34 @@ class JaxExportTest(jtu.JaxTestCase):
     run_mesh = Mesh(run_devices, "i")
     b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
 
+    res_exported = exp.call(b)
+    self.assertAllClose(res_native, res_exported)
+
+  def test_call_with_different_no_of_devices_sharding_constraint_error(self):
+    if jax.device_count() < 3:
+      self.skipTest("Need at least 3 devices")
+
+    # We export for 2 devices, but call with >=3 devices.
+    mesh_1 = Mesh(jax.local_devices()[:2], "i")
+    @jax.jit
+    def f_with_sharding(x):
+      x = jax.lax.with_sharding_constraint(x, NamedSharding(mesh_1, P("i")))
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
+        (jax.device_count(), 10)
+    )
+    exp = get_exported(f_with_sharding)(a)
+    self.assertEqual(exp.nr_devices, 2)
+
+    run_devices = jax.local_devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
     with self.assertRaisesRegex(
         ValueError,
-        "Function .* was exported for 1 devices and is called in a "
-        f"context with {jax.local_device_count()} devices.* function contains "
-        "non-replicated sharding annotations"):
+        "Function .* was exported for 2 devices and is called in a "
+        f"context with {jax.local_device_count()} devices"):
       exp.call(b)
 
   @jtu.parameterized_filterable(
