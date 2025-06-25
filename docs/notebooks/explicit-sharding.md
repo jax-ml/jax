@@ -265,7 +265,7 @@ argument.
 
 +++ {"id": "ERJx4p0tXoS3"}
 
-## Working around unimplemented sharding rules using `auto_sharding`
+## Working around unimplemented sharding rules using `auto_axes`
 
 The implementation of explicit sharding is still a work-in-progress and there
 are plenty of ops that are missing sharding rules. For example, `scatter` and

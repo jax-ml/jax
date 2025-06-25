@@ -30,6 +30,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
       renamed to `Format`, `.format`, `.input_formats` and `.output_formats`
     * `DeviceLocalLayout`, `.device_local_layout` have been renamed to `Layout`
       and `.layout`
+  * `jax.experimental.shard` module has been deleted and all the APIs have been
+    moved to the `jax.sharding` endpoint. So use `jax.sharding.reshard`,
+    `jax.sharding.auto_axes` and `jax.sharding.explicit_axes` instead of their
+    experimental endpoints.
+
 * Deprecations:
   * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new
     {func}`jax.dlpack.is_supported_dtype` function.
