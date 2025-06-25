@@ -65,6 +65,9 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   # TODO: b/423649694 - remove the forward compatibility check after 2025-07-18
   if ctx.is_forward_compat() or is_cloud_tpu_older_than(2025, 6, 19):
     return 4
+  # TODO: b/425259894 - remove the forward compatibility check after 2025-07-24
+  if ctx.is_forward_compat() or is_cloud_tpu_older_than(2025, 7, 25):
+    return 5
   return None
 
 

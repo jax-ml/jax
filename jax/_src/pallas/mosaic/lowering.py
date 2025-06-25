@@ -2385,7 +2385,11 @@ def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
   )
-  return tpu.iota(out_type, dimension=dimension)
+  if jaxlib_version < (0, 6, 3):
+    # TODO: b/425259894 - Remove after 2025-07-24
+    return tpu.iota(out_type, dimensions=dimension)
+  else:
+    return tpu.iota(out_type, dimensions=[dimension])
 
 
 @register_lowering_rule(lax.gather_p)

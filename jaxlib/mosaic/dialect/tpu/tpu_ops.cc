@@ -760,6 +760,21 @@ LogicalResult DynamicRotateOp::verify() {
   return verifyRotateOp<DynamicRotateOp>(*this);
 }
 
+LogicalResult IotaOp::verify() {
+  const int64_t rank = getType().getRank();
+  SmallVector<bool> seen(rank, false);
+  for (const int32_t dim : getDimensions()) {
+    if (dim < 0 || dim >= getType().getRank()) {
+      return emitOpError("Invalid dimension: ") << dim;
+    }
+    if (seen[dim]) {
+      return emitOpError("Dimensions must be unique");
+    }
+    seen[dim] = true;
+  }
+  return success();
+}
+
 // a + matmul(l, r, 0) == matmul(l, r, a)
 template <typename AddOp>
 class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {
