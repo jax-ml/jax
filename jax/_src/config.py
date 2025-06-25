@@ -248,7 +248,8 @@ def trace_context():
           use_high_dynamic_range_gumbel.value,
           error_checking_behavior_nan.value,
           error_checking_behavior_divide.value,
-          error_checking_behavior_oob.value)
+          error_checking_behavior_oob.value,
+          use_simplified_jaxpr_constants.value)
 
 config = Config()
 
@@ -1104,6 +1105,16 @@ use_direct_linearize = bool_state(
     name='jax_use_direct_linearize',
     default=False,
     help=('Use direct linearization instead JVP followed by partial eval'),
+    include_in_jit_key=True)
+
+use_simplified_jaxpr_constants = bool_state(
+    name='jax_use_simplified_jaxpr_constants',
+    default=False,
+    help=('Enable a simplification of the handling of closed-over constants '
+          'in Jaxpr. The value `True` enables the new behavior. '
+          'This flag will exist only briefly, while we transition '
+          'users. See https://github.com/jax-ml/jax/pull/29679.'
+          'DO NOT RELY ON THIS FLAG.'),
     include_in_jit_key=True)
 
 # TODO make it so people don't use this, this is internal...

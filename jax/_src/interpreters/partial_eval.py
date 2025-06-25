@@ -1566,6 +1566,10 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
   return used_inputs, new_eqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
+# TODO(necula): this cache is not really working as a weakref cache: the key
+# is a weakref, but it points to a value that has a strong ref to the same
+# jaxpr. So, we have a cycle with a strong ref, and these keys are never
+# collected.
 @weakref_lru_cache
 def close_jaxpr(jaxpr: Jaxpr) -> ClosedJaxpr:
   return ClosedJaxpr(jaxpr, ())

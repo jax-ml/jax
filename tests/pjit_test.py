@@ -4113,6 +4113,40 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with mesh:
       f()  # doesn't crash
 
+  def test_closed_constants_at_top_level(self):
+    const = np.arange(8)
+
+    @jax.jit
+    def f(x):
+      return x + jax.jit(lambda y: y + const)(x)
+
+    jaxpr = f.trace(const).jaxpr
+    pjit_e, = [e for e in jaxpr.jaxpr.eqns if e.primitive.name == "pjit"]
+    inner_pjit_jaxpr = pjit_e.params["jaxpr"]
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIs(const, jaxpr.consts[0])
+      self.assertEmpty(inner_pjit_jaxpr.consts)
+    else:
+      self.assertEmpty(jaxpr.consts)
+      self.assertIs(const, inner_pjit_jaxpr.consts[0])
+
+  def test_lowering_cache_hit_with_closed_over_constants(self):
+    np_inp = np.arange(8)
+    arr = jnp.arange(8)
+    @jax.jit
+    def f(x):
+      return np_inp
+
+    with (jtu.count_pjit_cpp_cache_miss() as cpp_count,
+          jtu.count_jit_tracing_cache_miss() as tracing_count,
+          jtu.count_jit_and_pmap_lowerings() as lowering_count):
+      f(np_inp)
+      f(np_inp)
+      f(arr)
+      f(arr)
+    self.assertEqual((2, 1, 1),
+                     (cpp_count(), tracing_count(), lowering_count()))
+
   def test_lowering_cache_hit_different_devices(self):
     if jax.device_count() < 4:
       self.skipTest('Requires >=4 devices')
