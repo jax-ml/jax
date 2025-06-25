@@ -174,30 +174,13 @@ class CustomCallBackendConfig:
       config.write(b', "internal_scratch_in_bytes": ')
       config.write(str(self.internal_scratch_in_bytes).encode("ascii"))
     if self.output_memory_spaces is not None:
-      if len(self.output_memory_spaces) == 1:
-        output_memory_space = self.output_memory_spaces[0]
-        if output_memory_space is not None:
-          config.write(b', "output_memory_space_colors": [')
-          config.write(
-              f'{{"color":{output_memory_space.color}}}'.encode("ascii")
-          )
-          config.write(b"]")
-      else:
-        comma = False
-        for i, output_memory_space in enumerate(self.output_memory_spaces):
-          if output_memory_space is None:
-            continue
-          if comma:
-            config.write(b",")
-          else:
-            config.write(b', "output_memory_space_colors": [')
-          config.write(
-              f'{{"shape_index":[{i}],"color":{output_memory_space.color}}}'
-              .encode("ascii")
-          )
-          comma = True
-        if comma:
-          config.write(b"]")
+      config.write(b', "output_memory_colors": [')
+      for i, memory_space in enumerate(self.output_memory_spaces):
+        if i:
+          config.write(b",")
+        color = memory_space.color if memory_space is not None else -1
+        config.write(str(color).encode("ascii"))
+      config.write(b"]")
     if self.input_memory_spaces is not None:
       comma = False
       for i, input_memory_space in enumerate(self.input_memory_spaces):
