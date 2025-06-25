@@ -90,7 +90,7 @@ def call_sharding_rule(prim, sh_rule, unreduced_rule, num_out, *avals, **kwargs)
         f'sharding rule for {prim.name} is not implemented. Please file an'
         ' issue at https://github.com/jax-ml/jax/issues. You can work around'
         ' this error by dropping that operation into full auto sharding'
-        ' mode via: `jax.experimental.shard.auto_axes(fun, out_shardings=...)`')
+        ' mode via: `jax.sharding.auto_axes(fun, out_shardings=...)`')
   out_sharding = sh_rule(*avals, **kwargs)
   out_sharding = call_unreduced_rule(prim, unreduced_rule, out_sharding,
                                      *avals, **kwargs)
