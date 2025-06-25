@@ -255,7 +255,6 @@ def pallas_call_tpu_lowering_rule(
       *args,
       module=mosaic_module,
       out_type=kernel_out_avals,
-      backend="tpu",
       kernel_name=mlir.sanitize_name(debug_info.func_name),
       cost_estimate=mosaic_cost_estimate,
       vmem_limit_bytes=mosaic_params.vmem_limit_bytes,

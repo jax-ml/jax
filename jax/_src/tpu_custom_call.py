@@ -33,7 +33,6 @@ from jax._src import sharding_impls
 from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.interpreters import mlir
 from jax._src.lib import tpu
-from jax._src.lib import xla_client
 from jax.interpreters import xla
 from jaxlib.mlir import ir
 from jaxlib.mlir.passmanager import PassManager
@@ -338,9 +337,7 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
 def _lower_mosaic_module_to_asm(
     module: ir.Module,
     *,
-    backend: str,
     device_type: str | None,
-    kernel_name: str | None,
     ir_version: int | None = None,
 ) -> tuple[ir.Module, tuple[bool, bool, bool, bool]]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
@@ -490,7 +487,6 @@ def _get_active_core_count(module: ir.Module) -> int | None:
 def _lower_to_custom_call_config(
     module: ir.Module,
     *,
-    backend: str,
     vmem_limit_bytes: int | None,
     cost_estimate: CostEstimate | None,
     flags: dict[str, bool | int | float] | None,
@@ -499,7 +495,6 @@ def _lower_to_custom_call_config(
     collective_id: int | None,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
-    kernel_name: str | None = None,
     ir_version: int | None = None,
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
@@ -512,9 +507,7 @@ def _lower_to_custom_call_config(
       needs_layout_passes,
   ) = _lower_mosaic_module_to_asm(
       module,
-      backend=backend,
       device_type=device_type,
-      kernel_name=kernel_name,
       ir_version=ir_version,
   )
   active_core_count = _get_active_core_count(module)
@@ -600,7 +593,6 @@ def lower_module_to_custom_call(
     *in_nodes: ir.Value,
     module: ir.Module,
     out_type: Any,
-    backend: str,
     kernel_name: str,
     cost_estimate: CostEstimate | None,
     vmem_limit_bytes: int | None,
@@ -617,7 +609,6 @@ def lower_module_to_custom_call(
 ) -> Sequence[ir.Value]:
   config = _lower_to_custom_call_config(
       module,
-      backend=backend,
       vmem_limit_bytes=vmem_limit_bytes,
       cost_estimate=cost_estimate,
       flags=flags,
@@ -626,7 +617,6 @@ def lower_module_to_custom_call(
       collective_id=collective_id,
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
-      kernel_name=kernel_name,
       ir_version=get_ir_version(ctx),
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
@@ -647,7 +637,6 @@ def as_tpu_kernel(
     out_type: Any,
     *,
     cost_estimate: CostEstimate | None = None,
-    backend: str | xla_client.Client = "tpu",
     kernel_name: str | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
@@ -664,7 +653,6 @@ def as_tpu_kernel(
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   config = _lower_to_custom_call_config(
       module,
-      backend=backend,
       vmem_limit_bytes=vmem_limit_bytes,
       cost_estimate=cost_estimate,
       flags=flags,
@@ -673,7 +661,6 @@ def as_tpu_kernel(
       collective_id=collective_id,
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
-      kernel_name=kernel_name,
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
   )
