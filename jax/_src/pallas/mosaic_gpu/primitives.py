@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from jax._src import dtypes
 from collections.abc import Sequence, Callable
 import dataclasses
 import enum
@@ -100,7 +101,7 @@ def _load_p_lowering_rule(
   is_signed = mgpu_utils.is_signed(out_aval.dtype)
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
-      if tiling != (8, swizzle // out_aval.dtype.itemsize):
+      if tiling != (8, swizzle // (dtypes.bit_width(out_aval.dtype) / 8)):
         raise NotImplementedError("Tiling does not fit swizzle")
       return mgpu.FragmentedArray.load_tiled(
           x_ref,

@@ -94,6 +94,7 @@ pytype_strict_library(
         "//jax/_src/lib",
         "//jax/_src/pallas",
         "//jaxlib/mlir:ir",
+        "//third_party/py/absl/logging",
     ] + py_deps("numpy"),
 )
 
@@ -105,6 +106,7 @@ pytype_strict_library(
         ":lowering",
         "//jax",
         "//jax:core",
+        "//jax:dtypes",
         "//jax:frozen_dict",
         "//jax:lax",
         "//jax:mosaic_gpu",
