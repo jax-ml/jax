@@ -984,13 +984,13 @@ FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
                      result_ty, layout_in, layout_out);
 }
 
-LogicalResult arith_extf_rule(RewriteContext &ctx, Operation &op,
-                              const ArrayRef<Layout> layouts_in,
-                              const ArrayRef<Layout> layouts_out) {
+LogicalResult tpu_extf_rule(RewriteContext &ctx, Operation &op,
+                            const ArrayRef<Layout> layouts_in,
+                            const ArrayRef<Layout> layouts_out) {
   TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
   TPU_ASSERT_OP(layouts_in.front().has_value());
   TPU_ASSERT_OP(layouts_out.front().has_value());
-  auto extf_op = cast<arith::ExtFOp>(op);
+  auto extf_op = cast<tpu::ExtFOp>(op);
   if (layouts_out.front()->bitwidth() != 32) {
     return op.emitOpError("Not implemented: Only support conversion to 32-bit");
   }
@@ -1186,14 +1186,14 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
   return success();
 }
 
-LogicalResult arith_truncf_rule(RewriteContext &ctx, Operation &op,
-                                const ArrayRef<Layout> layouts_in,
-                                const ArrayRef<Layout> layouts_out) {
+LogicalResult tpu_truncf_rule(RewriteContext &ctx, Operation &op,
+                              const ArrayRef<Layout> layouts_in,
+                              const ArrayRef<Layout> layouts_out) {
   TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
   TPU_ASSERT_OP(layouts_in.front().has_value());
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_out.front().has_value());
-  auto truncf_op = cast<arith::TruncFOp>(op);
+  auto truncf_op = cast<tpu::TruncFOp>(op);
   if (layouts_in.front()->bitwidth() != 32 ||
       (layouts_out.front()->bitwidth() != 16 &&
        layouts_out.front()->bitwidth() != 8)) {
@@ -7776,10 +7776,8 @@ const llvm::StringMap<rule_type> &rules() {
   static const llvm::StringMap<rule_type> *rules = [] {
     static auto rules = new llvm::StringMap<rule_type>{
         {arith::ConstantOp::getOperationName(), arith_constant_rule},
-        {arith::ExtFOp::getOperationName(), arith_extf_rule},
         {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
         {arith::ExtUIOp::getOperationName(), arith_extui_rule},
-        {arith::TruncFOp::getOperationName(), arith_truncf_rule},
         {arith::TruncIOp::getOperationName(), arith_trunci_rule},
         {func::ReturnOp::getOperationName(), func_return_rule},
         {scf::ForOp::getOperationName(), scf_for_rule},
@@ -7808,6 +7806,8 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::RelayoutOp::getOperationName(), tpu_relayout_rule},
         {tpu::FPToSIOp::getOperationName(), tpu_fptosi_rule},
         {tpu::SIToFPOp::getOperationName(), tpu_sitofp_rule},
+        {tpu::ExtFOp::getOperationName(), tpu_extf_rule},
+        {tpu::TruncFOp::getOperationName(), tpu_truncf_rule},
         {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
         {vector::ExtractOp::getOperationName(), vector_extract_rule},
         {vector::LoadOp::getOperationName(), vector_load_rule},
@@ -7873,9 +7873,9 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
   // TODO: b/342235360 - This check is temporary while we increase and test
   // support for offsets outside of the first tile. When support is more broad,
   // any op without support should check it within their own rule.
-  if (!isa<arith::TruncFOp, arith::TruncIOp, arith::ExtSIOp,
-           vector::BroadcastOp, vector::ExtractStridedSliceOp,
-           vector::ShapeCastOp, tpu::RelayoutOp>(op)) {
+  if (!isa<arith::TruncIOp, arith::ExtSIOp, vector::BroadcastOp,
+           vector::ExtractStridedSliceOp, vector::ShapeCastOp, tpu::RelayoutOp,
+           tpu::TruncFOp>(op)) {
     for (const Layout &layout : layouts_in) {
       if (layout && layout->offsets()[1].has_value() &&
           layout->offsets()[1].value() >= layout->tiling()[1]) {

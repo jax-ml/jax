@@ -542,6 +542,23 @@ def TPU_SIToFPOp : TPU_Op<"sitofp", [Pure, ElementwiseMappable]> {
   let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($output) }];
 }
 
+// Internal operation.
+def TPU_ExtFOp : TPU_Op<"extf", [Pure, ElementwiseMappable]> {
+  let arguments = (ins AnyType:$in);
+  let results = (outs AnyType:$out);
+  let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($out) }];
+}
+
+// Internal operation.
+def TPU_TruncFOp : TPU_Op<"truncf", [Pure, ElementwiseMappable]> {
+  let arguments = (
+    ins AnyType:$in,
+    TPU_RoundingModeEnum:$rounding_mode
+  );
+  let results = (outs AnyType:$out);
+  let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($out) }];
+}
+
 def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension_numbers"> {
   let parameters = (ins
     ArrayRefParameter<"int64_t", "">:$lhs_contracting_dims,

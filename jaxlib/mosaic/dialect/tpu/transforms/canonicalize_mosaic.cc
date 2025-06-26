@@ -390,7 +390,7 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
       if (element_type.isBF16()) {
         if (ctx.compatibility_mode) {
           auto target_f32 =
-              builder.create<arith::ExtFOp>(op.getLoc(), target_f32_ty, operand)
+              builder.create<tpu::ExtFOp>(op.getLoc(), target_f32_ty, operand)
                   .getResult();
           should_rewrite_op = true;
           new_operands.push_back(target_f32);
@@ -428,8 +428,8 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
         builder.create(op.getLoc(), op.getName().getIdentifier(), new_operands,
                        new_res_ty, op.getAttrs());
     if (should_truncate) {
-      new_op = builder.create<arith::TruncFOp>(op.getLoc(), res_ty,
-                                               new_op->getResult(0));
+      new_op = builder.create<tpu::TruncFOp>(op.getLoc(), res_ty,
+                                             new_op->getResult(0));
     }
     op.replaceAllUsesWith(new_op);
     op.erase();
@@ -459,7 +459,7 @@ FailureOr<Value> canonicalize_multi_dim_reduction(
       }
     }
     if (ctx.hardware_generation <= 5) {
-      auto new_source = builder.create<arith::ExtFOp>(
+      auto new_source = builder.create<tpu::ExtFOp>(
           VectorType::get(source_ty.getShape(), builder.getF32Type()),
           op.getSource());
 
@@ -468,12 +468,12 @@ FailureOr<Value> canonicalize_multi_dim_reduction(
       // createOrFold does not trigger recursive canonicalization, but
       // extensions to f32 are always supported.
       Value new_acc =
-          builder.createOrFold<arith::ExtFOp>(result_ty_f32, op.getAcc());
+          builder.createOrFold<tpu::ExtFOp>(result_ty_f32, op.getAcc());
       auto new_op = builder.create<vector::MultiDimReductionOp>(
           op.getLoc(), new_acc.getType(), op.getKindAttr(), new_source, new_acc,
           DenseI64ArrayAttr::get(builder.getContext(), op.getReductionDims()));
       auto new_result =
-          builder.create<arith::TruncFOp>(op.getLoc(), result_ty, new_op);
+          builder.create<tpu::TruncFOp>(op.getLoc(), result_ty, new_op);
       op.replaceAllUsesWith(new_result);
       op.erase();
       return new_result;
@@ -678,10 +678,10 @@ FailureOr<Value> canonicalize_fptosi(const CanonicalizeContext &ctx,
   // Upcast the input to f32.
   if (src_bitwidth < 32) {
     if (is_vector) {
-      x = builder.create<arith::ExtFOp>(
+      x = builder.create<tpu::ExtFOp>(
           VectorType::get(src_vty.getShape(), builder.getF32Type()), x);
     } else {
-      x = builder.create<arith::ExtFOp>(builder.getF32Type(), x);
+      x = builder.create<tpu::ExtFOp>(builder.getF32Type(), x);
     }
   }
   if (dst_bitwidth < 32) {
@@ -775,7 +775,7 @@ FailureOr<Value> canonicalize_sitofp(const CanonicalizeContext &ctx,
                                       tpu::RoundingMode::kToNearestEven);
   }
   if (dst_bitwidth < 32) {
-    x = builder.create<arith::TruncFOp>(op.getType(), x);
+    x = builder.create<tpu::TruncFOp>(op.getType(), x);
   }
   op.replaceAllUsesWith(x);
   op.erase();
@@ -1025,10 +1025,10 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
       val_bf16 =
           builder.create<arith::SIToFPOp>(input_vty_bf16, op.getOperand());
     } else {
-      auto val_f32 = builder.create<arith::ExtFOp>(
+      auto val_f32 = builder.create<tpu::ExtFOp>(
           VectorType::get(input_vty.getShape(), builder.getF32Type()),
           op.getOperand());
-      val_bf16 = builder.create<arith::TruncFOp>(input_vty_bf16, val_f32);
+      val_bf16 = builder.create<tpu::TruncFOp>(input_vty_bf16, val_f32);
     }
 
     Value transposed_bf16 = builder.create<tpu::TransposeOp>(
@@ -1040,16 +1040,99 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
       new_result =
           builder.create<arith::FPToSIOp>(op.getType(), transposed_bf16);
     } else {
-      auto transposed_f32 = builder.create<arith::ExtFOp>(
+      auto transposed_f32 = builder.create<tpu::ExtFOp>(
           VectorType::get(output_vty.getShape(), builder.getF32Type()),
           transposed_bf16);
-      new_result = builder.create<arith::TruncFOp>(output_vty, transposed_f32);
+      new_result = builder.create<tpu::TruncFOp>(output_vty, transposed_f32);
     }
     op.replaceAllUsesWith(new_result);
     op.erase();
     return new_result;
   }
   return raw_op.getResult(0);
+}
+
+FailureOr<Value> canonicalize_arith_extf(const CanonicalizeContext &ctx,
+                                         Operation &raw_op) {
+  auto op = cast<arith::ExtFOp>(raw_op);
+  CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
+  // Canonicalize arith::ExtFOp to tpu::ExtFOp.
+  auto new_result = builder.create<tpu::ExtFOp>(op.getType(), op.getOperand());
+  op.replaceAllUsesWith(new_result);
+  op.erase();
+  return new_result;
+}
+
+FailureOr<Value> canonicalize_tpu_extf(const CanonicalizeContext &ctx,
+                                       Operation &raw_op) {
+  auto op = cast<tpu::ExtFOp>(raw_op);
+  auto dst_ty = dyn_cast<VectorType>(op.getType());
+  if (!dst_ty) {
+    return raw_op.getResult(0);
+  }
+
+  if (dst_ty.getElementType().isF32()) {
+    // Cast to f32 is always supported.
+    return raw_op.getResult(0);
+  }
+
+  if (!ctx.compatibility_mode) {
+    return op.emitOpError(
+        "Enable compatibility mode to support extension to non-f32.");
+  }
+
+  CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
+  auto src_ty = cast<VectorType>(op.getOperand().getType());
+  // Otherwise, cast to f32 and then truncate.
+  VectorType f32_ty = VectorType::get(src_ty.getShape(), builder.getF32Type());
+  Value val_f32 = builder.create<tpu::ExtFOp>(f32_ty, op.getOperand());
+  auto new_result = builder.create<tpu::TruncFOp>(
+      dst_ty, val_f32, tpu::RoundingMode::kToNearestEven);
+  op.replaceAllUsesWith(new_result);
+  op.erase();
+  return new_result;
+}
+
+FailureOr<Value> canonicalize_arith_truncf(const CanonicalizeContext &ctx,
+                                           Operation &raw_op) {
+  auto op = cast<arith::TruncFOp>(raw_op);
+  CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
+  // Canonicalize arith::TruncFOp to tpu::TruncFOp.
+  auto new_result = builder.create<tpu::TruncFOp>(
+      op.getType(), op.getOperand(), tpu::RoundingMode::kToNearestEven);
+  op.replaceAllUsesWith(new_result);
+  op.erase();
+  return new_result;
+}
+
+FailureOr<Value> canonicalize_tpu_truncf(const CanonicalizeContext &ctx,
+                                         Operation &raw_op) {
+  auto op = cast<tpu::TruncFOp>(raw_op);
+  auto src_ty = dyn_cast<VectorType>(op.getOperand().getType());
+  if (!src_ty) {
+    return raw_op.getResult(0);
+  }
+
+  if (src_ty.getElementType().isF32()) {
+    // Truncate from f32 is always supported.
+    return raw_op.getResult(0);
+  }
+
+  if (!ctx.compatibility_mode) {
+    return op.emitOpError(
+        "Enable compatibility mode to support truncation from non-f32.");
+  }
+
+  CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
+  auto dst_ty = cast<VectorType>(op.getType());
+  // Otherwise, cast to f32 and then truncate.
+  VectorType f32_ty = VectorType::get(src_ty.getShape(), builder.getF32Type());
+  Value val_f32 = builder.create<tpu::ExtFOp>(f32_ty, op.getOperand());
+  auto new_result = builder.create<tpu::TruncFOp>(
+      dst_ty, val_f32, tpu::RoundingMode::kToNearestEven);
+  op.replaceAllUsesWith(new_result);
+  op.erase();
+  return new_result;
 }
 
 const llvm::StringMap<canonicalize_rule_type> &rules() {
@@ -1065,6 +1148,10 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {arith::SIToFPOp::getOperationName(), canonicalize_sitofp},
+      {arith::TruncFOp::getOperationName(), canonicalize_arith_truncf},
+      {arith::ExtFOp::getOperationName(), canonicalize_arith_extf},
+      {tpu::TruncFOp::getOperationName(), canonicalize_tpu_truncf},
+      {tpu::ExtFOp::getOperationName(), canonicalize_tpu_extf},
       {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
   return *rules;

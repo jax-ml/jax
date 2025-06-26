@@ -150,7 +150,7 @@ class VectorLayoutInferer {
           any_op.emitOpError("Multi-result ops not supported");
           return failure();
         }
-      } else if (isa<arith::ExtFOp, arith::ExtSIOp>(any_op)) {
+      } else if (isa<arith::ExtSIOp, tpu::ExtFOp>(any_op)) {
         if (inferExt(&any_op).failed()) {
           return failure();
         }
@@ -162,7 +162,7 @@ class VectorLayoutInferer {
         if (inferExt(&any_op).failed()) {
           return failure();
         }
-      } else if (isa<arith::TruncFOp, arith::TruncIOp>(any_op)) {
+      } else if (isa<arith::TruncIOp, tpu::TruncFOp>(any_op)) {
         if (inferTrunc(&any_op).failed()) {
           return failure();
         }
@@ -1724,7 +1724,7 @@ class VectorLayoutInferer {
     unsigned dst_bitwidth = dst_ty.getElementTypeBitWidth();
     auto some_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
-    if (dyn_cast<arith::ExtFOp>(op)) {
+    if (isa<tpu::ExtFOp>(op)) {
       TPU_CHECK_OP(dst_bitwidth == 32, "Only supported extensions to 32-bit");
     }
     auto &layout = *some_layout;
