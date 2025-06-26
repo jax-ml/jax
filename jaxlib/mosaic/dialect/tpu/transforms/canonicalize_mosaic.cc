@@ -429,7 +429,8 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
                        new_res_ty, op.getAttrs());
     if (should_truncate) {
       new_op = builder.create<tpu::TruncFOp>(op.getLoc(), res_ty,
-                                             new_op->getResult(0));
+                                             new_op->getResult(0),
+                                             tpu::RoundingMode::kToNearestEven);
     }
     op.replaceAllUsesWith(new_op);
     op.erase();
@@ -472,8 +473,8 @@ FailureOr<Value> canonicalize_multi_dim_reduction(
       auto new_op = builder.create<vector::MultiDimReductionOp>(
           op.getLoc(), new_acc.getType(), op.getKindAttr(), new_source, new_acc,
           DenseI64ArrayAttr::get(builder.getContext(), op.getReductionDims()));
-      auto new_result =
-          builder.create<tpu::TruncFOp>(op.getLoc(), result_ty, new_op);
+      auto new_result = builder.create<tpu::TruncFOp>(
+          op.getLoc(), result_ty, new_op, tpu::RoundingMode::kToNearestEven);
       op.replaceAllUsesWith(new_result);
       op.erase();
       return new_result;
@@ -775,7 +776,8 @@ FailureOr<Value> canonicalize_sitofp(const CanonicalizeContext &ctx,
                                       tpu::RoundingMode::kToNearestEven);
   }
   if (dst_bitwidth < 32) {
-    x = builder.create<tpu::TruncFOp>(op.getType(), x);
+    x = builder.create<tpu::TruncFOp>(op.getType(), x,
+                                      tpu::RoundingMode::kToNearestEven);
   }
   op.replaceAllUsesWith(x);
   op.erase();
@@ -1028,7 +1030,8 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
       auto val_f32 = builder.create<tpu::ExtFOp>(
           VectorType::get(input_vty.getShape(), builder.getF32Type()),
           op.getOperand());
-      val_bf16 = builder.create<tpu::TruncFOp>(input_vty_bf16, val_f32);
+      val_bf16 = builder.create<tpu::TruncFOp>(
+          input_vty_bf16, val_f32, tpu::RoundingMode::kToNearestEven);
     }
 
     Value transposed_bf16 = builder.create<tpu::TransposeOp>(
@@ -1043,7 +1046,8 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
       auto transposed_f32 = builder.create<tpu::ExtFOp>(
           VectorType::get(output_vty.getShape(), builder.getF32Type()),
           transposed_bf16);
-      new_result = builder.create<tpu::TruncFOp>(output_vty, transposed_f32);
+      new_result = builder.create<tpu::TruncFOp>(
+          output_vty, transposed_f32, tpu::RoundingMode::kToNearestEven);
     }
     op.replaceAllUsesWith(new_result);
     op.erase();
