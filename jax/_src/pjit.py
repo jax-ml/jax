@@ -334,13 +334,13 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 @api_boundary
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
   p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
-  donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
+  donate_argnums = tuple(i for i, d in enumerate(p.params['donated_invars']) if d)
   args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
   lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
                            pgle_profiler=None)
   return stages.Traced(
       p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
-      lower_callable, args_flat, p.arg_names, p.num_consts)
+      lower_callable, args_flat, p.arg_names, len(p.consts))
 
 
 @api_boundary
@@ -512,9 +512,7 @@ class PjitParams(NamedTuple):
   in_avals: tuple[core.AbstractValue, ...]
   in_tree: PyTreeDef
   out_tree: PyTreeDef
-  donated_invars: tuple[bool, ...]
   arg_names: tuple[str, ...]
-  num_consts: int
   attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str, Any]]]
   box_data: list
 
@@ -646,9 +644,9 @@ def _infer_params_impl(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  return PjitParams(consts, params, in_avals, in_tree, out_tree(),
-                    donated_invars, dbg.arg_names, len(consts),
-                    attrs_tracked, box_data), args_flat
+  return (PjitParams(consts, params, in_avals, in_tree, out_tree(),
+                     dbg.arg_names, attrs_tracked, box_data),
+          args_flat)
 
 
 class InferParamsCacheEntry:
