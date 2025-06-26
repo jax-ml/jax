@@ -44,7 +44,6 @@ from jax._src import sharding_specs
 from jax._src import pjit
 from jax._src import profiler
 from jax._src import sharding_impls
-from jax._src import source_info_util
 from jax._src import stages
 from jax._src import tree_util
 from jax._src import typing
@@ -855,11 +854,10 @@ def lower_parallel_callable(
 
   axis_env = sharding_impls.AxisEnv(
       replicas.num_global_replicas, (axis_name,), (global_axis_size,))
-  name_stack = source_info_util.new_name_stack(wrap_name(name, 'pmap'))
   replicated_args = [axis is None for axis in in_axes]
   tuple_args = dispatch.should_tuple_args(len(shards.global_sharded_avals),
                                           backend.platform)
-  module_name = f"pmap_{fun.__name__}"
+  module_name = wrap_name(name, 'pmap')
   platforms = lowering_platforms or (backend.platform,)
   with core.extend_axis_env_nd([(axis_name, global_axis_size)]):
     ordered_effects = list(
@@ -870,7 +868,7 @@ def lower_parallel_callable(
         effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
     with dispatch.log_elapsed_time(
         "Finished jaxpr to MLIR module conversion {fun_name} in {elapsed_time:.9f} sec",
-        fun_name=str(name_stack), event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
+        fun_name=module_name, event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
       lowering_result = mlir.lower_jaxpr_to_module(
           module_name,
           closed_jaxpr,
@@ -878,7 +876,6 @@ def lower_parallel_callable(
           backend=backend,
           platforms=platforms,
           axis_context=sharding_impls.ReplicaAxisContext(axis_env),
-          name_stack=name_stack,
           donated_args=donated_invars,
           replicated_args=replicated_args,
           arg_shardings=None,
@@ -1727,10 +1724,7 @@ def prune_unused_inputs(
 
 
 @weakref_lru_cache
-def _dce_jaxpr(closed_jaxpr, api_name, fun_name,
-               keep_unused, donated_invars, auto_spmd_lowering):
-  name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
-
+def _dce_jaxpr(closed_jaxpr, keep_unused, donated_invars, auto_spmd_lowering):
   assert isinstance(closed_jaxpr, core.ClosedJaxpr)
   jaxpr = closed_jaxpr.jaxpr
   consts = closed_jaxpr.consts
@@ -1747,7 +1741,7 @@ def _dce_jaxpr(closed_jaxpr, api_name, fun_name,
     del kept_const_idx
 
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-  return closed_jaxpr, donated_invars, kept_var_idx, name_stack
+  return closed_jaxpr, donated_invars, kept_var_idx
 
 class MutationData(NamedTuple):
   in_mut: list[core.MutableArray]
@@ -1825,7 +1819,7 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
     nreps: int, backend: xc.Client, name: str, jaxpr: core.Jaxpr) -> None:
   if nreps > 1:
     warnings.warn(
-        f"The jitted function {name} includes a pmap. Using "
+        f"The function {name} includes a pmap. Using "
          "jit-of-pmap can lead to inefficient data movement, as the outer jit "
          "does not preserve sharded data representations and instead collects "
          "input and output arrays onto a single device. "
@@ -1847,10 +1841,10 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
 
 
 @weakref_lru_cache
-def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
+def _cached_lowering_to_hlo(closed_jaxpr, module_name, backend,
                             semantic_in_shardings, semantic_out_shardings,
                             in_layouts, out_layouts, num_devices, device_assignment,
-                            donated_invars, name_stack, all_default_mem_kind,
+                            donated_invars, all_default_mem_kind,
                             inout_aliases: None | tuple[None | int, ...],
                             propagated_out_mem_kinds: tuple[None | str, ...],
                             platforms: tuple[str, ...],
@@ -1867,7 +1861,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
     logger.log(log_priority,
                "Compiling %s with global shapes and types %s. "
                "Argument mapping: %s.",
-               fun_name, global_in_avals, in_shardings)
+               module_name, global_in_avals, in_shardings)
 
   # Look at the number of replcas present in the jaxpr. In
   # lower_sharding_computation, nreps > 1 during `jit(pmap)` cases. This is
@@ -1875,7 +1869,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   # `jax.Array` is turned on by default.
   # TODO(yashkatariya): Remove this when `jit(pmap)` is removed.
   nreps = dispatch.jaxpr_replicas(jaxpr)
-  _raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, fun_name, jaxpr)
+  _raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, module_name, jaxpr)
 
   in_mlir_shardings: list[JSharding | AUTO | None] | None
   out_mlir_shardings: list[JSharding | AUTO | None] | None
@@ -1897,7 +1891,6 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
     axis_ctx = sharding_impls.ReplicaAxisContext(axis_env)
     num_partitions = 1
 
-  module_name = f"{api_name}_{fun_name}"
 
   if num_devices > 1:
     unsupported_effects = effects.ordered_effects.filter_in(closed_jaxpr.effects)
@@ -1910,7 +1903,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
   with dispatch.log_elapsed_time(
         "Finished jaxpr to MLIR module conversion {fun_name} in {elapsed_time:.9f} sec",
-        fun_name=str(name_stack), event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
+        fun_name=module_name, event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
@@ -1918,7 +1911,6 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         backend=backend,
         platforms=platforms,
         axis_context=axis_ctx,
-        name_stack=name_stack,
         donated_args=donated_invars,
         replicated_args=replicated_args,
         arg_shardings=in_mlir_shardings,
@@ -2198,9 +2190,8 @@ def lower_sharding_computation(
 
   all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr._debug_info)
 
-  closed_jaxpr, donated_invars, kept_var_idx, name_stack = _dce_jaxpr(
-      closed_jaxpr, api_name, fun_name, keep_unused, donated_invars,
-      auto_spmd_lowering)
+  closed_jaxpr, donated_invars, kept_var_idx = _dce_jaxpr(
+      closed_jaxpr, keep_unused, donated_invars, auto_spmd_lowering)
   in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
   in_layouts = tuple(l for i, l in enumerate(in_layouts) if i in kept_var_idx)
 
@@ -2326,13 +2317,14 @@ def lower_sharding_computation(
       out_shardings, global_out_avals)
 
   jaxpr_util.maybe_dump_jaxpr_to_file(fun_name, closed_jaxpr.jaxpr)
+  module_name = util.wrap_name(fun_name, api_name)
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
-       closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
+       closed_jaxpr, module_name, backend, semantic_in_shardings,
        semantic_out_shardings, in_layouts, out_layouts, num_devices,
        tuple(device_list) if prim_requires_devices else None,  # type: ignore[arg-type]
-       donated_invars, name_stack, all_default_mem_kind, inout_aliases,
+       donated_invars, all_default_mem_kind, inout_aliases,
        propagated_out_mem_kinds, platforms,
        lowering_parameters=lowering_parameters,
        abstract_mesh=abstract_mesh)
@@ -2343,7 +2335,7 @@ def lower_sharding_computation(
   # because we calculate the device_assignment and backend before in_shardings,
   # etc are pruned.
   return MeshComputation(
-      str(name_stack),
+      module_name,
       module,
       donated_invars,
       platforms,

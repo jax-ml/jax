@@ -291,7 +291,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertIn(
         (
             "Error writing persistent compilation cache entry "
-            "for 'jit__lambda_': RuntimeError: test error"
+            "for 'jit__lambda': RuntimeError: test error"
         ),
         str(w[0].message),
     )
@@ -315,7 +315,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertIn(
         (
             "Error reading persistent compilation cache entry "
-            "for 'jit__lambda_': RuntimeError: test error"
+            "for 'jit__lambda': RuntimeError: test error"
         ),
         str(w[0].message),
     )

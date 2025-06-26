@@ -1676,7 +1676,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     )
 
   @jtu.ignore_warning(category=UserWarning,
-                      message=".* jitted function .* includes a pmap")
+                      message=".* function .* includes a pmap")
   def test_jvp_pmap(self):
     tracer_spy = TracerSpy()
     def my_f(x, y):

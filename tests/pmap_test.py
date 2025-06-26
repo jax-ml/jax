@@ -1859,7 +1859,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     def foo(x): return x
 
-    with self.assertWarnsRegex(UserWarning, "The jitted function foo includes a pmap"):
+    with self.assertWarnsRegex(UserWarning, "The function jit.foo. includes a pmap"):
       jit(self.pmap(foo))(jnp.arange(device_count))
 
   def testJitOfPmapOutputSharding(self):
@@ -2152,7 +2152,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     keys = jax.random.split(jax.random.key(0), jax.device_count())
     result1 = jax.pmap(jax.random.bits)(keys)
     with jtu.ignore_warning(
-        category=UserWarning, message="The jitted function bits includes a pmap"):
+        category=UserWarning, message="The function jit.bits. includes a pmap"):
       result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
     self.assertArraysEqual(result1, result2)
 

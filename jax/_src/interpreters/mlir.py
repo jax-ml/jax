@@ -1157,7 +1157,6 @@ def lower_jaxpr_to_module(
     platforms: Sequence[str],
     backend: xb.XlaBackend | None,
     axis_context: AxisContext,
-    name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
     replicated_args: Sequence[bool] | None = None,
     arg_shardings: Sequence[JSharding | AUTO | None] | None = None,
@@ -1262,13 +1261,13 @@ def lower_jaxpr_to_module(
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
     attrs = ctx.module.operation.attributes
-    module_name = sanitize_name(module_name)
-    attrs["sym_name"] = ir.StringAttr.get(module_name)
+    attrs["sym_name"] = ir.StringAttr.get(
+        sanitize_name(module_name).rstrip("_"))
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, ordered_effects,
-        name_stack=name_stack,
+        name_stack=source_info_util.new_name_stack(module_name),
         public=True,
         replicated_args=replicated_args,
         arg_shardings=arg_shardings,
@@ -2903,7 +2902,6 @@ def build_mlir_module_helper(
     raise ValueError(f'Cannot lower jaxpr with effects: {closed_jaxpr.effects}')
   lowering_result = lower_jaxpr_to_module(name, closed_jaxpr,
       backend=backend, ordered_effects=[],
-      name_stack=source_info_util.NameStack(),
       donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
       axis_context=axis_context, platforms=platforms,
       lowering_parameters=LoweringParameters())

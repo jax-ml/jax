@@ -2496,7 +2496,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "compiling computation `scan` that requires {} "
+            "compiling computation `jit(scan)` that requires {} "
             "replicas, but only {} XLA devices are available."
             .format(too_big, jax.device_count())),
         lambda: f_loop(jnp.ones(too_big)))

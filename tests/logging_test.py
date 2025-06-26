@@ -150,7 +150,7 @@ class LoggingTest(jtu.JaxTestCase):
       with capture_jax_logs() as log_output:
         jax.jit(lambda x: x + 1)(1)
       self.assertIn("Finished tracing + transforming", log_output.getvalue())
-      self.assertIn("Compiling <lambda>", log_output.getvalue())
+      self.assertIn("Compiling jit(<lambda>)", log_output.getvalue())
 
     # Turn off all debug logging.
     with jax_debug_log_modules(""):
@@ -163,7 +163,7 @@ class LoggingTest(jtu.JaxTestCase):
       with capture_jax_logs() as log_output:
         jax.jit(lambda x: x + 1)(1)
       self.assertIn("Finished tracing + transforming", log_output.getvalue())
-      self.assertNotIn("Compiling <lambda>", log_output.getvalue())
+      self.assertNotIn("Compiling jit(<lambda>)", log_output.getvalue())
 
     # Turn everything off again.
     with jax_debug_log_modules(""):
