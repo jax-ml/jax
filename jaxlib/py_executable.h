@@ -142,8 +142,7 @@ class PyExecutable {
       const {
     return ifrt_executable_->GetHloModules();
   }
-  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
-  GetOutputMemoryKinds() const {
+  absl::StatusOr<std::vector<absl::string_view>> GetOutputMemoryKinds() const {
     return ifrt_executable_->GetOutputMemoryKinds();
   }
   std::optional<std::vector<OpSharding>> GetOutputShardings() const {
@@ -218,8 +217,7 @@ class PyLoadedExecutable {
 
   absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> HloModules() const;
 
-  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
-  GetOutputMemoryKinds() const;
+  absl::StatusOr<std::vector<absl::string_view>> GetOutputMemoryKinds() const;
 
   absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
   GetParameterLayouts() const;
