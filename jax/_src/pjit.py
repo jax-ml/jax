@@ -34,6 +34,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
@@ -2463,13 +2464,16 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
       pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
       for aval in unknown_out_avals
   ]
-  eqn = pe.new_eqn_recipe(trace, (*unknown_tracers_in, *residual_tracers),
+  unknown_tracers_in = [*unknown_tracers_in, *residual_tracers]
+  eqn = pe.new_eqn_recipe(trace, unknown_tracers_in,
                           unknown_tracers_out,
                           pjit_p,
                           unknown_params,
                           unknown_jaxpr.effects,
                           source_info_util.current())
   for t in unknown_tracers_out: t.recipe = eqn
+  if effects.partial_eval_kept_effects.filter_in(unknown_jaxpr.effects):
+    trace.effect_handles.append(pe.EffectHandle(unknown_tracers_in, eqn))  # type: ignore
   return merge_lists(unknown_outs, known_out_vals, unknown_tracers_out)
 
 pe.custom_partial_eval_rules[pjit_p] = _pjit_partial_eval

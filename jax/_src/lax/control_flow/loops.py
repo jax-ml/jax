@@ -1104,8 +1104,6 @@ def _transpose_scan_jaxpr(jaxpr: core.ClosedJaxpr,
                           num_res1: int, num_c: int, num_res2: int,
                           ct_ys_is_zeros: Sequence[bool]):
   num_a = len(jaxpr.in_avals) - num_res1 - num_c - num_res2
-  # TODO: allow input cotangent avals to be batched relative to jaxpr.in_avals
-  # if an axis isn't reduced
   res1_avals, c_avals, a_avals, res2_avals = split_list(
       jaxpr.in_avals, [num_res1, num_c, num_a])
 
