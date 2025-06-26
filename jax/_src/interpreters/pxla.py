@@ -937,7 +937,7 @@ class PmapComputation(stages.Lowering):
     return self._hlo
 
   @profiler.annotate_function
-  def compile(self, compiler_options=None, device_assignment=None
+  def compile(self, compiler_options=None, *, device_assignment=None
               ) -> PmapExecutable:
     if self._executable is None or compiler_options is not None:
       executable = UnloadedPmapExecutable.from_hlo(
@@ -2406,7 +2406,7 @@ class MeshComputation(stages.Lowering):
   def stablehlo(self) -> ir.Module:
     return self._hlo
 
-  def compile(self, compiler_options=None, device_assignment=None,
+  def compile(self, compiler_options=None, *, device_assignment=None,
               ) -> MeshExecutable:
     t_compiler_options = (() if compiler_options is None else
                           tuple(compiler_options.items()))
