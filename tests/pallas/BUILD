@@ -486,6 +486,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_pipeline_test",
     srcs = ["tpu_pallas_pipeline_test.py"],
+    args = [
+        # Timeout on deadlocks for a better error message.
+        "--xla_tpu_debug_sflag_wait_timeout_ms=500",
+        "--xla_tpu_debug_sflag_wait_shalt_on_detection",
+    ],
     enable_backends = ["tpu"],
     enable_configs = [
         "tpu_v5e_x8",

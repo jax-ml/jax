@@ -386,13 +386,13 @@ class BufferedRef(BufferedRefBase):
     dtype: dtype for buffers.
     buffer_type: enum indicating whether this is an input, output, or in/out
       accumulator buffered reference.
-    window_ref: a double-buffer to hold a working buffer and a dirty buffer used
+    window_ref: a multiple-buffer to hold the working and dirty buffers used
       to copy into and out of.  In the case of a BufferedRef targeting a VMEM
       reference, this simply points to the existing ref.
     accum_ref: accumulating buffer used by accumulator BufferedRefs.
     current_slot: current slot index to the working buffer.
-    sem_recvs: Double buffered semaphores for input DMAs.
-    sem_sends: Double buffered semaphores for output DMAs.
+    sem_recvs: Multiple buffered semaphores for input DMAs.
+    sem_sends: Multiple buffered semaphores for output DMAs.
     block_shape: passthrough property for the BlockSpec's block_shape.
     compute_index: passthrough property for the BlockSpec's compute_index.
     memory_space: passthrough property for the BlockSpec's memory_space.
@@ -418,6 +418,11 @@ class BufferedRef(BufferedRefBase):
   # using this ref.
   swap: ArrayRef | None
 
+  def __post_init__(self):
+    if self.current_slot is not None and self.buffer_count > 2:
+      raise NotImplementedError(
+          "Multiple buffering with >2 buffers not implemented.")
+
   @property
   def spec(self):
     return self._spec
@@ -425,6 +430,14 @@ class BufferedRef(BufferedRefBase):
   @property
   def buffer_type(self):
     return self._buffer_type
+
+  @property
+  def buffer_count(self):
+    """Returns the number of buffers used for multiple buffering."""
+    # Check if it's a VMEM-backed buffer.
+    if self.window_ref is None or self.current_slot is None:
+      raise ValueError("buffer count is undefined")
+    return self.window_ref.shape[0]
 
   def tree_flatten(self):
     return (
@@ -449,8 +462,8 @@ class BufferedRef(BufferedRefBase):
     return BufferType
 
   @classmethod
-  def create(cls, spec: pl.BlockSpec, dtype, buffer_type, needs_swap_ref=True
-            ) -> BufferedRef:
+  def create(cls, spec: pl.BlockSpec, dtype, buffer_type, buffer_count,
+             needs_swap_ref=True) -> BufferedRef:
     """Create a BufferedRef.
 
     Args:
@@ -463,6 +476,7 @@ class BufferedRef(BufferedRefBase):
     Returns:
       Initialized BufferedRef
     """
+    del buffer_count
     block_shape = _get_block_shape(spec)
     if buffer_type is BufferType.ACCUMULATOR:
       accum_ref = VMEM(block_shape, dtype)
@@ -508,20 +522,24 @@ class BufferedRef(BufferedRefBase):
       )
 
   @classmethod
-  def input(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.INPUT, needs_swap_ref)
+  def input(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.INPUT, buffer_count,
+                      needs_swap_ref)
 
   @classmethod
-  def output(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.OUTPUT, needs_swap_ref)
+  def output(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.OUTPUT, buffer_count,
+                      needs_swap_ref)
 
   @classmethod
-  def accumulator(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.ACCUMULATOR, needs_swap_ref)
+  def accumulator(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.ACCUMULATOR, buffer_count,
+                      needs_swap_ref)
 
   @classmethod
-  def input_output(cls, spec, dtype, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.INPUT_OUTPUT, needs_swap_ref)
+  def input_output(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+    return cls.create(spec, dtype, BufferType.INPUT_OUTPUT, buffer_count,
+                      needs_swap_ref)
 
   @property
   def block_shape(self):
@@ -828,6 +846,7 @@ class Scheduler:
       indices: tuple[int | jax.Array, ...],
       grid: tuple[int | jax.Array, ...],
       grid_offsets: tuple[int | jax.Array, ...],
+      num_stages: int,
       first_cycle=None,
       last_cycle=None,
       init_accumulators=None,
@@ -841,6 +860,7 @@ class Scheduler:
       indices: current grid indices.
       grid: pallas grid for BufferedRefs.
       grid_offsets: offsets for grid indices (used for megacore).
+      num_stages: number of stages in the pipeline.
       first_cycle: whether this is the first invocation of the pipeline.
       last_cycle: whether this is the last invocation of the pipeline.
       init_accumulators: do we zero-initialize accumulator state for this
@@ -849,6 +869,8 @@ class Scheduler:
       use_sreg_for_state: optional bool, indicates whether to use sregs for
         current_slot state.
     """
+    if num_stages != 2:
+      raise ValueError("Only 2-stage pipelines are supported.")
     self.step = step
     self.grid = grid
     self.first_cycle = first_cycle
@@ -1180,12 +1202,22 @@ def make_pipeline_allocations(
   in_refs = refs[:num_in_specs]
   out_refs = refs[num_in_specs:]
   def make_input_bref(in_spec, in_ref):
-    return BufferedRef.input(in_spec, in_ref.dtype, needs_swap_ref)
+    buffer_count = 2
+    if in_spec.pipeline_mode is not None:
+      buffer_count = in_spec.pipeline_mode.buffer_count
+    return BufferedRef.input(in_spec, in_ref.dtype, buffer_count,
+                             needs_swap_ref)
   in_brefs = jax.tree.map(make_input_bref, in_specs, in_refs)
   def make_output_bref(out_spec, out_ref, accumulate):
+    buffer_count = 2
+    if out_spec.pipeline_mode is not None:
+      buffer_count = out_spec.pipeline_mode.buffer_count
+
     if accumulate:
-      return BufferedRef.accumulator(out_spec, out_ref.dtype, needs_swap_ref)
-    return BufferedRef.output(out_spec, out_ref.dtype, needs_swap_ref)
+      return BufferedRef.accumulator(out_spec, out_ref.dtype,
+                                     buffer_count, needs_swap_ref)
+    return BufferedRef.output(out_spec, out_ref.dtype,
+                              buffer_count, needs_swap_ref)
   out_brefs = jax.tree.map(
       make_output_bref, out_specs, out_refs, should_accumulate_out)
   return (*in_brefs, *out_brefs)
@@ -1380,6 +1412,10 @@ def emit_pipeline(
   if isinstance(out_specs, list):
     out_specs = tuple(out_specs)
   should_accumulate_out = _broadcast_pytree_to(should_accumulate_out, out_specs)
+  get_buffer_count = lambda spec: (spec.pipeline_mode.buffer_count if
+    (spec is not None and spec.pipeline_mode is not None) else 2)
+  flattened_specs = jax.tree.leaves((in_specs, out_specs))
+  max_buffer_count = max((2, *map(get_buffer_count, flattened_specs)))
 
   def pipeline(
     *refs: Any,
@@ -1467,6 +1503,7 @@ def emit_pipeline(
           indices,
           grid,
           grid_offsets=grid_offsets,
+          num_stages=max_buffer_count,
           first_cycle=first_cycle,
           last_cycle=last_cycle,
           init_accumulators=init_accumulators,

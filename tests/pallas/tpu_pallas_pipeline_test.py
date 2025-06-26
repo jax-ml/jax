@@ -222,6 +222,474 @@ class PallasCallPipelineTest(parameterized.TestCase):
     np.testing.assert_allclose(z, jnp.dot(x, y) + jnp.dot(x, y))
 
 
+# TODO(justinfu): Implement multiple buffering and enable >2 buffers
+# in this test.
+class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
+
+  def setUp(self):
+    if jax.device_count() > 1:
+      self.skipTest('Only 1 device is supported.')
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Only works with TPU v5+')
+    super().setUp()
+
+  @parameterized.product(
+      in_buffer_count=[2],
+      out_buffer_count=[2],
+  )
+  def test_copy(self, in_buffer_count, out_buffer_count):
+    x = jnp.reshape(jnp.arange(512 * 512), (512, 512))
+    def copy_kernel(x_hbm_ref, o_hbm_ref):
+      def inner_kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(4, 4),
+          in_specs=[
+              pl.BlockSpec((128, 128), lambda i, j: (i, j),
+                pipeline_mode=pl.Buffered(buffer_count=in_buffer_count)),
+          ],
+          out_specs=pl.BlockSpec((128, 128), lambda i, j: (i, j),
+            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
+      )(x_hbm_ref, o_hbm_ref)
+    fn = pl.pallas_call(
+        copy_kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+    )
+    result = fn(x)
+    np.testing.assert_allclose(result, x)
+
+  @parameterized.product(
+      x_buffer_count=[2],
+      y_buffer_count=[2],
+      out_buffer_count=[2],
+  )
+  def test_matmul(self, x_buffer_count, y_buffer_count, out_buffer_count):
+    block_shape = (128, 128)
+    x = jax.random.uniform(jax.random.key(0), (512, 512))
+    y = jax.random.uniform(jax.random.key(1), (512, 512))
+    def matmul_kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
+      def pipeline_step(x_ref, y_ref, o_ref):
+        @pl.when(pl.program_id(2) == 0)
+        def _():
+          o_ref[...] = jnp.zeros(o_ref.shape, jnp.float32)
+        o_ref[...] += x_ref[...] @ y_ref[...]
+      pltpu.emit_pipeline(
+          pipeline_step,
+          grid=(512 // block_shape[0], 512 // block_shape[0], 512 // block_shape[0]),
+          in_specs=[
+              pl.BlockSpec(block_shape, lambda i, j, k: (i, k),
+                pipeline_mode=pl.Buffered(buffer_count=x_buffer_count)),
+              pl.BlockSpec(block_shape, lambda i, j, k: (k, j),
+                pipeline_mode=pl.Buffered(buffer_count=y_buffer_count)),
+          ],
+          out_specs=pl.BlockSpec(block_shape, lambda i, j, k: (i, j),
+            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
+      )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
+    fn = pl.pallas_call(
+        matmul_kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+    )
+    result = fn(x, y)
+    np.testing.assert_allclose(result, x @ y, atol=5e-5)
+
+  @parameterized.product(
+      x_buffer_count=[2],
+      y_buffer_count=[2],
+      out_buffer_count=[2],
+  )
+  def test_matmul_megacore(self,
+                           x_buffer_count, y_buffer_count, out_buffer_count):
+    block_shape = (128, 128)
+    x = jax.random.uniform(jax.random.key(0), (512, 512))
+    y = jax.random.uniform(jax.random.key(1), (512, 512))
+    def matmul_kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
+      def pipeline_step(x_ref, y_ref, o_ref):
+        @pl.when(pl.program_id(2) == 0)
+        def _():
+          o_ref[...] = jnp.zeros(o_ref.shape, jnp.float32)
+        o_ref[...] += x_ref[...] @ y_ref[...]
+      pltpu.emit_pipeline(
+          pipeline_step,
+          core_axis=0,
+          grid=(512 // block_shape[0], 512 // block_shape[0], 512 // block_shape[0]),
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY),
+          in_specs=[
+              pl.BlockSpec(block_shape, lambda i, j, k: (i, k),
+                pipeline_mode=pl.Buffered(buffer_count=x_buffer_count)),
+              pl.BlockSpec(block_shape, lambda i, j, k: (k, j),
+                pipeline_mode=pl.Buffered(buffer_count=y_buffer_count)),
+          ],
+          out_specs=pl.BlockSpec(block_shape, lambda i, j, k: (i, j),
+            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
+      )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
+    fn = pl.pallas_call(
+        matmul_kernel,
+        grid=(2,),
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=(pltpu.PARALLEL,)
+        ),
+    )
+    result = fn(x, y)
+    np.testing.assert_allclose(result, x @ y, atol=5e-5)
+
+  @parameterized.product(
+      in_buffer_count=[2],
+      out_buffer_count=[2],
+      in_block_indices=[
+          [2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+          [0, 0, 2, 3, 3, 3, 1, 7, 6, 6],
+          [3, 3, 3, 3, 3, 3, 3, 7, 6, 6],
+          [0, 1, 2, 3, 4, 5, 0, 1, 2, 3],
+      ],
+  )
+  def test_block_gather(self, in_block_indices, in_buffer_count, out_buffer_count):
+    # Excercises pipeline with repeated input block indices.
+    block_size = 128
+    x = jnp.reshape(jnp.arange(1024 * 128), (1024, 128))
+
+    def copy_kernel(x_hbm_ref, blk_indices_ref, o_hbm_ref):
+      def x_index_map(i):
+        return (blk_indices_ref[i], 0)
+      def inner_kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(len(in_block_indices),),
+          in_specs=[
+              pl.BlockSpec((128, 128), index_map=x_index_map,
+                pipeline_mode=pl.Buffered(buffer_count=in_buffer_count)),
+          ],
+          out_specs=pl.BlockSpec((128, 128), lambda i: (i, 0),
+            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
+      )(x_hbm_ref, o_hbm_ref)
+    fn = pl.pallas_call(
+        copy_kernel,
+        out_shape=jax.ShapeDtypeStruct((len(in_block_indices) * 128, 128), jnp.int32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+    )
+    result = fn(x, jnp.array(in_block_indices))
+
+    expected = []
+    for blk_idx in in_block_indices:
+      expected.append(x[blk_idx * block_size:(blk_idx + 1) * block_size, :])
+    expected = jnp.concatenate(expected, axis=0)
+    np.testing.assert_allclose(result, expected)
+
+  @parameterized.product(
+      in_buffer_count=[2],
+      out_buffer_count=[2],
+      out_block_indices=[
+        [0, 0, 2, 2, 2, 5, 3, 3],
+        [5, 5, 5, 5, 5, 5, 5, 5],
+      ],
+  )
+  def test_block_scatter(self, out_block_indices, in_buffer_count,
+                         out_buffer_count):
+    # Excercises pipeline with repeated output block indices.
+    block_size = 128
+    x = jnp.reshape(jnp.arange(1024 * 128), (1024, 128))
+
+    def copy_kernel(x_hbm_ref, blk_indices_ref, o_hbm_ref):
+      # zero-out o_hbm_ref
+      @functools.partial(pl.run_scoped,
+                         o_vmem=pltpu.VMEM((1024, 128), jnp.int32))
+      def _(o_vmem):
+        o_vmem[...] = jnp.zeros(o_vmem.shape, jnp.int32)
+        pltpu.sync_copy(o_vmem, o_hbm_ref)
+
+      def o_index_map(i):
+        return (blk_indices_ref[i], 0)
+      def inner_kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(8,),
+          in_specs=[
+              pl.BlockSpec((128, 128), index_map=lambda i: (i, 0),
+                pipeline_mode=pl.Buffered(buffer_count=in_buffer_count)),
+          ],
+          out_specs=pl.BlockSpec((128, 128), o_index_map,
+            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
+      )(x_hbm_ref, o_hbm_ref)
+    fn = pl.pallas_call(
+        copy_kernel,
+        out_shape=jax.ShapeDtypeStruct((1024, 128), jnp.int32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+    )
+    result = fn(x, jnp.array(out_block_indices))
+
+    expected = [jnp.zeros((128, 128), jnp.int32)] * 8
+    for i, blk_idx in enumerate(out_block_indices):
+      expected[blk_idx] = x[i * block_size:(i + 1) * block_size, :]
+    expected = jnp.concatenate(expected, axis=0)
+    np.testing.assert_allclose(result, expected)
+
+  @parameterized.product(
+      in_buffer_count=[2],
+      out_buffer_count=[2],
+
+  )
+  def test_copy_with_multiple_cycles(self, in_buffer_count, out_buffer_count):
+    x = jnp.reshape(jnp.arange(512 * 512), (512, 512))
+    def copy_kernel(x_hbm_ref, o_hbm_ref):
+      def inner_kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+      pipeline_fn, make_allocations = pltpu.emit_pipeline_with_allocations(
+          inner_kernel,
+          grid=(2, 4),
+          in_specs=[
+              pl.BlockSpec((128, 128), lambda i, j: (i, j),
+                pipeline_mode=pl.Buffered(buffer_count=in_buffer_count)),
+          ],
+          out_specs=pl.BlockSpec((128, 128), lambda i, j: (i, j),
+            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
+      )
+      def prefetch(x_bref, o_bref, scheduler):
+        del o_bref
+        # Prefetch will use a 0, 0 index so we need to slice x_hbm_ref
+        scheduler.prefetch(x_bref, x_hbm_ref.at[256:, :])
+
+      @functools.partial(pl.run_scoped,
+        allocations=make_allocations(x_hbm_ref,
+                                     o_hbm_ref,
+                                     should_accumulate_out=(False,)))
+      def _(allocations):
+        pipeline_fn(x_hbm_ref.at[:256, :], o_hbm_ref.at[:256, :],
+                allocations=allocations,
+                first_cycle=True,
+                last_cycle=False,
+                prefetch=prefetch,
+                postyeet=None,
+        )
+        pipeline_fn(x_hbm_ref.at[256:, :], o_hbm_ref.at[256:, :],
+                allocations=allocations,
+                first_cycle=False,
+                last_cycle=True,
+                prefetch=None,
+                postyeet=None,
+        )
+    fn = pl.pallas_call(
+        copy_kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+    )
+    result = fn(x)
+    np.testing.assert_allclose(result, x)
+
+  @parameterized.product(
+      in_buffer_count=[2],
+      out_buffer_count=[2],
+      in_block_indices=[
+          [0, 1, 2, 3, 4, 5,],
+          [2, 2, 2, 2, 2, 2,],
+          [0, 0, 7, 7, 4, 4,],
+          [3, 3, 7, 7, 5, 3, 3],
+          [5],
+      ],
+  )
+  def test_block_gather_with_multiple_cycles(
+      self, in_block_indices, in_buffer_count=2, out_buffer_count=2):
+    # Exercises pipeline with repeated input block indices.
+    block_size = 128
+    x = jnp.reshape(jnp.arange(1024 * 128), (1024, 128))
+    blk_len = len(in_block_indices)
+
+    def copy_kernel(x_hbm_ref, blk_indices_ref, o_hbm_ref, blk_idx_offset):
+      blk_idx_offset[0] = 0
+      def inner_kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+      def x_index_map(i):
+        return (blk_indices_ref[i], 0)
+      pipeline_fn, make_allocations = pltpu.emit_pipeline_with_allocations(
+          inner_kernel,
+          grid=(blk_len,),
+          in_specs=[
+              pl.BlockSpec((128, 128), index_map=x_index_map,
+                pipeline_mode=pl.Buffered(buffer_count=in_buffer_count)),
+          ],
+          out_specs=pl.BlockSpec((128, 128),
+                                 lambda i: (i + blk_idx_offset[0], 0),
+            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
+      )
+      def prefetch(x_bref, o_bref, scheduler):
+        del o_bref
+        scheduler.prefetch(x_bref, x_hbm_ref)
+
+      @functools.partial(pl.run_scoped,
+        allocations=make_allocations(x_hbm_ref,
+                                     o_hbm_ref,
+                                     should_accumulate_out=(False,)))
+      def _(allocations):
+        pipeline_fn(x_hbm_ref, o_hbm_ref,
+                allocations=allocations,
+                first_cycle=True,
+                last_cycle=False,
+                prefetch=prefetch,
+                postyeet=None,
+        )
+        blk_idx_offset[0] = blk_len
+        pipeline_fn(x_hbm_ref, o_hbm_ref,
+                allocations=allocations,
+                first_cycle=False,
+                last_cycle=True,
+                prefetch=None,
+                postyeet=None,
+        )
+    fn = pl.pallas_call(
+        copy_kernel,
+        out_shape=jax.ShapeDtypeStruct((blk_len * 2 * 128, 128), jnp.int32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        scratch_shapes = [pltpu.SMEM((1,), dtype=jnp.int32)]
+    )
+    result = jax.block_until_ready(fn(x, jnp.array(in_block_indices)))
+
+    expected = []
+    for blk_idx in [*in_block_indices, *in_block_indices]:
+      x_block = x[blk_idx * block_size:(blk_idx + 1) * block_size, :]
+      expected.append(x_block)
+    expected = jax.block_until_ready(jnp.concatenate(expected, axis=0))
+    np.testing.assert_allclose(result, expected)
+
+  @parameterized.product(
+      in_buffer_count=[2],
+  )
+  def test_pipeline_with_accumulator(self, in_buffer_count=2):
+    x = jnp.reshape(jnp.arange(1024 * 128), (1024, 128)) // (128*128)
+    accum_schedule = pltpu.get_pipeline_schedule('fixed')
+    def copy_kernel(x_hbm_ref, o_hbm_ref):
+      def inner_kernel(x_ref, o_ref):
+        @pl.when(pl.program_id(0) == 0)
+        def _():
+          o_ref[...] = jnp.zeros_like(o_ref)
+        o_ref[...] += x_ref[...]
+      pipeline_fn, make_allocations = pltpu.emit_pipeline_with_allocations(
+          inner_kernel,
+          grid=(4,),
+          in_specs=[
+              pl.BlockSpec((128, 128), lambda i : (i, 0),
+                pipeline_mode=pl.Buffered(buffer_count=in_buffer_count)),
+          ],
+          out_specs=pl.BlockSpec((128, 128), lambda i : (0, 0)),
+          should_accumulate_out=True,
+      )
+      def prefetch(x_bref, o_bref, scheduler):
+        del o_bref
+        # Prefetch will use a 0, 0 index so we need to slice x_hbm_ref
+        scheduler.prefetch(x_bref, x_hbm_ref.at[512:, :])
+
+      @functools.partial(pl.run_scoped,
+        allocations=make_allocations(x_hbm_ref,
+                                     o_hbm_ref,
+                                     should_accumulate_out=(True,)))
+      def _(allocations):
+        pipeline_fn(x_hbm_ref.at[:512, :], o_hbm_ref,
+                allocations=allocations,
+                first_cycle=True,
+                last_cycle=False,
+                prefetch=prefetch,
+                postyeet=None,
+                init_accumulators=True,
+                schedule=(None, accum_schedule)
+        )
+        pipeline_fn(x_hbm_ref.at[512:, :], o_hbm_ref,
+                allocations=allocations,
+                first_cycle=False,
+                last_cycle=True,
+                prefetch=None,
+                postyeet=None,
+                init_accumulators=False,
+                schedule=(None, accum_schedule)
+        )
+    fn = pl.pallas_call(
+        copy_kernel,
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+    )
+    result = fn(x)
+    expected = 0
+    for i in range(x.shape[0] // 128):
+      x_blk = x[i * 128:(i + 1) * 128, :]
+      expected += x_blk
+    np.testing.assert_allclose(result, expected)
+
+  def test_matmul_with_input_output(self):
+    M, N, K = 512, 512, 512
+    blk_m, blk_n, blk_k = 128, 128, 128
+    nm, nn, nk = M // blk_m, N // blk_n, K // blk_k
+    inner_allocs = [
+        pltpu.BufferedRef.input(
+            pl.BlockSpec((blk_m, blk_k), lambda n, m, k: (m, k)), jnp.float32),
+        pltpu.BufferedRef.input(
+            pl.BlockSpec((blk_k, blk_n), lambda n, m, k: (k, n)), jnp.float32),
+        pltpu.BufferedRef.input_output(
+            pl.BlockSpec((blk_m, blk_n), lambda n, m, k: (m, n)), jnp.float32),
+        ]
+
+    def matmul_kernel(x_hbm, y_hbm, o_hbm, x_bref, y_bref, o_bref):
+      def inner_kernel(x_ref, y_ref, o_ref):
+        @pl.when(pl.program_id(2) == 0)
+        def _():
+          o_ref[...] = jnp.zeros_like(o_ref)
+        o_ref[...] += x_ref[...] @ y_ref[...]
+
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(nm, nn, nk),
+      )(
+        x_hbm, y_hbm, o_hbm,
+        allocations=[x_bref, y_bref, o_bref]
+      )
+
+    x = jax.random.uniform(jax.random.key(0), (M, K), jnp.float32)
+    y = jax.random.uniform(jax.random.key(1), (K, N), jnp.float32)
+    fn = pl.pallas_call(
+        matmul_kernel,
+        out_shape=jax.ShapeDtypeStruct((M, N), jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        scratch_shapes=inner_allocs,
+    )
+    result = fn(x, y)
+    np.testing.assert_allclose(result, x @ y, atol=5e-5)
+
+
 class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
   def setUp(self):
