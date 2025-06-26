@@ -1615,14 +1615,20 @@ def _interpret_jaxpr(
             target_device_id, eqn.params['device_id_type'], axis_sizes)
         (orig_src_ref, _, orig_dst_ref, *_
         ) = jax.tree.unflatten(eqn.params['tree'], eqn.invars)
+        src_memory_space = getattr(orig_src_ref.aval, 'memory_space', None)
+        if src_memory_space is None:
+          src_memory_space = mosaic_core.MemorySpace.ANY
+        dst_memory_space = getattr(orig_dst_ref.aval, 'memory_space', None)
+        if dst_memory_space is None:
+          dst_memory_space = mosaic_core.MemorySpace.ANY
         callback.io_callback(
             functools.partial(dma_start, source_info=eqn.source_info),
             (),
             device_id,
             local_core_id,
-            TPU_MEMORY_SPACE_IDXS[getattr(orig_src_ref.aval, 'memory_space', mosaic_core.MemorySpace.ANY)],
+            TPU_MEMORY_SPACE_IDXS[src_memory_space],
             src, src_transforms,
-            TPU_MEMORY_SPACE_IDXS[getattr(orig_dst_ref.aval, 'memory_space', mosaic_core.MemorySpace.ANY)],
+            TPU_MEMORY_SPACE_IDXS[dst_memory_space],
             dst, dst_transforms,
             state_discharge.transform_array(dst_sem, dst_sem_transforms),
             state_discharge.transform_array(src_sem, src_sem_transforms),
