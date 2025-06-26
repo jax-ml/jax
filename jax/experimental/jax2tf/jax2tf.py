@@ -3565,20 +3565,41 @@ def _shard_value(val: TfVal,
     tad = sharding_proto.tile_assignment_devices  # type: ignore
 
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
-  xla_sharding_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
+  xla_sharding_v1_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
       type=int(sharding_proto.type),
       tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
       tile_assignment_devices=tad,
       replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
       last_tile_dims=sharding_proto.last_tile_dims,
   )
+  # Shardy requires V2 sharding format.
+  if config.use_shardy_partitioner.value:
+    xla_sharding_v2_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
+        type=int(sharding_proto.type),
+        tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
+        tile_assignment_devices=sharding_proto.tile_assignment_devices,
+        iota_reshape_dims=sharding_proto.iota_reshape_dims,
+        iota_transpose_perm=sharding_proto.iota_transpose_perm,
+        replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
+        last_tile_dims=sharding_proto.last_tile_dims,
+    )
+  else:
+    xla_sharding_v2_proto = None
   if tf_context.executing_eagerly():
     raise ValueError(
         "A jit function with sharded arguments or results must be used under a `tf.function` context. "
         "See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning for a discussion")
 
-  return xla_sharding.Sharding(proto=xla_sharding_proto).apply_to_tensor(
-      val, use_sharding_op=True)
+  tf_version = tuple(int(v) for v in tf.__version__.split(".")[:2])
+  # apply_to_tensor comes from a tensorflow package, check the tensorflow
+  # version to make sure that it has the sharding_v2_proto parameter.
+  if tf_version < (2, 20):
+    return xla_sharding.Sharding(proto=xla_sharding_v1_proto).apply_to_tensor(
+        val, use_sharding_op=True
+    )
+  return xla_sharding.Sharding(proto=xla_sharding_v1_proto).apply_to_tensor(
+      val, use_sharding_op=True, sharding_v2_proto=xla_sharding_v2_proto
+  )
 
 
 def _pjit(*args: TfVal,
