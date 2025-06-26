@@ -37,6 +37,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import jaxpr_util
 from jax._src import linear_util as lu
 from jax._src import op_shardings
 from jax._src import sharding_specs
@@ -2323,6 +2324,8 @@ def lower_sharding_computation(
       in_shardings, global_in_avals)
   semantic_out_shardings = SemanticallyEqualShardings(
       out_shardings, global_out_avals)
+
+  jaxpr_util.maybe_dump_jaxpr_to_file(fun_name, closed_jaxpr.jaxpr)
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(

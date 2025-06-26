@@ -1856,3 +1856,27 @@ use_high_dynamic_range_gumbel = bool_state(
     help='If True, gumble noise draws two samples to cover low probability '
          'events with more precision.',
 )
+
+jax_dump_ir_to = string_flag(
+    'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
+    help="Path to which IR(s) emitted by JAX should be dumped as text files."
+         "If omitted, JAX will not dump any IR. "
+         "Supports the special value 'sponge' to pick the path from the "
+         "environment variable TEST_UNDECLARED_OUTPUTS_DIR. See "
+         "jax_dump_ir_modes for options governing what is dumped.")
+
+jax_include_debug_info_in_dumps = string_flag(
+    'jax_include_debug_info_in_dumps',
+    os.getenv('JAX_INCLUDE_DEBUG_INFO_IN_DUMPS', 'True'),
+    help='Determine whether or not to keep debug symbols and location '
+        'information when dumping IR code. By default, debug information will '
+        'be preserved in the IR dump. To avoid exposing source code and '
+        'potentially sensitive information, set to false ')
+
+# TODO(dsuo): Turn this into a list-valued flag.
+jax_dump_ir_modes = string_flag(
+    name="jax_dump_ir_modes",
+    default=os.getenv("JAX_DUMP_IR_MODES", "ir"),
+    help="Comma-delimited modes in which to dump IR. Can be 'stablehlo' (the "
+         "default), 'jaxpr', or 'eqn_count_pprof' for "
+         "jaxpr equation count pprof profile.")

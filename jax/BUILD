@@ -469,6 +469,7 @@ pytype_strict_library(
         ":deprecations",
         ":dtypes",
         ":effects",
+        ":jaxpr_util",
         ":layout",
         ":mesh",
         ":mlir",
@@ -1015,7 +1016,9 @@ pytype_strict_library(
     name = "jaxpr_util",
     srcs = ["_src/jaxpr_util.py"],
     deps = [
+        ":config",
         ":core",
+        ":path",
         ":source_info_util",
         ":util",
         "//jax/_src/lib",

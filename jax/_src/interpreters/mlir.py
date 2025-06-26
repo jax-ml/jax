@@ -25,7 +25,6 @@ import heapq
 import io
 import itertools
 import operator
-import os
 import re
 import types
 import typing
@@ -76,20 +75,6 @@ Value = Any  # = ir.Value
 # mypy implicitly sets this variable to true when type checking.
 MYPY = False
 
-_JAX_DUMP_IR_TO = config.string_flag(
-    'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
-    help="Path to which the IR that is emitted by JAX should be dumped as "
-         "text files. If omitted, JAX will not dump IR. "
-         "Supports the special value 'sponge' to pick the path from the "
-         "environment variable TEST_UNDECLARED_OUTPUTS_DIR.")
-
-_JAX_INCLUDE_DEBUG_INFO_IN_DUMPS = config.string_flag(
-  'jax_include_debug_info_in_dumps',
-  os.getenv('JAX_INCLUDE_DEBUG_INFO_IN_DUMPS', "True"),
-  help="Determine whether or not to keep debug symbols and location information "
-       "when dumping IR code. By default, debug information will be preserved in "
-       "the IR dump. To avoid exposing source code and potentially sensitive "
-       "information, set to false")
 lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 
 
@@ -541,23 +526,17 @@ def dump_module_to_file(module: ir.Module, stage_name: str) -> str | None:
     The name of the file containing the dump if JAX_DUMP_IR_TO is defined and
     the module was dumped, `None` otherwise.
   """
-  out_dir_name = _JAX_DUMP_IR_TO.value
-  if not out_dir_name:
+  if not (out_dir := path.make_jax_dump_dir(config.jax_dump_ir_to.value)):
     return None
-  if out_dir_name == "sponge":
-    out_dir_name = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR", "")
-    if not out_dir_name:
-      raise ValueError("JAX_DUMP_IR_TO='sponge' but "
-                       "TEST_UNDECLARED_OUTPUTS_DIR is not defined")
-
+  modes = config.jax_dump_ir_modes.value.split(',')
+  if 'stablehlo' not in modes:
+    return None
   id = next(_ir_dump_counter)
   sym_name = module.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
 
   name = f"jax_ir{id:04d}_{_make_string_safe_for_filename(module_name)}_{stage_name}.mlir"
 
-  out_dir = path.Path(out_dir_name)
-  out_dir.mkdir(parents=True, exist_ok=True)
   full_path = out_dir / name
   full_path.write_text(module_to_string(module))
   return name
@@ -575,7 +554,7 @@ def _make_string_safe_for_filename(s: str) -> str:
 def module_to_string(module: ir.Module, enable_debug_info=None) -> str:
   output = io.StringIO()
   if enable_debug_info is None:
-    enable_debug_flag = str.lower(_JAX_INCLUDE_DEBUG_INFO_IN_DUMPS.value)
+    enable_debug_flag = str.lower(config.jax_include_debug_info_in_dumps.value)
     enable_debug_info = enable_debug_flag not in ('false', '0')
   module.operation.print(file=output, enable_debug_info=enable_debug_info)
   return output.getvalue()

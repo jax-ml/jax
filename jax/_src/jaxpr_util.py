@@ -21,17 +21,22 @@ from collections.abc import Callable
 import gzip
 import itertools
 import json
+import logging
 import types
 from typing import Any, Union
 from collections.abc import Iterator
 
+from jax._src import config
 from jax._src import core
+from jax._src import path
 from jax._src import util
 from jax._src import source_info_util
 from jax._src.lib import xla_client
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+
+logger = logging.getLogger(__name__)
 
 
 def _all_eqns(
@@ -254,3 +259,37 @@ def eqns_using_var(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[core.JaxprEqn
     else:
       # if the previous condition fails, there is no deeper jaxpr to explore =(
       yield eqn
+
+def maybe_dump_jaxpr_to_file(
+    fun_name: str, jaxpr: core.Jaxpr
+) -> str | None:
+  """Maybe dumps the `jaxpr` to a file.
+
+  Dumps the jaxpr if JAX_DUMP_JAXPR_TO is defined.
+
+  Args:
+    fn: The name of the function whose jaxpr is being dumped.
+    jaxpr: The jaxpr to dump.
+
+  Returns:
+    The path to the file where the jaxpr was dumped, or None if no file was
+    dumped.
+  """
+  if not (out_dir := path.make_jax_dump_dir(config.jax_dump_ir_to.value)):
+    return None
+  modes = config.jax_dump_ir_modes.value.split(",")
+  if "jaxpr" not in modes and "eqn_count_pprof" not in modes:
+    return None
+  if "jaxpr" in modes:
+    logging.log(
+        logging.INFO, "Dumping jaxpr for %s to %s.", fun_name, out_dir
+    )
+    jaxpr_path = out_dir / f"{fun_name}.jaxpr.txt"
+    jaxpr_path.write_text(jaxpr.pretty_print())
+  if "eqn_count_pprof" in modes:
+    logging.log(
+        logging.INFO, "Dumping eqn count pprof for %s to %s.", fun_name, out_dir
+    )
+    eqn_prof_path = out_dir / f"{fun_name}.eqn_count_pprof"
+    eqn_prof_path.write_bytes(pprof_equation_profile(jaxpr))
+  return fun_name
