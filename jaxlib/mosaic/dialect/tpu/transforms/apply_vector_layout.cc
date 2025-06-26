@@ -7499,7 +7499,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
     });
     return std::make_pair(dst, new_vregs);
   }
-  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+  if ((src.implicit_dim() == VectorLayout::ImplicitDim::kNone ||
+       src.implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor) &&
       dst_implicit_dim == VectorLayout::ImplicitDim::kMinor &&
       src.bitwidth() == 32 && src.hasNativeTiling(ctx.target_shape)) {
     // TODO(tlongeri): Make insertImplicitMinorDimension more flexible about
@@ -7517,6 +7518,14 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
         insertImplicitMinorDimension(ctx, builder, loc, vregs,
                                      src.implicitShape(vty.getShape()), src,
                                      dst.offsets()));
+    if (src.implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor) {
+      // Remove the original implicit 2nd minor, now implicit 3rd minor
+      SmallVector<int64_t> dst_vregs_shape(dst_vregs.dimensions().begin(),
+                                           dst_vregs.dimensions().end());
+      CHECK_EQ(*(dst_vregs_shape.end() - 3), 1);
+      dst_vregs_shape.erase(dst_vregs_shape.end() - 3);
+      dst_vregs.Reshape(dst_vregs_shape);
+    }
     return std::make_pair(dst, std::move(dst_vregs));
   }
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kMinor &&
