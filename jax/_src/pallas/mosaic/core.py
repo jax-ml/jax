@@ -25,6 +25,7 @@ from collections.abc import Mapping
 
 import jax
 from jax._src import core as jax_core
+from jax._src import state
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.pallas import core as pallas_core
@@ -43,7 +44,6 @@ BlockSpecTree = pallas_core.BlockSpecTree
 GridMapping = pallas_core.GridMapping
 NoBlockSpec = pallas_core.NoBlockSpec
 ScratchShapeTree = pallas_core.ScratchShapeTree
-AbstractMemoryRef = pallas_core.AbstractMemoryRef
 no_block_spec = pallas_core.no_block_spec
 _convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
 _out_shape_to_aval_mapping = pallas_core._out_shape_to_aval_mapping
@@ -183,7 +183,7 @@ class SemaphoreType(enum.Enum):
   def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
     return self(()).get_array_aval()
 
-  def get_ref_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     return self(()).get_ref_aval()
 
 @dataclasses.dataclass(frozen=True)
@@ -208,7 +208,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
     self.scratch_shapes = tuple(scratch_shapes)
 
   def _make_scalar_ref_aval(self, aval):
-    return AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
+    return state.AbstractRef(jax_core.ShapedArray(aval.shape, aval.dtype),
                              MemorySpace.SMEM)
 
 

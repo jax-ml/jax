@@ -983,7 +983,7 @@ def _run_scoped_discharge_rule(
   # We update all ref values with their updated values from the discharged
   # body. For other values we leave them in place.
   updates = [
-      ref_outputs.pop(0) if should and isinstance(aval, pallas_core.AbstractMemoryRef)
+      ref_outputs.pop(0) if should and isinstance(aval, state.AbstractRef)
       else None for should, aval in zip(should_discharge, in_avals)]
   assert len(updates) == len(in_avals), f'{len(updates)} != {len(in_avals)}'
   return updates, return_values
