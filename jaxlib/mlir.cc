@@ -112,30 +112,6 @@ absl::StatusOr<XlaComputation> PyMlirModuleToXlaComputation(
   return computation;
 }
 
-absl::StatusOr<nb::bytes> PyMhloToStablehlo(absl::string_view mlir_module) {
-  mlir::MLIRContext context;
-  if (VLOG_IS_ON(3)) context.disableMultithreading();
-  // JAX can be customized in a way that involves operations from custom
-  // dialects showing up in JAX IR.
-  // `ParseMlirModuleString` won't know about these dialects, but that's fine
-  // since we just want to convert MHLO ops to StableHLO ops here and leave
-  // everything else unchanged.
-  // In order to achieve that, we're allowing unregistered dialects here.
-  context.allowUnregisteredDialects(true);
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      ParseMlirModuleString(mlir_module, context));
-  mlir::PassManager pm(&context);
-  if (VLOG_IS_ON(3)) EnablePrintBeforeAndAfter(pm);
-  pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
-  if (!mlir::succeeded(pm.run(*module))) {
-    return tsl::errors::InvalidArgument("MHLO => StableHLO failed");
-  }
-  // Use bytecode, passing unregistered dialects with properties causes issues
-  // when using textual assembly.
-  TF_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
-  return nb::bytes(bytecode.data(), bytecode.size());
-}
-
 absl::StatusOr<nb::bytes> PySerializePortableArtifact(
     absl::string_view mlir_module, absl::string_view target) {
   mlir::MLIRContext context;
@@ -170,9 +146,6 @@ void BuildMlirSubmodule(nb::module_& m) {
   mlir_module.def("hlo_to_stablehlo", xla::ValueOrThrowWrapper(HloToStableHlo),
                   nb::arg("computation"));
 
-  mlir_module.def("xla_computation_to_mlir_module",
-                  xla::ValueOrThrowWrapper(PyXlaComputationToMlirModule),
-                  nb::arg("computation"));
   mlir_module.def(
       "mlir_module_to_xla_computation",
       [](const nb::bytes& bytecode, bool use_tuple_args, bool return_tuple) {
@@ -186,16 +159,6 @@ void BuildMlirSubmodule(nb::module_& m) {
                   xla::ValueOrThrowWrapper(PyMlirModuleToXlaComputation),
                   nb::arg("mlir_module"), nb::arg("use_tuple_args") = false,
                   nb::arg("return_tuple") = false);
-  mlir_module.def(
-      "mhlo_to_stablehlo",
-      [](const nb::bytes& bytecode) {
-        return xla::ValueOrThrow(PyMhloToStablehlo(
-            absl::string_view(bytecode.c_str(), bytecode.size())));
-      },
-      nb::arg("mlir_module"));
-  mlir_module.def("mhlo_to_stablehlo",
-                  xla::ValueOrThrowWrapper(PyMhloToStablehlo),
-                  nb::arg("mlir_module"));
   mlir_module.def(
       "serialize_portable_artifact",
       [](const nb::bytes& bytecode, absl::string_view target) {
