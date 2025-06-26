@@ -1616,31 +1616,25 @@ def _ragged_all_to_all_transpose(
 
 def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
                                           axis_name, axis_index_groups):
-  del axis_data
+  if axis_data.name in axis_name:
+    raise NotImplementedError("Please open a feature request!")
   if axis_index_groups:
     raise NotImplementedError("Please open a feature request!")
 
-  operand, output, input_offsets, send_sizes, output_offsets, recv_sizes = vals_in
-  operand_dim, output_dim, input_offsets_dim, send_sizes_dim, output_offsets_dim, recv_sizes_dim = dims_in
-  if not (operand.shape[operand_dim] == output.shape[output_dim] == input_offsets.shape[input_offsets_dim] == send_sizes.shape[send_sizes_dim] == output_offsets.shape[output_offsets_dim] == recv_sizes.shape[recv_sizes_dim]):
-    raise ValueError("all operands must have the same batch sizes")
+  _, output_dim, *_ = dims_in
 
-  sliced_results = []
-  for i in range(operand.shape[operand_dim]):
-    sliced_operand = slicing.slice_in_dim(operand, start_index=i, limit_index=i+1, axis=operand_dim).flatten()
-    sliced_output = slicing.slice_in_dim(output, start_index=i, limit_index=i+1, axis=output_dim)
-    sliced_output_shape = sliced_output.shape
-    sliced_output = sliced_output.flatten()
-    sliced_input_offsets = slicing.slice_in_dim(input_offsets, start_index=i, limit_index=i+1, axis=input_offsets_dim).flatten()
-    sliced_send_sizes = slicing.slice_in_dim(send_sizes, start_index=i, limit_index=i+1, axis=send_sizes_dim).flatten()
-    sliced_output_offsets = slicing.slice_in_dim(output_offsets, start_index=i, limit_index=i+1, axis=output_offsets_dim).flatten()
-    sliced_recv_sizes = slicing.slice_in_dim(recv_sizes, start_index=i, limit_index=i+1, axis=recv_sizes_dim).flatten()
-    sliced_result = ragged_all_to_all(sliced_operand, sliced_output, sliced_input_offsets, sliced_send_sizes, sliced_output_offsets, sliced_recv_sizes, axis_name=axis_name, axis_index_groups=axis_index_groups)
-    sliced_result = lax.expand_dims(sliced_result.reshape(sliced_output_shape), dimensions=(output_dim,))
-    sliced_results.append(sliced_result)
+  def index(arr, axis, idx):
+    return slicing.index_in_dim(arr, idx, axis, False)
 
-  concat_result = lax.concatenate(sliced_results, dimension=output_dim)
-  return concat_result, operand_dim
+  def stack(xs, axis):
+    return lax.concatenate([lax.expand_dims(x, [axis]) for x in xs], axis)
+
+  ra2a = partial(ragged_all_to_all, axis_name=axis_name,
+                 axis_index_groups=axis_index_groups)
+  concat_result = stack([ra2a(*map(partial(index, idx=i), vals_in, dims_in))
+                         for i in range(axis_data.size)], axis=output_dim)
+  return concat_result, output_dim
+
 
 ragged_all_to_all_p = core.Primitive('ragged_all_to_all')
 ragged_all_to_all_p.def_effectful_abstract_eval(_ragged_all_to_all_effectful_abstract_eval)
