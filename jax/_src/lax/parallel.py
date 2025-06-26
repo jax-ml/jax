@@ -1626,21 +1626,23 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
     raise NotImplementedError("Please open a feature request!")
   if axis_index_groups:
     raise NotImplementedError("Please open a feature request!")
+  size = axis_data.size
 
-  _, output_dim, *_ = dims_in
+  def bdim_at_second(x, d):
+    assert x.ndim == 2
+    return batching.broadcast(x, size, 1) if d is None else x if d == 1 else x.T
+  def merge(x): return x.reshape(-1, *x.shape[2:])
+  def split(x): return x.reshape(size, -1, *x.shape[1:])
 
-  def index(arr, axis, idx):
-    return slicing.index_in_dim(arr, idx, axis, False)
-
-  def stack(xs, axis):
-    return lax.concatenate([lax.expand_dims(x, [axis]) for x in xs], axis)
-
-  ra2a = partial(ragged_all_to_all, axis_name=axis_name,
-                 axis_index_groups=axis_index_groups)
-  concat_result = stack([ra2a(*map(partial(index, idx=i), vals_in, dims_in))
-                         for i in range(axis_data.size)], axis=output_dim)
-  return concat_result, output_dim
-
+  operand, output = map(partial(batching.bdim_at_front, size=size), vals_in[:2], dims_in[:2])
+  N, M = operand.shape[1], output.shape[1]
+  input_offsets, send_sizes, output_offsets, recv_sizes = \
+      map(bdim_at_second, vals_in[2:], dims_in[2:])
+  input_offsets += lax.iota(input_offsets.dtype, size)[None, :] * N
+  output_offsets += lax.iota(output_offsets.dtype, size)[None, :] * M
+  vals_in = operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
+  result = split(ragged_all_to_all(*map(merge, vals_in), axis_name=axis_name))
+  return result, 0
 
 ragged_all_to_all_p = core.Primitive('ragged_all_to_all')
 ragged_all_to_all_p.def_effectful_abstract_eval(_ragged_all_to_all_effectful_abstract_eval)
