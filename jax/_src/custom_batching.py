@@ -295,7 +295,7 @@ def custom_vmap_jvp(primals, tangents, *,
       out_mutually_batched.store(out_batched)
       return out
 
-    api_util.save_wrapped_fun_sourceinfo(to_jvp, call.jaxpr.debug_info)
+    api_util.save_wrapped_fun_debug_info(to_jvp, call.jaxpr.debug_info)
     def to_vmap_over_extra_batched_dims(primals, tangents):
       return api.jvp(to_jvp, primals, tangents)
 
