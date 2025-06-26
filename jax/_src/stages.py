@@ -223,7 +223,8 @@ class Lowering:
         f"cost analysis unsupported on XLA computation: {type(self)}")
 
   def compile(
-      self, compiler_options: CompilerOptions | None = None) -> Executable:
+      self, compiler_options: CompilerOptions | None = None,
+      device_assignment: tuple[xc.Device, ...] | None = None) -> Executable:
     """Compile and return a corresponding ``Executable``."""
     raise NotImplementedError(
         f"cost analysis unsupported on XLA computation: {type(self)}")
@@ -605,9 +606,11 @@ class Lowered(Stage):
          for o, s in zip(out_avals, out_shardings)])
 
   def compile(
-      self, compiler_options: CompilerOptions | None = None) -> Compiled:
+      self, compiler_options: CompilerOptions | None = None,
+      device_assignment: tuple[xc.Device, ...] | None = None) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
-    kw: dict[str, Any] = {"compiler_options": compiler_options}
+    kw: dict[str, Any] = {"compiler_options": compiler_options,
+                          "device_assignment": device_assignment}
     return Compiled(
         self._lowering.compile(**kw),  # pytype: disable=wrong-keyword-args
         self.args_info,

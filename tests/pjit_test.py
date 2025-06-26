@@ -4862,6 +4862,47 @@ class ArrayPjitTest(jtu.JaxTestCase):
     ins, _ = f.lower(np.arange(8)).compile().input_shardings
     self.assertEqual(ins[0], SingleDeviceSharding(jax.devices()[0]))
 
+  def test_aot_devices_to_compile(self):
+    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
+    abstract_sds = jax.ShapeDtypeStruct(
+        (8, 2), jnp.float32, sharding=NamedSharding(mesh.abstract_mesh, P('x')))
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    lowered = f.trace(abstract_sds).lower(lowering_platforms=('tpu',))
+    self.assertIn('num_partitions = 2', lowered.as_text())
+
+    compiled = lowered.compile(device_assignment=tuple(mesh.devices.flat))
+
+    arr = jax.device_put(np.arange(16, dtype=jnp.float32).reshape(8, 2),
+                         NamedSharding(mesh, P('x')))
+    out = compiled(arr)
+    self.assertArraysEqual(out, arr * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'The size of abstract mesh 2.*must match the length of device'
+        ' assignment: 1'):
+      lowered.compile(device_assignment=(jax.devices()[0],))
+
+  def test_aot_devices_to_compile_error(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    arr = jax.ShapeDtypeStruct((8, 2), jnp.float32,
+                               sharding=NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def f(x):
+      return x
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'device_assignment passed to `.compile` must match the'
+        ' device_assignment calculated from array shardings and out_shardings'):
+      f.lower(arr).compile(device_assignment=(jax.devices()[0],))
+
   def test_abstract_mesh_lower(self):
     mesh = jtu.create_mesh((2,), 'x')
     mesh2 = jtu.create_mesh((1,), 'x')
@@ -4879,7 +4920,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertIn('num_partitions = 2', lowered.as_text())
 
     with self.assertRaisesRegex(
-        RuntimeError, 'A jitted computation cannot contain AbstractMesh'):
+        RuntimeError, 'device_assignment cannot be `None` during compilation'):
       lowered.compile()
 
     @jax.jit
@@ -4901,14 +4942,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
         lowering_platforms=('tpu',))
     self.assertIn('num_partitions = 2', lowered2.as_text())
     with self.assertRaisesRegex(
-        RuntimeError, 'A jitted computation cannot contain AbstractMesh'):
+        RuntimeError, 'device_assignment cannot be `None` during compilation'):
       lowered2.compile()
-
-    lowered3 = g.lower(abstract_sds, concrete_sds)
-    self.assertIn('num_partitions = 2', lowered3.as_text())
-    with self.assertRaisesRegex(
-        RuntimeError, 'A jitted computation cannot contain AbstractMesh'):
-      lowered3.compile()
 
   def test_jit_out_shardings_unconstrained(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))

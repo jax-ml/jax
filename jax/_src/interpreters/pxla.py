@@ -939,7 +939,8 @@ class PmapComputation(stages.Lowering):
     return self._hlo
 
   @profiler.annotate_function
-  def compile(self, compiler_options=None) -> PmapExecutable:
+  def compile(self, compiler_options=None, device_assignment=None
+              ) -> PmapExecutable:
     if self._executable is None or compiler_options is not None:
       executable = UnloadedPmapExecutable.from_hlo(
           self._hlo, **self.compile_args,
@@ -1103,8 +1104,9 @@ class UnloadedPmapExecutable:
       # `executable_devices` contains devices for output shardings of a pmapped
       # function. It contains only local devices for correspondence with
       # `PmapSharding`s, which also contain only local devices.
-      executable_devices = _create_da_object(
+      executable_devices = _create_device_list(
           tuple(local_device_assignment.flat))
+      assert executable_devices is not None
       compiled = compiler.compile_or_get_cached(
           pci.backend, hlo, device_assignment, compile_options,
           host_callbacks, executable_devices)
@@ -1939,9 +1941,16 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
 
 
 @lru_cache(maxsize=2048)
-def _create_da_object(  # pytype: disable=invalid-annotation
-    device_assignment: tuple[xc.Device, ...]) -> xc.DeviceList:
+def _create_device_list_cached(device_assignment: tuple[xc.Device, ...]
+                             ) -> xc.DeviceList:
   return xc.DeviceList(device_assignment)
+
+def _create_device_list(
+    device_assignment: tuple[xc.Device, ...] | xc.DeviceList | None
+    ) -> xc.DeviceList | None:
+  if device_assignment is None or isinstance(device_assignment, xc.DeviceList):
+    return device_assignment  # type: ignore
+  return _create_device_list_cached(device_assignment)
 
 
 @weakref_lru_cache
@@ -1958,12 +1967,12 @@ def jaxpr_transfer_mem_kinds(
 
 
 def are_all_shardings_default_mem_kind(
-    da_object: xc.DeviceList | None, shardings
+    device_list: xc.DeviceList | None, shardings
 ):
-  if da_object is None:
+  if device_list is None:
     return True
   try:
-    default_mem_kind = da_object.default_memory_kind
+    default_mem_kind = device_list.default_memory_kind
   except:
     return True
   for i in shardings:
@@ -2116,7 +2125,7 @@ def _abstract_to_concrete_mesh(abstract_mesh, device_assignment):
   np_dev = np.vectorize(lambda i: device_assignment[i],
                         otypes=[object])(np.arange(len(device_assignment)))
   return Mesh(np_dev.reshape(abstract_mesh.axis_sizes),
-              abstract_mesh.axis_names, axis_types=abstract_mesh._axis_types)
+              abstract_mesh.axis_names, axis_types=abstract_mesh.axis_types)
 
 def _concretize_abstract_out_shardings(shardings, avals, device_assignment,
                                        out_mem_kinds):
@@ -2276,12 +2285,11 @@ def lower_sharding_computation(
       or any(not isinstance(s, UnspecifiedValue) for s in it.chain(
           unique_in_shardings, unique_out_shardings, unique_intermediate_shardings)))
 
-  da_object = (_create_da_object(tuple(device_assignment))
-               if device_assignment is not None else None)
+  device_list = _create_device_list(device_assignment)
 
   transfer_mem_kind_in_jaxpr = jaxpr_transfer_mem_kinds(jaxpr)
   all_default_mem_kind = are_all_shardings_default_mem_kind(
-      da_object,
+      device_list,
       it.chain(unique_in_shardings, unique_out_shardings,
                unique_intermediate_shardings, transfer_mem_kind_in_jaxpr))  # pytype: disable=wrong-arg-types
 
@@ -2299,7 +2307,7 @@ def lower_sharding_computation(
 
   abstract_mesh = None
   if prim_requires_devices:
-    assert da_object is not None
+    assert device_list is not None
     for sharding in it.chain(unique_in_shardings, unique_out_shardings,
                              unique_intermediate_shardings):
       if isinstance(sharding, NamedSharding):
@@ -2320,7 +2328,7 @@ def lower_sharding_computation(
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
        semantic_out_shardings, in_layouts, out_layouts, num_devices,
-       tuple(da_object) if prim_requires_devices else None,  # type: ignore[arg-type]
+       tuple(device_list) if prim_requires_devices else None,  # type: ignore[arg-type]
        donated_invars, name_stack, all_default_mem_kind, inout_aliases,
        propagated_out_mem_kinds, platforms,
        lowering_parameters=lowering_parameters,
@@ -2337,6 +2345,7 @@ def lower_sharding_computation(
       donated_invars,
       platforms,
       compiler_options_kvs,
+      device_list,
       global_in_avals=global_in_avals,
       global_out_avals=global_out_avals,
       in_shardings=in_shardings,
@@ -2351,7 +2360,6 @@ def lower_sharding_computation(
       kept_var_idx=kept_var_idx,
       mut=mut,
       backend=backend,
-      device_assignment=da_object,
       num_devices=num_devices,
       committed=committed,
       in_layouts=in_layouts,
@@ -2387,12 +2395,14 @@ class MeshComputation(stages.Lowering):
   def __init__(self, name: str, hlo: ir.Module,
                donated_invars: Sequence[bool], platforms: Sequence[str],
                compiler_options_kvs: tuple[tuple[str, Any], ...],
+               device_assignment: xc.DeviceList | tuple[xc.Device, ...] | None,
                **compile_args):
     self._name = name
     self._hlo = hlo
     self._donated_invars = donated_invars
     self._platforms = platforms
     self._compiler_options_kvs = compiler_options_kvs
+    self._device_list = _create_device_list(device_assignment)
     self.compile_args = compile_args
     self._executable = None
 
@@ -2401,14 +2411,34 @@ class MeshComputation(stages.Lowering):
   def stablehlo(self) -> ir.Module:
     return self._hlo
 
-  def compile(self, compiler_options=None) -> MeshExecutable:
+  def compile(self, compiler_options=None, device_assignment=None,
+              ) -> MeshExecutable:
     t_compiler_options = (() if compiler_options is None else
                           tuple(compiler_options.items()))
     compiler_options_kvs = self._compiler_options_kvs + t_compiler_options
-    if self._executable is None or compiler_options_kvs:
+
+    device_list = _create_device_list(device_assignment)
+    if device_list is None:
+      compilation_device_list = self._device_list
+    else:
+      if (self._device_list is not None and
+          self._device_list != device_list):
+        raise ValueError(
+            "device_assignment passed to `.compile` must match the"
+            " device_assignment calculated from array shardings and"
+            " out_shardings. Got device ids passed to compile"
+            f" {[d.id for d in device_list]} on platform"
+            f" {device_list[0].platform.upper()} and devices ids"
+            " calculated from array shardings and out_shardings"
+            f" {[d.id for d in self._device_list]} on platform"
+            f" {self._device_list[0].platform.upper()}")
+      compilation_device_list = device_list
+
+    if self._executable is None or compiler_options_kvs or device_assignment:
       executable = UnloadedMeshExecutable.from_hlo(
           self._name, self._hlo, **self.compile_args,
-          compiler_options_kvs=compiler_options_kvs)
+          compiler_options_kvs=compiler_options_kvs,
+          device_list=compilation_device_list)
       if not compiler_options_kvs:
         self._executable = executable
       return executable
@@ -2837,10 +2867,21 @@ def get_prop_to_input_output(in_shardings, out_shardings,
   return allow_prop_to_inputs, allow_prop_to_outputs
 
 
+def maybe_concretize_mesh(sharding, da: xc.DeviceList):
+  if (isinstance(sharding, NamedSharding) and
+      isinstance(sharding.mesh, AbstractMesh)):
+    if sharding.mesh.size != len(da):
+      raise ValueError(
+          f"The size of abstract mesh {sharding.mesh.size} in {sharding} must"
+          f" match the length of device assignment: {len(da)}")
+    return sharding.update(mesh=_abstract_to_concrete_mesh(sharding.mesh, da))
+  return sharding
+
+
 @dataclasses.dataclass
 class UnloadedMeshExecutable:
   xla_executable: Any
-  device_assignment: xc.DeviceList | Sequence[xc.Device]
+  device_list: xc.DeviceList
   backend: xb.XlaBackend
   input_avals: Sequence[ShapedArray]
   input_shardings: Sequence[JSharding]
@@ -2897,7 +2938,7 @@ class UnloadedMeshExecutable:
                keepalive: Any,
                kept_var_idx: set[int],
                backend: xb.XlaBackend,
-               device_assignment: xc.DeviceList | Sequence[xc.Device] | None,
+               device_list: xc.DeviceList | None,
                committed: bool,
                in_layouts: MaybeLayout,
                out_layouts: MaybeLayout,
@@ -2912,20 +2953,18 @@ class UnloadedMeshExecutable:
                context_mesh: Mesh | None = None,
   ) -> MeshExecutable:
     del num_devices  # For compilation, we have an actual device_assignment
-    if (device_assignment is None or
-        any(isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh)
-            for s in it.chain(in_shardings, out_shardings))):
+    if device_list is None:
       raise RuntimeError(
-          "A jitted computation cannot contain AbstractMesh in in_shardings and"
-          " out_shardings during compilation. You can use `jax.export` to "
-          " lower with an AbstractMesh and later compile with concrete devices.")
+          "device_assignment cannot be `None` during compilation. Please pass a"
+          " tuple of devices to `.compile(device_assignment=)`")
+
+    in_shardings = tuple(maybe_concretize_mesh(i, device_list)
+                         for i in in_shardings)
+    out_shardings = tuple(maybe_concretize_mesh(o, device_list)
+                          for o in out_shardings)
+
     if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
       hlo = mlir.refine_polymorphic_shapes(hlo)
-    if isinstance(device_assignment, xc.DeviceList):
-      da = device_assignment
-    else:
-      da = _create_da_object(tuple(device_assignment))
-    del device_assignment
 
     allow_prop_to_inputs, allow_prop_to_outputs = get_prop_to_input_output(
         in_shardings, out_shardings, len(ordered_effects))
@@ -2941,28 +2980,28 @@ class UnloadedMeshExecutable:
     xla_executable = _cached_compilation(
         hlo, name, mesh, spmd_lowering,
         tuple_args, auto_spmd_lowering, allow_prop_to_inputs,
-        allow_prop_to_outputs, tuple(host_callbacks), backend, da, pmap_nreps,
-        compiler_options_kvs, pgle_profiler)
+        allow_prop_to_outputs, tuple(host_callbacks), backend, device_list,
+        pmap_nreps, compiler_options_kvs, pgle_profiler)
 
     if auto_spmd_lowering:
       assert mesh is not None
       in_shardings_xla, out_shardings_xla = _get_mesh_pspec_shardings_from_executable(
           xla_executable, mesh)
-      in_shardings = [x if isinstance(i, AUTO) else i
+      in_shardings = [x if isinstance(i, AUTO) else i  # type: ignore
                       for x, i in safe_zip(in_shardings_xla, in_shardings)]
-      out_shardings = [x if isinstance(o, AUTO) else o
+      out_shardings = [x if isinstance(o, AUTO) else o  # type: ignore
                        for x, o in safe_zip(out_shardings_xla, out_shardings)]
     else:
       if pmap_nreps == 1:
         assert mesh is None
         in_shardings = _maybe_get_and_check_in_shardings(
-            xla_executable, in_shardings, tuple(da), global_in_avals,
+            xla_executable, in_shardings, tuple(device_list), global_in_avals,
             len(ordered_effects))
         out_shardings = _maybe_get_and_check_out_shardings(
-            xla_executable, out_shardings, tuple(da), global_out_avals,
+            xla_executable, out_shardings, tuple(device_list), global_out_avals,
             len(ordered_effects))
       else:
-        in_shardings, out_shardings, committed, da = _get_metadata_jit_pmap(
+        in_shardings, out_shardings, committed, device_list = _get_metadata_jit_pmap(
             xla_executable.local_devices(), len(in_shardings), len(out_shardings))
 
     # xla_in_layouts are all either None or Layout. Even default
@@ -2982,12 +3021,12 @@ class UnloadedMeshExecutable:
         in_shardings, out_shardings, global_in_avals, global_out_avals,
         intermediate_shardings, context_mesh)
 
-    in_shardings = finalize_shardings(in_shardings, da)
-    out_shardings = finalize_shardings(out_shardings, da)
+    in_shardings = finalize_shardings(in_shardings, device_list)
+    out_shardings = finalize_shardings(out_shardings, device_list)
 
     return UnloadedMeshExecutable(
         xla_executable=xla_executable,
-        device_assignment=da,
+        device_list=device_list,
         backend=backend,
         input_avals=global_in_avals,
         input_shardings=in_shardings,
@@ -3201,7 +3240,8 @@ def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):
   # It is unsupported for these shardings to be uncommitted, so force
   # the outputs to be committed.
   committed = True
-  return in_shardings, out_shardings, committed, tuple(local_devices)
+  return (in_shardings, out_shardings, committed,
+          _create_device_list(tuple(local_devices)))
 
 
 def check_device_backend_on_shardings(shardings) -> bool:

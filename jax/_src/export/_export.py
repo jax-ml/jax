@@ -741,7 +741,7 @@ def _export_lowered(
     export_sharding(s, aval)
     for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
 
-  device_assignment = lowering.compile_args["device_assignment"]
+  device_assignment = lowering._device_list  # type: ignore
   if _device_assignment_for_internal_jax2tf_use_only is not None:
     _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
 
