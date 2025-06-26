@@ -50,7 +50,7 @@ def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
           lu.wrap_init(f, debug_info=debug_info), in_tree
       )
       flat_avals = [jax_core.get_aval(x) for x in flat_args]
-      jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
       if debug:
         print("Jaxpr before fusion:")
         print(jaxpr)

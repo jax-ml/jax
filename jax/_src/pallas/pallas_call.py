@@ -256,7 +256,7 @@ def _batch_block_mapping(
                    debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info),
       tree_util.tree_structure(idx_avals))
   with grid_mapping.trace_env():
-    block_mapping_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+    block_mapping_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
         block_mapping_flat_fn,
         idx_avals)
   new_index_map_out_tree = out_tree_thunk()
@@ -1024,7 +1024,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
       jaxpr_in_tree)
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     avals_in = map(jax_core.get_aval, flat_args)
-    traced_loop, _, consts, () = pe.trace_to_jaxpr_dynamic(
+    traced_loop, _, consts = pe.trace_to_jaxpr_dynamic(
         wrapped_loop, list(avals_in))
     traced_loop = jax_core.ClosedJaxpr(traced_loop, consts)
   out_error, _ = checkify.checkify_jaxpr(
@@ -1138,7 +1138,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
       lu.wrap_init(checked_kernel_fn, debug_info=debug_info), jaxpr_in_tree)
 
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
-    final_jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+    final_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
         wrapped_kernel_with_err, jaxpr_flat_avals)
 
   # Prepare pallas_call inputs. We need to create new block specs
@@ -1207,7 +1207,7 @@ def _trace_kernel_to_jaxpr(
       wrapped_kernel_fun, kernel_in_transforms
   )
   with grid_mapping.trace_env(), config._check_vma(False):
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
                                                      kernel_avals)
     if consts:
       consts_avals = [jax_core.get_aval(c) for c in consts]
@@ -1466,7 +1466,7 @@ def _pallas_call_state_discharge_rule(
           ],
       )
   )
-  new_jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(
+  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(_rewritten_body, debug_info=jaxpr.debug_info),
       [
           *index_map_avals,

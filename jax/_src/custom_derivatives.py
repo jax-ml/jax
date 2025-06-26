@@ -60,7 +60,7 @@ zip = safe_zip
 def _initial_style_jaxpr(fun: lu.WrappedFun,
                          in_avals: Sequence[core.AbstractValue]
                          ) -> tuple[core.Jaxpr, Sequence[Any]]:
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   return jaxpr, consts
 
 def _close_jaxpr(jaxpr: core.Jaxpr) -> core.ClosedJaxpr:
@@ -1181,7 +1181,7 @@ def custom_gradient(fun):
     rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule,
                                                       debug_info=debug_fwd), out_tree)
     ans_avals = [core.get_aval(x).to_tangent_aval() for x in ans_flat]
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
     return ans, Residuals(jaxpr, in_tree(), out_tree, consts)
 
   def bwd(res, cts):
@@ -1310,7 +1310,7 @@ def _closure_convert_for_avals(fun, in_tree, in_avals,
                                debug_info: core.DebugInfo):
   wrapped_fun, out_tree = flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug_info), in_tree)
-  jaxpr, out_pvals, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
   out_tree = out_tree()
 
   (closure_consts, hoisted_consts), merge = partition_list(_maybe_perturbed, consts)
@@ -1654,7 +1654,7 @@ def optimize_remat_of_custom_vjp_fwd(
     flat_fwd = _fix_fwd_args(flat_fwd)
 
     in_avals = [core.get_aval(x) for x in args_flat]
-    fwd_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fwd, in_avals)
+    fwd_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fwd, in_avals)
     fwd_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr))
     prim_tree, res_tree, fwds = out_trees()
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
@@ -1667,7 +1667,7 @@ def optimize_remat_of_custom_vjp_fwd(
 
     @pe._memoize
     def fun_jaxpr_thunk():
-      jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
       return jaxpr, consts
 
     out_flat = remat_opt_p.bind(*consts, *args_flat, num_consts=len(consts),

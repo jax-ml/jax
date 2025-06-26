@@ -920,7 +920,7 @@ def run_scoped(
   # parent scope). Jax can't reason about effects to references that
   # are not in the invars of an operation so we just put them all
   # there.
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
   out = run_scoped_p.bind(*consts, jaxpr=jaxpr, collective_axes=collective_axes)
   return tree_util.tree_unflatten(out_tree_thunk(), out)
 

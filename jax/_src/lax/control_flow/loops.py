@@ -49,9 +49,8 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
-    _avals_short, _initial_style_jaxpr,
-    _initial_style_jaxpr_attrs, _make_closed_jaxpr_attrs, _prune_zeros,
-    _typecheck_param)
+    _avals_short, _initial_style_jaxpr, _prune_zeros, _typecheck_param,
+    _make_closed_jaxpr)
 from jax._src.lax.other import logaddexp
 from jax._src.pjit import auto_axes, PartitionSpec as P
 from jax._src.mesh import get_abstract_mesh
@@ -61,7 +60,6 @@ from jax._src.state import discharge as state_discharge
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
 from jax._src.typing import Array
-from jax._src.attrs import jax_setattr, jax_getattr, jax_extendattr
 from jax._src.util import (
     merge_lists, partition_list, safe_map, safe_zip, split_list,
     split_list_checked, unzip2, weakref_lru_cache,)
@@ -281,7 +279,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     init_flat, init_tree = tree_flatten(init)
     in_flat, in_tree = tree_flatten((init, xs))
     carry_avals = tuple(_map(core.get_aval, init_flat))
-    jaxpr, consts, out_tree, attrs_tracked = _initial_style_jaxpr_attrs(
+    jaxpr, consts, out_tree = _initial_style_jaxpr(
         f, in_tree, (*carry_avals, *x_avals), debug_info=dbg_body)
     if config.mutable_array_checks.value:
       _check_no_aliased_closed_over_refs(dbg_body, (*jaxpr.consts, *consts), in_flat)
@@ -290,19 +288,9 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       msg = "scan body output must be a pair, got {}."
       raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
 
-    if attrs_tracked:
-      appends_out = [k for _, t, (_, _, k) in attrs_tracked
-                     for k in [k in (pe.Append, pe.ListAttr)] * t.num_leaves]
-      jaxpr = pe.move_outvars_to_back(
-          jaxpr, appends_out + [False] * (len(jaxpr.out_avals) - len(appends_out)))
-      num_attr_carry = sum(init_tree.num_leaves for init_tree, _, (_, _, kind)
-                           in attrs_tracked if kind in (pe.ReadWrite, pe.BoxAttr))
-      _, carry_avals_out, _ = split_list(
-          jaxpr.out_avals, [num_attr_carry, out_tree_children[0].num_leaves])
-    else:
-      carry_avals_out, _ = split_list(jaxpr.out_avals, [out_tree_children[0].num_leaves])
+    carry_avals_out, _ = split_list(jaxpr.out_avals, [out_tree_children[0].num_leaves])
     return (init_flat, carry_avals, carry_avals_out, init_tree, in_flat, jaxpr,
-            consts, out_tree, out_tree_children, attrs_tracked)
+            consts, out_tree, out_tree_children)
 
   # The carry input and output avals must match exactly. However, we want to account for
   # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
@@ -314,7 +302,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if changed:
     init = tree_unflatten(init_tree, new_init_flat)
     init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(init)
-  in_flat, jaxpr, consts, out_tree, out_tree_children, attrs_tracked = rest
+  in_flat, jaxpr, consts, out_tree, out_tree_children = rest
   num_carry = len(init_flat)
   num_xs = len(x_avals)
   num_ys = len(jaxpr.out_avals) - num_carry
@@ -334,11 +322,6 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     unroll = max(length, 1) if unroll else 1
   if unroll < 1:
     raise ValueError("`unroll` must be a `bool` or a positive `int`.")
-
-  if attrs_tracked:
-    in_state = _get_states(attrs_tracked)
-    in_flat = [*in_state, *in_flat]
-    num_carry += len(in_state)
 
   # If the body forwards an input carry to an output carry, that input is
   # read-only and can be moved to be a const. Doing so can lead to efficiency
@@ -383,72 +366,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if any(move_to_const):
     out = pe.merge_lists(move_to_const + [False] * num_ys, out, new_consts)
 
-  if attrs_tracked:
-    num_ext = (len(out) - len(in_state)
-               - sum(k is pe.Append for *_, (_, _, k) in attrs_tracked)
-               - sum(t.num_leaves for _, t, (_, _, k) in attrs_tracked
-                     if k is pe.ListAttr))
-    out_state, out, out_append = split_list(out, [len(in_state), num_ext])
-    out_attrs = _merge_attrs_out(attrs_tracked, out_state, out_append)
-    _set_states(attrs_tracked, out_attrs)
-
   return tree_unflatten(out_tree, out)
-
-def _set_states(attrs_tracked, vals):
-  valss = split_list_checked(vals, [td.num_leaves for _, td, _ in attrs_tracked])
-  for ((_, treedef, (obj, attr, kind)), leaves) in zip(attrs_tracked, valss):
-    if kind is pe.ReadWrite:
-      val = tree_unflatten(treedef, leaves)
-      jax_setattr(obj, attr, val)
-    elif kind is pe.Append:
-      val, = leaves
-      jax_extendattr(obj, attr, val.reshape(-1, *val.shape[2:]))
-    elif kind is pe.BoxAttr:
-      val = tree_unflatten(treedef, leaves)
-      obj.set(val)
-    elif kind is pe.ListAttr:
-      for leaves_ in zip(*leaves):
-        for item in tree_unflatten(treedef, leaves_):
-          obj.append(item)
-    else:
-      assert False
-
-def _get_states(attrs_tracked):
-  vals = []
-  for treedef, _, (obj, attr, kind) in attrs_tracked:
-    if kind is pe.ReadWrite:
-      tree = jax_getattr(obj, attr)
-      leaves, treedef_ = tree_flatten(tree)
-      assert treedef == treedef_
-      vals.extend(leaves)
-    elif kind is pe.Append:
-      pass
-    elif kind is pe.BoxAttr:
-      tree = obj.get()
-      leaves, treedef_ = tree_flatten(tree)
-      assert treedef == treedef_
-      vals.extend(leaves)
-    elif kind is pe.ListAttr:
-      pass
-    else:
-      assert False
-  return vals
-
-def _merge_attrs_out(attrs_tracked, out_state, out_append):
-  # merge out_state & out_append back into attrs_tracked order
-  out_state_, out_append_ = iter(out_state), iter(out_append)
-  out_attrs = []
-  for _, out_tree, (_, _, k) in attrs_tracked:
-    if k in (pe.ReadWrite, pe.BoxAttr):
-      out_attrs.extend(it.islice(out_state_, out_tree.num_leaves))
-    elif k is pe.Append:
-      out_attrs.append(next(out_append_))
-    elif k is pe.ListAttr:
-      out_attrs.extend(it.islice(out_append_, out_tree.num_leaves))
-    else:
-      assert False
-  assert next(out_state_, None) is next(out_append_, None) is None
-  return out_attrs
 
 
 def _capitalize(s):
@@ -980,21 +898,14 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
 
   #       jaxpr :: [ires, T d] -> [T c] -> [T a, eres] -> ([T c], [T b])
   # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a, e])
-  jaxpr_trans, attrs_tracked = _transpose_scan_jaxpr(
+  jaxpr_trans = _transpose_scan_jaxpr(
       jaxpr, num_ires, num_consts - num_ires, num_eres, ct_ys_is_zeros)
-  appends_out = [k for _, t, (_, _, k) in attrs_tracked
-                 for k in [k in (pe.Append, pe.ListAttr)] * t.num_leaves]
-  jaxpr_trans = pe.move_outvars_to_back(
-      jaxpr_trans, appends_out + [False] * (len(jaxpr_trans.out_avals) - len(appends_out)))
-  num_attr_carry = sum(init_tree.num_leaves for init_tree, _, (_, _, kind)
-                       in attrs_tracked if kind is pe.ReadWrite)
-  linear_trans = ([False] * num_ires + [False] * num_attr_carry +
+  linear_trans = ([False] * num_ires +
                   [True] * (len(ct_consts) + len(ct_carry) + len(ct_ys)) +
                   [False] * num_eres)
-  in_state = _get_states(attrs_tracked)
 
-  transpose_inputs = *ires, *in_state, *ct_consts, *ct_carry, *ct_ys, *eres
-  transpose_num_out_carry = num_consts-num_ires+num_carry+num_attr_carry
+  transpose_inputs = *ires, *ct_consts, *ct_carry, *ct_ys, *eres
+  transpose_num_out_carry = num_consts-num_ires+num_carry
 
   if not _split_transpose:
     outs = scan_p.bind(
@@ -1089,10 +1000,6 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
         for mask in outs_mask
     ]
 
-  num_outs = len(outs) - num_attr_carry - sum(appends_out)
-  out_state, outs, out_append = split_list(outs, [num_attr_carry, num_outs])
-  out_attrs = _merge_attrs_out(attrs_tracked, out_state, out_append)
-  _set_states(attrs_tracked, out_attrs)
   ct_consts, ct_init, ct_xs = split_list(outs, [num_consts - num_ires, num_carry])
   return [None] * num_ires + ct_consts + ct_init + ct_xs + [None] * num_eres
 
@@ -1139,8 +1046,8 @@ def _transpose_scan_jaxpr(jaxpr: core.ClosedJaxpr,
   # TODO(necula): fix arg names and results for transposed
   transposed_wrapped = lu.wrap_init(transposed, debug_info=jaxpr.jaxpr.debug_info)
   trans_avals = (*res1_avals, *c_avals, *b_carry_avals, *b_ys_avals_stripped, *res2_avals)
-  trans_jaxpr, attrs_tracked = _make_closed_jaxpr_attrs(transposed_wrapped, trans_avals)
-  return trans_jaxpr, attrs_tracked
+  trans_jaxpr = _make_closed_jaxpr(transposed_wrapped, trans_avals)
+  return trans_jaxpr
 
 
 def _scan_batching_rule(axis_data, args,
@@ -1327,7 +1234,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     out_loop = scan_p.bind(*consts_known_lp, *consts_known_donthoist,
                            *ins_known_lp, **params_known)
     return [*intensive_res, *out_loop]
-  call_jaxpr_, _, call_jaxpr_consts, () = pe.trace_to_jaxpr_dynamic(
+  call_jaxpr_, _, call_jaxpr_consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(known, debug_info=jaxpr_known_hoist.jaxpr.debug_info),
       [v.aval for v in ins_known])
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
@@ -1474,7 +1381,7 @@ def _scan_state_partial_discharge_rule(should_discharge, in_avals, out_avals, *a
   )
   # TODO(cperivol): avoid tracing the jaxpr twice. When doing so don't
   # forget to manage the effects.
-  new_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
+  new_jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(wrapped, debug_info=discharged_jaxpr.debug_info),
       avals_for_wrapped_no_refs)
   all_out = scan_p.bind(*args_for_wrapped,
@@ -2257,7 +2164,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, 
                                  *carry)
     carry, refs_out = split_list(carry_refs, [num_carry])
     return [*refs_out, *carry]
-  new_body_jaxpr, _, new_body_consts, () = pe.trace_to_jaxpr_dynamic(
+  new_body_jaxpr, _, new_body_consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(new_body, debug_info=discharged_body_jaxpr.debug_info),
       [*remaining_body_const_avals, *[a.inner_aval for a in ref_avals],
       *carry_avals])
@@ -2271,7 +2178,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, 
         consts_refs_carry, [cond_nconsts, num_refs])
     del refs  # We don't use them here!
     return core.eval_jaxpr(cond_jaxpr, cond_jaxpr_consts, *consts, *carry)
-  new_cond_jaxpr, _, new_cond_consts, () = pe.trace_to_jaxpr_dynamic(
+  new_cond_jaxpr, _, new_cond_consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(new_cond, debug_info=cond_jaxpr.debug_info),
       [*cond_consts_avals, *[a.inner_aval for a in ref_avals], *carry_avals])
   if new_cond_consts: raise NotImplementedError

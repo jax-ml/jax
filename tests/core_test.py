@@ -602,7 +602,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
     def f(x, y):
       return x, y
 
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(f,
                    debug_info=debug_info("test", f, (1, 2), {})),
       [n, a, b], keep_inputs=[False, True, True])
@@ -627,7 +627,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
         return (x, w)
       return g(x, y, x, y)
 
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(f,
                    debug_info=debug_info("test", f, (0, 1), {})),
         [n, a, b], keep_inputs=[False, True, True])
@@ -664,7 +664,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
         return (x, w)
       return g(x.shape[0], x, y, x, y)
 
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(f,
                      debug_info=debug_info("test", f, (1, 2), {})),
         [n, a, b], keep_inputs=[False, True, True])
@@ -701,7 +701,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
       u = lax.reduce_sum(w, [0])
       return (u,)
 
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(f,
                      debug_info=debug_info("test", f, (1, 2), {})),
         [n, a, b], keep_inputs=[False, True, True])
@@ -727,7 +727,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
       def g(x): return x
       return g(a),
 
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(f,
                      debug_info=debug_info("test", f, (1, 2), {})),
         [n, m, a, b], keep_inputs=[False, False, True, True])

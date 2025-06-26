@@ -138,7 +138,7 @@ def physicalize(f):
         lu.wrap_init(f, debug_info=debug_info), treedef
     )
     avals = [core.ShapedArray(a.shape, a.dtype) for a in flattened_args]
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
     new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, consts))
     out_flat = core.eval_jaxpr(
         new_jaxpr.jaxpr, new_jaxpr.consts, *flattened_args
@@ -158,7 +158,7 @@ def physicalize_closed_jaxpr(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
   wrapped_fun, _ = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug_info), treedef
   )
-  new_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
+  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
   assert len(new_jaxpr.constvars) == len(consts), "Mismatched consts"
   return core.ClosedJaxpr(new_jaxpr, consts)
 
@@ -189,7 +189,7 @@ def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
   wrapped_fun, _ = api_util.flatten_fun_nokwargs(
       lu.wrap_init(_flat_jaxpr_eval, debug_info=debug_info), treedef
   )
-  new_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
+  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
   assert not consts
   new_jaxpr = pe.convert_invars_to_constvars(
       new_jaxpr, len(tree_util.tree_leaves(const_avals))

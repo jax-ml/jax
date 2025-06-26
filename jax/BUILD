@@ -330,7 +330,6 @@ py_library_providing_imports_info(
             "_src/internal_test_util/**",
         ],
     ) + [
-        "experimental/attrs.py",
         "experimental/pjit.py",
         "experimental/multihost_utils.py",
         "experimental/shard_map.py",
@@ -355,7 +354,6 @@ py_library_providing_imports_info(
         ":ad_util",
         ":api",
         ":api_util",
-        ":attrs",
         ":basearray",
         ":batching",
         ":buffer_callback",
@@ -460,7 +458,6 @@ pytype_strict_library(
         ":abstract_arrays",
         ":ad",
         ":api_util",
-        ":attrs",
         ":basearray",
         ":batching",
         ":compiler",
@@ -507,22 +504,6 @@ pytype_strict_library(
         ":tree_util",
         ":util",
     ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "attrs",
-    srcs = ["_src/attrs.py"],
-    deps = [
-        ":ad",
-        ":ad_util",
-        ":api_util",
-        ":core",
-        ":dtypes",
-        ":partial_eval",
-        ":source_info_util",
-        ":tree_util",
-        ":util",
-    ],
 )
 
 pytype_strict_library(
@@ -641,7 +622,6 @@ py_library_providing_imports_info(
         ":ad_util",
         ":api",
         ":api_util",
-        ":attrs",
         ":batching",
         ":callback",
         ":config",
