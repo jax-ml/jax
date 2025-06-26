@@ -1685,13 +1685,20 @@ def _broadcast_in_dim_lowering_rule(
       and y_aval.ndim == x_aval.ndim + 1
       and x.layout in (mgpu.WGMMA_ROW_LAYOUT, mgpu.TCGEN05_ROW_LAYOUT)
   ):
-    return x.broadcast_minor(y_aval.shape[-1])
+    if x.layout == mgpu.WGMMA_ROW_LAYOUT:
+      new_layout = mgpu.WGMMA_LAYOUT
+    elif x.layout == mgpu.TCGEN05_ROW_LAYOUT:
+      new_layout = mgpu.TCGEN05_LAYOUT
+    else:
+      raise NotImplementedError(f"Unsupported layout: {x.layout}")
+    return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, new_layout)
   if (
       broadcast_dimensions == (1,)
       and y_aval.ndim == x_aval.ndim + 1
       and x.layout in (mgpu.WGMMA_COL_LAYOUT, mgpu.TCGEN05_COL_LAYOUT)
   ):
-    return x.broadcast_major(y_aval.shape[-2])
+    # XXX: WGMMA_COL_LAYOUT == TCGEN05_COL_LAYOUT so there's no way to distinguish between them!
+    return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, mgpu.WGMMA_LAYOUT)
   if broadcast_dimensions:
     raise NotImplementedError(
         f"Unsupport broadcast {broadcast_dimensions} for layout: {x.layout}"
