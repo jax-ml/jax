@@ -3286,9 +3286,9 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
       dy_gather_op.getSource().getType().getShape();
   const int64_t rank = src_shape.size();
 
-  if (bitwidth != 8 && bitwidth != 32) {
+  if (bitwidth != 8 && bitwidth != 16 && bitwidth != 32) {
     return op.emitOpError(
-        "Not implemented: DynamicGatherOp only supported for 8- or 32-bit "
+        "Not implemented: DynamicGatherOp only supported for 8-, 16- or 32-bit "
         "types");
   }
   if (dy_gather_op.getDimensions().size() != 1) {
@@ -3333,25 +3333,45 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
                   ctx.target_shape));
 
   Location loc = dy_gather_op.getLoc();
+  VectorType i32_vreg_ty =
+      getNativeVregType(builder.getI32Type(), ctx.target_shape);
+  VectorType i16_vreg_ty =
+      getNativeVregType(builder.getI16Type(), ctx.target_shape);
+  VectorType i8_vreg_ty =
+      getNativeVregType(builder.getI8Type(), ctx.target_shape);
   SmallVector<int32_t> dimensions;
-  if (bitwidth == 8) {
+  if (bitwidth == 8 || bitwidth == 16) {
     if (gather_dim != rank - 2) {
       return dy_gather_op.emitOpError(
-          "Not implemented: 8-bit dynamic gather only supported along 2nd "
-          "minor dimension");
+          "Not implemented: 8- and 16-bit dynamic gather only supported along "
+          "2nd minor dimension");
+    }
+    auto i8_const_vreg = [&](const int8_t value) {
+      return getFullVector(builder, loc, i8_vreg_ty,
+                           builder.getI8IntegerAttr(value));
+    };
+    // Lowering doesn't support 16-bit dynamic gathers, so they are emulated
+    // with 8-bit dynamic gathers.
+    if (bitwidth == 16) {
+      idx_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+        // (a, b, ...) i16 -> (2a, 2a+1, 2b, 2b+1, ...) i8
+        *v = builder.create<arith::MulIOp>(
+            loc, *v,
+            getFullVector(builder, loc, i16_vreg_ty,
+                          builder.getI16IntegerAttr(2)));
+        Value plus_one = builder.create<arith::AddIOp>(
+            loc, *v,
+            getFullVector(builder, loc, i16_vreg_ty,
+                          builder.getI16IntegerAttr(1)));
+        *v = builder.create<tpu::PackSubelementsOp>(
+            loc, i8_vreg_ty, SmallVector<Value>{*v, plus_one},
+            PackFormat::kInterleaved);
+      });
     }
     // Vreg shape is 8x128x4, and lowering only supports dimensions == {2, 0},
     // i.e. byte index is in the upper bits and sublane index in the lower bits.
     // However, the input indices effectively have sublane index in the upper
     // bits and byte index in the lower bits.
-    VectorType i32_vreg_ty =
-        getNativeVregType(builder.getI32Type(), ctx.target_shape);
-    VectorType i8_vreg_ty =
-        getNativeVregType(builder.getI8Type(), ctx.target_shape);
-    auto i8_const_vreg = [&](const int8_t value) {
-      return getFullVector(builder, loc, i8_vreg_ty,
-                           builder.getI8IntegerAttr(value));
-    };
     idx_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
       const int sublane_bits = llvm::Log2_64(ctx.target_shape[0]);
       const int byte_bits = 2;
@@ -3397,8 +3417,15 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
     SmallVector<int64_t> src_vregs_idxs(toArrayRef(idxs));
     src_vregs_idxs[gather_dim] = 0;
     Value src_vreg = src_vregs(src_vregs_idxs);
+    Type src_ty = src_vreg.getType();
+    if (bitwidth == 16) {
+      src_vreg = builder.create<tpu::BitcastVregOp>(loc, i8_vreg_ty, src_vreg);
+    }
     *v = builder.create<tpu::DynamicGatherOp>(loc, src_vreg.getType(), src_vreg,
                                               idx_vregs(idxs), dimensions);
+    if (bitwidth == 16) {
+      *v = builder.create<tpu::BitcastVregOp>(loc, src_ty, *v);
+    }
   });
 
   dy_gather_op.replaceAllUsesWith(

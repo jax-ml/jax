@@ -972,9 +972,9 @@ class VectorLayoutInferer {
     // layout, we can set all offsets to zero for now. Also maybe we should
     // consider adding this to elementwise rule.
     const int bitwidth = op.getType().getElementTypeBitWidth();
-    if (bitwidth != 8 && bitwidth != 32) {
+    if (bitwidth != 8 && bitwidth != 16 && bitwidth != 32) {
       return op.emitOpError(
-          "Not implemented: Only 8- or 32-bit gathers supported");
+          "Not implemented: Only 8-, 16- or 32-bit gathers supported");
     }
     if (bitwidth != op.getIndices().getType().getElementTypeBitWidth()) {
       return op.emitOpError(
