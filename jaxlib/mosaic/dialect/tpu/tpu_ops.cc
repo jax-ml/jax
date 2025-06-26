@@ -41,6 +41,7 @@ limitations under the License.
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Region.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
@@ -1653,12 +1654,6 @@ LogicalResult PackSubelementsOp::verify() {
 }
 
 LogicalResult DynamicGatherOp::verify() {
-  if (getSource().getType() != getType()) {
-    return emitOpError("Expected source and result types must match");
-  }
-  if (getIndices().getType().getShape() != getIndices().getType().getShape()) {
-    return emitOpError("Expected indices and result shapes must match");
-  }
   const int64_t rank = getSource().getType().getRank();
   SmallVector<bool> seen(rank, false);
   for (int32_t d : getDimensions()) {
@@ -1670,6 +1665,28 @@ LogicalResult DynamicGatherOp::verify() {
     }
     seen[d] = true;
   }
+  const ArrayRef<int64_t> source_shape = getSource().getType().getShape();
+  const ArrayRef<int64_t> result_shape = getType().getShape();
+  if (source_shape.size() != result_shape.size()) {
+    return emitOpError("Source and result shapes must have the same rank");
+  }
+  for (int32_t i = 0; i < source_shape.size(); ++i) {
+    if (!seen[i] && source_shape[i] != result_shape[i]) {
+      return emitOpError(
+          "Source and result shapes must match on non-gather dimensions");
+    }
+  }
+  return success();
+}
+
+/*static*/ LogicalResult DynamicGatherOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location, ValueRange operands,
+    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+  VectorType source_vty = cast<VectorType>(operands[0].getType());
+  VectorType indices_vty = cast<VectorType>(operands[1].getType());
+  inferredReturnTypes.push_back(
+      VectorType::get(indices_vty.getShape(), source_vty.getElementType()));
   return success();
 }
 

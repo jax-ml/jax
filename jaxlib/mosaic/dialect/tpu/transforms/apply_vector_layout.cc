@@ -3278,32 +3278,48 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
   const VectorLayout &idx_layout = *(layouts_in[1]);
   const VectorLayout &out_layout = *(layouts_out[0]);
 
+  const int bitwidth = src_layout.bitwidth();
+
   OpBuilder builder(&op);
   auto dy_gather_op = cast<tpu::DynamicGatherOp>(op);
+  const ArrayRef<int64_t> src_shape =
+      dy_gather_op.getSource().getType().getShape();
+  const int64_t rank = src_shape.size();
 
-  // TODO: b/423658138 - we need to think harder for general vector shape.
-  const bool is_8bit_vreg =
-      dy_gather_op.getType().getElementTypeBitWidth() == 8 &&
-      dy_gather_op.getType().getShape() ==
-          ArrayRef<int64_t>{4 * ctx.target_shape[0], ctx.target_shape[1]};
-  const bool is_32bit_vreg =
-      dy_gather_op.getType().getElementTypeBitWidth() == 32 &&
-      dy_gather_op.getType().getShape() == ArrayRef<int64_t>(ctx.target_shape);
-  if (!is_32bit_vreg && !is_8bit_vreg) {
+  if (bitwidth != 8 && bitwidth != 32) {
     return op.emitOpError(
-        "Not implemented: DynamicGatherOp only supports 8- or 32-bit VREG "
-        "shape");
+        "Not implemented: DynamicGatherOp only supported for 8- or 32-bit "
+        "types");
   }
-
+  if (dy_gather_op.getDimensions().size() != 1) {
+    return op.emitOpError(
+        "Not implemented: Zero or multiple gather dimensions");
+  }
+  const int32_t gather_dim = dy_gather_op.getDimensions().front();
+  if (gather_dim < rank - 2) {
+    return op.emitOpError(
+        "Not implemented: DynamicGatherOp only implemented for last two "
+        "dimensions");
+  }
   if (src_layout != out_layout || idx_layout != out_layout) {
     return op.emitOpError(
         "Not implemented: only support same layout for source, indices and "
         "result");
   }
-
-  if (!out_layout.hasNativeTiling(ctx.target_shape)) {
+  if (src_layout.offsets()[gather_dim - (rank - 2)] != 0) {
     return op.emitOpError(
-        "Not implemented: unsupported layout for DynamicGatherOp");
+        "Not implemented: Non-zero offset for gather dimension");
+  }
+  if (src_layout.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
+    return op.emitOpError("Not implemented: Implicit dimensions");
+  }
+  if (!src_layout.hasNativeTiling(ctx.target_shape)) {
+    return op.emitOpError("Not implemented: Non-native tiling");
+  }
+  const std::array<int64_t, 2> native_tiling = src_layout.tiling();
+  if (src_shape[gather_dim] > native_tiling[gather_dim - (rank - 2)]) {
+    return op.emitOpError(
+        "Not implemented: Multiple source vregs along gather dimension");
   }
 
   FAILUREOR_ASSIGN_OR_RETURN(
@@ -3316,16 +3332,13 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
       disassemble(builder, idx_layout, dy_gather_op.getIndices(),
                   ctx.target_shape));
 
-  TPU_ASSERT_EQ_OP(src_vregs.dimensions(), idx_vregs.dimensions());
-  TPU_ASSERT_EQ_OP(src_vregs.num_elements(), 1);
-
   Location loc = dy_gather_op.getLoc();
-  SmallVector<int32_t> dimensions(dy_gather_op.getDimensions());
-  if (dy_gather_op.getType().getElementTypeBitWidth() == 8) {
-    if (dy_gather_op.getDimensions() != ArrayRef<int32_t>{0}) {
+  SmallVector<int32_t> dimensions;
+  if (bitwidth == 8) {
+    if (gather_dim != rank - 2) {
       return dy_gather_op.emitOpError(
-          "Not implemented: 8-bit dynamic gather only supported along "
-          "dimension 0");
+          "Not implemented: 8-bit dynamic gather only supported along 2nd "
+          "minor dimension");
     }
     // Vreg shape is 8x128x4, and lowering only supports dimensions == {2, 0},
     // i.e. byte index is in the upper bits and sublane index in the lower bits.
@@ -3343,18 +3356,11 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
       const int sublane_bits = llvm::Log2_64(ctx.target_shape[0]);
       const int byte_bits = 2;
       // This check ensures that e.g. when right shifting below, the bits from
-      // the higher bytes don't influence the indices of the lower bytes. Lets
-      // us mask just once.
-      const bool mask_once =
+      // the higher bytes don't influence the indices of the lower bytes.
+      const bool needs_mask =
           sublane_bits + byte_bits + std::max(byte_bits, sublane_bits) <= 8;
-      if (mask_once) {
-        // Zero out the high bits that specify neither byte nor index (they
-        // might not be zero since op semantics allow wrapping).
-        Value mask = i8_const_vreg((1 << (byte_bits + sublane_bits)) - 1);
-        *v = builder.create<arith::AndIOp>(loc, mask, *v);
-      }
       Value shifted_byte = *v;
-      if (!mask_once) {
+      if (!needs_mask) {
         Value mask = i8_const_vreg((1 << byte_bits) - 1);
         shifted_byte = builder.create<arith::AndIOp>(loc, mask, shifted_byte);
       }
@@ -3365,7 +3371,7 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
           getFullVector(builder, loc, i32_vreg_ty,
                         builder.getI32IntegerAttr(sublane_bits)));
       Value shifted_sublane = *v;
-      if (!mask_once) {
+      if (!needs_mask) {
         Value mask =
             i8_const_vreg((1 << (byte_bits + sublane_bits)) - (1 << byte_bits));
         shifted_sublane =
@@ -3380,14 +3386,19 @@ LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
       *v = builder.create<arith::OrIOp>(loc, shifted_byte, shifted_sublane);
       *v = builder.create<tpu::BitcastVregOp>(loc, i8_vreg_ty, *v);
     });
-    dimensions = SmallVector<int32_t>{2, 0};
+    dimensions.append({2, 0});
+  } else {
+    CHECK_EQ(bitwidth, 32);
+    dimensions.push_back(gather_dim - (rank - 2));
   }
 
-  xla::Array<Value> out_vregs(src_vregs.dimensions());
+  xla::Array<Value> out_vregs(idx_vregs.dimensions());
   out_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-    *v = builder.create<tpu::DynamicGatherOp>(loc, src_vregs(idxs).getType(),
-                                              src_vregs(idxs), idx_vregs(idxs),
-                                              dimensions);
+    SmallVector<int64_t> src_vregs_idxs(toArrayRef(idxs));
+    src_vregs_idxs[gather_dim] = 0;
+    Value src_vreg = src_vregs(src_vregs_idxs);
+    *v = builder.create<tpu::DynamicGatherOp>(loc, src_vreg.getType(), src_vreg,
+                                              idx_vregs(idxs), dimensions);
   });
 
   dy_gather_op.replaceAllUsesWith(

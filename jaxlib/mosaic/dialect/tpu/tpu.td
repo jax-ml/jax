@@ -484,7 +484,7 @@ def TPU_GatherOp : TPU_Op<"gather", [Pure]> {
   }];
 }
 
-def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, SameOperandsAndResultShape, AllTypesMatch<["source", "output"]>]> {
+def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>, AllShapesMatch<["indices", "output"]>, AllElementTypesMatch<["source", "output"]>]> {
   let description = [{
     Gathers elements from `source` using `indices`.
 
@@ -498,7 +498,7 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, SameOperandsAndResultS
     - `jk` is the subsequence of `in` for `n` not in `dimensions`.
 
     When a single dimension is specified, this is similar to
-    `np.take_along_axis`, except that OOB indices wrap.
+    `np.take_along_axis`.
   }];
   let arguments = (ins
     AnyVectorOfNonZeroRank:$source,
