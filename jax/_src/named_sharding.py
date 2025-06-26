@@ -196,9 +196,8 @@ class NamedSharding(JSharding.Sharding):
     if isinstance(self.mesh, mesh_lib.AbstractMesh):
       raise ValueError('is_fully_addressable is not implemented for '
                        '`jax.sharding.AbstractMesh`.')
-    # Speed up `is_fully_addressable` since there is a high chance that the
-    # mesh across multiple NamedSharding objects will be the same.
     if config.enable_empty_arrays.value:
+      # return False if addressable_device_list is empty.
       return self._internal_device_list.is_fully_addressable  # type: ignore
     return not self.mesh.is_multi_process
 

@@ -637,6 +637,7 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
 
     if self._npy_value is None:
+      # addressable_device_list can be empty. If it's empty, we will error below
       if (self.is_fully_replicated and
           self.sharding._internal_device_list.addressable_device_list):  # type: ignore
         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
@@ -647,6 +648,7 @@ class ArrayImpl(basearray.Array):
 
       # TODO(yashkatariya): Merge `_process_has_full_value_in_mcjax` with
       # is_fully_addressable.
+      # is_fully_addressable return False if addressable_device_list is empty.
       if (not self.is_fully_addressable and
           not _process_has_full_value_in_mcjax(self.sharding, self.shape)):
         raise RuntimeError(
