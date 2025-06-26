@@ -1316,6 +1316,22 @@ bool HasHbmOrVmemSharedMemorySpace(MemRefType ty) {
 }
 }  // namespace
 
+FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
+  const MemRefType source_ty = getMemRefType(getSource());
+  const MemRefType target_ty = getMemRefType(getTarget());
+  if (HasHbmOrVmemSharedMemorySpace(source_ty) &&
+      HasMemorySpace(target_ty, MemorySpace::kVmem)) {
+    return true;
+  }
+  if (HasMemorySpace(source_ty, MemorySpace::kVmem) &&
+      HasHbmOrVmemSharedMemorySpace(target_ty)) {
+    return false;
+  }
+  return emitOpError(
+      "The transfer must be between HBM and VMEM, or between VMEM_SHARED and "
+      "VMEM");
+}
+
 LogicalResult EnqueueIndirectDMAOp::verify() {
   FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
   if (failed(issuing_core)) {
@@ -1334,20 +1350,7 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
     return emitOpError("Source and target element type mismatch");
   }
 
-  bool is_gather = false;
-  bool is_scatter = false;
-  if (HasHbmOrVmemSharedMemorySpace(source_ty) &&
-      HasMemorySpace(target_ty, MemorySpace::kVmem)) {
-    is_gather = true;
-  } else if (HasMemorySpace(source_ty, MemorySpace::kVmem) &&
-             HasHbmOrVmemSharedMemorySpace(target_ty)) {
-    is_scatter = true;
-  } else {
-    return emitOpError(
-        "The transfer must be between HBM and VMEM, or between VMEM_SHARED and "
-        "VMEM");
-  }
-  CHECK(is_gather != is_scatter);
+  FAILUREOR_ASSIGN_OR_RETURN(bool is_gather, isGather());
 
   const Value offsets = getOffsets();
   ArrayRef<int64_t> offsets_shape;
@@ -1374,7 +1377,6 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
                         /*offsets_shape=*/offsets_shape,
                         /*result_ty=*/target_ty);
   }
-  CHECK(is_scatter);
   return verifyScatter(/*updates_ty=*/source_ty,
                        /*offsets_shape=*/offsets_shape,
                        /*operand_ty=*/target_ty);

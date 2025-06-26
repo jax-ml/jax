@@ -863,6 +863,9 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma"> {
   );
   let hasVerifier = 1;
   let extraClassDeclaration = [{
+    // Return true if this op performs a gather. Returns false if it performs a
+    // scatter.
+    FailureOr<bool> isGather();
     LogicalResult verifyGather(MemRefType operand_ty,
                                ArrayRef<int64_t> offsets_shape,
                                MemRefType result_ty);
