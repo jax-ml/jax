@@ -888,7 +888,7 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   dbg = jaxpr.debug_info._replace(
-      arg_names=("",) * len(jaxpr.constvars) + jaxpr.debug_info.arg_names)
+      arg_names=("",) * len(jaxpr.constvars) + (*jaxpr.debug_info.arg_names,))
   lifted_jaxpr = jaxpr.replace(
       constvars=(), invars=jaxpr.constvars + jaxpr.invars, debug_info=dbg)
   config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
@@ -1566,6 +1566,10 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
   return used_inputs, new_eqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
+# TODO(necula): this cache is not really working as a weakref cache: the key
+# is a weakref, but it points to a value that has a strong ref to the same
+# jaxpr. So, we have a cycle with a strong ref, and these keys are never
+# collected.
 @weakref_lru_cache
 def close_jaxpr(jaxpr: Jaxpr) -> ClosedJaxpr:
   return ClosedJaxpr(jaxpr, ())
@@ -1590,17 +1594,20 @@ def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
   return _move_binders_to_front(closed_jaxpr, tuple(to_move))
 
 @weakref_lru_cache
-def _move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]
+def _move_binders_to_front(jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]
                            ) -> ClosedJaxpr:
-  assert len(closed_jaxpr.in_avals) == len(to_move)
-  constvars, invars = closed_jaxpr.jaxpr.constvars, closed_jaxpr.jaxpr.invars
+  assert len(jaxpr.in_avals) == len(to_move)
+  constvars, invars = jaxpr.jaxpr.constvars, jaxpr.jaxpr.invars
   new_invars = _move_to_front(invars, to_move)
   new_effs = _renumber_effects(
-      (*constvars, *new_invars), (*constvars, *invars), closed_jaxpr.jaxpr.effects)
-  new_jaxpr = closed_jaxpr.jaxpr.replace(
-      constvars=constvars, invars=new_invars, effects=new_effs)
-  new_closed_jaxpr = core.ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
-  return new_closed_jaxpr
+      (*constvars, *new_invars), (*constvars, *invars), jaxpr.jaxpr.effects)
+  arg_names = jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.in_avals))
+  new_arg_names = _move_to_front(arg_names, to_move)
+  dbg = jaxpr.jaxpr.debug_info._replace(arg_names=new_arg_names)
+  # TODO(necula): pass debug_info=dbg into update
+  new_jaxpr = jaxpr.jaxpr.replace(
+      constvars=constvars, invars=new_invars, effects=new_effs)  # , debug_info=dbg)
+  return core.ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
 def _renumber_effects(new_vars, old_vars, effs):
   newvar_idxs = {id(v): i for i, v in enumerate(new_vars)}
@@ -2325,7 +2332,7 @@ def _check_returned_jaxtypes(dbg, out_tracers):
     try:
       core.typeof(x)
     except TypeError:
-      if (dbg and len(paths := dbg.result_paths()) > i and
+      if (dbg and len(paths := dbg.resolve_result_paths()) > i and
           (p := paths[i].removeprefix('result'))):
         extra = f' at output component {p}'
       else:

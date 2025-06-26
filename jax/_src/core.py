@@ -179,6 +179,10 @@ class Jaxpr:
     return p.text(self.pretty_print(use_color=True))
 
   def replace(self, **kwargs):
+    # TODO(mattjj,necula): enable to find places we mess up debug_info
+    # if "debug_info" not in kwargs:
+    #   if "invars" in kwargs or "outvars" in kwargs:
+    #     raise ValueError("must update debug info")
     jaxpr = Jaxpr(
         constvars=kwargs.pop("constvars", self.constvars),
         invars=kwargs.pop("invars", self.invars),

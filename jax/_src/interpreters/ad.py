@@ -1215,12 +1215,11 @@ def f_jvp_traceable(f, store, nonzeros, *primals_and_nztangents):
 def rearrange_binders(jaxpr: core.ClosedJaxpr, primals_in, tangents_in, primals_out, tangents_out):
   new_invars = _perm(primals_in, tangents_in, jaxpr.jaxpr.invars)
   new_outvars = _perm(primals_out, tangents_out, jaxpr.jaxpr.outvars)
-  new_debug_info = jaxpr.jaxpr.debug_info
   arg_names = jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.in_avals))
   result_paths = jaxpr.jaxpr.debug_info.safe_result_paths(len(jaxpr.out_avals))
   new_arg_names = tuple(_perm(primals_in, tangents_in, arg_names))
   new_result_paths = tuple(_perm(primals_out, tangents_out, result_paths))
-  new_debug_info = new_debug_info._replace(
+  new_debug_info = jaxpr.jaxpr.debug_info._replace(
       arg_names=new_arg_names, result_paths=new_result_paths)
   constvars = jaxpr.jaxpr.constvars
   new_effects = pe._renumber_effects(

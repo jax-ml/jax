@@ -484,25 +484,24 @@ class MutableArrayTest(jtu.JaxTestCase):
     expected = 2. * jnp.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  # TODO(mattjj,dougalm): enable
-  # @parameterized.parameters([False, True])
-  # def test_grad_scan(self, jit):
-  #   def f(x):
-  #     x_ref = core.mutable_array(x)
+  @parameterized.parameters([False, True])
+  def test_grad_scan(self, jit):
+    def f(x):
+      x_ref = core.mutable_array(x)
 
-  #     def g(_, __):
-  #       x_ref[...] = jnp.sin(x_ref[...]) + jnp.sin(x_ref[...])
-  #       return None, None
-  #     jax.lax.scan(g, None, None, length=1)
+      def g(_, __):
+        x_ref[...] = jnp.sin(x_ref[...]) + jnp.sin(x_ref[...])
+        return None, None
+      jax.lax.scan(g, None, None, length=1)
 
-  #     return core.freeze(x_ref)
+      return core.freeze(x_ref)
 
-  #   if jit:
-  #     f = jax.jit(f)
+    if jit:
+      f = jax.jit(f)
 
-  #   ans = jax.grad(f)(2.)
-  #   expected = 2. * jnp.cos(2.)
-  #   self.assertAllClose(ans, expected, check_dtypes=False)
+    ans = jax.grad(f)(2.)
+    expected = 2. * jnp.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 @jtu.with_config(jax_mutable_array_checks=True)
