@@ -2066,6 +2066,7 @@ class PallasCallWGTest(
         mgpu_primitives.broadcasted_iota_p,
         mgpu_primitives.load_p,
         mgpu_primitives.tcgen05_mma_p,
+        mgpu_primitives.tcgen05_commit_arrive_p,
         mgpu_primitives.commit_tmem_p,
         lax.slice_p,
         pallas_core.core_map_p,
@@ -2727,6 +2728,55 @@ class PallasCallSm100ATest(PallasSm100ATest):
       y = jnp.transpose(y, (1, 0))
     expected = x @ y
     np.testing.assert_allclose(result, expected, rtol=1e-3)
+
+  @parameterized.parameters(
+      (128, jnp.float16)
+  )
+  def test_manual_tcgen05_commit_arrive(self, swizzle, dtype):
+    self.skip_if_wg_semantics()
+    shape = (128, 128)
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+
+    def kernel(a_gmem, b_gmem, out_gmem,
+        a_smem, b_smem, out_smem, tma_barrier, mma_barrier, acc_tmem):
+      plgpu.copy_gmem_to_smem(a_gmem, a_smem, tma_barrier)
+      plgpu.barrier_wait(tma_barrier)
+      plgpu.copy_gmem_to_smem(b_gmem, b_smem, tma_barrier)
+      plgpu.barrier_wait(tma_barrier)
+
+      plgpu.commit_tmem()
+      # Don't pass a barrier directly into tcgen05_mma and arrive manually.
+      plgpu.tcgen05_mma(acc_tmem,
+                        a_smem,
+                        b_smem,
+                        accumulate=False)
+      plgpu.tcgen05_commit_arrive(mma_barrier)
+      plgpu.barrier_wait(mma_barrier)
+      out_smem[...] = acc_tmem[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(out_smem, out_gmem)
+      plgpu.wait_smem_to_gmem(0)
+
+    f = plgpu.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        scratch_shapes=[
+          plgpu.SMEM(shape, dtype, transforms=transforms),  # a_smem
+          plgpu.SMEM(shape, dtype, transforms=transforms),  # b_smem
+          plgpu.SMEM(shape, dtype, transforms=transforms),  # out_smem
+          plgpu.Barrier(),  # tma_barrier
+          plgpu.Barrier(for_tensor_core=True),  # mma_barrier
+          plgpu.TMEM((128, 128), jnp.float32),  # acc
+        ],
+    )
+    x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
+    y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
+    result = f(x, y)
+    np.testing.assert_allclose(result, x @ y, rtol=1e-3)
 
   def test_matmul_with_sliced_accumulator(self):
     self.skip_if_wg_semantics()

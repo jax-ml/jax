@@ -1234,7 +1234,7 @@ tcgen05_mma_p.multiple_results = True
 def tcgen05_mma(acc: _Ref,
                 a: _Ref,
                 b: _Ref,
-                barrier: _Ref,
+                barrier: _Ref | None = None,
                 accumulate: bool | jax.Array = True,
                 collective_axis: str | None = None):
   """Asynchronous matrix-multiply accumulate for TensorCore gen 5 (Blackwell).
@@ -1253,8 +1253,10 @@ def tcgen05_mma(acc: _Ref,
     acc: The accumulator. Must be a TMEM Ref.
     a: The left-hand side. Must be a TMEM/SMEM Ref.
     b: The right-hand side. Must be an SMEM Ref.
-    barrier: Barrier Ref for synchronizing with the tensor core. Should have
-      for_tensor_core set to True.
+    barrier: Optional barrier Ref for synchronizing with the tensor core.
+      Should have for_tensor_core set to True. If not specified, the MMA
+      completion should be explicitly observed by calling
+      `tcgen05_commit_arrive`
     accumulate: Whether to accumulate into acc or overwrite it.
     collective_axis: The name of the cluster axis along which to perform
       a collective MMA. The cluster axis should have a size of exactly 2,
@@ -1302,7 +1304,14 @@ def tcgen05_mma(acc: _Ref,
   else:
     barrier_transforms_leaves, barrier_transforms_tree = [], None
 
-  tcgen05_mma_p.bind(acc, a, b, barrier, accumulate,
+  if barrier is not None:
+    barrier_ref = [barrier]
+    arrive = True
+  else:
+    barrier_ref = []
+    arrive = False
+
+  tcgen05_mma_p.bind(acc, a, b, accumulate, *barrier_ref,
                      *acc_transforms_leaves, *a_transforms_leaves,
                      *b_transforms_leaves,
                      *barrier_transforms_leaves,
@@ -1310,17 +1319,19 @@ def tcgen05_mma(acc: _Ref,
                      a_transforms_tree=a_transforms_tree,
                      b_transforms_tree=b_transforms_tree,
                      barrier_transforms_tree=barrier_transforms_tree,
-                     collective_axis=collective_axis)
+                     collective_axis=collective_axis,
+                     arrive=arrive)
 
 
 @tcgen05_mma_p.def_abstract_eval
-def _tcgen05_mma_abstract_eval(acc, a, b, barrier, accumulate,
-                               *transforms_leaves,
+def _tcgen05_mma_abstract_eval(acc, a, b, accumulate,
+                               *barrier_and_transforms_leaves,
                                acc_transforms_tree, a_transforms_tree,
                                b_transforms_tree,
                                barrier_transforms_tree,
-                               collective_axis):
-  del (accumulate, transforms_leaves, acc_transforms_tree,
+                               collective_axis,
+                               arrive):
+  del (accumulate, acc_transforms_tree,
        a_transforms_tree, b_transforms_tree, barrier_transforms_tree)
 
   if acc.memory_space != gpu_core.TMEM:
@@ -1341,10 +1352,12 @@ def _tcgen05_mma_abstract_eval(acc, a, b, barrier, accumulate,
       raise ValueError(
           "LHS Ref must be collective if collective_axis is set.")
 
-  for_tensor_core = getattr(
-      barrier.inner_aval.dtype, "for_tensor_core", False)
-  if not for_tensor_core:
-    raise ValueError("MMA barrier must have for_tensor_core set to True.")
+  if arrive:
+    barrier = barrier_and_transforms_leaves[0]
+    for_tensor_core = getattr(
+        barrier.inner_aval.dtype, "for_tensor_core", False)
+    if not for_tensor_core:
+      raise ValueError("MMA barrier must have for_tensor_core set to True.")
 
   return []
 
@@ -1356,18 +1369,23 @@ def _tcgen05_mma_lowering(
     acc: tcgen05.TMEMRef,
     a_ref,
     b_ref,
-    barrier_ref: mgpu.BarrierRef,
     accumulate: bool | ir.Value,
-    *transforms_leaves,
+    *barrier_and_transforms_leaves,
     acc_transforms_tree,
     a_transforms_tree,
     b_transforms_tree,
     barrier_transforms_tree,
     collective_axis,
+    arrive,
 ):
   _, a_aval, b_aval, *_ = ctx.avals_in
   lhs_swizzle: int | None = None
   lhs_transpose: bool = False
+  if arrive:
+    barrier_ref, *transforms_leaves = barrier_and_transforms_leaves
+  else:
+    barrier_ref = None
+    transforms_leaves = barrier_and_transforms_leaves  # type: ignore[assignment]
 
   transforms_trees = (
       acc_transforms_tree,
@@ -1443,7 +1461,7 @@ def _tcgen05_mma_lowering(
         f" {rhs_tiling=} expected={(8, swizzle_elems)}"
     )
 
-  if barrier_transforms_tree is not None:
+  if barrier_transforms_tree is not None and barrier_ref is not None:
     barrier_transforms = barrier_transforms_tree.unflatten(
         barrier_transforms_leaves
     )
@@ -1471,25 +1489,12 @@ def _tcgen05_mma_lowering(
     assert isinstance(accumulate, ir.Value)
 
   predicate = ctx.module_ctx.single_lane_predicate
-  collective = False
   if collective_axis is not None:
-    cluster_axis = lowering._resolve_cluster_axis(
-        ctx.module_ctx.axis_names, collective_axis)
-    if cluster_axis != gpu_dialect.Dimension(0):
-      # Note: resolve_cluster_axis checks if axis_names exists.
-      assert ctx.module_ctx.axis_names is not None
-      if len(ctx.module_ctx.axis_names.cluster) <= 1:
-        raise ValueError("No cluster axes found.")
-      minormost_cluster_axis = ctx.module_ctx.axis_names.cluster[0]
-      raise ValueError(
-          "Can only perform collective MMA along minormost cluster axis. "
-          f"Got {collective_axis}, expected {minormost_cluster_axis}.")
-    index = ir.IndexType.get()
-    is_leader_block = arith_dialect.cmpi(
-        arith_dialect.CmpIPredicate.eq,
-        ctx.launch_ctx.cluster_idx(cluster_axis), mgpu.c(0, index))
+    is_leader_block = _collective_mma_predicate(ctx, collective_axis)
     predicate = arith_dialect.andi(predicate, is_leader_block)
     collective = True
+  else:
+    collective = False
 
   with mgpu.when(predicate):
     tcgen05.mma(
@@ -1501,10 +1506,110 @@ def _tcgen05_mma_lowering(
               accumulate=accumulate,
               collective=collective,
           )
+    if arrive:
+      tcgen05.commit_arrive(barrier_ref,
+                            collective=collective,
+                            ctx=ctx.launch_ctx)
+  return []
+
+
+tcgen05_commit_arrive_p = jax_core.Primitive("tcgen05_commit_arrive")
+tcgen05_commit_arrive_p.multiple_results = True
+
+
+def tcgen05_commit_arrive(barrier: _Ref,
+                          collective_axis: str | None = None):
+  """Arrive on a Barrier to track completion of a preceding `tcgen05_mma` call.
+
+  Args:
+    barrier: Barrier Ref for synchronizing with the tensor core. Should have
+      for_tensor_core set to True.
+    collective_axis: The name of the cluster axis along which the
+      MMA was performed if it was collective. The cluster axis should have a
+      size of exactly 2, and must be on the minormost cluster axis.
+  """
+  if isinstance(barrier, pallas_core.TransformedRef):
+    barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
+        barrier.transforms
+    )
+    barrier = barrier.ref
+  else:
+    barrier_transforms_leaves, barrier_transforms_tree = [], None
+
+  tcgen05_commit_arrive_p.bind(
+      barrier, *barrier_transforms_leaves,
+      barrier_transforms_tree=barrier_transforms_tree,
+      collective_axis=collective_axis)
+
+
+@tcgen05_commit_arrive_p.def_abstract_eval
+def _tcgen05_commit_arrive_abstract_eval(barrier,
+                               *barrier_transforms_leaves,
+                               barrier_transforms_tree,
+                               collective_axis):
+  del (barrier_transforms_leaves, barrier_transforms_tree, collective_axis)
+  for_tensor_core = getattr(
+      barrier.inner_aval.dtype, "for_tensor_core", False)
+  if not for_tensor_core:
+    raise ValueError("MMA barrier must have for_tensor_core set to True.")
+  return []
+
+
+@lowering.register_lowering_rule(
+    tcgen05_commit_arrive_p, *gpu_core.LANExWG_SEMANTICS)
+@lowering.register_lowering_rule(
+    tcgen05_commit_arrive_p, *gpu_core.LANExWARP_SEMANTICS)
+def _tcgen05_commit_arrive_lowering(
+    ctx: lowering.LoweringRuleContext,
+    barrier_ref: mgpu.BarrierRef,
+    *barrier_transforms_leaves,
+    barrier_transforms_tree,
+    collective_axis,
+):
+  if barrier_transforms_tree is not None:
+    barrier_transforms = barrier_transforms_tree.unflatten(
+        barrier_transforms_leaves
+    )
+    indexer = _extract_barrier_indexer(barrier_transforms)
+    if indexer is not None:
+      barrier_ref = barrier_ref.__getitem__(
+          *map(lowering._as_index, indexer.indices)
+      )
+
+  predicate = ctx.module_ctx.single_lane_predicate
+  if collective_axis is not None:
+    is_leader_block = _collective_mma_predicate(ctx, collective_axis)
+    predicate = arith_dialect.andi(predicate, is_leader_block)
+    collective = True
+  else:
+    collective = False
+
+  with mgpu.when(predicate):
     tcgen05.commit_arrive(barrier_ref,
                           collective=collective,
                           ctx=ctx.launch_ctx)
   return []
+
+
+def _collective_mma_predicate(ctx: lowering.LoweringRuleContext,
+                              collective_axis: str) -> ir.Value:
+  """Computes a predicate to run only on the leader block."""
+  cluster_axis = lowering._resolve_cluster_axis(
+      ctx.module_ctx.axis_names, collective_axis)
+  if cluster_axis != gpu_dialect.Dimension(0):
+    # Note: resolve_cluster_axis checks if axis_names exists.
+    assert ctx.module_ctx.axis_names is not None
+    if len(ctx.module_ctx.axis_names.cluster) <= 1:
+      raise ValueError("No cluster axes found.")
+    minormost_cluster_axis = ctx.module_ctx.axis_names.cluster[0]
+    raise ValueError(
+        "Can only perform collective MMA along minormost cluster axis. "
+        f"Got {collective_axis}, expected {minormost_cluster_axis}.")
+  index = ir.IndexType.get()
+  is_leader_block = arith_dialect.cmpi(
+      arith_dialect.CmpIPredicate.eq,
+      ctx.launch_ctx.cluster_idx(cluster_axis), mgpu.c(0, index))
+  return is_leader_block
 
 
 commit_tmem_p = jax_core.Primitive("commit_tmem")
