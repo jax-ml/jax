@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial
+from dataclasses import dataclass
 import itertools
 import math
 
@@ -1177,8 +1178,13 @@ batching.fancy_primitive_batchers[ppermute_p] = _ppermute_batcher
 batching.skippable_batchers[ppermute_p] = partial(_names_in_param, 'axis_name')
 
 
+@dataclass(frozen=True)
 class SingleSideCollectiveEffect(core.Effect):
   __str__ = lambda _: "one-sided communication"
+  def __hash__(self):
+    return hash(SingleSideCollectiveEffect)
+  def __eq__(self, other):
+    return isinstance(other, SingleSideCollectiveEffect)
 
 
 single_side_collective_effect = SingleSideCollectiveEffect()
@@ -1205,7 +1211,7 @@ def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
   sharding = xc.OpSharding()
   sharding.type = xc.OpSharding.Type.MANUAL
   mlir.set_sharding(send_op, sharding)
-  return [send_op.results]
+  return send_op.results
 
 
 mlir.lowerable_effects.add_type(SingleSideCollectiveEffect)
@@ -1215,7 +1221,7 @@ def _psend_abstract_eval(x, *, axis_name, **params):
   _check_axis_names(axis_name)
   return abstract_token, {
       *map(core.NamedAxisEffect, axis_name),
-      SingleSideCollectiveEffect(),
+      single_side_collective_effect,
   }
 
 
@@ -1260,7 +1266,7 @@ def _precv_abstract_eval(
     token, *, out_shape, axis_name, **params
 ):
   return out_shape, {*map(core.NamedAxisEffect, axis_name),
-                     SingleSideCollectiveEffect()}
+                     single_side_collective_effect}
 
 precv_p = core.Primitive("precv")
 precv_p.multiple_results = False
