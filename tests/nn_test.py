@@ -201,6 +201,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       impl=['cudnn', 'xla'],
   )
   def testDotProductAttention(self, dtype, group_num, use_vmap, impl):
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      raise unittest.SkipTest("Cudnn doesn't support compute_cap 10.3.")
     if impl == 'cudnn' and not _is_required_cudnn_version_satisfied("8.0", 8904):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
     if impl == 'cudnn' and dtype == jnp.float32:
@@ -250,6 +252,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
     if isinstance(mask_mode, str):
       mask_mode = (mask_mode,)
     min_cudnn_version = 90200 if 'sliding_window' in mask_mode else 8904
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      raise unittest.SkipTest("Cudnn doesn't support compute_cap 10.3.")
     if not _is_required_cudnn_version_satisfied("8.0", min_cudnn_version):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
 
@@ -313,6 +317,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       use_vmap=[False, True],
   )
   def testDotProductAttentionBiasGradient(self, batch_size, use_vmap):
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      raise unittest.SkipTest("Cudnn doesn't support compute_cap 10.3.")
     if not _is_required_cudnn_version_satisfied("8.0", 8904):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
 
