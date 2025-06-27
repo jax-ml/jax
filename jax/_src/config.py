@@ -1106,6 +1106,15 @@ use_direct_linearize = bool_state(
     help=('Use direct linearization instead JVP followed by partial eval'),
     include_in_jit_key=True)
 
+use_simplified_jaxpr_constants = bool_state(
+    name='jax_use_simplified_jaxpr_constants',
+    default=False,
+    help=('Enable a simplification of the handling of closed-over constants '
+          'in Jaxpr. The value `True` enables the new behavior. '
+          'This flag will exist only briefly, while we transition '
+          'users. See https://github.com/jax-ml/jax/pull/29600.'
+          'DO NOT RELY ON THIS FLAG.'))
+
 # TODO make it so people don't use this, this is internal...
 _check_vma = bool_state(
     name='check_vma',
