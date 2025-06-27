@@ -89,80 +89,93 @@ def matmul_kernel(a, b, config: TuningConfig):
   def kernel(a_gmem, b_gmem, out_gmem,
              a_smem, b_smem, acc_tmem, acc_smem,
              a_tma_barrier, b_tma_barrier, consumed_barrier):
-    m_index = lax.axis_index("m")
-    n_index = lax.axis_index("n")
     if collective:
-      cluster_idx = lax.axis_index("x")
-      block_m_index = m_index * 2 + cluster_idx
-      is_lead_block = cluster_idx == 0
+      grid = (m_iters, n_iters, 2)
+      collective_axes = ("sm", "x")
     else:
-      block_m_index = m_index
-      is_lead_block = True
-    block_slice_m = pl.ds(block_m_index * block_tile_m, block_tile_m)
-    slice_m = pl.ds(m_index * tile_m, tile_m)
-    slice_n = pl.ds(n_index * tile_n, tile_n)
+      grid = (m_iters, n_iters)
+      collective_axes = ("sm",)
 
-    @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-    def _per_warp():
-      warp_id = lax.axis_index("warp")
-      @pl.when(warp_id == TMA_WARP)
-      def _memory():
-        def _loop_body(ki, _):
-          slice_k = pl.ds(ki * tile_k, tile_k)
-          slot = lax.rem(ki, max_concurrent_steps)
-          @pl.when(ki >= max_concurrent_steps)
-          def _():
+    @plgpu.nd_loop(grid, collective_axes=collective_axes)
+    def mn_loop(idx):  # pylint: disable=unused-variable
+      if collective:
+        m_index, n_index, cluster_idx = idx
+        block_m_index = m_index * 2 + cluster_idx
+        is_lead_block = cluster_idx == 0
+      else:
+        m_index, n_index = idx
+        block_m_index = m_index
+        is_lead_block = True
+
+      block_slice_m = pl.ds(block_m_index * block_tile_m, block_tile_m)
+      slice_m = pl.ds(m_index * tile_m, tile_m)
+      slice_n = pl.ds(n_index * tile_n, tile_n)
+
+      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+      def _per_warp():
+        warp_id = lax.axis_index("warp")
+        @pl.when(warp_id == TMA_WARP)
+        def _memory():
+          def _loop_body(ki, _):
+            slice_k = pl.ds(ki * tile_k, tile_k)
+            slot = lax.rem(ki, max_concurrent_steps)
+            @pl.when(ki >= max_concurrent_steps)
+            def _():
+              plgpu.barrier_wait(consumed_barrier.at[slot])
+            plgpu.copy_gmem_to_smem(
+                a_gmem.at[slice_m, slice_k],
+                a_smem.at[slot],
+                a_tma_barrier.at[slot],
+                partitioned_axis=0 if collective else None,
+                collective_axes="x" if collective else None,
+            )
+            plgpu.copy_gmem_to_smem(
+                b_gmem.at[slice_k, slice_n],
+                b_smem.at[slot],
+                b_tma_barrier.at[slot],
+                partitioned_axis=1 if collective else None,
+                collective_axes="x" if collective else None,
+            )
+          lax.fori_loop(0, k_iters, _loop_body, None)
+          # The memory loop will wait a total of (k_iters - 1) times,
+          # matching the arrivals in the compute loop.
+          for i in range(max_concurrent_steps - 1):
+            slot = lax.rem(k_iters + i, max_concurrent_steps)
             plgpu.barrier_wait(consumed_barrier.at[slot])
-          plgpu.copy_gmem_to_smem(
-              a_gmem.at[slice_m, slice_k],
-              a_smem.at[slot],
-              a_tma_barrier.at[slot],
-              partitioned_axis=0 if collective else None,
-              collective_axes="x" if collective else None,
-          )
-          plgpu.copy_gmem_to_smem(
-              b_gmem.at[slice_k, slice_n],
-              b_smem.at[slot],
-              b_tma_barrier.at[slot],
-              partitioned_axis=1 if collective else None,
-              collective_axes="x" if collective else None,
-          )
 
-        lax.fori_loop(0, k_iters, _loop_body, None)
+        @pl.when(jnp.logical_and(warp_id == MMA_WARP, is_lead_block))
+        def _compute():
+          def _loop_body(ki, _):
+            slot = lax.rem(ki, max_concurrent_steps)
+            plgpu.barrier_wait(a_tma_barrier.at[slot])
+            plgpu.barrier_wait(b_tma_barrier.at[slot])
 
-      @pl.when(jnp.logical_and(warp_id == MMA_WARP, is_lead_block))
-      def _compute():
-        def _loop_body(ki, _):
-          slot = lax.rem(ki, max_concurrent_steps)
-          plgpu.barrier_wait(a_tma_barrier.at[slot])
-          plgpu.barrier_wait(b_tma_barrier.at[slot])
+            is_last_iter = ki >= k_iters - 1
+            barrier_slot = lax.select_n(is_last_iter,
+                                        slot, max_concurrent_steps)
+            plgpu.tcgen05_mma(
+                acc_tmem,
+                a_smem.at[slot],
+                b_smem.at[slot],
+                consumed_barrier.at[barrier_slot],
+                accumulate=(ki > 0),
+                collective_axis="x" if collective else None,
+            )
 
-          is_last_iter = ki >= k_iters - 1
-          barrier_slot = lax.select_n(is_last_iter,
-                                      slot, max_concurrent_steps)
-          plgpu.tcgen05_mma(
-              acc_tmem,
-              a_smem.at[slot],
-              b_smem.at[slot],
-              consumed_barrier.at[barrier_slot],
-              accumulate=(ki > 0),
-              collective_axis="x" if collective else None,
-          )
+          lax.fori_loop(0, k_iters, _loop_body, None)
 
-        lax.fori_loop(0, k_iters, _loop_body, None)
+      plgpu.barrier_wait(consumed_barrier.at[max_concurrent_steps])
+      acc_smem[...] = acc_tmem[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(acc_smem, out_gmem.at[block_slice_m, slice_n])
+      plgpu.wait_smem_to_gmem(0)
 
-    plgpu.barrier_wait(consumed_barrier.at[max_concurrent_steps])
-    acc_smem[...] = acc_tmem[...].astype(dtype)
-    plgpu.commit_smem()
-    plgpu.copy_smem_to_gmem(acc_smem, out_gmem.at[block_slice_m, slice_n])
-    plgpu.wait_smem_to_gmem(0)
-
+  num_sms = jax.local_devices()[0].core_count
   f = plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
-      # n, m generally works better for most shapes.
-      grid=(n_iters, m_iters),
-      grid_names=("n", "m"),
+      grid=(num_sms//2,) if collective else (num_sms,),
+      grid_names=("sm",),
       cluster_names=("x",) if collective else (),
       cluster=(2,) if collective else (),
       scratch_shapes=(  # type: ignore
@@ -206,6 +219,9 @@ def main(_) -> None:
     best_util = -float("inf")
     for (tile_m, tile_n, tile_k,
          max_concurrent_steps, collective) in tuning_it:
+      # Only N <= 128 are supported for collective MMAs
+      if collective and tile_n > 128:
+        continue
       config = TuningConfig(
           tile_m=tile_m,
           tile_n=tile_n,
