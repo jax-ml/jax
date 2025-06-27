@@ -830,10 +830,10 @@ class _IndexUpdateRef:
     out_s = core.typeof(self.array).sharding
     if out_s.mesh.empty or out_s.mesh._are_all_axes_auto_or_manual:
       out_s = None
-    return scatter._scatter_update(self.array, self.index, values, lax_slicing.scatter,
-                                   indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode,
-                                   out_sharding=out_s, normalize_indices=wrap_negative_indices)
+    return scatter._scatter_update(
+        self.array, self.index, values, lax_slicing.scatter,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode, out_sharding=out_s, normalize_indices=wrap_negative_indices)
 
   def apply(self, func: Callable[[ArrayLike], Array], *,
             indices_are_sorted: bool = False, unique_indices: bool = False,
@@ -854,12 +854,10 @@ class _IndexUpdateRef:
     """
     def _scatter_apply(x, indices, y, dims, **kwargs):
       return lax_slicing.scatter_apply(x, indices, func, dims, update_shape=y.shape, **kwargs)
-    return scatter._scatter_update(self.array, self.index,
-                                   lax._zero(self.array),
-                                   _scatter_apply,
-                                   indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode,
-                                   normalize_indices=wrap_negative_indices)
+    return scatter._scatter_update(
+        self.array, self.index, lax._zero(self.array), _scatter_apply,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode, normalize_indices=wrap_negative_indices)
 
   def add(self, values: ArrayLike, *,
           indices_are_sorted: bool = False, unique_indices: bool = False,
@@ -872,11 +870,13 @@ class _IndexUpdateRef:
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
-    return scatter._scatter_update(self.array, self.index, values,
-                                   lax_slicing.scatter_add,
-                                   indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode,
-                                   normalize_indices=wrap_negative_indices)
+    out_s = core.typeof(self.array).sharding
+    if out_s.mesh.empty or out_s.mesh._are_all_axes_auto_or_manual:
+      out_s = None
+    return scatter._scatter_update(
+        self.array, self.index, values, lax_slicing.scatter_add,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode, normalize_indices=wrap_negative_indices, out_sharding=out_s)
 
   def subtract(self, values: ArrayLike, *,
                indices_are_sorted: bool = False, unique_indices: bool = False,
