@@ -1081,6 +1081,11 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     return None
   if isinstance(sharding, NamedSharding) and sharding.mesh.empty:
     return None
+  if not isinstance(sharding, (NamedSharding, PartitionSpec)):
+    raise TypeError(
+        f"`out_sharding` argument of {api_name} only supports instances of"
+        f" `NamedSharding` or `PartitionSpec`. Got {sharding} of type:"
+        f" {type(sharding)}")
 
   cur_mesh = mesh_lib.get_abstract_mesh()
   if isinstance(sharding, PartitionSpec):
@@ -1105,6 +1110,8 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
           f' {sharding.mesh.abstract_mesh} passed to {api_name}.'
           ' This error occurs at source: '
           f' {source_info_util.summarize(source_info_util.current())}')
+    # TODO(yashkatariya): Maybe allow concrete mesh at the top level
+    # i.e `core.trace_state_clean()` for APIs like jnp.zeros, etc?
     if isinstance(sharding.mesh, mesh_lib.Mesh):
       sharding = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
 

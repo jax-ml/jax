@@ -422,7 +422,8 @@ def einsum_path(
 ) -> tuple[list[tuple[int, ...]], Any]: ...
 
 def empty(shape: Any, dtype: DTypeLike | None = ..., *,
-          device: _Device | _Sharding | None = ...) -> Array: ...
+          device: _Device | _Sharding | None = ...,
+          out_sharding: NamedSharding | P | None = ...) -> Array: ...
 def empty_like(prototype: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = ...,
                shape: Any = ..., *,
@@ -745,7 +746,8 @@ number = _np.number
 object_ = _np.object_
 ogrid: _Ogrid
 def ones(shape: Any, dtype: DTypeLike | None = ..., *,
-         device: _Device | _Sharding | None = ...) -> Array: ...
+         device: _Device | _Sharding | None = ...,
+         out_sharding: NamedSharding | P | None = ...) -> Array: ...
 def ones_like(a: ArrayLike | DuckTypedArray,
               dtype: DTypeLike | None = ...,
               shape: Any = ..., *,
@@ -1035,7 +1037,8 @@ def where(condition: ArrayLike, x: ArrayLike | None = ...,
           ) -> Array | tuple[Array, ...]: ...
 
 def zeros(shape: Any, dtype: DTypeLike | None = ..., *,
-          device: _Device | _Sharding | None = ...) -> Array: ...
+          device: _Device | _Sharding | None = ...,
+          out_sharding: NamedSharding | P | None = ...) -> Array: ...
 def zeros_like(a: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = ...,
                shape: Any = ..., *,

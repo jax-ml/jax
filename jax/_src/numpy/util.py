@@ -29,6 +29,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.util import safe_zip, safe_map, set_module
 from jax._src.sharding import Sharding
+from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
+                                     canonicalize_sharding)
 from jax._src.typing import (
     Array, ArrayLike, DimSize, Shape, SupportsNdim, SupportsShape, SupportsSize)
 
@@ -320,6 +322,19 @@ def normalize_device_to_sharding(device: xc.Device | Sharding | None) -> Shardin
     return SingleDeviceSharding(device)
   else:
     return device
+
+def choose_device_or_out_sharding(device: xc.Device | Sharding | None,
+                                  out_sharding: NamedSharding | P | None,
+                                  name: str):
+  if device is not None and out_sharding is not None:
+    raise ValueError(
+        f"Only one of `device` or `out_sharding` can be set. Got {device=} and"
+        f" {out_sharding=}")
+  if device is not None and out_sharding is None:
+    return normalize_device_to_sharding(device)
+  if device is None and out_sharding is not None:
+    return canonicalize_sharding(out_sharding, name)
+  return None
 
 
 @export

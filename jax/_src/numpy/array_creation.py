@@ -28,6 +28,7 @@ from jax._src.numpy.array_constructors import asarray
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.sharding import Sharding
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike
 from jax._src.util import canonicalize_axis, set_module
 
@@ -47,7 +48,8 @@ def canonicalize_shape(shape: Any, context: str="") -> core.Shape:
 
 @export
 def zeros(shape: Any, dtype: DTypeLike | None = None, *,
-          device: xc.Device | Sharding | None = None) -> Array:
+          device: xc.Device | Sharding | None = None,
+          out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array full of zeros.
 
   JAX implementation of :func:`numpy.zeros`.
@@ -80,12 +82,15 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
   if (m := _check_forgot_shape_tuple("zeros", shape, dtype)): raise TypeError(m)
   dtypes.check_user_dtype_supported(dtype, "zeros")
   shape = canonicalize_shape(shape)
-  return lax.full(shape, 0, dtypes.jax_dtype(dtype), sharding=util.normalize_device_to_sharding(device))
+  sharding = util.choose_device_or_out_sharding(
+      device, out_sharding, 'jnp.zeros')
+  return lax.full(shape, 0, dtypes.jax_dtype(dtype), sharding=sharding)
 
 
 @export
 def ones(shape: Any, dtype: DTypeLike | None = None, *,
-         device: xc.Device | Sharding | None = None) -> Array:
+         device: xc.Device | Sharding | None = None,
+         out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array full of ones.
 
   JAX implementation of :func:`numpy.ones`.
@@ -118,12 +123,15 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
   if (m := _check_forgot_shape_tuple("ones", shape, dtype)): raise TypeError(m)
   shape = canonicalize_shape(shape)
   dtypes.check_user_dtype_supported(dtype, "ones")
-  return lax.full(shape, 1, dtypes.jax_dtype(dtype), sharding=util.normalize_device_to_sharding(device))
+  sharding = util.choose_device_or_out_sharding(
+      device, out_sharding, 'jnp.ones')
+  return lax.full(shape, 1, dtypes.jax_dtype(dtype), sharding=sharding)
 
 
 @export
 def empty(shape: Any, dtype: DTypeLike | None = None, *,
-          device: xc.Device | Sharding | None = None) -> Array:
+          device: xc.Device | Sharding | None = None,
+          out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an empty array.
 
   JAX implementation of :func:`numpy.empty`. Because XLA cannot create an
@@ -155,7 +163,7 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
   """
   if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
   dtypes.check_user_dtype_supported(dtype, "empty")
-  return zeros(shape, dtype, device=device)
+  return zeros(shape, dtype, device=device, out_sharding=out_sharding)
 
 
 def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:  # type: ignore
@@ -209,7 +217,8 @@ def full(shape: Any, fill_value: ArrayLike,
 
   if np.ndim(fill_value) == 0:
     shape = canonicalize_shape(shape)
-    return lax.full(shape, fill_value, dtype, sharding=util.normalize_device_to_sharding(device))
+    return lax.full(shape, fill_value, dtype,
+                    sharding=util.normalize_device_to_sharding(device))
   else:
     return api.device_put(
         util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
@@ -257,7 +266,8 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
   dtypes.check_user_dtype_supported(dtype, "zeros_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
-  return lax.full_like(a, 0, dtype, shape, sharding=util.normalize_device_to_sharding(device))
+  return lax.full_like(a, 0, dtype, shape,
+                       sharding=util.normalize_device_to_sharding(device))
 
 
 @export
@@ -302,7 +312,8 @@ def ones_like(a: ArrayLike | DuckTypedArray,
   dtypes.check_user_dtype_supported(dtype, "ones_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
-  return lax.full_like(a, 1, dtype, shape, sharding=util.normalize_device_to_sharding(device))
+  return lax.full_like(a, 1, dtype, shape,
+                       sharding=util.normalize_device_to_sharding(device))
 
 
 @export
@@ -349,7 +360,8 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
   dtypes.check_user_dtype_supported(dtype, "ones_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
-  return lax.full_like(prototype, 0, dtype, shape, sharding=util.normalize_device_to_sharding(device))
+  return lax.full_like(prototype, 0, dtype, shape,
+                       sharding=util.normalize_device_to_sharding(device))
 
 
 @export
@@ -403,7 +415,8 @@ def full_like(a: ArrayLike | DuckTypedArray,
   if shape is not None:
     shape = canonicalize_shape(shape)
   if np.ndim(fill_value) == 0:
-    return lax.full_like(a, fill_value, dtype, shape, sharding=util.normalize_device_to_sharding(device))
+    return lax.full_like(a, fill_value, dtype, shape,
+                         sharding=util.normalize_device_to_sharding(device))
   else:
     shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
     dtype = dtypes.result_type(a) if dtype is None else dtype

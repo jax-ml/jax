@@ -8103,6 +8103,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     flip_state_scalar(key, batch_states, batch_idxs)  # doesn't crash
     jax.jit(flip_state_scalar)(key, batch_states, batch_idxs)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_jnp_zeros_out_sharding(self, mesh):
+    s = NamedSharding(mesh, P('x'))
+
+    out = jnp.zeros((8,), jnp.float32, out_sharding=s)
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, np.zeros((8,), np.float32))
+
+    out = jnp.zeros((8,), jnp.float32, out_sharding=P('x'))
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, np.zeros((8,), np.float32))
+
+    @jax.jit
+    def f(x):
+      return jnp.zeros(x.shape, x.dtype, out_sharding=P('x'))
+    out = f(np.arange(8, dtype=np.float32))
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, np.zeros((8,), np.float32))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
