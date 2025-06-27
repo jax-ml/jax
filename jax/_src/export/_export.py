@@ -22,11 +22,9 @@ import dataclasses
 import functools
 import itertools
 import json
+import logging
 import re
 from typing import Any, Protocol, TypeVar, Union, cast
-
-import logging
-import numpy as np
 
 from jax._src import ad_util
 from jax._src import api
@@ -37,13 +35,6 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import mesh as mesh_lib
-from jax._src.interpreters import mlir
-from jax._src.interpreters import pxla
-from jax._src.lib import xla_client
-from jax._src.lib import _jax
-from jax._src.lib.mlir import ir, passmanager
-from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib.mlir.dialects import func as func_dialect, sdy
 from jax._src import mesh
 from jax._src import pjit
 from jax._src import sharding
@@ -54,8 +45,16 @@ from jax._src import tree_util
 from jax._src import typing
 from jax._src import util
 from jax._src import xla_bridge as xb
-
 from jax._src.export import shape_poly
+from jax._src.interpreters import mlir
+from jax._src.interpreters import pxla
+from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import xla_client
+from jax._src.lib.mlir import ir, passmanager
+from jax._src.lib.mlir.dialects import func as func_dialect, sdy
+from jax._src.lib.mlir.dialects import hlo
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +215,8 @@ class Exported:
     return f"Exported(fun_name={self.fun_name}, ...)"
 
   def in_shardings_jax(
-    self,
-    mesh: mesh.Mesh) -> Sequence[sharding.Sharding | None]:
+      self, mesh: mesh_lib.Mesh
+  ) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings corresponding to self.in_shardings_hlo.
 
     The Exported object stores `in_shardings_hlo` as HloShardings, which are
@@ -256,8 +255,8 @@ class Exported:
                  for s in self.in_shardings_hlo)
 
   def out_shardings_jax(
-      self,
-      mesh: mesh.Mesh) -> Sequence[sharding.Sharding | None]:
+      self, mesh: mesh_lib.Mesh
+  ) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings corresponding to `self.out_shardings_hlo`.
 
     See documentation for in_shardings_jax.
@@ -834,8 +833,17 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   else:
     target_version = hlo.get_version_from_compatibility_requirement(
       hlo.StablehloCompatibilityRequirement.WEEK_4)
-  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
-      mlir_str, target_version)
+  if jaxlib_extension_version >= 356:
+    module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
+        mlir_str, target_version, xb.get_backend().mixed_mlir_dialects
+    )
+  else:
+    # pylint: disable=no-value-for-parameter
+    module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
+        mlir_str, target_version
+    )
+    # pylint: disable=no-value-for-parameter
+
   return module_serialized
 
 
@@ -1120,7 +1128,9 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "shape_assertion",  # Used by shape_poly to evaluate assertions
 }
 
-check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|\[({}, )*{}\]"")$")
+check_sharding_pattern = re.compile(
+    r"^({replicated}|{unknown shard_as.*}|.*\[({}, )*{}\]" ")$"
+)
 
 def _check_module(mod: ir.Module, *,
                   disabled_checks: Sequence[DisabledSafetyCheck],
@@ -1146,8 +1156,11 @@ def _check_module(mod: ir.Module, *,
   module_uses_non_replicated_sharding = False
   def check_sharding(op: ir.Operation, loc: ir.Location):
     try:
-      sharding = (op.attributes["sdy.sharding"] if shardy_enabled else
-                  op.attributes["mhlo.sharding"])
+      sharding = (
+          op.attributes["sharding"]
+          if shardy_enabled
+          else op.attributes["mhlo.sharding"]
+      )
     except KeyError:
       pass
     else:
@@ -1175,6 +1188,8 @@ def _check_module(mod: ir.Module, *,
         disallowed_custom_call_ops.append(f"{op} at {op.location}")
       if call_target_name_attr == sharding_attr:
         check_sharding(op, op.location)
+    elif op_name == "sdy.sharding_constraint":
+      check_sharding(op, op.location)
 
   def walk_operations(op):
     check_op(op)
