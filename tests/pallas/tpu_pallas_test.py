@@ -14,32 +14,32 @@
 
 """Test TPU-specific extensions to pallas_call."""
 
+from collections.abc import Callable
 import contextlib
 import functools
-import itertools
 import gc
 import io
+import itertools
 import math
 import re
 import sys
-from collections.abc import Callable
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import api_util
 from jax import lax
 from jax._src import checkify
+from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import _jax
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
-from jax._src.state import utils as state_utils
 from jax._src.state import discharge as state_discharge
+from jax._src.state import utils as state_utils
 from jax.experimental import mesh_utils
 from jax.experimental import mosaic
 from jax.experimental import pallas as pl
-from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import example_kernel
 from jax.extend import linear_util as lu
@@ -52,6 +52,25 @@ jax.config.parse_flags_with_absl()
 P = jax.sharding.PartitionSpec
 
 partial = functools.partial
+
+
+def only_passes_in_interpret(
+    unless_generation: int | None = None, *args, **kwargs
+):
+  def decorator(f, *args, **kwargs):
+    def wrapper(self, *args, **kwargs):
+      if self.INTERPRET or (
+          unless_generation is not None
+          and jtu.is_device_tpu_at_least(unless_generation)
+      ):
+        f(self, *args, **kwargs)
+      else:
+        with self.assertRaises(Exception):
+          f(self, *args, **kwargs)
+
+    return wrapper
+
+  return decorator
 
 
 @contextlib.contextmanager
@@ -162,6 +181,43 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
         ),
     )(s, x)
     np.testing.assert_allclose(out, x.reshape((8, 8, -1))[s].reshape(x.shape))
+
+  @parameterized.parameters(
+      (jnp.bfloat16,),
+      (jnp.int8,),
+  )
+  @only_passes_in_interpret()
+  def test_narrow_bitwidth_scalar_prefetch(self, dtype):
+    def body(s_ref, x_ref, o_ref):
+      o_ref[...] = x_ref[...] + jnp.broadcast_to(s_ref[0], x_ref.shape)
+
+    s = jnp.array([5], dtype)
+    x = jnp.arange(16 * 128, dtype=dtype).reshape((16, 128))
+
+    out = self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=1,
+        ),
+    )(s, x)
+    jtu.check_close(out, x + jnp.broadcast_to(s, x.shape))
+
+  def test_f32_scalar_prefetch(self):
+    def body(s_ref, x_ref, o_ref):
+      o_ref[...] = x_ref[...] + jnp.broadcast_to(s_ref[0], x_ref.shape)
+
+    s = jnp.array([5.0], jnp.float32)
+    x = jnp.arange(8 * 128, dtype=jnp.float32).reshape((8, 128))
+
+    out = self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=1,
+        ),
+    )(s, x)
+    np.testing.assert_allclose(out, x + jnp.broadcast_to(s, x.shape))
 
   def test_trivial_scalar_prefetch_with_windowless_args(self):
     def body(_, x_ref, o_ref):
@@ -934,8 +990,7 @@ class PallasCallDMATest(PallasBaseTest):
     aref1 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     aref2 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     in_avals = [aref1, aref2]
-    stateful_jaxpr, _, () = pe.trace_to_jaxpr_dynamic(wrap_init(f, 2),
-                                                          in_avals)
+    stateful_jaxpr, _, () = pe.trace_to_jaxpr_dynamic(wrap_init(f, 2), in_avals)
     discharged_jaxpr, _ = state_discharge.discharge_state(
         stateful_jaxpr, consts=(), should_discharge=[False, True])
     self.assertLen(discharged_jaxpr.invars, 2)
@@ -2829,25 +2884,13 @@ class PrettyPrintingTest(PallasBaseTest):
       return []
 
     jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(body, 2), [state.shaped_array_ref((2, 8, 128), jnp.int32),
-                             jax.core.ShapedArray((), jnp.int32)]
+        wrap_init(body, 2),
+        [
+            state.shaped_array_ref((2, 8, 128), jnp.int32),
+            jax.core.ShapedArray((), jnp.int32),
+        ],
     )
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
-
-
-def only_passes_in_interpret(unless_generation: int | None = None):
-  def decorator(f):
-    def wrapper(self):
-      if self.INTERPRET or (
-          unless_generation is not None
-          and jtu.is_device_tpu_at_least(unless_generation)
-      ):
-        f(self)
-      else:
-        with self.assertRaises(Exception):
-          f(self)
-    return wrapper
-  return decorator
 
 
 class MiscellaneousTest(PallasBaseTest):
