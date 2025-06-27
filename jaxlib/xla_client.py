@@ -190,6 +190,8 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
     options['preallocate'] = preallocate not in ('false', 'False', '0')
   if collective_memory_size:
     options['collective_memory_size'] = int(collective_memory_size) * (1 << 20)
+  abort = os.getenv('XLA_PYTHON_CLIENT_ABORT_COLLECTIVES_ON_FAILURE', '0')
+  options['abort_collectives_on_failure'] = bool(int(abort))
   return options
 
 
