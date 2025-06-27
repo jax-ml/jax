@@ -26,6 +26,7 @@ from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import canonicalize_axis, set_module
@@ -125,10 +126,15 @@ def dot(a: ArrayLike, b: ArrayLike, *,
 
 
 @export
-@partial(api.jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
+@partial(
+    api.jit,
+    static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
+    inline=True,
+)
 def matmul(a: ArrayLike, b: ArrayLike, *,
            precision: lax.PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None,
+           out_sharding: NamedSharding | P | None = None,
            ) -> Array:
   """Perform a matrix multiplication.
 
@@ -234,15 +240,18 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
       raise ValueError("Incompatible shapes for matmul arguments: {} and {}"
                        .format(np.shape(a), np.shape(b)))
 
-  if a_is_mat: idx_a_other.append(num_batch_dims)
-  if b_is_mat: idx_b_other.append(num_batch_dims + a_is_mat)
+  if a_is_mat:
+    idx_a_other.append(num_batch_dims)
+  if b_is_mat:
+    idx_b_other.append(num_batch_dims + a_is_mat)
   perm = np.argsort(np.concatenate([idx_batch, idx_a_other, idx_b_other]))
 
   a = lax.squeeze(a, tuple(a_squeeze))
   b = lax.squeeze(b, tuple(b_squeeze))
   out = lax.dot_general(
     a, b, (((np.ndim(a) - 1,), (np.ndim(b) - 1 - b_is_mat,)), (a_batch, b_batch)),
-    precision=precision, preferred_element_type=preferred_element_type)
+    precision=precision, preferred_element_type=preferred_element_type,
+    out_sharding=out_sharding)
   result = lax.transpose(out, perm)
   return lax._convert_element_type(result, preferred_element_type, output_weak_type)
 
