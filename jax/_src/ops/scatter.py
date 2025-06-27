@@ -17,9 +17,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Union
-import warnings
 from functools import partial
+from types import EllipsisType
+from typing import Any
+import warnings
 
 import numpy as np
 
@@ -33,16 +34,15 @@ from jax._src import util
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.numpy import indexing
-from jax._src.pjit import auto_axes
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
+from jax._src.pjit import auto_axes
 from jax._src.typing import Array, ArrayLike
 
 
-from types import EllipsisType
 SingleIndex = int | slice | Sequence[int] | Array | EllipsisType | None
-Index = Union[SingleIndex, tuple[SingleIndex, ...]]
-Scalar = Union[complex, float, int, np.number]
+Index = SingleIndex | tuple[SingleIndex, ...]
+Scalar = complex | float | int | np.number
 
 
 def _scatter_update(x: ArrayLike, idx: Index, y: ArrayLike, scatter_op: Callable[..., Array],

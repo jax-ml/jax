@@ -308,7 +308,6 @@ py_library_providing_imports_info(
             "_src/debugger/**/*.py",
             "_src/image/**/*.py",
             "_src/nn/**/*.py",
-            "_src/ops/**/*.py",
             "_src/scipy/**/*.py",
             "_src/third_party/**/*.py",
             "_src/tpu/**/*.py",
@@ -1574,9 +1573,8 @@ py_library_providing_imports_info(
     name = "numpy",
     srcs = glob([
         "_src/numpy/**/*.py",
-    ]) + [
-        "_src/ops/scatter.py",
-    ],
+        "_src/ops/**/*.py",
+    ]),
     deps = [
         ":api",
         ":api_util",
