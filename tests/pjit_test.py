@@ -4633,14 +4633,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     x_s1 = jax.device_put(np_inp, s1)
     # Reshard!
-    out = jax.device_put(x_s1, s2)
+    with jax.transfer_guard('disallow_explicit'):
+      out = jax.device_put(x_s1, s2)
     self.assertArraysEqual(out, np_inp)
     self.assertEqual(out.sharding, s2)
 
     s3 = NamedSharding(mesh2, P('model_q'))
     x_s3 = jax.device_put(np_inp, s3)
     # Reshard to iota device assignment!
-    out2 = jax.device_put(x_s3, s1)
+    with jax.transfer_guard('disallow_explicit'):
+      out2 = jax.device_put(x_s3, s1)
     self.assertArraysEqual(out2, np_inp)
     self.assertEqual(out2.sharding, s1)
 
