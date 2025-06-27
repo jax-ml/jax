@@ -55,7 +55,7 @@ WARP_SIZE = 32
 WARPGROUP_SIZE = 128
 
 
-_Ref = pallas_core.AbstractMemoryRef | state_types.TransformedRef
+_Ref = state.AbstractRef | state_types.TransformedRef
 
 
 def _check_ref(
@@ -764,7 +764,7 @@ def _barrier_arrive_lowering(
   return ()
 
 
-def barrier_arrive(barrier: pallas_core.AbstractMemoryRef) -> None:
+def barrier_arrive(barrier: state.AbstractRef) -> None:
   """Arrives at the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
       barrier, None, "barrier_arrive", force_trailing_indexer=False,
@@ -831,7 +831,7 @@ def _barrier_wait_lowering(
   return ()
 
 
-def barrier_wait(barrier: pallas_core.AbstractMemoryRef) -> None:
+def barrier_wait(barrier: state.AbstractRef) -> None:
   """Waits on the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
       barrier, None, "barrier_wait", force_trailing_indexer=False,
@@ -1959,7 +1959,7 @@ def _jaxpr_call_discharge(
 
 def jaxpr_call(
     jaxpr: jax_core.Jaxpr,
-    *refs: pallas_core.AbstractMemoryRef | state_types.TransformedRef,
+    *refs: state.AbstractRef | state_types.TransformedRef,
     program_ids: Sequence[jax.Array | None],
 ) -> Sequence[jax.Array]:
   """Internal primitive for calling a kernel jaxpr inside ``emit_pipeline``.
@@ -2018,7 +2018,7 @@ class RefType:
 
 
 def _undo_transforms(
-    raw_ref: pallas_core.AbstractMemoryRef,
+    raw_ref: state.AbstractRef,
     memory_transforms: Sequence[gpu_core.MemoryRefTransform],
 ):
   """Extract the `Transform`s that reverse the `MemoryRefTransform`s"""
@@ -2133,7 +2133,7 @@ def _inline_mgpu_abstract_eval(
       *itertools.chain.from_iterable(
           (state.ReadEffect(i), state.WriteEffect(i))
           for i, r in enumerate(flat_args)
-          if isinstance(r, pallas_core.AbstractMemoryRef)
+          if isinstance(r, state.AbstractRef)
       ),
   }
 
@@ -2194,7 +2194,7 @@ def _inline_mgpu_lowering_rule(
       flat_transformed.append(a)
       assert transforms is None
       continue
-    assert isinstance(aval, pallas_core.AbstractMemoryRef)
+    assert isinstance(aval, state.AbstractRef)
     a, user_transforms = lowering._handle_transforms(
         ctx, a, transforms, handle_transposes=False
     )

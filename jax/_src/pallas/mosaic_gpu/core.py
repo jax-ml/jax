@@ -30,6 +30,7 @@ import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import state
 from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.lib.mlir.dialects import arith as arith_dialect
@@ -47,8 +48,7 @@ import jax.numpy as jnp
 from jaxlib.mlir import ir
 
 
-_Ref = pallas_core.AbstractMemoryRef | state_types.TransformedRef
-AbstractMemoryRef = pallas_core.AbstractMemoryRef
+_Ref = state.AbstractRef | state_types.TransformedRef
 
 DimensionSemantics = Literal["parallel", "sequential"]
 
@@ -252,7 +252,7 @@ class GPUMemoryRef(pallas_core.MemoryRef):
       )
     else:
       ref = pallas_core.TransformedRef(
-          AbstractMemoryRef(aval, memory_space=self.memory_space), ()
+          state.AbstractRef(aval, memory_space=self.memory_space), ()
       )
     for t in reversed(self.transforms):
       ref = t.undo(ref)
@@ -333,7 +333,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
       byte_offset = 0
       for ref in jax.tree.leaves(ref_group):
         byte_offset = align_to(byte_offset, SMEM_ALIGNMENT)
-        assert isinstance(ref, pallas_core.AbstractMemoryRef) or isinstance(
+        assert isinstance(ref, pallas_core.state.AbstractRef) or isinstance(
             ref, pallas_core.TransformedRef
         )
         if not isinstance(ref, pallas_core.TransformedRef):
@@ -381,7 +381,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
   return tuple(flat_refs)
 
 
-class AbstractRefUnion(pallas_core.AbstractMemoryRef):
+class AbstractRefUnion(pallas_core.state.AbstractRef):
   refs: Sequence[_GPUMemoryRefTree]
 
   def __init__(
@@ -900,7 +900,7 @@ class BlockSpec(pallas_core.BlockSpec):
     )
     block_inner_aval = bm.block_aval.inner_aval
     for t in self.transforms:
-      block_inner_aval = t(block_inner_aval)
+      block_inner_aval = t(block_inner_aval)  # type: ignore[arg-type]
     return bm.replace(
         transformed_block_aval=bm.block_aval.update(
             inner_aval=block_inner_aval
@@ -958,12 +958,12 @@ class Barrier:
   num_barriers: int = 1
   for_tensor_core: bool = False
 
-  def get_ref_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
         [self.num_barriers], BarrierType(self.num_arrivals,
                                          for_tensor_core=self.for_tensor_core)
     )
-    return AbstractMemoryRef(aval, SMEM)
+    return state.AbstractRef(aval, SMEM)
 
   def __post_init__(self):
     if self.num_arrivals < 1:
@@ -976,11 +976,11 @@ class ClusterBarrier:
   collective_axes: tuple[str | tuple[str, ...], ...]
   num_barriers: int = 1
 
-  def get_ref_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
         [self.num_barriers], ClusterBarrierType(self.collective_axes)
     )
-    return AbstractMemoryRef(aval, SMEM)
+    return state.AbstractRef(aval, SMEM)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -989,7 +989,7 @@ class WGMMAAccumulatorRef:
   dtype: jnp.dtype = jnp.float32
   _init: Any = state_types.uninitialized
 
-  def get_ref_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     if self._init is not state_types.uninitialized:
       raise ValueError(
           "Preinitialized WGMMAAccumulatorRef only supported in pl.run_state."
@@ -1011,7 +1011,7 @@ def _wgmma_ref_type_mapping(ref: WGMMAAccumulatorRef):
 state_types._ref_type_aval_mappings[WGMMAAccumulatorRef] = _wgmma_ref_type_mapping
 
 
-class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
+class WGMMAAbstractAccumulatorRef(state.AbstractRef):
   __slots__ = ["inner_aval", "memory_space"]
 
   def __repr__(self) -> str:
@@ -1034,7 +1034,7 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
     return arr
 
 
-class AbstractTMEMRef(AbstractMemoryRef):
+class AbstractTMEMRef(state.AbstractRef):
   __slots__ = ["inner_aval", "memory_space", "packed", "collective"]
 
   def __init__(self, inner_aval, memory_space, packed, collective):

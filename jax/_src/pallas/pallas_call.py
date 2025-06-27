@@ -245,7 +245,7 @@ def _batch_block_mapping(
       _, _, _, lengths_aval = ragged_axis_values
       idx_avals = [*idx_avals, lengths_aval]
     else:
-      i32_aval_memref = pallas_core.AbstractMemoryRef(
+      i32_aval_memref = state.AbstractRef(
           jax_core.ShapedArray(([axis_size]), jnp.int32),
           pallas_core.MemorySpace.INDEX,
       )
@@ -575,7 +575,7 @@ def _pallas_call_batching_rule(
       aval = jax_core.get_aval(ragged_axis_length).update(dtype=jnp.int32)
       if isinstance(aval, jax_core.DShapedArray):
         aval = jax_core.ShapedArray(aval.shape, aval.dtype, aval.weak_type)
-      lengths_aval = pallas_core.AbstractMemoryRef(
+      lengths_aval = state.AbstractRef(
           aval,
           pallas_core.MemorySpace.INDEX,
       )
@@ -1125,7 +1125,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
   shaped_err_avals = map(_ensure_2d_error_shape, shaped_err_avals)
   err_vals = map(_ensure_2d_error_shape, err_vals)
 
-  error_memref_aval = [pallas_core.AbstractMemoryRef(
+  error_memref_aval = [state.AbstractRef(
       err_val, pallas_core.MemorySpace.ERROR) for err_val in shaped_err_avals]
   shaped_scalar_avals, input_aval, output_aval, scratch_aval = split_list(
       shaped_input_avals, [num_scalars, num_kernel_inputs, num_kernel_outputs])
@@ -1396,7 +1396,7 @@ def _pallas_call_state_discharge_rule(
   ref_avals, rest_in_avals = split_list(avals_in, [num_refs])
   assert all(isinstance(ref_aval, state.AbstractRef) for ref_aval in ref_avals)
   ref_avals = [
-      pallas_core.AbstractMemoryRef(
+      state.AbstractRef(
           ref_aval.inner_aval, pallas_core.MemorySpace.ANY
       )
       for ref_aval in ref_avals
@@ -1407,7 +1407,7 @@ def _pallas_call_state_discharge_rule(
   ref_block_mappings = [
       block_spec.to_block_mapping(
           origin="",  # TODO(sharadmv): enable origins for refs
-          array_aval=ref_aval.inner_aval,
+          array_aval=ref_aval.inner_aval,  # type: ignore[arg-type]
           index_map_avals=grid_mapping.index_map_avals,
           index_map_tree=grid_mapping.index_map_tree,
           grid=grid_mapping.grid,
