@@ -174,16 +174,12 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       fn=[lax.mul, lax.add, lax.sub, lax.div, lax.max, lax.lt, lax.eq, lax.gt],
   )
   def test_binop(self, fn):
-
-    def f(x, y):
-      return fn(x, y)
-
     in_type = (
         jax.ShapeDtypeStruct((512, 512), jnp.float32),
         jax.ShapeDtypeStruct((512, 512), jnp.float32),
     )
     f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
-        f, *in_type
+        fn, *in_type
     )
     self.assertEmpty(new_values)
     self.assertEmpty(scalar_prefetch_values)
@@ -214,6 +210,39 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(
         kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, x, y),
         fn(x, y),
+    )
+
+  def test_binop_bcast_mapped_dim(self):
+    in_type = (
+        jax.ShapeDtypeStruct((128, 512), jnp.float32),
+        jax.ShapeDtypeStruct((1, 512), jnp.float32),
+    )
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        lax.add, *in_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((None, 128), lambda i, j: (i, j))
+    kernel_fn, (value_block_specs, *in_block_specs), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(128, 4),
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, *in_type)
+    )
+    self.assertEmpty(value_block_specs)
+    self.assertLen(in_block_specs, 2)
+    x_block_spec, y_block_spec = in_block_specs
+    self.assertEqual(x_block_spec.block_shape, (None, 128))
+    self.assertEqual(x_block_spec.index_map(2, 3), (2, 3))
+    self.assertEqual(y_block_spec.block_shape, (None, 128))
+    self.assertEqual(y_block_spec.index_map(2, 3), (0, 3))
+
+    x = y = np.ones((128,), dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0), scalar_prefetch_values, new_values, x, y), x + y
     )
 
   def test_slice(self):

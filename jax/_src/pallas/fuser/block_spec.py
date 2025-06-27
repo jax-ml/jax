@@ -743,11 +743,14 @@ def _eltwise_usage_rule(
 def _bcast_block_spec(
     block_spec: pallas_core.BlockSpec, i: int
 ) -> pallas_core.BlockSpec:
-  def new_index_map(i, *args):
+  def new_index_map(*args):
     idx = block_spec.index_map(*args)
     assert len(idx) == len(block_spec.block_shape)
     idx = util.tuple_update(idx, i, 0)
     return idx
+
+  if block_spec.block_shape[i] is None:
+    return pallas_core.BlockSpec(block_spec.block_shape, new_index_map)
 
   # TODO(wdvi): This is a hack needed since lowering rules require block shape
   # to contain either all pl.Element or none
@@ -757,9 +760,7 @@ def _bcast_block_spec(
   new_block_shape = util.tuple_update(  # pytype: disable=wrong-arg-types
       block_spec.block_shape, i, bcast_dim_block_shape
   )
-  return pallas_core.BlockSpec(
-      new_block_shape, functools.partial(new_index_map, i)
-  )
+  return pallas_core.BlockSpec(new_block_shape, new_index_map)
 
 
 def _binop_usage_rule(prim, ctx, used_out: set[Usage]):
