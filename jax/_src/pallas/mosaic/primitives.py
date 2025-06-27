@@ -47,6 +47,8 @@ zip, unsafe_zip = util.safe_zip, zip
 repeat_p = jax_core.Primitive('repeat')
 
 def repeat(x, repeats, axis):
+  if axis < 0 or axis >= len(x.shape):
+    raise ValueError("axis is out of range.")
   return repeat_p.bind(x, repeats=repeats, axis=axis)
 
 @repeat_p.def_abstract_eval
