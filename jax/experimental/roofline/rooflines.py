@@ -20,6 +20,7 @@ import numpy as np
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import core, util
+from jax._src import dispatch
 from jax._src import ops
 from jax._src import prng
 from jax._src import random
@@ -47,6 +48,7 @@ for prim in it.chain(
   ann.__dict__.values(),
   control_flow.__dict__.values(),
   convolution.__dict__.values(),
+  dispatch.__dict__.values(),
   fft.__dict__.values(),
   lax.__dict__.values(),
   linalg.__dict__.values(),
