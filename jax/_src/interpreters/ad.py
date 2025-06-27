@@ -1141,7 +1141,7 @@ def map_transpose(primitive: core.Primitive, params,
   @as_hashable_function(closure=(in_axes, tuple(type(c) is Zero for c in ct)))
   def out_axes_thunk():
     return tuple(axis or 0 for axis, nz in zip(in_axes, nz_arg_cts()) if nz)
-  new_params = dict(params, name=wrap_name(params['name'], 'transpose'),
+  new_params = dict(params, name=wrap_name('transpose', params['name']),
                     in_axes=new_in_axes, out_axes_thunk=out_axes_thunk)
   del new_params['out_axes']
   update_params = call_transpose_param_updaters.get(primitive)

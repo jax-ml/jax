@@ -596,7 +596,7 @@ class GraphSerializationImpl(SerializationImpl):
     self.enable_xla = enable_xla
 
     fun_name = getattr(fun_jax, "__name__", "unknown")
-    name_stack = util.wrap_name(fun_name, "jax2tf")
+    name_stack = util.wrap_name("jax2tf", fun_name)
     self.name_stack = name_stack
     self.args_flat_tf = args_flat_tf
     self.debug = api_util.debug_info("jax2tf", fun_jax,
@@ -3624,7 +3624,7 @@ def _pjit(*args: TfVal,
                   skip_replicated_sharding=not _thread_local_state.enable_xla),
           args, in_hlo_shardings))
   results = _interpret_jaxpr(jaxpr, *sharded_args,
-                              extra_name_stack=util.wrap_name(name, "pjit"),
+                              extra_name_stack=util.wrap_name("pjit", name),
                               fresh_constant_cache=False)
   out_hlo_shardings: Sequence[xla_client.HloSharding | None] = map(
     _xla_compatible_sharding_to_hlo_sharding, out_shardings, _out_aval)

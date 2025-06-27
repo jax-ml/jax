@@ -368,8 +368,8 @@ class WrapKwArgs:
   def __eq__(self, other):
     return self.val == other.val
 
-def wrap_name(name: str, transform_name: str) -> str:
-  return transform_name + '(' + name + ')'
+def wrap_name(transform_name: str, name: str) -> str:
+  return f"{transform_name}({name})"
 
 
 def fun_name(fun: Callable, default_name: str = "<unnamed function>") -> str:

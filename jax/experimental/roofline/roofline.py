@@ -137,7 +137,7 @@ def _roofline_interpreter(
   pin_lhs_in_vmem: bool = False,
   pin_rhs_in_vmem: bool = False,
 ) -> RooflineResult:
-  name_stack = source_info_util.new_name_stack(util.wrap_name(f_name, "roofline"))
+  name_stack = source_info_util.new_name_stack(util.wrap_name("roofline", f_name))
 
   result = RooflineResult.zeros()
 
@@ -183,7 +183,7 @@ def _roofline_interpreter(
     ):
       if "jaxpr" in eqn.params:
         result += _roofline_interpreter(
-          util.wrap_name(f_name, eqn.primitive.name),
+          util.wrap_name(eqn.primitive.name, f_name),
           eqn.params["jaxpr"],
           mesh,
           pin_lhs_in_vmem=pin_lhs_in_vmem,
@@ -193,7 +193,7 @@ def _roofline_interpreter(
         # Used for custom_jvp_call_p. Recursively calculates roofline result for
         # all primitives in the custom function.
         result += _roofline_interpreter(
-          util.wrap_name(f_name, eqn.primitive.name),
+          util.wrap_name(eqn.primitive.name, f_name),
           eqn.params['call_jaxpr'],
           mesh,
           pin_lhs_in_vmem=pin_lhs_in_vmem,

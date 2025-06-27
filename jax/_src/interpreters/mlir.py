@@ -1753,7 +1753,7 @@ def lower_jaxpr_to_fun(
     tokens_in = TokenSet(zip(effects, token_args))
     args: list[IrValues] = unflattened_args
     if name is not None:
-      callee_name_stack = name_stack.extend(util.wrap_name(name, api_name))
+      callee_name_stack = name_stack.extend(util.wrap_name(api_name, name))
     else:
       callee_name_stack = name_stack
     consts = [ir_constant(xla.canonicalize_dtype(x)) for x in jaxpr.consts]

@@ -856,7 +856,7 @@ def lower_parallel_callable(
   replicated_args = [axis is None for axis in in_axes]
   tuple_args = dispatch.should_tuple_args(len(shards.global_sharded_avals),
                                           backend.platform)
-  module_name = wrap_name(name, 'pmap')
+  module_name = wrap_name('pmap', name)
   platforms = lowering_platforms or (backend.platform,)
   with core.extend_axis_env_nd([(axis_name, global_axis_size)]):
     ordered_effects = list(
@@ -1541,7 +1541,7 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
         axis_context=sharding_impls.ReplicaAxisContext(new_env))
     sharded_outs, _ = mlir.jaxpr_subcomp(
         sub_ctx, call_jaxpr,
-        ctx.name_stack.extend(util.wrap_name(name, 'pmap')),
+        ctx.name_stack.extend(util.wrap_name('pmap', name)),
         mlir.TokenSet(), (), *in_nodes_sharded,
         dim_var_values=ctx.dim_var_values)
   out_avals = [v.aval for v in call_jaxpr.outvars]
@@ -2316,7 +2316,7 @@ def lower_sharding_computation(
       out_shardings, global_out_avals)
 
   jaxpr_util.maybe_dump_jaxpr_to_file(fun_name, closed_jaxpr.jaxpr)
-  module_name = util.wrap_name(fun_name, api_name)
+  module_name = util.wrap_name(api_name, fun_name)
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
