@@ -211,10 +211,15 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       f_converted = jax2tf.convert(f_jax)
       if jtu.test_device_matches(["tpu"]):
         return tf.compat.v1.tpu.rewrite(
-            f_converted, [tf.convert_to_tensor(x)],
+            f_converted,
+            [tf.convert_to_tensor(x)],
             device_assignment=self.device_assignment(
                 computation_shape=[1, 1, 1, 2],
-            ))[0]
+            ),
+            xla_options=tf.tpu.XlaOptions(
+                use_shardy_partitioner=jax.config.use_shardy_partitioner.value
+            ),
+        )[0]
       else:
         return f_converted(x)
 
@@ -301,9 +306,14 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       f_converted = jax2tf.convert(f_jax)
       if jtu.test_device_matches(["tpu"]):
         return tf.compat.v1.tpu.rewrite(
-            f_converted, [tf.convert_to_tensor(x)],
+            f_converted,
+            [tf.convert_to_tensor(x)],
             device_assignment=self.device_assignment(
-                computation_shape=[1, 1, 1, 2])
+                computation_shape=[1, 1, 1, 2]
+            ),
+            xla_options=tf.tpu.XlaOptions(
+                use_shardy_partitioner=jax.config.use_shardy_partitioner.value
+            ),
         )[0]
       else:
         return f_converted(x)
@@ -545,9 +555,14 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       f_converted = jax2tf.convert(f_jax, native_serialization=True)
       if jtu.test_device_matches(["tpu"]):
         return tf.compat.v1.tpu.rewrite(
-            f_converted, [tf.convert_to_tensor(a)],
+            f_converted,
+            [tf.convert_to_tensor(a)],
             device_assignment=self.device_assignment(
-                computation_shape=[1, 1, 1, 2])
+                computation_shape=[1, 1, 1, 2]
+            ),
+            xla_options=tf.tpu.XlaOptions(
+                use_shardy_partitioner=jax.config.use_shardy_partitioner.value
+            ),
         )[0]
       else:
         return f_converted(a)
@@ -624,9 +639,14 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
                                    polymorphic_shapes=poly)
       if jtu.test_device_matches(["tpu"]):
         res = tf.compat.v1.tpu.rewrite(
-            f_converted, [tf.convert_to_tensor(a)],
+            f_converted,
+            [tf.convert_to_tensor(a)],
             device_assignment=self.device_assignment(
-                computation_shape=[1, 1, 1, 2])
+                computation_shape=[1, 1, 1, 2]
+            ),
+            xla_options=tf.tpu.XlaOptions(
+                use_shardy_partitioner=jax.config.use_shardy_partitioner.value
+            ),
         )[0]
       else:
         res = f_converted(a)
