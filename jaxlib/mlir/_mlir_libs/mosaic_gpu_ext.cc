@@ -19,8 +19,8 @@ limitations under the License.
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "nanobind/nanobind.h"
-#include "jaxlib/mosaic/dialect/gpu/integrations/c/attributes.h"
-#include "jaxlib/mosaic/dialect/gpu/integrations/c/gpu_dialect.h"
+#include "xla/mosaic/dialect/gpu/integrations/c/attributes.h"
+#include "xla/mosaic/dialect/gpu/integrations/c/gpu_dialect.h"
 
 namespace nb = nanobind;
 
