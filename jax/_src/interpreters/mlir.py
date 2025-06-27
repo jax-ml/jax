@@ -2469,6 +2469,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
                            out_shape: core.Shape) -> Sequence[ir.Value]:
   """Broadcasts multiple ops to the out_shape."""
   out = []
+  is_dynamic = not core.is_constant_shape(out_shape)
   for op, op_aval in zip(ops, ops_avals):
     op_aval_shape = op_aval.shape  # type: ignore
     if core.definitely_equal_shape(op_aval_shape, out_shape):
@@ -2476,8 +2477,9 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
     else:
       assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
       broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))
-      out.append(broadcast_in_dim(ctx, op,
-                                  core.ShapedArray(out_shape, op_aval.dtype),  # type: ignore
+      constructor = core.DShapedArray if is_dynamic else core.ShapedArray
+      array = constructor(out_shape, op_aval.dtype)
+      out.append(broadcast_in_dim(ctx, op, array,
                                   broadcast_dimensions=broadcast_dimensions))
   return out
 
