@@ -40,5 +40,6 @@ py_library_providing_imports_info(
         "//jax:version",
     ] + if_building_jaxlib([
         "//jaxlib",
+        "@xla//xla/python:_profile_data",
     ]),
 )
