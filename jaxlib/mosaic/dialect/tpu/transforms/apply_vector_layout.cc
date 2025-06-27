@@ -7299,9 +7299,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       return pack_vregs(src, vregs, dst_tiling, dst_offsets_hint);
     }
   }
-  // Handle retiling from (1, 128 * packing) to (packing, 128) for
+  // Handle retiling from/to (1, 128 * packing) to/from (packing, 128) for
   // packed data.
-  // We do compressed unpacking followed by interleaved packing.
   // TODO(tlongeri): This can be used as a first step before using
   // a generalized retiling where we only move sublanes around
   // (without packing/unpacking).
@@ -7311,9 +7310,13 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   // match corresponding elements without shifting. It's just that
   // the tiles are not adjacent (no contiguous vreg slice).
   if (bitwidth < 32 && 32 % bitwidth == 0 &&
-      src.tiling() ==
-          std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
-      dst_tiling == std::array<int64_t, 2>{packing, ctx.target_shape[1]}) {
+      ((src.tiling() ==
+
+            std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
+        dst_tiling == std::array<int64_t, 2>{packing, ctx.target_shape[1]}) ||
+       (src.tiling() == std::array<int64_t, 2>{packing, ctx.target_shape[1]} &&
+        dst_tiling ==
+            std::array<int64_t, 2>{1, ctx.target_shape[1] * packing}))) {
     FAILUREOR_ASSIGN_OR_RETURN(
         std::tie(src, vregs),
         unpack_vregs(src, vregs, {1, ctx.target_shape[1]}));
