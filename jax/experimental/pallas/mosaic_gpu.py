@@ -21,6 +21,8 @@ from jax._src.pallas.mosaic_gpu.core import Barrier as Barrier
 from jax._src.pallas.mosaic_gpu.core import ClusterBarrier as ClusterBarrier
 from jax._src.pallas.mosaic_gpu.core import BlockSpec as BlockSpec
 from jax._src.pallas.mosaic_gpu.core import CompilerParams as CompilerParams
+from jax._src.pallas.mosaic_gpu.core import Layout as Layout
+from jax._src.pallas.mosaic_gpu.core import layout_cast as layout_cast
 from jax._src.pallas.mosaic_gpu.core import Mesh as Mesh
 from jax._src.pallas.mosaic_gpu.core import MemorySpace as MemorySpace
 from jax._src.pallas.mosaic_gpu.core import kernel as kernel
@@ -50,8 +52,6 @@ from jax._src.pallas.mosaic_gpu.primitives import ShapeDtypeStruct as ShapeDtype
 from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu
-from jax._src.pallas.mosaic_gpu.primitives import Layout as Layout
-from jax._src.pallas.mosaic_gpu.primitives import layout_cast as layout_cast
 from jax._src.pallas.mosaic_gpu.primitives import load as load
 from jax._src.pallas.mosaic_gpu.primitives import RefType as RefType
 from jax._src.pallas.mosaic_gpu.primitives import set_max_registers as set_max_registers

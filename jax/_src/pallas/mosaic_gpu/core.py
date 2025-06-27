@@ -30,6 +30,7 @@ import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import frozen_dict
 from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.lib.mlir.dialects import arith as arith_dialect
@@ -1187,3 +1188,84 @@ class _WGMMAPipelineEffect(effects.Effect):
 
 effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
 _wgmma_pipeline_effect = _WGMMAPipelineEffect()
+
+
+# We define the layout_cast primitive here, because it needs to be available in
+# the lowering code (to provide layout hints to the rules).
+layout_cast_p = jax_core.Primitive("layout_cast")
+
+
+@layout_cast_p.def_abstract_eval
+def _layout_cast_abstract_eval(x, new_layout):
+  del new_layout  # Unused.
+  return x
+
+
+def layout_cast(x: Any, new_layout: Layout | ParameterizedLayout):
+  """Casts the layout of the given array."""
+  return layout_cast_p.bind(x, new_layout=new_layout)
+
+
+class Layout(enum.Enum):
+  #: [m, n] matrix, where m % 64 == 0 == n % 8.
+  WGMMA = enum.auto()
+  #: [m] matrix, where m % 64 == 0.
+  WGMMA_ROW = enum.auto()
+  #: [n] matrix, where n % 8 == 0.
+  WGMMA_COL = enum.auto()
+  WGMMA_TRANSPOSED = enum.auto()
+
+  WG_SPLAT = enum.auto()
+  WG_STRIDED = enum.auto()
+
+  TCGEN05 = enum.auto()
+  TCGEN05_ROW = enum.auto()
+  TCGEN05_COL = enum.auto()
+
+  def __call__(self, *args, **kwargs) -> ParameterizedLayout:
+    return ParameterizedLayout(self, args, kwargs)
+
+  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
+    def check_no_args():
+      if args or kwargs:
+        raise ValueError(f"Can't instantiate {self} with arguments.")
+
+    match self:
+      case Layout.WGMMA_TRANSPOSED:
+        check_no_args()
+        return mgpu.WGMMA_TRANSPOSED_LAYOUT
+      case Layout.WGMMA:
+        check_no_args()
+        return mgpu.WGMMA_LAYOUT
+      case Layout.WGMMA_ROW:
+        check_no_args()
+        return mgpu.WGMMA_ROW_LAYOUT
+      case Layout.WGMMA_COL:
+        check_no_args()
+        return mgpu.WGMMA_COL_LAYOUT
+      case Layout.WG_SPLAT:
+        return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
+      case Layout.WG_STRIDED:
+        return mgpu.WGStridedFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
+      case Layout.TCGEN05:
+        check_no_args()
+        return mgpu.TCGEN05_LAYOUT
+      case Layout.TCGEN05_ROW:
+        check_no_args()
+        return mgpu.TCGEN05_ROW_LAYOUT
+      case Layout.TCGEN05_COL:
+        check_no_args()
+        return mgpu.TCGEN05_COL_LAYOUT
+
+@dataclasses.dataclass(frozen=True)
+class ParameterizedLayout:
+  layout_cls: Layout
+  args: Sequence[Any]
+  kwargs: Any
+
+  def __post_init__(self):
+    object.__setattr__(self, "args", tuple(self.args))
+    object.__setattr__(self, "kwargs", frozen_dict.FrozenDict(self.kwargs))
+
+  def to_mgpu(self) -> mgpu.FragmentedLayout:
+    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)

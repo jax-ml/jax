@@ -539,6 +539,7 @@ class LoweringRuleContext:
   prim: jax_core.Primitive
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
+  out_layout_hint: mgpu.FragmentedLayout | None
 
   replace = dataclasses.replace
 
@@ -1072,7 +1073,7 @@ def lower_jaxpr_to_mosaic_gpu(
   # TODO(justinfu): Handle transform scopes.
   last_local_name_stack: list[str] = []
   named_regions = []
-  for eqn in jaxpr.eqns:
+  for i, eqn in enumerate(jaxpr.eqns):
     invals = map(read_env, eqn.invars)
     source_info = eqn.source_info.replace(
         name_stack=module_ctx.name_stack + eqn.source_info.name_stack
@@ -1100,12 +1101,22 @@ def lower_jaxpr_to_mosaic_gpu(
       rule = mosaic_lowering_rules[
           (module_ctx.lowering_semantics, module_ctx.primitive_semantics)
           ][eqn.primitive]
+      # If the equation is immediately followed by a layout cast on its output,
+      # we provide the layout as a hint to the rule.
+      out_layout_hint = None
+      if i + 1 < len(jaxpr.eqns):
+        lookahead_eqn = jaxpr.eqns[i + 1]
+        is_layout_cast = lookahead_eqn.primitive == gpu_core.layout_cast_p
+        uses_eqn_output = lookahead_eqn.invars == eqn.outvars
+        if is_layout_cast and uses_eqn_output:
+          out_layout_hint = lookahead_eqn.params["new_layout"].to_mgpu()
       rule_ctx = LoweringRuleContext(
           module_ctx,
           launch_ctx,
           avals_in=[cast(jax_core.ShapedArray, v.aval) for v in eqn.invars],
           avals_out=[cast(jax_core.ShapedArray, v.aval) for v in eqn.outvars],
           prim=eqn.primitive,
+          out_layout_hint=out_layout_hint,
       )
       try:
         outvals = rule(rule_ctx, *invals, **eqn.params)
@@ -1440,7 +1451,9 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
   x_smem, transforms = _handle_transforms(
       ctx, x_ref, transforms, allow_peer_refs=True
   )
+  del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
+  is_signed = mgpu_utils.is_signed(dtype)
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if len(tiling) != 2:
@@ -1451,19 +1464,43 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
             "Minor tiling dimension does not fit swizzle: "
             f" expected {expected_minor_tiling}, got {tiling[-1]}"
         )
+      layout = ctx.out_layout_hint or mgpu.WGMMA_LAYOUT
       return mgpu.FragmentedArray.load_tiled(
-          x_smem, is_signed=mgpu_utils.is_signed(dtype), swizzle=swizzle
+          x_smem, is_signed=is_signed, swizzle=swizzle, layout=layout
       )
     case ():
       # Handle scalar indexing.
       if not ctx.avals_out[0].shape:
-        is_signed = mgpu_utils.is_signed(dtype)
         val = memref_dialect.load(x_smem, [])
         return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
 
-      return mgpu.FragmentedArray.load_strided(
-          x_smem, is_signed=mgpu_utils.is_signed(dtype)
-      )
+      match ctx.out_layout_hint:
+        case (
+            mgpu.WGMMA_ROW_LAYOUT
+            | mgpu.WGMMA_COL_LAYOUT
+            | mgpu.TCGEN05_ROW_LAYOUT
+            | mgpu.TCGEN05_COL_LAYOUT
+        ):
+          return mgpu.FragmentedArray.load_untiled(
+              x_smem,
+              is_signed=is_signed,
+              layout=ctx.out_layout_hint,
+              swizzle=16,
+              optimized=False,  # Those values are always very small.
+          )
+        case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
+          ref_ty = ir.MemRefType(x_smem.type)
+          if shape != tuple(ref_ty.shape):
+            raise ValueError(
+                f"Unsupported shape {shape}, (expected {tuple(ref_ty.shape)})"
+            )
+          return mgpu.FragmentedArray.load_strided(
+              x_smem, is_signed=is_signed, vec_size=vec_size,
+          )
+        case None:
+          return mgpu.FragmentedArray.load_strided(x_smem, is_signed=is_signed)
+        case _:
+          raise NotImplementedError(f"Unsupported layout: {ctx.out_layout_hint}")
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
 
@@ -3255,3 +3292,47 @@ def _check_lowering_rule(ctx: LoweringRuleContext, *err_args, err_tree, debug):
   not_pred = arith_dialect.xori(pred.registers.item(), minus_one)
   cf_dialect.assert_(not_pred, exception.fmt_string)
   return []
+
+@register_lowering_rule(gpu_core.layout_cast_p, mgpu.LoweringSemantics.Lane)
+def _layout_cast_lowering(ctx: LoweringRuleContext, x, *, new_layout):
+  del ctx  # Unused.
+  return x.to_layout(new_layout.to_mgpu())
+
+
+@register_lowering_rule(gpu_core.layout_cast_p, mgpu.LoweringSemantics.Warpgroup)
+def _layout_cast_lowering_wg(
+    ctx: LoweringRuleContext, x, *, new_layout
+):
+  del ctx  # Unused.
+  return mgpu.dialect.layout_cast(x, mgpu.to_layout_attr(new_layout.to_mgpu()))
+
+
+@register_lowering_rule(lax.iota_p, mgpu.LoweringSemantics.Lane)
+def _iota_lowering(
+    ctx: LoweringRuleContext, dtype, shape, dimension, sharding
+):
+  del sharding  # Unused.
+  if ctx.out_layout_hint is None:
+    raise RuntimeError(
+        "Failed to infer the output layout of the iota. Please apply"
+        " plgpu.layout_cast to its output right after its creation."
+    )
+  mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
+  if ir.FloatType.isinstance(mlir_dtype):
+    i32 = ir.IntegerType.get_signless(32)
+    cast = lambda x: arith_dialect.uitofp(
+        mlir_dtype, arith_dialect.index_cast(i32, x)
+    )
+  else:
+    cast = lambda x: arith_dialect.index_cast(mlir_dtype, x)
+  is_signed = mgpu_utils.is_signed(dtype)
+  return mgpu.FragmentedArray.splat(
+      llvm_dialect.mlir_undef(mlir_dtype),
+      shape,
+      ctx.out_layout_hint,
+      is_signed=is_signed,
+  ).foreach(
+      lambda _, idx: cast(idx[dimension]),
+      create_array=True,
+      is_signed=is_signed,
+  )

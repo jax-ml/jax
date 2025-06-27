@@ -2480,8 +2480,11 @@ class FragmentedArray:
     ref_tiling_shape = tuple(ref_ty.shape[ref_logical_rank:])
     ref_tiling = Tiling((ref_tiling_shape,))
     ref_strides, _ = ref_ty.get_strides_and_offset()
-    if ref_tiling.untile_shape(tuple(ref_ty.shape)) != shape:
-      raise ValueError()
+    if (ref_logical_shape := ref_tiling.untile_shape(tuple(ref_ty.shape))) != shape:
+      raise ValueError(
+          f"The reference has untiled shape of {ref_logical_shape} while the"
+          f" register array has shape {shape}"
+      )
     nested_ref_shape = tuple(
         (ref_ty.shape[i], ref_ty.shape[i + ref_logical_rank])
         if ref_ty.shape[i + ref_logical_rank] != 1 else (ref_ty.shape[i],)
