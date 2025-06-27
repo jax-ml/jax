@@ -399,14 +399,13 @@ def _pull_block_spec(
       )
       ctx.scalar_prefetch_fn = scalar_prefetch_fn_env[i] = scalar_prefetch_fn
     for v, in_block_spec in zip(eqn.invars, in_block_specs, strict=True):
+      # TODO(cjfj): Check that index map functions are equivalent (in jaxpr).
       if (
           not isinstance(v, core.Literal)
           and v in env
-          and (bs := env[v]) != in_block_spec
+          and env[v].block_shape != in_block_spec.block_shape
       ):
-        if bs.block_shape != in_block_spec.block_shape:
-          in_block_spec = in_block_spec.replace(block_shape=_illegal)
-        in_block_spec = in_block_spec.replace(index_map=_illegal)
+        in_block_spec = pallas_core.BlockSpec(_illegal, _illegal)  # pytype: disable=wrong-arg-types
       _write_block_spec(v, in_block_spec)
 
   def _get_in_block_spec(v, usage):
