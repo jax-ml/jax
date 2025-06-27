@@ -16,6 +16,12 @@
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.scipy.stats.pareto import (
+  logcdf as logcdf,
   logpdf as logpdf,
+  logppf as logppf,
+  logsf as logsf,
+  cdf as cdf,
   pdf as pdf,
+  ppf as ppf,
+  sf as sf,
 )
