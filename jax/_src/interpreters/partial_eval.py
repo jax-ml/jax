@@ -1566,13 +1566,13 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
   return used_inputs, new_eqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
-# TODO(necula): this cache is not really working as a weakref cache: the key
-# is a weakref, but it points to a value that has a strong ref to the same
-# jaxpr. So, we have a cycle with a strong ref, and these keys are never
-# collected.
 @weakref_lru_cache
 def close_jaxpr(jaxpr: Jaxpr) -> ClosedJaxpr:
-  return ClosedJaxpr(jaxpr, ())
+  # The `jaxpr.replace()` is making a copy of the Jaxpr, without which
+  # the cache value would have a strong reference to the same Jaxpr as
+  # the key, and we would never gc the cache entry. This works because
+  # Jaxpr is hashed by id, and the cache entry is dead is the key is dead.
+  return ClosedJaxpr(jaxpr.replace(), ())
 
 def move_invars_right(jaxpr: ClosedJaxpr, to_move: Sequence[bool]):
   return _move_invars_right(jaxpr, tuple(to_move))
