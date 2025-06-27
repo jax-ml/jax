@@ -75,6 +75,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:CommonFolders",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:Dialect",

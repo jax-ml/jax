@@ -29,6 +29,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep.
+#include "mlir/IR/Location.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
@@ -65,6 +66,11 @@ void TPUDialect::initialize() {
 #define GET_OP_LIST
 #include "jaxlib/mosaic/dialect/tpu/tpu_ops.cc.inc"
       >();
+}
+
+Operation *TPUDialect::materializeConstant(OpBuilder &builder, Attribute value,
+                                           Type type, Location loc) {
+  return arith::ConstantOp::materialize(builder, value, type, loc);
 }
 
 /* static */ std::optional<CoreType> TPUDialect::GetCoreTypeAttr(

@@ -2262,9 +2262,16 @@ def _convert_element_type_lowering_rule(
   signed = jnp.signedinteger
   both_32bit = old_dtype.itemsize == 4 and new_dtype.itemsize == 4
   if _from(floating) and _to(floating):
-    if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
+    forward_compat = ctx.forward_compatible or is_cloud_tpu_older_than(
+        2025, 6, 29
+    )
+    if old_dtype.itemsize < new_dtype.itemsize and (
+        new_dtype.itemsize == 4 or not forward_compat
+    ):
       return arith.extf(out_type, x)
-    elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
+    elif old_dtype.itemsize > new_dtype.itemsize and (
+        old_dtype.itemsize == 4 or not forward_compat
+    ):
       return arith.truncf(out_type, x)
   elif _from(integer) and _to(integer):
     if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:

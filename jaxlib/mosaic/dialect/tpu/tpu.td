@@ -36,6 +36,7 @@ def TPU_Dialect : Dialect {
 
     static std::optional<CoreType> GetCoreTypeAttr(Operation *op);
   }];
+  let hasConstantMaterializer = 1;
 }
 
 class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
@@ -540,6 +541,25 @@ def TPU_SIToFPOp : TPU_Op<"sitofp", [Pure, ElementwiseMappable]> {
   let arguments = (ins AnyType:$in, TPU_RoundingModeEnum:$rounding_mode);
   let results = (outs AnyType:$output);
   let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($output) }];
+}
+
+// Internal operation.
+def TPU_ExtFOp : TPU_Op<"extf", [Pure, ElementwiseMappable]> {
+  let arguments = (ins AnyType:$in);
+  let results = (outs AnyType:$out);
+  let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($out) }];
+  let hasFolder = 1;
+}
+
+// Internal operation.
+def TPU_TruncFOp : TPU_Op<"truncf", [Pure, ElementwiseMappable]> {
+  let arguments = (
+    ins AnyType:$in,
+    TPU_RoundingModeEnum:$rounding_mode
+  );
+  let results = (outs AnyType:$out);
+  let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($out) }];
+  let hasFolder = 1;
 }
 
 def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension_numbers"> {

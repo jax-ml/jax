@@ -25,10 +25,12 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/CommonFolders.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
@@ -42,6 +44,7 @@ limitations under the License.
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Region.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
@@ -51,6 +54,33 @@ limitations under the License.
 
 namespace mlir {
 namespace tpu {
+
+namespace {
+
+llvm::RoundingMode convertTpuRoundingModeToLLVMIR(tpu::RoundingMode mode) {
+  switch (mode) {
+    case tpu::RoundingMode::kToNearestEven:
+      return llvm::RoundingMode::NearestTiesToEven;
+    case tpu::RoundingMode::kTowardsZero:
+      return llvm::RoundingMode::TowardZero;
+  }
+}
+
+// Attempts to convert `sourceValue` to an APFloat value with
+// `targetSemantics` and `roundingMode`, without any information loss.
+static FailureOr<APFloat> convertFloatValue(
+    APFloat sourceValue, const llvm::fltSemantics &targetSemantics,
+    llvm::RoundingMode roundingMode = llvm::RoundingMode::NearestTiesToEven) {
+  bool losesInfo = false;
+  auto status = sourceValue.convert(targetSemantics, roundingMode, &losesInfo);
+  if (losesInfo || status != APFloat::opOK) {
+    return failure();
+  }
+
+  return sourceValue;
+}
+
+}  // namespace
 
 LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
                                             PatternRewriter &rewriter) {
@@ -1755,6 +1785,41 @@ LogicalResult SublaneShuffleOp::verify() {
     }
   }
   return success();
+}
+
+OpFoldResult TruncFOp::fold(FoldAdaptor adaptor) {
+  auto resElemType = cast<FloatType>(getElementTypeOrSelf(getType()));
+  const llvm::fltSemantics &targetSemantics = resElemType.getFloatSemantics();
+  return constFoldCastOp<FloatAttr, FloatAttr, FloatAttr::ValueType,
+                         FloatAttr::ValueType, /*PoisonAttr=*/void>(
+      adaptor.getOperands(), getType(),
+      [this, &targetSemantics](const APFloat &a, bool &castStatus) {
+        llvm::RoundingMode llvmRoundingMode =
+            convertTpuRoundingModeToLLVMIR(getRoundingMode());
+        FailureOr<APFloat> result =
+            convertFloatValue(a, targetSemantics, llvmRoundingMode);
+        if (failed(result)) {
+          castStatus = false;
+          return a;
+        }
+        return *result;
+      });
+}
+
+OpFoldResult ExtFOp::fold(FoldAdaptor adaptor) {
+  auto resElemType = cast<FloatType>(getElementTypeOrSelf(getType()));
+  const llvm::fltSemantics &targetSemantics = resElemType.getFloatSemantics();
+  return constFoldCastOp<FloatAttr, FloatAttr, FloatAttr::ValueType,
+                         FloatAttr::ValueType, /*PoisonAttr=*/void>(
+      adaptor.getOperands(), getType(),
+      [&targetSemantics](const APFloat &a, bool &castStatus) {
+        FailureOr<APFloat> result = convertFloatValue(a, targetSemantics);
+        if (failed(result)) {
+          castStatus = false;
+          return a;
+        }
+        return *result;
+      });
 }
 
 }  // namespace tpu
