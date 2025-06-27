@@ -364,7 +364,12 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
   # only operate on primals. This is required to support primitives with
   # linearization rules that include computations on the residuals.
   lin_eqns = []
+  dangling_refs = set()
   for eqn in jaxpr.eqns:
+    if eqn.primitive is core.mutable_array_p:
+      dangling_refs.add(eqn.outvars[0])
+    if eqn.primitive is core.freeze_p:
+      dangling_refs.remove(eqn.invars[0])  # type: ignore
     # TODO (dfm): The effects check is probably stricter than necessary.
     # Consider adding an allowlist of effects here.
     if jaxpr.effects or any(
@@ -381,6 +386,9 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       foreach(write_primal, eqn.outvars, ans)
     else:
       write_primal(eqn.outvars[0], ans)
+
+  for v in dangling_refs:
+    write_primal(v, core.mutable_array(zeros_like_aval(v.aval.inner_aval)))  # type: ignore
 
   ct_env: dict[Any, Any] = {}
   ctx = (source_info_util.transform_name_stack('transpose') if transform_stack

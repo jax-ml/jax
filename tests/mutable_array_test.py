@@ -447,6 +447,63 @@ class MutableArrayTest(jtu.JaxTestCase):
     jax.grad(primal, argnums=1)(grads_ref, jnp.float32(1.0))
     self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
 
+  @parameterized.parameters([False, True], [False, True])
+  def test_freeze_insertion(self, inner_jit, outer_jit):
+    def f(x):
+      x_ref = core.mutable_array(x)
+
+      def g():
+        x_ref[...] = x_ref[...] + x_ref[...]
+      if inner_jit:
+        g = jax.jit(g)
+      g()
+
+      return x_ref[...]
+
+    if outer_jit:
+      f = jax.jit(f)
+
+    self.assertAllClose(jax.grad(f)(3.), 2., check_dtypes=False)
+
+  @parameterized.parameters([False, True])
+  def test_grad_jit(self, jit):
+    def f(x):
+      x_ref = core.mutable_array(x)
+
+      @jax.jit
+      def g():
+        x_ref[...] = jnp.sin(x_ref[...]) + jnp.sin(x_ref[...])
+      g()
+
+      return core.freeze(x_ref)
+
+    if jit:
+      f = jax.jit(f)
+
+    ans = jax.grad(f)(2.)
+    expected = 2. * jnp.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  # TODO(mattjj,dougalm): enable
+  # @parameterized.parameters([False, True])
+  # def test_grad_scan(self, jit):
+  #   def f(x):
+  #     x_ref = core.mutable_array(x)
+
+  #     def g(_, __):
+  #       x_ref[...] = jnp.sin(x_ref[...]) + jnp.sin(x_ref[...])
+  #       return None, None
+  #     jax.lax.scan(g, None, None, length=1)
+
+  #     return core.freeze(x_ref)
+
+  #   if jit:
+  #     f = jax.jit(f)
+
+  #   ans = jax.grad(f)(2.)
+  #   expected = 2. * jnp.cos(2.)
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
