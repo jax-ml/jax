@@ -991,8 +991,11 @@ LogicalResult tpu_extf_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(layouts_in.front().has_value());
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto extf_op = cast<tpu::ExtFOp>(op);
-  if (layouts_out.front()->bitwidth() != 32) {
-    return op.emitOpError("Not implemented: Only support conversion to 32-bit");
+  if (layouts_out.front()->bitwidth() != 32 &&
+      layouts_out.front()->bitwidth() != 16) {
+    return op.emitOpError(
+        "Not implemented: Only support conversion to 32-bit (float32) or "
+        "16-bit (bfloat16)");
   }
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   FAILUREOR_ASSIGN_OR_RETURN(
@@ -1194,7 +1197,8 @@ LogicalResult tpu_truncf_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto truncf_op = cast<tpu::TruncFOp>(op);
-  if (layouts_in.front()->bitwidth() != 32 ||
+  if ((layouts_in.front()->bitwidth() != 32 &&
+       layouts_in.front()->bitwidth() != 16) ||
       (layouts_out.front()->bitwidth() != 16 &&
        layouts_out.front()->bitwidth() != 8)) {
     return op.emitOpError(

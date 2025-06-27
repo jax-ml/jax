@@ -39,8 +39,8 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
@@ -1075,8 +1075,19 @@ FailureOr<Value> canonicalize_tpu_extf(const CanonicalizeContext &ctx,
     return raw_op.getResult(0);
   }
 
-  if (dst_ty.getElementType().isF32()) {
+  auto src_ty = cast<VectorType>(op.getOperand().getType());
+  auto dst_elem_ty = dst_ty.getElementType();
+  auto src_elem_ty = src_ty.getElementType();
+  if (dst_elem_ty.isF32()) {
     // Cast to f32 is always supported.
+    return raw_op.getResult(0);
+  }
+
+  if (dst_elem_ty.isBF16() &&
+      isa<Float8E5M2Type, Float8E4M3FNType>(src_elem_ty) &&
+      ctx.hardware_generation >= 7) {
+    // We have low-level optimized code for f8e4m3fn and f8e5m2 -> bf16 casts on
+    // TPU7x+.
     return raw_op.getResult(0);
   }
 
@@ -1086,7 +1097,6 @@ FailureOr<Value> canonicalize_tpu_extf(const CanonicalizeContext &ctx,
   }
 
   CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
-  auto src_ty = cast<VectorType>(op.getOperand().getType());
   // Otherwise, cast to f32 and then truncate.
   VectorType f32_ty = VectorType::get(src_ty.getShape(), builder.getF32Type());
   Value val_f32 = builder.create<tpu::ExtFOp>(f32_ty, op.getOperand());
@@ -1117,8 +1127,19 @@ FailureOr<Value> canonicalize_tpu_truncf(const CanonicalizeContext &ctx,
     return raw_op.getResult(0);
   }
 
-  if (src_ty.getElementType().isF32()) {
+  auto dst_ty = cast<VectorType>(op.getType());
+  auto src_elem_ty = src_ty.getElementType();
+  auto dst_elem_ty = dst_ty.getElementType();
+  if (src_elem_ty.isF32()) {
     // Truncate from f32 is always supported.
+    return raw_op.getResult(0);
+  }
+
+  if (src_elem_ty.isBF16() &&
+      isa<Float8E5M2Type, Float8E4M3FNType>(dst_elem_ty) &&
+      ctx.hardware_generation >= 7) {
+    // We have low-level optimized code for bf16 -> f8e4m3fn and f8e5m2 casts on
+    // TPU7x+.
     return raw_op.getResult(0);
   }
 
@@ -1128,7 +1149,6 @@ FailureOr<Value> canonicalize_tpu_truncf(const CanonicalizeContext &ctx,
   }
 
   CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
-  auto dst_ty = cast<VectorType>(op.getType());
   // Otherwise, cast to f32 and then truncate.
   VectorType f32_ty = VectorType::get(src_ty.getShape(), builder.getF32Type());
   Value val_f32 = builder.create<tpu::ExtFOp>(f32_ty, op.getOperand());
