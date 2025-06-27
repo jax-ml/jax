@@ -113,8 +113,6 @@ from jax._src.lax.lax import (
   gt_p as gt_p,
   imag as imag,
   imag_p as imag_p,
-  infeed as infeed,
-  infeed_p as infeed_p,
   integer_pow as integer_pow,
   integer_pow_p as integer_pow_p,
   iota as iota,
@@ -149,8 +147,6 @@ from jax._src.lax.lax import (
   optimization_barrier as optimization_barrier,
   optimization_barrier_p as optimization_barrier_p,
   or_p as or_p,
-  outfeed as outfeed,
-  outfeed_p as outfeed_p,
   pad as pad,
   pad_p as pad_p,
   padtype_to_pads as padtype_to_pads,
@@ -399,50 +395,3 @@ from jax.lax import linalg as linalg
 from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
-
-import jax._src.lax.lax
-
-_deprecations = {
-    "infeed": (
-        (
-            "jax.lax.infeed was deprecated in JAX v0.6.0 and will be removed in"
-            " JAX v0.7.0."
-        ),
-        jax._src.lax.lax.infeed,
-    ),
-    "infeed_p": (
-        (
-            "jax.lax.infeed_p was deprecated in JAX v0.6.0 and will be removed"
-            " in JAX v0.7.0."
-        ),
-        jax._src.lax.lax.infeed_p,
-    ),
-    "outfeed": (
-        (
-            "jax.lax.outfeed was deprecated in JAX v0.6.0 and will be removed"
-            " in JAX v0.7.0."
-        ),
-        jax._src.lax.lax.outfeed,
-    ),
-    "outfeed_p": (
-        (
-            "jax.lax.outfeed_p was deprecated in JAX v0.6.0 and will be removed"
-            " in JAX v0.7.0."
-        ),
-        jax._src.lax.lax.outfeed_p,
-    ),
-}
-
-import typing as _typing
-
-if _typing.TYPE_CHECKING:
-  infeed = jax._src.lax.lax.infeed
-  infeed_p = jax._src.lax.lax.infeed_p
-  outfeed = jax._src.lax.lax.outfeed
-  outfeed_p = jax._src.lax.lax.outfeed_p
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
