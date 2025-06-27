@@ -1903,6 +1903,79 @@ class PallasCallTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.parameters(
+      (jnp.sum,),
+      (jnp.max,)
+  )
+  def test_reduce_with_tcgen05_layout(self, op):
+    self.skip_if_wg_semantics()
+    axis = -1
+    swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(128),
+    )
+    @functools.partial(
+        self.kernel,
+        out_shape=jnp.zeros((128,), jnp.float32),
+        scratch_shapes=[
+            plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
+            plgpu.SMEM((128,), jnp.float32),
+            plgpu.Barrier(),
+        ],
+        num_threads=1,
+        thread_name="x",
+    )
+    def kernel(x_ref, y_ref, smem_ref, smem_reduced_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      x_val = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05)
+      smem_reduced_ref[...] = op(x_val, axis=axis)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem_reduced_ref, y_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jax.random.uniform(
+        jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
+    x_result = jax.block_until_ready(kernel(x))
+    np.testing.assert_allclose(x_result, op(x, axis=axis), atol=1e-5)
+
+  @parameterized.parameters((0,), (1,))
+  def test_broadcast_in_dim_tcgen05_layout(self, axis):
+    self.skip_if_wg_semantics()
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jnp.zeros((128, 128), jnp.float32),
+        scratch_shapes=[
+            plgpu.SMEM((128,), jnp.float32),
+            plgpu.SMEM((128, 128), jnp.float32),
+            plgpu.Barrier(),
+        ],
+        num_threads=1,
+        thread_name="x",
+    )
+    def kernel(x_ref, y_ref, smem_ref, smem_out_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      if axis == 0:
+        reduced = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05_COL)
+      else:
+        reduced = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05_ROW)
+      broadcasted = lax.broadcast_in_dim(reduced, (128, 128), [1 - axis])
+      broadcasted = plgpu.layout_cast(broadcasted, plgpu.Layout.TCGEN05)
+      smem_out_ref[...] = broadcasted
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem_out_ref, y_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
+    x_result = jax.block_until_ready(kernel(x))
+    expected = jnp.expand_dims(x, axis=axis)
+    expected = jnp.broadcast_to(expected, (128, 128))
+    np.testing.assert_array_equal(x_result, expected)
+
+
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
@@ -2573,77 +2646,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
         jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(x_result, (x + 1)[:, 0:128])
-
-  @parameterized.parameters(
-      (jnp.sum,),
-      (jnp.max,)
-  )
-  def test_reduce_with_tcgen05_layout(self, op):
-    self.skip_if_wg_semantics()
-    axis = -1
-    swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
-    transforms = (
-        plgpu.TilingTransform((8, swizzle_elems)),
-        plgpu.SwizzleTransform(128),
-    )
-    @functools.partial(
-        self.kernel,
-        out_shape=jnp.zeros((128,), jnp.float32),
-        scratch_shapes=[
-            plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
-            plgpu.SMEM((128,), jnp.float32),
-            plgpu.Barrier(),
-        ],
-        num_threads=1,
-        thread_name="x",
-    )
-    def kernel(x_ref, y_ref, smem_ref, smem_reduced_ref, barrier_ref):
-      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
-      plgpu.barrier_wait(barrier_ref)
-      x_val = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05)
-      smem_reduced_ref[...] = op(x_val, axis=axis)
-      plgpu.commit_smem()
-      plgpu.copy_smem_to_gmem(smem_reduced_ref, y_ref)
-      plgpu.wait_smem_to_gmem(0)
-
-    x = jax.random.uniform(
-        jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
-    x_result = jax.block_until_ready(kernel(x))
-    np.testing.assert_allclose(x_result, op(x, axis=axis), atol=1e-5)
-
-  @parameterized.parameters((0,), (1,))
-  def test_broadcast_in_dim_tcgen05_layout(self, axis):
-    self.skip_if_wg_semantics()
-
-    @functools.partial(
-        self.kernel,
-        out_shape=jnp.zeros((128, 128), jnp.float32),
-        scratch_shapes=[
-            plgpu.SMEM((128,), jnp.float32),
-            plgpu.SMEM((128, 128), jnp.float32),
-            plgpu.Barrier(),
-        ],
-        num_threads=1,
-        thread_name="x",
-    )
-    def kernel(x_ref, y_ref, smem_ref, smem_out_ref, barrier_ref):
-      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
-      plgpu.barrier_wait(barrier_ref)
-      if axis == 0:
-        reduced = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05_COL)
-      else:
-        reduced = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05_ROW)
-      broadcasted = lax.broadcast_in_dim(reduced, (128, 128), [1 - axis])
-      smem_out_ref[...] = broadcasted
-      plgpu.commit_smem()
-      plgpu.copy_smem_to_gmem(smem_out_ref, y_ref)
-      plgpu.wait_smem_to_gmem(0)
-
-    x = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
-    x_result = jax.block_until_ready(kernel(x))
-    expected = jnp.expand_dims(x, axis=axis)
-    expected = jnp.broadcast_to(expected, (128, 128))
-    np.testing.assert_array_equal(x_result, expected)
 
   @parameterized.product(m=[64, 128],
                          n=[64, 128, 256],

@@ -1734,8 +1734,10 @@ def _broadcast_in_dim_lowering_rule(
       and y_aval.ndim == x_aval.ndim + 1
       and x.layout in (mgpu.WGMMA_COL_LAYOUT, mgpu.TCGEN05_COL_LAYOUT)
   ):
-    # XXX: WGMMA_COL_LAYOUT == TCGEN05_COL_LAYOUT so there's no way to distinguish between them!
-    return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, mgpu.WGMMA_LAYOUT)
+    # XXX: WGMMA_COL_LAYOUT == TCGEN05_COL_LAYOUT, so there's no way to
+    # distinguish between them! Layout hints are necessary for that.
+    new_layout = ctx.out_layout_hint or mgpu.WGMMA_LAYOUT
+    return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, new_layout)
   if broadcast_dimensions:
     raise NotImplementedError(
         f"Unsupport broadcast {broadcast_dimensions} for layout: {x.layout}"
