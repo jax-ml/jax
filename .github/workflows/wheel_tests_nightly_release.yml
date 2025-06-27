@@ -66,13 +66,31 @@ jobs:
         matrix:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
-          runner: ["linux-x86-g2-48-l4-4gpu"]
+          runner: ["linux-x86-g2-48-l4-4gpu",  "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
           python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14"]
           cuda: [
             {cuda-version: "12.1", use-nvidia-pip-wheels: false},
             {cuda-version: "12.8", use-nvidia-pip-wheels: true}
           ]
           enable-x64: [0]
+          exclude:
+            # H100 runs only a CUDA 12.8 and min and max Python versions.
+            - runner: "linux-x86-a3-8g-h100-8gpu"
+              cuda:
+                cuda-version: "12.1"
+            - runner: "linux-x86-a3-8g-h100-8gpu"
+              python: "3.12"
+            - runner: "linux-x86-a3-8g-h100-8gpu"
+              python: "3.13"
+            - runner: "linux-x86-a3-8g-h100-8gpu"
+              python: "3.13-nogil"
+            # B200 runs only min and max Python versions.
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              python: "3.12"
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              python: "3.13"
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              python: "3.13-nogil"
     name: "Pytest CUDA (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }}, CUDA Pip packages = ${{ matrix.cuda.use-nvidia-pip-wheels }})"
     with:
       runner: ${{ matrix.runner }}
