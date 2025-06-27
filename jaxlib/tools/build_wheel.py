@@ -153,10 +153,10 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
   # prefixes, so we need to create a map of paths relative to the root package
   # to the full paths.
   # E.g. if we have the wheel sources paths like
-  # bazel-out/k8-opt/bin/jaxlib/mlir/_mlir_libs/register_jax_dialects.py and
+  # bazel-out/k8-opt/bin/jaxlib/mlir/_mlir_libs/_jax_mlir_ext.py and
   # external/xla/xla/ffi/api/c_api.h, the resulting map will be
-  # {'jaxlib/mlir/_mlir_libs/register_jax_dialects.py':
-  # 'bazel-out/k8-opt/bin/jaxlib/mlir/_mlir_libs/register_jax_dialects.py',
+  # {'jaxlib/mlir/_mlir_libs/_jax_mlir_ext.py':
+  # 'bazel-out/k8-opt/bin/jaxlib/mlir/_mlir_libs/_jax_mlir_ext.py',
   # 'xla/ffi/api/c_api.h': 'external/xla/xla/ffi/api/c_api.h'}
   wheel_sources_map = build_utils.create_wheel_sources_map(
       wheel_sources, root_packages=["jaxlib", "xla"]
@@ -347,7 +347,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/_tpu_ext.{pyext}",
           f"{source_file_prefix}jaxlib/_sdy.{pyext}",
           f"{source_file_prefix}jaxlib/_stablehlo.{pyext}",
-          f"{source_file_prefix}jaxlib/register_jax_dialects.{pyext}",
+          f"{source_file_prefix}jaxlib/_jax_mlir_ext.{pyext}",
           f"{source_file_prefix}jaxlib/_mlirDialectsGPU.{pyext}",
           f"{source_file_prefix}jaxlib/_mlirDialectsLLVM.{pyext}",
           f"{source_file_prefix}jaxlib/_mlirDialectsNVGPU.{pyext}",

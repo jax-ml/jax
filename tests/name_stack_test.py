@@ -16,9 +16,10 @@ import functools
 from absl.testing import absltest
 import jax
 from jax import api_util
+from jax import lax
 import jax.numpy as jnp
 from jax._src import core
-from jax import lax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.pjit import pjit
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
@@ -96,8 +97,9 @@ class NameStackTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(2).jaxpr
     self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
 
-    hlo_text = _get_hlo(f)(2)
-    self.assertIn('foo/jit(core_call)/bar', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(f)(2)
+      self.assertIn('foo/jit(core_call)/bar', hlo_text)
 
   def test_jit_jaxpr_should_not_store_outer_name_stack(self):
     @jax.named_scope('foo')
@@ -115,8 +117,9 @@ class NameStackTest(jtu.JaxTestCase):
         str(jaxpr.eqns[0].params[jaxpr_param].eqns[0].source_info.name_stack),
         'bar')
 
-    hlo_text = _get_hlo(f)(2)
-    self.assertIn('foo/jit(_f)/bar', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(f)(2)
+      self.assertIn('foo/jit(_f)/bar', hlo_text)
 
   def test_pmap_call_primitive_jaxpr_should_not_store_outer_name_stack(self):
     @jax.named_scope('foo')
@@ -166,8 +169,9 @@ class NameStackTransformationTest(jtu.JaxTestCase):
         str(jaxpr.eqns[0].params[jaxpr_param].eqns[0].source_info.name_stack),
         'bar')
 
-    hlo_text = _get_hlo(f)(jnp.ones(2))
-    self.assertIn('foo/vmap(jit(_f))/bar', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(f)(jnp.ones(2))
+      self.assertIn('foo/vmap(jit(_f))/bar', hlo_text)
 
   def test_jvp_should_transform_stacks(self):
     def f(x):
@@ -193,8 +197,9 @@ class NameStackTransformationTest(jtu.JaxTestCase):
         str(jaxpr.eqns[0].params[jaxpr_param].eqns[0].source_info.name_stack),
         'bar/baz')
 
-    hlo_text = _get_hlo(g)(1., 1.)
-    self.assertIn('foo/jvp(jit(f))/bar/baz/mul', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(g)(1., 1.)
+      self.assertIn('foo/jvp(jit(f))/bar/baz/mul', hlo_text)
 
   def test_grad_should_add_jvp_and_transpose_to_name_stack(self):
     @jax.value_and_grad
@@ -233,10 +238,11 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     self.assertEqual(str(
       jaxpr.eqns[1].params[jaxpr_param].eqns[0].source_info.name_stack), 'bar')
 
-    hlo_text = _get_hlo(f)(1.)
-    self.assertIn('jvp(foo)/jit(f)/bar/sin', hlo_text)
-    self.assertIn('jvp(foo)/jit(f)/bar/cos', hlo_text)
-    self.assertIn('transpose(jvp(foo))/jit(f)/bar/mul', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(f)(1.)
+      self.assertIn('jvp(foo)/jit(f)/bar/sin', hlo_text)
+      self.assertIn('jvp(foo)/jit(f)/bar/cos', hlo_text)
+      self.assertIn('transpose(jvp(foo))/jit(f)/bar/mul', hlo_text)
 
   def test_nested_jit_stack(self):
 
@@ -248,10 +254,11 @@ class NameStackTransformationTest(jtu.JaxTestCase):
         return jnp.sin(y)
       return g(x)
 
-    hlo_text = _get_hlo(f)(2.)
-    self.assertIn('jvp(jit(f))/jit(g)/sin', hlo_text)
-    self.assertIn('jvp(jit(f))/jit(g)/cos', hlo_text)
-    self.assertIn('transpose(jvp(jit(f)))/jit(g)/mul', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(f)(2.)
+      self.assertIn('jvp(jit(f))/jit(g)/sin', hlo_text)
+      self.assertIn('jvp(jit(f))/jit(g)/cos', hlo_text)
+      self.assertIn('transpose(jvp(jit(f)))/jit(g)/mul', hlo_text)
 
   def test_nested_pjit_stack(self):
     @jax.value_and_grad
@@ -262,10 +269,11 @@ class NameStackTransformationTest(jtu.JaxTestCase):
         return jnp.sin(y)
       return g(x)
 
-    hlo_text = _get_hlo(f)(2.)
-    self.assertIn('jvp(jit(f))/jit(g)/sin', hlo_text)
-    self.assertIn('jvp(jit(f))/jit(g)/cos', hlo_text)
-    self.assertIn('transpose(jvp(jit(f)))/jit(g)/mul', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(f)(2.)
+      self.assertIn('jvp(jit(f))/jit(g)/sin', hlo_text)
+      self.assertIn('jvp(jit(f))/jit(g)/cos', hlo_text)
+      self.assertIn('transpose(jvp(jit(f)))/jit(g)/mul', hlo_text)
 
   def test_remat_appears_in_hlo(self):
     @ad_checkpoint.remat
@@ -459,9 +467,10 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       call_jaxpr.eqns[1].params['branches'][1].eqns[0].source_info.name_stack),
       'true')
 
-    hlo_text = _get_hlo(g)(jnp.arange(2.), jnp.ones(2))
-    self.assertIn('jvp(jit(f))/foo/cond/branch_0_fun/false/sub', hlo_text)
-    self.assertIn('jvp(jit(f))/foo/cond/branch_1_fun/true/add', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(g)(jnp.arange(2.), jnp.ones(2))
+      self.assertIn('jvp(jit(f))/foo/cond/branch_0_fun/false/sub', hlo_text)
+      self.assertIn('jvp(jit(f))/foo/cond/branch_1_fun/true/add', hlo_text)
 
   def test_vmap_of_jvp_of_cond_transforms_name_stack(self):
 
@@ -487,13 +496,14 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       call_jaxpr.eqns[1].params['branches'][1].eqns[0].source_info.name_stack),
       'true')
 
-    hlo_text = _get_hlo(g)(jnp.arange(2.), jnp.ones(2))
-    self.assertIn(
-        'vmap(jvp(jit(f)))/foo/cond/branch_0_fun/false/sub"',
-        hlo_text)
-    self.assertIn(
-        'vmap(jvp(jit(f)))/foo/cond/branch_1_fun/true/add"',
-        hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(g)(jnp.arange(2.), jnp.ones(2))
+      self.assertIn(
+          'vmap(jvp(jit(f)))/foo/cond/branch_0_fun/false/sub"',
+          hlo_text)
+      self.assertIn(
+          'vmap(jvp(jit(f)))/foo/cond/branch_1_fun/true/add"',
+          hlo_text)
 
   def test_grad_of_cond_transforms_name_stack(self):
 
@@ -575,8 +585,9 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       jaxpr.eqns[1].params['jaxpr'].eqns[0].source_info.name_stack),
       'scan_body')
 
-    hlo_text = _get_hlo(f)(1.)
-    self.assertIn('foo/while/body/scan_body', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(f)(1.)
+      self.assertIn('foo/while/body/scan_body', hlo_text)
 
   def test_vmap_of_scan_should_transform_stack(self):
 
@@ -593,8 +604,9 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       jaxpr.eqns[1].params['jaxpr'].eqns[0].source_info.name_stack),
       'scan_body')
 
-    hlo_text = _get_hlo(f)(jnp.arange(2.))
-    self.assertIn('vmap(foo)/while/body/scan_body/add', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(f)(jnp.arange(2.))
+      self.assertIn('vmap(foo)/while/body/scan_body/add', hlo_text)
 
   def test_jvp_of_scan_should_transform_stack(self):
 
@@ -611,8 +623,9 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       jaxpr.eqns[1].params['jaxpr'].eqns[0].source_info.name_stack),
       'scan_body')
 
-    hlo_text = _get_hlo(g)(1., 1.)
-    self.assertIn('jvp(foo)/while/body/scan_body/add', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(g)(1., 1.)
+      self.assertIn('jvp(foo)/while/body/scan_body/add', hlo_text)
 
   def test_grad_of_scan_should_transform_stack(self):
 
@@ -631,9 +644,10 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       jaxpr.eqns[1].params['jaxpr'].eqns[0].source_info.name_stack),
       'scan_body')
 
-    hlo_text = _get_hlo(f)(1.)
-    self.assertIn('jvp(foo)/while/body/scan_body/mul', hlo_text)
-    self.assertIn('transpose(jvp(foo))/while/body/scan_body/mul', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(f)(1.)
+      self.assertIn('jvp(foo)/while/body/scan_body/mul', hlo_text)
+      self.assertIn('transpose(jvp(foo))/while/body/scan_body/mul', hlo_text)
 
   def test_vmap_of_grad_of_scan_should_transform_stack(self):
 
@@ -653,9 +667,10 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       jaxpr.eqns[1].params['jaxpr'].eqns[0].source_info.name_stack),
       'scan_body')
 
-    hlo_text = _get_hlo(f)(jnp.arange(2.))
-    self.assertIn('vmap(jvp(foo))/while/body/scan_body/mul', hlo_text)
-    self.assertIn('vmap(transpose(jvp(foo)))/while/body/scan_body/mul', hlo_text)
+    if jaxlib_extension_version > 357:
+      hlo_text = _get_hlo(f)(jnp.arange(2.))
+      self.assertIn('vmap(jvp(foo))/while/body/scan_body/mul', hlo_text)
+      self.assertIn('vmap(transpose(jvp(foo)))/while/body/scan_body/mul', hlo_text)
 
 
 if __name__ == '__main__':

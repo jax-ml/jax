@@ -1075,10 +1075,9 @@ def lower_jaxpr_to_mosaic_gpu(
   named_regions = []
   for i, eqn in enumerate(jaxpr.eqns):
     invals = map(read_env, eqn.invars)
-    source_info = eqn.source_info.replace(
-        name_stack=module_ctx.name_stack + eqn.source_info.name_stack
-    )
-    loc = mlir._source_info_to_location(module_ctx, eqn.primitive, source_info)
+    eqn_name_stack = module_ctx.name_stack + eqn.source_info.name_stack
+    loc = mlir.source_info_to_location(
+        module_ctx, eqn.primitive, eqn_name_stack, eqn.source_info.traceback)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       if eqn.primitive not in mosaic_lowering_rules[
           (module_ctx.lowering_semantics, module_ctx.primitive_semantics)]:

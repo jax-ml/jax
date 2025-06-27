@@ -959,7 +959,8 @@ def _wrap_main_func(
           ))
       ctx = mlir.LoweringRuleContext(
         module_context=module_context,
-        name_stack=source_info_util.new_name_stack(), primitive=None,
+        name_stack=source_info_util.new_name_stack(), traceback=None,
+        primitive=None,
         avals_in=args_avals_flat, avals_out=None,
         tokens_in=mlir.TokenSet(), tokens_out=None)
       # We compute dim_values from the array arguments.
@@ -1003,6 +1004,9 @@ def _wrap_main_func(
                                  orig_main_args)
       func_dialect.ReturnOp([call.results[idx] for idx in new_main_result_indices])
     symbol_table.set_symbol_name(new_main_op, "main")
+    pipeline = passmanager.PassManager.parse(
+        'builtin.module(symbol-dce)')
+    pipeline.run(wrapped_module.operation)
 
   return wrapped_module
 
