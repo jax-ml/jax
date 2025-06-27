@@ -755,7 +755,7 @@ def jaxpr_to_checkify_jaxpr(
   fun = lu.wrap_init(checkify_jaxpr_partial, debug_info=jaxpr.jaxpr.debug_info)
   fun, metadata = _flatten_and_get_error_metadata_thunk(fun)
 
-  new_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun, flat_err_and_in_vals)
+  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, flat_err_and_in_vals)
   checked_jaxpr = core.ClosedJaxpr(new_jaxpr, consts)
   out_tree, error_effects = metadata()
   return checked_jaxpr, out_tree, error_effects
@@ -841,7 +841,7 @@ def checkify_while_body_jaxpr(
     return out
   new_body_f_ = lu.wrap_init(new_body_f, debug_info=body_jaxpr.jaxpr.debug_info)
   c_consts_avals = cond_jaxpr.in_avals[:c_consts_num]
-  jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(new_body_f_, [*c_consts_avals,
+  jaxpr, _, () = pe.trace_to_jaxpr_dynamic(new_body_f_, [*c_consts_avals,
                                                              *body_jaxpr.in_avals])
   closed_jaxpr = pe.close_jaxpr(jaxpr)
   err_vals, err_tree = jtu.tree_flatten(error)
@@ -993,7 +993,7 @@ def shard_map_error_check(
     return *errs, *outs
 
   with core.extend_axis_env_nd(mesh.shape.items()), config._check_vma(check_vma):
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(expand_errors_leading_dim,
                      debug_info=checked_jaxpr.jaxpr.debug_info),
         checked_jaxpr.in_avals
@@ -1231,7 +1231,7 @@ def checkify(f: Callable[..., Out],
     fun_, out_tree = api_util.flatten_fun(lu.wrap_init(closed_f,
                                                        debug_info=debug),
                                           in_tree)
-    jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, ())
+    jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(fun_, ())
     jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr_))
     # checkify:
     error, out_flat = checkify_jaxpr(jaxpr, errors, init_error, *consts)

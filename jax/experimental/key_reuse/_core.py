@@ -402,7 +402,7 @@ def function_type_signature(fun: Callable[..., Any], *args: Any) -> KeyReuseSign
       lu.wrap_init(fun,
                    debug_info=api_util.debug_info("key_reuse", fun, args, {})),
       in_tree)
-  jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
+  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
   return jaxpr_type_signature(jaxpr)
 
 

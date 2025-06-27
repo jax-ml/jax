@@ -117,7 +117,7 @@ def _uses_arguments(
   if not num_args:
     return ()
 
-  jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(
           index_map,
           debug_info=api_util.debug_info("pallas index_map",

@@ -183,7 +183,7 @@ class custom_dce:
           out_avals,
       )
       assert self.dce_rule is not None
-      dce_jaxpr, _, dce_consts, () = pe.trace_to_jaxpr_dynamic(
+      dce_jaxpr, _, dce_consts = pe.trace_to_jaxpr_dynamic(
           flat_rule, in_avals
       )
 
@@ -199,7 +199,7 @@ class custom_dce:
 
       return core.ClosedJaxpr(dce_jaxpr, dce_consts), used_ins
 
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     closed_call = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
     out_avals = closed_call.out_avals
     out_flat = custom_dce_p.bind(

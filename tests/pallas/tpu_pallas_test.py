@@ -803,7 +803,7 @@ class PallasCallDMATest(PallasBaseTest):
       pl.run_scoped(body, pltpu.VMEM((8,), jnp.float32))
       return []
 
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(kernel, 2),
         [
             state.shaped_array_ref((8,), jnp.float32),
@@ -934,7 +934,7 @@ class PallasCallDMATest(PallasBaseTest):
     aref1 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     aref2 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     in_avals = [aref1, aref2]
-    stateful_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(wrap_init(f, 2),
+    stateful_jaxpr, _, () = pe.trace_to_jaxpr_dynamic(wrap_init(f, 2),
                                                           in_avals)
     discharged_jaxpr, _ = state_discharge.discharge_state(
         stateful_jaxpr, consts=(), should_discharge=[False, True])
@@ -2828,7 +2828,7 @@ class PrettyPrintingTest(PallasBaseTest):
       )
       return []
 
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 2), [state.shaped_array_ref((2, 8, 128), jnp.int32),
                              jax.core.ShapedArray((), jnp.int32)]
     )

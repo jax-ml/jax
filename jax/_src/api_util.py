@@ -717,16 +717,6 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
                for path, l in generate_key_paths(x) if l is not static)
 
 
-def hoist_obj_attrs(f, flat_args):
-  idxs, objs, flat_args_ = [], [], []
-  for i, x in enumerate(flat_args):
-    if type(x) in _class_with_attrs:
-      objs.append(_HashableByObjectId(x))
-    else:
-      idxs.append(i)
-      flat_args_.append(x)
-  return _argnums_partial(f, tuple(idxs), tuple(objs)), flat_args_
-
 class _HashableByObjectId:
   __slots__ = ['val']
   def __init__(self, val):
@@ -735,10 +725,6 @@ class _HashableByObjectId:
     return id(self.val)
   def __eq__(self, other):
     return self.val is other.val
-
-def register_class_with_attrs(t: type) -> None:
-  _class_with_attrs.add(t)
-_class_with_attrs: set[type] = set()
 
 # TODO(mattjj): make this function faster
 def _check_no_aliased_ref_args(dbg: core.DebugInfo, avals, args):

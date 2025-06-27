@@ -763,7 +763,7 @@ def lower_pipelined_jaxpr_to_module(
     )(*refs)
 
   with grid_mapping.trace_env():
-    new_jaxpr, _, new_consts, () = pe.trace_to_jaxpr_dynamic(
+    new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(pipeline_fn, debug_info=jaxpr.debug_info),
         [
             gpu_core.GMEM(
@@ -1188,7 +1188,7 @@ def _lower_fun(
             "Pallas Mosaic GPU lower_fun", fun, args, params
         ),
     )
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
     out = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, args, consts
     )

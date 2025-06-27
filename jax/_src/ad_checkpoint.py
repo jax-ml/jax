@@ -422,7 +422,7 @@ def _trace_to_jaxpr(fun: Callable,
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
   flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun, debug_info=debug), in_tree)
   try:
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
   except core.ConcretizationTypeError as e:
     msg, = e.args
     if 'for checkpoint' in msg:
@@ -718,7 +718,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
 
   transposed_wrapped = lu.wrap_init(transposed,
                                     debug_info=jaxpr.jaxpr.debug_info)
-  transposed_jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(
+  transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
       transposed_wrapped, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
   return transposed_jaxpr, cell.in_cts_zero  # pytype: disable=attribute-error

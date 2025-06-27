@@ -793,7 +793,7 @@ def _batch_jaxpr2(
         if config._check_vma.value:
           aval = aval.update(vma=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
       avals_in2.append(aval)
-  jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in2)
+  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)
   return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
 
 def handle_ragged(in_avals: list[core.AbstractValue], dim: RaggedAxis,
@@ -834,7 +834,7 @@ def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
                                  axis_data.explicit_mesh_axis)
               if b is not not_mapped
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
-  jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in)
+  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
 
 @lu.transformation_with_aux2

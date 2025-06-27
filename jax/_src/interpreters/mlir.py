@@ -2267,7 +2267,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
         wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
         jaxpr, _, consts = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
       else:
-        jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
         # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
       if ctx.platforms is not None:
