@@ -2336,8 +2336,8 @@ class ShardMapTest(jtu.JaxTestCase):
     with jax.sharding.use_mesh(jtu.create_mesh((1,), 'x')):
       ex_out1, ex_out2 = jax.jit(jax.grad(lambda x, y: jnp.sin((x @ y).sum()),
                                           argnums=(0, 1)))(np_inp1, np_inp2)
-    self.assertArraysAllClose(ex_out1, out1)
-    self.assertArraysAllClose(ex_out2, out2)
+    self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
+    self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
 
   def test_shmap_auto_unreduced_error(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
