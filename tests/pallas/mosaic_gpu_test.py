@@ -2857,7 +2857,13 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   @parameterized.product(
-      m_n_k=[(256, 256, 256), (256, 128, 128), (256, 256, 64)],
+      m_n_k=[
+          (256, 256, 256),
+          (256, 128, 128),
+          (256, 256, 64),
+          (128, 64, 128),
+          (128, 64, 128),
+      ],
       swizzle=[128, 64, 32],
       dtype=[jnp.float16, jnp.bfloat16],
       lhs_tmem=[False, True],
@@ -2865,6 +2871,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
   def test_simple_collective_matmul(self, m_n_k, swizzle, dtype, lhs_tmem):
     self.skip_if_wg_semantics()
     m, n, k = m_n_k
+    if (n // 2) * jnp.dtype(dtype).itemsize < swizzle:
+      self.skipTest("swizzle too big")
     full_lhs_shape = (m, k)
     full_rhs_shape = (k, n)
     full_acc_shape = (m, n)
@@ -2877,6 +2885,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
         plgpu.TilingTransform((8, swizzle_elems)),
         plgpu.SwizzleTransform(swizzle),
     )
+    if lhs_tmem and m == 128:
+      self.skipTest("m=128 not supported for LHS in TMEM")
 
     def kernel(a_gmem, b_gmem, out_gmem, a_smem, b_smem,
                scratch_smem, acc_tmem, tma_barrier, mma_barrier,
@@ -2909,7 +2919,11 @@ class PallasCallSm100ATest(PallasSm100ATest):
           collective_axis="x",
       )
       plgpu.barrier_wait(mma_barrier)
-      scratch_smem[...] = acc_tmem[...].astype(dtype)
+      if m == 128:
+        layout = plgpu.Layout.TCGEN05_M64_COLLECTIVE(n)
+      else:
+        layout = plgpu.Layout.TCGEN05
+      scratch_smem[...] = plgpu.layout_cast(acc_tmem[...], layout).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(scratch_smem, out_gmem.at[slice_lhs, :])
       plgpu.wait_smem_to_gmem(0)

@@ -1222,6 +1222,7 @@ class Layout(enum.Enum):
   TCGEN05_TMEM_NATIVE = enum.auto()
   TCGEN05_ROW = enum.auto()
   TCGEN05_COL = enum.auto()
+  TCGEN05_M64_COLLECTIVE = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
@@ -1260,6 +1261,8 @@ class Layout(enum.Enum):
       case Layout.TCGEN05_TMEM_NATIVE:
         check_no_args()
         return mgpu.tcgen05.TMEM_NATIVE_LAYOUT
+      case Layout.TCGEN05_M64_COLLECTIVE:
+        return tcgen05.fa_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
 
 @dataclasses.dataclass(frozen=True)
 class ParameterizedLayout:
