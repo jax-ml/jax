@@ -3441,6 +3441,55 @@ class PipelineTest(PallasTest):
     # are never written to.
     np.testing.assert_array_equal(kernel_fn(x)[:, :16], y[:, :16])
 
+  def test_emit_with_no_output(self):
+    dtype = jnp.float16
+    m, k, n = 64, 128, 64
+    block_k = 32
+
+    transforms = ()
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
+      transforms = (
+          plgpu.TilingTransform((8, 32)),
+          plgpu.SwizzleTransform(64),
+      )
+    def kernel(x_gmem, y_gmem, o_gmem, o_smem):
+      def acc_scope(acc_ref):
+        plgpu.emit_pipeline(
+            lambda _, x_smem, y_smem: plgpu.wgmma(
+                acc_ref, x_smem, y_smem
+            ),
+            in_specs=[
+                plgpu.BlockSpec(
+                    (m, block_k), lambda i: (0, i), transforms=transforms
+                ),
+                plgpu.BlockSpec(
+                    (block_k, n), lambda i: (i, 0), transforms=transforms
+                )
+            ],
+            grid=(k // block_k,),
+            max_concurrent_steps=2,
+            delay_release=1,
+        )(x_gmem, y_gmem)
+        return acc_ref[...]
+
+      acc = pl.run_scoped(acc_scope, plgpu.ACC((m, n), dtype=jnp.float32))
+
+      o_smem[...] = acc[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(o_smem, o_gmem)
+
+    x = jax.random.uniform(jax.random.key(0), (m, k)).astype(dtype)
+    y = jax.random.uniform(jax.random.key(1), (k, n)).astype(dtype)
+
+    kernel_fn = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+        scratch_shapes=[plgpu.SMEM((m, n), dtype)],
+    )
+
+    out_ref = jnp.dot(x, y, preferred_element_type=dtype)
+    np.testing.assert_allclose(kernel_fn(x, y), out_ref)
+
   def test_emit_with_parallel_grid(self):
     num_steps1 = 4
     num_steps2 = 5

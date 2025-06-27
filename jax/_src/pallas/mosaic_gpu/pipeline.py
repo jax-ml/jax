@@ -290,6 +290,7 @@ def emit_pipeline(
 
     # This is true if any of the outputs need to be transferred inside the loop.
     copies_out_in_loop = not all(bref.is_index_invariant for bref in out_brefs)
+    needs_epilogue = any(bref.is_index_invariant for bref in out_brefs)
 
     def loop_body(step, carry):
       slot = lax.rem(step, max_concurrent_steps)
@@ -386,18 +387,20 @@ def emit_pipeline(
 
     # Outputs invariant to the sequential axis are never written from inside the
     # loop. This is the only place where we store them.
-    if not copies_out_in_loop:
+    if not copies_out_in_loop and needs_epilogue:
       gpu_primitives.commit_smem()
 
-    last_slot = lax.rem(num_steps - 1, max_concurrent_steps)
-    for bref in out_brefs:
-      if bref.is_index_invariant:
-        bref.copy_out(last_slot, last_indices, predicate=None)
+    if needs_epilogue:
+      last_slot = lax.rem(num_steps - 1, max_concurrent_steps)
+      for bref in out_brefs:
+        if bref.is_index_invariant:
+          bref.copy_out(last_slot, last_indices, predicate=None)
 
-    gpu_primitives.commit_smem_to_gmem_group()
+      gpu_primitives.commit_smem_to_gmem_group()
 
-    # Finalize the pipeline.
-    gpu_primitives.wait_smem_to_gmem(0)
+    if out_brefs:
+      # Finalize the pipeline.
+      gpu_primitives.wait_smem_to_gmem(0)
     return final_carry if init_carry is not None else None
 
   return pipeline
@@ -613,6 +616,7 @@ def emit_pipeline_warp_specialized(
 
       # This is true if any of the outputs need to be transferred inside the loop.
       copies_out_in_loop = not all(bref.is_index_invariant for bref in out_brefs)
+      needs_epilogue = any(bref.is_index_invariant for bref in out_brefs)
 
       def compute_loop_body(step, carry):
         indices, last_store_slices, prev_body_carry = carry
@@ -704,18 +708,21 @@ def emit_pipeline_warp_specialized(
 
       # Handle index_invariant outputs after the loop. They are not
       # written in the main pipeline loop.
-      if not copies_out_in_loop:
+      if not copies_out_in_loop and needs_epilogue:
         gpu_primitives.commit_smem()
-      last_slot = lax.rem(num_steps - 1, max_concurrent_steps)
-      for bref in out_brefs:
-        if bref.is_index_invariant:
-          bref.copy_out(_get_slot(last_slot, has_seq_dim=False),
-                        last_indices, predicate=None)
 
-      gpu_primitives.commit_smem_to_gmem_group()
+      if needs_epilogue:
+        last_slot = lax.rem(num_steps - 1, max_concurrent_steps)
+        for bref in out_brefs:
+          if bref.is_index_invariant:
+            bref.copy_out(_get_slot(last_slot, has_seq_dim=False),
+                          last_indices, predicate=None)
 
-      # Finalize the pipeline.
-      gpu_primitives.wait_smem_to_gmem(0)
+        gpu_primitives.commit_smem_to_gmem_group()
+
+      if out_brefs:
+        # Finalize the pipeline.
+        gpu_primitives.wait_smem_to_gmem(0)
 
     # The memory thread executes this block which issues all pipelined DMAs.
     def memory_block():
