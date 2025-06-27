@@ -18,12 +18,14 @@ import dataclasses
 import functools
 import pickle
 import re
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import flatten_util
 from jax import tree_util
+from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax._src.tree_util import flatten_one_level, prefix_errors
 import jax.numpy as jnp
@@ -493,6 +495,12 @@ class TreeTest(jtu.JaxTestCase):
                              is_leaf=lambda n: isinstance(n, list))
     self.assertEqual(out, (((1, [3]), (2, None)),
                            (([3, 4, 5], ({"foo": "bar"}, 7, [5, 6])))))
+
+  @unittest.skipIf(xla_extension_version < 304, "Requires newer jaxlib")
+  def testTreeMapPreservesKeyOrder(self):
+    dct = {"b": 1, "a": 2, "c": 3}
+    dct2 = tree_util.tree_map(lambda x: x + 1, dct)
+    self.assertEqual(list(dct.keys()), list(dct2.keys()))
 
   def testTreeReduceWithIsLeafArgument(self):
     out = tree_util.tree_reduce(lambda x, y: x + y, [(1, 2), [(3, 4), (5, 6)]],
