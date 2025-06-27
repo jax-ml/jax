@@ -244,6 +244,21 @@ FailureOr<SmallVector<int64_t>> expectIntConstsFromOperandRange(
   return res;
 }
 
+LayoutOffsets alignedToVregSlice(const LayoutOffsets offsets,
+                                 const std::array<int64_t, 2> target_shape,
+                                 const int bitwidth,
+                                 const std::array<int64_t, 2> tiling) {
+  const std::array<int64_t, 2> vreg_slice =
+      VectorLayout::vregSlice(target_shape, bitwidth, tiling);
+  LayoutOffsets aligned_offsets;
+  for (int i : {0, 1}) {
+    if (offsets[i]) {
+      aligned_offsets[i] = *offsets[i] % vreg_slice[i];
+    }
+  }
+  return aligned_offsets;
+}
+
 Value broadcastSublane(OpBuilder &builder, Value vreg, int sublane_idx,
                        const std::array<int64_t, 2> target_shape) {
   return builder.create<tpu::GatherOp>(
@@ -960,6 +975,23 @@ FailureOr<xla::Array<Value>> unpackVregs(RewriteContext &ctx,
   return output_vregs;
 }
 
+FailureOr<std::pair<VectorLayout, xla::Array<Value>>> unpackVregs(
+    RewriteContext &ctx, OpBuilder &builder, Location loc,
+    const xla::Array<Value> &input_vregs, VectorType input_ty,
+    VectorType result_ty, const VectorLayout &layout_in,
+    const std::array<int64_t, 2> tiling_out) {
+  const int unpacked_bitwidth = result_ty.getElementTypeBitWidth();
+  const LayoutOffsets offsets_out = alignedToVregSlice(
+      layout_in.offsets(), ctx.target_shape, unpacked_bitwidth, tiling_out);
+  const VectorLayout layout_out(unpacked_bitwidth, offsets_out, tiling_out,
+                                layout_in.implicit_dim());
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> output_vregs,
+      unpackVregs(ctx, builder, loc, input_vregs, input_ty, result_ty,
+                  layout_in, layout_out));
+  return std::make_pair(layout_out, std::move(output_vregs));
+}
+
 template <typename OpTy>
 FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
                                               OpBuilder &builder, OpTy op,
@@ -1152,6 +1184,30 @@ FailureOr<xla::Array<Value>> packVregs(RewriteContext &ctx, OpBuilder &builder,
         builder.create<PackSubelementsOp>(loc, res_vreg_ty, parts, pack_format);
   });
   return output_vregs;
+}
+
+FailureOr<std::pair<VectorLayout, xla::Array<Value>>> packVregs(
+    RewriteContext &ctx, OpBuilder &builder, Location loc,
+    const xla::Array<Value> &input_vregs, VectorType input_ty,
+    VectorType result_ty, const VectorLayout &layout_in,
+    const std::array<int64_t, 2> tiling_out, const LayoutOffsets offset_hints) {
+  const std::array<int64_t, 2> unpacked_vreg_slice =
+      layout_in.vregSlice(ctx.target_shape);
+  LayoutOffsets packed_offsets = layout_in.offsets();
+  for (int i : {0, 1}) {
+    // Pick the offset hint if it aligned modulo the vreg slice.
+    if (offset_hints[i] && packed_offsets[i] &&
+        *offset_hints[i] % unpacked_vreg_slice[i] == *packed_offsets[i]) {
+      packed_offsets[i] = *offset_hints[i];
+    }
+  }
+  const VectorLayout layout_out(result_ty.getElementTypeBitWidth(),
+                                packed_offsets, tiling_out,
+                                layout_in.implicit_dim());
+  FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> output_vregs,
+                             packVregs(ctx, builder, loc, input_vregs, input_ty,
+                                       result_ty, layout_in, layout_out));
+  return std::make_pair(layout_out, std::move(output_vregs));
 }
 
 template <typename OpTy>
@@ -7170,51 +7226,18 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   auto unpacked_vty = VectorType::get(vty.getShape(), unpacked_elem_ty);
   auto unpack_vregs = [&](const VectorLayout packed_layout,
                           const xla::Array<Value> &packed_vregs,
-                          const std::array<int64_t, 2> unpacked_tiling)
-      -> FailureOr<std::pair<VectorLayout, xla::Array<Value>>> {
-    const std::array<int64_t, 2> unpacked_vreg_slice =
-        VectorLayout::vregSlice(ctx.target_shape, 32, unpacked_tiling);
-    LayoutOffsets unpacked_offsets;
-    for (int i : {0, 1}) {
-      if (packed_layout.offsets()[i]) {
-        unpacked_offsets[i] =
-            *packed_layout.offsets()[i] % unpacked_vreg_slice[i];
-      }
-    }
-    const VectorLayout unpacked_layout(32, unpacked_offsets, unpacked_tiling,
-                                       packed_layout.implicit_dim());
-    FAILUREOR_ASSIGN_OR_RETURN(
-        xla::Array<Value> unpacked_vregs,
-        unpackVregs(ctx, builder, loc, packed_vregs,
-                    /*input_ty=*/vty, /*result_ty=*/unpacked_vty, packed_layout,
-                    unpacked_layout));
-    return std::pair(unpacked_layout, std::move(unpacked_vregs));
+                          const std::array<int64_t, 2> unpacked_tiling) {
+    return unpackVregs(ctx, builder, loc, packed_vregs, /*input_ty=*/vty,
+                       /*result_ty=*/unpacked_vty, packed_layout,
+                       unpacked_tiling);
   };
   auto pack_vregs = [&](const VectorLayout unpacked_layout,
                         const xla::Array<Value> &unpacked_vregs,
                         const std::array<int64_t, 2> packed_tiling,
-                        const LayoutOffsets offset_hints)
-      -> FailureOr<std::pair<VectorLayout, xla::Array<Value>>> {
-    const std::array<int64_t, 2> unpacked_vreg_slice =
-        unpacked_layout.vregSlice(ctx.target_shape);
-    LayoutOffsets packed_offsets;
-    for (int i : {0, 1}) {
-      // Pick the offset hint if it aligned modulo the vreg slice.
-      if (offset_hints[i] && unpacked_layout.offsets()[i] &&
-          *offset_hints[i] % unpacked_vreg_slice[i] ==
-              *unpacked_layout.offsets()[i]) {
-        packed_offsets[i] = *offset_hints[i];
-      } else {
-        packed_offsets[i] = unpacked_layout.offsets()[i];
-      }
-    }
-    const VectorLayout packed_layout(bitwidth, packed_offsets, packed_tiling,
-                                     unpacked_layout.implicit_dim());
-    FAILUREOR_ASSIGN_OR_RETURN(
-        xla::Array<Value> packed_vregs,
-        packVregs(ctx, builder, loc, unpacked_vregs, /*input_ty=*/unpacked_vty,
-                  /*result_ty=*/vty, unpacked_layout, packed_layout));
-    return std::pair(packed_layout, std::move(packed_vregs));
+                        const LayoutOffsets offset_hints) {
+    return packVregs(
+        ctx, builder, loc, unpacked_vregs, /*input_ty=*/unpacked_vty,
+        /*result_ty=*/vty, unpacked_layout, packed_tiling, offset_hints);
   };
   // Handle replicating small-to-large retiling for (a) replicated 2nd minor or
   // (b) 32-bit single-row.
@@ -7299,25 +7322,44 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       return pack_vregs(src, vregs, dst_tiling, dst_offsets_hint);
     }
   }
-  // Handle retiling from (1, 128 * packing) to (packing, 128) for
+  // Handle retiling from/to (1, 128 * packing) to/from (packing, 128) for
   // packed data.
-  // We do compressed unpacking followed by interleaved packing.
-  // TODO(tlongeri): This can be used as a first step before using
-  // a generalized retiling where we only move sublanes around
-  // (without packing/unpacking).
   // TODO(tlongeri): Interleaved unpacking followed by interleaved
   // packing (but with different pairings) might also be
   // interesting if the next step is a retile, since we can also
   // match corresponding elements without shifting. It's just that
   // the tiles are not adjacent (no contiguous vreg slice).
   if (bitwidth < 32 && 32 % bitwidth == 0 &&
-      src.tiling() ==
-          std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
-      dst_tiling == std::array<int64_t, 2>{packing, ctx.target_shape[1]}) {
+      ((src.tiling() ==
+
+            std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
+        dst_tiling == std::array<int64_t, 2>{packing, ctx.target_shape[1]}) ||
+       (src.tiling() == std::array<int64_t, 2>{packing, ctx.target_shape[1]} &&
+        dst_tiling ==
+            std::array<int64_t, 2>{1, ctx.target_shape[1] * packing}))) {
     FAILUREOR_ASSIGN_OR_RETURN(
         std::tie(src, vregs),
         unpack_vregs(src, vregs, {1, ctx.target_shape[1]}));
     return pack_vregs(src, vregs, dst_tiling, dst_offsets_hint);
+  }
+  if (bitwidth < 32 && 32 % bitwidth == 0 &&
+      ((src.tiling() ==
+            std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
+        dst_tiling[0] % packing == 0 && dst_tiling[1] == ctx.target_shape[1]) ||
+       (dst_tiling ==
+            std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
+        src.tiling()[0] % packing == 0 &&
+        src.tiling()[1] == ctx.target_shape[1]))) {
+    const std::array<int64_t, 2> intermediate_tiling = {packing,
+                                                        ctx.target_shape[1]};
+    const LayoutOffsets intermediate_offsets_hint = alignedToVregSlice(
+        dst_offsets_hint, ctx.target_shape, bitwidth, intermediate_tiling);
+    FAILUREOR_ASSIGN_OR_RETURN(
+        std::tie(src, vregs),
+        changeTiling(ctx, builder, loc, vty, src, vregs, intermediate_tiling,
+                     intermediate_offsets_hint));
+    return changeTiling(ctx, builder, loc, vty, src, vregs, dst_tiling,
+                        dst_offsets_hint);
   }
   if (src.tiling()[1] == target_shape[1] && dst_tiling[1] == target_shape[1]) {
     // All clauses in the and expression are based on performance benchmarking.
@@ -7468,7 +7510,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
     });
     return std::make_pair(dst, new_vregs);
   }
-  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+  if ((src.implicit_dim() == VectorLayout::ImplicitDim::kNone ||
+       src.implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor) &&
       dst_implicit_dim == VectorLayout::ImplicitDim::kMinor &&
       src.bitwidth() == 32 && src.hasNativeTiling(ctx.target_shape)) {
     // TODO(tlongeri): Make insertImplicitMinorDimension more flexible about
@@ -7486,6 +7529,14 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
         insertImplicitMinorDimension(ctx, builder, loc, vregs,
                                      src.implicitShape(vty.getShape()), src,
                                      dst.offsets()));
+    if (src.implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor) {
+      // Remove the original implicit 2nd minor, now implicit 3rd minor
+      SmallVector<int64_t> dst_vregs_shape(dst_vregs.dimensions().begin(),
+                                           dst_vregs.dimensions().end());
+      CHECK_EQ(*(dst_vregs_shape.end() - 3), 1);
+      dst_vregs_shape.erase(dst_vregs_shape.end() - 3);
+      dst_vregs.Reshape(dst_vregs_shape);
+    }
     return std::make_pair(dst, std::move(dst_vregs));
   }
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kMinor &&
@@ -7512,6 +7563,65 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
     return changeImplicitDim(ctx, builder, loc, vty, src, std::move(vregs),
                              VectorLayout::ImplicitDim::kNone,
                              dst_offset_hints);
+  }
+  // Fallback to changing implicit dim with 32 bits and native tiling, which is
+  // completely supported.
+  // TODO(tlongeri): Although possibly for some cases this is the most efficient
+  // path, this is a temporary fallback until we implement more efficient
+  // implicit dim changes.
+  if (src.bitwidth() != 32 || !src.hasNativeTiling(ctx.target_shape)) {
+    const int bitwidth = src.bitwidth();
+    const std::array<int64_t, 2> tiling = src.tiling();
+    VectorType vreg_ty =
+        getNativeVregType(vty.getElementType(), ctx.target_shape);
+    VectorType int_vreg_ty =
+        getNativeVregType(builder.getIntegerType(bitwidth), ctx.target_shape);
+    VectorType int_vty =
+        VectorType::get(vty.getShape(), builder.getIntegerType(bitwidth));
+    VectorType i32_vty = VectorType::get(vty.getShape(), builder.getI32Type());
+    const std::array<int64_t, 2> unpacked_tiling =
+        src.tiling()[0] == 1 ? std::array<int64_t, 2>{1, ctx.target_shape[1]}
+        : src.tiling()[0] % ctx.target_shape[0] == 0 ? ctx.target_shape
+                                                     : src.tiling();
+    vregs.Each([&](const absl::Span<const int64_t> idx, Value *vreg) {
+      *vreg = builder.create<BitcastVregOp>(vreg->getLoc(), int_vreg_ty, *vreg);
+    });
+    if (bitwidth != 32) {
+      FAILUREOR_ASSIGN_OR_RETURN(
+          std::tie(src, vregs),
+          unpackVregs(ctx, builder, loc, vregs, /*input_ty=*/int_vty,
+                      /*result_ty=*/i32_vty, src, unpacked_tiling));
+    }
+    FAILUREOR_ASSIGN_OR_RETURN(
+        std::tie(src, vregs),
+        changeTiling(ctx, builder, loc, i32_vty, src, vregs,
+                     /*dst_tiling=*/ctx.target_shape,
+                     alignedToVregSlice(dst_offset_hints, ctx.target_shape, 32,
+                                        /*tiling=*/ctx.target_shape)));
+    FAILUREOR_ASSIGN_OR_RETURN(
+        std::tie(src, vregs),
+        changeImplicitDim(ctx, builder, loc, i32_vty, src, std::move(vregs),
+                          dst_implicit_dim,
+                          alignedToVregSlice(dst_offset_hints, ctx.target_shape,
+                                             32, ctx.target_shape)));
+    FAILUREOR_ASSIGN_OR_RETURN(
+        std::tie(src, vregs),
+        changeTiling(ctx, builder, loc, i32_vty, src, vregs,
+                     /*dst_tiling=*/unpacked_tiling,
+                     alignedToVregSlice(dst_offset_hints, ctx.target_shape, 32,
+                                        /*tiling=*/unpacked_tiling)));
+    if (bitwidth != 32) {
+      FAILUREOR_ASSIGN_OR_RETURN(
+          std::tie(src, vregs),
+          packVregs(ctx, builder, loc, vregs, /*input_ty=*/i32_vty,
+                    /*result_ty=*/int_vty, src, tiling,
+                    alignedToVregSlice(dst_offset_hints, ctx.target_shape,
+                                       bitwidth, tiling)));
+    }
+    vregs.Each([&](const absl::Span<const int64_t> idx, Value *vreg) {
+      *vreg = builder.create<BitcastVregOp>(vreg->getLoc(), vreg_ty, *vreg);
+    });
+    return std::make_pair(src, std::move(vregs));
   }
   return emitError(loc,
                    "Not implemented: Unsupported implicit dim change: from ")
