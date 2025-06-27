@@ -1441,7 +1441,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
       raise NotImplementedError(
           f"Unimplemented transforms for TMEM refs. {transforms=}"
       )
-    return x_tmem.load()
+    return x_tmem.load(layout=ctx.out_layout_hint)
 
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
     raise TypeError(f"Can only load from references (got {x_ref}).")
@@ -1475,19 +1475,6 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
         return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
 
       match ctx.out_layout_hint:
-        case (
-            mgpu.WGMMA_ROW_LAYOUT
-            | mgpu.WGMMA_COL_LAYOUT
-            | mgpu.TCGEN05_ROW_LAYOUT
-            | mgpu.TCGEN05_COL_LAYOUT
-        ):
-          return mgpu.FragmentedArray.load_untiled(
-              x_smem,
-              is_signed=is_signed,
-              layout=ctx.out_layout_hint,
-              swizzle=16,
-              optimized=False,  # Those values are always very small.
-          )
         case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
           ref_ty = ir.MemRefType(x_smem.type)
           if shape != tuple(ref_ty.shape):
@@ -1500,7 +1487,13 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
         case None:
           return mgpu.FragmentedArray.load_strided(x_smem, is_signed=is_signed)
         case _:
-          raise NotImplementedError(f"Unsupported layout: {ctx.out_layout_hint}")
+          return mgpu.FragmentedArray.load_untiled(
+              x_smem,
+              is_signed=is_signed,
+              layout=ctx.out_layout_hint,
+              swizzle=16,
+              optimized=False,
+          )
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
 

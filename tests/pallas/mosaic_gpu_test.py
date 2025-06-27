@@ -2612,6 +2612,36 @@ class PallasCallSm100ATest(PallasSm100ATest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(x_result, x + 1)
 
+  @parameterized.parameters(
+      plgpu.Layout.TCGEN05, plgpu.Layout.TCGEN05_TMEM_NATIVE
+  )
+  def test_tmem_load_layout(self, layout):
+    self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
+    @functools.partial(
+        self.kernel,
+        out_shape=jnp.zeros((128, 128), jnp.float32),
+        scratch_shapes=[
+            plgpu.TMEM((128, 128), jnp.float32),
+            plgpu.SMEM((128, 128), jnp.float32),
+            plgpu.Barrier(),
+        ],
+    )
+    def kernel(x_ref, y_ref, tmem_ref, smem_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      x_val = plgpu.load(smem_ref, (), layout=layout)
+      tmem_ref[...] = x_val + 1
+      plgpu.commit_tmem()
+      smem_ref[...] = plgpu.layout_cast(tmem_ref[...], layout)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem_ref, y_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jax.random.uniform(
+        jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
+    x_result = jax.block_until_ready(kernel(x))
+    np.testing.assert_array_equal(x_result, x + 1)
+
   def test_tmem_column_slicing(self):
     self.skip_if_wg_semantics()
     swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize

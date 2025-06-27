@@ -106,3 +106,5 @@ from .wgmma import (
     WGMMAAccumulator as WGMMAAccumulator,
     wgmma as wgmma,
 )
+
+from . import tcgen05 as tcgen05
