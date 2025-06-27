@@ -22,6 +22,7 @@ import jax.numpy as jnp
 from jax.sharding import NamedSharding
 from jax._src import api
 from jax._src import core
+from jax._src import prng
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -35,6 +36,7 @@ from jax._src.shard_map import shard_map, shard_map_p
 
 ShapeDtypeStructTree = Any
 Specs = Any
+ValidRooflineDtype = np.dtype | prng.KeyTy
 
 map = util.safe_map
 
@@ -54,14 +56,16 @@ class RooflineRuleContext:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RooflineShape:
   shape: tuple[int, ...]
-  dtype: np.dtype
+  dtype: ValidRooflineDtype
 
   @classmethod
   def from_aval(cls, aval: core.AbstractValue) -> RooflineShape:
     if not isinstance(aval, core.ShapedArray):
       raise TypeError(f"Expected ShapedArray, got {type(aval)}.")
-    if not isinstance(aval.dtype, np.dtype):
-      raise TypeError(f"Expected numpy dtype, got {type(aval.dtype)}.")
+    if not isinstance(aval.dtype, ValidRooflineDtype):
+      raise TypeError(
+          f"Expected numpy or prng.KeyTy dtype, got {type(aval.dtype)}."
+      )
     return cls(shape=aval.shape, dtype=aval.dtype)
 
   @property

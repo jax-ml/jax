@@ -956,6 +956,20 @@ class RooflineTest(jtu.JaxTestCase):
         which.dtype.itemsize * 4 * 8 + out.dtype.itemsize * 4 * 8,
     )
 
+  def test_random_primitive_roofline_does_not_raise_error(self):
+    """Tests that roofline can handle primitives with PRNG keys as ins/outs."""
+    dummy_input = jax.random.PRNGKey(0)
+
+    def f(key):
+      # Use jax.random.split to ensure the random_wrap primitive is used.
+      prng_key, _ = jax.random.split(key)
+      return prng_key
+
+    _, result = roofline.roofline(f)(dummy_input)
+
+    self.assertEqual(result.unfused_flops, 0)
+    self.assertEqual(result.unfused_hbm_bytes, 0)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
