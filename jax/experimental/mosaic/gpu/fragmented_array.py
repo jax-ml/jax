@@ -2578,25 +2578,35 @@ class FragmentedArray:
     else:
       plan = TrivialTransferPlan()
 
-    # We could technically handle this case, but it would be quite complicated.
-    # If tiling dimensions would have to be expanded into multiple, we'd have to
-    # adjust the dimension indices in layouts, including expanding some of them
-    # into multiple indices. Note that for non-tiling dims, we allow the shape
-    # to be arbitrary, which is why we fix it up below in mem_idx_to_reg_idx.
-    if any(
-        len(dim_shape) != 1 for dim_shape in tiled_nested_shape[-layout.tiled_tiling_rank :]
-    ):
-      raise NotImplementedError("Memory and register tiling too complicated")
     tiles_strides_transfer = [s // vector_length for s in tiles_strides]
-    elem_tiled_strides = list(itertools.chain.from_iterable(tiled_nested_strides))
     # Technically we should keep the vector_dim stride set to 1, but its shape
     # is 1 so it does not matter.
     dyn_tiled_strides = [
-        c(s // vector_length) for s in elem_tiled_strides[-layout.tiled_tiling_rank :]
+        c(s // vector_length)
+        for s in itertools.chain.from_iterable(
+            tiled_nested_strides[-layout.tiled_tiling_rank :]
+        )
     ]
+    # This expands a tiled index into a finer-grained index that accounts for
+    # the fact that some tiled dims are tiled further in the nested shape.
+    def expand_nested_dims(idxs: Sequence[ir.Value]) -> list[ir.Value]:
+      assert len(idxs) == layout.tiled_tiling_rank
+      new_idxs = []
+      for idx, dim_shape in zip(idxs, tiled_nested_shape[-layout.tiled_tiling_rank :]):
+        if dim_shape == (1,):
+          new_idxs.append(idx)
+          continue
+        dim_strides = utils.get_contiguous_strides(dim_shape)
+        for i, (size, stride) in enumerate(zip(dim_shape, dim_strides)):
+          new_idx = arith.divui(idx, c(stride))
+          if i != len(dim_shape) - 1:  # No need to apply this to last dim.
+            new_idx = arith.remui(new_idx, c(size))
+          new_idxs.append(new_idx)
+      assert len(new_idxs) == sum(map(len, tiled_nested_shape[-layout.tiled_tiling_rank :]))
+      return new_idxs
     # All offsets are in units of transfer_dtype.
-    lane_offset = utils.dyn_dot(layout.lane_indices(), dyn_tiled_strides)
-    warp_offset = utils.dyn_dot(layout.warp_indices(), dyn_tiled_strides)
+    lane_offset = utils.dyn_dot(expand_nested_dims(layout.lane_indices()), dyn_tiled_strides)
+    warp_offset = utils.dyn_dot(expand_nested_dims(layout.warp_indices()), dyn_tiled_strides)
     dyn_offset = arith.addi(lane_offset, warp_offset)
     ptr = utils.memref_ptr(ref, memory_space=llvm_memory_space)
     _as_consts = lambda consts: [c(const) for const in consts.tolist()]

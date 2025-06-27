@@ -1131,8 +1131,7 @@ class TCGen05Test(TestCase):
     in_mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
     swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
     tiling = (8, swizzle_elems)
-    # SMEM store planning for FA is too complicated for too long N...
-    n = 128 if jax_dtype != jnp.float32 else 64
+    n = 256
     reg_layout = reg_layout_f(n)
 
     def kernel(ctx, input, output, scratch):
