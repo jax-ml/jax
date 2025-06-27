@@ -1976,7 +1976,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(x_result, expected)
 
 
-
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
     super().setUp()
@@ -2139,6 +2138,7 @@ class PallasCallWGTest(
         mgpu_primitives.tcgen05_mma_p,
         mgpu_primitives.tcgen05_commit_arrive_p,
         mgpu_primitives.commit_tmem_p,
+        mgpu_primitives.load_p,
         lax.slice_p,
         lax.iota_p,
         pallas_core.core_map_p,
@@ -2453,7 +2453,9 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )
     def kernel(x_ref, o_ref):
       for i in range(2):
-        x = plgpu.load(x_ref, (i,), layout=layout)
+        x = plgpu.load(
+            x_ref, (i,), layout=layout, optimized=src_memory_space == plgpu.SMEM
+        )
         o_ref[i, ...] = x
 
     x = jnp.arange(2 * m, dtype=jnp.float32).reshape(2, m)

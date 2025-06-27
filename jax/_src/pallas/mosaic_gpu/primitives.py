@@ -68,28 +68,6 @@ def _check_ref(
     )
 
 
-def load(
-    src: _Ref,
-    idx,
-    *,
-    layout: Layout | ParameterizedLayout | None = None,
-) -> jax.Array:
-  """Loads from a reference into an array with the specified layout.
-
-  Args:
-    src: The reference to load from. Can be either in SMEM or GMEM.
-    idx: The index to load from.
-    layout: The optional layout to use for the resulting array.
-
-  Returns:
-    The loaded array.
-  """
-  result = src[idx]  # type: ignore[index]
-  if layout is not None:
-    result = gpu_core.layout_cast(result, layout)
-  return result
-
-
 copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
 copy_smem_to_gmem_p.multiple_results = True
 
@@ -2005,3 +1983,57 @@ def _inline_mgpu_lowering_rule(
     _type_check_mgpu(r, ty)
 
   return ret_leaves
+
+load_p = jax_core.Primitive("load")
+
+
+@load_p.def_effectful_abstract_eval
+def _load_abstract_eval(src, *avals_flat, tree, optimized):
+  del optimized  # Unused.
+  transforms = tree.unflatten(avals_flat)
+  dtype = lowering._transform_dtype(src.dtype, transforms)
+  return (
+      jax_core.ShapedArray(transforms[-1].get_indexer_shape(), dtype),
+      {state.ReadEffect(0)},
+  )
+
+
+lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Lane)(
+    lowering._get_lowering_rule
+)
+
+
+def load(
+    src: _Ref,
+    idx,
+    *,
+    layout: Layout | None = None,
+    optimized: bool = True,
+) -> jax.Array:
+  """Loads from a reference into an array with the specified layout.
+
+  Args:
+    src: The reference to load from. Can be either in SMEM or GMEM.
+    idx: The index to load from.
+    layout: The optional layout to use for the resulting array.
+    optimized: If True, a compilation error will be raised if no optimized
+      implementation for the load is available.
+
+  Returns:
+    The loaded array.
+  """
+  src, src_transforms = state_primitives.get_ref_and_transforms(
+      src, idx, "load", force_trailing_indexer=True,
+  )
+  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
+      src_transforms
+  )
+  result = load_p.bind(
+      src,
+      *flat_src_transforms,
+      tree=src_transforms_treedef,
+      optimized=optimized,
+  )
+  if layout is not None:
+    result = gpu_core.layout_cast(result, layout)
+  return result

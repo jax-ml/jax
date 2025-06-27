@@ -1431,7 +1431,9 @@ def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...
 
 
 @register_lowering_rule(sp.get_p, mgpu.LoweringSemantics.Lane)
-def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
+def _get_lowering_rule(
+    ctx: LoweringRuleContext, x_ref, *leaves, tree, optimized=True
+):
   if isinstance(x_ref, tcgen05.TMEMRef):
     transforms = jax.tree.unflatten(tree, leaves)
     x_tmem, transforms = _handle_transforms(
@@ -1466,7 +1468,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
         )
       layout = ctx.out_layout_hint or mgpu.WGMMA_LAYOUT
       return mgpu.FragmentedArray.load_tiled(
-          x_smem, is_signed=is_signed, swizzle=swizzle, layout=layout
+          x_smem, is_signed=is_signed, swizzle=swizzle, layout=layout, optimized=optimized
       )
     case ():
       # Handle scalar indexing.
@@ -1482,7 +1484,9 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
                 f"Unsupported shape {shape}, (expected {tuple(ref_ty.shape)})"
             )
           return mgpu.FragmentedArray.load_strided(
-              x_smem, is_signed=is_signed, vec_size=vec_size,
+              x_smem,
+              is_signed=is_signed,
+              vec_size=vec_size,
           )
         case None:
           return mgpu.FragmentedArray.load_strided(x_smem, is_signed=is_signed)
@@ -1492,7 +1496,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
               is_signed=is_signed,
               layout=ctx.out_layout_hint,
               swizzle=16,
-              optimized=False,
+              optimized=optimized,
           )
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
