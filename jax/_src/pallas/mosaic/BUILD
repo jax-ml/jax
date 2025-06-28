@@ -105,6 +105,7 @@ py_library(
         "//jax:checkify",
         "//jax:core",
         "//jax:custom_derivatives",
+        "//jax:debugging",
         "//jax:dtypes",
         "//jax:mesh",
         "//jax:mlir",

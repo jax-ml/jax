@@ -140,6 +140,7 @@ from jax._src.lax.special import (
 from jax._src.lax.slicing import (
   dynamic_slice_p as dynamic_slice_p,
   dynamic_update_slice_p as dynamic_update_slice_p,
+  index_in_dim as index_in_dim,
   gather_p as gather_p,
   scatter_add_p as scatter_add_p,
   scatter_max_p as scatter_max_p,
@@ -162,6 +163,7 @@ from jax._src.lax.windowed_reductions import (
   select_and_scatter_add_p as select_and_scatter_add_p,
 )
 from jax._src.lax.control_flow import (
+  cond as cond,
   cond_p as cond_p,
   cumlogsumexp_p as cumlogsumexp_p,
   cummax_p as cummax_p,
@@ -178,6 +180,7 @@ from jax._src.lax.fft import (
 from jax._src.lax.parallel import (
   all_gather_p as all_gather_p,
   all_to_all_p as all_to_all_p,
+  axis_index as axis_index,
   axis_index_p as axis_index_p,
   pmax_p as pmax_p,
   pmin_p as pmin_p,

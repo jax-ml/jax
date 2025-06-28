@@ -26,19 +26,20 @@ import weakref
 
 import numpy as np
 
-import jax
-import jax.numpy as jnp
-from jax import lax
+from jax._src import api
 from jax._src import callback as cb
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
+from jax._src import lax
 from jax._src import mesh as mesh_lib
+from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import shard_map
 from jax._src import tree_util
 from jax._src import util
+from jax._src import xla_bridge
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -46,6 +47,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.numpy import lax_numpy as jnp
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, PartitionSpec as P, parse_flatten_op_sharding)
@@ -84,15 +86,15 @@ def debug_callback_impl(*args, callback: Callable[..., Any],
                         effect: DebugEffect, partitioned: bool):
   del effect, partitioned
   try:
-    cpu_device, *_ = jax.local_devices(backend="cpu")
+    cpu_device, *_ = xla_bridge.local_devices(backend="cpu")
   except RuntimeError as e:
     raise RuntimeError(
         "jax.debug.callback failed to find a local CPU device to place the"
         " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
         " JAX_PLATFORMS environment variable."
     ) from e
-  args = jax.device_put(args, cpu_device)
-  with jax.default_device(cpu_device):
+  args = api.device_put(args, cpu_device)
+  with config.default_device(cpu_device):
     try:
       callback(*args)
     except BaseException:
@@ -138,13 +140,13 @@ ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 def _debug_callback_partial_auto(axis_context, *args, **params):
   partial_auto = list(set(axis_context.mesh.axis_names) - axis_context.manual_axes)
   def f():
-    idx = jax.lax.with_sharding_constraint(
-        jax.lax.axis_index(*partial_auto),
+    idx = pjit.with_sharding_constraint(
+        lax.axis_index(*partial_auto),
         NamedSharding(axis_context.mesh, P()))
-    return jax.lax.cond(idx == 0,
-                        lambda: debug_callback_p.bind(*args, **params),
-                        lambda: [])
-  return jax.shard_map(f, in_specs=(), out_specs=[])()
+    return lax.cond(idx == 0,
+                    lambda: debug_callback_p.bind(*args, **params),
+                    lambda: [])
+  return shard_map.shard_map(f, in_specs=(), out_specs=[])()
 
 def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params):
   axis_context = ctx.module_context.axis_context

@@ -296,7 +296,6 @@ py_library_providing_imports_info(
     srcs = [
         "_src/__init__.py",
         "_src/blocked_sampler.py",
-        "_src/debugging.py",
         "_src/dlpack.py",
         "_src/interpreters/__init__.py",
         "_src/prng.py",
@@ -371,6 +370,7 @@ py_library_providing_imports_info(
         ":custom_partitioning",
         ":custom_partitioning_sharding_rule",
         ":custom_transpose",
+        ":debugging",
         ":deprecations",
         ":dtypes",
         ":earray",
@@ -863,6 +863,34 @@ pytype_strict_library(
         ":util",
         ":xla",
     ],
+)
+
+pytype_strict_library(
+    name = "debugging",
+    srcs = [
+        "_src/debugging.py",
+    ],
+    deps = [
+        ":ad",
+        ":api",
+        ":batching",
+        ":callback",
+        ":config",
+        ":core",
+        ":effects",
+        ":lax",
+        ":mesh",
+        ":mlir",
+        ":numpy",
+        ":partial_eval",
+        ":shard_map",
+        ":sharding",
+        ":sharding_impls",
+        ":tree_util",
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
