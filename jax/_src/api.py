@@ -710,7 +710,8 @@ def _check_output_dtype_jacfwd(holomorphic, x):
                       f"but got {aval.dtype.name}.")
 
 def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
-           has_aux: bool = False, holomorphic: bool = False, allow_int: bool = False) -> Callable:
+           has_aux: bool = False, holomorphic: bool = False,
+           allow_int: bool = False) -> Callable:
   """Jacobian of ``fun`` evaluated row-by-row using reverse-mode AD.
 
   Args:
@@ -856,13 +857,20 @@ def hessian(fun: Callable, argnums: int | Sequence[int] = 0,
   return jacfwd(jacrev(fun, argnums, has_aux=has_aux, holomorphic=holomorphic),
                 argnums, has_aux=has_aux, holomorphic=holomorphic)
 
+def _insert_pvary(basis, leaf):
+  if not config._check_vma.value:
+    return basis
+  return core.pvary(basis, tuple(core.typeof(leaf).vma))
+
 def _std_basis(pytree):
   import jax.numpy as jnp  # pytype: disable=import-error
   leaves, _ = tree_flatten(pytree)
   ndim = sum(map(np.size, leaves))
   dtype = dtypes.result_type(*leaves)
   flat_basis = jnp.eye(ndim, dtype=dtype)
-  return _unravel_array_into_pytree(pytree, 1, None, flat_basis)
+  out_pytree = _unravel_array_into_pytree(pytree, 1, None, flat_basis)
+  out_pytree = tree_map(_insert_pvary, out_pytree, pytree)
+  return out_pytree
 
 def _jacfwd_unravel(input_pytree, output_pytree_leaf, arr):
   return _unravel_array_into_pytree(

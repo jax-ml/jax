@@ -2249,6 +2249,44 @@ class ShardMapTest(jtu.JaxTestCase):
     with jax.disable_jit():
       f(x)  # don't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_jacrev_explicit(self, mesh):
+    B, N, H = 20, 6, 8
+    w = jnp.arange(N * H).reshape(N, H).astype(jnp.float32)
+    x = jnp.arange(B * N).reshape(B, N).astype(jnp.float32)
+
+    def f(w, x):
+      return jnp.sum(x @ w, axis=-1)
+
+    @jax.jit
+    @shard_map(in_specs=(P(), P('x', None)), out_specs=P('x', None))
+    def f_jac_sharded(w, x):
+      return jax.jacrev(f, argnums=1)(w, x)
+
+    f_jac_sharded(w, x)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jacrev_explicit_complex(self, mesh):
+    B, N, H = 20, 6, 8
+    w = jnp.arange(N * H).reshape(N, H).astype(jnp.float32)
+    x = jnp.arange(B * N).reshape(B, N).astype(jnp.float32)
+
+    def f(w, xs):
+      return jax.tree.map(lambda z: jnp.sum(z @ w, axis=-1), xs)
+
+    @jax.jit
+    @shard_map(in_specs=(P(), P('x'), P('y')),
+               out_specs=(P('x'), P('y'), P('x'), P('y')))
+    def f_jac_sharded(w, x, y):
+      ret = jax.jacrev(f, argnums=1)(w, (x, y))
+      self.assertEqual(ret[0][0].aval.vma, {'x'})
+      self.assertEqual(ret[0][1].aval.vma, {'y'})
+      self.assertEqual(ret[1][0].aval.vma, {'x'})
+      self.assertEqual(ret[1][1].aval.vma, {'y'})
+      return ret[0][0], ret[0][1], ret[1][0], ret[1][1]
+
+    f_jac_sharded(w, x, x)  # doesn't crash
+
   @parameterized.parameters(it.product(range(4), repeat=3))
   @jtu.run_on_devices("cpu")
   def test_forwarding_correctness(self, seed, num_input_fwd, num_output_fwd):
