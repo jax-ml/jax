@@ -800,12 +800,53 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         x_block,
     )
 
+  @parameterized.parameters(
+      # Merge two dimensions.
+      ((8, 8, 128), (1, 2, 128), (1, 1, 2, 128), (0, 2, 3, 5)),
+      ((2, 32, 128), (2, 4, 128), (2, 1, 4, 128), (2, 1, 1, 5)),
+      ((2, 4, 1024), (2, 1, 128), (2, 1, 1, 128), (2, 3, 5, 0)),
+      # Merge three dimensions.
+      ((64, 128), (4, 128), (1, 1, 4, 128), (0, 1, 0, 3)),
+      ((2, 4096), (1, 64), (1, 1, 1, 64), (2, 0, 1, 1)),
+      # Merge two pairs of dimensions.
+      ((8, 1024), (1, 256), (1, 1, 2, 128), (0, 2, 3, 0)),
+  )
+  def test_reshape_merge_dims(
+      self, shape, block_shape, expected_x_block_shape, expected_x_index
+  ):
+    f = lambda x: x.reshape(shape)
+    in_type = jax.ShapeDtypeStruct((2, 4, 8, 128), jnp.float32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, in_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec(block_shape, lambda *pids: pids)
+    kernel_fn, (value_block_specs, x_block_spec), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(2, 3, 4)[: len(shape)],
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, in_type)
+    )
+    pids = (2, 3, 5)[: len(shape)]
+    self.assertEmpty(value_block_specs)
+    self.assertEqual(x_block_spec.block_shape, expected_x_block_shape)
+    self.assertEqual(x_block_spec.index_map(*pids), expected_x_index)
+
+    x = jnp.arange(np.prod(block_shape), dtype=jnp.float32)
+    x = x.reshape(expected_x_block_shape)
+    y = kernel_fn((0, 1, 2), scalar_prefetch_values, (), x)
+    np.testing.assert_array_equal(y, x.reshape(block_shape))
+
   def test_basic_reshape_sublanes_to_lanes(self):
 
     def f(x):
-      return x.reshape((512, 2048))
+      return x.reshape((512, 4096))
 
-    in_type = jax.ShapeDtypeStruct((512, 16, 128), jnp.float32)
+    in_type = jax.ShapeDtypeStruct((512, 32, 128), jnp.float32)
     f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
         f, in_type
     )
@@ -822,6 +863,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         )(new_values, in_type)
     )
     self.assertEmpty(value_block_specs)
+    self.assertEqual(x_block_spec.block_shape, (256, 8, 128))
     self.assertEqual(x_block_spec.index_map(0, 1, 2), (0, 2, 0))
     self.assertEqual(x_block_spec.index_map(3, 2, 1), (3, 1, 0))
 
