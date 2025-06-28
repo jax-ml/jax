@@ -164,6 +164,7 @@ if _typing.TYPE_CHECKING:
   HloSharding = _xc.HloSharding
   OpSharding = _xc.OpSharding
   Traceback = _xc.Traceback
+  DeviceList = _xc.DeviceList
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 
