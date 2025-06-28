@@ -833,6 +833,7 @@ class DistributedRuntimeClient:
 def get_distributed_runtime_service(
     address: str,
     num_nodes: int,
+    heartbeat_timeout: int | None = ...,
     heartbeat_interval: int | None = ...,
     max_missing_heartbeats: int | None = ...,
     cluster_register_timeout: int | None = ...,
@@ -844,6 +845,7 @@ def get_distributed_runtime_client(
     rpc_timeout: int | None = ...,
     init_timeout: int | None = ...,
     shutdown_timeout: int | None = ...,
+    heartbeat_timeout: int | None = ...,
     heartbeat_interval: int | None = ...,
     max_missing_heartbeats: int | None = ...,
     missed_heartbeat_callback: Any | None = ...,
