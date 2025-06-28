@@ -60,6 +60,7 @@ limitations under the License.
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/sharding.h"
 #include "jaxlib/traceback.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -79,11 +80,15 @@ limitations under the License.
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/program.h"
+#include "xla/python/ifrt/shape.h"
+#include "xla/python/ifrt/sharding.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
+#include "xla/python/pjrt_ifrt/pjrt_layout.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pprof_profile_builder.h"
 #include "xla/python/types.h"
@@ -554,7 +559,8 @@ namespace {
 struct HeapProfileKey {
   std::optional<Traceback> traceback;
   int64_t size;
-  xla::PjRtDevice* device;
+  std::optional<std::variant<const xla::PjRtDevice*, const ifrt::Device*>>
+      device;
   bool operator==(const HeapProfileKey& other) const;
 };
 
@@ -584,45 +590,85 @@ H AbslHashValue(H h, const HeapProfileKey& key) {
 
 absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
   CHECK(PyGILState_Check());
-  absl::flat_hash_set<PjRtBuffer*> buffer_set;
   absl::flat_hash_map<HeapProfileKey, int64_t> entries;
 
-  auto add_buffer_to_profile = [&](PjRtBuffer* buffer,
-                                   std::optional<Traceback> traceback) {
-    // We only wish to count each PjRtBuffer once, even though they may be
-    // shared by multiple PyArrays.
-    if (!buffer->IsDeleted() && buffer_set.insert(buffer).second) {
-      TF_ASSIGN_OR_RETURN(size_t size, buffer->GetOnDeviceSizeInBytes());
-      HeapProfileKey key{traceback, static_cast<int64_t>(size),
-                         buffer->device()};
-      ++entries[key];
-    }
-    return absl::OkStatus();
-  };
-
+  absl::flat_hash_set<const PjRtBuffer*> buffer_set;
   std::vector<PyArray> arrays = LiveArrays();
   for (const PyArray& array : arrays) {
-    if (array.ifrt_array() == nullptr) {
+    ifrt::Array* ifrt_array = array.ifrt_array();
+    if (ifrt_array == nullptr || ifrt_array->IsDeleted()) {
       continue;
     }
-    auto* arr =
-        llvm::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(array.ifrt_array());
-    // TODO(hyeontaek): Support non-PjRt Arrays.
-    if (arr == nullptr) {
-      throw XlaRuntimeError(
-          "This operation is implemented for a PjRt-compatible backend "
-          "only.");
+
+    if (auto* arr =
+            llvm::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
+        arr != nullptr) {
+      for (const std::shared_ptr<PjRtBuffer>& buffer : arr->pjrt_buffers()) {
+        // We only wish to count each PjRtBuffer once, even though they may be
+        // shared by multiple PyArrays.
+        if (!buffer->IsDeleted() && buffer_set.insert(buffer.get()).second) {
+          TF_ASSIGN_OR_RETURN(size_t size, buffer->GetOnDeviceSizeInBytes());
+          HeapProfileKey key{array.traceback(), static_cast<int64_t>(size),
+                             buffer->device()};
+          ++entries[key];
+        }
+      }
+      continue;
     }
-    for (const auto& buffer : arr->pjrt_buffers()) {
-      TF_RETURN_IF_ERROR(
-          add_buffer_to_profile(buffer.get(), array.traceback()));
+
+    const ifrt::Sharding& sharding = ifrt_array->sharding();
+    const absl::Span<ifrt::Device* const> devices =
+        sharding.devices()->devices();
+
+    // Only handles arrays which are uniformly sharded across devices.
+    // Unlike the PjRt array case, we cannot detect aliasing of buffers,
+    // so this may overcount memory usage.
+    std::optional<int64_t> shard_size;
+    if (absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> pjrt_layout =
+            ifrt_array->pjrt_layout();
+        pjrt_layout.ok()) {
+      const absl::StatusOr<ifrt::Shape> shard_shape =
+          sharding.GetShardShape(ifrt_array->shape());
+      if (!shard_shape.ok()) {
+        continue;
+      }
+
+      std::unique_ptr<ifrt::PjRtLayout> ifrt_pjrt_layout =
+          ifrt::PjRtLayout::Create(*std::move(pjrt_layout));
+      absl::StatusOr<std::optional<int64_t>> shard_byte_size =
+          ifrt_pjrt_layout->ByteSize(ifrt_array->dtype(), *shard_shape);
+      if (!shard_byte_size.ok() || !shard_byte_size->has_value()) {
+        continue;
+      }
+
+      shard_size = *shard_byte_size;
+    } else if (!devices.empty()) {
+      // If the PjRt layout is not available, assume a default layout that
+      // is sharded evenly across devices.
+      TF_ASSIGN_OR_RETURN(PrimitiveType primitive_type,
+                          ifrt::ToPrimitiveType(ifrt_array->dtype()));
+      shard_size = CeilOfRatio<int64_t>(
+          ShapeUtil::ByteSizeOf(
+              LayoutUtil::GetWithDefaultLayout(xla::ShapeUtil::MakeShape(
+                  primitive_type, ifrt_array->shape().dims()))),
+          devices.size());
+    }
+
+    if (!shard_size.has_value()) {
+      continue;
+    }
+
+    for (const ifrt::Device* device : devices) {
+      HeapProfileKey key{array.traceback(), *shard_size,
+                         device};
+      ++entries[key];
     }
   }
 
   for (PyLoadedExecutable* executable = executables_; executable;
        executable = executable->next_) {
     HeapProfileKey key{executable->traceback(),
-                       executable->SizeOfGeneratedCodeInBytes(), nullptr};
+                       executable->SizeOfGeneratedCodeInBytes(), std::nullopt};
     ++entries[key];
   }
 
@@ -638,23 +684,24 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
   const int buffer_string_id = builder.StringId("buffer");
   const int executable_string_id = builder.StringId("executable");
   const int device_string_id = builder.StringId("device");
-  for (const auto& entry : entries) {
+  for (const auto& [profile_key, count] : entries) {
     auto* sample = builder.profile().add_sample();
-    if (entry.first.traceback) {
-      for (const auto& frame : entry.first.traceback->RawFrames()) {
+    if (profile_key.traceback) {
+      for (const auto& frame : profile_key.traceback->RawFrames()) {
         sample->add_location_id(builder.LocationId(frame.first, frame.second));
       }
     }
-    sample->add_value(entry.second);
-    sample->add_value(entry.first.size * entry.second);
+    sample->add_value(count);
+    sample->add_value(profile_key.size * count);
 
     auto* kind_label = sample->add_label();
     kind_label->set_key(kind_string_id);
-    if (entry.first.device) {
+    if (profile_key.device.has_value()) {
       kind_label->set_str(buffer_string_id);
       auto* device_label = sample->add_label();
       device_label->set_key(device_string_id);
-      std::string device_label_str(entry.first.device->DebugString());
+      std::string device_label_str(std::visit(
+          [](const auto* d) { return d->DebugString(); }, *profile_key.device));
       device_label->set_str(builder.StringId(device_label_str));
     } else {
       kind_label->set_str(executable_string_id);
