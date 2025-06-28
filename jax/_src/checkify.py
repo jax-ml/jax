@@ -21,25 +21,21 @@ from typing import TypeVar, Any, Union
 
 import numpy as np
 
-import jax.numpy as jnp
-from jax import dtypes
-from jax import lax
-
-# TODO(yashkatariya): Remove the experimental import after users are migrated
-# to `jax.shard_map`.
-from jax.experimental import shard_map  # noqa: F401
-from jax._src import shard_map as jshmap
+from jax._src import ad_checkpoint
 from jax._src import api
 from jax._src import api_util
-from jax._src import ad_checkpoint
-from jax._src import linear_util as lu
 from jax._src import callback
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import dtypes
 from jax._src import effects
-from jax._src import pjit
+from jax._src import lax
+from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
+from jax._src import numpy as jnp
+from jax._src import pjit
+from jax._src import shard_map as jshmap
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -49,13 +45,21 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.partition_spec import PartitionSpec as P
 from jax._src.tree_util import tree_flatten
 from jax._src.tree_util import tree_map
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import Array
-from jax._src.partition_spec import PartitionSpec as P
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
                            unzip3, weakref_lru_cache, HashableWrapper, foreach)
+
+# Backward compatibility: some downstream users implicitly rely on this import,
+# and reference jax.experimental.shard_map without an explicit import.
+# TODO(yashkatariya): remove this once users are migrated to jax.shard_map.
+try:
+  import jax.experimental.shard_map as _  # pytype: disable=import-error  # noqa: F401
+except ImportError:
+  pass
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -171,7 +175,7 @@ class OOBError(JaxException):
             f'{self._payload[1]} with size {self._payload[2]}. ')
 
   def get_effect_type(self):
-    return ErrorEffect(OOBError, (api.ShapeDtypeStruct((3,), jnp.int32),))
+    return ErrorEffect(OOBError, (api.ShapeDtypeStruct((3,), np.int32),))
 
 class FailedCheckError(JaxException):
 
@@ -584,7 +588,7 @@ def check_nans(prim, error, enabled_errors, out):
     return error
 
   def isnan(x):
-    if jnp.issubdtype(x.dtype, dtypes.prng_key):
+    if dtypes.issubdtype(x.dtype, dtypes.prng_key):
       return False
     return jnp.any(jnp.isnan(x))
 
@@ -687,7 +691,7 @@ def oob_payload(oob_mask, indices, dims_map, operand_shape):
   oob_axis = jnp.array(dims_map)[multi_idx[-1]]
   oob_axis_size = jnp.array(operand_shape)[oob_axis]
   oob_index = jnp.ravel(indices)[flat_idx]
-  payload = jnp.array([oob_index, oob_axis, oob_axis_size], dtype=jnp.int32)
+  payload = jnp.array([oob_index, oob_axis, oob_axis_size], dtype=np.int32)
   return payload
 
 def scatter_oob(operand, indices, updates, dnums):
@@ -1304,7 +1308,7 @@ def _check_error(error, *, debug=False):
 def is_scalar_pred(pred) -> bool:
   return (isinstance(pred, bool) or
           isinstance(pred, Array) and pred.shape == () and
-          pred.dtype == jnp.dtype('bool'))
+          pred.dtype == np.dtype('bool'))
 
 
 def debug_check(pred: Bool, msg: str, *fmt_args, **fmt_kwargs) -> None:

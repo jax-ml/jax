@@ -42,15 +42,18 @@ from jax._src.numpy.lax_numpy import (
     eye as eye,
     nonzero as nonzero,
     permute_dims as permute_dims,
+    ravel as ravel,
     reshape as reshape,
     round as round,
     squeeze as squeeze,
     trace as trace,
     transpose as transpose,
+    unravel_index as unravel_index,
     where as where,
 )
 
 from jax._src.numpy.reductions import (
+    any as any,
     max as max,
 )
 
@@ -60,5 +63,11 @@ from jax._src.numpy.tensor_contractions import (
 
 from jax._src.numpy.ufuncs import (
     abs as abs,
+    equal as equal,
+    greater as greater,
+    isnan as isnan,
+    less as less,
     logical_and as logical_and,
+    logical_not as logical_not,
+    logical_or as logical_or,
 )

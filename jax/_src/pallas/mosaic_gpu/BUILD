@@ -61,6 +61,7 @@ pytype_strict_library(
         ":core",
         "//jax",
         "//jax:api",
+        "//jax:checkify",
         "//jax:core",
         "//jax:dtypes",
         "//jax:lax",

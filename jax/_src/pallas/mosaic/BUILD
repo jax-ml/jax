@@ -102,6 +102,7 @@ py_library(
         ":primitives",
         "//jax",
         "//jax:ad_util",
+        "//jax:checkify",
         "//jax:core",
         "//jax:custom_derivatives",
         "//jax:dtypes",

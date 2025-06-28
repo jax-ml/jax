@@ -41,6 +41,7 @@ py_library(
         "//jax",
         "//jax:ad_util",
         "//jax:api_util",
+        "//jax:checkify",
         "//jax:config",
         "//jax:core",
         "//jax:dtypes",
