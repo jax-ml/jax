@@ -7399,6 +7399,29 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.grad(g)(arr)
     self.assertEqual(out.sharding, arr.sharding)
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_dynamic_update_slice(self, mesh):
+    arr = jax.device_put(np.arange(16., dtype=np.float32), P('x'))
+    update = jax.device_put(np.arange(8., dtype=np.float32), P('x'))
+
+    @jax.jit
+    def f(arr, update):
+      y = lax.dynamic_update_slice(arr, update, (3,))
+      self.assertEqual(y.aval.sharding.spec, P('x'))
+      return y
+
+    out = f(arr, update)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    def g(x, y):
+      return f(x, y).sum()
+
+    out = jax.jit(jax.grad(g))(arr, update)
+    self.assertEqual(out.sharding, arr.sharding)
+
+    out = jax.grad(g)(arr, update)
+    self.assertEqual(out.sharding, arr.sharding)
+
   def test_auto_axes_computation_follows_data(self):
     mesh = jtu.create_mesh((2,), ('x',), axis_types=(AxisType.Explicit,))
     s = NamedSharding(mesh, P('x'))

@@ -1662,19 +1662,18 @@ def _dynamic_update_slice_jvp(primals, tangents):
 
 def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
   assert all(not ad.is_undefined_primal(x) for x in start_indices)
-  if ad.is_undefined_primal(update):
-    update_shape = update.aval.shape
-  else:
-    update_shape = update.shape
+  update_shape = (update.aval.shape if ad.is_undefined_primal(update) else
+                  update.shape)
+  update_sharding = update.aval.sharding
   if type(t) is ad_util.Zero:
     operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
     update_t = ad_util.Zero(update.aval) if ad.is_undefined_primal(update) else None
   else:
-    dus = dynamic_update_slice_p.bind
-    ds = dynamic_slice_p.bind
-    zeros = lax._zeros(t, shape=update_shape)
-    operand_t = dus(t, zeros, *start_indices) if ad.is_undefined_primal(operand) else None
-    update_t = ds(t, *start_indices, slice_sizes=update_shape) if ad.is_undefined_primal(update) else None
+    zeros = lax._zeros(t, shape=update_shape, sharding=update_sharding)
+    operand_t = (dynamic_update_slice_p.bind(t, zeros, *start_indices)
+                 if ad.is_undefined_primal(operand) else None)
+    update_t = (dynamic_slice_p.bind(t, *start_indices, slice_sizes=update_shape)
+                if ad.is_undefined_primal(update) else None)
   return [operand_t, update_t] + [None] * len(start_indices)
 
 def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
