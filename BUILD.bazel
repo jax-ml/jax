@@ -128,7 +128,7 @@ genrule(
 py_import(
     name = "jax_py_import",
     wheel = ":jax_wheel",
-    wheel_deps = [":wheel_additives"],
+    zip_deps = [":wheel_additives"],
 )
 
 # This target is used to add more sources to the jax wheel.
@@ -137,7 +137,7 @@ py_import(
 py_import(
     name = "jax_wheel_with_internal_test_util",
     wheel = "@pypi_jax//:whl",
-    wheel_deps = [":wheel_additives"],
+    zip_deps = [":wheel_additives"],
 )
 
 pytype_test(
