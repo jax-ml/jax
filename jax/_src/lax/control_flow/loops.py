@@ -2102,7 +2102,6 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
       pred_ctx = mlir.LoweringRuleContext(
           module_context=ctx.module_context,
           name_stack=cond_name_stack,
-          traceback=ctx.traceback,
           primitive=None,
           avals_in=[pred_aval],
           avals_out=[pred_aval.update(

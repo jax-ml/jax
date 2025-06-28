@@ -410,9 +410,7 @@ def lower_jaxpr_to_triton_ir(
     avals_in = [v.aval for v in eqn.invars]
     avals_out = [v.aval for v in eqn.outvars]
     eqn_block_infos = map(read_block_info_env, eqn.invars)
-    loc = mlir.source_info_to_location(
-        ctx, eqn.primitive, eqn.source_info.name_stack,
-        eqn.source_info.traceback)
+    loc = mlir._source_info_to_location(ctx, eqn.primitive, eqn.source_info)
     rule_ctx = LoweringRuleContext(ctx, avals_in, avals_out, eqn_block_infos)
     try:
       with source_info_util.user_context(eqn.source_info.traceback), loc:
