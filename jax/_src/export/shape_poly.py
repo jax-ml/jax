@@ -1001,7 +1001,8 @@ class SymbolicScope:
           "The symbolic constraints should be a sequence of strings. "
           f"Got {repr(constraints_str)}")
     self._initialized = False
-    self._location_frame = source_info_util.user_frame(source_info_util.current())
+    self._location_frame = source_info_util.user_frame(
+        source_info_util.current().traceback)
     # Keep the explicit constraints in the order in which they were added
     self._explicit_constraints: list[_SymbolicConstraint] = []
 

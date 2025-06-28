@@ -484,25 +484,32 @@ def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
   ctx.traceback_caches.traceback_cache[tb] = loc
   return loc
 
-def _source_info_to_location(
-    ctx: ModuleContext, primitive: core.Primitive,
-    source_info: source_info_util.SourceInfo) -> ir.Location:
+def source_info_to_location(
+    ctx: ModuleContext, primitive: core.Primitive | None,
+    name_stack: source_info_util.NameStack,
+    traceback: xc.Traceback | None) -> ir.Location:
   if config.include_full_tracebacks_in_locations.value:
-    if source_info.traceback is None:
+    if traceback is None:
       loc = ir.Location.unknown()
     else:
-      loc = _traceback_to_location(ctx, source_info.traceback)
+      loc = _traceback_to_location(ctx, traceback)
   else:
-    frame = source_info_util.user_frame(source_info)
+    frame = source_info_util.user_frame(traceback)
     if frame is None:
       loc = ir.Location.unknown()
     else:
       loc = ir.Location.file(get_canonical_source_file(frame.file_name,
                                                        ctx.traceback_caches),
                              frame.start_line, frame.start_column)
-  loc = ir.Location.name(f"{source_info.name_stack}/{primitive.name}",
-                         childLoc=loc)
-  loc = ir.Location.name(f"{primitive.name}:", childLoc=loc)
+  if primitive is None:
+    if name_stack.stack:
+      loc = ir.Location.name(str(name_stack), childLoc=loc)
+  else:
+    eqn_str = (
+        f"{name_stack}/{primitive.name}" if name_stack.stack else primitive.name
+    )
+    loc = ir.Location.name(eqn_str, childLoc=loc)
+    loc = ir.Location.name(f"{primitive.name}:", childLoc=loc)
   return loc
 
 upstream_dialects = ir.DialectRegistry()
@@ -780,7 +787,13 @@ class ModuleContext:
 class LoweringRuleContext:
   """Per-rule context information for MLIR lowering."""
   module_context: ModuleContext
+  # Even though we assigned name_stack entries to each jaxpr equation during
+  # tracing, we need to propagate name stacks during lowering as well because
+  # lowering may effectively inline multiple jaxprs into a single HLO function.
+  # For example, the body of a while loop needs the name stack of the enclosing
+  # while instruction to be prepended when forming its HLO name.
   name_stack: source_info_util.NameStack
+  traceback: xc.Traceback | None
   primitive: core.Primitive | None
   avals_in: Sequence[core.AbstractValue]
   avals_out: Any  # Usually Sequence[core.AbstractValue], but sometimes None.
@@ -1266,9 +1279,8 @@ def lower_jaxpr_to_module(
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
     lower_jaxpr_to_fun(
-        ctx, "main", jaxpr, ordered_effects,
-        name_stack=source_info_util.new_name_stack(module_name),
-        public=True,
+        ctx, module_name, jaxpr, ordered_effects,
+        main_function=True,
         replicated_args=replicated_args,
         arg_shardings=arg_shardings,
         result_shardings=result_shardings,
@@ -1437,16 +1449,14 @@ def lower_jaxpr_to_fun(
     name: str,
     jaxpr: core.ClosedJaxpr,
     effects: Sequence[core.Effect],
-    name_stack: source_info_util.NameStack,
     *,
-    public: bool = False,
+    main_function: bool = False,
     replicated_args: Sequence[bool] | None = None,
     arg_shardings: Sequence[JSharding | AUTO | None] | None = None,
     result_shardings: Sequence[JSharding | AUTO | None] | None = None,
     use_sharding_annotations: bool = True,
     input_output_aliases: Sequence[int | None] | None = None,
     xla_donated_args: Sequence[bool] | None = None,
-    api_name: str = "jit",
     arg_names: Sequence[str | None] | None = None,
     result_names: Sequence[str] | None = None,
     arg_memory_kinds: Sequence[str | None] | None = None,
@@ -1459,6 +1469,9 @@ def lower_jaxpr_to_fun(
 
   Assumes that an MLIR context, location, and insertion point are set.
 
+  Note: this function does *not* take a name stack. Name stacks do not cross
+  the boundaries of HLO functions.
+
   Args:
     ctx: the lowering context.
     name: the function name. The name will be uniquified by the symbol table,
@@ -1466,7 +1479,11 @@ def lower_jaxpr_to_fun(
     jaxpr: the jaxpr to lower.
     effects: a sequence of `core.Effect`s corresponding to an ordering of tokens
       that will be created in or used by the lowered function.
-    public: if true, the function's visibility is set to "public".
+    main_function: if true, this is the main function in the module. This has
+      several effects:
+      * the function's visibility is set to "public".
+      * the function's symbol name will be "main"
+      * the function's name will be used as the root name stack entry.
     replicated_args: if present, annotates arguments as replicated.
     arg_shardings: sharding annotations for each argument (optional).
     result_shardings: sharding annotations for each result (optional).
@@ -1478,8 +1495,6 @@ def lower_jaxpr_to_fun(
     input_output_aliases: optional sequence that maps argument numbers to the
       corresponding output that should alias them.
     xla_donated_args: optional sequence of args to set donation annotations.
-    api_name: The name of the higher level primitive which should show up in the
-      name stack.
   Returns:
     MLIR func op
   """
@@ -1539,9 +1554,10 @@ def lower_jaxpr_to_fun(
   flat_input_types = flatten_ir_types(input_types)
   flat_output_types = flatten_ir_types(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
-  func_op = func_dialect.FuncOp(name, ftype, ip=ctx.ip)
+  func_name = "main" if main_function else name
+  func_op = func_dialect.FuncOp(func_name, ftype, ip=ctx.ip)
   func_op.attributes["sym_visibility"] = ir.StringAttr.get(
-      "public" if public else "private")
+      "public" if main_function else "private")
   ctx.symbol_table.insert(func_op)
 
   ir_arg_shardings = None
@@ -1718,7 +1734,18 @@ def lower_jaxpr_to_fun(
       arg_locs.append(ir.Location.name(n) if n else ir.Location.unknown())
     entry_block = func_op.add_entry_block(arg_locs)
   else:
-    entry_block = func_op.add_entry_block()
+    with ir.Location.unknown():
+      entry_block = func_op.add_entry_block()
+
+  # When lowering a function out of line, we do not include name context from
+  # the caller. A function might have multiple callers, and it would be
+  # incorrect to include any one caller's context. Exception: The main function
+  # has no caller, so we include its name in the name stack.
+  name_stack = (
+      source_info_util.new_name_stack(name)
+      if main_function
+      else source_info_util.new_name_stack()
+  )
 
   with ir.InsertionPoint(entry_block):
     flat_args = entry_block.arguments
@@ -1728,7 +1755,7 @@ def lower_jaxpr_to_fun(
     dim_var_values, _, _ = util.split_list(flat_args, [num_dim_vars, num_tokens])
     # A lowering context just for function body entry/exit code.
     entry_lowering_ctx = LoweringRuleContext(
-        module_context=ctx, name_stack=name_stack, primitive=None,
+        module_context=ctx, name_stack=name_stack, traceback=None, primitive=None,
         avals_in=[], avals_out=None,
         tokens_in=TokenSet.create([]), tokens_out=None,
         axis_size_env=None, dim_var_values=dim_var_values)
@@ -1737,7 +1764,7 @@ def lower_jaxpr_to_fun(
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
           for a, s, a_aval in zip(flat_args, ir_arg_shardings, input_avals)]
 
-    if ir_arg_shardings is not None and name == "main":
+    if ir_arg_shardings is not None and main_function:
       flat_args = [
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
@@ -1752,13 +1779,9 @@ def lower_jaxpr_to_fun(
         [num_dim_vars, num_tokens])
     tokens_in = TokenSet(zip(effects, token_args))
     args: list[IrValues] = unflattened_args
-    if name is not None:
-      callee_name_stack = name_stack.extend(util.wrap_name(api_name, name))
-    else:
-      callee_name_stack = name_stack
     consts = [ir_constant(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
     out_vals, tokens_out = jaxpr_subcomp(
-        ctx, jaxpr.jaxpr, callee_name_stack, tokens_in,
+        ctx, jaxpr.jaxpr, name_stack, tokens_in,
         consts, *args, dim_var_values=dim_var_values)
     outs: list[IrValues] = []
     for eff in effects:
@@ -1789,13 +1812,13 @@ def lower_jaxpr_to_fun(
 
     # Insert a custom call if output is on host because XLA needs that to do the
     # transfer.
-    if custom_call_ir_result_memory_kinds is not None and name == "main":
+    if custom_call_ir_result_memory_kinds is not None and main_function:
       flat_outputs = [
           o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
           for o, mk, o_aval in zip(
               flat_outputs, custom_call_ir_result_memory_kinds, output_avals)]
 
-    if ir_result_shardings is not None and name == "main":
+    if ir_result_shardings is not None and main_function:
       flat_outputs = [
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
@@ -1998,9 +2021,9 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   last_used = core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
-    source_info = eqn.source_info.replace(
-        name_stack=name_stack + eqn.source_info.name_stack)
-    loc = _source_info_to_location(ctx, eqn.primitive, source_info)
+    eqn_name_stack = name_stack + eqn.source_info.name_stack
+    loc = source_info_to_location(ctx, eqn.primitive, eqn_name_stack,
+                                  eqn.source_info.traceback)
     with (source_info_util.user_context(eqn.source_info.traceback), loc,
           eqn.ctx.manager):
       override_rule = get_override_lowering_rule(eqn.primitive)
@@ -2025,7 +2048,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       avals_in = map(aval, eqn.invars)
       rule_ctx = LoweringRuleContext(
           module_context=ctx, primitive=eqn.primitive,
-          name_stack=source_info.name_stack,
+          name_stack=eqn_name_stack,
+          traceback=eqn.source_info.traceback,
           avals_in=avals_in,
           avals_out=map(aval, eqn.outvars), tokens_in=tokens_in,
           tokens_out=None, jaxpr_eqn_ctx=eqn.ctx, dim_var_values=dim_var_values)
@@ -2284,7 +2308,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   return f_lowered
 
 
-def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects, name_stack,
+def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
                                arg_names=None, result_names=None):
   if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
@@ -2294,7 +2318,7 @@ def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects, name_stack,
     except KeyError:
       num_callbacks = len(ctx.host_callbacks)
       func_op = lower_jaxpr_to_fun(
-          ctx, fn_name, call_jaxpr, effects, name_stack, arg_names=arg_names,
+          ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
           result_names=result_names)
 
       # If this Jaxpr includes callbacks, we can't cache the lowering because
@@ -2305,7 +2329,7 @@ def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects, name_stack,
         ctx.cached_primitive_lowerings[key] = func_op
   else:
     func_op = lower_jaxpr_to_fun(
-        ctx, fn_name, call_jaxpr, effects, name_stack, arg_names=arg_names,
+        ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
         result_names=result_names)
   return func_op
 
@@ -2329,7 +2353,6 @@ def check_backend_matches(inner_backend: str | None,
 
 def lower_called_computation(
     fn_name,
-    name_stack,
     call_jaxpr,
     ctx: ModuleContext,
     avals_out,
@@ -2349,21 +2372,20 @@ def lower_called_computation(
       fn_name,
       call_jaxpr,
       effects,
-      name_stack,
       arg_names=arg_names,
       result_names=result_names,
   )
   return func_op, output_types, effects
 
 
-def call_lowering(fn_name, name_stack, call_jaxpr, backend,
+def call_lowering(fn_name, call_jaxpr, backend,
                   ctx: ModuleContext, avals_in,
                   avals_out, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
                   arg_names=None, result_names=None):
   del avals_in
   func_op, output_types, effects = lower_called_computation(
-      fn_name, name_stack, call_jaxpr, ctx, avals_out, tokens_in,
+      fn_name, call_jaxpr, ctx, avals_out, tokens_in,
       backend=backend, arg_names=arg_names, result_names=result_names)
   symbol_name = func_op.name.value
   flat_output_types = flatten_ir_types(output_types)
@@ -2380,7 +2402,7 @@ def call_lowering(fn_name, name_stack, call_jaxpr, backend,
 def core_call_lowering(ctx: LoweringRuleContext,
                        *args, name, backend=None, call_jaxpr):
   out_nodes, tokens = call_lowering(
-      name, ctx.name_stack, call_jaxpr, backend, ctx.module_context,
+      name, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args,
       dim_var_values=ctx.dim_var_values)
   ctx.set_tokens_out(tokens)

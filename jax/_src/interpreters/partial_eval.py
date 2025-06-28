@@ -2309,6 +2309,8 @@ def trace_to_jaxpr_dynamic(
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(fun.debug_info, parent_trace=parent_trace, lower=lower)
+  # Name stacks are reset because the name stacks on jaxpr equations should be
+  # rooted at the enclosing jaxpr.
   with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
     source_info = source_info_util.current()
     in_tracers = _input_type_to_tracers(

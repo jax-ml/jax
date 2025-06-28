@@ -168,7 +168,7 @@ def raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
               end_line=end_line, end_column=end_column)
 
 
-def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
+def user_frames(traceback: Traceback | None) -> Iterator[Frame]:
   """Iterator over the user's frames, filtering jax-internal frames."""
   # Guess the user's frame is the innermost frame not in the jax source tree or
   # Python stdlib. We don't use traceback_util.path_starts_with because that
@@ -176,14 +176,13 @@ def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   # e.g. adding source provenance annotations to XLA lowerings, so we don't
   # want to incur the cost. We consider files that end with _test.py as user
   # frames, to allow testing this mechanism from tests.
-  traceback = source_info.traceback
   code, lasti = traceback.raw_frames() if traceback else ([], [])
   return (raw_frame_to_frame(code[i], lasti[i]) for i in range(len(code))
           if is_user_filename(code[i].co_filename))
 
 @functools.lru_cache(maxsize=64)
-def user_frame(source_info: SourceInfo) -> Frame | None:
-  return next(user_frames(source_info), None)
+def user_frame(traceback: Traceback | None) -> Frame | None:
+  return next(user_frames(traceback), None)
 
 def _summarize_frame(frame: Frame) -> str:
   if frame.start_column != 0:
@@ -193,7 +192,7 @@ def _summarize_frame(frame: Frame) -> str:
     return f"{frame.file_name}:{frame.start_line} ({frame.function_name})"
 
 def summarize(source_info: SourceInfo, num_frames=1) -> str:
-  frames = itertools.islice(user_frames(source_info), num_frames)
+  frames = itertools.islice(user_frames(source_info.traceback), num_frames)
   frame_strs = [_summarize_frame(frame) if frame else "unknown"
                 for frame in frames]
   return '\n'.join(reversed(frame_strs))
