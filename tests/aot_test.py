@@ -19,6 +19,7 @@ import jax
 from jax._src import core
 from jax._src import test_util as jtu
 import jax._src.lib
+from jax._src.lib import ifrt_version
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.pjit import pjit
@@ -121,10 +122,11 @@ class JaxAotTest(jtu.JaxTestCase):
     stablehlo = lowered.as_text("stablehlo")
     self.assertNotRegex(stablehlo, r"sine.* loc")
 
-    hlo = lowered.as_text("hlo", debug_info=True)
-    self.assertRegex(hlo, r"sine.*metadata=.*source_file=.*")
-    hlo = lowered.as_text("hlo")
-    self.assertNotRegex(hlo, r"sine.*metadata=.*source_file=.*")
+    if ifrt_version >= 12:
+      hlo = lowered.as_text("hlo", debug_info=True)
+      self.assertRegex(hlo, r"sine.*metadata=.*source_file=.*")
+      hlo = lowered.as_text("hlo")
+      self.assertNotRegex(hlo, r"sine.*metadata=.*source_file=.*")
 
   @jtu.run_on_devices('gpu', 'tpu')
   def test_mismatched_backends_raises(self):

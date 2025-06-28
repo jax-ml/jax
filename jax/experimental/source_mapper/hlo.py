@@ -30,7 +30,8 @@ class HloPass(enum.Enum):
 
 
 METADATA_REGEX = re.compile(
-    r"metadata={op_name=\"(?P<scope>.*)\" source_file=\"(?P<src_file>.*)\""
+    r"metadata={.*op_name=\"(?P<scope>.*)\""
+    r" source_file=\"(?P<src_file>.*)\""
     r" source_line=(?P<src_line>[0-9]+)\}"
 )
 
