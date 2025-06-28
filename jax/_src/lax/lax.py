@@ -4046,15 +4046,6 @@ def broadcast_hlo(
     out.append(arg)
   return out
 
-def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
-  out = []
-  for op, in_aval in zip(ops, in_avals):
-    if in_aval.sharding == out_aval.sharding or in_aval.sharding is None:
-      out.append(op)
-    else:
-      out.append(mlir.lower_with_sharding_in_types(ctx, op, out_aval))
-  return out
-
 
 def _nary_lower_hlo(
     op: Callable, ctx, *args: ir.Value, accuracy=None, **params
@@ -4063,8 +4054,8 @@ def _nary_lower_hlo(
   """
   del params
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
-  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape)
-  args = multi_sharding_in_dim(ctx, args, avals_in, aval_out)
+  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape,
+                                     aval_out.sharding)
 
   out = op(*args)
   if accuracy:
@@ -4338,7 +4329,8 @@ def _complex_transpose_rule(t, x, y):
     else:
       return [None, _unbroadcast(y.aval, imag(neg(t)))]
 
-_complex_dtype = lambda dtype, *args, **kwargs: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
+def _complex_dtype(dtype, *args, **kwargs):
+  return (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear2(complex_p, _complex_transpose_rule)

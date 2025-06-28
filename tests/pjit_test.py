@@ -8164,6 +8164,27 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(xs, reshard(ids, P('x')), scalar)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
+  @config.numpy_dtype_promotion('standard')
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_explicit_complex_grad(self, mesh):
+    @jax.jit
+    def f(x):
+      return (x * 1j).real
+
+    jax.grad(f)(1.0)  # doesn't crash
+    jax.jit(jax.grad(f))(1.0)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_explicit_complex(self, mesh):
+    x = jnp.arange(8, dtype=np.float32)
+    y = np.arange(8, dtype=np.float32)
+
+    @jax.jit
+    def f(x, y):
+      return jax.lax.complex(x, y)
+
+    f(x, y)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
