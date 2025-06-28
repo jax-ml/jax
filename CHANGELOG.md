@@ -34,6 +34,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     moved to the `jax.sharding` endpoint. So use `jax.sharding.reshard`,
     `jax.sharding.auto_axes` and `jax.sharding.explicit_axes` instead of their
     experimental endpoints.
+  * `lax.infeed` and `lax.outfeed` were removed as public APIs, after being
+    deprecated in JAX 0.6.
 
 * Deprecations:
   * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new

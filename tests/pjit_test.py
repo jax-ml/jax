@@ -810,11 +810,11 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     def f_for_jit(x):
       token = lax.create_token(x)
-      (y,), token = lax.infeed(
+      (y,), token = lax_internal.infeed(
           token, shape=(core.ShapedArray(x.shape, np.float32),))
-      (z,), token = lax.infeed(
+      (z,), token = lax_internal.infeed(
           token, shape=(core.ShapedArray(x.shape, np.float32),))
-      (w,), token = lax.infeed(
+      (w,), token = lax_internal.infeed(
           token, shape=(core.ShapedArray(x.shape, np.float32),))
 
       return x + y + z + w
@@ -843,17 +843,17 @@ class PJitTest(jtu.BufferDonationTestCase):
     def f_for_pjit(x):
       token = lax.create_token(x)
       # A replicated infeed
-      (y,), token = lax.infeed(
+      (y,), token = lax_internal.infeed(
           token,
           shape=(core.ShapedArray(x.shape, np.float32),),
           partitions=(None,))
       # An infeed sharded on first axis
-      (z,), token = lax.infeed(
+      (z,), token = lax_internal.infeed(
           token,
           shape=(core.ShapedArray(x.shape, np.float32),),
           partitions=(P(nr_devices, 1),))
       # An infeed sharded on second axis
-      (w,), token = lax.infeed(
+      (w,), token = lax_internal.infeed(
           token,
           shape=(core.ShapedArray(x.shape, np.float32),),
           partitions=(P(1, nr_devices),))
@@ -886,9 +886,9 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     def f(x):
       token = lax.create_token(x)
-      token = lax.outfeed(token, x, partitions=(None,))
-      token = lax.outfeed(token, x, partitions=((nr_devices, 1),))
-      token = lax.outfeed(token, x, partitions=((1, nr_devices),))
+      token = lax_internal.outfeed(token, x, partitions=(None,))
+      token = lax_internal.outfeed(token, x, partitions=((nr_devices, 1),))
+      token = lax_internal.outfeed(token, x, partitions=((1, nr_devices),))
       return x
 
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
