@@ -503,6 +503,102 @@ class MutableArrayTest(jtu.JaxTestCase):
     expected = 2. * jnp.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_grad_jit_readonly(self):
+    def f(x):
+      x_ref = core.mutable_array(x)
+
+      @jax.jit
+      def inner():
+        return jnp.sin(x_ref[...])
+
+      return inner()
+
+    jtu.check_grads(f, (1.5,), 2, ['fwd', 'rev'])
+
+  @jtu.sample_product(
+      seed=range(6),
+      num_consts=range(2, 6),
+      num_args=[0, 3],
+  )
+  @jtu.run_on_devices("cpu")
+  def test_jit_vjp_systematic_readonly(self, seed, num_consts, num_args):
+    num_mut_consts = num_consts // 2
+    num_pure_consts = num_consts - num_mut_consts
+    num_mut_consts = 1
+    num_pure_consts = 0
+    num_args = 0
+
+    rng = np.random.RandomState(seed)
+    pure_consts = [rng.normal() for _ in range(num_pure_consts)]
+    mut_const_vals = [rng.normal() for _ in range(num_mut_consts)]
+
+    args = [rng.normal() for _ in range(num_args)]
+
+    mutable_bools = rng.permutation([True] * num_mut_consts +
+                                    [False] * num_pure_consts)
+
+    def f(mut_const_vals, pure_consts, args):
+      consts = pure_consts[:], map(core.mutable_array, mut_const_vals)
+
+      @jax.jit
+      def inner(args):
+        tot = 0.
+        for is_mut in mutable_bools:
+          const = consts[int(is_mut)].pop()
+          if is_mut: const = const[...]
+          tot += jnp.sin(const)
+        for x in args:
+          tot += jnp.sin(x)
+        return tot
+
+      return inner(args)
+
+    jtu.check_grads(f, (mut_const_vals, pure_consts, args), 2, ['rev'])
+
+  @jtu.sample_product(
+      seed=range(6),
+      num_consts=range(2, 6),
+      num_carry=[0, 3],
+      num_ext_in=[0, 3],
+      num_iters=[1, 3],
+  )
+  @jtu.run_on_devices("cpu")
+  def test_scan_vjp_systematic_readonly(
+      self, seed, num_consts, num_carry, num_ext_in, num_iters):
+    num_mut_consts = 1 # num_consts // 2
+    num_pure_consts = 0 # num_consts - num_mut_consts
+    num_carry = 1
+    num_ext_in = 0
+    num_iters = 1
+
+    rng = np.random.RandomState(seed)
+    pure_consts = [rng.normal() for _ in range(num_pure_consts)]
+    mut_const_vals = [rng.normal() for _ in range(num_mut_consts)]
+
+    init_carry = [rng.normal() for _ in range(num_carry)]
+    xs = [rng.normal(size=num_iters) for _ in range(num_ext_in)]
+
+    mutable_bools = rng.permutation([True] * num_mut_consts +
+                                    [False] * num_pure_consts)
+
+    def f(mut_const_vals, pure_consts, c, xs):
+      consts = pure_consts[:], map(core.mutable_array, mut_const_vals)
+
+      def body(c, x):
+        tot = 0.
+        for is_mut in mutable_bools:
+          const = consts[int(is_mut)].pop()
+          if is_mut: const = const[...]
+          tot += jnp.sin(const)
+        new_c = [jnp.sin(carry) + tot for carry in c]
+        y = sum(map(jnp.sin, x)) * 1.0
+        return new_c, y
+
+      return jax.lax.scan(body, init_carry, xs, length=num_iters)
+
+    jtu.check_grads(f, (mut_const_vals, pure_consts, init_carry, xs),
+                    2, ['fwd', 'rev'])
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
