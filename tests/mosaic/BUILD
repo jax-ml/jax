@@ -95,6 +95,16 @@ jax_py_test(
 )
 
 jax_py_test(
+    name = "gpu_equations_test",
+    srcs = ["gpu_equations_test.py"],
+    deps = [
+        "//jax",
+        "//jax:mosaic_gpu",
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
+)
+
+jax_py_test(
     name = "gpu_layout_inference_test",
     srcs = ["gpu_layout_inference_test.py"],
     deps = [
