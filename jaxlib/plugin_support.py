@@ -22,8 +22,8 @@ from .version import __version__ as jaxlib_version
 
 
 _PLUGIN_MODULE_NAME = {
-    "cuda": "jax_cuda12_plugin",
-    "rocm": "jax_rocm60_plugin",
+    "cuda": ["jax_cuda12_plugin"],
+    "rocm": ["jax_rocm7_plugin", "jax_rocm60_plugin"],
 }
 
 
@@ -47,7 +47,7 @@ def import_from_plugin(
   if plugin_name not in _PLUGIN_MODULE_NAME:
     raise ValueError(f"Unknown plugin: {plugin_name}")
   return maybe_import_plugin_submodule(
-      [f".{plugin_name}", _PLUGIN_MODULE_NAME[plugin_name]],
+      [f".{plugin_name}", *_PLUGIN_MODULE_NAME[plugin_name]],
       submodule_name,
       check_version=check_version,
   )
