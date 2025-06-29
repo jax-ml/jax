@@ -16,12 +16,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from collections.abc import Hashable
 import enum
 import functools
 import string
-from collections.abc import Hashable
 from typing import Any
-from collections.abc import Callable, Sequence
 
 import jax
 from jax import lax
@@ -42,10 +42,12 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
-from jax._src.state import types as state_types
 from jax._src.state import primitives as sp
+from jax._src.state import types as state_types
+from jax._src.state.types import RefBitcaster, RefReshaper
 from jax.interpreters import mlir
 import jax.numpy as jnp
+import numpy as np
 
 partial = functools.partial
 Slice = indexing.Slice
@@ -128,10 +130,9 @@ def _atomic_rmw_discharge_rule(
     in_avals, out_avals, *args_flat, args_tree, atomic_type: AtomicOpType
 ):
   del out_avals  # Unused.
-  ref, indexers, val, mask = args_tree.unflatten(args_flat)
-  if len(indexers) > 1:
-    raise NotImplementedError("Only one indexer is supported.")
-  idx = indexers[0]
+  ref, transforms, val, mask = args_tree.unflatten(args_flat)
+  *prev_transforms, idx = transforms
+  ref = transform_discharged_ref(ref, prev_transforms)
 
   if mask is not None:
     raise NotImplementedError
@@ -373,9 +374,11 @@ load_p = jax_core.Primitive('masked_load')
 
 @load_p.def_effectful_abstract_eval
 def _load_abstract_eval(*avals_flat, args_tree, **_):
-  ref, indexers, _, _ = args_tree.unflatten(avals_flat)
+  ref, transforms, _, _ = args_tree.unflatten(avals_flat)
+  assert transforms is not None and isinstance(transforms[-1], NDIndexer)
+  transformed_ref = pallas_core.TransformedRef(ref, transforms)
   return (
-      jax_core.ShapedArray(indexers[-1].get_indexer_shape(), ref.dtype),
+      jax_core.ShapedArray(transformed_ref.shape, transformed_ref.dtype),
       {state.ReadEffect(0)},
   )
 
@@ -383,15 +386,12 @@ def _load_abstract_eval(*avals_flat, args_tree, **_):
 def _load_pp_rule(eqn, context, settings):
   # Pretty prints `a = load x i` as `x[i] <- a`
   y, = eqn.outvars
-  x, indexers, mask, other  = tree_util.tree_unflatten(eqn.params["args_tree"],
-                                                       eqn.invars)
+  x, transforms, mask, other = tree_util.tree_unflatten(
+      eqn.params["args_tree"], eqn.invars
+  )
   # TODO(sharadmv): pretty print mask and other
   lhs = jax_core.pp_vars([y], context, print_shapes=settings.print_shapes)
-  result = [
-      lhs,
-      pp.text(' <- '),
-      sp.pp_ref_transforms(context, x, indexers)
-  ]
+  result = [lhs, pp.text(" <- "), sp.pp_ref_transforms(context, x, transforms)]
   if mask is not None:
     result += [
         pp.text(" "),
@@ -409,18 +409,20 @@ jax_core.pp_eqn_rules[load_p] = _load_pp_rule
 
 
 def _load_jvp(primals, tangents, args_tree, **params):
-  ref_primal, indexers, mask, other_primal = args_tree.unflatten(primals)
+  ref_primal, transforms, mask, other_primal = args_tree.unflatten(primals)
   ref_tangent, _, _, other_tangent = args_tree.unflatten(tangents)
   if other_tangent is not None:
     other_tangent = ad_util.instantiate(other_tangent)
   return (
       load_p.bind(
-          *tree_util.tree_leaves((ref_primal, indexers, mask, other_primal)),
+          *tree_util.tree_leaves((ref_primal, transforms, mask, other_primal)),
           args_tree=args_tree,
           **params,
       ),
       load_p.bind(
-          *tree_util.tree_leaves((ref_tangent, indexers, mask, other_tangent)),
+          *tree_util.tree_leaves(
+              (ref_tangent, transforms, mask, other_tangent)
+          ),
           args_tree=args_tree,
           **params,
       ),
@@ -473,20 +475,13 @@ _unpad_values_to_avoid_dynamic_slice_oob_shift = partial(
   _pad_values_to_avoid_dynamic_slice_oob_shift, unpad=True)
 
 
-@state_discharge.register_discharge_rule(load_p)
-def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
-  del out_avals  # Unused.
-  ref, indexers, mask, other = args_tree.unflatten(args_flat)
-  # TODO(sharadmv): add support for multiple indexers
-  if len(indexers) > 1:
-    raise NotImplementedError("Only one indexer supported in discharge rule.")
-  idx = indexers[0]
-  if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
+def _slice_discharged_ref(ref, indexer):
+  if all((isinstance(s, Slice) or not s.shape) for s in indexer.indices):
     # TODO(ayx): support strided load/store in interpret mode.
-    for s in idx.indices:
+    for s in indexer.indices:
       if isinstance(s, Slice) and s.stride > 1:
         raise NotImplementedError("Unimplemented stride support.")
-    indices = idx.indices
+    indices = indexer.indices
     scalar_dims = [not isinstance(s, Slice) and not s.shape for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
@@ -496,16 +491,81 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     ref = _pad_values_to_avoid_dynamic_slice_oob_shift(ref, slice_sizes)
     idx_dtype = dtypes.canonicalize_dtype(jnp.int64)
     out_ones = lax.dynamic_slice(
-      ref,
-      [jnp.astype(s, idx_dtype) for s in slice_starts],
-      slice_sizes=slice_sizes,
+        ref,
+        [jnp.astype(s, idx_dtype) for s in slice_starts],
+        slice_sizes=slice_sizes,
     )
     out_indexer = tuple(0 if scalar else slice(None) for scalar in scalar_dims)
     out = out_ones[out_indexer]
-  elif all(not isinstance(s, Slice) for s in idx.indices):
-    out = ref[idx.indices]
+  elif all(not isinstance(s, Slice) for s in indexer.indices):
+    out = ref[indexer.indices]
   else:
     raise NotImplementedError
+  return out
+
+
+def _bitcast_discharged_ref(ref, bitcaster):
+  src_packing = 32 // dtypes.bit_width(ref.dtype)
+  dst_packing = 32 // dtypes.bit_width(bitcaster.dtype)
+  if not (
+      len(ref.shape) >= 2
+      and ref.shape[-1] % src_packing == 0
+      and len(bitcaster.shape) >= 2
+      and bitcaster.shape[-1] % dst_packing == 0
+  ):
+    raise NotImplementedError(
+        f"bitcast ref from {ref.dtype}{ref.shape} to"
+        f" {bitcaster.dtype}{bitcaster.shape}"
+    )
+  if src_packing < dst_packing:
+    out = (
+        lax.bitcast_convert_type(ref, bitcaster.dtype)
+        .swapaxes(-1, -2)
+        .reshape(bitcaster.shape)
+    )
+  elif src_packing > dst_packing:
+    ratio = src_packing // dst_packing
+    src = ref.reshape(
+        *ref.shape[:-2], ref.shape[-2] // ratio, ratio, ref.shape[-1]
+    ).swapaxes(-1, -2)
+    out = lax.bitcast_convert_type(src, bitcaster.dtype)
+  else:
+    out = lax.bitcast_convert_type(ref, bitcaster.dtype)
+  return out
+
+
+def _reshape_discharged_ref(ref, reshaper):
+  if ref.dtype != reshaper.dtype:
+    raise ValueError(
+        f"Ref dtype {ref.dtype} does not match reshaper dtype {reshaper.dtype}"
+    )
+  if np.prod(ref.shape) != np.prod(reshaper.shape):
+    raise ValueError(
+        f"Ref shape {ref.shape} can not be reshaped to {reshaper.shape}"
+    )
+  return ref.reshape(reshaper.shape)
+
+
+def transform_discharged_ref(ref, transforms):
+  for transform in transforms:
+    match transform:
+      case NDIndexer():
+        transform_f = _slice_discharged_ref
+      case RefBitcaster():
+        transform_f = _bitcast_discharged_ref
+      case RefReshaper():
+        transform_f = _reshape_discharged_ref
+      case _:
+        raise NotImplementedError(f"Unsupported transform: {transform}")
+    ref = transform_f(ref, transform)
+  return ref
+
+
+@state_discharge.register_discharge_rule(load_p)
+def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
+  del out_avals  # Unused.
+  ref, transforms, mask, other = args_tree.unflatten(args_flat)
+  out = transform_discharged_ref(ref, transforms)
   if mask is not None and other is not None:
     out = jnp.where(mask, out, other)
   return (None,) * len(in_avals), out
@@ -516,20 +576,23 @@ swap_p = jax_core.Primitive('masked_swap')
 
 @swap_p.def_effectful_abstract_eval
 def _swap_abstract_eval(*avals_flat, args_tree, **_):
-  ref, indexers, val, _ = args_tree.unflatten(avals_flat)
-  expected_output_shape = indexers[-1].get_indexer_shape()
+  ref, transforms, val, _ = args_tree.unflatten(avals_flat)
+  assert transforms is not None and isinstance(transforms[-1], NDIndexer)
+  transformed_ref = pallas_core.TransformedRef(ref, transforms)
+  expected_output_shape = transformed_ref.shape
+  expected_output_dtype = transformed_ref.dtype
   if expected_output_shape != val.shape:
     raise ValueError(
         f"Invalid shape for `swap`. Ref shape: {ref.shape}. "
-        f"Value shape: {val.shape}. Indices: {indexers}. "
+        f"Value shape: {val.shape}. Transforms: {transforms}. "
     )
-  if ref.dtype != val.dtype:
+  if expected_output_dtype != val.dtype:
     raise ValueError(
-        f"Invalid dtype for `swap`. Ref dtype: {ref.dtype}. "
+        f"Invalid dtype for `swap`. Ref dtype: {expected_output_dtype}. "
         f"Value dtype: {val.dtype}. "
     )
   return (
-      jax_core.ShapedArray(expected_output_shape, ref.dtype),
+      jax_core.ShapedArray(expected_output_shape, expected_output_dtype),
       {state.WriteEffect(0)},
   )
 
@@ -539,8 +602,8 @@ def _swap_pp_rule(eqn, context, settings):
   # or:
   # Pretty prints `_ = swap x v i` as `x[i] <- v`
   y, = eqn.outvars
-  x, indexers, val, mask = eqn.params["args_tree"].unflatten(eqn.invars)
-  x_i = sp.pp_ref_transforms(context, x, indexers)
+  x, transforms, val, mask = eqn.params["args_tree"].unflatten(eqn.invars)
+  x_i = sp.pp_ref_transforms(context, x, transforms)
   if isinstance(y, jax_core.DropVar):
     return pp.concat([
         x_i,
@@ -566,17 +629,17 @@ jax_core.pp_eqn_rules[swap_p] = _swap_pp_rule
 
 
 def _swap_jvp(primals, tangents, *, args_tree, **params):
-  ref_primal, indexers, val_primal, mask = args_tree.unflatten(primals)
+  ref_primal, transforms, val_primal, mask = args_tree.unflatten(primals)
   ref_tangent, _, val_tangent, _ = args_tree.unflatten(tangents)
   val_tangent = ad_util.instantiate(val_tangent)
   return (
       swap_p.bind(
-          *tree_util.tree_leaves((ref_primal, indexers, val_primal, mask)),
+          *tree_util.tree_leaves((ref_primal, transforms, val_primal, mask)),
           args_tree=args_tree,
           **params,
       ),
       swap_p.bind(
-          *tree_util.tree_leaves((ref_tangent, indexers, val_tangent, mask)),
+          *tree_util.tree_leaves((ref_tangent, transforms, val_tangent, mask)),
           args_tree=args_tree,
           **params,
       ),
@@ -589,10 +652,9 @@ ad.primitive_jvps[swap_p] = _swap_jvp
 @state_discharge.register_discharge_rule(swap_p)
 def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   del out_avals  # Unused.
-  ref, indexers, val, mask = args_tree.unflatten(args_flat)
-  if len(indexers) > 1:
-    raise NotImplementedError("Only one indexer supported in discharge rule.")
-  idx = indexers[0]
+  ref, transforms, val, mask = args_tree.unflatten(args_flat)
+  *prev_transforms, idx = transforms
+  ref = transform_discharged_ref(ref, prev_transforms)
   if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
     # TODO(ayx): support strided load/store in interpret mode.
     for s in idx.indices:
