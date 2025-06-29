@@ -86,9 +86,14 @@ class PallasBaseTest(jtu.JaxTestCase):
 class OpsTest(PallasBaseTest):
 
   @parameterized.product(
-      from_dtype=_JAX_DTYPES, to_dtype=_JAX_DTYPES, is_ref_bitcast=[False, True]
+      from_dtype=_JAX_DTYPES,
+      to_dtype=_JAX_DTYPES,
+      is_ref_bitcast=[False, True],
+      use_primitive_io_op=[False, True],
   )
-  def test_bitcast(self, from_dtype, to_dtype, is_ref_bitcast):
+  def test_bitcast(
+      self, from_dtype, to_dtype, is_ref_bitcast, use_primitive_io_op
+  ):
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Run on TPUv4+ to have expected memory layout")
     if from_dtype == to_dtype:
@@ -98,9 +103,15 @@ class OpsTest(PallasBaseTest):
 
     def kernel(x_ref, y_ref):
       if is_ref_bitcast:
-        y_ref[...] = x_ref.bitcast(to_dtype)[...]
+        if use_primitive_io_op:
+          pl.store(y_ref, ..., pl.load(x_ref.bitcast(to_dtype), ...))
+        else:
+          y_ref[...] = x_ref.bitcast(to_dtype)[...]
       else:
-        y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
+        if use_primitive_io_op:
+          pl.store(y_ref, ..., pltpu.bitcast(pl.load(x_ref, ...), to_dtype))
+        else:
+          y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
 
     m, n = 1, 256
     in_packing = 32 // pallas_utils.dtype_bitwidth(from_dtype)
