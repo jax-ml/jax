@@ -135,15 +135,15 @@ maintains an up-to-date list.
 
    installation
    quickstart
+   notebooks/thinking_in_jax
 
 .. toctree::
    :hidden:
    :maxdepth: 1
 
+   key-concepts
    tutorials
-
    notebooks/Common_Gotchas_in_JAX
-
    faq
 
 .. toctree::

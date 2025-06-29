@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.4
+    jupytext_version: 1.17.2
 kernelspec:
   display_name: Python 3
   name: python3
@@ -31,36 +31,18 @@ JAX provides a simple and powerful API for writing accelerated numerical code, b
 - Through duck-typing, JAX arrays can often be used as drop-in replacements of NumPy arrays.
 - Unlike NumPy arrays, JAX arrays are always immutable.
 
-NumPy provides a well-known, powerful API for working with numerical data. For convenience, JAX provides `jax.numpy` which closely mirrors the numpy API and provides easy entry into JAX. Almost anything that can be done with `numpy` can be done with `jax.numpy`:
+The arrays themselves are implemented as different Python types:
 
 ```{code-cell} ipython3
 :id: kZaOXL7-uvUP
 :outputId: 7fd4dd8e-4194-4983-ac6b-28059f8feb90
 
-import matplotlib.pyplot as plt
 import numpy as np
-
-x_np = np.linspace(0, 10, 1000)
-y_np = 2 * np.sin(x_np) * np.cos(x_np)
-plt.plot(x_np, y_np);
-```
-
-```{code-cell} ipython3
-:id: 18XbGpRLuZlr
-:outputId: 3d073b3c-913f-410b-ee33-b3a0eb878436
-
 import jax.numpy as jnp
 
+x_np = np.linspace(0, 10, 1000)
 x_jnp = jnp.linspace(0, 10, 1000)
-y_jnp = 2 * jnp.sin(x_jnp) * jnp.cos(x_jnp)
-plt.plot(x_jnp, y_jnp);
 ```
-
-+++ {"id": "kTZcsCJiuPG8"}
-
-The code blocks are identical aside from replacing `np` with `jnp`, and the results are the same. As we can see, JAX arrays can often be used directly in place of NumPy arrays for things like plotting.
-
-The arrays themselves are implemented as different Python types:
 
 ```{code-cell} ipython3
 :id: PjFFunI7xNe8
@@ -127,6 +109,54 @@ y = x.at[0].set(10)
 print(x)
 print(y)
 ```
+
+## JAX arrays (`jax.Array`)
+
+**Key concepts:**
+- Create arrays using JAX API functions.
+- JAX array objects have a `devices` attribute that indicates where the array is stored.
+- JAX arrays can be *sharded* across multiple devices for parallel computation.
+
+The default array implementation in JAX is [`jax.Array`](https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array). In many ways it is similar to
+the [`numpy.ndarray`](https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray) type that you may be familiar with from the NumPy package, but it
+has some important differences.
+
+### Array creation
+
+We typically don't call the `jax.Array` constructor directly, but rather create arrays via JAX API functions.
+For example, [`jax.numpy`](https://docs.jax.dev/en/latest/jax.numpy.html#module-jax.numpy) provides familiar NumPy-style array construction functionality
+such as `jax.numpy.zeros`, `jax.numpy.linspace`, `jax.numpy.arange`, etc.
+
+```{code-cell} ipython3
+import jax
+import jax.numpy as jnp
+
+x = jnp.arange(5)
+isinstance(x, jax.Array)
+```
+
+If you use Python type annotations in your code, `jax.Array` is the appropriate
+annotation for jax array objects (see [`jax.typing`](https://docs.jax.dev/en/latest/jax.typing.html#module-jax.typing) for more discussion).
+
++++
+
+### Array devices and sharding
+
+JAX Array objects have a `devices` method that lets you inspect where the contents of the array are stored. In the simplest cases, this will be a single CPU device:
+
+```{code-cell} ipython3
+x.devices()
+```
+
+In general, an array may be *sharded* across multiple devices, in a manner that can be inspected via the `sharding` attribute:
+
+```{code-cell} ipython3
+x.sharding
+```
+
+Here the array is on a single device, but in general a JAX array can be
+sharded across multiple devices, or even multiple hosts.
+To read more about sharded arrays and parallel computation, refer to {ref}`sharded-computation`.
 
 +++ {"id": "886BGDPeyXCu"}
 
@@ -414,77 +444,3 @@ f(1, False)
 +++ {"id": "ZESlrDngGVb1"}
 
 Understanding which values and operations will be static and which will be traced is a key part of using `jax.jit` effectively.
-
-+++ {"id": "r-RCl_wD5lI7"}
-
-## Static vs traced operations
-
-**Key concepts:**
-
-- Just as values can be either static or traced, operations can be static or traced.
-
-- Static operations are evaluated at compile-time in Python; traced operations are compiled & evaluated at run-time in XLA.
-
-- Use `numpy` for operations that you want to be static; use `jax.numpy` for operations that you want to be traced.
-
-This distinction between static and traced values makes it important to think about how to keep a static value static. Consider this function:
-
-```{code-cell} ipython3
-:id: XJCQ7slcD4iU
-:outputId: 3646dea0-f6b6-48e9-9dc0-c4dec7816b7a
-:tags: [raises-exception]
-
-import jax.numpy as jnp
-from jax import jit
-
-@jit
-def f(x):
-  return x.reshape(jnp.array(x.shape).prod())
-
-x = jnp.ones((2, 3))
-f(x)
-```
-
-+++ {"id": "ZO3GMGrHBZDS"}
-
-This fails with an error specifying that a tracer was found instead of a 1D sequence of concrete values of integer type. Let's add some print statements to the function to understand why this is happening:
-
-```{code-cell} ipython3
-:id: Cb4mbeVZEi_q
-:outputId: 30d8621f-34e1-4e1d-e6c4-c3e0d8769ec4
-
-@jit
-def f(x):
-  print(f"x = {x}")
-  print(f"x.shape = {x.shape}")
-  print(f"jnp.array(x.shape).prod() = {jnp.array(x.shape).prod()}")
-  # comment this out to avoid the error:
-  # return x.reshape(jnp.array(x.shape).prod())
-
-f(x)
-```
-
-+++ {"id": "viSQPc3jEwJr"}
-
-Notice that although `x` is traced, `x.shape` is a static value. However, when we use `jnp.array` and `jnp.prod` on this static value, it becomes a traced value, at which point it cannot be used in a function like `reshape()` that requires a static input (recall: array shapes must be static).
-
-A useful pattern is to use `numpy` for operations that should be static (i.e. done at compile-time), and use `jax.numpy` for operations that should be traced (i.e. compiled and executed at run-time). For this function, it might look like this:
-
-```{code-cell} ipython3
-:id: GiovOOPcGJhg
-:outputId: 5363ad1b-23d9-4dd6-d9db-95a6c9de05da
-
-from jax import jit
-import jax.numpy as jnp
-import numpy as np
-
-@jit
-def f(x):
-  return x.reshape((np.prod(x.shape),))
-
-f(x)
-```
-
-+++ {"id": "C-QZ5d1DG-dv"}
-
-For this reason, a standard convention in JAX programs is to `import numpy as np` and `import jax.numpy as jnp` so that both interfaces are available for finer control over whether operations are performed in a static manner (with `numpy`, once at compile-time) or a traced manner (with `jax.numpy`, optimized at run-time).
