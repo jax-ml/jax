@@ -296,7 +296,6 @@ py_library_providing_imports_info(
     srcs = [
         "_src/__init__.py",
         "_src/blocked_sampler.py",
-        "_src/dlpack.py",
         "_src/interpreters/__init__.py",
         "_src/prng.py",
         "_src/random.py",
@@ -372,6 +371,7 @@ py_library_providing_imports_info(
         ":custom_transpose",
         ":debugging",
         ":deprecations",
+        ":dlpack",
         ":dtypes",
         ":earray",
         ":effects",
@@ -896,6 +896,21 @@ pytype_strict_library(
 pytype_strict_library(
     name = "deprecations",
     srcs = ["_src/deprecations.py"],
+)
+
+pytype_strict_library(
+    name = "dlpack",
+    srcs = ["_src/dlpack.py"],
+    deps = [
+        ":api",
+        ":deprecations",
+        ":lax",
+        ":numpy",
+        ":sharding",
+        ":typing",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

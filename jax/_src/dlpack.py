@@ -16,13 +16,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from jax import numpy as jnp
 from jax._src import array
 from jax._src import deprecations
 from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
 from jax._src.lib import xla_client
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import scalar_types as jnp_types
 from jax._src.sharding import Sharding
 from jax._src.typing import Array, DLDeviceType, DTypeLike
 
@@ -40,12 +41,13 @@ MIN_DLPACK_VERSION = (0, 5)
 # hash(jnp.float32) == hash(jnp.dtype(jnp.float32).type)
 
 # TODO(vanderplas): remove this set
-SUPPORTED_DTYPES = frozenset({
-    jnp.int8, jnp.int16, jnp.int32, jnp.int64, jnp.uint8, jnp.uint16,
-    jnp.uint32, jnp.uint64, jnp.float16, jnp.bfloat16, jnp.float32,
-    jnp.float64, jnp.complex64, jnp.complex128, jnp.bool_})
+SUPPORTED_DTYPES: frozenset[DTypeLike] = frozenset({
+    jnp_types.int8, jnp_types.int16, jnp_types.int32, jnp_types.int64,
+    jnp_types.uint8, jnp_types.uint16, jnp_types.uint32, jnp_types.uint64,
+    jnp_types.float16, jnp_types.bfloat16, jnp_types.float32, jnp_types.float64,
+    jnp_types.complex64, jnp_types.complex128, jnp_types.bool_})
 
-SUPPORTED_DTYPES_SET = frozenset({np.dtype(dt) for dt in SUPPORTED_DTYPES})
+SUPPORTED_DTYPES_SET: frozenset[np.dtype] = frozenset({np.dtype(dt) for dt in SUPPORTED_DTYPES})
 
 
 def is_supported_dtype(dtype: DTypeLike) -> bool:
