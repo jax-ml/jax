@@ -44,7 +44,7 @@ class SourceInfoTest(jtu.JaxTestCase):
       fn_endline = fn_startline + len(lines)
       jaxpr = jax.make_jaxpr(fn)(2)
       for eqn in jaxpr.eqns:
-        frame = source_info_util.user_frame(eqn.source_info.traceback)
+        frame = source_info_util.user_frame(eqn.source_info)
         assert frame is not None, eqn
         self.assertLessEqual(fn_startline, frame.start_line)
         self.assertLessEqual(frame.end_line, fn_endline)

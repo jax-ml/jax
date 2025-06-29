@@ -400,12 +400,6 @@ class JaxprEqn:
   primitive: Primitive
   params: dict[str, Any]
   effects: Effects
-
-  # The source_info.name_stack is always relative to the enclosing jaxpr (only)
-  # and does not include any name context from the caller of the jaxpr. A jaxpr
-  # might have multiple callers, after all.
-  # TODO(phawkins): update source_info.tracebacks to also be relative to the
-  # enclosing jaxpr.
   source_info: source_info_util.SourceInfo
   ctx: JaxprEqnContext
 
@@ -3452,7 +3446,7 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
   rule = (_pp_eqn if not settings.custom_pp_eqn_rules else
           pp_eqn_rules.get(eqn.primitive, _pp_eqn))
   doc = rule(eqn, context, settings)
-  user_frame = source_info_util.user_frame(eqn.source_info.traceback)
+  user_frame = source_info_util.user_frame(eqn.source_info)
   return doc if user_frame is None else pp.source_map(doc, user_frame)
 
 def _pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings,

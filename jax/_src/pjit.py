@@ -2045,15 +2045,14 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
   if func is None:
     arg_shardings = [None if isinstance(i, UnspecifiedValue) else i for i in in_shardings]
     result_shardings = [None if isinstance(o, UnspecifiedValue) else o for o in out_shardings]
-    # TODO(b/228598865): non-top-level functions cannot have shardings set
-    # directly on the inputs or outputs because they are lost during MLIR->HLO
-    # conversion. using_sharding_annotation=False means we add an identity
-    # operation instead.
+    # TODO(b/228598865): inlined calls cannot have shardings set directly on the
+    # inputs or outputs because they are lost during MLIR->HLO conversion.
+    # using_sharding_annotation=False means we add an identity operation instead.
     num_callbacks = len(mod_ctx.host_callbacks)
     func = mlir.lower_jaxpr_to_fun(
-        mod_ctx, name, jaxpr, effects,
+        mod_ctx, name, jaxpr, effects, ctx.name_stack,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
-        use_sharding_annotations=False,
+        use_sharding_annotations=False, api_name=api_name,
         arg_layouts=in_layouts, result_layouts=out_layouts)
 
     # If this Jaxpr includes callbacks, we can't cache the lowering because
@@ -2081,14 +2080,9 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
   args = (*ctx.dim_var_values, *tokens_in, *args)
-  with mlir.source_info_to_location(
-      ctx.module_context, None,
-      ctx.name_stack.extend(util.wrap_name('jit', name)),
-      ctx.traceback
-  ):
-    call = func_dialect.CallOp(flat_output_types,
-                              ir.FlatSymbolRefAttr.get(func.name.value),
-                              mlir.flatten_ir_values(args))
+  call = func_dialect.CallOp(flat_output_types,
+                             ir.FlatSymbolRefAttr.get(func.name.value),
+                             mlir.flatten_ir_values(args))
   mlir.wrap_compute_type_in_place(ctx, call)
   out_nodes = mlir.unflatten_ir_values_like_types(call.results, output_types)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])

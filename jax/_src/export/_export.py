@@ -959,8 +959,7 @@ def _wrap_main_func(
           ))
       ctx = mlir.LoweringRuleContext(
         module_context=module_context,
-        name_stack=source_info_util.new_name_stack(), traceback=None,
-        primitive=None,
+        name_stack=source_info_util.new_name_stack(), primitive=None,
         avals_in=args_avals_flat, avals_out=None,
         tokens_in=mlir.TokenSet(), tokens_out=None)
       # We compute dim_values from the array arguments.

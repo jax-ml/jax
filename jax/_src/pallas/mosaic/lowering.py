@@ -1140,9 +1140,10 @@ def jaxpr_subcomp(
   current_name_stack.extend(initial_name_stack)
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
-    eqn_name_stack = ctx.name_stack + eqn.source_info.name_stack
-    loc = mlir.source_info_to_location(
-        ctx, eqn.primitive, eqn_name_stack, eqn.source_info.traceback)
+    source_info = eqn.source_info.replace(
+        name_stack=ctx.name_stack + eqn.source_info.name_stack
+    )
+    loc = mlir._source_info_to_location(ctx, eqn.primitive, source_info)
     with (source_info_util.user_context(eqn.source_info.traceback), loc,
           eqn.ctx.manager):
       if eqn.primitive in lowering_rules[ctx.kernel_type]:
@@ -1158,7 +1159,7 @@ def jaxpr_subcomp(
         )
 
         # Insert trace_start and trace_stop ops on named_scope boundaries.
-        name_stack = [scope.name for scope in eqn_name_stack.stack]
+        name_stack = [scope.name for scope in source_info.name_stack.stack]
         popped, pushed = _compute_name_stack_updates(
             current_name_stack, name_stack)
         current_name_stack = name_stack
@@ -1182,8 +1183,8 @@ def jaxpr_subcomp(
           new_error = LoweringException(msg)
           # We insert the traceback here so that the user code shows
           # up in the traceback for the post-transform error.
-          if eqn.source_info.traceback is not None:
-            tb = eqn.source_info.traceback.as_python_traceback()
+          if source_info.traceback is not None:
+            tb = source_info.traceback.as_python_traceback()
             new_error.__traceback__ = traceback_util.filter_traceback(tb)
           raise new_error from e
       else:
