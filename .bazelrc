@@ -218,6 +218,10 @@ build:rocm --action_env=TF_HIPCC_CLANG="1"
 build:public_cache --remote_cache="https://storage.googleapis.com/jax-bazel-cache/" --remote_upload_local_results=false
 # Cache pushes are limited to JAX's CI system.
 build:public_cache_push --config=public_cache --remote_upload_local_results=true --google_default_credentials
+# CI only bazel cache for presubmits
+build:ci_non_rbe_cache --remote_cache="https://storage.googleapis.com/jax-presubmit-bazel-cache/" 
+build:ci_non_rbe_cache --remote_upload_local_results=true
+build:ci_non_rbe_cache --google_default_credentials
 
 # Note: the following cache configs are deprecated and will be removed soon.
 # Public read-only cache for Mac builds. JAX uses a GCS bucket to store cache
