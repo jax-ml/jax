@@ -28,7 +28,7 @@ from jax._src import dtypes
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy.util import (
     check_arraylike, promote_dtypes, promote_dtypes_inexact,
-    promote_dtypes_complex)
+    promote_dtypes_complex, promote_args_inexact)
 from jax._src.tpu.linalg import qdwh
 from jax._src.typing import Array, ArrayLike
 
@@ -2306,7 +2306,7 @@ def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
     return Y_flat_final.reshape((m, n))
 
 
-@partial(jit, static_argnums=[3, 4])
+@partial(jit, static_argnames=["method", "tol"])
 def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, method: Literal["eigen", "schur"] = "schur", tol: float = 1e-8) -> Array:
     """
     Solves the Sylvester equation
