@@ -75,7 +75,25 @@ from jax._src.state.discharge import run_state as run_state
 from jax._src.state.indexing import ds as ds
 from jax._src.state.indexing import dslice as dslice
 from jax._src.state.indexing import Slice as Slice
-from jax._src.state.primitives import broadcast_to as broadcast_to
+from jax._src.state.primitives import broadcast_to as _broadcast_to
 
 
 ANY = MemorySpace.ANY
+
+
+import typing as _typing  # pylint: disable=g-import-not-at-top
+if _typing.TYPE_CHECKING:
+  broadcast_to = _broadcast_to
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+
+  _deprecations = {
+      # Deprecated on June 25th 2025.
+      "broadcast_to": (
+          "pl.broadcast_to is deprecated, use plgpu.broadcast_to instead.",
+          _broadcast_to,
+      ),
+  }
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing

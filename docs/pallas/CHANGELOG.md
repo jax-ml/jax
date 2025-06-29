@@ -13,6 +13,14 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Deprecations
+
+  * `jax.experimental.pallas.broadcast_to` has been moved to
+    {mod}`jax.experimental.pallas.triton`. Accessing it via
+    {mod}`jax.experimental.pallas` is deprecated.
+
+## Released with jax 0.6.2
+
 * New functionality
 
   * Added a new decorator {func}`jax.experimental.pallas.loop` which allows
