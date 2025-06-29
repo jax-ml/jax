@@ -11,8 +11,10 @@ Classes
 
    Barrier
    BlockSpec
+   ClusterBarrier
    CompilerParams
    MemorySpace
+   Mesh
    Layout
    SwizzleTransform
    TilingTransform
@@ -31,6 +33,8 @@ Functions
    copy_gmem_to_smem
    copy_smem_to_gmem
    emit_pipeline
+   emit_pipeline_warp_specialized
+   kernel
    layout_cast
    set_max_registers
    wait_smem_to_gmem
@@ -46,3 +50,4 @@ Aliases
    ACC
    GMEM
    SMEM
+   TMEM
