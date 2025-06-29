@@ -1208,11 +1208,26 @@ LogicalResult EnqueueDMAOp::verify() {
   if (target_sem_type.getRank() != 0) {
     return emitOpError("DMA target semaphore must be rank 0");
   }
+  auto source_ty = getMemRefType(getSource());
+  auto target_ty = getMemRefType(getTarget());
+  if (source_ty.getElementType() != target_ty.getElementType()) {
+    return emitOpError("DMA source and target element type mismatch");
+  }
+  uint64_t num_src_dynamic_dims = getNumDynamicDims(source_ty);
+  uint64_t num_tgt_dynamic_dims = getNumDynamicDims(target_ty);
+  if (num_src_dynamic_dims != num_tgt_dynamic_dims) {
+    const std::string plural = num_src_dynamic_dims == 1 ? "" : "s";
+    return emitOpError(
+               "DMA source and target must have the same number of dynamic "
+               "dimensions. Source has ")
+           << num_src_dynamic_dims << " dynamic dimension" << plural
+           << ", target has " << num_tgt_dynamic_dims;
+  }
   if (getDeviceId() || getCoreId()) {
     if (!getSourceSemaphore()) {
       return emitOpError(
-          "DMA source semaphore must be specified when "
-          "device_id or core_id is specified");
+          "DMA source semaphore must be specified when device_id or core_id is "
+          "specified");
     }
   }
   bool is_remote = getDeviceId() || getCoreId();

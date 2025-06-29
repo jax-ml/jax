@@ -380,4 +380,15 @@ SmallVector<Operation *> getNontrivialTransitiveUsers(Value v) {
   return users;
 }
 
+uint64_t getNumDynamicDims(MemRefType ty) {
+  CHECK(ty != nullptr);
+  uint64_t num_dynamic_dims = 0;
+  for (int64_t i = 0; i < ty.getRank(); ++i) {
+    if (ty.isDynamicDim(i)) {
+      ++num_dynamic_dims;
+    }
+  }
+  return num_dynamic_dims;
+}
+
 }  // namespace mlir::tpu

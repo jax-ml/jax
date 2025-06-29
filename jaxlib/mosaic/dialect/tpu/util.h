@@ -303,6 +303,8 @@ bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size);
 // results.
 SmallVector<Operation *> getNontrivialTransitiveUsers(Value v);
 
+// Returns the number of dynamic dimensions in the given memref type.
+uint64_t getNumDynamicDims(MemRefType ty);
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
