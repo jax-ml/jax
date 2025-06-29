@@ -171,7 +171,7 @@ def _check_dtypes_match(xs, ys):
       assert _dtype(x) == _dtype(y)
     else:
       assert (_dtypes.canonicalize_dtype(_dtype(x)) ==
-              _dtypes.canonicalize_dtype(_dtype(y)))
+              _dtypes.canonicalize_dtype(_dtype(y))), breakpoint()
   tree_map(_assert_dtypes_match, xs, ys)
 
 
