@@ -5756,6 +5756,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ('split_6_error', (4, 8, 9), (4, 2, 2, 3, 3, 2),
        P('x', None, None), None, 'This reshape is not supported'
       ),
+      ('split_7', (10, 1), (2, 5, 1), P('x', None), P('x', None, None), ''),
+      ('split_8', (10, 1), (2, 5, 1, 1), P('x', None),
+       P('x', None, None, None), ''),
+      ('split_9', (10, 1, 1), (2, 5, 1, 1), P('x', None, None),
+       P('x', None, None, None), ''),
+      ('split_10', (1, 10), (1, 2, 5), P(None, 'x'), P(None, 'x', None), ''),
       ('merge_1', (4, 2, 3, 8), (4, 6, 8),
        P('x', None, None, 'y'), P('x', None, 'y'), ''
       ),
@@ -5781,6 +5787,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ('merge_6_error', (4, 2, 3, 8), (4, 8, 6),
        P(None, 'y', None, 'x'), None, 'This reshape is not supported'
       ),
+      ('merge_7', (2, 5, 1), (10, 1), P('x', None, None), P('x', None), ''),
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshape_split_merge_one_axis(self, src_shape, dst_shape, src_spec,

@@ -7055,6 +7055,14 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions, sharding):
 def _split_on_one_axis(op_shape, new_sizes, name):
   if len(new_sizes) <= len(op_shape):
     return False, []
+  orig_op_shape, orig_new_sizes = op_shape, new_sizes
+
+  num_1s = 0
+  while op_shape[-1] == 1 and new_sizes[-1] == 1:
+    num_1s += 1
+    op_shape = op_shape[:-1]
+    new_sizes = new_sizes[:-1]
+
   i, j, count, out = 0, 0, 0, []
   while j < len(new_sizes):
     if op_shape[i] == new_sizes[j]:
@@ -7063,9 +7071,10 @@ def _split_on_one_axis(op_shape, new_sizes, name):
       count += 1
       if count > 1:
         raise core.ShardingTypeError(
-            f'{name} on more than 1 axis is not supported. Please specify'
-            ' the sharding of the output via the `sharding` argument of'
-            f' jax.lax.reshape. Got operand.shape={op_shape} and {new_sizes=}')
+            f'{name} on more than 1 axis is not supported. Please specify the'
+            ' sharding of the output via the `sharding` argument of'
+            f' jax.lax.reshape. Got operand.shape={orig_op_shape} and'
+            f' {orig_new_sizes=}')
       temp = [new_sizes[j]]
       next_j = j + 1
       while (math.prod(temp) != op_shape[i] or
@@ -7080,7 +7089,9 @@ def _split_on_one_axis(op_shape, new_sizes, name):
       out.append(temp)
     i += 1
     j += 1
-  assert len(op_shape) == len(out)
+  out.extend([1] * num_1s)
+
+  assert len(orig_op_shape) == len(out)
   return True, out
 
 
