@@ -1975,6 +1975,38 @@ class PallasCallTest(PallasTest):
     expected = jnp.broadcast_to(expected, (128, 128))
     np.testing.assert_array_equal(x_result, expected)
 
+  @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
+  def test_copy_layout(self, layout):
+    self.skip_if_wg_semantics()
+    if layout in {plgpu.Layout.WG_SPLAT, plgpu.Layout.WGMMA_TRANSPOSED}:
+      self.skipTest("Not the right layout for this test")
+
+    shape = (128, 128)
+    transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
+    if layout == plgpu.Layout.TCGEN05_M64_COLLECTIVE:
+      layout = plgpu.Layout.TCGEN05_M64_COLLECTIVE(128)
+    if layout == plgpu.Layout.WG_STRIDED:
+      layout = plgpu.Layout.WG_STRIDED((128, 128), 2)
+      transforms = ()
+    # TODO(apaszke): This should not be necessary, but the test fails otherwise!
+    # I suspect it has to deal with the fact that the tiling is 1D, but we use
+    # a 2D shape by default.
+    if layout == plgpu.Layout.WGMMA_ROW:
+      shape = (128,)
+      transforms = ()
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        in_specs=[plgpu.BlockSpec(transforms=transforms)],
+        out_specs=plgpu.BlockSpec(transforms=transforms),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = plgpu.load(x_ref, (), layout=layout)
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x)
+
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):

@@ -2600,7 +2600,7 @@ class FragmentedArray:
         dim_strides = utils.get_contiguous_strides(dim_shape)
         for i, (size, stride) in enumerate(zip(dim_shape, dim_strides)):
           new_idx = arith.divui(idx, c(stride))
-          if i != len(dim_shape) - 1:  # No need to apply this to last dim.
+          if i != 0:  # No need to apply rem to the first dim.
             new_idx = arith.remui(new_idx, c(size))
           new_idxs.append(new_idx)
       assert len(new_idxs) == sum(map(len, tiled_nested_shape[-layout.tiled_tiling_rank :]))
