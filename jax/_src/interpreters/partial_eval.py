@@ -22,8 +22,9 @@ from dataclasses import dataclass
 from functools import partial
 import itertools as it
 import operator as op
+import threading
 from typing import Any, NamedTuple, Union
-from weakref import ref
+from weakref import ref, WeakValueDictionary
 
 from jax._src import ad_util
 from jax._src import api_util
@@ -1566,13 +1567,18 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
   return used_inputs, new_eqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
-# TODO(necula): this cache is not really working as a weakref cache: the key
-# is a weakref, but it points to a value that has a strong ref to the same
-# jaxpr. So, we have a cycle with a strong ref, and these keys are never
-# collected.
-@weakref_lru_cache
+# We are not using a weakref_lru_cache here, we need something with
+# weakrefs to values. See https://github.com/jax-ml/jax/issues/29803
+class _CloseJaxprMemoTable(threading.local):
+  def __init__(self):
+    self.table = WeakValueDictionary()
+
+_close_jaxpr_memo_table = _CloseJaxprMemoTable()
 def close_jaxpr(jaxpr: Jaxpr) -> ClosedJaxpr:
-  return ClosedJaxpr(jaxpr, ())
+  return _close_jaxpr_memo_table.table.setdefault(jaxpr, ClosedJaxpr(jaxpr, ()))
+
+close_jaxpr.cache_clear = _close_jaxpr_memo_table.table.clear
+close_jaxpr.cache_keys = lambda : list(_close_jaxpr_memo_table.table.keys())
 
 def move_invars_right(jaxpr: ClosedJaxpr, to_move: Sequence[bool]):
   return _move_invars_right(jaxpr, tuple(to_move))

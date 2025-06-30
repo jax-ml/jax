@@ -3161,7 +3161,7 @@ def clear_caches():
   # (used for staging and Python-dispatch compiled executable caches).
   util.clear_all_caches()
   util.clear_all_weakref_lru_caches()
-
+  pe.close_jaxpr.cache_clear()
   # Clear all C++ compiled executable caches for pjit
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
