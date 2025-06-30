@@ -2519,8 +2519,10 @@ class FragmentedArray:
     tiles_shape = list(tiled_nested_shape)
     tiles_strides = list(tiled_nested_strides)
     for d in (*layout.partitioned_warp_dims, *layout.partitioned_lane_dims, layout.vector_dim):
-      tiles_shape[d] = (1,)
-      tiles_strides[d] = (0,)
+      # We could avoid repeating the singleton dimensions, but it simplifies the
+      # code below that computes the register index for a given tile.
+      tiles_shape[d] = (1,) * len(tiles_shape[d])
+      tiles_strides[d] = (0,) * len(tiles_strides[d])
     tiles_shape = list(itertools.chain.from_iterable(tiles_shape))
     tiles_strides = list(itertools.chain.from_iterable(tiles_strides))
     warp_shape = list(itertools.chain.from_iterable(

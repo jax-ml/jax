@@ -1988,12 +1988,6 @@ class PallasCallTest(PallasTest):
     if layout == plgpu.Layout.WG_STRIDED:
       layout = plgpu.Layout.WG_STRIDED((128, 128), 2)
       transforms = ()
-    # TODO(apaszke): This should not be necessary, but the test fails otherwise!
-    # I suspect it has to deal with the fact that the tiling is 1D, but we use
-    # a 2D shape by default.
-    if layout == plgpu.Layout.WGMMA_ROW:
-      shape = (128,)
-      transforms = ()
 
     @functools.partial(
         self.pallas_call,
