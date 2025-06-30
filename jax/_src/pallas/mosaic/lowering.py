@@ -369,7 +369,7 @@ def _get_arg_type(
     block_mapping: pallas_core.BlockMapping | None,
 ):
   memory_space = None
-  if isinstance(aval, pallas_core.AbstractMemoryRef):
+  if isinstance(aval, state.AbstractRef):
     memory_space = _memory_space_to_tpu_memory_space(aval.memory_space)
     # We assume unannotated memory refs are in VMEM
     if memory_space is None:
@@ -3488,7 +3488,7 @@ def _bitcast_convert_type_lowering_rule(
 def _alloc_value(
     aval: jax_core.AbstractValue, *, ctx: LoweringRuleContext
 ) -> ir.Value:
-  if isinstance(aval, pallas_core.AbstractMemoryRef):
+  if isinstance(aval, state.AbstractRef):
     memspace = _memory_space_to_mosaic_attribute(aval.memory_space)
     if jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
       assert aval.memory_space == TPUMemorySpace.SEMAPHORE

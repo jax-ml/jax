@@ -129,6 +129,7 @@ pytype_strict_library(
         "//jax:mosaic_gpu",
         "//jax:pallas",
         "//jax:partial_eval",
+        "//jax:state_types",
         "//jax:util",
         "//jax/_src/pallas",
     ],
