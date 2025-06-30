@@ -3630,8 +3630,9 @@ def _dma_start_lowering_rule(
       src_sem,
       src_sem_transforms,
       device_id,
+      core_id,
   ) = tree_util.tree_unflatten(tree, args)
-  (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, _) = (
+  src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, _, _ = (
       tree_util.tree_unflatten(tree, ctx.avals_in)
   )
   if src_ref_aval.dtype == jnp.bool_:
@@ -3660,6 +3661,7 @@ def _dma_start_lowering_rule(
       sem,
       source_semaphore=src_sem,
       device_id=device_id,
+      core_id=core_id,
       **priority_kwarg,
   )
   return []
@@ -3678,9 +3680,10 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
       _,
       _,
       device_id,
+      core_id,
   ) = tree_util.tree_unflatten(tree, args)
-  (src_aval, _, dst_aval, _, sem_aval, _, _, _, _) = tree_util.tree_unflatten(
-      tree, ctx.avals_in
+  (src_aval, _, dst_aval, _, sem_aval, _, _, _, _, _) = (
+      tree_util.tree_unflatten(tree, ctx.avals_in)
   )
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   ref_block_shape = block_shapes[2]
@@ -3694,7 +3697,7 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 7, 27):
     tpu.wait_dma2(sem, src, dst)
   else:
-    tpu.wait_dma2(sem, src, dst, device_id=device_id)
+    tpu.wait_dma2(sem, src, dst, device_id=device_id, core_id=core_id)
   return []
 
 
