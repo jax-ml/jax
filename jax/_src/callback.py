@@ -768,8 +768,8 @@ def emit_python_callback(
         f"`EmitPythonCallback` not supported on {platform} backend.")
   if partitioned:
     if platform not in {"cpu", "cuda", "rocm"}:
-      raise ValueError(
-          f"Partitioned callback not supported on {platform} backend.")
+      raise NotImplementedError(
+          f"Partitioned callback not implemented on {platform} backend.")
     if result_avals:
       raise ValueError("Partitioned callback not supported with return values.")
   backend = ctx.module_context.get_backend()
