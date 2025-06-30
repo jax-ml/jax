@@ -534,6 +534,123 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
 
+# TODO(dfm): Reuse some of the logic from remat_partial_eval directly.
+def remat_lin(nzs, *primals_in, jaxpr, prevent_cse, differentiated, policy):
+  del differentiated  # unused
+  assert not jaxpr.constvars
+  disallowed_effects = effects.remat_allowed_effects.filter_not_in(jaxpr.effects)
+  if disallowed_effects:
+    raise NotImplementedError(
+        'Effects not supported in partial-eval of `checkpoint`/`remat`: '
+        f'{disallowed_effects}')
+  closed_jaxpr = pe.close_jaxpr(jaxpr)
+  primal_jaxpr, num_residuals, nzs_out, tangent_jaxpr = ad.linearize_jaxpr(
+      closed_jaxpr, nzs)
+  num_primal_in, num_tangent_in = len(nzs), sum(nzs)
+  num_primal_out, num_tangent_out = len(nzs_out), sum(nzs_out)
+
+  # The following code is a bit silly, but it lets us reuse the existing remat
+  # partial eval infrastructure to re-write the linearized jaxpr properly.
+  # First, we zip together the primal and tangent jaxprs to get the full
+  # end-to-end computation. Before this zipping, we have:
+  #   primal_jaxpr: primals_in -> (*residuals, *primals_out)
+  #   tangent_jaxpr: (*residuals, *nz_tangents_in) -> nz_tangents_out
+  # We combine these to get:
+  #   zipped_jaxpr: (*primals_in, *nz_tangents_in) -> (*primals_out, *nz_tangents_out)
+  # which looks a heck of a lot like a JVP, but the important point is that we
+  # constructed this using linearization rules instead of JVPs.
+  all_consts = [*primal_jaxpr.consts, *tangent_jaxpr.consts]
+  primal_jaxpr_ = primal_jaxpr.jaxpr
+  tangent_jaxpr_ = tangent_jaxpr.jaxpr
+  tangent_invars, tangent_resvars = split_list(tangent_jaxpr_.invars, [num_tangent_in])
+  primal_resvars, primal_outvars = split_list(primal_jaxpr_.outvars, [num_residuals])
+  new_vars = dict(zip(tangent_resvars, primal_resvars))
+  def replace(a: core.Atom) -> core.Atom:
+    return a if isinstance(a, core.Literal) else new_vars.get(a, a)
+  new_eqns = list(primal_jaxpr_.eqns)
+  for eqn in tangent_jaxpr_.eqns:
+    new_eqns.append(eqn.replace(invars=[replace(v) for v in eqn.invars]))
+  constvars = [*primal_jaxpr_.constvars, *tangent_jaxpr_.constvars]
+  invars = [*primal_jaxpr_.invars, *tangent_invars]
+  outvars = [*primal_outvars, *(replace(v) for v in tangent_jaxpr_.outvars)]
+  eff = pe.make_jaxpr_effects(constvars, invars, outvars, new_eqns)
+  dbg = jaxpr.debug_info
+  zipped_jaxpr = core.Jaxpr(constvars, invars, outvars, new_eqns, eff, dbg)
+
+  # Unzip this freshly zipped jaxpr based on the policy.
+  in_unknowns = [False] * num_primal_in + [True] * num_tangent_in
+  out_unknowns = [False] * num_primal_out + [True] * num_tangent_out
+  jaxpr_known, jaxpr_staged, out_unknowns, _, num_res = \
+      pe.partial_eval_jaxpr_custom(
+          zipped_jaxpr, in_unknowns, [True] * len(in_unknowns), out_unknowns,
+          True, policy or nothing_saveable)
+  assert not any(split_list(out_unknowns, [num_primal_out])[0])
+
+  # DCE jaxpr_staged, keeping only the tangent outputs
+  used_out_staged = [False] * num_primal_out + [True] * num_tangent_out
+  jaxpr_unknown, in_used_staged = pe.dce_jaxpr(jaxpr_staged, used_out_staged)
+  used_res, in_used_staged = split_list(in_used_staged, [num_res])
+  primals_used_staged, tangents_used_staged = split_list(in_used_staged, [num_primal_in])
+
+  # DCE jaxpr_known, keeping all primal outputs but discarding any unused
+  # residuals.
+  out_used_known = [True] * num_primal_out + used_res
+  jaxpr_known, in_used_known = pe.dce_jaxpr(jaxpr_known, out_used_known)
+  num_res = sum(used_res)
+
+  # To avoid precision mismatches in fwd and bwd passes due to XLA excess
+  # precision, insert explicit x = reduce_precision(x, **finfo(x.dtype)) calls
+  # on producers of any residuals. See https://github.com/jax-ml/jax/pull/22244.
+  jaxpr_known_ = _insert_reduce_precision(jaxpr_known, num_res)
+
+  # Evaluate the output primals and residuals.
+  _, primals_in_ = partition_list(in_used_known, primals_in)
+  primals_and_res_out = core.eval_jaxpr(jaxpr_known_, all_consts, *primals_in_)
+  primals_out, residuals = split_list(primals_and_res_out, [len(primals_and_res_out) - num_res])
+
+  # Work out which input primals are required for the tangent computation, and
+  # therefore should be included as residuals.
+  _, primals_in_staged = partition_list(primals_used_staged, primals_in)
+  all_residuals = [*residuals, *primals_in_staged]
+
+  # log info about saved residuals
+  log_level = logging.WARNING if config.log_checkpoint_residuals.value else logging.DEBUG
+  if logger.isEnabledFor(log_level):
+    try:
+      _, staged_unk = partition_list(in_used_staged, in_unknowns)
+      res_invars, _ = partition_list(staged_unk, jaxpr_unknown.invars[num_res:])
+      res_outvars = jaxpr_known.outvars[len(jaxpr_known.outvars) - num_res:]
+      body_res = _saved_residuals(jaxpr_known.replace(outvars=res_outvars),
+                                  ("",) * len(jaxpr_known.invars))
+      logger.log(log_level,
+                'remat-decorated function ' +
+                'saving inputs with shapes:\n' * bool(res_invars) +
+                '  %s\n' * len(res_invars) +
+                'and ' * bool(res_invars) * bool(body_res) +
+                'saving these intermediates:\n' * bool(body_res) +
+                '  %s from %s\n' * len(body_res),
+                *[v.aval.str_short() for v in res_invars],
+                *[elt for (a, s) in body_res for elt in [a.str_short(), s]])
+    except:
+      pass  # just don't log anything on failure
+
+  def tangent_fun(res, *tangents):
+    nz_tangents_in = [t for nz, t in zip(nzs, tangents) if nz]
+    _, nz_tangents_in = partition_list(tangents_used_staged, nz_tangents_in)
+    nz_tangents_out = remat_p.bind(
+        *all_consts, *res, *nz_tangents_in,
+        jaxpr=pe.convert_constvars_jaxpr(jaxpr_unknown),
+        prevent_cse=prevent_cse, differentiated=True, policy=policy)
+    tangent_avals_out = [v.aval.to_tangent_aval() for v in jaxpr.outvars]
+    nz_tangents_out_ = iter(nz_tangents_out)
+    tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
+                   for (aval, nz) in zip(tangent_avals_out, nzs_out)]
+    return tangents_out
+
+  return primals_out, nzs_out, all_residuals, tangent_fun
+ad.primitive_linearizations[remat_p] = remat_lin
+
+
 effects.remat_allowed_effects.add_type(lax_internal.InOutFeedEffect)
 
 def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
