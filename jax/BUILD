@@ -299,7 +299,6 @@ py_library_providing_imports_info(
     ] + glob(
         [
             "*.py",
-            "_src/debugger/**/*.py",
             "_src/image/**/*.py",
             "_src/nn/**/*.py",
             "_src/scipy/**/*.py",
@@ -367,6 +366,7 @@ py_library_providing_imports_info(
         ":custom_partitioning",
         ":custom_partitioning_sharding_rule",
         ":custom_transpose",
+        ":debugger",
         ":debugging",
         ":deprecations",
         ":dlpack",
@@ -871,6 +871,20 @@ pytype_strict_library(
         ":tree_util",
         ":util",
         ":xla",
+    ],
+)
+
+pytype_strict_library(
+    name = "debugger",
+    srcs = glob(["_src/debugger/**/*.py"]),
+    deps = [
+        ":callback",
+        ":core",
+        ":debugging",
+        ":lax",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
     ],
 )
 
