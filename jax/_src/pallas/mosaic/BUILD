@@ -140,6 +140,7 @@ py_library(
     deps = [
         ":primitives",
         "//jax",
+        "//jax:blocked_sampler",
         "//jax:typing",
     ] + py_deps("numpy"),
 )

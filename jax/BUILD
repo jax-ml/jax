@@ -295,7 +295,6 @@ py_library_providing_imports_info(
     name = "jax",
     srcs = [
         "_src/__init__.py",
-        "_src/blocked_sampler.py",
         "_src/interpreters/__init__.py",
     ] + glob(
         [
@@ -350,6 +349,7 @@ py_library_providing_imports_info(
         ":api_util",
         ":basearray",
         ":batching",
+        ":blocked_sampler",
         ":buffer_callback",
         ":callback",
         ":checkify",
@@ -515,6 +515,16 @@ pytype_strict_library(
         ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "blocked_sampler",
+    srcs = ["_src/blocked_sampler.py"],
+    deps = [
+        ":numpy",
+        ":random",
+        ":typing",
+    ],
 )
 
 pytype_strict_library(
