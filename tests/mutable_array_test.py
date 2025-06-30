@@ -689,6 +689,15 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(Exception, "unbatched mutable array"):
       jax.vmap(f)(vals)
 
+  def test_vmap_aliased_arguments(self):
+    def f(ref_1, ref_2):
+      pass
+
+    x_ref = core.mutable_array(jnp.zeros((3, 3)))
+    with self.assertRaisesRegex(
+        ValueError,
+        "only one reference to a mutable array may be passed as an argument"):
+      jax.vmap(f)(x_ref, x_ref)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
