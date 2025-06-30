@@ -1766,8 +1766,8 @@ def logistic(key: ArrayLike,
 @partial(jit, static_argnums=(1, 2))
 def _logistic(key, shape, dtype):
   _check_shape("logistic", shape)
-  x = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).eps, maxval=1.)
-  return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
+  x = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).tiny, maxval=1.)
+  return lax.sub(lax.log(x), lax.log1p(lax.neg(x)))
 
 
 def pareto(key: ArrayLike,
