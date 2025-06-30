@@ -3000,9 +3000,9 @@ class MiscellaneousTest(PallasBaseTest):
           kernel, out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32)
       )(x)
 
-  @only_passes_in_interpret()
   def test_retiling1(self):
-    """b/352626602"""
+    if not jtu.if_cloud_tpu_at_least(2025, 6, 30):
+      self.skipTest('Needs a newer libtpu')
     x = np.arange(1024, dtype=jnp.bfloat16).reshape(1024)
 
     def kernel(x_ref, out_ref):

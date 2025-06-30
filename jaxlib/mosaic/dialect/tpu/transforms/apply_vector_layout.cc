@@ -244,6 +244,21 @@ FailureOr<SmallVector<int64_t>> expectIntConstsFromOperandRange(
   return res;
 }
 
+LayoutOffsets alignedToVregSlice(const LayoutOffsets offsets,
+                                 const std::array<int64_t, 2> target_shape,
+                                 const int bitwidth,
+                                 const std::array<int64_t, 2> tiling) {
+  const std::array<int64_t, 2> vreg_slice =
+      VectorLayout::vregSlice(target_shape, bitwidth, tiling);
+  LayoutOffsets aligned_offsets;
+  for (int i : {0, 1}) {
+    if (offsets[i]) {
+      aligned_offsets[i] = *offsets[i] % vreg_slice[i];
+    }
+  }
+  return aligned_offsets;
+}
+
 Value broadcastSublane(OpBuilder &builder, Value vreg, int sublane_idx,
                        const std::array<int64_t, 2> target_shape) {
   return builder.create<tpu::GatherOp>(
@@ -7176,15 +7191,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
                           const xla::Array<Value> &packed_vregs,
                           const std::array<int64_t, 2> unpacked_tiling)
       -> FailureOr<std::pair<VectorLayout, xla::Array<Value>>> {
-    const std::array<int64_t, 2> unpacked_vreg_slice =
-        VectorLayout::vregSlice(ctx.target_shape, 32, unpacked_tiling);
-    LayoutOffsets unpacked_offsets;
-    for (int i : {0, 1}) {
-      if (packed_layout.offsets()[i]) {
-        unpacked_offsets[i] =
-            *packed_layout.offsets()[i] % unpacked_vreg_slice[i];
-      }
-    }
+    LayoutOffsets unpacked_offsets = alignedToVregSlice(
+        packed_layout.offsets(), ctx.target_shape, 32, unpacked_tiling);
     const VectorLayout unpacked_layout(32, unpacked_offsets, unpacked_tiling,
                                        packed_layout.implicit_dim());
     FAILUREOR_ASSIGN_OR_RETURN(
@@ -7305,9 +7313,6 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   }
   // Handle retiling from/to (1, 128 * packing) to/from (packing, 128) for
   // packed data.
-  // TODO(tlongeri): This can be used as a first step before using
-  // a generalized retiling where we only move sublanes around
-  // (without packing/unpacking).
   // TODO(tlongeri): Interleaved unpacking followed by interleaved
   // packing (but with different pairings) might also be
   // interesting if the next step is a retile, since we can also
@@ -7325,6 +7330,25 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
         std::tie(src, vregs),
         unpack_vregs(src, vregs, {1, ctx.target_shape[1]}));
     return pack_vregs(src, vregs, dst_tiling, dst_offsets_hint);
+  }
+  if (bitwidth < 32 && 32 % bitwidth == 0 &&
+      ((src.tiling() ==
+            std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
+        dst_tiling[0] % packing == 0 && dst_tiling[1] == ctx.target_shape[1]) ||
+       (dst_tiling ==
+            std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
+        src.tiling()[0] % packing == 0 &&
+        src.tiling()[1] == ctx.target_shape[1]))) {
+    const std::array<int64_t, 2> intermediate_tiling = {packing,
+                                                        ctx.target_shape[1]};
+    const LayoutOffsets intermediate_offsets_hint = alignedToVregSlice(
+        dst_offsets_hint, ctx.target_shape, bitwidth, intermediate_tiling);
+    FAILUREOR_ASSIGN_OR_RETURN(
+        std::tie(src, vregs),
+        changeTiling(ctx, builder, loc, vty, src, vregs, intermediate_tiling,
+                     intermediate_offsets_hint));
+    return changeTiling(ctx, builder, loc, vty, src, vregs, dst_tiling,
+                        dst_offsets_hint);
   }
   if (src.tiling()[1] == target_shape[1] && dst_tiling[1] == target_shape[1]) {
     // All clauses in the and expression are based on performance benchmarking.
