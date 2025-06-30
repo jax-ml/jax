@@ -504,6 +504,18 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_grad_jit_readonly(self):
+    @jax.jit
+    def f(x):
+      x_ref = core.mutable_array(x)
+
+      def inner():
+        return jnp.sin(x_ref[...])
+
+      return inner()
+
+    jtu.check_grads(f, (1.5,), 2, ['fwd', 'rev'])
+
+  def test_grad_jit_readonly2(self):
     def f(x):
       x_ref = core.mutable_array(x)
 
