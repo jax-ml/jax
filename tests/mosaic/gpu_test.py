@@ -20,8 +20,8 @@ import enum
 import itertools
 import math
 import operator
-import sys
 import re
+import sys
 import unittest
 
 from absl.testing import absltest, parameterized
@@ -2595,6 +2595,29 @@ class FragmentedArrayTest(TestCase):
   )
   def test_layout_reduction_definition(self, layout, expected_reduced_layout, axis):
     self.assertEqual(layout.reduce((axis,)), expected_reduced_layout)
+
+  def test_layout_reduction_handles_tiles_with_three_different_ranks(self):
+    layout = fa.TiledLayout(
+        tiling=fa.Tiling(tiles=((1, 2, 64), (2, 16), (8,), (4,), (2,), (1,))),
+        warp_dims=(-7,),
+        lane_dims=(-6, -5, -4, -3, -2),
+        vector_dim=-1,
+    )
+    self.assertEqual(
+        layout.reduce((2,)),
+        fa.TiledLayout(
+            tiling=fa.Tiling(tiles=((1, 2), (1,))),
+            warp_dims=(fa.Replicated(times=4),),
+            lane_dims=(
+                -2,
+                fa.Replicated(times=2),
+                fa.Replicated(times=2),
+                fa.Replicated(times=2),
+                fa.Replicated(times=2),
+            ),
+            vector_dim=-1,
+        ),
+    )
 
   @parameterized.product(
       op=(arith.addf, arith.maximumf),

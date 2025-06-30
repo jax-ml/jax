@@ -175,6 +175,7 @@ class Tiling:
     for t in self.tiles:
       assert last_tile_rank >= len(t)
       dim_in_tile -= last_tile_rank - len(t)
+      last_tile_rank = len(t)
       if dim_in_tile >= 0:
         t = t[:dim_in_tile] + t[dim_in_tile + 1:]
       if not t:  # If this tile is empty, all other tiles will be empty too.
