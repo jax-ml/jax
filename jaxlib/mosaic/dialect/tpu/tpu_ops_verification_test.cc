@@ -26,6 +26,7 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
@@ -275,6 +276,39 @@ TEST_F(TpuOpsVerificationTest,
       StatusIs(
           _, HasSubstr(
                  "Expected mask shape to be broadcastable to result shape.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaElementTypeMismatch) {
+  auto dma = Create<EnqueueDMAOp>(
+      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+      /*source_semaphore=*/AllocaSemaphore(),
+      /*target=*/
+      Create<memref::AllocaOp>(GetMemRefType({1024, 256, 128},
+                                             builder().getI64Type(),
+                                             MemorySpace::kHbm))
+          .getMemref(),
+      /*target_semaphore=*/AllocaSemaphore(),
+      /*device_id=*/nullptr,
+      /*core_id=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_, HasSubstr("DMA source and target element type mismatch")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaDynamicRankMismatch) {
+  auto dma = Create<EnqueueDMAOp>(
+      /*source=*/AllocaI32({ShapedType::kDynamic, 256, 128}, MemorySpace::kHbm),
+      /*source_semaphore=*/AllocaSemaphore(),
+      /*target=*/
+      AllocaI32({ShapedType::kDynamic, ShapedType::kDynamic, 128},
+                MemorySpace::kHbm),
+      /*target_semaphore=*/AllocaSemaphore(),
+      /*device_id=*/nullptr,
+      /*core_id=*/nullptr);
+
+  ASSERT_THAT(VerifyOp(dma),
+              StatusIs(_, HasSubstr("DMA source and target shape mismatch.")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
