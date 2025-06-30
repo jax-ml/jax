@@ -502,7 +502,10 @@ class BlockSpec:
   ) -> BlockMapping:
     if self.index_map is None:
       index_map_func = default_index_map(len(array_aval.shape))
-      api_util.save_wrapped_fun_sourceinfo(index_map_func, default_index_map)
+      index_map_dbg = api_util.debug_info("pallas_call index_map",
+                                          default_index_map, (),{}
+                                          )._replace(arg_names=("",) * len(index_map_avals))
+      api_util.save_wrapped_fun_debug_info(index_map_func, index_map_dbg)
     else:
       index_map_func = self.index_map
     if self.block_shape is None:
