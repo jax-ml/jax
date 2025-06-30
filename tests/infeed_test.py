@@ -20,6 +20,7 @@ from absl.testing import absltest
 import jax
 from jax import lax, numpy as jnp
 from jax._src import core
+from jax._src import lax as lax_internal
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 import jax._src.test_util as jtu
@@ -45,10 +46,10 @@ class InfeedTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       token = lax.create_token(x)
-      (y,), token = lax.infeed(
+      (y,), token = lax_internal.lax.infeed(
           token, shape=(core.ShapedArray((3, 4), jnp.float32),)
       )
-      (z,), _ = lax.infeed(
+      (z,), _ = lax_internal.lax.infeed(
           token, shape=(core.ShapedArray((3, 1, 1), jnp.float32),)
       )
       return x + y + z
@@ -77,7 +78,7 @@ class InfeedTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       token = lax.create_token(x)
-      res, token = lax.infeed(token, shape=to_infeed_shape)
+      res, token = lax_internal.lax.infeed(token, shape=to_infeed_shape)
       return res
 
     device = jax.local_devices()[0]
@@ -97,8 +98,8 @@ class InfeedTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       token = lax.create_token(x)
-      y, token = lax.infeed(token, shape=core.ShapedArray((3, 4), jnp.float32))
-      token = lax.outfeed(token, y + np.float32(1))
+      y, token = lax_internal.lax.infeed(token, shape=core.ShapedArray((3, 4), jnp.float32))
+      token = lax_internal.lax.outfeed(token, y + np.float32(1))
       return x - 1
 
     x = np.float32(7.5)
@@ -121,8 +122,8 @@ class InfeedTest(jtu.JaxTestCase):
   def testInfeedThenOutfeedInALoop(self):
 
     def doubler(_, token):
-      y, token = lax.infeed(token, shape=core.ShapedArray((3, 4), jnp.float32))
-      return lax.outfeed(token, y * np.float32(2))
+      y, token = lax_internal.lax.infeed(token, shape=core.ShapedArray((3, 4), jnp.float32))
+      return lax_internal.lax.outfeed(token, y * np.float32(2))
 
     @jax.jit
     def f(n):
