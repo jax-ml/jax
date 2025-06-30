@@ -2475,8 +2475,11 @@ def _batch_and_remainder(x, batch_size: int):
     return x, None
   num_batches, remainder = divmod(leaves[0].shape[0], batch_size)
   batch_elems = num_batches * batch_size
-  if remainder:
-    scan_leaves, remainder_leaves = unzip2(
+  if num_batches == 0:
+    remainder_leaves = [_remainder_leaf(leaf, batch_elems) for leaf in leaves]
+    return None, treedef.unflatten(remainder_leaves)
+  elif remainder:
+    scan_leaves, remainder_leaves = unzip2(  # type: ignore
         [(_scan_leaf(leaf, batch_elems, num_batches, batch_size),
           _remainder_leaf(leaf, batch_elems)) for leaf in leaves])
     return treedef.unflatten(scan_leaves), treedef.unflatten(remainder_leaves)
@@ -2537,9 +2540,15 @@ def map(f, xs, *, batch_size: int | None = None):
   if batch_size is not None:
     scan_xs, remainder_xs = _batch_and_remainder(xs, batch_size)
     g = lambda _, x: ((), api.vmap(f)(x))
-    _, scan_ys = scan(g, (), scan_xs)
+    if scan_xs is not None:
+      _, scan_ys = scan(g, (), scan_xs)
+    else:
+      scan_ys = None
+
     flatten = lambda x: x.reshape(-1, *x.shape[2:])
-    if remainder_xs is not None:
+    if scan_ys is None:
+      ys = api.vmap(f)(remainder_xs)
+    elif remainder_xs is not None:
       remainder_ys = api.vmap(f)(remainder_xs)
       ys = tree_map(
         lambda x, y: lax.concatenate([flatten(x), y], dimension=0), scan_ys,
