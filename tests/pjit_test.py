@@ -8208,6 +8208,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     f(x, y)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_scatter_jit_invariant(self, mesh):
+    def f():
+      a = jnp.zeros((10,10))
+      val = jnp.ones((5,5))
+      b = a.at[::2,::2].set(val)
+      return b
+
+    f()
+    jax.jit(f)()
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
