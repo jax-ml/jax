@@ -65,8 +65,8 @@ jobs:
           persist-credentials: false
       - name: Set env vars for use in artifact download URL
         run: |
-          os=$(uname -s | awk '{print tolower($0)}')
-          arch=$(uname -m)
+          os="$(uname -s | awk '{print tolower($0)}')"
+          arch="$(uname -m)"
 
           # Adjust os and arch for Windows
           if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
@@ -77,14 +77,14 @@ jobs:
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
-          python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
+          python_major_minor="$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')"
 
-          echo "OS=${os}" >> $GITHUB_ENV
-          echo "ARCH=${arch}" >> $GITHUB_ENV
+          echo "OS=${os}" >> "$GITHUB_ENV"
+          echo "ARCH=${arch}" >> "$GITHUB_ENV"
           # Python wheels follow a naming convention: standard wheels use the pattern
           # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
           # `*-cp<py_version>-cp<py_version>t-*`.
-          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
+          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> "$GITHUB_ENV"
       - name: Download wheels from GCS (non-Windows runs)
         id: download-wheel-artifacts-nw
         # Set continue-on-error to true to prevent actions from failing the workflow if this step
@@ -93,13 +93,13 @@ jobs:
         continue-on-error: true
         if: ${{ !contains(inputs.runner, 'windows-x86') }}
         run: |
-          mkdir -p $(pwd)/dist
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+          mkdir -p dist
+          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
 
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
             echo "JAX only release. Only downloading the jax wheel from the release bucket."
           else
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" dist/
           fi
       - name: Download wheels from GCS (Windows runs)
         id: download-wheel-artifacts-w
@@ -129,28 +129,28 @@ jobs:
           exit 1
       - name: Install Python dependencies
         run: |
-          $JAXCI_PYTHON -m pip install uv~=0.5.30
+          "$JAXCI_PYTHON" -m pip install uv~=0.5.30
 
           # For prerelease python 3.14, some pre-built dependency wheels aren't available,
           # so we need to download their deps or build them from source.
-          if [[ $JAXCI_PYTHON == "python3.14" ]]; then
+          if [[ "$JAXCI_PYTHON" == "python3.14" ]]; then
             # Build numpy from source
             # Need to include fixes for https://github.com/numpy/numpy/issues/28681.
-            $JAXCI_PYTHON -m uv pip install "git+https://github.com/numpy/numpy@v2.3.0"
+            "$JAXCI_PYTHON" -m uv pip install "git+https://github.com/numpy/numpy@v2.3.0"
 
             # Install build requirements for scipy
             apt update && apt upgrade -y && apt-get install -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
-            $JAXCI_PYTHON -m uv pip install "git+https://github.com/scipy/scipy@main"
+            "$JAXCI_PYTHON" -m uv pip install "git+https://github.com/scipy/scipy@main"
 
             # Install build requirements for pillow
             apt install -q -y libjpeg-dev --no-install-recommends
           fi
 
-          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+          "$JAXCI_PYTHON" -m uv pip install -r build/test-requirements.txt
 
           # CPU Pytests crash with NumPy 2.2+ on Linux Aarch64; b/399168632
-          if [[ $OS == "linux" && $ARCH == "aarch64" && $JAXCI_HERMETIC_PYTHON_VERSION != "3.14" ]]; then
-            $JAXCI_PYTHON -m uv pip install numpy~=2.1.0
+          if [[ "$OS" == "linux" && "$ARCH" == "aarch64" && "$JAXCI_HERMETIC_PYTHON_VERSION" != "3.14" ]]; then
+            "$JAXCI_PYTHON" -m uv pip install numpy~=2.1.0
           fi
       # Halt for testing
       - name: Wait For Connection

@@ -33,9 +33,9 @@ jobs:
           persist-credentials: false
       - name: Setup build and test enviroment
         run: |
-          rm -rf ${GITHUB_WORKSPACE}/jax-metal-venv
-          python3 -m venv ${GITHUB_WORKSPACE}/jax-metal-venv
-          source  ${GITHUB_WORKSPACE}/jax-metal-venv/bin/activate
+          rm -rf "${GITHUB_WORKSPACE}/jax-metal-venv"
+          python3 -m venv "${GITHUB_WORKSPACE}/jax-metal-venv"
+          source  "${GITHUB_WORKSPACE}/jax-metal-venv/bin/activate"
           pip install uv~=0.5.30
           uv pip install -U pip numpy wheel absl-py pytest
           if [[ "${{ matrix.jaxlib-version }}" == "nightly" ]]; then
@@ -46,7 +46,7 @@ jobs:
           uv pip install . jax-metal
       - name: Run test
         run: |
-          source  ${GITHUB_WORKSPACE}/jax-metal-venv/bin/activate
+          source  "${GITHUB_WORKSPACE}/jax-metal-venv/bin/activate"
           export ENABLE_PJRT_COMPATIBILITY=1
           cd jax
           pytest tests/lax_metal_test.py

@@ -36,11 +36,11 @@ jobs:
         persist-credentials: false
     - name: Install dependencies
       run: |
-        $PYTHON -m uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
+        "$PYTHON" -m uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
         ARRAY_API_TESTS_MODULE: jax.numpy
         JAX_ENABLE_X64: 'true'
       run: |
-        cd ${GITHUB_WORKSPACE}/array-api-tests
-        $PYTHON -m pytest -n auto array_api_tests --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/tests/array_api_skips.txt
+        cd "${GITHUB_WORKSPACE}/array-api-tests"
+        "$PYTHON" -m pytest -n auto array_api_tests --derandomize --disable-deadline --skips-file "${GITHUB_WORKSPACE}/tests/array_api_skips.txt"
