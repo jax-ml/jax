@@ -3001,7 +3001,7 @@ class MiscellaneousTest(PallasBaseTest):
       )(x)
 
   def test_retiling1(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 6, 30):
+    if not jtu.if_cloud_tpu_at_least(2025, 7, 2):
       self.skipTest('Needs a newer libtpu')
     x = np.arange(1024, dtype=jnp.bfloat16).reshape(1024)
 
