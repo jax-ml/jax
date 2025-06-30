@@ -3,8 +3,8 @@
 <!--* freshness: { reviewed: '2024-03-08' } *-->
 
 ```{note}
-May 2023 update: we recommend using [Tensorboard
-profiling](tensorboard-profiling) for device memory analysis. After taking a
+June 2025 update: we recommend using [XProf
+profiling](xprof-profiling) for device memory analysis. After taking a
 profile, open the `memory_viewer` tab of the Tensorboard profiler for more
 detailed and understandable device memory usage.
 ```
