@@ -297,8 +297,6 @@ py_library_providing_imports_info(
         "_src/__init__.py",
         "_src/blocked_sampler.py",
         "_src/interpreters/__init__.py",
-        "_src/prng.py",
-        "_src/random.py",
     ] + glob(
         [
             "*.py",
@@ -399,6 +397,7 @@ py_library_providing_imports_info(
         ":pretty_printer",
         ":profiler",
         ":public_test_util",
+        ":random",
         ":shard_alike",
         ":shard_map",
         ":sharding",
@@ -1305,6 +1304,7 @@ pytype_strict_library(
         ":jax",
         ":pallas",
         ":pallas_tpu",
+        ":random",
         ":shard_map",
     ] + py_deps("numpy"),
 )
@@ -1956,7 +1956,10 @@ pytype_library(
 pytype_strict_library(
     name = "extend_src",
     srcs = glob(include = ["_src/extend/**/*.py"]),
-    deps = [":jax"],
+    deps = [
+        ":jax",
+        ":random",
+    ],
 )
 
 # TODO(phawkins): remove this target in favor of the finer-grained targets in jax/extend/...
@@ -1984,6 +1987,33 @@ pytype_library(
         ":tpu_custom_call",
         "//jax/_src/lib",
     ],
+)
+
+pytype_library(
+    name = "random",
+    srcs = [
+        "_src/prng.py",
+        "_src/random.py",
+    ],
+    visibility = [":internal"] + jax_visibility("random"),
+    deps = [
+        ":ad",
+        ":api",
+        ":batching",
+        ":config",
+        ":core",
+        ":ffi",
+        ":lax",
+        ":mlir",
+        ":numpy",
+        ":pretty_printer",
+        ":sharding_impls",
+        ":source_info_util",
+        ":typing",
+        ":util",
+        ":xla",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_library(

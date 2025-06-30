@@ -21,20 +21,16 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
-import jax
-from jax import lax
-from jax import numpy as jnp
-from jax import tree_util
-
 from jax._src import api
 from jax._src import config as config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import ffi
+from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
-from jax._src import tree_util as tree_util_internal
+from jax._src import tree_util
 from jax._src import typing
 from jax._src.api import jit, vmap
 from jax._src.dtypes import float0
@@ -43,7 +39,9 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import lax
+from jax._src.lax import slicing as lax_slicing
 from jax._src.lib import gpu_prng
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
@@ -63,8 +61,12 @@ Device = xc.Device
 Shard = Any  # TODO(jakevdp): fix circular imports and import Shard
 Shape = tuple[int, ...]
 
-UINT_DTYPES = {
-    8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}
+UINT_DTYPES: dict[int, np.dtype] = {
+    8: np.dtype('uint8'),
+    16: np.dtype('uint16'),
+    32: np.dtype('uint32'),
+    64: np.dtype('uint64'),
+}
 
 if hasattr(gpu_prng, "registrations"):
   for platform, targets in gpu_prng.registrations().items():
@@ -140,7 +142,7 @@ def _check_prng_key_data(impl, key_data: typing.Array):
                     f"got dtype={key_data.dtype}")
 
 
-class PRNGKeyArray(jax.Array):
+class PRNGKeyArray(Array):
   """An array of PRNG keys backed by an RNG implementation.
 
   This class lifts the definition of a PRNG, provided in the form of a
@@ -157,7 +159,7 @@ class PRNGKeyArray(jax.Array):
   #    device_buffer, device_buffers, __cuda_interface__()
 
   _impl: PRNGImpl
-  _base_array: jax.Array
+  _base_array: Array
   _consumed: bool | np.ndarray  # Used in jax.experimental.key_reuse.
   _source_info: None | source_info_util.SourceInfo = None
 
@@ -332,7 +334,7 @@ def prngkeyarray_unflatten(impl, children):
   base_array, = children
   return PRNGKeyArray(impl, base_array)
 
-tree_util_internal.dispatch_registry.register_node(
+tree_util.dispatch_registry.register_node(
     PRNGKeyArray, prngkeyarray_flatten, prngkeyarray_unflatten)
 
 
@@ -356,7 +358,7 @@ class KeyTyRules:
   @staticmethod
   def full(shape, fill_value, dtype):
     physical_shape = (*shape, *dtype._impl.key_shape)
-    if hasattr(fill_value, 'dtype') and jnp.issubdtype(fill_value.dtype, dtypes.prng_key):
+    if hasattr(fill_value, 'dtype') and dtypes.issubdtype(fill_value.dtype, dtypes.prng_key):
       key_data = jnp.broadcast_to(random_unwrap(fill_value), physical_shape)
     else:
       key_data = lax.full(physical_shape, fill_value, dtype=np.dtype('uint32'))
@@ -366,7 +368,7 @@ class KeyTyRules:
 
   @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:
-    return core.ShapedArray(dtype._impl.key_shape, jnp.dtype('uint32'))
+    return core.ShapedArray(dtype._impl.key_shape, np.dtype('uint32'))
 
   @staticmethod
   def physical_const(val) -> Array:
@@ -633,9 +635,9 @@ batching.defbroadcasting(random_fold_in_p)
 
 @random_fold_in_p.def_abstract_eval
 def random_fold_in_abstract_eval(keys_aval, msgs_aval):
-  shape = lax_internal.broadcasting_shape_rule(
+  shape = lax.broadcasting_shape_rule(
       'random_fold_in', keys_aval, msgs_aval)
-  sharding = lax_internal.broadcasting_sharding_rule(
+  sharding = lax.broadcasting_sharding_rule(
       'random_fold_in', keys_aval, msgs_aval)
   vma = core.standard_vma_rule('random_fold_in', keys_aval, msgs_aval)
   return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding, vma=vma)
@@ -753,7 +755,7 @@ batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
 
 
 def random_unwrap(keys):
-  if not jnp.issubdtype(keys.dtype, dtypes.prng_key):
+  if not dtypes.issubdtype(keys.dtype, dtypes.prng_key):
     raise TypeError(f'random_unwrap takes key array operand, got {keys.dtype=}')
   return random_unwrap_p.bind(keys)
 
@@ -807,7 +809,7 @@ def _threefry_seed(seed: typing.Array) -> typing.Array:
     raise TypeError(f"PRNG key seed must be an integer; got {seed!r}")
   convert = lambda k: lax.expand_dims(lax.convert_element_type(k, np.uint32), [0])
   k1 = convert(
-      lax.shift_right_logical(seed, lax_internal._const(seed, 32)))
+      lax.shift_right_logical(seed, lax._const(seed, 32)))
   with config.numpy_dtype_promotion('standard'):
     # TODO(jakevdp): in X64 mode, this can generate 64-bit computations for 32-bit
     # inputs. We should avoid this.
@@ -816,9 +818,9 @@ def _threefry_seed(seed: typing.Array) -> typing.Array:
 
 
 def _make_rotate_left(dtype):
-  if not jnp.issubdtype(dtype, np.integer):
+  if not dtypes.issubdtype(dtype, np.integer):
     raise TypeError("_rotate_left only accepts integer dtypes.")
-  nbits = np.array(jnp.iinfo(dtype).bits, dtype)
+  nbits = np.array(dtypes.iinfo(dtype).bits, dtype)
 
   def _rotate_left(x, d):
     if lax.dtype(d) != dtype:
@@ -832,12 +834,12 @@ def _make_rotate_left(dtype):
 ### hash function and split
 
 def _threefry2x32_abstract_eval(*args):
-  if any(a.dtype != jnp.uint32 for a in args):
+  if any(a.dtype != np.uint32 for a in args):
     raise TypeError("Arguments to threefry2x32 must have uint32 type, got {}"
                     .format(args))
   if all(isinstance(arg, core.ShapedArray) for arg in args):
-    shape = lax_internal.broadcasting_shape_rule(*args)
-    aval = core.ShapedArray(shape, jnp.dtype(jnp.uint32))
+    shape = lax.broadcasting_shape_rule(*args)
+    aval = core.ShapedArray(shape, np.dtype('uint32'))
   else:
     raise TypeError(f"Arguments to threefry2x32 must all be arrays, got {args}")
   return (aval,) * 2
@@ -886,7 +888,9 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   x[1] = x[1] + ks[1]
 
   if use_rolled_loops:
-    x, _, _ = lax.fori_loop(0, 5, rolled_loop_step, (x, rotate_list(ks), rotations))
+    x, _, _ = lax_control_flow.fori_loop(
+        0, 5, rolled_loop_step, (x, rotate_list(ks), rotations)
+    )
 
   else:
     for r in rotations[0]:
@@ -1101,11 +1105,11 @@ def threefry_2x32(keypair, count):
     flat_count_padded = jnp.concatenate([flat_count, np.uint32([0])])
     flat_count_padded_half_size = flat_count_padded.shape[0] // 2
     x = [
-      lax.dynamic_slice(flat_count_padded, (0,),
-                        (flat_count_padded_half_size,)),
-      lax.dynamic_slice(flat_count_padded,
-                        (flat_count_padded_half_size,),
-                        (flat_count_padded_half_size,))
+      lax_slicing.dynamic_slice(flat_count_padded, (0,),
+                                (flat_count_padded_half_size,)),
+      lax_slicing.dynamic_slice(flat_count_padded,
+                                (flat_count_padded_half_size,),
+                                (flat_count_padded_half_size,))
     ]
   assert x[0].shape == x[1].shape, (x[0].shape, x[1].shape)
 
@@ -1115,7 +1119,7 @@ def threefry_2x32(keypair, count):
   if core.is_constant_dim(odd_size):
     return lax.reshape(out[:-1] if odd_size else out, count.shape)
   else:
-    out_no_padding = lax.dynamic_slice(out, (0,), (flat_count.shape[0],))
+    out_no_padding = lax_slicing.dynamic_slice(out, (0,), (flat_count.shape[0],))
   return lax.reshape(out_no_padding, count.shape)
 
 
@@ -1146,7 +1150,7 @@ def _threefry_split_foldlike(key, shape) -> typing.Array:
 
 def threefry_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
   assert not data.shape
-  return _threefry_fold_in(key, jnp.uint32(data))
+  return _threefry_fold_in(key, jnp.asarray(data, dtype='uint32'))
 
 @jit
 def _threefry_fold_in(key, data):
@@ -1177,7 +1181,7 @@ def _threefry_random_bits_partitionable(key: typing.Array, bit_width, shape):
   if bit_width == 64:
     bits_hi = lax.convert_element_type(bits1, dtype)
     bits_lo = lax.convert_element_type(bits2, dtype)
-    return lax.shift_left(bits_hi, dtype(32)) | bits_lo
+    return lax.shift_left(bits_hi, jnp.asarray(32, dtype=dtype)) | bits_lo
   elif bit_width == 32:
     return bits1 ^ bits2
   else:
@@ -1193,7 +1197,7 @@ def _threefry_random_bits_original(key: typing.Array, bit_width, shape):
     max_count += 1
 
   if core.is_constant_dim(max_count):
-    nblocks, rem = divmod(max_count, jnp.iinfo(np.uint32).max)
+    nblocks, rem = divmod(max_count, dtypes.iinfo(np.uint32).max)
   else:
     nblocks, rem = 0, max_count
 
@@ -1202,18 +1206,18 @@ def _threefry_random_bits_original(key: typing.Array, bit_width, shape):
   else:
     keys = threefry_split(key, (nblocks + 1,))
     subkeys, last_key = keys[:-1], keys[-1]
-    blocks = vmap(threefry_2x32, in_axes=(0, None))(subkeys, lax.iota(np.uint32, jnp.iinfo(np.uint32).max))
+    blocks = vmap(threefry_2x32, in_axes=(0, None))(subkeys, lax.iota(np.uint32, dtypes.iinfo(np.uint32).max))
     last = threefry_2x32(last_key, lax.iota(np.uint32, rem))
     bits = lax.concatenate([blocks.ravel(), last], 0)
 
   dtype = UINT_DTYPES[bit_width]
   if bit_width == 64:
     bits = [lax.convert_element_type(x, dtype) for x in jnp.split(bits, 2)]
-    bits = lax.shift_left(bits[0], dtype(32)) | bits[1]
+    bits = lax.shift_left(bits[0], jnp.asarray(32, dtype=dtype)) | bits[1]
   elif bit_width in [8, 16]:
     # this is essentially bits.view(dtype)[:size]
     bits = lax.bitwise_and(
-      np.uint32(np.iinfo(dtype).max),
+      jnp.asarray(np.iinfo(dtype).max, dtype='uint32'),
       lax.shift_right_logical(
         lax.broadcast(bits, (1,)),
         lax.mul(
@@ -1268,7 +1272,7 @@ def _rbg_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
 
 def _rbg_random_bits(key: typing.Array, bit_width: int, shape: Sequence[int]
                      ) -> typing.Array:
-  if not key.shape == (4,) and key.dtype == jnp.dtype('uint32'):
+  if not key.shape == (4,) and key.dtype == np.dtype('uint32'):
     raise TypeError("_rbg_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
@@ -1291,7 +1295,7 @@ def _unsafe_rbg_split(key: typing.Array, shape: Shape) -> typing.Array:
   # treat 10 iterations of random bits as a 'hash function'
   num = math.prod(shape)
   _, keys = lax.rng_bit_generator(key, (10 * num, 4), dtype='uint32')
-  return lax.slice_in_dim(
+  return lax_slicing.slice_in_dim(
       keys, start_index=None, limit_index=None, stride=10).reshape(*shape, 4)
 
 def _unsafe_rbg_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:

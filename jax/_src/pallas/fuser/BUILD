@@ -54,6 +54,7 @@ pytype_strict_library(
         "//jax:custom_derivatives",
         "//jax:lax",
         "//jax:partial_eval",
+        "//jax:random",
         "//jax:tree_util",
         "//jax:util",
         "//jax/_src/pallas",

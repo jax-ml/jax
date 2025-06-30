@@ -22,8 +22,11 @@ from jax._src.numpy.array_constructors import (
 
 from jax._src.numpy.array_creation import (
     full as full,
+    full_like as full_like,
     ones as ones,
+    ones_like as ones_like,
     zeros as zeros,
+    zeros_like as zeros_like,
 )
 
 from jax._src.numpy.indexing import (
@@ -35,17 +38,23 @@ from jax._src.numpy.lax_numpy import (
     argmax as argmax,
     argmin as argmin,
     argsort as argsort,
+    broadcast_shapes as broadcast_shapes,
     broadcast_to as broadcast_to,
     clip as clip,
+    concatenate as concatenate,
     diag as diag,
     expand_dims as expand_dims,
     eye as eye,
+    moveaxis as moveaxis,
     nonzero as nonzero,
     permute_dims as permute_dims,
     ravel as ravel,
     reshape as reshape,
     round as round,
+    searchsorted as searchsorted,
+    split as split,
     squeeze as squeeze,
+    stack as stack,
     trace as trace,
     transpose as transpose,
     unravel_index as unravel_index,
@@ -54,6 +63,7 @@ from jax._src.numpy.lax_numpy import (
 
 from jax._src.numpy.reductions import (
     any as any,
+    cumsum as cumsum,
     max as max,
 )
 
@@ -63,11 +73,21 @@ from jax._src.numpy.tensor_contractions import (
 
 from jax._src.numpy.ufuncs import (
     abs as abs,
+    bitwise_and as bitwise_and,
+    ceil as ceil,
     equal as equal,
+    exp as exp,
+    floor as floor,
     greater as greater,
+    isinf as isinf,
     isnan as isnan,
     less as less,
+    log as log,
+    log1p as log1p,
     logical_and as logical_and,
     logical_not as logical_not,
     logical_or as logical_or,
+    power as power,
+    sign as sign,
+    sqrt as sqrt,
 )
