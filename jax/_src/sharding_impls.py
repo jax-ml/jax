@@ -20,7 +20,7 @@ from collections.abc import Mapping, Sequence
 import dataclasses
 import functools
 import math
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple, TypeAlias, cast
 
 from jax._src import config
 from jax._src import core
@@ -1074,7 +1074,11 @@ def flatten_spec(spec):
       out.append(s)
   return out
 
-def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
+
+ShardingType: TypeAlias = NamedSharding | PartitionSpec | None
+
+
+def canonicalize_sharding(sharding: ShardingType,
                           api_name: str, check_mesh_consistency: bool = True
                           ) -> NamedSharding | None:
   if sharding is None:
