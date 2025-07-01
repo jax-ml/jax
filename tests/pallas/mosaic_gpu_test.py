@@ -2352,6 +2352,41 @@ class PallasCallSm90ATest(PallasSm90ATest):
         res, a @ (b.T if rhs_transpose else b), rtol=1e-3
     )
 
+  def test_wgmma_sliced_acc_flip(self):
+    self.skip_if_wg_semantics()
+    dtype = jnp.float16
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=dtype)
+    b = jax.random.uniform(key2, shape=(128, 256), dtype=dtype)
+
+    def kernel(a_ref, b_ref, o_ref):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref.at[:, :128], a_ref, b_ref.at[:, 128:])
+        plgpu.wgmma(acc_ref.at[:, 128:], a_ref, b_ref.at[:, :128])
+        return acc_ref[...]
+
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 256), jnp.float32))
+
+    swizzle = 128
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+    res = self.pallas_call(
+        kernel,
+        in_specs=[plgpu.BlockSpec(transforms=transforms)] * 2,
+        out_shape=jax.ShapeDtypeStruct((64, 256), jnp.float32),
+    )(a, b)
+
+    def flip_halves(x):
+      y = x.reshape(*x.shape[:-1], 2, x.shape[-1] // 2)
+      y = y[..., ::-1, :]
+      return y.reshape(x.shape)
+
+    np.testing.assert_allclose(res, a @ flip_halves(b), rtol=1e-3)
+
   def test_wgmma_registers(self):
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
@@ -2430,7 +2465,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )(a, b)
     np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
 
-  def test_wgmma_sliced_acc(self):
+  def test_wgmma_sliced_acc_read(self):
     self.skip_if_wg_semantics()  # Needs WGMMA to support slices.
 
     swizzle = 128

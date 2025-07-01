@@ -1517,9 +1517,9 @@ class FragmentedArray:
       raise NotImplementedError("Only arrays with tiled layouts can be sliced")
     base_idx, slice_shape, is_squeezed = utils.parse_indices(idx, self.shape)
     if any(isinstance(idx, ir.Value) for idx in base_idx):
-      raise ValueError("Only static slicing allowed")
+      raise ValueError("Only slicing with static indices allowed")
     if any(is_squeezed):
-      raise NotImplementedError("Only slicing implemented")
+      raise NotImplementedError("Integer indexing not implemented (only slicing allowed)")
     base_tile_shape = self.layout.base_tile_shape
     if len(base_tile_shape) != len(self.shape):
       raise NotImplementedError("Tiling has different rank than array")
@@ -1535,6 +1535,53 @@ class FragmentedArray:
     new_regs = self.registers[register_slices]
     return FragmentedArray(
         _registers=new_regs, _layout=self.layout, _is_signed=self.is_signed
+    )
+
+  def __setitem__(self, idx, value):
+    if not isinstance(value, FragmentedArray):
+      raise ValueError(f"Expected a FragmentedArray, got: {value}")
+    if not isinstance(self.layout, TiledLayout):
+      raise NotImplementedError("Only arrays with tiled layouts can be sliced")
+    base_idx, slice_shape, is_squeezed = utils.parse_indices(idx, self.shape)
+    if any(isinstance(idx, ir.Value) for idx in base_idx):
+      raise ValueError("Only slicing with static indices allowed")
+    if any(is_squeezed):
+      raise NotImplementedError("Integer indexing not implemented (only slicing allowed)")
+    if value.shape != tuple(slice_shape):
+      raise ValueError(
+          f"Slice has shape {tuple(slice_shape)}, but assigned array has shape"
+          f" {value.shape}"
+      )
+    if value.mlir_dtype != self.mlir_dtype:
+      raise ValueError(
+          f"Array has dtype {value.mlir_dtype}, but assigned array has dtype"
+          f" {self.mlir_dtype}"
+      )
+    if value.layout != self.layout:
+      raise ValueError(
+          f"Array has layout {value.layout}, but assigned array has layout"
+          f" {self.layout}"
+      )
+    base_tile_shape = self.layout.base_tile_shape
+    if len(base_tile_shape) != len(self.shape):
+      raise NotImplementedError("Tiling has different rank than array")
+    if any(
+        b % t or l % t
+        for b, l, t in zip(base_idx, slice_shape, base_tile_shape, strict=True)
+    ):
+      raise NotImplementedError("Only tile aligned slicing supported")
+    register_slices = tuple(
+        slice(b // t, (b + l) // t)
+        for b, l, t in zip(base_idx, slice_shape, base_tile_shape, strict=True)
+    )
+    assert self.registers[register_slices].shape == value.registers.shape
+    self.registers[register_slices] = value.registers
+
+  def copy(self):
+    return FragmentedArray(
+        _registers=np.copy(self.registers),
+        _layout=self.layout,
+        _is_signed=self.is_signed,
     )
 
   # TODO(apaszke): Support JAX dtypes here as well?

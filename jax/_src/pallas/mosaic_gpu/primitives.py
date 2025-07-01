@@ -821,6 +821,13 @@ def wgmma(acc: gpu_core.WGMMAAbstractAccumulatorRef, a, b) -> None:
   if a.dtype != b.dtype:
     raise ValueError(f"Mixed input dtypes for matrix multiplication unsupported: lhs={a.dtype}, rhs={b.dtype}")
 
+  acc_transforms_leaves: list
+  if isinstance(acc, pallas_core.TransformedRef):
+    acc_transforms_leaves, acc_transforms_tree = jax.tree.flatten(acc.transforms)
+    acc = acc.ref
+  else:
+    acc_transforms_leaves, acc_transforms_tree = [], None
+
   if isinstance(a, pallas_core.TransformedRef):
     a_transforms_leaves, a_transforms_tree = jax.tree.flatten(a.transforms)
     a = a.ref
@@ -837,8 +844,10 @@ def wgmma(acc: gpu_core.WGMMAAbstractAccumulatorRef, a, b) -> None:
       acc,
       a,
       b,
+      *acc_transforms_leaves,
       *a_transforms_leaves,
       *b_transforms_leaves,
+      acc_transforms_tree=acc_transforms_tree,
       a_transforms_tree=a_transforms_tree,
       b_transforms_tree=b_transforms_tree,
   )
@@ -865,23 +874,22 @@ def _wgmma_ref_pp_eqn(
 ):
   del settings
   acc, a, b, *leaves = eqn.invars
-  a_transforms_treedef = eqn.params["a_transforms_tree"]
-  b_transforms_treedef = eqn.params["b_transforms_tree"]
-  split = getattr(a_transforms_treedef, "num_leaves", 0)
-  a_transforms = (
-      a_transforms_treedef.unflatten(leaves[:split])
-      if a_transforms_treedef is not None
-      else []
+  transform_treedefs = [
+      eqn.params["acc_transforms_tree"],
+      eqn.params["a_transforms_tree"],
+      eqn.params["b_transforms_tree"],
+  ]
+  transform_leaves = util.split_list(
+      leaves, [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
   )
-  b_transforms = (
-      b_transforms_treedef.unflatten(leaves[split:])
-      if b_transforms_treedef is not None
-      else []
+  acc_transforms, a_transforms, b_transforms = (
+      () if treedef is None else treedef.unflatten(leaves)
+      for treedef, leaves in zip(transform_treedefs, transform_leaves)
   )
   return pp.concat([
       pp.text("wgmma_ref"),
       pp.text(" "),
-      pp.text(jax_core.pp_var(acc, context)),
+      state_primitives.pp_ref_transforms(context, acc, acc_transforms),
       pp.text(" <- "),
       state_primitives.pp_ref_transforms(context, a, a_transforms),
       pp.text(" @ "),
@@ -909,15 +917,32 @@ def _wgmma_lowering(
     a,
     b,
     *transforms_leaves,
+    acc_transforms_tree,
     a_transforms_tree,
     b_transforms_tree,
 ):
   lhs_swizzle: int | None = None
-  if a_transforms_tree is not None:
-    a_transforms_leaves, b_transforms_leaves = util.split_list(
-        transforms_leaves, [a_transforms_tree.num_leaves]
-    )
-    a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
+  transform_treedefs = [
+      acc_transforms_tree, a_transforms_tree, b_transforms_tree
+  ]
+  transform_leaves = util.split_list(
+      transforms_leaves, [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
+  )
+  acc_transforms, a_transforms, b_transforms = (
+      None if treedef is None else treedef.unflatten(leaves)
+      for treedef, leaves in zip(transform_treedefs, transform_leaves)
+  )
+
+  acc_indices = None
+  if acc_transforms is not None:
+    if not all(isinstance(t, indexing.NDIndexer) for t in acc_transforms):
+      raise ValueError("WGMMA accumulator only supports indexing transforms")
+    acc_indexer = lowering.merge_indexers(acc_transforms)
+    if acc_indexer.int_indexer_shape:
+      raise NotImplementedError("int_indexer_shape non-empty")
+    acc_indices = lowering._ndindexer_indices(acc_indexer)
+
+  if a_transforms is not None:
     a, a_transforms = lowering._handle_transforms(
         ctx, a, a_transforms, handle_transposes=False, handle_reshapes=False
     )
@@ -938,14 +963,13 @@ def _wgmma_lowering(
       raise NotImplementedError("WGMMA lhs tiling does not fit swizzle")
   else:
     lhs_transpose = False
-    b_transforms_leaves = transforms_leaves  # type: ignore
     if not isinstance(a, mgpu.FragmentedArray):
       raise ValueError(
           "When WGMMA lhs is passed in as a ref, it must be transformed by"
           " swizzling and tiling appropriately."
       )
 
-  b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
+  assert b_transforms is not None
   b, b_transforms = lowering._handle_transforms(
       ctx, b, b_transforms, handle_transposes=False, handle_reshapes=False
   )
@@ -993,9 +1017,16 @@ def _wgmma_lowering(
     a = mgpu.memref_transpose(a, (1, 0, 3, 2))
   if rhs_transpose:
     b = mgpu.memref_transpose(b, (1, 0, 3, 2))
-  new_acc = mgpu.wgmma(acc, a, b, swizzle=rhs_swizzle)
+  acc_in = acc
+  if acc_indices is not None:
+    acc_in = mgpu.WGMMAAccumulator(_value=acc.value[acc_indices], _sync=False)
+  acc_out = mgpu.wgmma(acc_in, a, b, swizzle=rhs_swizzle)
+  if acc_indices is not None:
+    acc_value = acc.value.copy()
+    acc_value[acc_indices] = acc_out.value
+    acc_out = mgpu.WGMMAAccumulator(_value=acc_value, _sync=False)
   nvvm_dialect.wgmma_commit_group_sync_aligned()
-  return new_acc
+  return acc_out
 
 
 @lowering.register_lowering_rule(wgmma_p, mgpu.LoweringSemantics.Warpgroup)
@@ -1005,9 +1036,12 @@ def _wgmma_warpgroup_lowering(
     a,
     b,
     *transforms_leaves,
+    acc_transforms_tree,
     a_transforms_tree,
     b_transforms_tree,
 ):
+  if acc_transforms_tree is not None:
+    raise NotImplementedError
   if a_transforms_tree is not None:
     a_transforms_leaves, b_transforms_leaves = util.split_list(
         transforms_leaves, [a_transforms_tree.num_leaves]
