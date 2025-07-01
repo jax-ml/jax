@@ -16,6 +16,9 @@
 
 # pylint: disable=g-complex-comprehension
 
+import enum
+from typing import ClassVar
+
 from absl.testing import parameterized
 import jax
 from jax._src import config
@@ -47,7 +50,20 @@ def layout_cast(x: ir.Value, layout: mgpu.FragmentedLayout | ir.Attribute) -> ir
   return mgpu.dialect.layout_cast(x, layout)
 
 
-class LayoutInferenceTest(parameterized.TestCase):
+class InferenceImplementation(enum.Enum):
+  LEGACY = 1
+  EQUATIONS = 2
+
+
+class LayoutInferenceTestMetaclass(parameterized.TestGeneratorMetaclass):
+  def __new__(mcs, *args, inference_impl=InferenceImplementation.LEGACY):
+    cls = super().__new__(mcs, *args)
+    cls.INFERENCE_IMPL = inference_impl
+    return cls
+
+
+class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestMetaclass):
+  INFERENCE_IMPL: ClassVar[InferenceImplementation]
 
   def setUp(self):
     if jax.version._version != jax.lib.__version__:
@@ -57,6 +73,17 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.enter_context(ir.Location.unknown())
     self.module = ir.Module.create()
 
+  def infer_layout(self, module):
+    if self.INFERENCE_IMPL == InferenceImplementation.LEGACY:
+      mgpu.infer_layout(module)
+    else:
+      mgpu.infer_layout2(module)
+
+  def skip_if_equations(self):
+    # TODO(bchetioui): delete once equations work everywhere.
+    if self.INFERENCE_IMPL == InferenceImplementation.EQUATIONS:
+      self.skipTest("Equations-based layout inference is not supported yet")
+
   def checkInLayouts(self, op, in_layouts):
     self.assertSequenceEqual(op.attributes["in_layouts"], in_layouts)
 
@@ -64,6 +91,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(op.attributes["out_layouts"], out_layouts)
 
   def test_infer_strided_layout_default(self):
+    self.skip_if_equations()
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
     add = None
@@ -78,7 +106,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     # Not setting any layouts on the module should default in ops having a
     # strided fragmented layout.
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     layout = layouts.to_layout_attr(
         mgpu.WGStridedFragLayout.from_shaped_type(ty)
@@ -88,6 +116,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkOutLayouts(add, [layout])
 
   def test_infer_strided_layout_from_shape_cast(self):
+    self.skip_if_equations()
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
     src_type = ir.VectorType.get(shape, elt_type)
@@ -101,7 +130,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(src_type)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     in_layout = layouts.to_layout_attr(
         mgpu.WGStridedFragLayout.from_shaped_type(src_type)
@@ -115,7 +144,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     # Ensure that we can recover the original layout.
     del op.attributes["in_layouts"]
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
     self.checkInLayouts(op, [in_layout])
 
   def test_infer_splat_layout_for_splat_constants(self):
@@ -125,27 +154,19 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       ty = ir.VectorType.get(shape, elt_type)
       c0 = ir.FloatAttr.get(elt_type, 0)
-      c1 = ir.FloatAttr.get(elt_type, 1)
-      splat0 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, c0))
-      splat1 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, c1))
-      add = arith.AddFOp(splat0, splat1)
+      splat = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, c0))
 
     # Not setting any layouts on the module should default in all ops having a
     # splat fragmented layout.
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
 
-    self.assertEmpty(splat0.attributes["in_layouts"])
-    self.checkOutLayouts(splat0, [layout])
-
-    self.assertEmpty(splat1.attributes["in_layouts"])
-    self.checkOutLayouts(splat1, [layout])
-
-    self.checkInLayouts(add, [layout, layout])
-    self.checkOutLayouts(add, [layout])
+    self.assertEmpty(splat.attributes["in_layouts"])
+    self.checkOutLayouts(splat, [layout])
 
   def test_infer_layout_from_consumer_for_non_splat_constant(self):
+    self.skip_if_equations()
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
     layout = layouts.to_layout_attr(
@@ -160,13 +181,14 @@ class LayoutInferenceTest(parameterized.TestCase):
       c = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attr_list, ty))
       layout_cast(c, layout)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     self.assertEmpty(c.attributes["in_layouts"])
     self.checkOutLayouts(c, [layout])
 
   @parameterized.parameters(True, False)
   def test_infer_splat_layout_for_vector_splat(self, rhs_splat):
+    self.skip_if_equations()
     add = splat = None
     shape = (16, 8)
     layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
@@ -182,7 +204,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(shape, elt_type)
       func.FuncOp.from_py_func(elt_type, ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     self.assertEmpty(splat.attributes["in_layouts"])
     self.checkOutLayouts(splat, [layout])
@@ -199,6 +221,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       mgpu.WGStridedFragLayout(shape=(32, 4), vec_size=1),
   )
   def test_pointwise_op_propagates_argument_layouts(self, layout):
+    self.skip_if_equations()
     add = None
 
     def body(lhs, rhs):
@@ -211,13 +234,14 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(layout.shape, ir.BF16Type.get())
       func.FuncOp.from_py_func(ty, ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     layout_attr = layouts.to_layout_attr(layout)
     self.checkInLayouts(add, [layout_attr, layout_attr])
     self.checkOutLayouts(add, [layout_attr])
 
   def test_infer_layout_cast_layout(self):
+    self.skip_if_equations()
     add = cast = None
 
     shape = (128, 64)
@@ -235,7 +259,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(shape, elt_type)
       func.FuncOp.from_py_func(ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
     self.checkOutLayouts(add, [splat_layout])
     self.checkInLayouts(cast, [wgmma_layout])
     self.checkOutLayouts(cast, [wgmma_layout])
@@ -249,6 +273,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_broadcast_in_dim_layout(
       self, broadcast_dim, in_cast, out_cast, in_layout, out_layout
   ):
+    self.skip_if_equations()
     bcast = None
     in_shape = (64,)
     out_shape = (64, 64)
@@ -270,7 +295,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(in_shape, ir.F32Type.get())
       func.FuncOp.from_py_func(ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
     self.checkInLayouts(bcast, [layouts.to_layout_attr(in_layout)])
     self.checkOutLayouts(bcast, [layouts.to_layout_attr(out_layout)])
 
@@ -287,6 +312,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_multi_reduce_layout(
       self, reduce_dim, in_cast, acc_cast, out_cast, in_layout, out_layout
   ):
+    self.skip_if_equations()
     red = None
 
     in_shape = (64, 64)
@@ -312,13 +338,14 @@ class LayoutInferenceTest(parameterized.TestCase):
       acc_ty = ir.VectorType.get(out_shape, ir.F32Type.get())
       func.FuncOp.from_py_func(in_ty, acc_ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
     in_layout_attr = layouts.to_layout_attr(in_layout)
     out_layout_attr = layouts.to_layout_attr(out_layout)
     self.checkInLayouts(red, [in_layout_attr, out_layout_attr])
     self.checkOutLayouts(red, [out_layout_attr])
 
   def test_infer_layout_traverses_ops_correctly(self):
+    self.skip_if_equations()
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
     add = None
@@ -336,7 +363,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ab_type = ir.VectorType.get(shape, elt_type)
       func.FuncOp.from_py_func(ab_type, ab_type)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     self.assertIn("in_layouts", add.attributes)
     self.assertIn("out_layouts", add.attributes)
@@ -353,6 +380,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_layout_from_yield_op_in_layouts_for_for_op(
       self, shape, layout
   ):
+    self.skip_if_equations()
     for_op = yield_op = None
 
     def body(lower_bound, upper_bound, step, a, b):
@@ -370,7 +398,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       i32 = ir.IntegerType.get_signless(32)
       func.FuncOp.from_py_func(i32, i32, i32, ab_type, ab_type)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     if isinstance(layout, mgpu.WGSplatFragLayout):
       # In the splat case, we should not propagate the splat layout from the
@@ -392,6 +420,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       self.checkOutLayouts(for_op, carry_layouts)
 
   def test_infer_layout_from_body_op_to_yield_op_to_for_op(self):
+    self.skip_if_equations()
     for_op = yield_op = None
     shape = (64, 64)
 
@@ -410,7 +439,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       i32 = ir.IntegerType.get_signless(32)
       func.FuncOp.from_py_func(i32, i32, i32, ab_ty, ab_ty, c_ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
     self.checkInLayouts(yield_op, [wgmma_layout])
@@ -427,6 +456,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_while_op_layouts(
       self, init_shape, init_layout, result_shape, result_layout
   ):
+    self.skip_if_equations()
     f32 = ir.F32Type.get()
     in_type = ir.VectorType.get(init_shape, f32) if init_shape else f32
     out_type = ir.VectorType.get(result_shape, f32) if result_shape else f32
@@ -449,7 +479,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       i1 = ir.IntegerType.get_signless(1)
       func.FuncOp.from_py_func(i1, in_type, out_type)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     if init_layout is not None or result_layout is not None:
       init_layouts = [layouts.to_layout_attr(init_layout)] if init_layout else []
@@ -458,6 +488,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       self.checkOutLayouts(while_op, result_layouts)
 
   def test_infer_layout_has_no_layout_for_non_vector_types(self):
+    self.skip_if_equations()
     shape = (32, 4)
     elt_ty = ir.BF16Type.get()
 
@@ -473,7 +504,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       array_ty = ir.VectorType.get(shape, elt_ty)
       func.FuncOp.from_py_func(ref_ty, array_ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     self.assertIn("in_layouts", vector_store.attributes)
     self.assertIn("out_layouts", vector_store.attributes)
@@ -490,6 +521,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_layout_picks_non_splat_layout_over_splat_layout(
       self, layout
   ):
+    self.skip_if_equations()
     add = None
     shape = (32, 4)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
@@ -506,12 +538,13 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(shape, elt_type)
       func.FuncOp.from_py_func(ty, ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     self.checkInLayouts(add, [non_splat_layout, non_splat_layout])
     self.checkOutLayouts(add, [non_splat_layout])
 
   def test_infer_layout_preserves_splat_layouts_in_producers(self):
+    self.skip_if_equations()
     add0 = add1 = None
     shape = (32, 4)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
@@ -532,7 +565,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(shape, elt_type)
       func.FuncOp.from_py_func(ty, ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     self.checkInLayouts(add0, [splat_layout, splat_layout])
     self.checkOutLayouts(add0, [splat_layout])
@@ -540,6 +573,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkOutLayouts(add1, [strided_layout])
 
   def test_infer_layout_does_not_assign_default_layouts_to_func(self):
+    self.skip_if_equations()
 
     def body(lhs, rhs):
       arith.AddFOp(lhs, rhs)
@@ -549,11 +583,12 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(shape, ir.BF16Type.get())
       f = func.FuncOp.from_py_func(ty, ty)(body).func_op
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
     self.assertNotIn("in_layouts", f.attributes)
     self.assertNotIn("out_layouts", f.attributes)
 
   def test_optimization_barrier_op_propagates_user_layouts(self):
+    self.skip_if_equations()
     add = optimization_barrier = None
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
 
@@ -568,12 +603,13 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get((32, 4), ir.BF16Type.get())
       func.FuncOp.from_py_func(ty, ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     self.checkInLayouts(optimization_barrier, [wgmma_layout, wgmma_layout])
     self.checkOutLayouts(optimization_barrier, [wgmma_layout, wgmma_layout])
 
   def test_optimization_barrier_op_propagates_producer_layouts(self):
+    self.skip_if_equations()
     add = optimization_barrier = None
     shape = (32, 4)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
@@ -589,11 +625,14 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(shape, ir.BF16Type.get())
       func.FuncOp.from_py_func(ty, ty)(body)
 
-    mgpu.infer_layout(self.module)
+    self.infer_layout(self.module)
 
     self.checkInLayouts(optimization_barrier, [splat_layout])
     self.checkOutLayouts(optimization_barrier, [splat_layout])
 
+
+class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=InferenceImplementation.EQUATIONS):
+  ...
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
