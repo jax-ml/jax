@@ -26,6 +26,7 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
@@ -47,7 +48,9 @@ def pallas_call_lowering(
     compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    metadata: frozen_dict.FrozenDict[str, str] | None,
 ):
+  del metadata  # TODO(sharadmv): Add metadata to HLO.
   debug_info = jaxpr.debug_info
   del interpret, out_avals
   if grid_mapping.num_dynamic_grid_bounds:

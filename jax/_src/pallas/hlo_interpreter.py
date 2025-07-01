@@ -33,6 +33,7 @@ from collections.abc import Callable
 import jax
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src.interpreters import partial_eval as pe
@@ -350,8 +351,9 @@ def pallas_call_hlo_interpret(
     compiler_params: Any,
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    metadata: frozen_dict.FrozenDict[str, str] | None,
 ):
-  del mesh, compiler_params, cost_estimate, out_avals
+  del mesh, compiler_params, cost_estimate, out_avals, metadata
   debug_info = jaxpr.debug_info
   # If we're in interpret mode, we *scan* over the grid and eval the
   # discharged jaxpr.

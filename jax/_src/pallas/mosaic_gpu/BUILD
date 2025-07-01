@@ -47,6 +47,7 @@ pytype_strict_library(
         "//jax",
         "//jax:config",
         "//jax:core",
+        "//jax:frozen_dict",
         "//jax:mlir",
         "//jax:mosaic_gpu",
         "//jax:sharding_impls",

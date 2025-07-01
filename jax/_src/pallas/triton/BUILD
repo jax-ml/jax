@@ -84,6 +84,7 @@ pytype_strict_library(
         ":lowering",
         "//jax",
         "//jax:core",
+        "//jax:frozen_dict",
         "//jax:mlir",
         "//jax/_src/lib",
         "//jax/_src/pallas",

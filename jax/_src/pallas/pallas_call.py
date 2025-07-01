@@ -130,6 +130,7 @@ def _pallas_call_jvp_rule(
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
+    metadata: FrozenDict[str, str] | None,
 ):
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
@@ -196,6 +197,7 @@ def _pallas_call_jvp_rule(
       cost_estimate=jvp_cost_estimate,
       out_avals=(*out_avals, *out_avals),
       backend=backend,
+      metadata=metadata,
   )
   out_primals, out_tangents = split_list(out_flat, [len(out_flat) // 2])
   return out_primals, out_tangents
@@ -343,6 +345,7 @@ def _batch_with_explicit_loop(
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
+    metadata: FrozenDict[str, str] | None,
 ):
   """Batch the pallas_call by calling it in loop over the batch size.
 
@@ -411,6 +414,7 @@ def _batch_with_explicit_loop(
         cost_estimate=cost_estimate,
         out_avals=out_avals,
         backend=backend,
+        metadata=metadata,
     )
     for i, batch_out_array in enumerate(batch_out):
       state[i] = jax.lax.dynamic_update_index_in_dim(
@@ -441,6 +445,7 @@ def _pallas_call_batching_rule(
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
+    metadata: FrozenDict[str, str] | None = None,
 ):
   if mesh is not None:
     raise NotImplementedError(
@@ -479,6 +484,7 @@ def _pallas_call_batching_rule(
         cost_estimate=cost_estimate,
         out_avals=out_avals,
         backend=backend,
+        metadata=metadata,
     )
     return [jnp.expand_dims(x, 0) for x in out], (0,) * len(out)
 
@@ -513,6 +519,7 @@ def _pallas_call_batching_rule(
         cost_estimate=cost_estimate,
         out_avals=out_avals,
         backend=backend,
+        metadata=metadata,
     )
   else:
     pass  # No dynamic grid dimensions
@@ -548,6 +555,7 @@ def _pallas_call_batching_rule(
           cost_estimate=cost_estimate,
           out_avals=out_avals,
           backend=backend,
+          metadata=metadata,
       )
 
   if not dims:
@@ -928,6 +936,7 @@ def _pallas_call_batching_rule(
       cost_estimate=batched_cost_estimate,
       out_avals=batched_out_avals,
       backend=backend,
+      metadata=metadata,
   )
   return out, (0,) * len(out)
 
@@ -1388,7 +1397,8 @@ def _pallas_call_state_discharge_rule(
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: Backend | None = None,
+    backend: Backend | None,
+    metadata: FrozenDict[str, str] | None,
 ):
   del avals_out
   assert all(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars)
@@ -1493,6 +1503,7 @@ def _pallas_call_state_discharge_rule(
       cost_estimate=cost_estimate,
       out_avals=new_out_avals,
       backend=backend,
+      metadata=metadata,
   )
   refs_out, rest = split_list(out_flat, [num_refs])
   updated_vals_in = refs_out + [None] * len(rest_in_avals)
@@ -1517,6 +1528,7 @@ def pallas_call(
     ) = None,
     cost_estimate: CostEstimate | None = None,
     backend: Backend | None = None,
+    metadata: dict[str, str] | None = None,
 ) -> Callable[..., Any]:
   """Invokes a Pallas kernel on some inputs.
 
@@ -1570,6 +1582,8 @@ def pallas_call(
     backend: Optional string literal one of  ``"mosaic_tpu"``, ``"triton"`` or
       ``"mosaic_gpu"`` determining the backend to be used. None means let Pallas
       decide.
+    metadata: Optional dictionary of information about the kernel that will be
+      serialized as JSON in the HLO. Can be used for debugging and analysis.
 
   Returns:
     A function that can be called on a number of positional array arguments to
@@ -1606,6 +1620,7 @@ def pallas_call(
       compiler_params=compiler_params,
       cost_estimate=cost_estimate,
       backend=backend,
+      metadata=metadata,
   )
 
 
@@ -1650,6 +1665,7 @@ def _pallas_call(
     ) = None,
     cost_estimate: CostEstimate | None = None,
     backend: Backend | None = None,
+    metadata: dict[str, str] | None = None,
 ):
   compiler_params = _normalize_compiler_params(compiler_params)
 
@@ -1764,6 +1780,7 @@ def _pallas_call(
         compiler_params=compiler_params,
         cost_estimate=cost_estimate,
         backend=backend,
+        metadata=FrozenDict(metadata) if metadata is not None else None,
     )
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out

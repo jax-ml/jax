@@ -21,6 +21,7 @@ from typing import cast
 import zlib
 
 import jax
+from jax._src import frozen_dict
 import jax._src.core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
@@ -55,8 +56,10 @@ def pallas_call_lowering(
     compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    metadata: frozen_dict.FrozenDict[str, str] | None,
 ):
   del interpret, out_avals, cost_estimate
+  del metadata  # TODO(sharadmv): Add metadata to HLO.
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(

@@ -20,6 +20,7 @@ import functools
 import gc
 import io
 import itertools
+import json
 import math
 import re
 import sys
@@ -3326,6 +3327,33 @@ class MiscellaneousTest(PallasBaseTest):
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
+
+
+class PallasKernelMetadataTest(PallasBaseTest):
+
+  @parameterized.parameters(
+      (dict(foo='bar'),),
+      (dict(foo='afjafo'),),
+      (dict(problem_info=json.dumps(dict(tiling_info=dict(bm=128, bk=128)))),),
+  )
+  def test_metadata_is_preserved(self, metadata):
+
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = x_ref[...] + y_ref[...]
+
+    x = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+    y = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+
+    @jax.jit
+    def f(x, y):
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          metadata=metadata,
+      )(x, y)
+
+    hlo = f.lower(x, y).compile().as_text()
+    self.assertIn(json.dumps(metadata), hlo)
 
 
 if __name__ == '__main__':
