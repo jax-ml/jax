@@ -1758,6 +1758,7 @@ class JaxprStackFrame:
   tracer_to_var: dict[TracerId, Atom]
   constid_to_tracer: dict[ConstId, Tracer]
   constvar_to_val: dict[Var, Any]
+  tracers: list[DynamicJaxprTracer]  # hold onto strong refs for all tracers
   eqns: list[JaxprEqn]
   invars: list[Var]
   effects: core.Effects
@@ -1771,7 +1772,8 @@ class JaxprStackFrame:
     self.tracer_to_var = {}
     self.constid_to_tracer = {}
     self.constvar_to_val = {}
-    self.eqns = []
+    self.tracers = []   # circ refs, frame->tracer->trace->main->frame,
+    self.eqns = []      # cleared when we pop frame from main
     self.invars = []
     self.effects = set()
     self.debug_info = debug_info
@@ -1931,6 +1933,7 @@ class DynamicJaxprTrace(core.Trace):
 
   def new_arg(self, aval, source_info: SourceInfo):
     tracer = DynamicJaxprTracer(self, aval, source_info)
+    self.frame.tracers.append(tracer)
     self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
     self.frame.invars.append(var)
     self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
@@ -1952,6 +1955,7 @@ class DynamicJaxprTrace(core.Trace):
 
   def _new_const(self, aval, c, source_info: SourceInfo) -> DynamicJaxprTracer:
     tracer = DynamicJaxprTracer(self, aval, source_info)
+    self.frame.tracers.append(tracer)
     if core.is_literalable(c):
       self.frame.tracer_to_var[id(tracer)] = Literal(c, aval)
     else:
@@ -1984,6 +1988,9 @@ class DynamicJaxprTrace(core.Trace):
     return var
 
   def makevar(self, tracer):
+    var = self.frame.tracer_to_var.get(id(tracer))
+    assert var is None, "a jaxpr variable must be created only once per tracer"
+    self.frame.tracers.append(tracer)
     var = self.frame.tracer_to_var[id(tracer)] = self.frame.newvar(tracer.aval)
     return var
 
@@ -2758,6 +2765,7 @@ def inline_jaxpr_into_trace(
     if atom in tracer_env:
       return tracer_env[atom]
     tracer = tracer_env[atom] = DynamicJaxprTracer(trace, atom.aval, src)
+    trace.frame.tracers.append(tracer)
     trace.frame.tracer_to_var[id(tracer)] = atom
     return tracer
   return [maybe_new_tracer(x if isinstance(x, Literal) else env[x]) for x in jaxpr.outvars]
