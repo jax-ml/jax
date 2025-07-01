@@ -155,7 +155,7 @@ def build_kernel(
       # We wait in all blocks in the cluster to avoid double arrival errors.
       reuses_tmem = arith.cmpi(arith.CmpIPredicate.uge, call_counter, c(2, index))
       with mgpu.when(arith.andi(is_leader_of(MMA_WARP), reuses_tmem)):
-        tmem_done_barrier[acc_slot].wait(for_tensor_core=True)
+        tmem_done_barrier[acc_slot].wait(orders_tensor_core=True)
       with mgpu.when(arith.andi(is_leader_of(MMA_WARP), is_leader_block)):
         @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
         def _mma_body(ki, accumulate):
@@ -180,7 +180,7 @@ def build_kernel(
           return accumulate
 
       with mgpu.when(is_store_warpgroup):
-        mma_done_barrier[acc_slot].wait(for_tensor_core=True)
+        mma_done_barrier[acc_slot].wait(orders_tensor_core=True)
         final_acc = acc_slice.load().astype(mlir.dtype_to_ir_type(jnp.dtype(dtype)))
         assert tile_n % epilogue_tile_n == 0
         for ni in range(tile_n // epilogue_tile_n):
@@ -200,7 +200,7 @@ def build_kernel(
               swizzle=128,
           )
           ctx.await_async_copy(0, await_read_only=True)
-        tmem_done_barrier[acc_slot].arrive(for_tensor_core=True)
+        tmem_done_barrier[acc_slot].arrive(orders_tensor_core=True)
 
     # We statically assign the tiles to SMs.
     logical_grid_size = math.prod(logical_grid)

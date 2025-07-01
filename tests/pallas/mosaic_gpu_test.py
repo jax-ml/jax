@@ -2803,7 +2803,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
     scratch_shapes = [
         plgpu.TMEM((m, n), jnp.float32, packed=False),
         plgpu.SMEM((m, n), dtype, transforms=transforms),
-        plgpu.Barrier(for_tensor_core=True),
+        plgpu.Barrier(orders_tensor_core=True),
     ]
     if lhs_tmem:
       scratch_shapes.append(plgpu.TMEM((m, k), dtype, packed=True))
@@ -2873,7 +2873,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
           plgpu.SMEM(shape, dtype, transforms=transforms),  # b_smem
           plgpu.SMEM(shape, dtype, transforms=transforms),  # out_smem
           plgpu.Barrier(),  # tma_barrier
-          plgpu.Barrier(for_tensor_core=True),  # mma_barrier
+          plgpu.Barrier(orders_tensor_core=True),  # mma_barrier
           plgpu.TMEM((128, 128), jnp.float32),  # acc
         ],
     )
@@ -2913,7 +2913,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
     scratch_shapes = [
         plgpu.TMEM(tmem_shape, jnp.float32, packed=False),
         plgpu.SMEM(shape, dtype, transforms=transforms),
-        plgpu.Barrier(for_tensor_core=True),
+        plgpu.Barrier(orders_tensor_core=True),
     ]
 
     f = self.pallas_call(
@@ -3011,7 +3011,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
         plgpu.SMEM(block_acc_shape, dtype, transforms=transforms),
         plgpu.TMEM(block_acc_shape, jnp.float32, collective=True),
         plgpu.Barrier(),
-        plgpu.Barrier(for_tensor_core=True),
+        plgpu.Barrier(orders_tensor_core=True),
         plgpu.ClusterBarrier(collective_axes=("x",)),
     ]
     if lhs_tmem:
@@ -3105,7 +3105,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
           ),
           plgpu.SMEM(shape, dtype, transforms=transforms),  # out_smem
           plgpu.Barrier(),  # tma_barrier
-          plgpu.Barrier(for_tensor_core=True),  # mma_barrier
+          plgpu.Barrier(orders_tensor_core=True),  # mma_barrier
           plgpu.TMEM(shape, jnp.float32),  # acc
         ],
     )
@@ -3179,7 +3179,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
           plgpu.SMEM(shape, dtype, transforms=transforms),  # b_smem
           plgpu.SMEM(shape, dtype, transforms=transforms),  # out_smem
           plgpu.Barrier(),  # tma_barrier
-          plgpu.Barrier(for_tensor_core=True),  # mma_barrier
+          plgpu.Barrier(orders_tensor_core=True),  # mma_barrier
           plgpu.RefUnion(   # aliased_refs
             [plgpu.TMEM((128, 128), jnp.float32), # acc
               plgpu.TMEM((128, 128), dtype, packed=True)],  # lhs
@@ -3223,7 +3223,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
     scratch_shapes = [
         plgpu.TMEM(shape, jnp.float32, packed=False),
         plgpu.SMEM(shape, dtype, transforms=transforms),
-        plgpu.Barrier(num_barriers=2, for_tensor_core=True),
+        plgpu.Barrier(num_barriers=2, orders_tensor_core=True),
     ]
     f = self.pallas_call(
         kernel,

@@ -285,7 +285,7 @@ def _run_scoped_resource_estimator(
   for v in jaxpr.invars:
     aval = v.aval
     if isinstance(aval.dtype, gpu_core.BarrierType):
-      multiplier = 1 if aval.dtype.for_tensor_core else ctx.arrival_multiplier
+      multiplier = 1 if aval.dtype.orders_tensor_core else ctx.arrival_multiplier
       rs += Resources(
           barrier_counts=collections.Counter([
               mgpu.Barrier(
@@ -2443,7 +2443,7 @@ def _run_scoped_lowering_rule(
             f" allocation (currently collective_axes={collective_axes})."
         )
       if isinstance(aval.dtype, gpu_core.BarrierType):
-        multiplier = (1 if aval.dtype.for_tensor_core else
+        multiplier = (1 if aval.dtype.orders_tensor_core else
                       ctx.estimator_ctx.arrival_multiplier)
         barrier_ref = alloc_stack.enter_context(
             ctx.module_ctx.reserve_barrier(

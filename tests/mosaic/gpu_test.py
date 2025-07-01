@@ -1360,7 +1360,7 @@ class TCGen05Test(TestCase):
             acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
         )
         tcgen05.commit_arrive(barriers[2])
-      mma_barrier.wait(for_tensor_core=True)
+      mma_barrier.wait(orders_tensor_core=True)
       is_signed = True if jnp.issubdtype(in_jax_dtype, jnp.integer) else None
       acc.load(is_signed=is_signed).store_untiled(out, optimized=False)
 
@@ -1443,7 +1443,7 @@ class TCGen05Test(TestCase):
             acc, lhs_tmem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
         )
         tcgen05.commit_arrive(barriers[2])
-      mma_barrier.wait(for_tensor_core=True)
+      mma_barrier.wait(orders_tensor_core=True)
       acc.load().store_untiled(out, optimized=False)
 
     x_shape = (m, k)
@@ -1542,7 +1542,7 @@ class TCGen05Test(TestCase):
             accumulate=False,
         )
         tcgen05.commit_arrive(barriers[2])
-      barriers[2].wait(for_tensor_core=True)
+      barriers[2].wait(orders_tensor_core=True)
       acc.load().store_untiled(out, optimized=False)
 
     x_shape = (m, k)
@@ -1637,7 +1637,7 @@ class TCGen05Test(TestCase):
             acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False, collective=True
         )
         tcgen05.commit_arrive(barriers[2], collective=True, ctx=ctx)
-      mma_barrier.wait(for_tensor_core=True)
+      mma_barrier.wait(orders_tensor_core=True)
       m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
       acc.load().store_untiled(memref_slice(out, m_slice), optimized=False)
 
@@ -1751,7 +1751,7 @@ class TCGen05Test(TestCase):
             collective=True,
         )
         tcgen05.commit_arrive(barriers[2], collective=True, ctx=ctx)
-      mma_barrier.wait(for_tensor_core=True)
+      mma_barrier.wait(orders_tensor_core=True)
       m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
       acc.load().store_untiled(memref_slice(out, m_slice), optimized=False)
 

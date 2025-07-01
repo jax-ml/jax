@@ -926,7 +926,7 @@ class BarrierType(dtypes.ExtendedDType):
   name: ClassVar[str] = "barrier"
 
   num_arrivals: int
-  for_tensor_core: bool
+  orders_tensor_core: bool
 
   def __str__(self):
     return self.name
@@ -951,18 +951,21 @@ class Barrier:
     num_arrivals: The number of arrivals that will be recorded by this barrier.
     num_barriers: The number of barriers that will be created. Individual
       barriers can be accessed by indexing into the barrier Ref.
-    for_tensor_core: Whether this barrier is used for synchronizing with
-      the tensor core. This should be set to True when waiting on Blackwell
-      (TC Gen 5) asynchronous matmul instructions.
+    orders_tensor_core: If False, a successfull wait from one thread does not
+      guarantee that the TensorCore-related operations in other threads have
+      completed. Similarly, when False any TensorCore operation in the waiting
+      thread is allowed to begin before the wait succeeds.
   """
   num_arrivals: int = 1
   num_barriers: int = 1
-  for_tensor_core: bool = False
+  orders_tensor_core: bool = False
 
   def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
-        [self.num_barriers], BarrierType(self.num_arrivals,
-                                         for_tensor_core=self.for_tensor_core)
+        [self.num_barriers],
+        BarrierType(
+            self.num_arrivals, orders_tensor_core=self.orders_tensor_core
+        ),
     )
     return state.AbstractRef(aval, SMEM)
 

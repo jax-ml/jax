@@ -193,7 +193,7 @@ def matmul_kernel(a, b, config: TuningConfig):
           plgpu.Barrier(
               num_arrivals=1,
               num_barriers=max_concurrent_steps + 1,
-              for_tensor_core=True,
+              orders_tensor_core=True,
           ),
       ),
   )
