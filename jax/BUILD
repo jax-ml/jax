@@ -299,7 +299,6 @@ py_library_providing_imports_info(
     ] + glob(
         [
             "*.py",
-            "_src/image/**/*.py",
             "experimental/key_reuse/**/*.py",
             "experimental/roofline/**/*.py",
             "image/**/*.py",
@@ -375,6 +374,7 @@ py_library_providing_imports_info(
         ":ffi",
         ":flatten_util",
         ":hashable_array",
+        ":image",
         ":internal_mesh_utils",
         ":jaxpr_util",
         ":lax",
@@ -1071,6 +1071,22 @@ pytype_strict_library(
     name = "hashable_array",
     srcs = ["_src/hashable_array.py"],
     deps = py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "image",
+    srcs = glob([
+        "_src/image/**/*.py",
+    ]),
+    visibility = [":internal"] + jax_visibility("image"),  # buildifier: disable=visibility-as-string-list
+    deps = [
+        ":api",
+        ":core",
+        ":dtypes",
+        ":lax",
+        ":numpy",
+        ":util",
+    ] + py_deps("numpy"),
 )
 
 pytype_library(

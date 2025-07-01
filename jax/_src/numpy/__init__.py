@@ -133,6 +133,7 @@ from jax._src.numpy.ufuncs import (
     conjugate as conjugate,
     cos as cos,
     deg2rad as deg2rad,
+    divide as divide,
     equal as equal,
     exp as exp,
     expm1 as expm1,
