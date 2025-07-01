@@ -1996,16 +1996,16 @@ class DynamicJaxprTrace(core.Trace):
     if config.eager_constant_folding.value and not any(isinstance(x, Tracer) for x in tracers):
       return primitive.bind_with_trace(core.eval_trace, tracers, params)
     source_info = source_info_util.current()
-    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
-    jaxpr_tracers = map(to_jaxpr_tracer, tracers)
+    jaxpr_tracers = [self.to_jaxpr_tracer(t, source_info) for t in tracers]
     if primitive in custom_staging_rules:
       return custom_staging_rules[primitive](self, source_info, *jaxpr_tracers,
                                              **params)
-    return self.default_process_primitive(
-        primitive, jaxpr_tracers, params, source_info)
+    return self.default_process_primitive(primitive, jaxpr_tracers, params, source_info)
 
   def default_process_primitive(self, primitive, tracers, params,
                                 source_info=None):
+    source_info = source_info or source_info_util.current()
+    tracers = [self.to_jaxpr_tracer(t, source_info) for t in tracers]
     aval_qdds = [t.aval_mutable_qdd for t in tracers]
     # TODO(mattjj): make custom_lin have hashable params.
     # TODO(dougalm): add an attribute to primitives to mark primitives with
@@ -2030,7 +2030,6 @@ class DynamicJaxprTrace(core.Trace):
       raise ValueError(f"{primitive}.abstract_eval() method should return "
                        f"a tuple or a list iff {primitive}.multiple_results.")
     out_avals = [out_avals] if not primitive.multiple_results else out_avals
-    source_info = source_info or source_info_util.current()
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
     outvars = map(self.makevar, out_tracers)
