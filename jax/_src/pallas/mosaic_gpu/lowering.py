@@ -1534,19 +1534,6 @@ def _swap_lowering_rule(
   if not isinstance(value, mgpu.FragmentedArray):
     raise TypeError(f"Can only store arrays (got {value}).")
 
-  if isinstance(x_ref, tcgen05.TMEMRef):
-    transforms = jax.tree.unflatten(tree, leaves)
-    x_tmem, transforms = _handle_transforms(
-        ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
-    )
-    if transforms:
-      raise NotImplementedError(
-          f"Unimplemented transforms for TMEM refs. {transforms=}"
-      )
-    old_value = x_tmem.load(layout=value.layout)
-    x_tmem.store(value)
-    return old_value
-
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
     raise TypeError(f"Can only store to references (got {x_ref}).")
   v_aval = ctx.avals_in[1]

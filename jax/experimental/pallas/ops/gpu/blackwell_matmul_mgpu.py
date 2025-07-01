@@ -165,10 +165,11 @@ def matmul_kernel(a, b, config: TuningConfig):
           lax.fori_loop(0, k_iters, _loop_body, None)
 
       plgpu.barrier_wait(consumed_barrier.at[max_concurrent_steps])
-      acc_smem[...] = acc_tmem[...].astype(dtype)
+      acc_smem[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(acc_smem, out_gmem.at[block_slice_m, slice_n])
       plgpu.wait_smem_to_gmem(0)
+      plgpu.wait_load_tmem()  # Load must complete before we continue.
 
   num_sms = jax.local_devices()[0].core_count
   f = plgpu.kernel(

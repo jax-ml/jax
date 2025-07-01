@@ -2163,6 +2163,9 @@ class PallasCallWGTest(
         mgpu_primitives.inline_mgpu_p,
         mgpu_primitives.tcgen05_mma_p,
         mgpu_primitives.tcgen05_commit_arrive_p,
+        mgpu_primitives.async_load_tmem_p,
+        mgpu_primitives.async_store_tmem_p,
+        mgpu_primitives.wait_load_tmem_p,
         mgpu_primitives.commit_tmem_p,
         mgpu_primitives.load_p,
         lax.slice_p,
@@ -2580,16 +2583,12 @@ class PallasCallSm90AWGTest(
 
 class PallasCallSm100ATest(PallasSm100ATest):
 
-  @parameterized.parameters(
-      (False,),
-      (True,),
-  )
+  @parameterized.parameters((False,), (True,))
   def test_tmem(self, collective):
     self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
     swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
     transforms = (
-        plgpu.TilingTransform((8, swizzle_elems)),
-        plgpu.SwizzleTransform(128),
+        plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(128),
     )
     @functools.partial(
         self.kernel,
@@ -2610,11 +2609,14 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.barrier_wait(barrier_ref)
       # Exercise TMEM by roundtripping SMEM -> TMEM -> TMEM -> SMEM.
       x_val = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05)
-      tmem_ref[...] = x_val + 1
+      plgpu.async_store_tmem(tmem_ref, x_val + 1)
       plgpu.commit_tmem()
-      tmem_ref2[...] = tmem_ref[...]
+      #  We don't await the load, because we never overwrite tmem_ref
+      tmem_read = plgpu.async_load_tmem(tmem_ref)
+      plgpu.async_store_tmem(tmem_ref2, tmem_read)
       plgpu.commit_tmem()
-      smem_ref[...] = tmem_ref2[...]
+      #  We don't await the load, because we never overwrite tmem_ref2
+      smem_ref[...] = plgpu.async_load_tmem(tmem_ref2)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_ref, y_ref)
       plgpu.wait_smem_to_gmem(0)
@@ -2652,20 +2654,22 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.barrier_wait(barrier_ref)
       # Test tmem_128x32 a and b
       x_val = plgpu.load(smem_ref.at[:, 0:32], (), layout=plgpu.Layout.TCGEN05)
-      tmem_128x32a[...] = x_val + 1
+      plgpu.async_store_tmem(tmem_128x32a, x_val + 1)
       plgpu.commit_tmem()
-      smem_ref[:, 0:32] = tmem_128x32a[...]
+      smem_ref[:, 0:32] = plgpu.async_load_tmem(tmem_128x32a)
+      plgpu.wait_load_tmem()  # Make sure the load is done before we write to TMEM again.
 
       x_val = plgpu.load(smem_ref.at[:, 32:64], (), layout=plgpu.Layout.TCGEN05)
-      tmem_128x32b[...] = x_val + 1
+      plgpu.async_store_tmem(tmem_128x32b, x_val + 1)
       plgpu.commit_tmem()
-      smem_ref[:, 32:64] = tmem_128x32b[...]
+      smem_ref[:, 32:64] = plgpu.async_load_tmem(tmem_128x32b)
+      plgpu.wait_load_tmem()  # Make sure the load is done before we write to TMEM again.
 
       # Test tmem_128x64
       x_val = plgpu.load(smem_ref.at[:, 64:128], (), layout=plgpu.Layout.TCGEN05)
-      tmem_128x64[...] = x_val + 1
+      plgpu.async_store_tmem(tmem_128x64, x_val + 1)
       plgpu.commit_tmem()
-      smem_ref[:, 64:128] = tmem_128x64[...]
+      smem_ref[:, 64:128] = plgpu.async_load_tmem(tmem_128x64)
 
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_ref, y_ref)
@@ -2697,9 +2701,11 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.barrier_wait(barrier_ref)
       optimized = layout != plgpu.Layout.TCGEN05_TMEM_NATIVE
       x_val = plgpu.load(smem_ref, (), layout=layout, optimized=optimized)
-      tmem_ref[...] = x_val + 1
+      plgpu.async_store_tmem(tmem_ref, x_val + 1)
       plgpu.commit_tmem()
-      smem_ref[...] = plgpu.layout_cast(tmem_ref[...], layout)
+      # We don't wait for the load to complete, because we never overwrite
+      # tmem_ref.
+      smem_ref[...] = plgpu.async_load_tmem(tmem_ref, layout=layout)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_ref, y_ref)
       plgpu.wait_smem_to_gmem(0)
@@ -2732,9 +2738,9 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.barrier_wait(barrier_ref)
       x_val = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05)
       tmem_slice = tmem_ref.at[:, 8:208].at[:, 0:128]
-      tmem_slice[...] = x_val + 1
+      plgpu.async_store_tmem(tmem_slice, x_val + 1)
       plgpu.commit_tmem()
-      smem_ref[...] = tmem_ref[:, 8:136]
+      smem_ref[...] = plgpu.async_load_tmem(tmem_ref.at[:, 8:136])
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_ref, y_ref)
       plgpu.wait_smem_to_gmem(0)
@@ -2778,7 +2784,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       if lhs_tmem:
         lhs_ref = a_tmem_ref
         layout = plgpu.Layout.TCGEN05 if m == 128 else plgpu.Layout.WGMMA
-        lhs_ref[...] = plgpu.load(a_smem, (), layout=layout)
+        plgpu.async_store_tmem(lhs_ref, plgpu.load(a_smem, (), layout=layout))
         plgpu.commit_tmem()
       else:
         lhs_ref = a_smem
@@ -2788,7 +2794,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
                         barrier_ref,
                         accumulate=False)
       plgpu.barrier_wait(barrier_ref)
-      scratch_smem[...] = acc_tmem[...].astype(dtype)
+      # We don't await the load because acc_tmem is never modified again.
+      scratch_smem[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(scratch_smem, out_ref)
       plgpu.wait_smem_to_gmem(0)
@@ -2852,7 +2859,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
                         accumulate=False)
       plgpu.tcgen05_commit_arrive(mma_barrier)
       plgpu.barrier_wait(mma_barrier)
-      out_smem[...] = acc_tmem[...].astype(dtype)
+      # We don't await the load because acc_tmem is never modified again.
+      out_smem[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(out_smem, out_gmem)
       plgpu.wait_smem_to_gmem(0)
@@ -2896,7 +2904,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
                         barrier_ref,
                         accumulate=False)
       plgpu.barrier_wait(barrier_ref)
-      scratch_smem[...] = acc_tmem_slice[...].astype(dtype)
+      # We don't await the load because acc_tmem is never modified again.
+      scratch_smem[...] = plgpu.async_load_tmem(acc_tmem_slice).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(scratch_smem, out_ref)
       plgpu.wait_smem_to_gmem(0)
@@ -2969,7 +2978,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
 
       if lhs_tmem:
         lhs_ref = lhs_tmem_ref
-        lhs_ref[...] = plgpu.load(a_smem, (), layout=plgpu.Layout.TCGEN05)
+        plgpu.async_store_tmem(lhs_ref, plgpu.load(a_smem, (), layout=plgpu.Layout.TCGEN05))
         plgpu.commit_tmem()
       else:
         lhs_ref = a_smem
@@ -2990,7 +2999,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
         layout = plgpu.Layout.TCGEN05_M64_COLLECTIVE(n)
       else:
         layout = plgpu.Layout.TCGEN05
-      scratch_smem[...] = plgpu.layout_cast(acc_tmem[...], layout).astype(dtype)
+      # We don't await the load because acc_tmem is never modified again.
+      scratch_smem[...] = plgpu.async_load_tmem(acc_tmem, layout=layout).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(scratch_smem, out_gmem.at[slice_lhs, :])
       plgpu.wait_smem_to_gmem(0)
@@ -3056,26 +3066,26 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.barrier_wait(tma_barrier)
 
       # Do 128x128 @ 128x128 matmul
-      plgpu.commit_tmem()
       plgpu.tcgen05_mma(acc_tmem,
                         plgpu.transpose_ref(a_smem_128, (1, 0)),
                         b_smem_128,
                         mma_barrier,
                         accumulate=False)
       plgpu.barrier_wait(mma_barrier)
-      out_smem[...] = acc_tmem[...].astype(dtype)
+      out_smem[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(out_smem, out_gmem128)
       plgpu.wait_smem_to_gmem(0)
 
       # Do 128x64 @ 64x128 matmul
+      plgpu.wait_load_tmem()  # Make sure the loads are complete
       plgpu.tcgen05_mma(acc_tmem,
                         plgpu.transpose_ref(a_smem_64, (1, 0)),
                         b_smem_64,
                         mma_barrier,
                         accumulate=False)
       plgpu.barrier_wait(mma_barrier)
-      out_smem[...] = acc_tmem[...].astype(dtype)
+      out_smem[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(out_smem, out_gmem64)
       plgpu.wait_smem_to_gmem(0)
@@ -3128,7 +3138,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       acc_128, lhs_128, lhs_64, acc_64, _ = aliased_refs
 
       # Do 128x128 @ 128x128 matmul
-      lhs_128[...] = plgpu.load(a_smem, (), layout=plgpu.Layout.TCGEN05)
+      plgpu.async_store_tmem(lhs_128, plgpu.load(a_smem, (), layout=plgpu.Layout.TCGEN05))
       plgpu.commit_tmem()
       plgpu.tcgen05_mma(acc_128,
                         lhs_128,
@@ -3136,14 +3146,17 @@ class PallasCallSm100ATest(PallasSm100ATest):
                         mma_barrier,
                         accumulate=False)
       plgpu.barrier_wait(mma_barrier)
-      out_smem[...] = acc_128[...].astype(dtype)
+      out_smem[...] = plgpu.async_load_tmem(acc_128).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(out_smem, out_gmem128)
       plgpu.wait_smem_to_gmem(0)
 
       # Do 128x64 @ 64x128 matmul
-      lhs_64[...] = plgpu.load(a_smem.at[:, 0:64], (),
-                               layout=plgpu.Layout.TCGEN05)
+      plgpu.wait_load_tmem()  # Make sure the loads have completed
+      plgpu.async_store_tmem(
+          lhs_64,
+          plgpu.load(a_smem.at[:, 0:64], (), layout=plgpu.Layout.TCGEN05),
+      )
       plgpu.commit_tmem()
       plgpu.tcgen05_mma(acc_64,
                         lhs_64,
@@ -3151,7 +3164,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
                         mma_barrier,
                         accumulate=False)
       plgpu.barrier_wait(mma_barrier)
-      out_smem[...] = acc_64[...].astype(dtype)
+      # We don't await the load because TMEM is never modified again.
+      out_smem[...] = plgpu.async_load_tmem(acc_64).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(out_smem, out_gmem64)
       plgpu.wait_smem_to_gmem(0)

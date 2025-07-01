@@ -1549,7 +1549,12 @@ def _commit_tmem_lowering(_):
 
 
 def commit_tmem():
-  """Commits all writes to TMEM, making them visible to loads and MMA."""
+  """Commits all writes to TMEM issued by the current thread.
+
+  Once this function returns, the effects of calling ``async_store_tmem`` from
+  the current thread are visible to TMEM loads, MMA and barrier operations of
+  ``Barrier``s with ``orders_tensor_core=True``.
+  """
   commit_tmem_p.bind()
 
 
@@ -2071,3 +2076,144 @@ def load(
   if layout is not None:
     result = gpu_core.layout_cast(result, layout)
   return result
+
+
+async_load_tmem_p = jax_core.Primitive("async_load")
+
+def async_load_tmem(src: _Ref, idx = (), *, layout: Layout | None = None) -> jax.Array:
+  """Performs an asynchronous load from the TMEM array.
+
+  The load operation is only partly asynchronous. The returned array can be used
+  immediately, without any additional synchronization. However, it cannot be
+  assumed that the read from TMEM has completed when the function returns. If
+  you ever attempt to overwrite the read region, you should ensure that
+  ``wait_load_tmem`` has been called before that happens. Failure to do so
+  can result in nondeterministic data races.
+
+  For example, the following sequence of operations at the end of the kernel is
+  valid, even though the TMEM load is never awaited::
+
+    smem_ref[...] = plgpu.async_load_tmem(tmem_ref)
+    plgpu.commit_smem()
+    plgpu.copy_smem_to_gmem(smem_ref, gmem_ref)
+    plgpu.wait_smem_to_gmem(0)
+
+  However, if the kernel was persistent and might reuse the TMEM again, the
+  sequence should be extended with a call to ``wait_load_tmem``.
+
+  Args:
+    src: The TMEM reference to load from.
+    idx: An optional slice that specifies a subregion that will be loaded. All
+      data will be loaded if not specified.
+    layout: The optional layout hint to use for the resulting array.
+  """
+  src, src_transforms = state_primitives.get_ref_and_transforms(
+      src, idx, "async_load_tmem", force_trailing_indexer=True,
+  )
+  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
+      src_transforms
+  )
+  result = async_load_tmem_p.bind(
+      src, *flat_src_transforms, tree=src_transforms_treedef
+  )
+  if layout is not None:
+    result = gpu_core.layout_cast(result, layout)
+  return result
+
+@async_load_tmem_p.def_effectful_abstract_eval
+def _async_load_tmem_abstract_eval(src, *avals_flat, tree):
+  if src.memory_space != gpu_core.MemorySpace.TMEM:
+    raise ValueError("Async load only supports TMEM refs")
+  return state_primitives._get_abstract_eval(src, *avals_flat, tree=tree)
+
+@lowering.register_lowering_rule(async_load_tmem_p, mgpu.LoweringSemantics.Lane)
+def _async_load_tmem_lowering_rule(
+    ctx: lowering.LoweringRuleContext, x_ref, *leaves, tree
+):
+  assert isinstance(x_ref, tcgen05.TMEMRef)
+  transforms = jax.tree.unflatten(tree, leaves)
+  x_tmem, transforms = lowering._handle_transforms(
+      ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
+  )
+  if transforms:
+    raise NotImplementedError(
+        f"Unimplemented transforms for TMEM refs. {transforms=}"
+    )
+  layout_hint = None
+  if isinstance(ctx.out_layout_hint, mgpu.TiledLayout):
+    layout_hint = ctx.out_layout_hint
+  return x_tmem.load(layout=layout_hint)
+
+
+wait_load_tmem_p = jax_core.Primitive("wait_load_tmem")
+wait_load_tmem_p.multiple_results = True
+
+def wait_load_tmem():
+  """Awaits all previously asynchronous TMEM loads issued by the calling thread.
+
+  Once this function returns, the TMEM loads issued by the calling thread are
+  guaranteed to have completed. The read TMEM regions can be safely overwritten
+  by the calling thread, or any threads signalled through ``Barrier``s with
+  ``orders_tensor_core=True``.
+  """
+  wait_load_tmem_p.bind()
+
+
+@wait_load_tmem_p.def_effectful_abstract_eval
+def _wait_load_tmem_abstract_eval():
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(wait_load_tmem_p, mgpu.LoweringSemantics.Lane)
+def _wait_load_tmem_lowering(_):
+  tcgen05.wait_load_tmem()
+  return ()
+
+
+async_store_tmem_p = jax_core.Primitive("async_store_tmem")
+async_store_tmem_p.multiple_results = True
+
+def async_store_tmem(ref: _Ref, value):
+  """Stores the value to TMEM.
+
+  The store is asynchronous and is not guaranteed to be visible (e.g. by reads
+  or MMA operations) until ``commit_tmem`` has been called.
+
+  Args:
+    ref: The TMEM reference to store to.
+    value: The value to store.
+  """
+  ref, ref_transforms = state_primitives.get_ref_and_transforms(
+      ref, None, "async_store_tmem", force_trailing_indexer=True,
+  )
+  flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
+      ref_transforms
+  )
+  async_store_tmem_p.bind(
+      ref, value, *flat_ref_transforms, tree=ref_transforms_treedef
+  )
+
+@async_store_tmem_p.def_effectful_abstract_eval
+def _async_store_tmem_abstract_eval(ref, val, *avals_flat, tree):
+  if ref.memory_space != gpu_core.MemorySpace.TMEM:
+    raise ValueError("Async store only supports TMEM refs")
+  _, effects = state_primitives._swap_abstract_eval(
+      ref, val, *avals_flat, tree=tree
+  )
+  return (), effects
+
+@lowering.register_lowering_rule(async_store_tmem_p, mgpu.LoweringSemantics.Lane)
+def _async_store_tmem_lowering_rule(
+    ctx: lowering.LoweringRuleContext, x_ref, value, *leaves, tree
+):
+  assert isinstance(x_ref, tcgen05.TMEMRef)
+  transforms = jax.tree.unflatten(tree, leaves)
+  x_tmem, transforms = lowering._handle_transforms(
+      ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
+  )
+  if transforms:
+    raise NotImplementedError(
+        f"Unimplemented transforms for TMEM refs. {transforms=}"
+    )
+  x_tmem.store(value)
+  return ()

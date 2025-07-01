@@ -1175,3 +1175,11 @@ def commit_tmem():
       void, [], "tcgen05.wait::st.sync.aligned;", "", has_side_effects=True,
   )
   utils.warpgroup_barrier()
+
+
+def wait_load_tmem():
+  void = ir.Type.parse("!llvm.void")
+  llvm.inline_asm(
+      void, [], "tcgen05.wait::ld.sync.aligned;", "", has_side_effects=True,
+  )
+  utils.warpgroup_barrier()
