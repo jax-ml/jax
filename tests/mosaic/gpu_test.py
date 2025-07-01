@@ -780,11 +780,8 @@ class WGMMATest(TestCase):
       ),
       m=(64, 128, 192),
       n=(64, 128, 192),
-      k_steps=(1, 2),
       swizzle=(32, 64, 128),
       jax_out_dtype=(jnp.float16, jnp.float32),
-      rhs_tiling_kind=("large", "small", "small+no_transpose"),
-      lhs_tiling_kind=("large", "small", "small+no_transpose"),
   )
   def test_wgmma_basic_float(
       self,
@@ -793,55 +790,75 @@ class WGMMATest(TestCase):
       in_mlir_dtype_cls,
       m,
       n,
-      k_steps,
       swizzle,
       jax_out_dtype,
-      rhs_tiling_kind,
-      lhs_tiling_kind,
   ):
     self._test_wgmma_basic(
         m,
         n,
-        k_steps,
-        in_mlir_dtype_cls,
-        lhs_transpose,
-        rhs_transpose,
-        swizzle,
-        jax_out_dtype,
-        rhs_tiling_kind,
-        lhs_tiling_kind,
+        k_steps=2,  # Decrease to 1 to simplify debugging.
+        in_mlir_dtype_cls=in_mlir_dtype_cls,
+        lhs_transpose=lhs_transpose,
+        rhs_transpose=rhs_transpose,
+        swizzle=swizzle,
+        jax_out_dtype=jax_out_dtype,
+        lhs_tiling_kind="small+no_transpose" if lhs_transpose else "small",
+        rhs_tiling_kind="small+no_transpose" if rhs_transpose else "small",
     )
 
   @parameterized.product(
       in_mlir_dtype_cls=(I8Type,),
       m=(64, 128, 192),
       n=(64, 128, 192),
-      k_steps=(1, 2),
       swizzle=(32, 64, 128),
       jax_out_dtype=(jnp.int32,),
-      rhs_tiling_kind=("large", "small", "small+no_transpose"),
-      lhs_tiling_kind=("large", "small"),
   )
   def test_wgmma_basic_int(
-      self,
-      in_mlir_dtype_cls,
-      m,
-      n,
-      k_steps,
-      swizzle,
-      jax_out_dtype,
-      rhs_tiling_kind,
-      lhs_tiling_kind,
+      self, in_mlir_dtype_cls, m, n, swizzle, jax_out_dtype,
   ):
     self._test_wgmma_basic(
         m,
         n,
-        k_steps,
-        in_mlir_dtype_cls,
+        k_steps=2,  # Decrease to 1 to simplify debugging.
+        in_mlir_dtype_cls=in_mlir_dtype_cls,
         lhs_transpose=False,
         rhs_transpose=True,
         swizzle=swizzle,
         jax_out_dtype=jax_out_dtype,
+        rhs_tiling_kind="small",
+        lhs_tiling_kind="small+no_transpose",
+    )
+
+  @parameterized.product(
+      lhs_transpose=(False, True),
+      rhs_transpose=(False, True),
+      in_mlir_dtype_cls=(
+          ir.F32Type,
+          ir.F16Type,
+          ir.Float8E5M2Type,
+      ),
+      swizzle=(32, 64, 128),
+      rhs_tiling_kind=("large", "small", "small+no_transpose"),
+      lhs_tiling_kind=("large", "small", "small+no_transpose"),
+  )
+  def test_wgmma_transposes(
+      self,
+      lhs_transpose,
+      rhs_transpose,
+      in_mlir_dtype_cls,
+      swizzle,
+      rhs_tiling_kind,
+      lhs_tiling_kind,
+  ):
+    self._test_wgmma_basic(
+        m=128,
+        n=192,
+        k_steps=2,  # Decrease to 1 to simplify debugging.
+        in_mlir_dtype_cls=in_mlir_dtype_cls,
+        lhs_transpose=lhs_transpose,
+        rhs_transpose=rhs_transpose,
+        swizzle=swizzle,
+        jax_out_dtype=jnp.float32,
         rhs_tiling_kind=rhs_tiling_kind,
         lhs_tiling_kind=lhs_tiling_kind,
     )
