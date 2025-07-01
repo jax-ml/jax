@@ -3691,7 +3691,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',), axis_types=(AxisType.Auto,))
   def test_smap_replicated(self, mesh):
-    @partial(smap, in_axes=None, out_axes=None, axis_name='x')
+    @smap(in_axes=None, out_axes=None, axis_name='x')
     def f(x):
       return x * 2
     out = f(np.arange(8))

@@ -142,9 +142,13 @@ Infer = InferFromArgs()
 def _get_default_infer():
   return Infer
 
-# TODO(yashkatariya): We need a singleton which users can provide to `in_axes`
-# to tell smap to infer in_specs from args when mesh is fully explicit.
-def smap(f, /, *, in_axes=Infer, out_axes, axis_name: AxisName):
+def smap(f=None, /, *, in_axes=Infer, out_axes, axis_name: AxisName):
+  kwargs = dict(in_axes=in_axes, out_axes=out_axes, axis_name=axis_name)
+  if f is None:
+    return lambda g: _smap(g, **kwargs)
+  return _smap(f, **kwargs)
+
+def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
   if isinstance(axis_name, (list, tuple)):
     raise TypeError(
         f"smap axis_name should be a `str` or a `Hashable`, but got {axis_name}")
