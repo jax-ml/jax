@@ -9259,6 +9259,8 @@ def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side
     return (where(go_left, low, mid), where(go_left, mid, high)), ()
   n_levels = int(np.ceil(np.log2(len(sorted_arr) + 1)))
   init = (array(0, dtype=dtype), array(len(sorted_arr), dtype=dtype))
+  vma = core.typeof(sorted_arr).vma
+  init = tuple(core.pvary(i, tuple(vma)) for i in init)
   carry, _ = control_flow.scan(body_fun, init, (), length=n_levels,
                                unroll=n_levels if unrolled else 1)
   return carry[1]
