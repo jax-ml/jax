@@ -1004,6 +1004,9 @@ def _wrap_main_func(
                                  orig_main_args)
       func_dialect.ReturnOp([call.results[idx] for idx in new_main_result_indices])
     symbol_table.set_symbol_name(new_main_op, "main")
+    pipeline = passmanager.PassManager.parse(
+        'builtin.module(symbol-dce)')
+    pipeline.run(wrapped_module.operation)
 
   return wrapped_module
 

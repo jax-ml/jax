@@ -746,7 +746,7 @@ def _merge_branch_residuals(branch_res_avals):
 # residual outputs that it does not populate.
 def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
                        all_res_avals, res_aval_indices_per_jaxpr,
-                       num_non_res_outputs):
+                       num_non_res_outputs) -> tuple[core.ClosedJaxpr, ...]:
   def augment_jaxpr(jaxpr: core.ClosedJaxpr,
                     res_indices):
     def f_aug(*args):
@@ -764,9 +764,9 @@ def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
 # This function augments branch inputs to agree with the merged residual format:
 # each branch is made to accept all residuals, even though it will ignore those
 # that it does not read.
-def _join_cond_pe_staged_jaxpr_inputs(jaxprs: Sequence[core.ClosedJaxpr],
-                                      all_res_avals,
-                                      res_aval_indices_per_jaxpr):
+def _join_cond_pe_staged_jaxpr_inputs(
+    jaxprs: Sequence[core.ClosedJaxpr], all_res_avals,
+    res_aval_indices_per_jaxpr) -> tuple[core.ClosedJaxpr, ...]:
   all_res_vars = map(core.Var, all_res_avals)
 
   def augment_jaxpr(jaxpr: core.ClosedJaxpr, res_indices) -> core.ClosedJaxpr:

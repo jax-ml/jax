@@ -242,7 +242,9 @@ def pure_callback_lowering(
   return result
 
 
-mlir.register_lowering(pure_callback_p, pure_callback_lowering)
+# TODO(phawkins): On TPU, these have an embedded channel ID that should be
+# unique for each callback. Caching defeats this.
+mlir.register_lowering(pure_callback_p, pure_callback_lowering, cacheable=False)
 
 def _check_shape_dtype(shape_dtype):
   dt = np.dtype(shape_dtype.dtype)
@@ -527,9 +529,9 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
     )
   return result
 
-
-mlir.register_lowering(io_callback_p, io_callback_lowering)
-
+# TODO(phawkins): On TPU, these have an embedded channel ID that should be
+# unique for each callback. Caching defeats this.
+mlir.register_lowering(io_callback_p, io_callback_lowering, cacheable=False)
 
 def io_callback(
     callback: Callable[..., Any],

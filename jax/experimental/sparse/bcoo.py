@@ -1561,7 +1561,9 @@ _bcoo_sum_duplicates_hlo = mlir.lower_fun(
 
 ad.primitive_jvps[bcoo_sum_duplicates_p] = _bcoo_sum_duplicates_jvp
 batching.primitive_batchers[bcoo_sum_duplicates_p] = _bcoo_sum_duplicates_batching_rule
-mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_hlo)
+# TODO(phawkins): caching this primitive seems to cause x64 context problems.
+mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_hlo,
+                       cacheable=False)
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?

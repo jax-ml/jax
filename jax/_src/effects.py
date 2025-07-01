@@ -91,6 +91,9 @@ class EffectTypeSet:
   def __init__(self):
     self._effect_types: set[type[Effect]] = set()
 
+  def __repr__(self):
+    return f"EffectTypeSet({self._effect_types})"
+
   def add_type(self, effect_type: type[Effect]):
     self._effect_types.add(effect_type)
 

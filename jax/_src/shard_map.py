@@ -1397,7 +1397,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   unk_arg_tracers = [t for t in tracers if not t.is_known()]
   out_avals_sharded = [v.aval for v in jaxpr.outvars]
   unk_params = dict(mesh=mesh, in_specs=unk_in_specs,
-                    out_specs=unk_out_specs, jaxpr=jaxpr,
+                    out_specs=tuple(unk_out_specs), jaxpr=jaxpr,
                     check_vma=check_vma, manual_axes=manual_axes)
   out_avals = map(partial(_unshard_aval, mesh, check_vma), unk_out_specs,
                   out_avals_sharded)

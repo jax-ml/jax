@@ -2096,7 +2096,10 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   ctx.set_tokens_out(tokens_out)
   return out_nodes
 
-mlir.register_lowering(pjit_p, _pjit_lowering)
+# TODO(phawkins): this is marked uncacheable because it has its own cache and
+# because the cache breaks jaxpr metadata like source locations. We should fix
+# the metadata problem and consolidate the caches.
+mlir.register_lowering(pjit_p, _pjit_lowering, cacheable=False)
 
 
 def _pjit_batcher(axis_data, vals_in,
