@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import io
+import json
 from typing import cast
 import zlib
 
@@ -59,7 +60,6 @@ def pallas_call_lowering(
     metadata: frozen_dict.FrozenDict[str, str] | None,
 ):
   del interpret, out_avals, cost_estimate
-  del metadata  # TODO(sharadmv): Add metadata to HLO.
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
@@ -104,6 +104,10 @@ def pallas_call_lowering(
   buf = io.BytesIO()
   module_op.write_bytecode(buf)
 
+  serialized_metadata = None
+  if metadata is not None:
+    serialized_metadata = json.dumps(metadata)
+
   # TODO(b/394629193): Remove True once the bug is fixed.
   if True:
     # AOT Triton compilation is only available on jaxlib 0.5.1+.
@@ -122,10 +126,10 @@ def pallas_call_lowering(
         grid_z=mlir.i32_attr(grid_z),
         debug=ir.BoolAttr.get(debug),
     )
-    if params.serialized_metadata is not None:
+    if serialized_metadata is not None:
       # This field is unstable and may be removed in the future.
       backend_config["serialized_metadata"] = ir.StringAttr.get(
-          params.serialized_metadata
+          serialized_metadata
       )
     return mlir.custom_call(
         call_target_name="__gpu$xla.gpu.triton",
@@ -185,7 +189,7 @@ def pallas_call_lowering(
       backend_config=zlib.compress(
           kernel_call.to_proto(
               debug_info.func_name,
-              params.serialized_metadata or b"",
+              (serialized_metadata or "").encode(),
           )
       ),
       operand_layouts=avals_to_layouts(ctx.avals_in),
