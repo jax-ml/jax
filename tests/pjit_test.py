@@ -15,11 +15,9 @@
 from collections import OrderedDict, namedtuple
 import re
 from functools import partial, wraps
-import logging
 import json
 import math
 import textwrap
-import threading
 import unittest
 
 from absl.testing import absltest
@@ -63,9 +61,8 @@ from jax._src.lib import jaxlib_extension_version
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
-from jax._src import xla_bridge
-from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
+from jax._src.lib import xla_client as xc
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -800,141 +797,6 @@ class PJitTest(jtu.BufferDonationTestCase):
                  donate_argnames=('inp1',)).lower(x)
     f_com = f_low.compile()
     f_low.donate_argnums == f_com.donate_argnums == (0,)
-
-  @unittest.skip('Fails in OSS builds on GPU with jax at HEAD and latest '
-                 'jaxlib on pypi.')
-  def testInfeed(self):
-    devices = np.array(jax.local_devices())
-    nr_devices = len(devices)
-    shape = (nr_devices * 3, nr_devices * 5)
-
-    def f_for_jit(x):
-      token = lax.create_token(x)
-      (y,), token = lax_internal.infeed(
-          token, shape=(core.ShapedArray(x.shape, np.float32),))
-      (z,), token = lax_internal.infeed(
-          token, shape=(core.ShapedArray(x.shape, np.float32),))
-      (w,), token = lax_internal.infeed(
-          token, shape=(core.ShapedArray(x.shape, np.float32),))
-
-      return x + y + z + w
-
-    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    y = x * 2.
-    z = x * 3.
-    w = x * 4.
-
-    # Transfer data to infeed before executing the function. For GPUs, the
-    # execution of the compiled function is blocking, so transferring data
-    # to infeed before executing ensures that the execution does not deadlock
-    # waiting for the infeed data.
-    logging.info('Transferring to infeed for the jit call')
-    d = devices[0]
-    d.transfer_to_infeed((y,))
-    d.transfer_to_infeed((z,))
-    d.transfer_to_infeed((w,))
-
-    # JIT
-    logging.info('Making jit call')
-    res0 = jax.jit(f_for_jit)(x)
-    self.assertAllClose(res0, x + y + z + w, check_dtypes=True)
-
-    # PJIT
-    def f_for_pjit(x):
-      token = lax.create_token(x)
-      # A replicated infeed
-      (y,), token = lax_internal.infeed(
-          token,
-          shape=(core.ShapedArray(x.shape, np.float32),),
-          partitions=(None,))
-      # An infeed sharded on first axis
-      (z,), token = lax_internal.infeed(
-          token,
-          shape=(core.ShapedArray(x.shape, np.float32),),
-          partitions=(P(nr_devices, 1),))
-      # An infeed sharded on second axis
-      (w,), token = lax_internal.infeed(
-          token,
-          shape=(core.ShapedArray(x.shape, np.float32),),
-          partitions=(P(1, nr_devices),))
-      return x + y + z + w
-
-    logging.info('Transferring to infeed for the pjit call')
-    for didx, d in enumerate(devices):
-      # Transfer the whole array to all devices for replicated.
-      d.transfer_to_infeed((y,))
-      # For sharded infeed, transfer only the needed slices to each device.
-      d.transfer_to_infeed(z[3 * didx:3 * didx + 3, :])
-      d.transfer_to_infeed((w[:, 5 * didx:5 * didx + 5],))
-
-    with jax.sharding.Mesh(devices, ['d']):
-      logging.info('Making pjit call')
-      res = pjit(f_for_pjit, in_shardings=(P('d'),), out_shardings=P('d'))(x)
-
-    self.assertAllClose(res0, res, check_dtypes=True)
-
-  def testOutfeed(self):
-    if xla_bridge.using_pjrt_c_api():
-      raise unittest.SkipTest('outfeed not implemented in PJRT C API')
-    if config.use_shardy_partitioner.value:
-      self.skipTest(
-          'b/355263220: outfeed lowering not supported by Shardy')
-
-    devices = np.array(jax.local_devices())
-    nr_devices = len(devices)
-    shape = (nr_devices * 3, nr_devices * 5)
-
-    def f(x):
-      token = lax.create_token(x)
-      token = lax_internal.outfeed(token, x, partitions=(None,))
-      token = lax_internal.outfeed(token, x, partitions=((nr_devices, 1),))
-      token = lax_internal.outfeed(token, x, partitions=((1, nr_devices),))
-      return x
-
-    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-
-    def _dispatch():
-      with jax.sharding.Mesh(devices, ['d']):
-        logging.info('Making pjit call')
-        pjit(f, in_shardings=(P('d'),), out_shardings=P('d'))(x)
-    execution = threading.Thread(target=_dispatch)
-    execution.start()
-
-    # Check the expected outfeed for all devices.
-    def check_outfeed(x_fn):
-      for didx, d in enumerate(devices):
-        x = x_fn(didx)
-        y = d.transfer_from_outfeed(
-            xc.Shape.array_shape(
-                xc.PrimitiveType.F32, x.shape
-            ).with_major_to_minor_layout_if_absent()
-        )
-        self.assertAllClose(x, y, check_dtypes=True)
-
-    logging.info('Transferring from outfeed for the pjit call')
-
-    # Note, when checking results of multiple outfeeds, the loop structure
-    # should be such that we check a given outfeed for all devices before
-    # moving on to the next outfeed. If there are any collectives generated
-    # by pjit, a loop structutre like:
-    #     for each device:
-    #         check outfeed#0;
-    #         check outfeed#1;
-    #
-    # Could cause a deadlock if there is a collective scheduled between the
-    # 2 outfeeds, as device #0, after processing outfeed#0 will execute the
-    # collective, waiting for other devices to join, but other devices won't
-    # execute their collective until their outfeed#0 is executed. This is
-    # because, for GPU for example, execution of an outfeed on GPU is blocked
-    # till the corresponding `transfer_from_outfeed` is executed on the host.
-
-    # Transfer the whole array from all devices for replicated.
-    check_outfeed(lambda didx: x)
-    # For sharded outfeed, the results are sliced.
-    check_outfeed(lambda didx: x[3 * didx:3 * didx + 3, :])
-    check_outfeed(lambda didx: x[:, 5 * didx:5 * didx + 5])
-
-    execution.join()
 
   @jtu.with_mesh([('x', 2)])
   def testWithCustomPRNGKey(self):

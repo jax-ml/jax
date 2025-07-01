@@ -56,9 +56,6 @@ class PyDevice {
   absl::string_view Str() const;
   absl::string_view Repr() const;
 
-  absl::Status TransferToInfeed(LiteralSlice literal);
-  absl::StatusOr<nanobind::object> TransferFromOutfeed(Shape shape);
-
   absl::StatusOr<nb_class_ptr<PyMemorySpace>> Memory(
       absl::string_view kind) const;
   absl::StatusOr<nb_class_ptr<PyMemorySpace>> DefaultMemory() const;

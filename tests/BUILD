@@ -565,15 +565,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "infeed_test",
-    srcs = ["infeed_test.py"],
-    deps = py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
     name = "jax_jit_test",
     srcs = ["jax_jit_test.py"],
     main = "jax_jit_test.py",

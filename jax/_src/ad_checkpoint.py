@@ -534,8 +534,6 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
 
-effects.remat_allowed_effects.add_type(lax_internal.InOutFeedEffect)
-
 def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
                        jaxpr: core.Jaxpr, **params):
   assert not jaxpr.constvars

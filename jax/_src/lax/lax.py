@@ -36,7 +36,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import pretty_printer as pp
@@ -54,7 +53,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
-from jax._src.interpreters import xla
 from jax._src.interpreters.batching import RaggedAxis
 from jax._src.lax import slicing
 from jax._src import mesh as mesh_lib
@@ -8232,111 +8230,6 @@ def _after_all_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
   return [hlo.after_all(operands)]
 mlir.register_lowering(after_all_p, _after_all_lowering)
-
-
-class InOutFeedEffect(effects.Effect):
-  pass
-infeed_effect = InOutFeedEffect()
-outfeed_effect = InOutFeedEffect()
-
-effects.custom_derivatives_allowed_effects.add_type(InOutFeedEffect)
-
-def infeed(token, shape=None, partitions=None):
-  """Consumes an infeed value of `shape` from the host. Experimental.
-
-  `token` is used to sequence infeed and outfeed effects.
-  `partitions` may be specified inside a `sharded_jit` function.
-  """
-  flat_shapes, treedef = tree_util.tree_flatten(shape)
-  for shape in flat_shapes:
-    if not isinstance(shape, ShapedArray):
-      raise TypeError("shape argument to infeed must be a pytree of "
-                      "ShapedArray values, got {}".format(shape))
-  if partitions is not None:
-    # Always replicate token.
-    # We specifically use type() to raise an error for PartitionSpecs.
-    if type(partitions) != tuple:  # pylint: disable=unidiomatic-typecheck
-      raise ValueError(f"'partitions' argument to infeed should be a tuple, "
-                       f"got {partitions}")
-    partitions = partitions + (None,)
-  xs_and_token = infeed_p.bind(token, shapes=tuple(flat_shapes),
-                               partitions=partitions)
-  return (treedef.unflatten(xs_and_token[:-1]), xs_and_token[-1])
-
-def _infeed_abstract_eval(token, *, shapes, partitions):
-  if token is not abstract_token:
-    raise TypeError("First argument to infeed must be a token")
-  return (*shapes, abstract_token), {infeed_effect}
-
-
-infeed_p = Primitive("infeed")
-infeed_p.multiple_results = True
-infeed_p.def_impl(partial(dispatch.apply_primitive, infeed_p))
-infeed_p.def_effectful_abstract_eval(_infeed_abstract_eval)
-mlir.lowerable_effects.add_type(InOutFeedEffect)
-
-
-def _infeed_lowering(ctx, token, *, shapes, partitions):
-  output_types = safe_map(mlir.aval_to_ir_type, ctx.avals_out[:-1])
-  flat_output_types = mlir.flatten_ir_types(output_types)
-  # TODO(phawkins): verify `shapes` have a major-to-minor layout.
-  layouts = ir.ArrayAttr.get([
-      ir.ArrayAttr.get(
-          [mlir.i64_attr(i)
-           for i in range(len(aval.shape) - 1, -1, -1)])
-      for aval in shapes
-  ])
-  infeed = hlo.InfeedOp(
-      flat_output_types + [hlo.TokenType.get()],
-      token,
-      infeed_config=ir.StringAttr.get(''),
-      layout=layouts)
-  if partitions is not None:
-    mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
-  token = infeed.results[-1]
-  outs = infeed.results[:-1]
-  return mlir.unflatten_ir_values_like_types(outs, output_types) + [
-      token,
-  ]
-
-mlir.register_lowering(infeed_p, _infeed_lowering)
-
-
-def outfeed(token, xs, partitions = None):
-  """Outfeeds value `xs` to the host. Experimental.
-
-  `token` is used to sequence infeed and outfeed effects.
-  `partitions` may be specified inside a `sharded_jit` or `pjit` function.
-  """
-  if partitions is not None:
-    # We specifically use type() to raise an error for PartitionSpecs.
-    if type(partitions) != tuple:  # pylint: disable=unidiomatic-typecheck
-      raise ValueError(f"'partitions' argument to outfeed should be a tuple, "
-                       f"got {partitions}")
-  flat_xs, _ = tree_util.tree_flatten(xs)
-  return outfeed_p.bind(token, *flat_xs, partitions=partitions)
-
-def _outfeed_abstract_eval(token, *xs, partitions):
-  if token is not abstract_token:
-    raise TypeError("First argument to outfeed must be a token")
-  return abstract_token, {outfeed_effect}
-
-outfeed_p = Primitive("outfeed")
-outfeed_p.def_impl(partial(dispatch.apply_primitive, outfeed_p))
-outfeed_p.def_effectful_abstract_eval(_outfeed_abstract_eval)
-mlir.lowerable_effects.add_type(InOutFeedEffect)
-
-
-def _outfeed_lowering(ctx, token, *xs, partitions):
-  outfeed = hlo.OutfeedOp(
-      mlir.flatten_ir_values(xs),
-      token,
-      outfeed_config=ir.StringAttr.get(''))
-  if partitions is not None:
-    mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
-  return outfeed.results
-
-mlir.register_lowering(outfeed_p, _outfeed_lowering)
 
 
 def rng_uniform(a, b, shape):
