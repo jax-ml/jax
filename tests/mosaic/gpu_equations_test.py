@@ -80,5 +80,32 @@ class EquationSystemTest(parameterized.TestCase):
                                       equations=[Eq(v1, v2)])
     self.assertSequenceEqual(system.unknowns(), [v1, v2])
 
+  def test_intersection_of_conflicting_systems_is_unsatisfiable(self):
+    v0 = V(0)
+    layout0, layout1 = [C(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
+    system0 = equations.EquationSystem(assignments={v0: layout0})
+    system1 = equations.EquationSystem(assignments={v0: layout1})
+    self.assertIsInstance(system0 & system1, equations.Unsatisfiable)
+
+  def test_intersection_of_compatible_systems_is_union_of_fields(self):
+    v0, v1, v2 = V(0), V(1), V(2)
+    layout0, layout1, layout2 = [C(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2, 3)]
+    system0 = equations.EquationSystem(equations=[Eq(v0, layout0)])
+    system1 = equations.EquationSystem(
+        assignments={v2: layout2},
+        equations=[Eq(v1, layout1)],
+    )
+    system_intersection = system0 & system1
+    self.assertEqual(
+        system_intersection,
+        equations.EquationSystem(
+            assignments={v2: layout2},
+            equations=[Eq(v0, layout0), Eq(v1, layout1)],
+        ),
+    )
+    self.assertSequenceEqual(system0.unknowns(), [v0])
+    self.assertSequenceEqual(system1.unknowns(), [v1])
+    self.assertSequenceEqual(system_intersection.unknowns(), [v0, v1])
+
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
