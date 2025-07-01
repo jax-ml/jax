@@ -129,7 +129,7 @@ exports_files([
 
 exports_files(
     ["_src/export/serialization.fbs"],
-    visibility = jax_export_file_visibility,  # buildifier: disable=visibility-as-string-list
+    visibility = jax_export_file_visibility,
 )
 
 # Packages that have access to JAX-internal implementation details.
@@ -451,7 +451,7 @@ pytype_strict_library(
         "_src/interpreters/pxla.py",
         "_src/pjit.py",
     ],
-    visibility = [":internal"] + jax_visibility("api"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("api"),
     deps = [
         ":abstract_arrays",
         ":ad",
@@ -572,7 +572,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "checkify",
     srcs = ["_src/checkify.py"],
-    visibility = [":internal"] + jax_visibility("checkify"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("checkify"),
     deps = [
         ":ad",
         ":ad_util",
@@ -614,7 +614,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compilation_cache_internal",
     srcs = ["_src/compilation_cache.py"],
-    visibility = [":internal"] + jax_visibility("compilation_cache"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("compilation_cache"),
     deps = [
         ":cache_key",
         ":compilation_cache_interface",
@@ -629,7 +629,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "cache_key",
     srcs = ["_src/cache_key.py"],
-    visibility = [":internal"] + jax_visibility("compilation_cache"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("compilation_cache"),
     deps = [
         ":config",
         "//jax/_src/lib",
@@ -655,7 +655,7 @@ py_library_providing_imports_info(
     ) + [
         "_src/ad_checkpoint.py",
     ],
-    visibility = [":internal"] + jax_visibility("lax"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("lax"),
     deps = [
         ":abstract_arrays",
         ":ad",
@@ -717,7 +717,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compiler",
     srcs = ["_src/compiler.py"],
-    visibility = [":internal"] + jax_visibility("compiler"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("compiler"),
     deps = [
         ":cache_key",
         ":compilation_cache_internal",
@@ -1003,7 +1003,7 @@ pytype_strict_library(
     srcs = glob([
         "_src/export/**/*.py",
     ]),
-    visibility = [":internal"] + jax_visibility("export"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("export"),
     deps = [
         ":ad_util",
         ":api",
@@ -1077,7 +1077,7 @@ pytype_strict_library(
 pytype_library(
     name = "lax_reference",
     srcs = ["_src/lax_reference.py"],
-    visibility = [":internal"] + jax_visibility("lax_reference"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("lax_reference"),
     deps = [
         ":core",
         ":util",
@@ -1566,7 +1566,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "stages",
     srcs = ["_src/stages.py"],
-    visibility = [":internal"] + jax_visibility("stages"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("stages"),
     deps = [
         ":config",
         ":core",
@@ -1615,7 +1615,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "sharding_impls",
     srcs = ["_src/sharding_impls.py"],
-    visibility = [":internal"] + jax_visibility("sharding_impls"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("sharding_impls"),
     deps = [
         ":config",
         ":core",
@@ -1722,7 +1722,7 @@ pytype_library(
 pytype_strict_library(
     name = "source_info_util",
     srcs = ["_src/source_info_util.py"],
-    visibility = [":internal"] + jax_visibility("source_info_util"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("source_info_util"),
     deps = [
         ":traceback_util",
         ":version",
@@ -1737,7 +1737,7 @@ pytype_strict_library(
         "_src/state/indexing.py",
         "_src/state/types.py",
     ],
-    visibility = [":internal"] + jax_visibility("state_types"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("state_types"),
     deps = [
         ":core",
         ":dtypes",
@@ -1762,7 +1762,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "tree_util",
     srcs = ["_src/tree_util.py"],
-    visibility = [":internal"] + jax_visibility("tree_util"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("tree_util"),
     deps = [
         ":traceback_util",
         ":util",
@@ -1773,7 +1773,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "traceback_util",
     srcs = ["_src/traceback_util.py"],
-    visibility = [":internal"] + jax_visibility("traceback_util"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("traceback_util"),
     deps = [
         ":config",
         ":util",
@@ -1856,7 +1856,7 @@ pytype_strict_library(
         "_src/distributed.py",
         "_src/xla_bridge.py",
     ],
-    visibility = [":internal"] + jax_visibility("xla_bridge"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("xla_bridge"),
     deps = [
         ":cloud_tpu_init",
         ":config",
@@ -2043,7 +2043,7 @@ pytype_library(
         "_src/prng.py",
         "_src/random.py",
     ],
-    visibility = [":internal"] + jax_visibility("random"),  # buildifier: disable=visibility-as-string-list
+    visibility = [":internal"] + jax_visibility("random"),
     deps = [
         ":ad",
         ":api",
