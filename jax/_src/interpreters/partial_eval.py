@@ -23,7 +23,7 @@ from functools import partial
 import itertools as it
 import operator as op
 from typing import Any, NamedTuple, Union
-from weakref import ref
+from weakref import ref, WeakValueDictionary
 
 from jax._src import ad_util
 from jax._src import api_util
@@ -1652,6 +1652,11 @@ class DynamicJaxprTracer(core.Tracer):
     self.aval = aval  # type: ignore[misc]
     self.mutable_qdd = core.MutableQuasiDynamicData(qdd)
 
+  def __del__(self):
+    var = self._trace.frame.tracer_to_var.get(id(self))
+    if var:
+      self._trace.frame.decrement_refcount(var)
+
   def _short_repr(self):
     return f"JitTracer<{self.aval}>"
 
@@ -1753,12 +1758,16 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   return jaxpr_effects
 
 
+@dataclass
+class RefCountStatus:
+  count : int
+  parents : tuple[Var]
+
 class JaxprStackFrame:
   gensym: Callable[[AbstractValue], Var]
   tracer_to_var: dict[TracerId, Atom]
   constid_to_tracer: dict[ConstId, Tracer]
   constvar_to_val: dict[Var, Any]
-  tracers: list[DynamicJaxprTracer]  # hold onto strong refs for all tracers
   eqns: list[JaxprEqn]
   invars: list[Var]
   effects: core.Effects
@@ -1766,19 +1775,43 @@ class JaxprStackFrame:
   is_high: bool
   mutable_qdds: list[tuple[Var, core.MutableQuasiDynamicData]]
 
+  var_refcounts : dict[Var, RefCountStatus]
 
   def __init__(self, debug_info: core.DebugInfo):
     self.gensym = core.gensym()
     self.tracer_to_var = {}
-    self.constid_to_tracer = {}
+    self.constid_to_tracer = WeakValueDictionary()
     self.constvar_to_val = {}
-    self.tracers = []   # circ refs, frame->tracer->trace->main->frame,
     self.eqns = []      # cleared when we pop frame from main
     self.invars = []
     self.effects = set()
     self.debug_info = debug_info
     self.is_high = False
     self.mutable_qdds = []
+    self.var_refcounts = {}
+
+  def refcount_this(self, var, parent_vars):
+    self.var_refcounts[var] = RefCountStatus(1, tuple(parent_vars))
+    for parent in parent_vars:
+      self.increment_refcount(parent)
+
+  def increment_refcount(self, v: Atom):
+    if isinstance(v, Literal) or v not in self.var_refcounts:
+      return
+    refcounts = self.var_refcounts[v]
+    refcounts.count += 1
+
+  def decrement_refcount(self, v: Atom):
+    if isinstance(v, Literal) or v not in self.var_refcounts:
+      return
+    refcounts = self.var_refcounts[v]
+    refcounts.count -= 1
+    if refcounts.count == 0:
+      print(f"Variable {v} is now dead")
+      self.var_refcounts.pop(v)
+      self.constvar_to_val.pop(v, None)
+      for parent in refcounts.parents:
+        self.decrement_refcount(parent)
 
   def add_eqn(self, eqn: core.JaxprEqn):
     self.eqns.append(eqn)
@@ -1933,7 +1966,6 @@ class DynamicJaxprTrace(core.Trace):
 
   def new_arg(self, aval, source_info: SourceInfo):
     tracer = DynamicJaxprTracer(self, aval, source_info)
-    self.frame.tracers.append(tracer)
     self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
     self.frame.invars.append(var)
     self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
@@ -1955,11 +1987,11 @@ class DynamicJaxprTrace(core.Trace):
 
   def _new_const(self, aval, c, source_info: SourceInfo) -> DynamicJaxprTracer:
     tracer = DynamicJaxprTracer(self, aval, source_info)
-    self.frame.tracers.append(tracer)
     if core.is_literalable(c):
       self.frame.tracer_to_var[id(tracer)] = Literal(c, aval)
     else:
       self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
+      self.frame.refcount_this(var, ())
       self.frame.constid_to_tracer[id(c)] = tracer
       if isinstance(aval, core.AvalQDD):
         self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
@@ -1987,11 +2019,9 @@ class DynamicJaxprTrace(core.Trace):
       raise core.escaped_tracer_error(tracer)
     return var
 
-  def makevar(self, tracer):
-    var = self.frame.tracer_to_var.get(id(tracer))
-    assert var is None, "a jaxpr variable must be created only once per tracer"
-    self.frame.tracers.append(tracer)
+  def makevar(self, tracer, parent_vars):
     var = self.frame.tracer_to_var[id(tracer)] = self.frame.newvar(tracer.aval)
+    self.frame.refcount_this(var, parent_vars)
     return var
 
   def cur_qdd(self, x):
@@ -2040,7 +2070,7 @@ class DynamicJaxprTrace(core.Trace):
     source_info = source_info or source_info_util.current()
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
-    outvars = map(self.makevar, out_tracers)
+    outvars = [self.makevar(t, invars) for t in out_tracers]
     eqn = new_jaxpr_eqn(invars, outvars, primitive, params, effs, source_info)
     no_input_effects = not any(isinstance(e, effects.JaxprInputEffect)
                                for e in eqn.effects)
@@ -2765,7 +2795,6 @@ def inline_jaxpr_into_trace(
     if atom in tracer_env:
       return tracer_env[atom]
     tracer = tracer_env[atom] = DynamicJaxprTracer(trace, atom.aval, src)
-    trace.frame.tracers.append(tracer)
     trace.frame.tracer_to_var[id(tracer)] = atom
     return tracer
   return [maybe_new_tracer(x if isinstance(x, Literal) else env[x]) for x in jaxpr.outvars]
