@@ -8237,6 +8237,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     jax.lax.map(lambda _x: f(w, _x), x, batch_size=10)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_explicit_ctx_vmap_over_auto_axes(self, mesh):
+    xs = jax.device_put(jnp.ones((20, 2)), P(('x', 'y'), None))
+
+    @partial(jax.sharding.auto_axes, out_sharding=P())
+    def f(x):
+      return jnp.where(x, jnp.ones(2), x)
+
+    out = jax.jit(jax.vmap(f))(xs)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'), None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

@@ -1124,7 +1124,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
           f'PartitionSpec passed to {api_name} cannot contain axis'
           ' names that are of type Auto or Manual. Got PartitionSpec:'
           f' {sharding.spec} with axis name: {s} of type:'
-          f' {sharding.mesh._name_to_type[s]}, This error occurs at source: '
+          f' {sharding.mesh._name_to_type[s]}. This error occurs at source: '
           f' {source_info_util.summarize(source_info_util.current())}')
   return sharding
 

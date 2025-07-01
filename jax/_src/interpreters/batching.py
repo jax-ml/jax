@@ -458,7 +458,28 @@ class AxisData:
   size : Any
   # Only one of spmd_axis_name and explicit_mesh_axis is set.
   spmd_name : Any
-  explicit_mesh_axis: Any
+  _explicit_mesh_axis: Any
+
+  @property
+  def explicit_mesh_axis(self):
+    if self._explicit_mesh_axis is None:
+      return None
+    cur_mesh = mesh_lib.get_abstract_mesh()
+    if cur_mesh.empty:
+      return self._explicit_mesh_axis
+    spec = (self._explicit_mesh_axis[0]
+            if isinstance(self._explicit_mesh_axis, tuple) else
+            self._explicit_mesh_axis)
+    if cur_mesh._name_to_type[spec] != mesh_lib.AxisType.Explicit:
+      return None
+    return self._explicit_mesh_axis
+
+  def __repr__(self):
+    return (f'AxisData(name={self.name}, size={self.size},'
+            f' spmd_name={self.spmd_name},'
+            f' explicit_mesh_axis={self.explicit_mesh_axis})')
+
+  __str__ = __repr__
 
 
 def get_sharding_for_vmap(axis_data, orig_sharding, axis):
