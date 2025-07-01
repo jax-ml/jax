@@ -2367,15 +2367,22 @@ class PallasCallRefTransformTest(PallasBaseTest):
     )
     np.testing.assert_array_equal(y, expected)
 
-  @parameterized.product(slice_first=[True, False])
-  def test_load_bitcasted_ref(self, slice_first: bool):
+  @parameterized.product(
+      slice_first=[True, False], use_primitive_io_op=[False, True]
+  )
+  def test_load_bitcasted_ref(
+      self, slice_first: bool, use_primitive_io_op: bool
+  ):
     def kernel(x_ref, y_ref):
       ref = (
           x_ref.at[:8, :128].bitcast(jnp.int16)
           if slice_first
           else x_ref.bitcast(jnp.int16).at[:16, :128]
       )
-      y_ref[...] = ref[...]
+      if use_primitive_io_op:
+        pl.store(y_ref, ..., pl.load(ref, ...))
+      else:
+        y_ref[...] = ref[...]
 
     x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((16, 256))
     y = self.pallas_call(
@@ -2389,15 +2396,22 @@ class PallasCallRefTransformTest(PallasBaseTest):
     )
     np.testing.assert_array_equal(y, expected)
 
-  @parameterized.product(slice_first=[True, False])
-  def test_store_bitcasted_ref(self, slice_first):
+  @parameterized.product(
+      slice_first=[True, False], use_primitive_io_op=[False, True]
+  )
+  def test_store_bitcasted_ref(
+      self, slice_first: bool, use_primitive_io_op: bool
+  ):
     def kernel(x_ref, y_ref):
       ref = (
           y_ref.at[:8, :128].bitcast(jnp.bfloat16)
           if slice_first
           else y_ref.bitcast(jnp.bfloat16).at[:16, :128]
       )
-      ref[...] = x_ref[...]
+      if use_primitive_io_op:
+        pl.store(ref, ..., pl.load(x_ref, ...))
+      else:
+        ref[...] = x_ref[...]
 
     x = jnp.arange(16 * 128, dtype=jnp.bfloat16).reshape((16, 128))
     y = self.pallas_call(
