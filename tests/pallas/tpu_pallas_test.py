@@ -2024,11 +2024,14 @@ class PallasCallTest(PallasBaseTest):
           ),
       )(x)
 
-  @parameterized.product(dtype=[jnp.bfloat16, jnp.float32])
-  def test_pltpu_repeat(self, dtype):
+  @parameterized.product(
+    dtype=[jnp.bfloat16, jnp.float32],
+    axis=[1, -1],
+  )
+  def test_pltpu_repeat(self, dtype, axis):
     def test_kernel(x_ref, o_ref):
       x = x_ref[...]
-      o_ref[...] = pltpu.repeat(x, 2, axis=1)
+      o_ref[...] = pltpu.repeat(x, 2, axis=axis)
 
     @jax.jit
     def test(x: jax.Array) -> jax.Array:
