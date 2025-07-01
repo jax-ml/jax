@@ -52,7 +52,7 @@ jobs:
     needs: [build-jax-artifacts]
     uses: ./.github/workflows/pytest_tpu.yml
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
-    name: "TPU test (jaxlib=head)"
+    name: "TPU test v4 (jaxlib=head)"
     with:
       runner: "linux-x86-ct4p-240-4tpu"
       cores: "4"
