@@ -28,11 +28,16 @@ from __future__ import annotations
 
 import functools
 
-import jax
-import jax.numpy as jnp
-from jax import lax
+import numpy as np
+
+from jax._src import api
+from jax._src import config
 from jax._src import core
+from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax import linalg as lax_linalg
+from jax._src.numpy import linalg as jnp_linalg
 
 
 # Helpers for working with padded shapes
@@ -42,11 +47,11 @@ def _mask(x, dims, alternative=0):
   Replaces values outside those dimensions with `alternative`. `alternative` is
   broadcast with `x`.
   """
-  assert jnp.ndim(x) == len(dims)
+  assert np.ndim(x) == len(dims)
   mask = None
   for i, d in enumerate(dims):
     if d is not None:
-      mask_dim_i = lax.broadcasted_iota(jnp.int32, x.shape, i) < d
+      mask_dim_i = lax.broadcasted_iota(np.int32, x.shape, i) < d
       mask = mask_dim_i if mask is None else (mask & mask_dim_i)
   return x if mask is None else jnp.where(mask, x, alternative)
 
@@ -74,7 +79,7 @@ def _use_qr(u, m, n, params):
   a_minus_e_by_sqrt_c, sqrt_c, e = params
   M, N = u.shape
 
-  y = _dynamic_concat(sqrt_c * u, jnp.eye(N, dtype=jnp.dtype(u)), m)
+  y = _dynamic_concat(sqrt_c * u, jnp.eye(N, dtype=dtypes.dtype(u)), m)
   q, _ = lax_linalg.qr(y, full_matrices=False)
   # q1 = q[:m, :]
   q1 = _mask(lax.slice(q, (0, 0), (M, N)), (m, n))
@@ -94,7 +99,7 @@ def _use_cholesky(u, m, n, params):
   """
   a_minus_e, c, e = params
   _, N = u.shape
-  x = c * (u.T.conj() @ u) + jnp.eye(N, dtype=jnp.dtype(u))
+  x = c * (u.T.conj() @ u) + jnp.eye(N, dtype=dtypes.dtype(u))
   # Pads the lower-right corner with the identity matrix to prevent the Cholesky
   # decomposition from failing due to the matrix not being PSD if padded with
   # zeros.
@@ -119,9 +124,9 @@ def _qdwh(x, m, n, max_iterations, eps):
   # norm(x, 2) such that `alpha >= norm(x, 2)` and `beta` is a lower bound for
   # the smallest singular value of x.
   if eps is None:
-    eps = float(jnp.finfo(x.dtype).eps)
-  one_norm = jnp.linalg.norm(x, ord=1)
-  inf_norm = jnp.linalg.norm(x, ord=jnp.inf)
+    eps = float(dtypes.finfo(x.dtype).eps)
+  one_norm = jnp_linalg.norm(x, ord=1)
+  inf_norm = jnp_linalg.norm(x, ord=np.inf)
   alpha_inverse = lax.rsqrt(one_norm) * lax.rsqrt(inf_norm)
   alpha_inverse = jnp.where(one_norm == 0, 1, alpha_inverse)
   u = x * alpha_inverse.astype(x.dtype)
@@ -176,7 +181,7 @@ def _qdwh(x, m, n, max_iterations, eps):
 
     is_not_converged = True
     if test_convergence:
-      is_not_converged = jnp.linalg.norm(u - u_prev) > tol_norm
+      is_not_converged = jnp_linalg.norm(u - u_prev) > tol_norm
     return u, is_not_converged
 
   def iterate(u, coefs, **kwargs):
@@ -229,7 +234,7 @@ def _qdwh(x, m, n, max_iterations, eps):
 
 # TODO: Add pivoting.
 @functools.partial(
-    jax.jit, static_argnames=('is_hermitian', 'max_iterations', 'eps')
+    api.jit, static_argnames=('is_hermitian', 'max_iterations', 'eps')
 )
 def qdwh(
     x,
@@ -279,7 +284,7 @@ def qdwh(
   else:
     m, n = M, N
 
-  with jax.default_matmul_precision('float32'):
+  with config.default_matmul_precision('float32'):
     u, h, num_iters, is_converged = _qdwh(x, m, n, max_iterations, eps)
 
   return u, h, num_iters, is_converged

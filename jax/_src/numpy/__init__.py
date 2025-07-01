@@ -45,6 +45,7 @@ from jax._src.numpy.lax_numpy import (
     diag as diag,
     expand_dims as expand_dims,
     eye as eye,
+    hstack as hstack,
     moveaxis as moveaxis,
     nonzero as nonzero,
     permute_dims as permute_dims,
@@ -64,6 +65,7 @@ from jax._src.numpy.lax_numpy import (
 )
 
 from jax._src.numpy.reductions import (
+    all as all,
     any as any,
     cumsum as cumsum,
     max as max,
@@ -78,6 +80,7 @@ from jax._src.numpy.tensor_contractions import (
 from jax._src.numpy.ufuncs import (
     abs as abs,
     bitwise_and as bitwise_and,
+    cbrt as cbrt,
     ceil as ceil,
     equal as equal,
     exp as exp,
@@ -85,6 +88,7 @@ from jax._src.numpy.ufuncs import (
     floor as floor,
     greater as greater,
     isinf as isinf,
+    isfinite as isfinite,
     isnan as isnan,
     less as less,
     log as log,

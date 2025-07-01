@@ -22,9 +22,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from jax import lax
-import jax.numpy as jnp
-
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src import tree_util
 
 
@@ -46,7 +45,7 @@ class Stack:
     structure; the specific values are ignored.
     """
     return Stack(
-      jnp.array(0, jnp.int32),
+      jnp.array(0, 'int32'),
       tree_util.tree_map(
         lambda x: jnp.zeros((capacity,) + tuple(x.shape), x.dtype), prototype))
 

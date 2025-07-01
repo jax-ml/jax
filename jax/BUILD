@@ -302,7 +302,6 @@ py_library_providing_imports_info(
             "_src/image/**/*.py",
             "_src/scipy/**/*.py",
             "_src/third_party/**/*.py",
-            "_src/tpu/**/*.py",
             "experimental/key_reuse/**/*.py",
             "experimental/roofline/**/*.py",
             "image/**/*.py",
@@ -406,6 +405,7 @@ py_library_providing_imports_info(
         ":source_info_util",
         ":sourcemap",
         ":stages",
+        ":tpu",
         ":traceback_util",
         ":tree",
         ":tree_util",
@@ -1747,6 +1747,25 @@ pytype_strict_library(
         ":tree_util",
         ":typing",
         ":util",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "tpu",
+    srcs = glob([
+        "_src/tpu/**/*.py",
+    ]),
+    deps = [
+        ":api",
+        ":config",
+        ":core",
+        ":dtypes",
+        ":lax",
+        ":mlir",
+        ":numpy",
+        ":traceback_util",
+        ":tree_util",
+        ":typing",
     ] + py_deps("numpy"),
 )
 

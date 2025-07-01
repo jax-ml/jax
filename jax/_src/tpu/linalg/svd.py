@@ -40,15 +40,20 @@ import functools
 import operator
 from typing import Any
 
-import jax
-from jax import lax
+import numpy as np
+
+from jax._src import api
+from jax._src import config
 from jax._src import core
+from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.interpreters import mlir
 from jax._src.lax import linalg as lax_linalg
-import jax.numpy as jnp
+from jax._src.tpu.linalg import qdwh as tpu_qdwh
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
+@functools.partial(api.jit, static_argnums=(1, 2, 3, 4))
 def _svd_tall_and_square_input(
     a: Any,
     hermitian: bool,
@@ -71,12 +76,12 @@ def _svd_tall_and_square_input(
     `a = (u * s) @ v.T.conj()`. For `compute_uv=False`, only `s` is returned.
   """
 
-  u_p, h, _, _ = lax.linalg.qdwh(
+  u_p, h, _, _ = tpu_qdwh.qdwh(
       a, is_hermitian=hermitian, max_iterations=max_iterations
   )
 
   # TODO: Uses `eigvals_only=True` if `compute_uv=False`.
-  v, s = lax.linalg.eigh(
+  v, s = lax_linalg.eigh(
       h, subset_by_index=subset_by_index, sort_eigenvalues=False
   )
 
@@ -101,11 +106,11 @@ def _svd_tall_and_square_input(
   # eigenvalue decomposition and the SVD." SIAM Journal on Scientific Computing
   # 35, no. 3 (2013): A1325-A1349.
   def correct_rank_deficiency(u_out):
-    u_out, r = lax.linalg.qr(u_out, full_matrices=False)
+    u_out, r = lax_linalg.qr(u_out, full_matrices=False)
     u_out = u_out @ jnp.diag(jnp.where(jnp.diag(r) >= 0, 1, -1))
     return u_out
 
-  eps = float(jnp.finfo(a.dtype).eps)
+  eps = float(dtypes.finfo(a.dtype).eps)
   do_correction = s_out[-1] <= a.shape[1] * eps * s_out[0]
   cond_f = lambda args: args[1]
   body_f = lambda args: (correct_rank_deficiency(args[0]), False)
@@ -113,7 +118,7 @@ def _svd_tall_and_square_input(
   return (u_out, s_out, v_out)
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2, 3, 4, 5))
+@functools.partial(api.jit, static_argnums=(1, 2, 3, 4, 5))
 def svd(
     a: Any,
     full_matrices: bool,
@@ -200,7 +205,7 @@ def svd(
 
   reduce_to_square = False
   if full_matrices:
-    q_full, a_full = lax.linalg.qr(a, pivoting=False, full_matrices=True)
+    q_full, a_full = lax_linalg.qr(a, pivoting=False, full_matrices=True)
     q = q_full[:, :n]
     u_out_null = q_full[:, n:]
     a = a_full[:n, :]
@@ -209,16 +214,16 @@ def svd(
     # The constant `1.15` comes from Yuji Nakatsukasa's implementation
     # https://www.mathworks.com/matlabcentral/fileexchange/36830-symmetric-eigenvalue-decomposition-and-the-svd?s_tid=FX_rc3_behav
     if m > 1.15 * n:
-      q, a = lax.linalg.qr(a, pivoting=False, full_matrices=False)
+      q, a = lax_linalg.qr(a, pivoting=False, full_matrices=False)
       reduce_to_square = True
 
   if not compute_uv:
-    with jax.default_matmul_precision('float32'):
+    with config.default_matmul_precision('float32'):
       return _svd_tall_and_square_input(
           a, hermitian, compute_uv, max_iterations, subset_by_index
       )
 
-  with jax.default_matmul_precision('float32'):
+  with config.default_matmul_precision('float32'):
     u_out, s_out, v_out = _svd_tall_and_square_input(
         a, hermitian, compute_uv, max_iterations, subset_by_index
     )
@@ -232,9 +237,9 @@ def svd(
   cond_f = lambda args: jnp.logical_not(args[0])
   body_f = lambda args: (
       jnp.array(True),
-      jnp.full_like(u_out, jnp.nan),
-      jnp.full_like(s_out, jnp.nan),
-      jnp.full_like(v_out, jnp.nan),
+      jnp.full_like(u_out, np.nan),
+      jnp.full_like(s_out, np.nan),
+      jnp.full_like(v_out, np.nan),
   )
   _, u_out, s_out, v_out = lax.while_loop(
       cond_f, body_f, (is_finite, u_out, s_out, v_out)
@@ -259,7 +264,7 @@ def _svd_tpu(a, *, full_matrices, compute_uv, subset_by_index, algorithm=None):
       subset_by_index=subset_by_index,
   )
   for _ in range(len(batch_dims)):
-    fn = jax.vmap(fn)
+    fn = api.vmap(fn)
 
   if compute_uv:
     u, s, vh = fn(a)
