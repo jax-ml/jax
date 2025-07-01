@@ -17,7 +17,7 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/gpu/hybrid_kernels.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/ffi/api/ffi.h"
 

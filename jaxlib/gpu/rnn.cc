@@ -19,7 +19,7 @@ limitations under the License.
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "jaxlib/absl_status_casters.h"
 #include "jaxlib/gpu/rnn_kernels.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 
 namespace jax {

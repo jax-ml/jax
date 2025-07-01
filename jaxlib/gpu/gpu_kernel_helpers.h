@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "absl/base/optimization.h"
 #include "absl/status/status.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 
 #define JAX_AS_STATUS(expr) \
   jax::JAX_GPU_NAMESPACE::AsStatus(expr, __FILE__, __LINE__, #expr)

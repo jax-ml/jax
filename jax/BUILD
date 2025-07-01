@@ -28,8 +28,6 @@ load(
     "jax_internal_test_harnesses_visibility",
     "jax_test_util_visibility",
     "jax_visibility",
-    "mosaic_gpu_internal_users",
-    "mosaic_internal_users",
     "pallas_fuser_users",
     "pallas_gpu_internal_users",
     "pallas_tpu_internal_users",
@@ -151,12 +149,6 @@ package_group(
 )
 
 package_group(
-    name = "mosaic_users",
-    includes = [":internal"],
-    packages = mosaic_internal_users,
-)
-
-package_group(
     name = "pallas_gpu_users",
     includes = [":internal"],
     packages = pallas_gpu_internal_users,
@@ -172,12 +164,6 @@ package_group(
     name = "pallas_fuser_users",
     includes = [":internal"],
     packages = pallas_fuser_users,
-)
-
-package_group(
-    name = "mosaic_gpu_users",
-    includes = [":internal"],
-    packages = mosaic_gpu_internal_users,
 )
 
 package_group(
@@ -1305,7 +1291,7 @@ pytype_strict_library(
     name = "pallas_experimental_gpu_ops",
     srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
     visibility = [
-        ":mosaic_gpu_users",
+        "@xla//xla/mosaic:mosaic_gpu_users",
     ],
     deps = [
         ":jax",
@@ -1364,7 +1350,7 @@ pytype_strict_library(
     name = "pallas_mosaic_gpu",
     srcs = ["experimental/pallas/mosaic_gpu.py"],
     visibility = [
-        ":mosaic_gpu_users",
+        "@xla//xla/mosaic:mosaic_gpu_users",
     ],
     deps = [
         ":mosaic_gpu",
@@ -1387,7 +1373,7 @@ py_library_providing_imports_info(
         "@nvidia_nvshmem//:libnvshmem_device",
     ],
     visibility = [
-        ":mosaic_gpu_users",
+        "@xla//xla/mosaic:mosaic_gpu_users",
     ],
     deps = [
         ":config",
@@ -2006,7 +1992,7 @@ pytype_library(
         "experimental/mosaic/__init__.py",
         "experimental/mosaic/dialects.py",
     ],
-    visibility = [":mosaic_users"],
+    visibility = ["@xla//xla/mosaic:mosaic_users"],
     deps = [
         ":tpu_custom_call",
         "//jax/_src/lib",

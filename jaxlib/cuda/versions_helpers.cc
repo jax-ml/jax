@@ -21,7 +21,7 @@ limitations under the License.
 
 #include "absl/base/dynamic_annotations.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 
 namespace jax::cuda {
 

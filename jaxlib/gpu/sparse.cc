@@ -24,7 +24,7 @@ limitations under the License.
 #include "jaxlib/absl_status_casters.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/sparse_kernels.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 

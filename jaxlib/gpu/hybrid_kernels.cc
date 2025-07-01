@@ -39,7 +39,7 @@ limitations under the License.
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/ffi_helpers.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "xla/ffi/api/ffi.h"
 
 namespace jax {

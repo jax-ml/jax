@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "nanobind/nanobind.h"
 #include "jaxlib/gpu/solver_kernels_ffi.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 
 namespace jax {

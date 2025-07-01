@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "xla/ffi/api/ffi.h"
 
 namespace jax {

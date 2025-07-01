@@ -22,7 +22,7 @@ limitations under the License.
 #include "jaxlib/gpu/solver_kernels_ffi.h"
 #include "jaxlib/gpu/sparse_kernels.h"
 #include "jaxlib/gpu/triton_kernels.h"
-#include "jaxlib/gpu/vendor.h"
+#include "xla/backends/gpu/runtime/vendor.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_target_registry.h"
