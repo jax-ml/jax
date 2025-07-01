@@ -300,7 +300,6 @@ py_library_providing_imports_info(
         [
             "*.py",
             "_src/image/**/*.py",
-            "_src/nn/**/*.py",
             "_src/scipy/**/*.py",
             "_src/third_party/**/*.py",
             "_src/tpu/**/*.py",
@@ -388,6 +387,7 @@ py_library_providing_imports_info(
         ":mlir",
         ":monitoring",
         ":named_sharding",
+        ":nn",
         ":numpy",
         ":op_shardings",
         ":partial_eval",
@@ -1645,6 +1645,30 @@ pytype_strict_library(
         ":util",
         ":xla_bridge",
         "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "nn",
+    srcs = glob([
+        "_src/nn/**/*.py",
+    ]),
+    deps = [
+        ":api",
+        ":batching",
+        ":config",
+        ":core",
+        ":cudnn",
+        ":custom_derivatives",
+        ":deprecations",
+        ":dtypes",
+        ":lax",
+        ":mlir",
+        ":numpy",
+        ":random",
+        ":sharding_impls",
+        ":typing",
+        ":util",
     ] + py_deps("numpy"),
 )
 

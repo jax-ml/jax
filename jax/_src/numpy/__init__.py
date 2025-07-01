@@ -48,6 +48,7 @@ from jax._src.numpy.lax_numpy import (
     moveaxis as moveaxis,
     nonzero as nonzero,
     permute_dims as permute_dims,
+    promote_types as promote_types,
     ravel as ravel,
     reshape as reshape,
     round as round,
@@ -57,6 +58,7 @@ from jax._src.numpy.lax_numpy import (
     stack as stack,
     trace as trace,
     transpose as transpose,
+    tril as tril,
     unravel_index as unravel_index,
     where as where,
 )
@@ -65,6 +67,8 @@ from jax._src.numpy.reductions import (
     any as any,
     cumsum as cumsum,
     max as max,
+    mean as mean,
+    sum as sum,
 )
 
 from jax._src.numpy.tensor_contractions import (
@@ -77,6 +81,7 @@ from jax._src.numpy.ufuncs import (
     ceil as ceil,
     equal as equal,
     exp as exp,
+    expm1 as expm1,
     floor as floor,
     greater as greater,
     isinf as isinf,
@@ -84,10 +89,16 @@ from jax._src.numpy.ufuncs import (
     less as less,
     log as log,
     log1p as log1p,
+    logaddexp as logaddexp,
     logical_and as logical_and,
     logical_not as logical_not,
     logical_or as logical_or,
+    maximum as maximum,
+    minimum as minimum,
     power as power,
+    subtract as subtract,
     sign as sign,
     sqrt as sqrt,
+    square as square,
+    tanh as tanh
 )
