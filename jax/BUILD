@@ -19,6 +19,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "buffer_callback_internal_users",
+    "cutlass_dsl_gpu_internal_users",
     "if_building_jaxlib",
     "jax_export_file_visibility",
     "jax_extend_internal_users",
@@ -190,6 +191,12 @@ package_group(
     name = "buffer_callback_users",
     includes = [":internal"],
     packages = buffer_callback_internal_users,
+)
+
+package_group(
+    name = "cutlass_dsl_gpu_users",
+    includes = [":internal"],
+    packages = cutlass_dsl_gpu_internal_users,
 )
 
 # JAX-private test utilities.
@@ -2080,4 +2087,18 @@ pytype_library(
     deps = [
         ":jax",
     ],
+)
+
+pytype_strict_library(
+    name = "cutlass_dsl",
+    srcs = glob(include = ["experimental/cutlass/**/*.py"]),
+    visibility = [
+        ":cutlass_dsl_gpu_users",
+    ],
+    deps = [
+        ":config",
+        ":core",
+        ":jax",
+        "//jax/_src/lib",
+    ]  + py_deps("absl/flags") + py_deps("numpy"),
 )
