@@ -36,6 +36,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     experimental endpoints.
   * `lax.infeed` and `lax.outfeed` were removed as public APIs, after being
     deprecated in JAX 0.6.
+  * The `name` attribute of the `pjit_p` primitive (exported as
+    `jax.extend.core.primitives.pjit_p`) has changed from `"pjit"` to `"jit"`.
+    This affects the string representations of jaxprs.
 
 * Deprecations:
   * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new

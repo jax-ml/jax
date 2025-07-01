@@ -1236,11 +1236,11 @@ class PJitTest(jtu.BufferDonationTestCase):
         textwrap.dedent("""
             let lambda = { lambda ; a:f32[1]. let b:f32[1] = integer_pow[y=2] a in (b,) } in
             { lambda ; c:f32[1]. let
-                d:f32[1] = pjit[
+                d:f32[1] = jit[
                   name=<lambda>
                   jaxpr={ lambda ; c:f32[1]. let
-                      e:f32[1] = pjit[name=<lambda> jaxpr=lambda] c
-                      f:f32[1] = pjit[name=<lambda> jaxpr=lambda] c
+                      e:f32[1] = jit[name=<lambda> jaxpr=lambda] c
+                      f:f32[1] = jit[name=<lambda> jaxpr=lambda] c
                       d:f32[1] = add e f
                     in (d,) }
                 ] c
@@ -1256,7 +1256,7 @@ class PJitTest(jtu.BufferDonationTestCase):
         jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
             { lambda ; a:f32[1]. let
-                b:f32[1] = pjit[
+                b:f32[1] = jit[
                   name=<lambda>
                   jaxpr={ lambda ; a:f32[1] c:f32[1]. let  in (a,) }
                 ] a a
@@ -1273,7 +1273,7 @@ class PJitTest(jtu.BufferDonationTestCase):
         jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
             { lambda ; a:f32[1]. let
-                b:f32[1] = pjit[
+                b:f32[1] = jit[
                   name=<lambda>
                   jaxpr={ lambda ; a:f32[1] c:f32[]. let b:f32[1] = mul a c in (b,) }
                 ] a 1.0:f32[]
@@ -1289,7 +1289,7 @@ class PJitTest(jtu.BufferDonationTestCase):
         jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
             { lambda ; a:f32[1]. let
-                b:f32[1] = pjit[
+                b:f32[1] = jit[
                   name=<lambda>
                   jaxpr={ lambda ; a:f32[1] c:f32[1] d:f32[1]. let
                       e:f32[1] = mul a c
@@ -1308,7 +1308,7 @@ class PJitTest(jtu.BufferDonationTestCase):
         jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
             { lambda ; a:f32[1]. let
-                b:i32[] c:f32[1] = pjit[
+                b:i32[] c:f32[1] = jit[
                   name=<lambda>
                   jaxpr={ lambda ; a:f32[1]. let  in (2:i32[], a) }
                 ] a
@@ -1331,11 +1331,11 @@ class PJitTest(jtu.BufferDonationTestCase):
         textwrap.dedent("""
             let f = { lambda ; a:f32[1] b:f32[1]. let c:f32[1] = mul b a in (c,) } in
             { lambda ; d:f32[1] e:f32[1]. let
-                g:f32[1] = pjit[
+                g:f32[1] = jit[
                   name=g
                   jaxpr={ lambda ; d:f32[1] e:f32[1]. let
-                      h:f32[1] = pjit[name=f jaxpr=f] e d
-                      i:f32[1] = pjit[name=f jaxpr=f] e e
+                      h:f32[1] = jit[name=f jaxpr=f] e d
+                      i:f32[1] = jit[name=f jaxpr=f] e e
                       g:f32[1] = add h i
                     in (g,) }
                 ] d e
@@ -1361,14 +1361,14 @@ class PJitTest(jtu.BufferDonationTestCase):
             let f = { lambda ; a:f32[1]. let  in (a,) } in
             let f1 = { lambda ; b:f32[2]. let  in (b,) } in
             { lambda ; c:f32[1] d:f32[2]. let
-                e:f32[2] = pjit[
+                e:f32[2] = jit[
                   name=g
                   jaxpr={ lambda ; c:f32[1] d:f32[2]. let
-                      g:f32[1] = pjit[name=f jaxpr=f] c
-                      h:f32[1] = pjit[name=f jaxpr=f] c
+                      g:f32[1] = jit[name=f jaxpr=f] c
+                      h:f32[1] = jit[name=f jaxpr=f] c
                       i:f32[1] = mul g h
-                      j:f32[2] = pjit[name=f jaxpr=f1] d
-                      k:f32[2] = pjit[name=f jaxpr=f1] d
+                      j:f32[2] = jit[name=f jaxpr=f1] d
+                      k:f32[2] = jit[name=f jaxpr=f1] d
                       l:f32[2] = mul j k
                       e:f32[2] = add i l
                     in (e,) }
@@ -2706,7 +2706,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError,
         "Received incompatible devices for jitted computation. Got argument "
         r"inp1 of.*my_nested_pjit with shape bfloat16\[8,2\] and device ids \[0\].*"
-        r"pjit inside jit with device ids.*"):
+        r"jit inside jit with device ids.*"):
       my_nested_pjit(committed_inp, committed_inp, committed_inp)
 
   @jtu.ignore_warning(category=DeprecationWarning,
@@ -3260,14 +3260,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x * 2
 
     jaxpr = jax.make_jaxpr(f)(3)
-    self.assertIn('pjit', str(jaxpr))
+    self.assertIn('jit', str(jaxpr))
 
     @partial(pjit, inline=True)
     def g(x):
       return x * 2
 
     jaxpr = jax.make_jaxpr(g)(3)
-    self.assertNotIn('pjit', str(jaxpr))
+    self.assertNotIn('jit', str(jaxpr))
 
   def test_pjit_inline_literal(self):
     # https://github.com/jax-ml/jax/issues/27545
@@ -4121,7 +4121,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x + jax.jit(lambda y: y + const)(x)
 
     jaxpr = f.trace(const).jaxpr
-    pjit_e, = [e for e in jaxpr.jaxpr.eqns if e.primitive.name == "pjit"]
+    pjit_e, = [e for e in jaxpr.jaxpr.eqns if e.primitive.name == "jit"]
     inner_pjit_jaxpr = pjit_e.params["jaxpr"]
     if config.use_simplified_jaxpr_constants.value:
       self.assertIs(const, jaxpr.consts[0])

@@ -369,7 +369,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
   random_bits_error = "In random_bits, argument [0-9]+ is already consumed.*"
   random_split_error = "In random_split, argument [0-9]+ is already consumed.*"
   generic_error = ".*argument [0-9]+ is already consumed.*"
-  pjit_error = "In pjit, argument 0 is already consumed."
+  pjit_error = "In jit, argument 0 is already consumed."
 
   def check_key_reuse(self, f, *args):
     return _core.check_key_reuse(f, *args)

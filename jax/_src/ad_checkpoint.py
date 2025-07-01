@@ -488,7 +488,7 @@ def _saved_residuals(jaxpr: core.Jaxpr,
       if v in res_vars:
         if eqn.primitive is name_p or v in named_vars and (eqn := named_vars[v]):
           results.append((v.aval, f"named '{eqn.params['name']}' from {src}"))
-        elif str(eqn.primitive) == 'pjit':
+        elif eqn.primitive.name == 'jit':
           results.append((v.aval,
                           f"output of jitted function '{eqn.params['name']}' "
                           f"from {src}"))

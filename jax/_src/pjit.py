@@ -1509,7 +1509,7 @@ def check_aval_layout_compatibility(
 
 # -------------------- pjit rules --------------------
 
-pjit_p = core.Primitive("pjit")
+pjit_p = core.Primitive("jit")
 pjit_p.multiple_results = True
 pjit_p.skip_canonicalization = True
 
