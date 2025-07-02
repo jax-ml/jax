@@ -61,6 +61,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
@@ -2151,8 +2152,7 @@ batching.ragged_prop_rules[pjit_p] = batching.ragged_mask_no_op_rule
 
 
 def _pjit_batcher_for_sharding(
-    s: Sharding | UnspecifiedValue,
-    dim: int | batching.RaggedAxis, spmd_axis_name: tuple[str, ...] | None,
+    s, dim: int | batching.RaggedAxis, spmd_axis_name: tuple[str, ...] | None,
     mesh, ndim: int):
   if isinstance(s, UnspecifiedValue):
     return s
@@ -2167,9 +2167,10 @@ def _pjit_batcher_for_sharding(
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)  # type: ignore
     new_op.tile_assignment_dimensions = tad
-    new_gs = GSPMDSharding(
-        s._device_assignment, new_op,
-        _device_list=getattr(s, '_internal_device_list', None))
+    if jaxlib_extension_version >= 360:
+      new_gs = GSPMDSharding(s._internal_device_list, new_op)
+    else:
+      new_gs = GSPMDSharding(s._device_assignment, new_op)
     return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]
   else:
     if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
