@@ -40,18 +40,116 @@ class ConstantExpression:
   value: fa.FragmentedLayout
 
 
-Expression = Variable | ConstantExpression
+@dataclasses.dataclass(frozen=True)
+class LeastReplicatedExpression:
+  expressions: tuple[Expression, ...]
+
+  def __post_init__(self):
+    assert len(self.expressions) >= 1
+
+
+@dataclasses.dataclass(frozen=True)
+class MostReplicatedExpression:
+  expressions: tuple[Expression, ...]
+
+  def __post_init__(self):
+    assert len(self.expressions) >= 1
+
+
+Expression = Variable | ConstantExpression | LeastReplicatedExpression | MostReplicatedExpression
+
+
+def least_replicated_expression(
+    expressions: tuple[Expression, ...],
+) -> Expression | None:
+  """Returns the least replicated expression out of multiple expressions.
+
+  The input expressions should correspond to "compatible" expressions (i.e.
+  expressions that produce identical layouts up to replication). Practically
+  speaking, the result is either a constant expression, or the single expression
+  in the sequence.
+
+  Args:
+    expressions: a non-empty sequence of expressions.
+
+  Returns:
+    If there exists a constant expression such that it is less replicated than
+    all the other expressions in the sequence (or expressions contains a single
+    expression), then that  expression is returned. Otherwise, None is returned.
+  """
+  assert len(expressions) >= 1
+  if len(expressions) == 1:
+    return expressions[0]
+
+  for e in expressions:
+    # TODO(bchetioui): handle replication lattice between compatible layouts.
+    match e:
+      case ConstantExpression(value=fa.WGStridedFragLayout()):
+        return e
+      case ConstantExpression(value=layout) if isinstance(layout, fa.TiledLayout):
+        warp_replicated = isinstance(layout.warp_dim, fa.Replicated)
+        lane_replicated = any(isinstance(d, fa.Replicated) for d in layout.lane_dims)
+        # In this case, the layout is not replicated at all, so by definition
+        # it is the least replicated expression (assuming all the input
+        # expressions define compatible layouts).
+        if not warp_replicated and not lane_replicated:
+          return e
+  return None
+
+
+def most_replicated_expression(
+    expressions: tuple[Expression, ...],
+) -> Expression | None:
+  """Returns the most replicated expression out of multiple expressions.
+
+  The input expressions should correspond to "compatible" expressions (i.e.
+  expressions that produce identical layouts up to replication). Practically
+  speaking, the result is either a constant expression, or the single expression
+  in the sequence.
+
+  Args:
+    expressions: a non-empty sequence of expressions.
+
+  Returns:
+    If there exists a constant expression such that it is more replicated than
+    all the other expressions in the sequence (or expressions contains a single
+    expression), then that  expression is returned. Otherwise, None is returned.
+  """
+  assert len(expressions) >= 1
+  if len(expressions) == 1:
+    return expressions[0]
+
+  for e in expressions:
+    # TODO(bchetioui): handle replication lattice between compatible layouts.
+    if isinstance(e, ConstantExpression):
+      layout = e.value
+      match layout:
+        case fa.WGSplatFragLayout():
+          return e
+
+  return None
 
 
 def simplify_expression(
     expr: Expression, assignments: dict[Variable, ConstantExpression]
 ) -> Expression:
   """Simplifies an expression as much as is possible given a set of known variable assignments."""
+  simplify = simplify_expression
   match expr:
     case ConstantExpression():
       return expr
     case Variable():
       return assignments.get(expr, expr)
+    case MostReplicatedExpression(expressions=expressions):
+      reduced_expressions = tuple(simplify(e, assignments) for e in expressions)
+      if most_replicated := most_replicated_expression(reduced_expressions):
+        return simplify(most_replicated, assignments)
+      return MostReplicatedExpression(expressions=reduced_expressions)
+    case LeastReplicatedExpression(expressions=expressions):
+      reduced_expressions = tuple(simplify(e, assignments) for e in expressions)
+      if least_replicated := least_replicated_expression(reduced_expressions):
+        return simplify(least_replicated, assignments)
+      return LeastReplicatedExpression(expressions=reduced_expressions)
     case _:
       assert_never(expr)
 
@@ -102,6 +200,12 @@ class EquationSystem:
             free_variables.append(expr)
         case ConstantExpression():
           ...
+        case MostReplicatedExpression(expressions=expressions):
+          for e in expressions:
+            extract_variables(e)
+        case LeastReplicatedExpression(expressions=expressions):
+          for e in expressions:
+            extract_variables(e)
         case _:
           assert_never(expr)
     for equation in self.equations:
