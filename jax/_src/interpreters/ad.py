@@ -315,7 +315,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
   if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
     return map(lambda v: Zero(v.aval), jaxpr.invars)
 
-  def write_cotangent(prim, v, ct):
+  def write_cotangent(prim, v, ct, metadata=None):
     # assert v not in primal_env
     assert ct is not Zero, (prim, v.aval)  # check for an old harmless type error
     if ct is None or type(v) is Literal:
@@ -324,7 +324,12 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       # FIXME: This triggers a lot of failures!
       # assert v.aval == ct.aval, (prim, v.aval, ct.aval)
       return
-    ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
+    ct_to_write = add_tangents(ct_env[v], ct) if v in ct_env else ct
+    if metadata:
+      tagging_fn = metadata.get("_metadata_tagging_fn") or (lambda x, _: x)
+      ct_env[v] = tagging_fn(ct_to_write, metadata)
+    else:
+      ct_env[v] = ct_to_write
     # TODO(mattjj): add back these checks for dynamic shapes
     # if config.enable_checks.value:
     #   ct_aval = core.get_aval(ct_env[v])
@@ -387,7 +392,10 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
          else contextlib.nullcontext())
   with ctx:
     foreach(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
-    for eqn in lin_eqns[::-1]:
+    metadata_payload, metadata_producer_idx, metadata_chain_closure_idx = (
+        locate_metadata(lin_eqns)
+    )
+    for i, eqn in enumerate(lin_eqns[::-1]):
       if eqn.primitive.ref_primitive:
         if eqn.primitive is core.mutable_array_p:
           val_var, = eqn.invars
@@ -433,8 +441,31 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
             e.args = e.args[0] + f'\n{source_info_util.summarize(eqn.source_info)}',
             raise e from None
         cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
-        # FIXME: Some invars correspond to primals!
-        foreach(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
+
+        if i == metadata_chain_closure_idx:
+          # We want to tag only the last ct that is successfully written
+          # i.e. not a Zero or None as specified in `write_cotangent`
+          last_working_idx = -1
+          for idx, ct in enumerate(cts_out):
+            if not isinstance(ct, Zero) and ct is not None:
+              last_working_idx = idx
+
+          for idx, (v, ct) in enumerate(zip(eqn.invars, cts_out)):  # type: ignore[assignment]
+            if idx == last_working_idx:
+              write_cotangent(eqn.primitive, v, ct, metadata=metadata_payload)
+            else:
+              write_cotangent(eqn.primitive, v, ct)
+        elif i == metadata_producer_idx:
+          foreach(
+              partial(
+                  write_cotangent, eqn.primitive, metadata=metadata_payload
+              ),
+              eqn.invars,
+              cts_out,
+          )
+        else:
+          # FIXME: Some invars correspond to primals!
+          foreach(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
 
   cotangents_out = map(read_cotangent, jaxpr.invars)
   return cotangents_out
@@ -443,6 +474,43 @@ def closed_backward_pass(jaxpr: core.ClosedJaxpr, transform_stack,
                          primals_in, cotangents_in):
   return backward_pass(jaxpr.jaxpr, transform_stack, jaxpr.consts,
                        primals_in, cotangents_in)
+
+
+def locate_metadata(lin_eqns) -> tuple[dict[str, Any], int, int]:
+  metadata = {}
+  metadata_p_invars = set()
+  metadata_p_chain = set()
+  metadata_p_producer_idx = -1  # Singular producer of our metadata_p
+  metadata_p_chain_closure_idx = -1  # Final chain closure
+
+  for i, eqn in enumerate(lin_eqns[::-1]):
+    # Find the initial metadata primitive (if present) and its invars
+    if eqn.primitive.name == "xla_metadata_value":
+      metadata_p_invars = set(eqn.invars)
+      metadata = dict(eqn.params.get("xla_metadata", {}))
+      continue
+
+    # Check if this equation is the producer of the initial metadata primitive
+    for outvar in eqn.outvars:
+      if outvar in metadata_p_invars:
+        metadata_p_producer_idx = i
+        metadata_p_chain.add(outvar)
+        break
+
+    # Check if this equation is part of, or closes, the chain of metadata
+    for outvar in eqn.outvars:
+      if outvar in metadata_p_chain:
+        for invar in eqn.invars:
+          if invar in metadata_p_chain:
+            metadata_p_chain_closure_idx = i
+            break
+          metadata_p_chain.add(invar)
+
+  # We found a chain closure, so we shouldn't tag the producer
+  if metadata_p_chain_closure_idx != -1:
+    metadata_p_producer_idx = -1
+
+  return (metadata, metadata_p_producer_idx, metadata_p_chain_closure_idx)
 
 
 class UndefinedPrimal:
