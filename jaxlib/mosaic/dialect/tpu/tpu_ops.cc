@@ -1353,11 +1353,11 @@ bool HasHbmOrVmemSharedMemorySpace(MemRefType ty) {
   return HasMemorySpace(ty, MemorySpace::kHbm) ||
          HasMemorySpace(ty, MemorySpace::kVmemShared);
 }
-}  // namespace
 
-FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
-  const MemRefType source_ty = getMemRefType(getSource());
-  const MemRefType target_ty = getMemRefType(getTarget());
+template <typename Op>
+FailureOr<bool> isGather(Op op, Value source, Value target) {
+  const MemRefType source_ty = getMemRefType(source);
+  const MemRefType target_ty = getMemRefType(target);
   if (HasHbmOrVmemSharedMemorySpace(source_ty) &&
       HasMemorySpace(target_ty, MemorySpace::kVmem)) {
     return true;
@@ -1366,9 +1366,14 @@ FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
       HasHbmOrVmemSharedMemorySpace(target_ty)) {
     return false;
   }
-  return emitOpError(
+  return op->emitOpError(
       "The transfer must be between HBM and VMEM, or between VMEM_SHARED and "
       "VMEM");
+}
+}  // namespace
+
+FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
+  return mlir::tpu::isGather(this, getSource(), getTarget());
 }
 
 LogicalResult EnqueueIndirectDMAOp::verify() {
@@ -1443,6 +1448,28 @@ LogicalResult WaitDMA2Op::verify() {
     emitOpError("DMA wait semaphore must be rank 0");
     return failure();
   }
+  return success();
+}
+
+FailureOr<bool> WaitIndirectDMAOp::isGather() {
+  return mlir::tpu::isGather(this, getSrc(), getDst());
+}
+
+LogicalResult WaitIndirectDMAOp::verify() {
+  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core)) {
+    return issuing_core;
+  }
+  if (issuing_core != CoreType::kScVectorSubcore) {
+    return emitOpError(
+        "Wait indirect DMA is supported only on the SC vector subcore");
+  }
+  auto sem_type = getMemRefType(getSemaphore());
+  if (sem_type.getRank() != 0) {
+    emitOpError("Indirect DMA wait semaphore must be rank 0");
+    return failure();
+  }
+  RETURN_IF_FAILED(isGather());
   return success();
 }
 
