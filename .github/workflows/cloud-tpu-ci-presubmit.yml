@@ -77,8 +77,7 @@ jobs:
           # Test envs must be passed in due to not having access to the TPU metadata information
           bazel test \
             --config=ci_linux_x86_64 \
-            --config=ci_non_rbe_cache \
-            --config=resultstore \
+            --config=rbe_cache \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
             --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft \
             --@rules_python//python/config_settings:py_freethreaded='yes' \
