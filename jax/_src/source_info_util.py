@@ -47,7 +47,7 @@ class Frame(NamedTuple):
 _exclude_paths: list[str] = [
     # Attach the separator to make sure that .../jax does not end up matching
     # .../jax_triton and other packages that might have a jax prefix.
-    os.path.dirname(jax.version.__file__) + os.sep,
+    # os.path.dirname(jax.version.__file__) + os.sep,
     # Also exclude stdlib as user frames. In a non-standard Python runtime,
     # the following two may be different.
     sysconfig.get_path('stdlib'),

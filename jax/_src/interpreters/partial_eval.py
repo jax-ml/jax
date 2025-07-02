@@ -1793,29 +1793,43 @@ class JaxprStackFrame:
   def refcount_this(self, x, parents):
     assert x not in self.refcounts
     self.refcounts[x] = RefCountStatus(1, tuple(parents))
+    print(f'now refcounting {x}')
     for parent in parents:
       self.increment_refcount(parent)
 
   def increment_refcount(self, x):
+    if x not in self.refcounts:
+      print(source_info_util.summarize(x.stack_trace, 8))
+      print(f'couldnt find any refcounts for {x}')
+      breakpoint()
     refcounts = self.refcounts[x]
     refcounts.count += 1
+    print(f'icremented {x} to {refcounts.count}')
 
   def decrement_refcount(self, x):
+    if x not in self.refcounts:
+      print(source_info_util.summarize(x.stack_trace, 8))
+      print(f'couldnt find any refcounts for {x}')
+      breakpoint()
     refcounts = self.refcounts[x]
     refcounts.count -= 1
     if refcounts.count == 0:
+      print(f'removing {x}')
       self.refcounts.pop(x)
       self.finalize(x)
       for parent in refcounts.parents:
         self.decrement_refcount(parent)
+    else:
+      print(f'decremented {x} to {refcounts.count}')
 
   def finalize(self, x):
+    print(f'finalizing {x}')
     if isinstance(x, Var):
       constval = self.constvar_to_val.pop(x, None)
       if constval is not None:
-        self.constid_to_tracer.pop(id(constval), None)
+        print('... and removing its const')
+        self.constid_to_tracer.pop(id(constval))
     elif isinstance(x, JaxprEqn):
-      return
       self.eqns.pop(x)
     else:
       raise Exception
@@ -2087,22 +2101,23 @@ class DynamicJaxprTrace(core.Trace):
                                for e in eqn.effects)
     self.frame.add_eqn(eqn)
 
-    # Constant folding
-    if no_input_effects and primitive in const_fold_rules:
-      consts_in = map(self.get_const, tracers)
-      if any(c is not None for c in consts_in):
-        consts_out, eqn = const_fold_rules[primitive](consts_in, eqn)
-        assert (eqn is None) == all(c is not None for c in consts_out)
-        for i, c in enumerate(consts_out):
-          if c is not None:
-            out_tracers[i] = self.new_const(c, source_info)
+# TODO DO NOT SUBMIT
+#     # Constant folding
+#     if no_input_effects and primitive in const_fold_rules:
+#       consts_in = map(self.get_const, tracers)
+#       if any(c is not None for c in consts_in):
+#         consts_out, eqn = const_fold_rules[primitive](consts_in, eqn)
+#         assert (eqn is None) == all(c is not None for c in consts_out)
+#         for i, c in enumerate(consts_out):
+#           if c is not None:
+#             out_tracers[i] = self.new_const(c, source_info)
 
-    # Input-to-output tracer forwarding
-    if eqn is not None and no_input_effects and primitive in forwarding_rules:
-      in_fwd, eqn = forwarding_rules[primitive](eqn)
-      for out_idx, in_idx in enumerate(in_fwd):
-        if in_idx is not None:
-          out_tracers[out_idx] = tracers[in_idx]
+#     # Input-to-output tracer forwarding
+#     if eqn is not None and no_input_effects and primitive in forwarding_rules:
+#       in_fwd, eqn = forwarding_rules[primitive](eqn)
+#       for out_idx, in_idx in enumerate(in_fwd):
+#         if in_idx is not None:
+#           out_tracers[out_idx] = tracers[in_idx]
 
     return out_tracers if primitive.multiple_results else out_tracers.pop()
 
@@ -2185,8 +2200,7 @@ class DynamicJaxprTrace(core.Trace):
                               jvp: lu.WrappedFun, tracers,
                               symbolic_zeros: bool):
     source_info = source_info_util.current()
-    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
-    tracers = map(to_jaxpr_tracer, tracers)
+    tracers = [self.to_jaxpr_tracer(x, source_info) for x in tracers]
     in_avals = [t.aval for t in tracers]
     in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun, in_avals)
@@ -2202,9 +2216,9 @@ class DynamicJaxprTrace(core.Trace):
       jaxpr, _, out_consts = trace_to_jaxpr_dynamic(jvp_, in_avals_)
       return jaxpr, out_consts, out_zeros()
 
-    out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
+    out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
-    constvars = map(self.getvar, map(to_jaxpr_tracer, consts))
+    constvars = [self.getvar(self.to_jaxpr_tracer(c, source_info)) for c in consts]
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_fun_jaxpr,
