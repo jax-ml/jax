@@ -99,7 +99,7 @@ py_binary(
     ] + if_cuda([
         "//jaxlib:version",
         "//jaxlib/cuda:cuda_gpu_support",
-        "//jax_plugins/cuda:pjrt_c_api_gpu_plugin.so",
+        "//jax_plugins/cuda:pjrt_c_api_gpu_plugin",
         "//jax_plugins/cuda:pyproject.toml",
         "//jax_plugins/cuda:setup.py",
         "//jax_plugins/cuda:__init__.py",
@@ -107,7 +107,7 @@ py_binary(
     ]) + if_rocm([
         "//jaxlib:version",
         "//jaxlib/rocm:rocm_gpu_support",
-        "//jax_plugins/rocm:pjrt_c_api_gpu_plugin.so",
+        "//jax_plugins/rocm:pjrt_c_api_gpu_plugin",
         "//jax_plugins/rocm:pyproject.toml",
         "//jax_plugins/rocm:setup.py",
         "//jax_plugins/rocm:__init__.py",

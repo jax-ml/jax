@@ -44,14 +44,14 @@ def _get_library_path():
   if installed_path.exists():
     return installed_path
 
-  local_path = (
-      base_path / 'pjrt_c_api_gpu_plugin.so'
-  )
+  local_path = base_path / 'pjrt_c_api_gpu_plugin'
   if not local_path.exists():
     runfiles_dir = os.getenv('RUNFILES_DIR', None)
     if runfiles_dir:
       local_path = pathlib.Path(
-          os.path.join(runfiles_dir, '__main__/jax_plugins/rocm/pjrt_c_api_gpu_plugin.so')
+          os.path.join(
+              runfiles_dir, '__main__/jax_plugins/rocm/pjrt_c_api_gpu_plugin'
+          )
       )
 
   if local_path.exists():
