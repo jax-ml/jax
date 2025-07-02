@@ -857,6 +857,16 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let hasVerifier = 1;
 }
 
+// A base class for all ops that need to differentiate between gather and
+// scatter.
+class IndirectDMAOp {
+  code extraBaseClassDeclaration = [{
+    // Return true if this op performs a gather. Returns false if it performs a
+    // scatter.
+    FailureOr<bool> isGather();
+  }];
+}
+
 // tpu.enqueue_indirect_dma copies data between HBM and VMEM using indirect
 // HBM offsets.
 //
@@ -872,20 +882,17 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
 // add             : If true, add source values to target values. Otherwise, overwrite.
 // offset_filter   : If set, don't write values at offsets whose value is equal to
 //                   the filter value.
-def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma"> {
+def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
   let arguments = (ins
     AnyMemRef:$source,
     AnyMemRef:$target,
     AnyTypeOf<[MemRefOf<[I32]>, VectorOfRankAndType<[1], [I32]>]>:$offsets,
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
-    DefaultValuedAttr<BoolAttr, "false">:$add,
-    OptionalAttr<I32Attr>:$offset_filter
+    Optional<I32>:$offset_filter,
+    DefaultValuedAttr<BoolAttr, "false">:$add
   );
   let hasVerifier = 1;
-  let extraClassDeclaration = [{
-    // Return true if this op performs a gather. Returns false if it performs a
-    // scatter.
-    FailureOr<bool> isGather();
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
     LogicalResult verifyGather(MemRefType operand_ty,
                                ArrayRef<int64_t> offsets_shape,
                                MemRefType result_ty);
@@ -895,6 +902,10 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma"> {
   }];
 }
 
+// tpu.wait_dma2 waits for a DMA to complete.
+//
+// The number of granules to wait for is determined based on the size of the
+// destination memref.
 def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   let arguments = (ins
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
@@ -917,6 +928,22 @@ def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
     AnyMemRef:$ref
   );
   let hasVerifier = 1;
+}
+
+// Like tpu.wait_dma2, but for indirect DMAs.
+//
+// The number of granules to wait for is determined based on the size of the
+// destination memref in a gather, and the size of the source memref in a
+// scatter. The op differentiates between gather and scatter based on the memory
+// spaces of the source and destination memrefs.
+def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma">, IndirectDMAOp {
+  let arguments = (ins
+    MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
+    AnyMemRef:$src,
+    AnyMemRef:$dst
+  );
+  let hasVerifier = 1;
+  let extraClassDeclaration = extraBaseClassDeclaration;
 }
 
 def TPU_RegionOp : TPU_Op<"region", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
