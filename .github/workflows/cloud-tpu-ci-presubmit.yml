@@ -75,10 +75,24 @@ jobs:
           SRCDIR=$(pwd)
           # Run bazel test, room for improvement by either using prebuilt jaxlib, using a cache, or using an RBE instance
           # Test envs must be passed in due to not having access to the TPU metadata information
+
+          echo "TPU_SKIP_MDS_QUERY: true"
+          echo "CHIPS_PER_HOST_BOUNDS: $CHIPS_PER_HOST_BOUNDS"
+          echo "HOST_BOUNDS: $HOST_BOUNDS"
+          echo "ALT: false"
+          echo "WRAP: $WRAP"
+          echo "TPU_WORKER_ID: $TPU_WORKER_ID"
+          echo "TPU_ACCELERATOR_TYPE: $TPU_ACCELERATOR_TYPE"
+          echo "TPU_WORKER_HOSTNAMES: $TPU_WORKER_HOSTNAMES"
+          echo "TPU_RUNTIME_METRICS_PORTS: $TPU_RUNTIME_METRICS_PORTS"
+          echo "TPU_HOST_BOUNDS: $TPU_HOST_BOUNDS"
+          echo "TPU_TOPOLOGY_ALT: $TPU_TOPOLOGY_ALT"
+          echo "TPU_TOPOLOGY_WRAP: $TPU_TOPOLOGY_WRAP"
+          echo "VBAR_CONTROL_SERVICE_URL: $VBAR_CONTROL_SERVICE_URL"
+
           bazel test \
             --config=ci_linux_x86_64 \
             --config=rbe_cache \
-            --spawn_strategy=standalone \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
             --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft \
             --@rules_python//python/config_settings:py_freethreaded='yes' \
