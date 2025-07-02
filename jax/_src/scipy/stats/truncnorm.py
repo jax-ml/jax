@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.scipy.stats import norm
 from jax._src.scipy.special import logsumexp, log_ndtr, ndtr
@@ -105,8 +107,8 @@ def logpdf(x, a, b, loc=0, scale=1):
   val = lax.sub(norm.logpdf(x, loc, scale), _log_gauss_mass(a, b))
 
   x_scaled = lax.div(lax.sub(x, loc), scale)
-  val = jnp.where((x_scaled < a) | (x_scaled > b), -jnp.inf, val)
-  val = jnp.where(a >= b, jnp.nan, val)
+  val = jnp.where((x_scaled < a) | (x_scaled > b), -np.inf, val)
+  val = jnp.where(a >= b, np.nan, val)
   return val
 
 
@@ -257,9 +259,9 @@ def logcdf(x, a, b, loc=0, scale=1):
   logcdf = jnp.select(
     # third condition: avoid catastrophic cancellation (from scipy)
     [x >= b, x <= a, logcdf > -0.1, x > a],
-    [0, -jnp.inf, jnp.log1p(-jnp.exp(logsf)), logcdf]
+    [0, -np.inf, jnp.log1p(-jnp.exp(logsf)), logcdf]
   )
-  logcdf = jnp.where(a >= b, jnp.nan, logcdf)
+  logcdf = jnp.where(a >= b, np.nan, logcdf)
   return logcdf
 
 

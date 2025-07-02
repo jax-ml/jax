@@ -20,12 +20,6 @@ from typing import cast, Any
 
 import numpy as np
 
-import jax.numpy as jnp
-from jax import jit
-from jax import jvp
-from jax import vmap
-from jax import lax
-
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
@@ -33,7 +27,12 @@ from jax._src import custom_derivatives
 from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
+from jax._src.api import jit, jvp, vmap
 from jax._src.lax.lax import _const as _lax_const
+from jax._src.numpy import einsum as jnp_einsum
+from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
@@ -683,7 +682,7 @@ def rel_entr(
   safe_q = jnp.where(both_gt_zero_mask, q, 1)
   log_val = lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q))
   result = jnp.where(
-      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, zero, jnp.inf)
+      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, zero, np.inf)
   )
   return result
 
@@ -749,7 +748,7 @@ def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   dtype = lax.dtype(a).type
   s_, a_ = jnp.expand_dims(s, -1), jnp.expand_dims(a, -1)
   # precision ~ N, M
-  N = M = dtype(8) if lax.dtype(a) == jnp.float32 else dtype(16)
+  N = M = dtype(8) if lax.dtype(a) == np.float32 else dtype(16)
   assert M <= len(_BERNOULLI_COEFS)
   k = jnp.expand_dims(np.arange(N, dtype=N.dtype), tuple(range(a.ndim)))
   S = jnp.sum((a_ + k) ** -s_, -1)
@@ -758,7 +757,7 @@ def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   m = jnp.expand_dims(np.arange(2 * M, dtype=M.dtype), tuple(range(s.ndim)))
   s_over_a = (s_ + m) / (a_ + N)
   T1 = jnp.cumprod(s_over_a, -1)[..., ::2]
-  T1 = jnp.clip(T1, max=jnp.finfo(dtype).max)
+  T1 = jnp.clip(T1, max=dtypes.finfo(dtype).max)
   coefs = np.expand_dims(np.array(_BERNOULLI_COEFS[:T1.shape[-1]], dtype=dtype),
                          tuple(range(a.ndim)))
   T1 = T1 / coefs
@@ -790,7 +789,7 @@ def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.gamma`
     - :func:`jax.scipy.special.digamma`
   """
-  assert jnp.issubdtype(lax.dtype(n), jnp.integer)
+  assert dtypes.issubdtype(lax.dtype(n), np.integer)
   n_arr, x_arr = promote_args_inexact("polygamma", n, x)
   return lax.polygamma(n_arr, x_arr)
 
@@ -899,7 +898,7 @@ def ndtr(x: ArrayLike) -> Array:
   """
   x = jnp.asarray(x)
   dtype = lax.dtype(x)
-  if dtype not in (jnp.float32, jnp.float64):
+  if dtype not in (np.float32, np.float64):
     raise TypeError(
         "x.dtype={} is not supported, see docstring for supported types."
         .format(dtype))
@@ -941,7 +940,7 @@ def ndtri(p: ArrayLike) -> Array:
     TypeError: if `p` is not floating-type.
   """
   dtype = lax.dtype(p)
-  if dtype not in (jnp.float32, jnp.float64):
+  if dtype not in (np.float32, np.float64):
     raise TypeError(
         "x.dtype={} is not supported, see docstring for supported types."
         .format(dtype))
@@ -1006,7 +1005,7 @@ def _ndtri(p: ArrayLike) -> Array:
                       6.79019408009981274425E-9]))
 
   dtype = lax.dtype(p).type
-  shape = jnp.shape(p)
+  shape = np.shape(p)
 
   def _create_polynomial(var, coeffs):
     """Compute n_th order polynomial via Horner's method."""
@@ -1137,10 +1136,10 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   x_arr = jnp.asarray(x)
   dtype = lax.dtype(x_arr)
 
-  if dtype == jnp.float64:
+  if dtype == np.float64:
     lower_segment: np.ndarray = _LOGNDTR_FLOAT64_LOWER
     upper_segment: np.ndarray = _LOGNDTR_FLOAT64_UPPER
-  elif dtype == jnp.float32:
+  elif dtype == np.float32:
     lower_segment = _LOGNDTR_FLOAT32_LOWER
     upper_segment = _LOGNDTR_FLOAT32_UPPER
   else:
@@ -1439,8 +1438,8 @@ def _gen_recurrence_mask(
   i, j, k = jnp.ogrid[:l_max + 1, :l_max + 1, :l_max + 1]
   mask = (i + j - k == 0).astype(dtype)
 
-  d0_mask_3d = jnp.einsum('jk,ijk->ijk', d0_mask, mask)
-  d1_mask_3d = jnp.einsum('jk,ijk->ijk', d1_mask, mask)
+  d0_mask_3d = jnp_einsum.einsum('jk,ijk->ijk', d0_mask, mask)
+  d1_mask_3d = jnp_einsum.einsum('jk,ijk->ijk', d1_mask, mask)
 
   return (d0_mask_3d, d1_mask_3d)
 
@@ -1482,14 +1481,14 @@ def _gen_derivatives(p: Array,
       l_vec = jnp.arange(1, num_l - 1, dtype=x.dtype)
       p_p1 = p[1, 1:num_l - 1, :]
       coeff = -1.0 / ((l_vec + 1) * l_vec)
-      update_p_p1 = jnp.einsum('i,ij->ij', coeff, p_p1)
+      update_p_p1 = jnp_einsum.einsum('i,ij->ij', coeff, p_p1)
       p_mm2_lm1 = p_mm2_lm1.at[1, 2:num_l, :].set(update_p_p1)
 
     if num_l > 2:
       l_vec = jnp.arange(2, num_l - 1, dtype=x.dtype)
       p_p2 = p[2, 2:num_l - 1, :]
       coeff = 1.0 / ((l_vec + 2) * (l_vec + 1) * l_vec * (l_vec - 1))
-      update_p_p2 = jnp.einsum('i,ij->ij', coeff, p_p2)
+      update_p_p2 = jnp_einsum.einsum('i,ij->ij', coeff, p_p2)
       p_mm2_lm1 = p_mm2_lm1.at[0, 3:num_l, :].set(update_p_p2)
 
   m_mat, l_mat = jnp.meshgrid(
@@ -1511,8 +1510,8 @@ def _gen_derivatives(p: Array,
   c0_masked = c0_masked.at[1, :].set(zero_vec)
 
   # p_l^{m-1}.
-  p_mm1_l = (jnp.einsum('ij,ijk->ijk', a0_masked, p_m_lm1) +
-             jnp.einsum('ij,ijk->ijk', c0_masked, p_mm2_lm1))
+  p_mm1_l = (jnp_einsum.einsum('ij,ijk->ijk', a0_masked, p_m_lm1) +
+             jnp_einsum.einsum('ij,ijk->ijk', c0_masked, p_mm2_lm1))
 
   d0 = -0.5 / (m_mat + 1.0)
   d0_masked = coeff_zeros.at[upper_0_indices].set(d0[upper_0_indices])
@@ -1520,20 +1519,20 @@ def _gen_derivatives(p: Array,
   e0_masked = coeff_zeros.at[upper_0_indices].set(e0[upper_0_indices])
 
   # p_l^{m+1}.
-  p_mp1_l = (jnp.einsum('ij,ijk->ijk', d0_masked, p_mp2_lm1) +
-             jnp.einsum('ij,ijk->ijk', e0_masked, p_m_lm1))
+  p_mp1_l = (jnp_einsum.einsum('ij,ijk->ijk', d0_masked, p_mp2_lm1) +
+             jnp_einsum.einsum('ij,ijk->ijk', e0_masked, p_m_lm1))
 
   f0 = b0 * (l_mat - m_mat + 1.0) / 2.0
   f0_masked = coeff_zeros.at[upper_0_indices].set(f0[upper_0_indices])
-  p_derivative = jnp.einsum('ij,ijk->ijk', f0_masked, p_mm1_l) - 0.5 * p_mp1_l
+  p_derivative = jnp_einsum.einsum('ij,ijk->ijk', f0_masked, p_mm1_l) - 0.5 * p_mp1_l
 
   # Special treatment of the singularity at m = 1.
   if num_m > 1:
     l_vec = jnp.arange(num_l, dtype=p.dtype)
-    g0 = jnp.einsum('i,ij->ij', (l_vec + 1) * l_vec, p[0, :, :])
+    g0 = jnp_einsum.einsum('i,ij->ij', (l_vec + 1) * l_vec, p[0, :, :])
     if num_l > 2:
       g0 = g0 -  p[2, :, :]
-    p_derivative_m0 = jnp.einsum('j,ij->ij', 0.5 / jnp.sqrt(1 - x * x), g0)
+    p_derivative_m0 = jnp_einsum.einsum('j,ij->ij', 0.5 / jnp.sqrt(1 - x * x), g0)
     p_derivative = p_derivative.at[1, :, :].set(p_derivative_m0)
     p_derivative = p_derivative.at[1, 0, :].set(0)
 
@@ -1594,7 +1593,7 @@ def _gen_associated_legendre(l_max: int,
   a_idx = jnp.arange(1, l_max + 1, dtype=x.dtype)
   b_idx = jnp.arange(l_max, dtype=x.dtype)
   if is_normalized:
-    initial_value: ArrayLike = 0.5 / jnp.sqrt(jnp.pi)  # The initial value p(0,0).
+    initial_value: ArrayLike = 0.5 / jnp.sqrt(np.pi)  # The initial value p(0,0).
     f_a = jnp.cumprod(-1 * jnp.sqrt(1.0 + 0.5 / a_idx))
     f_b = jnp.sqrt(2.0 * b_idx + 3.0)
   else:
@@ -1608,13 +1607,13 @@ def _gen_associated_legendre(l_max: int,
   y = jnp.cumprod(
       jnp.broadcast_to(jnp.sqrt(1.0 - x * x), (l_max, x.shape[0])),
       axis=0)
-  p_diag = initial_value * jnp.einsum('i,ij->ij', f_a, y)
+  p_diag = initial_value * jnp_einsum.einsum('i,ij->ij', f_a, y)
   diag_indices = jnp.diag_indices(l_max + 1)
   p = p.at[(diag_indices[0][1:], diag_indices[1][1:])].set(p_diag)
 
   # Compute the off-diagonal entries with recurrence.
-  p_offdiag = jnp.einsum('ij,ij->ij',
-                         jnp.einsum('i,j->ij', f_b, x),
+  p_offdiag = jnp_einsum.einsum('ij,ij->ij',
+                         jnp_einsum.einsum('i,j->ij', f_b, x),
                          p[jnp.diag_indices(l_max)])
   offdiag_indices = (diag_indices[0][:l_max], diag_indices[1][:l_max] + 1)
   p = p.at[offdiag_indices].set(p_offdiag)
@@ -1626,16 +1625,16 @@ def _gen_associated_legendre(l_max: int,
   def body_fun(i, p_val):
     coeff_0 = d0_mask_3d[i]
     coeff_1 = d1_mask_3d[i]
-    h = (jnp.einsum('ij,ijk->ijk',
+    h = (jnp_einsum.einsum('ij,ijk->ijk',
                     coeff_0,
-                    jnp.einsum(
+                    jnp_einsum.einsum(
                         'ijk,k->ijk', jnp.roll(p_val, shift=1, axis=1), x)) -
-         jnp.einsum('ij,ijk->ijk', coeff_1, jnp.roll(p_val, shift=2, axis=1)))
+         jnp_einsum.einsum('ij,ijk->ijk', coeff_1, jnp.roll(p_val, shift=2, axis=1)))
     p_val = p_val + h
     return p_val
 
   # TODO(jakevdp): use some sort of fixed-point procedure here instead?
-  p = p.astype(jnp.result_type(p, x, d0_mask_3d))
+  p = p.astype(dtypes.result_type(p, x, d0_mask_3d))
   if l_max > 1:
     p = lax.fori_loop(lower=2, upper=l_max+1, body_fun=body_fun, init_val=p)
 
@@ -1664,7 +1663,7 @@ def lpmn(m: int, n: int, z: Array) -> tuple[Array, Array]:
     NotImplementedError if `m!=n`.
   """
   dtype = lax.dtype(z)
-  if dtype not in (jnp.float32, jnp.float64):
+  if dtype not in (np.float32, np.float64):
     raise TypeError(
         'z.dtype={} is not supported, see docstring for supported types.'
         .format(dtype))
@@ -1721,7 +1720,7 @@ def lpmn_values(m: int, n: int, z: Array, is_normalized: bool) -> Array:
     NotImplementedError if `m!=n`.
   """
   dtype = lax.dtype(z)
-  if dtype not in (jnp.float32, jnp.float64):
+  if dtype not in (np.float32, np.float64):
     raise TypeError(
         'z.dtype={} is not supported, see docstring for supported types.'
         .format(dtype))
@@ -1898,7 +1897,7 @@ def _expint1(x: Array) -> Array:
   A_arr = jnp.array(A, dtype=x.dtype)
   B_arr = jnp.array(B, dtype=x.dtype)
   f = jnp.polyval(A_arr, x) / jnp.polyval(B_arr, x)
-  return x * f + jnp.euler_gamma + jnp.log(x)
+  return x * f + np.euler_gamma + jnp.log(x)
 
 
 def _eval_expint_k(A: list[float], B: list[float], x: Array) -> Array:
@@ -2119,11 +2118,11 @@ def expi_jvp(primals, tangents):
 def _expn1(x: Array, n: Array) -> Array:
   # exponential integral En
   _c = _lax_const
-  MACHEP = jnp.finfo(x.dtype).eps
+  MACHEP = dtypes.finfo(x.dtype).eps
 
   zero = _c(x, 0.0)
   one = _c(x, 1.0)
-  psi = -jnp.euler_gamma - jnp.log(x)
+  psi = -np.euler_gamma - jnp.log(x)
   psi = lax.fori_loop(_c(n, 1), n, lambda i, psi: psi + one / i, psi)
   n1 = jnp.where(n == _c(n, 1), one + one, n)
   init = dict(
@@ -2133,7 +2132,7 @@ def _expn1(x: Array, n: Array) -> Array:
     yk=one,
     pk=one - n,
     ans=jnp.where(n == _c(n, 1), zero, one / (one - n1)),
-    t=jnp.inf,
+    t=np.inf,
   )
 
   def body(d):
@@ -2157,7 +2156,7 @@ def _expn2(x: Array, n: Array) -> Array:
   # x > 1.
   _c = _lax_const
   BIG = _c(x, 1.44115188075855872e17)
-  MACHEP = jnp.finfo(BIG.dtype).eps  # ?
+  MACHEP = dtypes.finfo(BIG.dtype).eps  # ?
   zero = _c(x, 0.0)
   one = _c(x, 1.0)
 
@@ -2168,7 +2167,7 @@ def _expn2(x: Array, n: Array) -> Array:
     pkm1=one,
     qkm1=x + n,
     ans=one / (x + n),
-    t=_c(x, jnp.inf),
+    t=_c(x, np.inf),
     r=zero,
     x=x,
   )
@@ -2218,7 +2217,7 @@ def _expn3(x: Array, n: Array) -> Array:
 
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
-@jnp.vectorize
+@jnp_vectorize.vectorize
 @jit
 def expn(n: ArrayLike, x: ArrayLike) -> Array:
   r"""Generalized exponential integral function.
@@ -2254,8 +2253,8 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
   ]
   n1 = jnp.where(n == _c(n, 1), n + n, n)
   vals = [
-    jnp.nan,
-    jnp.inf,
+    np.nan,
+    np.inf,
     one / n1,  # prevent div by zero
     jnp.exp(-x) / x,
     _expn3,
@@ -2340,7 +2339,7 @@ def _spence_calc(x: Array) -> Array:
                       lambda x: x - 1.0])
 
   y = _spence_poly(w)
-  y_flag_one = jnp.pi ** 2 / 6.0 - jnp.log(x) * jnp.log(1.0 - x) - y
+  y_flag_one = np.pi ** 2 / 6.0 - jnp.log(x) * jnp.log(1.0 - x) - y
   y = jnp.where(x_5_bool, y_flag_one, y)
   y_flag_two = -0.5 * jnp.log(x) ** 2 - y
   return jnp.where(x2_bool, y_flag_two, y)
@@ -2349,7 +2348,7 @@ def _spence_calc(x: Array) -> Array:
 def _spence(x: Array) -> Array:
   return jnp.piecewise(x,
                        [x < 0.0, x == 1.0, x == 0.0],
-                       [jnp.nan, 0, jnp.pi ** 2 / 6, _spence_calc])
+                       [np.nan, 0, np.pi ** 2 / 6, _spence_calc])
 
 
 def spence(x: Array) -> Array:
@@ -2390,7 +2389,7 @@ def spence(x: Array) -> Array:
   """
   x = jnp.asarray(x)
   dtype = lax.dtype(x)
-  if dtype not in (jnp.float32, jnp.float64):
+  if dtype not in (np.float32, np.float64):
     raise TypeError(
       f"x.dtype={dtype} is not supported, see docstring for supported types.")
   return _spence(x)
@@ -2420,7 +2419,7 @@ def bernoulli(n: int) -> Array:
     return b3[:n + 1]
   bn = jnp.zeros(n + 1).at[:3].set(b3)
   m = jnp.arange(4, n + 1, 2, dtype=bn.dtype)
-  q1 = (1. / jnp.pi ** 2) * jnp.cumprod(-(m - 1) * m / 4 / jnp.pi ** 2)
+  q1 = (1. / np.pi ** 2) * jnp.cumprod(-(m - 1) * m / 4 / np.pi ** 2)
   k = jnp.arange(2, 50, dtype=bn.dtype)  # Choose 50 because 2 ** -50 < 1E-15
   q2 = jnp.sum(k[:, None] ** -m[None, :], axis=0)
   return bn.at[4::2].set(q1 * (1 + q2))
@@ -2484,7 +2483,7 @@ def _hyp1f1_serie(a, b, x):
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
-  precision = jnp.finfo(x.dtype).eps
+  precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
     serie, k, term = state
@@ -2511,7 +2510,7 @@ def _hyp1f1_asymptotic(a, b, x):
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
-  precision = jnp.finfo(x.dtype).eps
+  precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
     serie, k, term = state
@@ -2533,14 +2532,14 @@ def _hyp1f1_asymptotic(a, b, x):
 
 
 @jit
-@jnp.vectorize
+@jnp_vectorize.vectorize
 def _hyp1f1_a_derivative(a, b, x):
   """
   Define it as a serie using :
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
-  precision = jnp.finfo(x.dtype).eps
+  precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
     serie, k, term = state
@@ -2561,14 +2560,14 @@ def _hyp1f1_a_derivative(a, b, x):
 
 
 @jit
-@jnp.vectorize
+@jnp_vectorize.vectorize
 def _hyp1f1_b_derivative(a, b, x):
   """
   Define it as a serie using :
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
-  precision = jnp.finfo(x.dtype).eps
+  precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
     serie, k, term = state
@@ -2600,7 +2599,7 @@ def _hyp1f1_x_derivative(a, b, x):
 
 @custom_derivatives.custom_jvp
 @jit
-@jnp.vectorize
+@jnp_vectorize.vectorize
 def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   r"""The 1F1 hypergeometric function.
 
@@ -2637,7 +2636,7 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
                       result,
                       jnp.array(1, dtype=x.dtype),
                       jnp.exp(x),
-                      jnp.array(jnp.inf, dtype=x.dtype))
+                      jnp.array(np.inf, dtype=x.dtype))
 
 
 hyp1f1.defjvps(
@@ -2657,7 +2656,7 @@ def _hyp2f1_terminal(a, b, c, x):
   # Ensure that between a and b, the negative integer parameter with the greater
   # absolute value - that still has a magnitude less than the absolute value of
   # c if c is non-positive - is used for the upper limit in the loop.
-  eps = jnp.finfo(x.dtype).eps * 50
+  eps = dtypes.finfo(x.dtype).eps * 50
   ib = jnp.round(b)
   mask = jnp.logical_and(
       b < a,
@@ -2702,7 +2701,7 @@ def _hyp2f1_serie(a, b, c, x):
   See Eq. 4.1 from PEARSON, OLVER & PORTER 2014
   https://doi.org/10.48550/arXiv.1407.7786
   """
-  rtol = jnp.finfo(x.dtype).eps
+  rtol = dtypes.finfo(x.dtype).eps
 
   def body(state):
     serie, k, term = state
@@ -2733,7 +2732,7 @@ def _hyp2f1_terminal_or_serie(a, b, c, x):
   See 4.6.1. Recurrence Relations from PEARSON, OLVER & PORTER 2014
   https://doi.org/10.48550/arXiv.1407.7786
   """
-  eps = jnp.finfo(x.dtype).eps * 50
+  eps = dtypes.finfo(x.dtype).eps * 50
 
   d = c - a - b
 
@@ -2761,7 +2760,7 @@ def _hyp2f1_digamma_transform(a, b, c, x):
   Digamma transformation of the 2F1 hypergeometric function.
   See AMS55 #15.3.10, #15.3.11, #15.3.12
   """
-  rtol = jnp.finfo(x.dtype).eps
+  rtol = dtypes.finfo(x.dtype).eps
 
   d = c - a - b
   s = 1 - x
@@ -2840,7 +2839,7 @@ def _hyp2f1_digamma_transform(a, b, c, x):
 
 
 @jit
-@jnp.vectorize
+@jnp_vectorize.vectorize
 def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
   r"""The 2F1 hypergeometric function.
 
@@ -2867,7 +2866,7 @@ def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
   """
   # This is backed by https://doi.org/10.48550/arXiv.1407.7786
   a, b, c, x = promote_args_inexact('hyp2f1', a, b, c, x)
-  eps = jnp.finfo(x.dtype).eps * 50
+  eps = dtypes.finfo(x.dtype).eps * 50
 
   d = c - a - b
   s = 1 - x
@@ -2893,7 +2892,7 @@ def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
 
   return lax.select_n(index,
                       jnp.array(1, dtype=x.dtype),
-                      jnp.array(jnp.inf, dtype=x.dtype),
+                      jnp.array(np.inf, dtype=x.dtype),
                       s ** d * _hyp2f1_terminal_or_serie(ca, cb, c, x),
                       s ** (-a),
                       s ** (-b),

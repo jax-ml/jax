@@ -300,8 +300,6 @@ py_library_providing_imports_info(
         [
             "*.py",
             "_src/image/**/*.py",
-            "_src/scipy/**/*.py",
-            "_src/third_party/**/*.py",
             "experimental/key_reuse/**/*.py",
             "experimental/roofline/**/*.py",
             "image/**/*.py",
@@ -397,6 +395,7 @@ py_library_providing_imports_info(
         ":profiler",
         ":public_test_util",
         ":random",
+        ":scipy",
         ":shard_alike",
         ":shard_map",
         ":sharding",
@@ -1189,6 +1188,31 @@ pytype_strict_library(
     srcs = ["_src/op_shardings.py"],
     deps = [
         "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "scipy",
+    srcs = glob([
+        "_src/scipy/**/*.py",
+        "_src/third_party/**/*.py",
+    ]),
+    deps = [
+        ":api",
+        ":api_util",
+        ":config",
+        ":core",
+        ":custom_derivatives",
+        ":deprecations",
+        ":dtypes",
+        ":lax",
+        ":nn",
+        ":numpy",
+        ":random",
+        ":tpu",
+        ":tree_util",
+        ":typing",
+        ":util",
     ] + py_deps("numpy"),
 )
 

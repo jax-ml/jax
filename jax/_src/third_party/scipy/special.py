@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import jax.numpy as jnp
-from jax import jit
+import numpy as np
 
+from jax._src import api
+from jax._src import numpy as jnp
 from jax._src import custom_derivatives, dtypes
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
-from numpy import complexfloating
 
 
-@jit
+@api.jit
 def sincospisquaredhalf(
   x: Array,
 ) -> tuple[Array, Array]:
@@ -32,17 +32,17 @@ def sincospisquaredhalf(
 
   sinpi = jnp.where(
     r < 0.5,
-    jnp.sin(jnp.pi * r),
+    jnp.sin(np.pi * r),
     jnp.where(
       r > 1.5,
-      jnp.sin(jnp.pi * (r - 2.0)),
-      -jnp.sin(jnp.pi * (r - 1.0)),
+      jnp.sin(np.pi * (r - 2.0)),
+      -jnp.sin(np.pi * (r - 1.0)),
     ),
   )
   cospi = jnp.where(
     r == 0.5,
     0.0,
-    jnp.where(r < 1.0, -jnp.sin(jnp.pi * (r - 0.5)), jnp.sin(jnp.pi * (r - 1.5))),
+    jnp.where(r < 1.0, -jnp.sin(np.pi * (r - 0.5)), jnp.sin(np.pi * (r - 1.5))),
   )
 
   return sinpi, cospi
@@ -92,16 +92,16 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
   # This part is mostly a direct translation of SciPy's C++ code,
   # and the original Cephes implementation for single precision.
 
-  if dtypes.issubdtype(xxa.dtype, complexfloating):
+  if dtypes.issubdtype(xxa.dtype, np.complexfloating):
     raise NotImplementedError(
         'Support for complex-valued inputs is not implemented yet.')
-  elif xxa.dtype in (jnp.float32, jnp.float16, jnp.bfloat16):
+  elif xxa.dtype in (np.float32, np.float16, dtypes.bfloat16):
     # Single-precision Cephes coefficients
 
     # For half-precision, series expansions have either
     # produce overflow or poor accuracy.
     # Upcasting to single-precision is hence needed.
-    xxa = xxa.astype(jnp.float32)  # No-op for float32
+    xxa = xxa.astype(np.float32)  # No-op for float32
 
     fresnl_sn = jnp.array([
       +1.647629463788700e-9,
@@ -111,7 +111,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +7.244727626597022e-3,
       -9.228055941124598e-2,
       +5.235987735681432e-1,
-    ], dtype=jnp.float32)
+    ], dtype=np.float32)
 
     fresnl_cn = jnp.array([
       +1.416802502367354e-8,
@@ -121,7 +121,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +2.818489036795073e-2,
       -2.467398198317899e-1,
       +9.999999760004487e-1,
-    ], dtype=jnp.float32)
+    ], dtype=np.float32)
 
     fresnl_fn = jnp.array([
       -1.903009855649792e12,
@@ -132,7 +132,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +8.560515466275470e3,
       -1.032877601091159e2,
       +2.999401847870011e0,
-    ], dtype=jnp.float32)
+    ], dtype=np.float32)
 
     fresnl_gn = jnp.array([
       -1.860843997624650e11,
@@ -143,8 +143,8 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +8.602931494734327e2,
       -1.493439396592284e1,
       +9.999841934744914e-1,
-    ], dtype=jnp.float32)
-  elif xxa.dtype == jnp.float64:
+    ], dtype=np.float32)
+  elif xxa.dtype == np.float64:
     # Double-precision Cephes coefficients
 
     fresnl_sn = jnp.array([
@@ -154,7 +154,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +2.54890880573376359104e9,
       -4.42979518059697779103e10,
       +3.18016297876567817986e11,
-    ], dtype=jnp.float64)
+    ], dtype=np.float64)
 
     fresnl_sd = jnp.array([
       +1.00000000000000000000e0,
@@ -164,7 +164,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +4.19320245898111231129e8,
       +2.24411795645340920940e10,
       +6.07366389490084639049e11,
-    ], dtype=jnp.float64)
+    ], dtype=np.float64)
 
     fresnl_cn = jnp.array([
       -4.98843114573573548651e-8,
@@ -173,7 +173,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +1.88843319396703850064e-2,
       -2.05525900955013891793e-1,
       +9.99999999999999998822e-1,
-    ], dtype=jnp.float64)
+    ], dtype=np.float64)
 
     fresnl_cd = jnp.array([
       +3.99982968972495980367e-12,
@@ -183,7 +183,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +8.68029542941784300606e-4,
       +4.12142090722199792936e-2,
       +1.00000000000000000118e0,
-    ], dtype=jnp.float64)
+    ], dtype=np.float64)
 
     fresnl_fn = jnp.array([
       +4.21543555043677546506e-1,
@@ -196,7 +196,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +1.72010743268161828879e-13,
       +1.34283276233062758925e-16,
       +3.76329711269987889006e-20,
-    ], dtype=jnp.float64)
+    ], dtype=np.float64)
 
     fresnl_fd = jnp.array([
       +1.00000000000000000000e0,
@@ -210,7 +210,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +5.88754533621578410010e-14,
       +4.52001434074129701496e-17,
       +1.25443237090011264384e-20,
-    ], dtype=jnp.float64)
+    ], dtype=np.float64)
 
     fresnl_gn = jnp.array([
       +5.04442073643383265887e-1,
@@ -224,7 +224,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +1.37555460633261799868e-15,
       +8.36354435630677421531e-19,
       +1.86958710162783235106e-22,
-    ], dtype=jnp.float64)
+    ], dtype=np.float64)
 
     fresnl_gd = jnp.array([
       +1.00000000000000000000e0,
@@ -239,13 +239,13 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       +1.38796531259578871258e-15,
       +8.39158816283118707363e-19,
       +1.86958710162783236342e-22,
-    ], dtype=jnp.float64)
+    ], dtype=np.float64)
   else:
     raise NotImplementedError(
         f'Support for {xxa.dtype} dtype is not implemented yet.')
 
-  assert xxa.dtype in (jnp.float32, jnp.float64)
-  single_precision = (xxa.dtype == jnp.float32)
+  assert xxa.dtype in (np.float32, np.float64)
+  single_precision = (xxa.dtype == np.float32)
 
   x = jnp.abs(xxa)
 
@@ -272,11 +272,11 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
     c_large = c_inf
     s_large = s_inf
   else:
-    c_large = 0.5 + 1 / (jnp.pi * x) * sinpi
-    s_large = 0.5 - 1 / (jnp.pi * x) * cospi
+    c_large = 0.5 + 1 / (np.pi * x) * sinpi
+    s_large = 0.5 - 1 / (np.pi * x) * cospi
 
   # Other x values
-  t = jnp.pi * x2
+  t = np.pi * x2
   u = 1.0 / (t * t)
   t = 1.0 / t
 
@@ -287,7 +287,7 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
     f = 1.0 - u * jnp.polyval(fresnl_fn, u) / jnp.polyval(fresnl_fd, u)
     g = t * jnp.polyval(fresnl_gn, u) / jnp.polyval(fresnl_gd, u)
 
-  t = jnp.pi * x
+  t = np.pi * x
   c_other = 0.5 + (f * sinpi - g * cospi) / t
   s_other = 0.5 - (f * cospi + g * sinpi) / t
 

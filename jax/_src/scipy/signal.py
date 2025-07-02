@@ -23,14 +23,14 @@ import warnings
 
 import numpy as np
 
-import jax
-import jax.numpy.fft
-import jax.numpy as jnp
-from jax import lax
+from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.lax.lax import PrecisionLike
+from jax._src.numpy import fft as jnp_fft
 from jax._src.numpy import linalg
 from jax._src.numpy.util import (
     check_arraylike, promote_dtypes_inexact, promote_dtypes_complex)
@@ -108,7 +108,7 @@ def fftconvolve(in1: ArrayLike, in2: ArrayLike, mode: str = "full",
   if any(in1.shape[i] != in2.shape[i] for i in mapped_axes):
     raise ValueError(f"mapped axes must have same shape; got {in1.shape=} {in2.shape=} {axes=}")
   for ax in sorted(mapped_axes):
-    _fftconvolve = jax.vmap(_fftconvolve, in_axes=ax, out_axes=ax)
+    _fftconvolve = api.vmap(_fftconvolve, in_axes=ax, out_axes=ax)
   return _fftconvolve(in1, in2)
 
 def _fftconvolve_unbatched(in1: Array, in2: Array, mode: str) -> Array:
@@ -319,7 +319,7 @@ def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill
   """
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("convolve2d() only supports boundary='fill', fillvalue=0")
-  if jnp.ndim(in1) != 2 or jnp.ndim(in2) != 2:
+  if np.ndim(in1) != 2 or np.ndim(in2) != 2:
     raise ValueError("convolve2d() only supports 2-dimensional inputs.")
   return _convolve_nd(in1, in2, mode, precision=precision)
 
@@ -454,7 +454,7 @@ def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fil
   """
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("correlate2d() only supports boundary='fill', fillvalue=0")
-  if jnp.ndim(in1) != 2 or jnp.ndim(in2) != 2:
+  if np.ndim(in1) != 2 or np.ndim(in2) != 2:
     raise ValueError("correlate2d() only supports 2-dimensional inputs.")
 
   swap = all(s1 <= s2 for s1, s2 in zip(in1.shape, in2.shape))
@@ -567,8 +567,8 @@ def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
   else:
     step = nperseg - noverlap
     starts = jnp.arange(signal_length - nperseg + 1, step=step)
-    slice_func = partial(jax.lax.dynamic_slice_in_dim, operand=x, slice_size=nperseg, axis=-1)
-    result = jax.vmap(slice_func, out_axes=-2)(start_index=starts)
+    slice_func = partial(lax.dynamic_slice_in_dim, operand=x, slice_size=nperseg, axis=-1)
+    result = api.vmap(slice_func, out_axes=-2)(start_index=starts)
 
   # Detrend each data segment individually
   result = detrend_func(result)
@@ -580,9 +580,9 @@ def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
 
   # Perform the fft on last axis. Zero-pads automatically
   if sides == 'twosided':
-    return jax.numpy.fft.fft(result, n=nfft)
+    return jnp_fft.fft(result, n=nfft)
   else:
-    return jax.numpy.fft.rfft(result.real, n=nfft)
+    return jnp_fft.rfft(result.real, n=nfft)
 
 
 def odd_ext(x: Array, n: int, axis: int = -1) -> Array:
@@ -789,9 +789,9 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
     sides = 'twosided'
 
   if sides == 'twosided':
-    freqs = jax.numpy.fft.fftfreq(nfft_int, 1/fs, dtype=freq_dtype)
+    freqs = jnp_fft.fftfreq(nfft_int, 1/fs, dtype=freq_dtype)
   elif sides == 'onesided':
-    freqs = jax.numpy.fft.rfftfreq(nfft_int, 1/fs, dtype=freq_dtype)
+    freqs = jnp_fft.rfftfreq(nfft_int, 1/fs, dtype=freq_dtype)
 
   # Perform the windowed FFTs
   result = _fft_helper(x, win, detrend_func,
@@ -1103,7 +1103,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   if freq_axis == time_axis:
     raise ValueError('Must specify differing time and frequency axes!')
 
-  Zxx = jnp.asarray(Zxx, dtype=jax.dtypes.canonicalize_dtype(
+  Zxx = jnp.asarray(Zxx, dtype=dtypes.canonicalize_dtype(
     dtypes.to_complex_dtype(Zxx.dtype)))
 
   n_default = (2 * (Zxx.shape[freq_axis] - 1) if input_onesided
@@ -1138,19 +1138,19 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
     Zxx = jnp.transpose(Zxx, outer_idxs + (freq_axis, time_axis))
 
   # Perform IFFT
-  ifunc = jax.numpy.fft.irfft if input_onesided else jax.numpy.fft.ifft
+  ifunc = jnp_fft.irfft if input_onesided else jnp_fft.ifft
   # xsubs: [..., T, N], N is the number of frames, T is the frame length.
   xsubs = ifunc(Zxx, axis=-2, n=nfft)[..., :nperseg_int, :]
 
   # Get window as array
   if isinstance(window, str) and window == 'hann':
     # Implement the default case without scipy
-    win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, jnp.pi, nperseg_int, endpoint=False)) ** 2
+    win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, np.pi, nperseg_int, endpoint=False)) ** 2
     win = win.astype(xsubs.dtype)
   elif isinstance(window, (str, tuple)):
     # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency
     try:
-      from scipy.signal import get_window
+      from scipy.signal import get_window  # pytype: disable=import-error
     except ImportError as err:
       raise ImportError(f"scipy must be available to use {window=}") from err
     win = get_window(window, nperseg_int)

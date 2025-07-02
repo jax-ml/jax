@@ -1,7 +1,10 @@
 from itertools import product
 
-from jax.numpy import (asarray, broadcast_arrays, can_cast,
-                       empty, nan, searchsorted, where, zeros)
+import numpy as np
+
+from jax._src import dtypes
+from jax._src.numpy import (asarray, broadcast_arrays,
+                            empty, searchsorted, where, zeros)
 from jax._src.tree_util import register_pytree_node
 from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact
 
@@ -62,7 +65,7 @@ class RegularGridInterpolator:
                values,
                method="linear",
                bounds_error=False,
-               fill_value=nan):
+               fill_value=np.nan):
     if method not in ("linear", "nearest"):
       raise ValueError(f"method {method!r} is not defined")
     self.method = method
@@ -80,7 +83,7 @@ class RegularGridInterpolator:
     if fill_value is not None:
       check_arraylike("RegularGridInterpolator", fill_value)
       fill_value = asarray(fill_value)
-      if not can_cast(fill_value.dtype, values.dtype, casting='same_kind'):
+      if not dtypes.can_cast(fill_value.dtype, values.dtype, casting='same_kind'):
         ve = "fill_value must be either 'None' or of a type compatible with values"
         raise ValueError(ve)
     self.fill_value = fill_value
