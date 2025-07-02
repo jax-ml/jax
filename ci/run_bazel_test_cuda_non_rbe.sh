@@ -72,7 +72,6 @@ set +e
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
 # should match the VM's CPU core count (set in `--local_test_jobs`).
 bazel test --config=ci_linux_x86_64_cuda \
-      --config=resultstore \
       --config=rbe_cache \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --//jax:build_jaxlib=false \

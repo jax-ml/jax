@@ -84,7 +84,6 @@ jobs:
             --run_under $(pwd)/build/parallel_accelerator_execute.sh \
             --test_env=JAX_ACCELERATOR_COUNT=8 \
             --test_env=JAX_TESTS_PER_ACCELERATOR=1 \
-            --strategy=TestRunner=local \
             --local_test_jobs=8 \
             --test_tag_filters=-multiaccelerator  \
             --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=1 \
