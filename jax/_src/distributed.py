@@ -23,6 +23,7 @@ from jax._src import clusters
 from jax._src import config
 from jax._src import xla_bridge
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +52,7 @@ class State:
                  cluster_detection_method: str | None = None,
                  initialization_timeout: int = 300,
                  coordinator_bind_address: str | None = None,
-                 service_heartbeat_interval_seconds: int = 10,
-                 service_max_missing_heartbeats: int = 10,
-                 client_heartbeat_interval_seconds: int = 10,
-                 client_max_missing_heartbeats: int = 10,
+                 heartbeat_timeout_seconds: int = 100,
                  slice_index: int | None = None):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS'))
@@ -126,6 +124,16 @@ class State:
       )
       logger.warning(warning)
 
+
+    heartbeat_kwargs = {}
+    if jaxlib_extension_version >= 361:
+      # In jaxlib version 361, the heartbeat_timeout argument replaced the old
+      # heartbeat_interval and max_missing_heartbeats arguments.
+      heartbeat_kwargs['heartbeat_timeout'] = heartbeat_timeout_seconds
+    else:
+      heartbeat_kwargs['heartbeat_interval'] = heartbeat_timeout_seconds
+      heartbeat_kwargs['max_missing_heartbeats'] = 1
+
     if process_id == 0:
       if self.service is not None:
         raise RuntimeError('distributed.initialize should only be called once.')
@@ -133,9 +141,7 @@ class State:
           'Starting JAX distributed service on %s', coordinator_bind_address
       )
       self.service = _jax.get_distributed_runtime_service(
-          coordinator_bind_address, num_processes,
-          heartbeat_interval=service_heartbeat_interval_seconds,
-          max_missing_heartbeats=service_max_missing_heartbeats)
+          coordinator_bind_address, num_processes, **heartbeat_kwargs) # type: ignore
 
     self.num_processes = num_processes
 
@@ -144,8 +150,7 @@ class State:
 
     self.client = _jax.get_distributed_runtime_client(
         coordinator_address, process_id, init_timeout=initialization_timeout,
-        heartbeat_interval=client_heartbeat_interval_seconds,
-        max_missing_heartbeats=client_max_missing_heartbeats, use_compression=True)
+        use_compression=True, **heartbeat_kwargs) # type: ignore
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
