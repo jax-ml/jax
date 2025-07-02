@@ -59,10 +59,15 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
     dtype: optional dtype for the created array; defaults to float32 or float64
       depending on the X64 configuration (see :ref:`default-dtypes`).
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
-      to which the created array will be committed.
+      to which the created array will be committed. This argument exists for
+      compatibility with the :ref:`python-array-api`.
+    out_sharding: (optional) :class:`~jax.sharding.PartitionSpec` or :class:`~jax.NamedSharding`
+      representing the sharding of the created array (see `explicit sharding`_ for more details).
+      This argument exists for consistency with other array creation routines across JAX.
+      Specifying both ``out_sharding`` and ``device`` will result in an error.
 
   Returns:
-    Array of the specified shape and dtype, on the specified device if specified.
+    Array of the specified shape and dtype, with the given device/sharding if specified.
 
   See also:
     - :func:`jax.numpy.zeros_like`
@@ -76,6 +81,8 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
     >>> jnp.zeros((2, 3), dtype=bool)
     Array([[False, False, False],
            [False, False, False]], dtype=bool)
+
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
@@ -100,10 +107,15 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
     dtype: optional dtype for the created array; defaults to float32 or float64
       depending on the X64 configuration (see :ref:`default-dtypes`).
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
-      to which the created array will be committed.
+      to which the created array will be committed. This argument exists for
+      compatibility with the :ref:`python-array-api`.
+    out_sharding: (optional) :class:`~jax.sharding.PartitionSpec` or :class:`~jax.NamedSharding`
+      representing the sharding of the created array (see `explicit sharding`_ for more details).
+      This argument exists for consistency with other array creation routines across JAX.
+      Specifying both ``out_sharding`` and ``device`` will result in an error.
 
   Returns:
-    Array of the specified shape and dtype, on the specified device if specified.
+    Array of the specified shape and dtype, with the given device/sharding if specified.
 
   See also:
     - :func:`jax.numpy.ones_like`
@@ -117,6 +129,8 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
     >>> jnp.ones((2, 3), dtype=bool)
     Array([[ True,  True,  True],
            [ True,  True,  True]], dtype=bool)
+
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
@@ -143,10 +157,15 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
     dtype: optional dtype for the created array; defaults to float32 or float64
       depending on the X64 configuration (see :ref:`default-dtypes`).
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
-      to which the created array will be committed.
+      to which the created array will be committed. This argument exists for
+      compatibility with the :ref:`python-array-api`.
+    out_sharding: (optional) :class:`~jax.sharding.PartitionSpec` or :class:`~jax.NamedSharding`
+      representing the sharding of the created array (see `explicit sharding`_ for more details).
+      This argument exists for consistency with other array creation routines across JAX.
+      Specifying both ``out_sharding`` and ``device`` will result in an error.
 
   Returns:
-    Array of the specified shape and dtype, on the specified device if specified.
+    Array of the specified shape and dtype, with the given device/sharding if specified.
 
   See also:
     - :func:`jax.numpy.empty_like`
@@ -160,6 +179,8 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
     >>> jnp.empty((2, 3), dtype=bool)
     Array([[False, False, False],
            [False, False, False]], dtype=bool)
+
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
   dtypes.check_user_dtype_supported(dtype, "empty")
