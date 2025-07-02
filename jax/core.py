@@ -96,51 +96,6 @@ _deprecations = {
                           _src_core.trace_state_clean),
     "typecheck": ("jax.core.typecheck is deprecated.", _src_core.typecheck),
     "typematch": ("jax.core.typematch is deprecated.", _src_core.typematch),
-    # Added 2024-12-10
-    "full_lower": ("jax.core.full_lower is deprecated. It is a no-op as of JAX v0.4.36.", None),
-    "jaxpr_as_fun": ("jax.core.jaxpr_as_fun was removed in JAX v0.6.0. Use jax.extend.core.jaxpr_as_fun instead, "
-                     "and see https://docs.jax.dev/en/latest/jax.extend.html for details.",
-                     None),
-    "lattice_join": ("jax.core.lattice_join is deprecated. It is a no-op as of JAX v0.4.36.", None),
-    # Finalized 2025-03-25 for JAX v0.6.0; remove after 2025-06-25
-    "AxisSize": ("jax.core.AxisSize was removed in JAX v0.6.0.", None),
-    "ClosedJaxpr": ("jax.core.ClosedJaxpr was removed in JAX v0.6.0. Use jax.extend.core.ClosedJaxpr instead, "
-                    "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
-    "EvalTrace": ("jax.core.EvalTrace was removed in JAX v0.6.0.", None),
-    "InDBIdx": ("jax.core.InDBIdx was removed in JAX v0.6.0.", None),
-    "InputType": ("jax.core.InputType was removed in JAX v0.6.0.", None),
-    "Jaxpr": ("jax.core.Jaxpr was removed in JAX v0.6.0. Use jax.extend.core.Jaxpr instead, "
-              "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
-    "JaxprEqn": ("jax.core.JaxprEqn was removed in JAX v0.6.0. Use jax.extend.core.JaxprEqn instead, "
-                 "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
-    "Literal": ("jax.core.Literal was removed in JAX v0.6.0. Use jax.extend.core.Literal instead, "
-                "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
-    "MapPrimitive": ("jax.core.MapPrimitive was removed in JAX v0.6.0.", None),
-    "OpaqueTraceState": ("jax.core.OpaqueTraceState was removed in JAX v0.6.0.", None),
-    "OutDBIdx": ("jax.core.OutDBIdx was removed in JAX v0.6.0.", None),
-    "Primitive": ("jax.core.Primitive was removed in JAX v0.6.0. Use jax.extend.core.Primitive instead, "
-                  "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
-    "Token": ("jax.core.Token was removed in JAX v0.6.0. Use jax.extend.core.Token instead, "
-              "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
-    "TRACER_LEAK_DEBUGGER_WARNING": ("jax.core.TRACER_LEAK_DEBUGGER_WARNING was removed in JAX v0.6.0.", None),
-    "Var": ("jax.core.Var was removed in JAX v0.6.0. Use jax.extend.core.Var instead, "
-            "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
-    "concrete_aval": ("jax.core.concrete_aval was removed in JAX v0.6.0.", None),
-    "dedup_referents": ("jax.core.dedup_referents was removed in JAX v0.6.0.", None),
-    "escaped_tracer_error": ("jax.core.escaped_tracer_error was removed in JAX v0.6.0.", None),
-    "extend_axis_env_nd": ("jax.core.extend_axis_env_nd was removed in JAX v0.6.0.", None),
-    "get_referent": ("jax.core.get_referent was removed in JAX v0.6.0.", None),
-    "join_effects": ("jax.core.join_effects was removed in JAX v0.6.0.", None),
-    "leaked_tracer_error": ("jax.core.leaked_tracer_error was removed in JAX v0.6.0.", None),
-    "maybe_find_leaked_tracers": ("jax.core.maybe_find_leaked_tracers was removed in JAX v0.6.0.", None),
-    "raise_to_shaped": ("jax.core.raise_to_shaped was removed in JAX v0.6.0. It is a no-op as of JAX v0.4.36.", None),
-    "raise_to_shaped_mappings": ("jax.core.raise_to_shaped_mappings was removed in JAX v0.6.0."
-                                 " It is unused as of jax v0.4.36.", None),
-    "reset_trace_state": ("jax.core.reset_trace_state was removed in JAX v0.6.0.", None),
-    "str_eqn_compact": ("jax.core.str_eqn_compact was removed in JAX v0.6.0.", None),
-    "substitute_vars_in_output_ty": ("jax.core.substitute_vars_in_output_ty was removed in JAX v0.6.0.", None),
-    "typecompat": ("jax.core.typecompat was removed in JAX v0.6.0.", None),
-    "used_axis_names_jaxpr": ("jax.core.used_axis_names_jaxpr was removed in JAX v0.6.0.", None),
 }
 
 import typing
