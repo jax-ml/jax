@@ -2123,15 +2123,13 @@ def _concretize_abstract_out_shardings(shardings, avals, device_assignment,
                                        out_mem_kinds):
   if device_assignment is None:
     return shardings
-  if len(device_assignment) == 1:
-    return shardings
 
   out = []
   for s, a, mem_kind in zip(shardings, avals, out_mem_kinds):
-    if isinstance(s, UnspecifiedValue) and a.sharding is not None:
+    if isinstance(s, UnspecifiedValue) and isinstance(a, core.ShapedArray):
       if a.sharding.mesh.empty:
         out.append(s)
-      elif a.sharding.mesh._are_all_axes_auto:
+      elif a.sharding.mesh._are_all_axes_auto_or_manual:
         out.append(s)
       else:
         spec = (PartitionSpec(*[PartitionSpec.UNCONSTRAINED if sp is None else sp

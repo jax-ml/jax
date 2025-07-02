@@ -8144,6 +8144,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, np.arange(8, dtype=np.float32))
 
+  @jtu.with_explicit_mesh((1,), 'x')
+  def test_auto_axes_single_device(self, mesh):
+    @partial(auto_axes, out_sharding=P('x'))
+    def f(x):
+      return x * 2
+
+    out = f(jnp.ones((2, 3)))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+    out = jax.jit(f)(jnp.ones((2, 3)))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
