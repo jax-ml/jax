@@ -981,23 +981,14 @@ class JitTest(jtu.BufferDonationTestCase):
   @jax.legacy_prng_key('allow')
   def test_omnistaging(self):
     # See https://github.com/jax-ml/jax/issues/5206
-
-    # TODO(frostig): remove `wrap` once we always enable_custom_prng
-    def wrap(arr):
-      arr = np.array(arr, dtype=np.uint32)
-      if config.enable_custom_prng.value:
-        return jax.random.wrap_key_data(arr)
-      else:
-        return arr
-
     key_list = [None]
 
     def init():
       key, subkey = jax.random.split(key_list[0])
       key_list[0] = key
-      return jax.random.normal(subkey, ())
+      return
 
-    key_list[0] = wrap([2384771982, 3928867769])
+    key_list[0] = jax.random.key(0)
     init()
     jit(init)()
     self.assertIsInstance(key_list[0], core.Tracer)

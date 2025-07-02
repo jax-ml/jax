@@ -463,7 +463,7 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
 _var_counter = it.count()
 
 class Var:
-  __slots__ = ["count", "aval", "initial_qdd", "final_qdd"]
+  __slots__ = ["count", "aval", "initial_qdd", "final_qdd", "stack_trace"]
 
   count: int
   aval: AbstractValue
@@ -478,6 +478,7 @@ class Var:
     self.aval = aval
     self.initial_qdd = initial_qdd
     self.final_qdd = final_qdd
+    self.stack_trace = source_info_util.current()
 
   def __repr__(self):
     return f'Var(id={id(self)}):{self.aval.str_short()}'
