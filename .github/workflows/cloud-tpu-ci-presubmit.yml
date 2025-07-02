@@ -70,7 +70,6 @@ jobs:
       - name: Run Bazel Tests
         run: |
           git clone --depth=1 https://github.com/openxla/xla.git $(pwd)/xla
-          export JAXCI_XLA_GIT_DIR=$(pwd)/xla
 
           SRCDIR=$(pwd)
           # Run bazel test, room for improvement by either using prebuilt jaxlib, using a cache, or using an RBE instance
@@ -93,19 +92,19 @@ jobs:
           bazel test \
             --config=ci_linux_x86_64 \
             --config=rbe_cache \
-            --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
+            --override_repository=xla="./xla" \
             --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft \
             --@rules_python//python/config_settings:py_freethreaded='yes' \
-            --run_under $(pwd)/build/parallel_accelerator_execute.sh \
+            --run_under ./build/parallel_accelerator_execute.sh \
             --test_env=JAX_ACCELERATOR_COUNT=8 \
             --test_env=JAX_TESTS_PER_ACCELERATOR=1 \
             --local_test_jobs=8 \
             --test_tag_filters=-multiaccelerator  \
-            --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=1 \
-            --test_env=JAX_TEST_NUM_THREADS=16 \
             --test_sharding_strategy=disabled \
             --generate_json_trace_profile  \
             --test_timeout=600 \
+            --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=1 \
+            --test_env=JAX_TEST_NUM_THREADS=16 \
             --test_env=JAX_SKIP_SLOW_TESTS=1 \
             --test_env=TPU_SKIP_MDS_QUERY=true \
             --test_env=CHIPS_PER_HOST_BOUNDS="$CHIPS_PER_HOST_BOUNDS" \
