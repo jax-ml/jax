@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import collections
+import contextlib
 import dataclasses
 import enum
 import functools
@@ -26,6 +27,7 @@ from collections.abc import Callable
 import jax
 from jax import lax
 from jax._src import callback
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import frozen_dict
 from jax._src.lax.control_flow import for_loop
@@ -118,6 +120,13 @@ class InterpretParams:
   ) = None
   num_cores_per_device: int = 1
 
+@contextlib.contextmanager
+def force_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
+  prev = config.pallas_tpu_interpret_mode_context_manager.swap_local(params)
+  try:
+    yield
+  finally:
+    config.pallas_tpu_interpret_mode_context_manager.set_local(prev)
 
 VectorClock = np.ndarray
 

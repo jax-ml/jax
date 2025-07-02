@@ -249,7 +249,8 @@ def trace_context():
           error_checking_behavior_nan.value,
           error_checking_behavior_divide.value,
           error_checking_behavior_oob.value,
-          use_simplified_jaxpr_constants.value)
+          use_simplified_jaxpr_constants.value,
+          pallas_tpu_interpret_mode_context_manager.value)
 
 config = Config()
 
@@ -1892,3 +1893,6 @@ jax_dump_ir_modes = string_flag(
     help="Comma-delimited modes in which to dump IR. Can be 'stablehlo' (the "
          "default), 'jaxpr', or 'eqn_count_pprof' for "
          "jaxpr equation count pprof profile.")
+
+pallas_tpu_interpret_mode_context_manager = config_ext.Config(
+    None, include_in_jit_key=True)
