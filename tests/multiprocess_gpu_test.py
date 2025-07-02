@@ -53,6 +53,11 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     num_gpus_per_task = 1
     num_tasks = num_gpus // num_gpus_per_task
 
+    if jax.device_count() < num_gpus:
+      raise unittest.SkipTest(
+          f"Test requires >={num_gpus} GPUs; got {jax.device_count()}."
+      )
+
     with contextlib.ExitStack() as exit_stack:
       subprocesses = []
       for task in range(num_tasks):
