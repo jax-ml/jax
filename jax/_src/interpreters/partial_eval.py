@@ -1887,7 +1887,8 @@ def _drop_unused_vars(
   return jaxpr, list(constvals)
 
 
-@cache()
+# TODO DO NOT SUBMIT
+# @cache()
 def _cached_abstract_eval(primitive: core.Primitive, *aval_qdds, **params):
   return primitive.abstract_eval(*aval_qdds, **params)
 
