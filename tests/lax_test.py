@@ -4877,6 +4877,17 @@ class RaggedTest(jtu.JaxTestCase):
   def test_ragged_dot_use_ragged_dot_instruction(self, use_instruction):
     with config.jax_ragged_dot_use_ragged_dot_instruction(use_instruction):
       self._test_ragged_dot(16, 4, 3, 2, jnp.float32)
+      if jtu.test_device_matches(["tpu"]) and use_instruction:
+        self.assertIn(
+            "chlo.ragged_dot",
+            jax.jit(lax.ragged_dot)
+            .lower(
+                core.ShapedArray((16, 4), dtype=jnp.float32),
+                core.ShapedArray((2, 4, 3), dtype=jnp.float32),
+                core.ShapedArray((2,), dtype=jnp.int32),
+            )
+            .as_text(dialect="stablehlo"),
+        )
 
   @parameterized.parameters(
         { "m": 5, "k": 4, "n": 3, "num_groups": 1},

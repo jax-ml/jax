@@ -6313,7 +6313,8 @@ def _ragged_dot_general_lower(
   # TODO(pravnar): Remove this once we have sharding support.
   def use_default_lowering():
     if config.jax_ragged_dot_use_ragged_dot_instruction.value:
-      return True
+      # Default lowering is via the pattern match, hence we return False.
+      return False
     axis_context = ctx.module_context.axis_context
     return (
         isinstance(axis_context, SPMDAxisContext)
