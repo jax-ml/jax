@@ -1892,3 +1892,14 @@ jax_dump_ir_modes = string_flag(
     help="Comma-delimited modes in which to dump IR. Can be 'stablehlo' (the "
          "default), 'jaxpr', or 'eqn_count_pprof' for "
          "jaxpr equation count pprof profile.")
+
+jax_ragged_dot_use_ragged_dot_instruction = bool_state(
+    name='jax_ragged_dot_use_ragged_dot_instruction',
+    default=False,
+    upgrade=True,
+    help=(
+        '(TPU only) If True, use chlo.ragged_dot instruction for ragged_dot()'
+        ' lowering. Otherwise, rely on the rollout logic in lowering rule for'
+        ' ragged_dot_general_p.'
+    ),
+)
