@@ -116,10 +116,9 @@ jobs:
             --test_env=TPU_ACCELERATOR_TYPE="$TPU_ACCELERATOR_TYPE" \
             --test_env=TPU_WORKER_HOSTNAMES="$TPU_WORKER_HOSTNAMES" \
             --test_env=TPU_RUNTIME_METRICS_PORTS="$TPU_RUNTIME_METRICS_PORTS" \
-            --test_env=TPU_RUNTIME_METRICS_PORTS="$TPU_RUNTIME_METRICS_PORTS" \
             --test_env=TPU_HOST_BOUNDS="$TPU_HOST_BOUNDS" \
             --test_env=TPU_TOPOLOGY_ALT="$TPU_TOPOLOGY_ALT" \
-            --test_env=TPU_TOPOLOGY_ALT="$TPU_TOPOLOGY_WRAP" \
+            --test_env=TPU_TOPOLOGY_WRAP="$TPU_TOPOLOGY_WRAP" \
             --test_env=VBAR_CONTROL_SERVICE_URL="$VBAR_CONTROL_SERVICE_URL" \
             -- //tests:tpu_tests
             # Copy tpu logs to tranisent bucket
