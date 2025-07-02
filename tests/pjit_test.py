@@ -3767,6 +3767,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out2.devices(), {jax.devices()[0]})
     self.assertArraysEqual(out2, np_inp)
 
+  def test_jnp_arange_concrete_sharding(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    out = jnp.arange(8, device=NamedSharding(mesh, P('x')))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
   def test_jit_submhlo_cached(self):
     @jax.jit
     def nest(x):

@@ -5911,8 +5911,8 @@ def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
     out_sharding: (optional) :class:`~jax.NamedSharding` or :class:`~jax.P` to
-      which the created array will be committed. Prefer using the `out_sharding`,
-      argument if using explicit sharding
+      which the created array will be committed. Use `out_sharding` argument,
+      if using explicit sharding
       (https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html)
 
   Returns:
@@ -5958,7 +5958,8 @@ def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
   """
   sharding = util.choose_device_or_out_sharding(
       device, out_sharding, 'jnp.arange')
-  if sharding is None or isinstance(sharding, NamedSharding):
+  if sharding is None or not sharding._is_concrete:
+    assert sharding is None or isinstance(sharding, NamedSharding)
     return _arange(start, stop=stop, step=step, dtype=dtype,
                    out_sharding=sharding)
   else:
