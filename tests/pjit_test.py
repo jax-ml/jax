@@ -8110,6 +8110,35 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.jit(jax.vmap(f))(xs)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'), None)))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_jnp_arange_out_sharding(self, mesh):
+    s = NamedSharding(mesh, P('x'))
+
+    out = jnp.arange(8, dtype=jnp.float32, out_sharding=s)
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, np.arange(8, dtype=np.float32))
+
+    out = jnp.arange(8, dtype=jnp.float32, out_sharding=P('x'))
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, np.arange(8, dtype=np.float32))
+
+    out = jnp.arange(start=8, stop=16, dtype=jnp.float32, out_sharding=P('x'))
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, np.arange(start=8, stop=16, dtype=np.float32))
+
+    out = jnp.arange(start=8, stop=16, step=2, dtype=jnp.float32,
+                     out_sharding=P('x'))
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, np.arange(start=8, stop=16, step=2,
+                                          dtype=np.float32))
+
+    @jax.jit
+    def f():
+      return jnp.arange(8, dtype=np.float32, out_sharding=P('x'))
+    out = f()
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, np.arange(8, dtype=np.float32))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

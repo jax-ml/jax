@@ -31,7 +31,7 @@ from functools import partial
 import math
 import operator
 import os
-from typing import (Any, IO, Literal, Protocol, TypeVar, Union, overload)
+from typing import Any, IO, Literal, Protocol, TypeVar, Union, overload
 import warnings
 
 import numpy as np
@@ -5882,7 +5882,8 @@ def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
 @export
 def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
            step: ArrayLike | None = None, dtype: DTypeLike | None = None,
-           *, device: xc.Device | Sharding | None = None) -> Array:
+           *, device: xc.Device | Sharding | None = None,
+           out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array of evenly-spaced values.
 
   JAX implementation of :func:`numpy.arange`, implemented in terms of
@@ -5909,6 +5910,10 @@ def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
       be determined via type promotion of `start`, `stop`, and `step`.
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
+    out_sharding: (optional) :class:`~jax.NamedSharding` or :class:`~jax.P` to
+      which the created array will be committed. Prefer using the `out_sharding`,
+      argument if using explicit sharding
+      (https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html)
 
   Returns:
     Array of evenly-spaced values from ``start`` to ``stop``, separated by ``step``.
@@ -5951,16 +5956,19 @@ def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
     - :func:`jax.numpy.linspace`: generate a fixed number of evenly-spaced values.
     - :func:`jax.lax.iota`: directly generate integer sequences in XLA.
   """
-  # TODO(vfdev-5): optimize putting the array directly on the device specified
-  # instead of putting it on default device and then on the specific device
-  output = _arange(start, stop=stop, step=step, dtype=dtype)
-  if device is not None:
-    return api.device_put(output, device=device)
-  return output
+  sharding = util.choose_device_or_out_sharding(
+      device, out_sharding, 'jnp.arange')
+  if sharding is None or isinstance(sharding, NamedSharding):
+    return _arange(start, stop=stop, step=step, dtype=dtype,
+                   out_sharding=sharding)
+  else:
+    output = _arange(start, stop=stop, step=step, dtype=dtype)
+    return api.device_put(output, sharding)
 
 
 def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
-            step: ArrayLike | None = None, dtype: DTypeLike | None = None) -> Array:
+            step: ArrayLike | None = None, dtype: DTypeLike | None = None,
+            out_sharding: NamedSharding | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "arange")
   if not config.dynamic_shapes.value:
     util.check_arraylike("arange", start)
@@ -5993,11 +6001,13 @@ def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
         not dtypes.issubdtype(start_dtype, dtypes.extended)):
       ceil_ = ufuncs.ceil if isinstance(start, core.Tracer) else np.ceil
       start = ceil_(start).astype(int)
-    return lax.iota(dtype, start)  # type: ignore[arg-type]
+    return lax.broadcasted_iota(dtype, (start,), 0, out_sharding=out_sharding)  # type: ignore[arg-type]
   else:
     if step is None and start == 0 and stop is not None:
-      return lax.iota(dtype, np.ceil(stop).astype(int))
-    return array(np.arange(start, stop=stop, step=step, dtype=dtype))
+      return lax.broadcasted_iota(dtype, (np.ceil(stop).astype(int),), 0,
+                                  out_sharding=out_sharding)
+    return array(np.arange(start, stop=stop, step=step, dtype=dtype),
+                 device=out_sharding)
 
 
 def _arange_dynamic(
