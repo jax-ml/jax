@@ -78,6 +78,7 @@ jobs:
           bazel test \
             --config=ci_linux_x86_64 \
             --config=rbe_cache \
+            --spawn_strategy=standalone \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
             --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft \
             --@rules_python//python/config_settings:py_freethreaded='yes' \
