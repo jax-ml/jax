@@ -265,10 +265,11 @@ def _merge_dyn_shape(
 
 def _dyn_shape_staging_rule(trace, source_info, prim, out_aval, *args,
                             **params):
-  out_tracer = pe.DynamicJaxprTracer(trace, out_aval, source_info)
-  eqn = pe.new_jaxpr_eqn([trace.getvar(x) for x in args],
-                         [trace.makevar(out_tracer)],
+  var = trace.frame.newvar(out_aval)
+  eqn = pe.new_jaxpr_eqn([x.val for x in args],
+                         [var],
                          prim, params, core.no_effects, source_info)
+  out_tracer = pe.DynamicJaxprTracer(trace, out_aval, var, source_info)
   trace.frame.add_eqn(eqn)
   return out_tracer
 
