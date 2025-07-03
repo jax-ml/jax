@@ -16,13 +16,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import enum
 import functools
 import threading
 from typing import Any, Protocol
-from collections.abc import Callable, Sequence
 
 import jax
 from jax import lax
@@ -36,6 +36,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.fuser import fuser_utils
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -1627,30 +1628,75 @@ def _reshape_pull_rule(
   aval_out = ctx.avals_out[0]
   assert isinstance(aval_out, core.ShapedArray)
 
-  # Handle the case where we reshape from (..., n/l, l) -> (..., n * l)
-  if _pattern_match_sublanes_to_lanes_reshape(aval_in, aval_out):
-    block_shape = tuple(block_spec.block_shape)
-    if not isinstance(block_shape[-1], (int, pallas_core.Blocked)):
-      raise NotImplementedError(
-          f'reshape must use Blocked block size on lanes: {block_shape}'
-      )
-    last_dim = _block_size(block_shape[-1])
-    if last_dim % 128 != 0:
-      raise NotImplementedError(
-          'reshape with non-128 aligned block size on lanes not supported yet'
-      )
-    # We can now reshape last dim from d -> (d/128, 128)
-    new_block_shape = block_shape[:1] + (last_dim // 128, 128)
+  block_shape = tuple(map(_block_size, block_spec.block_shape))
+  shape_in = aval_in.shape
+  shape_out = aval_out.shape
+  assert np.prod(shape_in) == np.prod(shape_out)
 
-    def new_index_map(*args):
-      idx = block_spec.index_map(*args)
-      return *idx, 0
+  # Handle merged dims; i.e. (..., m, n, ...) -> (..., m * n, ...).
+  i = 0
+  j = 0
+  new_block_shape = []
+  new_index_map = block_spec.index_map
 
-    return [pallas_core.BlockSpec(new_block_shape, new_index_map)]
+  while i < len(shape_in) and j < len(shape_out):
+    merged_dims = []
+
+    while not merged_dims or np.prod(merged_dims) < shape_out[j]:
+      merged_dims.append(shape_in[i])
+      i += 1
+
+    if np.prod(merged_dims) > shape_out[j]:
+      break  # Dimension has been split (or something more complex).
+
+    if len(merged_dims) == 1:
+      new_block_shape.append(block_shape[j])
+      j += 1
+      continue
+
+    if not isinstance(bd := block_shape[j], (int, pallas_core.Blocked)):
+      raise NotImplementedError('reshape merge must use `Blocked` block size')
+
+    num_blocks = pallas_utils.cdiv(shape_out[j], bd)
+    new_block_dims = []
+    for d in reversed(merged_dims):
+      if bd % d == 0:
+        new_block_dims.append(d)
+        bd //= d
+      elif d % bd == 0:
+        new_block_dims.append(bd)
+        bd = 1
+      else:
+        raise NotImplementedError('unsupported reshape merge')
+
+    new_block_dims.reverse()
+    new_grid = [np.int32(d // bd) for d, bd in zip(merged_dims, new_block_dims)]
+
+    if np.prod(new_grid) != num_blocks:
+      raise NotImplementedError('reshape merge must maintain grid size')
+
+    def new_index_map(
+        *args,
+        index_map=new_index_map,
+        new_grid=new_grid,
+        pos=len(new_block_shape),
+    ):
+      idx = list(index_map(*args))
+      idx[pos : pos + 1] = jnp.unravel_index(idx[pos], new_grid)
+      return tuple(idx)
+
+    new_block_shape.extend(new_block_dims)
+    j += 1
+
+  if i == len(shape_in) and np.prod(shape_out[j:]) == 1:
+    # Handle trailing `1` dims.
+    def new_index_map(*args, index_map=new_index_map):
+      return index_map(*args)[:i]
+
+    return [pallas_core.BlockSpec(tuple(new_block_shape), new_index_map)]
 
   # Handle the case where we reshape from (..., n * l) -> (..., n, l)
   if _pattern_match_lanes_to_sublanes_reshape(aval_in, aval_out):
-    block_shape = tuple(block_spec.block_shape)
     if not isinstance(block_shape[-1], (int, pallas_core.Blocked)):
       raise NotImplementedError(
           f'reshape must use Blocked block size on lanes: {block_shape}'
