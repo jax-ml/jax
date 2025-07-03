@@ -503,11 +503,40 @@ roofline.register_roofline(lax_parallel.all_gather_p)(
   )
 )
 
+def _calculate_gather_flops(
+    ctx: roofline.RooflineRuleContext,
+    mode: slicing.GatherScatterMode,
+) -> int:
+  """Calculates roofline unfused flops for Jax's gather primitive."""
+  _, indices = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
+
+  if mode == slicing.GatherScatterMode.FILL_OR_DROP:
+    # With FILL_OR_DROP, we have 4 steps to check whether to fill (or drop):
+    # 1. Check if the index is within upper bound.
+    # 2. Check if the index is within lower bound.
+    # 3. Call `and` on #1 and #2 to check the index is "in bounds".
+    # 4. `reduce` the result to a single boolean per window.
+    # Each of the steps is a single elementwise op on the indices.
+    index_check_flops = indices.size * 4
+
+    # Once we know whether to fill or drop (per window), there are 2 steps to
+    # mask the output:
+    # 1. Broadcast the per-window boolean to the output shape.
+    # 2. Choose whether to fill (from `operand`) if in-bounds, or drop if
+    #    out-of-bounds.
+    # Broadcasting is free, but choosing whether to fill or drop involves an
+    # elementiwse op the size of the output.
+    output_mask_flops = out.size
+    return index_check_flops + output_mask_flops
+
+  return 0
 
 @roofline.register_roofline(slicing.gather_p)
 def _gather_roofline(
     ctx: roofline.RooflineRuleContext,
     *args,
+    mode: slicing.GatherScatterMode,
     **kw,
 ) -> roofline.RooflineResult:
   _, indices = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
@@ -515,16 +544,73 @@ def _gather_roofline(
 
   # Gather doesn't read the whole input buffer, it's equivalent to a copy the
   # size of the output shape and a read of the gather indices.
-  bytes = (
+  unfused_hbm_bytes = (
       out.dtype.itemsize * out.size * 2 + indices.dtype.itemsize * indices.size
   )
 
   return roofline.RooflineResult(
-      # Gather does not issue any flops.
-      unfused_flops=0,
-      unfused_hbm_bytes=bytes,
+      unfused_flops=_calculate_gather_flops(ctx, mode),
+      unfused_hbm_bytes=unfused_hbm_bytes,
   )
 
+
+def _scatter_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  """Roofline for Jax's `scatter*` primitives.
+
+  The `scatter` functionality itself is a simple data read and write, which
+  contributes 0 flops.
+
+  But, the jaxpr for each `scatter*` function (aside from `jax.lax.scatter`)
+  contains an `update_jaxpr` that gets applied to the operand & scattered
+  updates (e.g. `add` for `scatter_add`, or arbitrary unary function for
+  `scatter_apply`), which *does* contribute flops. This `update_jaxpr` gets
+  applied to every element of the scattered updates.
+
+  Thus, # flops = [# flops for `update_jaxpr`] * [# elements in `updates`].
+
+  We use `eval_jaxpr` to get a callable from `update_jaxpr`, create
+  `dummy_inputs` with the same shape and dtype as `updates`, and then make
+  another `roofline` call to calculate the flops.
+  """
+  (_, indices, updates) = (
+      roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in
+  )
+
+  update_jaxpr = kw.get('update_jaxpr')
+
+  flops = 0
+  if update_jaxpr:
+    update_fn = lambda *inputs: core.eval_jaxpr(update_jaxpr, [], *inputs)
+    # Create dummy inputs that match the `updates`.
+    dummy_inputs = [
+        np.zeros(updates.shape, updates.dtype) for _ in update_jaxpr.invars
+    ]
+    # Calculate the flops for the `update_jaxpr`.
+    _, roofline_result = roofline.roofline(update_fn)(*dummy_inputs)
+    flops = roofline_result.unfused_flops
+
+  return roofline.RooflineResult(
+      unfused_flops=flops,
+      # Scatter accesses the equivalent of 3N update shapes (input, output, and
+      # updates), and the scatter indices.
+      unfused_hbm_bytes=(
+          3 * updates.dtype.itemsize * updates.size
+          + indices.dtype.itemsize * indices.size
+      ),
+  )
+
+
+roofline.register_roofline(slicing.scatter_add_p)(_scatter_roofline)
+roofline.register_roofline(slicing.scatter_max_p)(_scatter_roofline)
+roofline.register_roofline(slicing.scatter_min_p)(_scatter_roofline)
+roofline.register_roofline(slicing.scatter_mul_p)(_scatter_roofline)
+roofline.register_roofline(slicing.scatter_sub_p)(_scatter_roofline)
+# Also registers `jax.lax.scatter_apply`, which uses the `scatter_p` primitive.
+roofline.register_roofline(slicing.scatter_p)(_scatter_roofline)
 
 def _scalar_collective_roofline(
     ctx: roofline.RooflineRuleContext,
