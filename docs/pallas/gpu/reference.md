@@ -320,6 +320,7 @@ Each use of MMA involves a few steps:
 
 Steps 2.-4. are usually performed in a loop over the contraction dimension (`K`).
 
+(memory-space-a-b-mma)=
 ### Memory space of `A` and `B` operands
 
 The `A` and `B` operands are generally best passed in through SMEM, where they can
@@ -453,8 +454,203 @@ jax.lax.fori_loop(0, num_steps, loop_body, None)
 
 ### Blackwell (`tcgen05`)
 
-While Mosaic GPU supports `tcgen05` MMA instructions, exposing this capability to Pallas
-is still work in progress. Stay tuned!
+The Blackwell generation has significantly redesigned the TensorCore subunit.
+It is now significantly more independent from the regular warp schedulers and
+no longer uses or even supports using registers as its operands. In their place,
+a new memory space called _tensor memory_ (TMEM) has been introduced. What's
+more TensorCores from pairs of SMs can now pool their resources and compute
+larger MMA operations that span both SMs. We call this a ["collective MMA operation"](#collective-mma).
+
+#### Allocating the accumulator / Using TMEM
+
+TMEM references can be allocated in the same way in which all other references
+are allocated---using {py:func}`pl.run_scoped <jax.experimental.pallas.run_scoped>`:
+
+```python
+@functools.partial(pl.run_scoped, tmem_ref=plgpu.TMEM((128, 128), jnp.float32))
+def barrier_scope(tmem_ref):
+  ...
+```
+
+Not all shapes can be allocated in TMEM. Only 2D references are supported, and
+the number of rows (the size of the first dimension) must be 128 or 64 at the
+moment.
+
+What's more, if the data type has a bitwidth smaller than 32-bits, it is necessary
+to declare if the allocation is supposed to be packed (e.g. putting two 16-bit
+elements into a single 32-bit cell in TMEM) or not (with each element padded up
+to 32-bits). MMA accumulators (fp32 or fp16) are never packed, but if the left
+operand it passed in TMEM, it must always be packed:
+
+```python
+@functools.partial(pl.run_scoped,
+                   acc_ref=plgpu.TMEM((128, 128), jnp.float16, packed=False),
+                   lhs_ref=plgpu.TMEM((128, 128), jnp.float16, packed=True))
+def barrier_scope(acc_ref, lhs_ref):
+  plgpu.tcgen05_mma(acc_ref, lhs_ref, rhs_smem_ref, ...)
+  ...
+```
+
+Another interesting complication with TMEM is that all operations on it are asynchronous.
+For that reason, reads and writes using the Python subscript syntax that are normally
+used e.g. for SMEM are not allowed for TMEM.
+
+##### Loads
+
+Loads can be performed using {py:func}`plgpu.async_load_tmem <jax.experimental.pallas.mosaic_gpu.async_load_tmem>` and awaited using {py:func}`plgpu.wait_load_tmem <jax.experimental.pallas.mosaic_gpu.wait_load_tmem>`:
+
+```python
+smem_ref[...] = plgpu.async_load_tmem(tmem_ref)
+plgpu.commit_smem()
+plgpu.copy_smem_to_gmem(smem_ref, gmem_ref)
+plgpu.wait_smem_to_gmem(0)
+plgpu.wait_load_tmem()  # Wait for the read to fully complete before we overwrite tmem_ref again.
+```
+
+The load semantics are quite confusing, in that the array returned from the load
+can be safely used without any additional synchronization. However, if the read
+TMEM region is ever overwritten again (e.g. by a store or an MMA operation), the
+thread that issued the load must first call `plgpu.wait_load_tmem()` to ensure
+the program remains race-free.
+
+```{note}
+One way to make peace with this seemingly causality-breaking behavior (data
+arrives in registers before it is fully read from TMEM) is to consider that it
+might be an effect of an interaction of a limitation and a convenience feature
+in the PTX compiler. We don't know if this is true, but at least it makes sense.
+
+The convenience feature is that the compiler can reliably track the usage of
+registers produced by TMEM loads and will insert the minimum number of delays
+necessary to ensure the data arrives from TMEM before it's used. The read
+operation is unrolled into many instructions, meaning that they don't have to
+all be awaited before we start consuming the registers filled in by the first load.
+This is why we don't need to guard the use of the result.
+
+The limitation is that the compiler cannot reliably perform alias analysis on
+TMEM loads and stores, which is why any load and store that is not separated
+by an explicit wait is considered safe to execute concurrently. The alternative
+would unnecessarily pessimize the performance of loads and stores that are truly
+unrelated. This is why we need to explicitly wait before we reuse TMEM again.
+```
+
+##### Stores
+
+Conversely, stores are performed using {py:func}`plgpu.async_load_tmem <jax.experimental.pallas.mosaic_gpu.async_store_tmem>` and awaited using {py:func}`plgpu.commit_tmem <jax.experimental.pallas.mosaic_gpu.commit_tmem>`:
+
+```python
+plgpu.async_store_tmem(tmem_ref, smem_ref[...])
+plgpu.commit_tmem()
+smem_ref2[...] = plgpu.async_load_tmem(tmem_ref)  # Safe to read from tmem_ref now
+```
+
+#### Preparing the `A` and `B` operands
+
+We recommend passing in `A` and `B` through shared memory. In this case the
+[correct tiling and swizzling transforms must be specified](#memory-space-a-b-mma).
+The `A` operand can be passed in as a TMEM reference as well, but it must be packed.
+
+#### Issuing the operation
+
+The supported **non-collective** MMA shapes are such that:
+* `M` is 64 or 128
+* `N` is divisible by 8 and smaller than 512
+* `K` is a multiple of `8 * swizzle` divided by the bitwidth of element type
+
+The supported [**collective** MMA](#collective-mma) shapes are such that:
+* `M` is 128 or 256 (half of that per block)
+* `N` is divisible by 8 and smaller than 256 (smaller than 128 in each block)
+* `K` is a multiple of `8 * swizzle` divided by the bitwidth of element type
+
+The currently supported floating-point data types are: `jnp.bfloat16`,
+`jnp.float16`, `jnp.float8_e5m2`, `jnp.float8_e4m3fn`. The accumulator can be
+a `jnp.float32` or `jnp.float16`, with the exception of `jnp.bfloat16` when it
+must be a `jnp.float32`.
+
+The only currently supported integer data type is `jnp.int8` with a `jnp.int32`
+accumulator.
+
+```{note}
+According to our benchmarks, here are some performance rules-of-thumb:
+
+* Non-collective MMA should always use M=128 and N >= 128.
+  - M=64 causes a significant performance drop.
+  - N=64 causes a noticeable performance drop, but not as significant as M=64.
+* Collective MMA is always reasonably fast, but not faster than non-collective MMA.
+  - The biggest benefit from collective MMA is not higher TensorCore throughput
+    but the ability to share data between SMs, allowing to increase the arithmetic
+    intensity of the kernel.
+* Swizzle and transposes do not seem to affect performance in a significant way.
+```
+
+#### Waiting for the operation to complete
+
+Awaiting the result of a {py:func}`plgpu.tcgen05_mma <jax.experimental.pallas.mosaic_gpu.tcgen05_mma>`
+call requires the use of a `Barrier`. We recommend reading through the reference
+documentation for [`Barrier`s](#barrier), and especially its
+[Blackwell-related subsection](#awaiting-tcgen05-instructions) for more information.
+
+If the barrier is passed in directly to
+the {py:func}`plgpu.tcgen05_mma <jax.experimental.pallas.mosaic_gpu.tcgen05_mma>`,
+completing a wait on that barrier will indicate that the final accumulator has
+been written to TMEM. For example:
+
+```python
+@functools.partial(pl.run_scoped, barrier_ref=plgpu.Barrier(orders_tensor_core=True))
+def barrier_scope(barrier_ref):
+  plgpu.tcgen05_mma(acc_tmem, lhs_ref, rhs_ref, barrier_ref, accumulate=False)
+  plgpu.barrier_wait(barrier_ref)
+  # We can read the result now.
+  result = plgpu.async_load_tmem(acc_tmem)
+  ...
+```
+
+If no barrier is given to {py:func}`plgpu.tcgen05_mma <jax.experimental.pallas.mosaic_gpu.tcgen05_mma>`,
+its completion will be tracked only once {py:func}`plgpu.tcgen05_commit <jax.experimental.pallas.mosaic_gpu.tcgen05_commit>` is called:
+
+```python
+@functools.partial(pl.run_scoped, barrier_ref=plgpu.Barrier(orders_tensor_core=True))
+def barrier_scope(barrier_ref):
+  plgpu.tcgen05_mma(acc_tmem, lhs_ref, rhs_ref, accumulate=False)
+  plgpu.tcgen05_mma(acc_tmem, lhs_ref2, rhs_ref2)
+  plgpu.tcgen05_commit(barrier_ref)
+  plgpu.barrier_wait(barrier_ref)
+  # We can read the result now. Both MMAs have completed.
+  result = plgpu.async_load_tmem(acc_tmem)
+  ...
+```
+
+(collective-mma)=
+#### Collective MMA
+
+The Blackwell generation gains a new way to perform MMA operations, where the
+TensorCores of 2 SMs in a cluster collaborate on a single MMA operation. The
+`B` operand from each SM is shared with the other. The `D` and `A` operands are
+local to each SM and not shared.
+
+<center><img alt="A diagram showing the partitioning of operands in a collective MMA" src="../../_static/pallas/gpu/collective_mma.svg" style="width:60%; min-width: 600px;"></center>
+
+This means that to perform a collective MMA with shape M, N, and K, the operands
+in each of the two Pallas threads should be of sizes: `(M // 2, K)` for `A`,
+`(K, N // 2)` for `B` and `(M // 2, N)` for `D` (the accumulator). Stacking the
+two accumulators on top would recover the result of performing a MxNxK matrix
+multiplication.
+
+To make loading of the `B` operand easier, {py:func}`plgpu.copy_gmem_to_smem <jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem>`
+can be used together with `collective_axes` and `partitioned_axis` to indicate
+that the two Pallas threads along the collective axis should load the same slice,
+but each will only obtain half of it. Unlike a copy with `collective_axes` alone
+it does not utilize TMA multicast (since each thread loads a distinct slice of
+data), but it can simplify the indexing logic a bit.
+
+```python
+plgpu.copy_gmem_to_smem(
+    b_gmem,  # [K, N]
+    b_smem,  # [K, N // 2]
+    b_tma_barrier,
+    collective_axes="x",
+    partitioned_axis=1,
+)
+```
 
 ## Using `core_map`
 
@@ -668,6 +864,7 @@ Failing to call this function is likely to cause subtle data races, due to those
 hardware units reading stale data from SMEM. Unfortunately, this function is relatively expensive,
 which is why we rely on you, the user, to insert it in the minimal number of places where it's necessary.
 
+(barrier)=
 ### `Barrier`
 
 This is essentially a thin wrapper around an array of PTX `mbarrier` types and is
@@ -681,8 +878,6 @@ To block a thread until a barrier completes, use the following function:
 ```python
 plgpu.barrier_wait(barrier)
 ```
-
-There are three operations that can complete a barrier:
 
 ```{warning}
 It is critical to ensure that the synchronization scheme makes it impossible for two
@@ -710,6 +905,8 @@ some thread, it must observe every single completion of that barrier (by waiting
 
 Note that the `Barrier` can receive arrivals from any source, without restrictions.
 ```
+
+There are three operations that can complete a barrier:
 
 #### Asynchronous GMEM-to-SMEM copies
 
@@ -757,10 +954,42 @@ def thread1_body(i, _):
 pl.when(tid == 1)(lambda: jax.lax.fori_loop(0, steps, thread1_body, None))
 ```
 
+(awaiting-tcgen05-instructions)=
 #### Awaiting `tcgen05` TensorCore instructions
 
-While Mosaic GPU supports `tcgen05` MMA instructions, exposing this capability to Pallas
-is still work in progress. Stay tuned!
+Before we begin, an important warning:
+
+```{warning}
+On Blackwell generation of GPUs, `Barrier` operations by default have relaxed
+semantics with respect to the TensorCore operations. This means that by default
+any TensorCore-related operation (including TMEM operation) can be moved by the
+compiler _after a barrier signal_. Similarly, any TensorCore-related operation
+can be moved _before a barrier wait_.
+
+If you mean to use `Barrier`s to indicate to other threads that a TensorCore
+operation is complete, allocate the barrier with `orders_tensor_core=True`. This
+argument will insert the necessary instructions to prevent the problematic
+reordering mentioned above.
+```
+
+Unlike in older GPUs, the only way to observe the completion of
+Blackwell-generation TensorCore instructions is to pass in a `Barrier` reference
+to the {py:func}`plgpu.tcgen05_mma <jax.experimental.pallas.mosaic_gpu.tcgen05_mma>`
+function. Once the MMA is complete, the TensorCore will arrive on the barrier.
+
+Note that this use of `Barrier`s requires that they are created with
+`orders_tensor_core=True`, since they are used to synchronize with TensorCore
+operations.
+
+```python
+@functools.partial(pl.run_scoped, barrier_ref=plgpu.Barrier(orders_tensor_core=True))
+def barrier_scope(barrier_ref):
+  plgpu.tcgen05_mma(acc_tmem, lhs_ref, rhs_ref, barrier_ref, accumulate=False)
+  plgpu.barrier_wait(barrier_ref)
+  # We can read the result now
+  result = plgpu.async_load_tmem(acc_tmem)
+  ...
+```
 
 ### `ClusterBarrier`
 

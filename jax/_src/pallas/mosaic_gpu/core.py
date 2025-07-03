@@ -945,7 +945,7 @@ class ClusterBarrierType(dtypes.ExtendedDType):
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Barrier:
-  """Describes a barrier Ref.
+  """Describes a barrier reference.
 
   Attributes:
     num_arrivals: The number of arrivals that will be recorded by this barrier.

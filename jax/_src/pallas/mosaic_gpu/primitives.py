@@ -1609,7 +1609,7 @@ def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
 
 
 def commit_smem():
-  """Commits all writes to SMEM, making them visible to loads, TMA and WGMMA."""
+  """Commits all writes to SMEM, making them visible to TMA and MMA operations."""
   commit_smem_p.bind()
 
 
