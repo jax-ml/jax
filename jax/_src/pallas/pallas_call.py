@@ -50,7 +50,6 @@ from jax._src.util import (
     split_list,
     tuple_insert,
     unzip2,
-    weakref_lru_cache,
 )
 import jax.numpy as jnp
 
@@ -1200,7 +1199,6 @@ def pallas_call_checkify_rule(error: checkify.Error,
 checkify.error_checks[pallas_call_p] = pallas_call_checkify_rule
 
 
-@weakref_lru_cache
 def _trace_kernel_to_jaxpr(
     fun: Callable,
     debug_info: jax_core.DebugInfo,
@@ -1209,7 +1207,7 @@ def _trace_kernel_to_jaxpr(
     kernel_in_tree: tree_util.PyTreeDef,
     kernel_in_transforms: tuple[tuple[pallas_core.Transform, ...], ...],
     indexer: bool = False,
-) -> tuple[jax_core.ClosedJaxpr, tuple[jax.Array, ...]]:
+) -> tuple[jax_core.Jaxpr, tuple[jax.Array, ...]]:
   wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug_info), kernel_in_tree)
   wrapped_kernel_fun = primitives.wrap_with_transforms(
