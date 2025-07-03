@@ -651,7 +651,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     lc_system, lc_mapping = layout_inference2._layout_cast_equation_system(lc)
     assignments = cst_system.assignments | lc_system.assignments
     [hint_cst, hint_lc] = [
-        layout_inference2.simplify_hint(h, assignments) for h in
+        layout_inference2.reduce_hint(h, assignments) for h in
         layout_inference2.derive_hints(cst_mapping | lc_mapping)
     ]
 

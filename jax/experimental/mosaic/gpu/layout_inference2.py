@@ -79,12 +79,12 @@ def choose_variable_assignment_from_hints(
   return None
 
 
-def simplify_hint(
+def reduce_hint(
     h: Hint, assignments: dict[eqns.Variable, eqns.ConstantExpression]
 ) -> Hint:
-  """Like `eqns.simplify_equation` but for `Hint`s."""
+  """Like `eqns.reduce_equation` but for `Hint`s."""
   return dataclasses.replace(
-      h, expression=eqns.simplify_expression(h.expression, assignments))
+      h, expression=eqns.reduce_expression(h.expression, assignments))
 
 def find_assignments_for(
     unknowns: set[eqns.Variable],
@@ -104,7 +104,7 @@ def find_assignments_for(
       such that the assignment satisfies the equation system otherwise.
   """
   while True:
-    equation_system = eqns.simplify(equation_system)
+    equation_system = eqns.reduce(equation_system)
     if isinstance(equation_system, eqns.Unsatisfiable):
       return eqns.Unsatisfiable()
 
@@ -115,15 +115,15 @@ def find_assignments_for(
     if not remaining_unknowns:
       return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
 
-    # Simplify the expressions in the remaining hints based on the current
+    # Reduce the expressions in the remaining hints based on the current
     # assignments, and eliminate hints that pertain to variables that already
     # have an assignment.
-    hints = [simplify_hint(h, equation_system.assignments) for h in hints
+    hints = [reduce_hint(h, equation_system.assignments) for h in hints
              if h.variable not in equation_system.assignments]
 
-    # If unknowns remain and we have fully simplified the system, we may still
+    # If unknowns remain and we have fully reduced the system, we may still
     # be able to make progress by extracting an assignment from a `Hint`. In a
-    # system that has otherwise been fully simplified, it is guaranteed that
+    # system that has otherwise been fully reduced, it is guaranteed that
     # introducing a new assignment will yield a system that remains satisfiable
     # if the original system was satisfiable---because this is a sign of an
     # underdetermined system.
@@ -141,7 +141,7 @@ def find_assignments_for(
     if variable in equation_system.assignments:
       continue
     # Try to instantiate a single variable to a strided layout and see if it
-    # simplifies the system.
+    # reduces the system.
     op = variable.key.operation
     # TODO(bchetioui): should we make variables carry a shape as well, to make
     # things easier?
@@ -408,7 +408,7 @@ def infer_layout(module: ir.Module):
     inference_utils.traverse_op(op, gather_equations)
 
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
-  hints = [simplify_hint(h, global_equation_system.assignments) for h in derive_hints(operand_and_results_for_variable)]
+  hints = [reduce_hint(h, global_equation_system.assignments) for h in derive_hints(operand_and_results_for_variable)]
 
   # Attempt to find assignments that satisfy the equation system.
   solution = find_assignments_for(

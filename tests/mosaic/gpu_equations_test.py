@@ -35,23 +35,23 @@ class EquationSystemTest(parameterized.TestCase):
     system = equations.EquationSystem(
         equations=[Eq(v0, layout0), Eq(v0, layout1)],
     )
-    self.assertIsInstance(equations.simplify(system), equations.Unsatisfiable)
+    self.assertIsInstance(equations.reduce(system), equations.Unsatisfiable)
 
-  def test_simplify_equation_system_removes_tautological_equations(self):
+  def test_reduce_equation_system_removes_tautological_equations(self):
     v0, v1 = V(0), V(1)
     system = equations.EquationSystem(
         equations=[Eq(v0, v1), Eq(v0, v0)],
     )
-    self.assertLen(equations.simplify(system).equations, 1)
+    self.assertLen(equations.reduce(system).equations, 1)
 
-  def test_simplify_equation_system_of_simplified_system_is_noop(self):
+  def test_reduce_equation_system_of_simplified_system_is_noop(self):
     v0, v1 = V(0), V(1)
     system = equations.EquationSystem(
         equations=[Eq(v0, v1)],
     )
-    self.assertEqual(equations.simplify(system), system)
+    self.assertEqual(equations.reduce(system), system)
 
-  def test_simplify_equation_system_assigns_variables_with_known_equations(self):
+  def test_reduce_equation_system_assigns_variables_with_known_equations(self):
     v0, v1 = V(0), V(1)
     layout = C(mgpu.WGSplatFragLayout((1, 1)))
 
@@ -60,7 +60,7 @@ class EquationSystemTest(parameterized.TestCase):
           equations=[Eq(v0, layout), Eq(v0, v1)],
       )
       self.assertEqual(
-          equations.simplify(system),
+          equations.reduce(system),
           equations.EquationSystem(assignments={v0: layout, v1: layout})
       )
 
@@ -69,7 +69,7 @@ class EquationSystemTest(parameterized.TestCase):
           equations=[Eq(v1, layout), Eq(v0, v1)],
       )
       self.assertEqual(
-          equations.simplify(system),
+          equations.reduce(system),
           equations.EquationSystem(assignments={v0: layout, v1: layout})
       )
 
@@ -109,7 +109,7 @@ class EquationSystemTest(parameterized.TestCase):
     self.assertSequenceEqual(system1.unknowns(), [v1])
     self.assertSequenceEqual(system_intersection.unknowns(), [v0, v1])
 
-  def test_simplify_extracts_most_replicated_expression_correctly(self):
+  def test_reduce_extracts_most_replicated_expression_correctly(self):
     v0 = V(0)
     shape = (1, 128)
     layout0 = C(mgpu.WGSplatFragLayout(shape))
@@ -119,7 +119,7 @@ class EquationSystemTest(parameterized.TestCase):
           equations=[Eq(v0, equations.MostReplicatedExpression((layout0, layout1)))],
       )
       self.assertEqual(
-          equations.simplify(system),
+          equations.reduce(system),
           equations.EquationSystem(assignments={v0: layout0})
       )
 
@@ -128,7 +128,7 @@ class EquationSystemTest(parameterized.TestCase):
           equations=[Eq(v0, equations.MostReplicatedExpression((layout0,)))],
       )
       self.assertEqual(
-          equations.simplify(system),
+          equations.reduce(system),
           equations.EquationSystem(assignments={v0: layout0})
       )
 
@@ -139,9 +139,9 @@ class EquationSystemTest(parameterized.TestCase):
       system = equations.EquationSystem(
           equations=[Eq(v0, equations.MostReplicatedExpression((v1, layout1)))],
       )
-      self.assertEqual(equations.simplify(system), system)
+      self.assertEqual(equations.reduce(system), system)
 
-  def test_simplify_extracts_least_replicated_expression_correctly(self):
+  def test_reduce_extracts_least_replicated_expression_correctly(self):
     v0 = V(0)
     shape = (1, 128)
     layout0 = C(mgpu.WGSplatFragLayout(shape))
@@ -151,7 +151,7 @@ class EquationSystemTest(parameterized.TestCase):
           equations=[Eq(v0, equations.LeastReplicatedExpression([layout0, layout1]))],
       )
       self.assertEqual(
-          equations.simplify(system),
+          equations.reduce(system),
           equations.EquationSystem(assignments={v0: layout1})
       )
 
@@ -160,7 +160,7 @@ class EquationSystemTest(parameterized.TestCase):
           equations=[Eq(v0, equations.LeastReplicatedExpression((layout0,)))],
       )
       self.assertEqual(
-          equations.simplify(system),
+          equations.reduce(system),
           equations.EquationSystem(assignments={v0: layout0})
       )
 
@@ -171,7 +171,7 @@ class EquationSystemTest(parameterized.TestCase):
       system = equations.EquationSystem(
           equations=[Eq(v0, equations.LeastReplicatedExpression((v1, layout0)))],
       )
-      self.assertEqual(equations.simplify(system), system)
+      self.assertEqual(equations.reduce(system), system)
 
 
 if __name__ == "__main__":
