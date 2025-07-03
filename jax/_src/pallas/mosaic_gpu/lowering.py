@@ -1909,6 +1909,7 @@ for semantics in [gpu_core.LANExWG_SEMANTICS, gpu_core.LANExWARP_SEMANTICS]:
     lax.add_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x + y),
     lax.sub_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x - y),
     lax.mul_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x * y),
+    lax.div_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x // y),
     lax.rem_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x % y),
     lax.and_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x & y),
     lax.or_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x | y),
