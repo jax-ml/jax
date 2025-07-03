@@ -163,13 +163,36 @@ class Equation:
     return f"{self.lhs} == {self.rhs}"
 
 
-def simplify_equation(
+def reduce_equation(
     eq: Equation, assignments: dict[Variable, ConstantExpression]
-) -> Equation:
-  """Applies `reduce_expression` to both sides of an equation."""
+) -> Solution:
+  """Reduces an equation.
+
+  Args:
+    eq: the equation to reduce.
+    assignments: a set of known variable assignments.
+
+  Returns:
+    A Solution object representing the result of the evaluation. That is:
+      - Unsatisfiable(): if the equation is unsatisfiable.
+      - Tautological(): if the equation is tautological.
+      - Satisfiable(): if the equation is satisfiable by assigning a value to
+          a variable.
+      - Unknown(): if the equation contains remaining unknown variables.
+  """
   lhs = simplify_expression(eq.lhs, assignments)
   rhs = simplify_expression(eq.rhs, assignments)
-  return Equation(lhs, rhs)
+  match (lhs, rhs):
+    case (Variable(), ConstantExpression()):
+      return SatisfiedBy((lhs, rhs))
+    case (ConstantExpression(), Variable()):
+      return SatisfiedBy((rhs, lhs))
+    case (ConstantExpression(), ConstantExpression()) if lhs != rhs:
+      return Unsatisfiable()
+    case _ if lhs == rhs:
+      return Tautological()
+    case _:
+      return Unknown(Equation(lhs, rhs))
 
 
 @dataclasses.dataclass
@@ -184,9 +207,6 @@ class EquationSystem:
       default_factory=dict
   )
   equations: list[Equation] = dataclasses.field(default_factory=list)
-
-  def __post_init__(self):
-    self.equations = [simplify_equation(e, self.assignments) for e in self.equations]
 
   def unknowns(self) -> list[Variable]:
     """Returns the list of free variables in the system."""
@@ -232,48 +252,21 @@ class SatisfiedBy:
   assignment: tuple[Variable, ConstantExpression]
 
 
+@dataclasses.dataclass(frozen=True)
 class Unknown:
-  ...
+  equation: Equation
+
 
 class Tautological:
   ...
 
 
-# The result of evaluating an equation---and by extension, a system of
+# The result of reducing an equation---and by extension, a system of
 # equations. An equation can either be unsatisfiable (i.e. there exists no
 # assignment for which it holds), satisfied by an assignment, unknown (i.e.
 # still undetermined), or tautological (i.e. the equation is guaranteed to
 # hold for any assignment).
 Solution = Unsatisfiable | SatisfiedBy | Unknown | Tautological
-
-
-def evaluate_equation(eq: Equation) -> Solution:
-  """Evaluates an equation.
-
-  Args:
-    eq: the equation to evaluate. The function does not reduce the equation
-      before evaluating it, so it is assumed that the caller has already
-      performed any necessary reduction.
-
-  Returns:
-    A Solution object representing the result of the evaluation. That is:
-      - Unsatisfiable(): if the equation is unsatisfiable.
-      - Tautological(): if the equation is tautological.
-      - Satisfiable(): if the equation is satisfiable by assigning a value to
-          a variable.
-      - Unknown(): if the equation contains remaining unknown variables.
-  """
-  match (eq.lhs, eq.rhs):
-    case (Variable(), ConstantExpression()):
-      return SatisfiedBy((eq.lhs, eq.rhs))
-    case (ConstantExpression(), Variable()):
-      return SatisfiedBy((eq.rhs, eq.lhs))
-    case (ConstantExpression(), ConstantExpression()) if eq.lhs != eq.rhs:
-      return Unsatisfiable()
-    case _ if eq.lhs == eq.rhs:
-      return Tautological()
-    case _:
-      return Unknown()
 
 
 def _simplify_system_once(
@@ -291,8 +284,7 @@ def _simplify_system_once(
   assignments: dict[Variable, ConstantExpression] = dict()
   equations: list[Equation] = []
   for equation in equation_system.equations:
-    simplified_equation = simplify_equation(equation, equation_system.assignments)
-    match (result := evaluate_equation(simplified_equation)):
+    match (result := reduce_equation(equation, equation_system.assignments)):
       case Unsatisfiable():
         return Unsatisfiable()
       case Tautological():
@@ -303,9 +295,9 @@ def _simplify_system_once(
           return Unsatisfiable()
         assignments[variable] = expression
         changed = True
-      case Unknown():
-        equations.append(simplified_equation)
-        changed |= simplified_equation != equation
+      case Unknown(equation=reduced_equation):
+        equations.append(reduced_equation)
+        changed |= reduced_equation != equation
       case _:
         assert_never(result)
 
