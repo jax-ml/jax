@@ -267,10 +267,9 @@ FailureOr<SmallVector<Layout>> getOutLayouts(
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> out_layouts,
                              getLayoutArrayFromAttr(op.getAttr("out_layout")));
   if (out_layouts.size() != op.getNumResults()) {
-    return op.emitOpError("out_layout size does not match number of results")
-           << " results: " << op.getNumResults()
-           << " vs layout size: " << out_layouts.size() << " for "
-           << op.getName();
+    return op.emitOpError("out_layout size (")
+           << out_layouts.size() << ") does not match number of results ("
+           << op.getNumResults() << ")";
   }
   for (const auto [l, res] : llvm::zip_equal(out_layouts, op.getResults())) {
     if (!layoutIsValidForValue(l, res, target_shape)) {
@@ -285,7 +284,9 @@ FailureOr<SmallVector<Layout>> getInLayouts(
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> in_layouts,
                              getLayoutArrayFromAttr(op.getAttr("in_layout")));
   if (in_layouts.size() != op.getNumOperands()) {
-    return op.emitOpError("in_layout size does not match number of operands");
+    return op.emitOpError("in_layout size (")
+           << in_layouts.size() << ") does not match number of operands ("
+           << op.getNumOperands() << ")";
   }
   for (const auto [l, operand] :
        llvm::zip_equal(in_layouts, op.getOperands())) {
