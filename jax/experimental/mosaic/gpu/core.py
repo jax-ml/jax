@@ -56,8 +56,8 @@ from . import transform_inference
 from . import utils
 
 # MLIR can't find libdevice unless we point it to the CUDA path
-cuda_root = lib.cuda_path or "/usr/local/cuda"
-os.environ["CUDA_ROOT"] = cuda_root
+#cuda_root = lib.cuda_path or "/usr/local/cuda"
+#os.environ["CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
