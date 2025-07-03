@@ -253,6 +253,9 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
   out_aval: core.AbstractValue
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`swap` must be called on `Ref` types: {ref_aval}.")
+  if isinstance(val_aval, AbstractRef):
+    raise ValueError("Cannot store a Ref into another Ref. "
+                     "Did you forget to load from it using `[...]`?")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     assert isinstance(val_aval, core.ShapedArray)
     expected_out_shape = _shape_after_transforming(ref_aval.shape, transforms)

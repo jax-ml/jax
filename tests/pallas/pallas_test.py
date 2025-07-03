@@ -1277,6 +1277,19 @@ class ApiErrorTest(PallasBaseTest):
     ):
       dot_general_kernel(x, y)
 
+  def test_pallas_error_for_writing_ref_to_ref(self):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref
+
+    x = jnp.ones((8, 128), dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError, "Cannot store a Ref into another Ref",
+    ):
+      kernel(x)
+
 
 class ApiErrorInterpretTest(ApiErrorTest):
   INTERPRET = True
