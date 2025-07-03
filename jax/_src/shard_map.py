@@ -667,10 +667,6 @@ def _shard_map_staging(
   out_avals = map(_check_shapedarray, out_avals_)
   out_avals = [_check_shapedarray(_unshard_aval(mesh, check_vma, spec, aval))
                for spec, aval in zip(out_specs_thunk(), out_avals)]
-  out_tracers = [pe.DynamicJaxprTracer(trace, a, source_info) for a in out_avals]
-  invars = map(trace.getvar, in_tracers)
-  constvars = map(trace.getvar, map(to_jaxpr_tracer, consts))
-  outvars = map(trace.makevar, out_tracers)
   in_specs_staged = (P(),) * len(consts) + tuple(in_specs)  # type: ignore
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
@@ -679,10 +675,9 @@ def _shard_map_staging(
                 out_specs=tuple(out_specs_thunk()), jaxpr=jaxpr,
                 check_vma=check_vma, manual_axes=manual_axes)
   effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
-  eqn = pe.new_jaxpr_eqn([*constvars, *invars], outvars, prim, params,
+  const_tracers = map(to_jaxpr_tracer, consts)
+  return trace.emit_eqn([*const_tracers, *in_tracers], out_avals, prim, params,
                          effs, source_info)
-  trace.frame.add_eqn(eqn)
-  return out_tracers
 pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
 
 # TODO add underscore version, for direct-linearize to consume

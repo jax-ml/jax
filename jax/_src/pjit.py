@@ -1941,18 +1941,13 @@ def pjit_staging_rule(trace, source_info, *args, **params):
         jaxpr, params['out_shardings'], params['out_layouts'])
     params = dict(params, jaxpr=jaxpr, out_shardings=out_shardings,
                   out_layouts=out_layouts)
-    out_tracers = []
-    for aval in _out_type(jaxpr):
-      if type(aval) is core.DShapedArray:
-        shape = [args[d.val] if type(d) is core.InDBIdx else
-                 out_tracers[d.val] if type(d) is core.OutDBIdx else
-                 d for d in aval.shape]
-        aval = aval.update(shape=tuple(core.get_referent(d) for d in shape))
-      out_tracers.append(pe.DynamicJaxprTracer(trace, aval, source_info))
+    outvars = map(trace.frame.newvar, _out_type(jaxpr))
     eqn = core.new_jaxpr_eqn(
-      map(trace.getvar, args), map(trace.makevar, out_tracers), pjit_p, params,
+      [arg.var for arg in args], outvars, pjit_p, params,
       jaxpr.effects, source_info)
     trace.frame.add_eqn(eqn)
+    out_tracers = [pe.DynamicJaxprTracer(trace, v.aval, v, source_info)
+                   for v in outvars]
     out_tracers_ = iter(out_tracers)
     out_tracers = [args[f] if type(f) is int else next(out_tracers_)
                    for f in in_fwd]

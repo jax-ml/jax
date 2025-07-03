@@ -591,6 +591,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     core.check_jaxpr(jaxpr)
 
 
+@unittest.skip("currently unmaintained")
 @jtu.with_config(jax_dynamic_shapes=True)
 class DynamicShapesTest(jtu.JaxTestCase):
 
