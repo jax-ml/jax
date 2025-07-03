@@ -34,7 +34,7 @@ exports_files([
 ])
 
 cc_binary(
-    name = "pjrt_c_api_gpu_plugin.so",
+    name = "pjrt_c_api_gpu_plugin",
     linkopts = [
         "-Wl,--version-script,$(location :gpu_version_script.lds)",
         "-Wl,--no-undefined",
@@ -54,6 +54,6 @@ py_library_providing_imports_info(
     srcs = [
         "__init__.py",
     ],
-    data = [":pjrt_c_api_gpu_plugin.so"],
+    data = [":pjrt_c_api_gpu_plugin"],
     lib_rule = pytype_library,
 )
