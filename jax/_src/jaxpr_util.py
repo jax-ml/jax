@@ -148,8 +148,16 @@ def print_histogram(histogram: dict[Any, int]):
     print(count_fmt.format(count), name)
 
 
+DEFAULT_WORKSPACE_ROOT: str | None = None
+
+def _strip_workspace_root(filename: str, workspace_root: str) -> str:
+  i = filename.rfind(workspace_root)
+  return filename[i+len(workspace_root):] if i >= 0 else filename
+
+
 def _pprof_profile(
-    profile: dict[tuple[xla_client.Traceback | None, core.Primitive], int]
+    profile: dict[tuple[xla_client.Traceback | None, core.Primitive], int],
+    workspace_root: str | None = None,
 ) -> bytes:
   """Converts a profile into a compressed pprof protocol buffer.
 
@@ -187,14 +195,19 @@ def _pprof_profile(
                  "line": xla_client.Traceback.code_addr2line(code, lasti)}]}
       for (code, lasti), loc_id in loc.items()
   ]
-  functions = [
-      {"id": func_id,
-       "name": s[code.co_name],
-       "system_name": s[code.co_name],
-       "filename": s[code.co_filename],
-       "start_line": code.co_firstlineno}
-      for code, func_id in func.items()
-  ]
+  functions = []
+  for code, func_id in func.items():
+    filename = code.co_filename
+    name = code.co_qualname
+    if workspace_root is not None:
+      filename = _strip_workspace_root(filename, workspace_root)
+      name = f"{filename.removesuffix('.py').replace('/', '.')}.{name}"
+    functions.append(
+        {"id": func_id,
+        "name": s[name],
+        "filename": s[filename],
+        "start_line": code.co_firstlineno}
+    )
   sample_type = [{"type": s["equations"], "unit": s["count"]}]
   # This is the JSON encoding of a pprof profile protocol buffer. See:
   # https://github.com/google/pprof/blob/master/proto/profile.proto for a
@@ -209,7 +222,8 @@ def _pprof_profile(
   return gzip.compress(xla_client._xla.json_to_pprof_profile(json_profile))
 
 
-def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
+def pprof_equation_profile(jaxpr: core.Jaxpr, *,
+                           workspace_root: str | None = None) -> bytes:
   """Generates a pprof profile that maps jaxpr equations to Python stack traces.
 
   By visualizing the profile using pprof, one can identify Python code that is
@@ -217,6 +231,8 @@ def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
 
   Args:
     jaxpr: a Jaxpr.
+    workspace_root: the root of the workspace. If specified, function names
+      will be fully qualified, with respect to the workspace root.
 
   Returns:
     A gzip-compressed pprof Profile protocol buffer, suitable for passing to
@@ -226,7 +242,7 @@ def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
       (eqn.source_info.traceback, eqn.primitive)
       for _, eqn in all_eqns(jaxpr, revisit_inner_jaxprs=False)
   )
-  return _pprof_profile(d)
+  return _pprof_profile(d, workspace_root or DEFAULT_WORKSPACE_ROOT)
 
 def eqns_using_var_with_invar_index(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[tuple[core.JaxprEqn, int]]:
   """Find all the equations which use invar and the positional index of its binder"""
