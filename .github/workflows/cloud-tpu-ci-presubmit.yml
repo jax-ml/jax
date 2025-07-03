@@ -119,10 +119,11 @@ jobs:
             --test_env=TPU_HOST_BOUNDS="$TPU_HOST_BOUNDS" \
             --test_env=TPU_TOPOLOGY_ALT="$TPU_TOPOLOGY_ALT" \
             --test_env=TPU_TOPOLOGY_WRAP="$TPU_TOPOLOGY_WRAP" \
-            --test_env=VBAR_CONTROL_SERVICE_URL="$VBAR_CONTROL_SERVICE_URL" \
             -- //tests:tpu_tests
             # Copy tpu logs to tranisent bucket
             ./ci/copy_logs.sh
+
+            #             --test_env=VBAR_CONTROL_SERVICE_URL="$VBAR_CONTROL_SERVICE_URL" \
   run-pytest-tpu:
     if: github.event.repository.fork == false
     needs: [build-jax-artifacts]
