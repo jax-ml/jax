@@ -22,6 +22,8 @@ from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import xla_client
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import scalar_types as jnp_types
 from jax._src.sharding import Sharding
@@ -170,7 +172,7 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
       f"version ({max_version}) was requested."
     )
 
-def _place_array(_arr, device, dlpack_device, copy):
+def _check_device(device, dlpack_device, copy):
   if device and dlpack_device != device:
     if copy is not None and not copy:
       raise ValueError(
@@ -178,8 +180,10 @@ def _place_array(_arr, device, dlpack_device, copy):
         f"is {repr(dlpack_device)}, however copy=False. Set copy=True or "
         "copy=None to perform the requested operation."
       )
-    else:
-      return device_put(_arr, device)
+
+def _place_array(_arr, device, dlpack_device, copy):
+  if device and dlpack_device != device:
+    return device_put(_arr, device)
   if copy:
     return jnp.array(_arr, copy=True)
   return _arr
@@ -248,6 +252,7 @@ def from_dlpack(external_array,
 
   backend = xla_bridge.get_backend(dl_device_platform)
   dlpack_device = backend.device_from_local_hardware_id(device_id)
+  _check_device(device, dlpack_device, copy)
   if _is_tensorflow_tensor(external_array):
     # TensorFlow does not support stream=.
     stream = None
@@ -261,9 +266,28 @@ def from_dlpack(external_array,
         raise
   dlpack = external_array.__dlpack__(stream=stream)
 
-  arr = _jax.dlpack_managed_tensor_to_buffer(
-      dlpack, dlpack_device, stream)
+  try:
+    if jaxlib_extension_version < 384:
+      arr = _jax.dlpack_managed_tensor_to_buffer(
+        dlpack, dlpack_device, stream)
+    else:
+      arr = _jax.dlpack_managed_tensor_to_buffer(
+        dlpack, dlpack_device, stream, copy)
+  except xla_client.XlaRuntimeError as e:
+    se = str(e)
+    if "is not aligned to" in se:
+      i = se.index("is not aligned to")
+      raise ValueError(
+        "Specified input which requires a copy since the source data "
+        f"buffer {se[i:]} However copy=False. Set copy=True or "
+        "copy=None to perform the requested operation."
+      )
+    else:
+      raise
   # TODO(phawkins): when we are ready to support x64 arrays in
   # non-x64 mode, change the semantics to not canonicalize here.
   arr = jnp.asarray(arr, dtype=dtypes.canonicalize_dtype(arr.dtype))
+  if copy and jaxlib_extension_version >= 384:
+    # copy was already handled by dlpack_managed_tensor_to_buffer.
+    copy = None
   return _place_array(arr, device, dlpack_device, copy)
