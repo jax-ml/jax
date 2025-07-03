@@ -41,7 +41,8 @@ jobs:
       - name: Run Bazel single B200 CUDA Tests
         run: |
             nvidia-smi
-            bazel test --config=rbe_linux_x86_64_cuda \
+            bazel test \
+            --config=ci_linux_x86_64_cuda \
             --config=rbe_cache \
             --repo_env=HERMETIC_CUDA_VERSION="12.8.0" \
             --repo_env=HERMETIC_CUDNN_VERSION="9.8.0" \
@@ -84,7 +85,8 @@ jobs:
       - name: Run Bazel multiple H100 CUDA Tests
         run: |
             nvidia-smi
-            bazel test --config=rbe_linux_x86_64_cuda \
+            bazel test \
+            --config=ci_linux_x86_64_cuda \
             --config=rbe_cache \
             --repo_env=HERMETIC_CUDA_VERSION="12.8.0" \
             --repo_env=HERMETIC_CUDNN_VERSION="9.8.0" \
