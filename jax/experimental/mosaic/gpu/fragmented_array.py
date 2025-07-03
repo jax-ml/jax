@@ -392,7 +392,7 @@ class TiledLayout:
       yield tuple(idx)
 
   @property
-  def base_tile_shape(self) -> int:
+  def base_tile_shape(self) -> tuple[int, ...]:
     """The shape of the first tile in the tiling expression.
 
     This tile acts as the divisibility constraint for a suffix of arrays to
