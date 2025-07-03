@@ -93,18 +93,13 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.assertSequenceEqual(op.attributes["out_layouts"], out_layouts)
 
   def test_infer_strided_layout_default(self):
-    self.skip_if_equations()
-    shape = (16, 8)
-    elt_type = ir.BF16Type.get()
-    add = None
-
-    def body(a, b):
-      nonlocal add
-      add = arith.AddFOp(a, b)
+    shape = (128,)
+    bf16 = ir.BF16Type.get()
 
     with ir.InsertionPoint(self.module.body):
-      ty = ir.VectorType.get(shape, elt_type)
-      func.FuncOp.from_py_func(ty, ty)(body)
+      ty = ir.VectorType.get(shape, bf16)
+      attrs = [ir.FloatAttr.get(bf16, float(i)) for i in range(shape[0])]
+      cst = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attrs, ty))
 
     # Not setting any layouts on the module should default in ops having a
     # strided fragmented layout.
@@ -114,8 +109,8 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
         mgpu.WGStridedFragLayout.from_shaped_type(ty)
     )
 
-    self.checkInLayouts(add, [layout, layout])
-    self.checkOutLayouts(add, [layout])
+    self.checkInLayouts(cst, [])
+    self.checkOutLayouts(cst, [layout])
 
   def test_infer_strided_layout_from_shape_cast(self):
     self.skip_if_equations()
@@ -634,6 +629,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
 V = equations.Variable
 H = layout_inference2.Hint
+E = equations.Equation
 C = equations.ConstantExpression
 
 
@@ -648,7 +644,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     with ir.InsertionPoint(self.module.body):
       ty = ir.VectorType.get(shape, bf16)
       attrs = [ir.FloatAttr.get(bf16, i) for i in range(shape[0])]
-      cst = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attrs, ty))
+      cst = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attrs, type=ty))
       lc = layout_cast(cst, layouts.to_layout_attr(layout)).owner.opview
 
     equation_system, hints = layout_inference2.equation_system_and_hints_for_op(
@@ -675,14 +671,27 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     )
     self.assertEqual(assignments, {v0: C(mgpu.WGMMA_ROW_LAYOUT)})
 
-  def test_ambiguous_hints_cannot_be_used_to_assign_variables(self):
-    v0, v1 = V(0), V(1)
-    # The failure condition will have to be changed once we implement default
-    # assignment logic.
-    with self.assertRaises(NotImplementedError):
-      layout_inference2.find_assignments_for(
-          {v0}, equations.EquationSystem(), [H(v0, v1)]
-      )
+  def test_cannot_find_assignments_for_unsatisfiable_equation_system(self):
+    shape = (64,)
+    bf16 = ir.BF16Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      ty = ir.VectorType.get(shape, bf16)
+      attrs = [ir.FloatAttr.get(bf16, i) for i in range(shape[0])]
+      cst = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attrs, type=ty))
+
+    [variable] = layout_inference2.op_variables(cst)
+    assignments = layout_inference2.find_assignments_for(
+        {variable},
+        equations.EquationSystem(
+            equations=[
+                E(variable, C(mgpu.WGMMA_ROW_LAYOUT)),
+                E(variable, C(mgpu.WGMMA_COL_LAYOUT)),
+            ]
+        ),
+        hints={},
+    )
+    self.assertIsInstance(assignments, equations.Unsatisfiable)
 
 
 if __name__ == "__main__":

@@ -25,11 +25,13 @@ from typing import cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+import numpy as np
 
 from . import equations as eqns
 from . import fragmented_array as fa
 from . import inference_utils
 from . import layouts as layouts_lib
+from . import utils
 
 
 # mypy: ignore-errors
@@ -97,12 +99,10 @@ def simplify_hint(
 ) -> Hint:
   """Like `eqns.simplify_equation` but for `Hint`s."""
   return dataclasses.replace(
-      h, expression=eqns.simplify_expression(h.expression, assignments)
-  )
-
+      h, expression=eqns.simplify_expression(h.expression, assignments))
 
 def find_assignments_for(
-    unknowns: set[eqns.Variable],
+    unknowns: set[Variable],
     equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
 ) -> dict[Variable, eqns.ConstantExpression] | eqns.Unsatisfiable:
@@ -148,7 +148,43 @@ def find_assignments_for(
     else:
       break
 
-  raise NotImplementedError("Default assignment logic")
+  # Here, we have not managed to find an assignment for all the unknown
+  # variables, and our hints have not proven sufficient to unblock us. We now
+  # try to introduce new arbitrary (valid) assignments into the system, and
+  # hope that they turn out to be compatible with the equation system.
+  for variable in unknowns:
+    if variable in equation_system.assignments:
+      continue
+    # Try to instantiate a single variable to a strided layout and see if it
+    # simplifies the system.
+    op = variable.key.operation
+    # TODO(bchetioui): should we make variables carry a shape as well, to make
+    # things easier?
+    if variable.key.type == VariableType.OPERAND:
+      ty = cast(ir.ShapedType, op.operands[variable.key.index].type)
+    else:
+      ty = cast(ir.ShapedType, op.results[variable.key.index].type)
+    max_vec_size = np.prod(ty.shape) // fa.WARPGROUP_SIZE
+    # TODO(bchetioui): can't handle too small shapes.
+    if max_vec_size == 0:
+      continue
+    desired_vec_size = 8 // utils.bytewidth(ty.element_type)
+    vec_size = min(max_vec_size, desired_vec_size)
+    layout = fa.WGStridedFragLayout(shape=tuple(ty.shape), vec_size=vec_size)
+    new_assignment = {variable: eqns.ConstantExpression(layout)}
+    new_system = equation_system & eqns.EquationSystem(assignments=new_assignment)
+    if isinstance(new_system, eqns.Unsatisfiable):
+      # This assignment is not compatible with the equation system.
+      continue
+    solution = find_assignments_for(unknowns, new_system, hints)
+    if isinstance(solution, eqns.Unsatisfiable):
+      # This assignment is not compatible with the equation system.
+      continue
+    return solution
+
+  # TODO(bchetioui): should we have a way to give a useful dump to the user
+  # here, perhaps indicating what to layout cast.
+  return eqns.Unsatisfiable()
 
 
 EquationSystemDerivationRule = Callable[[ir.OpView], eqns.EquationSystem]
@@ -169,7 +205,7 @@ def is_vector(v: ir.Value) -> bool:
 
 @_add_equation_system_derivation_rule(arith.ConstantOp)
 def _constant_equation_system(
-    constant_op: arith.ConstantOp,
+    constant_op: arith.ConstantOp
 ) -> eqns.EquationSystem:
   value = constant_op.value
   variable = Variable(constant_op, VariableType.RESULT, 0)
@@ -178,19 +214,17 @@ def _constant_equation_system(
       and ir.DenseElementsAttr(value).is_splat
   ):
     layout = fa.WGSplatFragLayout(shape=tuple(constant_op.result.type.shape))
-    return eqns.EquationSystem(
-        assignments={variable: eqns.ConstantExpression(layout)}
-    )
+    return eqns.EquationSystem(assignments={variable: eqns.ConstantExpression(layout)})
   return eqns.EquationSystem()
 
 
 @_add_equation_system_derivation_rule(mgpu.LayoutCastOp)
-def _layout_cast_equation_system(op: mgpu.LayoutCastOp) -> eqns.EquationSystem:
+def _layout_cast_equation_system(
+    op: mgpu.LayoutCastOp
+) -> eqns.EquationSystem:
   in_variable = Variable(op, VariableType.OPERAND, 0)
   out_variable = Variable(op, VariableType.RESULT, 0)
-  out_layout = eqns.ConstantExpression(
-      layouts_lib.from_layout_attr(op.new_layout)
-  )
+  out_layout = eqns.ConstantExpression(layouts_lib.from_layout_attr(op.new_layout))
   return eqns.EquationSystem(
       assignments={out_variable: out_layout, in_variable: out_layout},
   )
