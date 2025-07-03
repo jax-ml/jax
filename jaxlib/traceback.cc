@@ -142,7 +142,7 @@ static void traceback_tp_dealloc(PyObject* self) {
 Traceback::Frame DecodeFrame(const TracebackEntry& frame) {
   return Traceback::Frame{
       .file_name = nb::borrow<nb::str>(frame.code->co_filename),
-      .function_name = nb::borrow<nb::str>(frame.code->co_name),
+      .function_name = nb::borrow<nb::str>(frame.code->co_qualname),
       .function_start_line = frame.code->co_firstlineno,
       .line_num = PyCode_Addr2Line(frame.code, frame.lasti),
   };
@@ -215,10 +215,7 @@ std::vector<Traceback::Frame> Traceback::Frames() const {
   frames.reserve(Py_SIZE(tb));
   for (Py_ssize_t i = 0; i < Py_SIZE(tb); ++i) {
     const TracebackEntry& frame = tb->frames[i];
-    frames.push_back(Frame{nb::borrow<nb::str>(frame.code->co_filename),
-                           nb::borrow<nb::str>(frame.code->co_name),
-                           frame.code->co_firstlineno,
-                           PyCode_Addr2Line(frame.code, frame.lasti)});
+    frames.push_back(DecodeFrame(frame));
   }
   return frames;
 }
