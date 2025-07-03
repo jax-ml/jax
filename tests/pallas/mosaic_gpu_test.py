@@ -1453,48 +1453,34 @@ class PallasCallTest(PallasTest):
     x = jnp.full(shape, 42.0, jnp.float32)
     np.testing.assert_array_equal(kernel(), x)
 
-  @parameterized.parameters(False, True)
-  def test_wgmma_transposed_layout(self, store_transposed):
-    """Tests that the result of wgmma can be store transposed using
-    the WGMMA_TRNASPOSED layout.
-    """
-
+  @parameterized.product(
+      layouts=[
+          (plgpu.Layout.WGMMA, plgpu.Layout.WGMMA_TRANSPOSED),
+          (plgpu.Layout.TCGEN05, plgpu.Layout.TCGEN05_TRANSPOSED),
+      ],
+  )
+  def test_transposed_layout(self, layouts):
+    layout, transposed_layout = layouts
     dtype = jnp.dtype(jnp.float16)
     swizzle_elems = 128 // dtype.itemsize
-    shape = (128, 128)
+    shape = (256, 192)
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(128),
+    )
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(shape, dtype),
-        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
-        scratch_shapes=[
-            plgpu.SMEM(
-                shape, dtype,
-                transforms=(
-                    plgpu.TilingTransform((8, swizzle_elems)),
-                    plgpu.SwizzleTransform(128),
-                ),
-            )
-        ]
+        out_shape=jax.ShapeDtypeStruct(shape[::-1], dtype),
+        out_specs=plgpu.BlockSpec(transforms=transforms),
     )
-    def kernel(o_ref, smem):
-      iota = plgpu.broadcasted_iota(
-          dtype, o_ref.shape, 0, layout=plgpu.Layout.WGMMA
-      ) * o_ref.shape[0]
-      iota += plgpu.broadcasted_iota(
-          dtype, o_ref.shape, 1, layout=plgpu.Layout.WGMMA
-      )
+    def kernel(o_ref):
+      iota = plgpu.broadcasted_iota(dtype, shape, 0, layout=layout)
+      iota *= shape[1]
+      iota += plgpu.broadcasted_iota(dtype, shape, 1, layout=layout)
+      o_ref_t = plgpu.transpose_ref(o_ref, (1, 0))
+      o_ref_t[...] = plgpu.layout_cast(iota, transposed_layout)
 
-      smem_trns = plgpu.transpose_ref(smem, (1, 0))
-      smem_trns[...] = plgpu.layout_cast(iota, plgpu.Layout.WGMMA_TRANSPOSED)
-      plgpu.commit_smem()
-      plgpu.copy_smem_to_gmem(smem_trns if store_transposed else smem, o_ref)
-
-    x = jnp.arange(128 * 128, dtype=dtype).reshape((128, 128)).T
-    if store_transposed:
-      with self.assertRaises(ValueError):
-        kernel()
-    else:
-      np.testing.assert_array_equal(kernel(), x)
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape).T
+    np.testing.assert_array_equal(kernel(), x)
 
   def test_profiler(self):
     self.skip_if_wg_semantics()  # Transform inference fails.
@@ -1978,7 +1964,11 @@ class PallasCallTest(PallasTest):
   @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
   def test_copy_layout(self, layout):
     self.skip_if_wg_semantics()
-    if layout in {plgpu.Layout.WG_SPLAT, plgpu.Layout.WGMMA_TRANSPOSED}:
+    if layout in {
+        plgpu.Layout.WG_SPLAT,
+        plgpu.Layout.WGMMA_TRANSPOSED,
+        plgpu.Layout.TCGEN05_TRANSPOSED,
+    }:
       self.skipTest("Not the right layout for this test")
 
     shape = (128, 128)

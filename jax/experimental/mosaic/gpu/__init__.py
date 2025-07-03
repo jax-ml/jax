@@ -63,6 +63,7 @@ from .fragmented_array import (
     FragmentedArray as FragmentedArray,
     FragmentedLayout as FragmentedLayout,
     TCGEN05_LAYOUT as TCGEN05_LAYOUT,
+    TCGEN05_TRANSPOSED_LAYOUT as TCGEN05_TRANSPOSED_LAYOUT,
     TCGEN05_ROW_LAYOUT as TCGEN05_ROW_LAYOUT,
     TCGEN05_COL_LAYOUT as TCGEN05_COL_LAYOUT,
     TiledLayout as TiledLayout,

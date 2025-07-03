@@ -799,6 +799,13 @@ TCGEN05_LAYOUT = TiledLayout(
     lane_dims=(-3, -2),
     vector_dim=-1,
 )
+# Like WGMMA_TRANSPOSED_LAYOUT, only each warp holds a 32xN strip instead of 16xN.
+TCGEN05_TRANSPOSED_LAYOUT = TiledLayout(
+    Tiling(((128, 8), (32, 8), (8, 8), (2, 2), (2, 1))),
+    warp_dims=(-10,),
+    lane_dims=(-6, -3, -5),
+    vector_dim=-2,
+)
 # TCGEN05_ROW_LAYOUT is to TCGEN05_LAYOUT as WGMMA_ROW_LAYOUT is to
 # WGMMA_LAYOUT.
 TCGEN05_ROW_LAYOUT = TiledLayout(
@@ -954,10 +961,9 @@ class FragmentedArray:
     if self.layout == new_layout:
       return self
     shape = self.shape
-    if (
-        self.layout == WGMMA_LAYOUT
-        and new_layout == WGMMA_TRANSPOSED_LAYOUT
-        and utils.bitwidth(self.mlir_dtype) == 16
+    if utils.bitwidth(self.mlir_dtype) == 16 and (
+        (self.layout == WGMMA_LAYOUT and new_layout == WGMMA_TRANSPOSED_LAYOUT)
+        or (self.layout == TCGEN05_LAYOUT and new_layout == TCGEN05_TRANSPOSED_LAYOUT)
     ):
       is_even_row = arith.cmpi(
           arith.CmpIPredicate.eq,

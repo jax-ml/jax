@@ -1222,6 +1222,7 @@ class Layout(enum.Enum):
   WG_STRIDED = enum.auto()
 
   TCGEN05 = enum.auto()
+  TCGEN05_TRANSPOSED = enum.auto()
   TCGEN05_TMEM_NATIVE = enum.auto()
   TCGEN05_ROW = enum.auto()
   TCGEN05_COL = enum.auto()
@@ -1255,6 +1256,9 @@ class Layout(enum.Enum):
       case Layout.TCGEN05:
         check_no_args()
         return mgpu.TCGEN05_LAYOUT
+      case Layout.TCGEN05_TRANSPOSED:
+        check_no_args()
+        return mgpu.TCGEN05_TRANSPOSED_LAYOUT
       case Layout.TCGEN05_ROW:
         check_no_args()
         return mgpu.TCGEN05_ROW_LAYOUT

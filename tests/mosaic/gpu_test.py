@@ -3107,22 +3107,25 @@ class LayoutTest(TestCase):
 
   @parameterized.product(
       dtype=[jnp.int16],  # TODO(apaszke): More dtypes
-      # TODO(apaszke): swizzle=64 <- not implemented in transfer_tiled right now
-      swizzle=[16, 32, 128],
+      swizzle=[16, 32, 64, 128],
+      layouts=[
+          (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT),
+          (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT),
+      ],
   )
-  def test_transpose_tiled(self, dtype, swizzle):
+  def test_transpose_tiled(self, dtype, swizzle, layouts):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
     col_tiling = swizzle // bw
-    m, n = 128, 256
+    m, n = 256, 192
     tiling = (8, col_tiling)
-    transpose_layout = fa.WGMMA_TRANSPOSED_LAYOUT
+    layout, transpose_layout = layouts
     def kernel(ctx, in_, out, smems):
       smem_in, smem_out, barrier = smems
       ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
       barrier.wait()
       t = mgpu.FragmentedArray.load_tiled(
-          smem_in, swizzle=swizzle, is_signed=True, layout=fa.WGMMA_LAYOUT
+          smem_in, swizzle=swizzle, is_signed=True, layout=layout
       )
       smem_out_t = memref_transpose(smem_out, (1, 0, 3, 2))
       t.to_layout(transpose_layout).store_tiled(smem_out_t, swizzle=swizzle)

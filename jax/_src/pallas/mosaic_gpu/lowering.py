@@ -1538,7 +1538,10 @@ def _swap_lowering_rule(
     raise TypeError(f"Can only store to references (got {x_ref}).")
   v_aval = ctx.avals_in[1]
   transforms = jax.tree.unflatten(tree, leaves)
-  transposed_value = value.layout == mgpu.WGMMA_TRANSPOSED_LAYOUT
+  transposed_value = value.layout in (
+      mgpu.WGMMA_TRANSPOSED_LAYOUT,
+      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
+  )
   x_smem, transforms = _handle_transforms(
       ctx, x_ref, transforms, handle_transposes=not transposed_value,
       allow_peer_refs=True
