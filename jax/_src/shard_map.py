@@ -392,7 +392,10 @@ def _check_specs(error_type: SpecErrorType, specs: Any, manual_axes) -> None:
       + '\n\n'.join(msgs) + '\n\n'
       f"Check the {prefix}_specs values passed to shard_map.")
 
-class NoFail: pass
+class NoFail:
+  def __repr__(self):
+    return "NoFail()"
+
 no_fail = NoFail()
 
 def _check_specs_vs_args(
@@ -1571,6 +1574,7 @@ def _shard_map_transpose(out_cts, *args,
     res_zeros = [ad_util.zero_from_primal(r) for r in res]
     return merge_lists(in_undef, res_zeros, in_cts)
 
+  fun_trans_callable.__name__ = f"transpose({jaxpr.debug_info.func_name})"
   fun_trans = lu.wrap_init(fun_trans_callable, debug_info=jaxpr.debug_info)
   fun_trans, nz_arg_cts = ad.nonzero_outputs(fun_trans)
   fun_trans_flat, out_tree = api_util.flatten_fun_nokwargs(fun_trans, in_tree)
@@ -1602,6 +1606,12 @@ def _shard_map_transpose(out_cts, *args,
       raise e2 from None
     else:
       api_util._raise_no_nan_in_deoptimized(e)
+  except _RepError as e:
+    fails, = e.args
+    if not callable(out_specs):
+      msg = _inout_vma_error(
+          fun_trans, mesh, out_tree(), list(new_out_specs_thunk()), fails)
+      raise ValueError(msg) from None
   return tree_unflatten(out_tree(), out_flat)
 ad.primitive_transposes[shard_map_p] = _shard_map_transpose
 
