@@ -369,7 +369,6 @@ def linkcode_resolve(domain, info):
 
 # Generate redirects from deleted files to new sources
 rediraffe_redirects = {
-    'notebooks/quickstart.md': 'quickstart.md',
     'jax-101/01-jax-basics.md': 'key-concepts.md',
     'jax-101/02-jitting.md': 'jit-compilation.md',
     'jax-101/03-vectorization.md': 'automatic-vectorization.md',
