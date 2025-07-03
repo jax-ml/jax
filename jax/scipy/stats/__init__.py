@@ -41,3 +41,5 @@ from jax._src.scipy.stats.kde import gaussian_kde as gaussian_kde
 from jax._src.scipy.stats._core import mode as mode, rankdata as rankdata, sem as sem
 from jax.scipy.stats import vonmises as vonmises
 from jax.scipy.stats import wrapcauchy as wrapcauchy
+from jax.scipy.stats import gumbel_r as gumbel_r
+from jax.scipy.stats import gumbel_l as gumbel_l
