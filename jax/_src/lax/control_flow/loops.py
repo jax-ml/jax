@@ -62,7 +62,7 @@ from jax._src.tree_util import equality_errors
 from jax._src.typing import Array
 from jax._src.util import (
     merge_lists, partition_list, safe_map, safe_zip, split_list,
-    split_list_checked, unzip2, weakref_lru_cache,)
+    split_list_checked, unzip2, weakref_lru_cache, subs_list)
 from jax._src import xla_bridge as xb
 from jax._src.tree_util import (
     keystr, tree_flatten, tree_flatten_with_path, tree_map, tree_unflatten,
@@ -628,15 +628,17 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
                   for p, nz in zip(primals_out, nonzeros_out)]
   return primals_out, tangents_out
 
-def _scan_linearization(nzs, *primals_in, reverse: bool, length: int,
-                        num_consts: int, num_carry: int,
-                        jaxpr: ClosedJaxpr, linear: Sequence[bool],
-                        unroll: int, _split_transpose: bool):
+def _scan_linearize(nzs, *primals_in, reverse: bool, length: int, num_consts:
+                    int, num_carry: int, jaxpr: ClosedJaxpr, linear:
+                    Sequence[bool], unroll: int, _split_transpose: bool):
   const_nz, init_nz, xs_nz = split_list(nzs, [num_consts, num_carry])
   carry_nz = init_nz
+  allow_fwds = [(i < num_consts or i >= num_consts + num_carry) and
+                not isinstance(x, np.ndarray) for i, x in enumerate(primals_in)]
   for _ in range(1 + num_carry):
     nzs = const_nz + carry_nz + xs_nz
-    primal_jaxpr, num_res, nzs_out, tangent_jaxpr = ad.linearize_jaxpr(jaxpr, nzs)
+    primal_jaxpr, num_res_out, nzs_out, in_fwd_res, tangent_jaxpr = \
+        ad.linearize_jaxpr(jaxpr, nzs, allow_fwds=allow_fwds)
     carry_nz_out = nzs_out[:num_carry]
     if carry_nz_out == carry_nz:
       break
@@ -644,62 +646,63 @@ def _scan_linearization(nzs, *primals_in, reverse: bool, length: int,
       carry_nz = _map(operator.or_, carry_nz, carry_nz_out)
   else:
     assert False, "Fixpoint not reached"
+  num_res_in = len(in_fwd_res)
+  num_primals_out = len(primal_jaxpr.out_avals) - num_res_out
 
-  # The linearize_jaxpr function produces primal_jaxpr with num_res residuals
-  # output at the front, and tangent_jaxpr with num_res residuals input at the
-  # back. We could move all the residuals to the back and treat them as
-  # extensive outputs, but this would be wasteful for residuals that are
-  # loop invariant, or forwarded extensive inputs.
+  # At this point all non-forwarded residuals produced by primal_jaxpr are at
+  # the end. We want to hoist out loop-invariant ones:
+  # Before:
+  #  [*const_primals_in , *carry_ext_primals_in] -> [*primals_out, *non_fwd_res]
+  # After:
+  #  [*const_primals_in_, *carry_ext_primals_in] -> [*primals_out, *ext_res]
+  # where, modulo hoisted res not being broadcasted by the scan,
+  #  non_fwd_res = merge_lists(which_hoisted, ext_res, hoisted_res)
+  const_primals_in, carry_ext_primals_in = split_list(primals_in, [num_consts])
+  primal_jaxpr, const_primals_in_, which_hoisted, hoisted_res = \
+      _scan_known_hoisting(primal_jaxpr, const_primals_in, num_res_out)
+  del num_res_out
 
-  # First, for residuals that are forwarded constants, we move those to the
-  # front in the tangent_jaxpr to treat them as intensive inputs.
-  in_fwd = pe._jaxpr_forwarding(primal_jaxpr.jaxpr)
-  primal_jaxpr, tangent_jaxpr, intensive_res, in_fwd = _const_to_intensive_res_forwarding(
-      primal_jaxpr, tangent_jaxpr, num_res, num_consts, primals_in, in_fwd)
-  num_intensive_res = len(intensive_res)
-  num_res -= num_intensive_res
+  # To make tangent_jaxpr match the scan calling convention, move to the back
+  # binders that don't correspond to hoisted or const-forwarded residuals.
+  #   Before: [*res, *tangents_in] -> [*tangents_out]
+  #   After: [*int_res, *tangents_in, *ext_res] -> [*tangents_out]
+  num_tangents_in = len(tangent_jaxpr.in_avals) - num_res_in
+  which_hoisted_ = iter(which_hoisted)
+  res_to_move = [not next(which_hoisted_) if f is None else
+                 f >= len(jaxpr.consts) + num_consts + num_carry
+                 for f in in_fwd_res]
+  assert next(which_hoisted_, None) is None
+  tangent_jaxpr = pe.move_binders_to_back(
+      tangent_jaxpr, res_to_move + [False] * num_tangents_in)
 
-  # After pruning the intensive residuals, the rest get moved to the back and
-  # handled as extensive outputs from the primal.
-  num_out = len(nzs_out)
-  primal_jaxpr = pe.move_outvars_to_back(
-      primal_jaxpr, [True] * num_res + [False] * num_out)
-  in_fwd = in_fwd[num_res:] + in_fwd[:num_res]
+  # Run the primal scan (if it has any outputs or effects).
+  if not primal_jaxpr.out_avals and not primal_jaxpr.effects:
+    out = []
+  else:
+    linear_ = (False,) * len(primal_jaxpr.in_avals)  # TODO conservative
+    out = scan_p.bind(*const_primals_in_, *carry_ext_primals_in,
+                      jaxpr=primal_jaxpr, reverse=reverse, length=length,
+                      num_consts=len(const_primals_in_), num_carry=num_carry,
+                      linear=linear_, unroll=unroll,
+                      _split_transpose=_split_transpose)
+  primals_out, ext_res = split_list(out, [num_primals_out])
 
-  # Then, any residuals or other extensive outputs that are forwarded extensive
-  # inputs, we remove them from the primal jaxpr, and manually forward them.
-  in_fwd = [in_idx if out_idx >= num_carry and in_idx is not None and
-            in_idx >= num_consts + num_carry else None
-            for out_idx, in_idx in enumerate(in_fwd)]
-  primal_jaxpr = pe.prune_closed_jaxpr_outputs(primal_jaxpr,
-                                               [i is None for i in in_fwd])
-
-  out = scan_p.bind(*primals_in, jaxpr=primal_jaxpr, reverse=reverse,
-                    length=length, num_consts=num_consts, num_carry=num_carry,
-                    linear=linear, unroll=unroll, _split_transpose=_split_transpose)
-  out_ = iter(out)
-  all_out = [next(out_) if f is None else _maybe_put(primals_in[f]) for f in in_fwd]
-  assert next(out_, None) is None
-  primals_out, extensive_res = split_list(all_out, [len(all_out) - num_res])
-  res = [*intensive_res, *extensive_res]
+  # Complete res using hoisted_res and input forwards.
+  res = subs_list(in_fwd_res, [*jaxpr.consts, *primals_in],
+                  merge_lists(which_hoisted, ext_res, hoisted_res))
 
   def tangent_fun(res, *tangents):
-    intensive_res, extensive_res = split_list(res, [num_intensive_res])
+    int_res, ext_res = partition_list(res_to_move, res)
     nz_tangents = [ad.instantiate_zeros(x) for nz, x in zip(nzs, tangents) if nz]
-    tangent_linear = (
-        (False,) * len(intensive_res) +
-        (True,) * len(nz_tangents) +
-        (False,) * len(extensive_res)
-    )
-    tangent_num_consts = len(intensive_res) + sum(nzs[:num_consts])
+    tangent_linear = ((False,) * len(int_res) + (True,) * len(nz_tangents) +
+                      (False,) * len(ext_res))
+    tangent_num_consts = len(int_res) + sum(nzs[:num_consts])
     tangent_num_carry = sum(nzs[num_consts:num_consts + num_carry])
-    nz_tangents_out = scan_p.bind(*intensive_res, *nz_tangents, *extensive_res,
-                                  jaxpr=tangent_jaxpr,
-                                  reverse=reverse, length=length,
-                                  num_consts=tangent_num_consts,
-                                  num_carry=tangent_num_carry,
-                                  linear=tangent_linear, unroll=unroll,
-                                  _split_transpose=_split_transpose)
+    nz_tangents_out = scan_p.bind(
+        *int_res, *nz_tangents, *ext_res, jaxpr=tangent_jaxpr, reverse=reverse,
+        length=length, num_consts=tangent_num_consts,
+        num_carry=tangent_num_carry, linear=tangent_linear, unroll=unroll,
+        _split_transpose=_split_transpose)
     tangent_avals_out = [v.aval.to_tangent_aval() for v in jaxpr.jaxpr.outvars]
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
@@ -708,27 +711,6 @@ def _scan_linearization(nzs, *primals_in, reverse: bool, length: int,
     return tangents_out
 
   return primals_out, nzs_out, res, tangent_fun
-
-def _const_to_intensive_res_forwarding(
-    primal_jaxpr: ClosedJaxpr,
-    tangent_jaxpr: ClosedJaxpr,
-    num_res: int,
-    num_consts: int,
-    primals_in: Sequence[Any],
-    in_fwd: list[int | None]
-) -> tuple[ClosedJaxpr, ClosedJaxpr, list[Any], list[int | None]]:
-  const_to_res = [in_idx if in_idx is not None and in_idx < num_consts else None
-                  for in_idx in in_fwd[:num_res]]
-  new_in_fwd = [f for c, f in zip(const_to_res, in_fwd[:num_res]) if c is None]
-  new_in_fwd += in_fwd[num_res:]
-  intensive_res = [primals_in[f] for f in const_to_res if f is not None]
-  num_out = len(primal_jaxpr.out_avals) - num_res
-  primal_jaxpr = pe.prune_closed_jaxpr_outputs(
-      primal_jaxpr, [i is None for i in const_to_res] + [True] * num_out)
-  num_nz = len(tangent_jaxpr.in_avals) - num_res
-  tangent_jaxpr = pe.move_binders_to_front(
-      tangent_jaxpr, [False] * num_nz + [i is not None for i in const_to_res])
-  return primal_jaxpr, tangent_jaxpr, intensive_res, new_in_fwd
 
 def _scan_known_hoisting(jaxpr_known, known_consts, num_res):
   # To disable:
@@ -799,6 +781,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   known_consts, known_ins = split_list(known_ins, [num_consts_known])
   jaxpr_known, known_consts_, which_hoisted, hoisted_res = \
       _scan_known_hoisting(jaxpr_known, known_consts, num_res_out)
+  del num_res_out  # changed
 
   # To make jaxpr_unknown match the scan calling convention, move to the back
   # binders that don't correspond to hoisted or const-forwarded residuals.
@@ -1455,13 +1438,14 @@ def _scan_state_partial_discharge_rule(should_discharge, in_avals, out_avals, *a
   return refs_out_matching_in_avals, [*carry_out, *ys]
 
 scan_p = core.Primitive("scan")
+scan_p.is_effectful = lambda params: bool(params['jaxpr'].effects)  # type: ignore
 scan_p.multiple_results = True
 scan_p.skip_canonicalization = True
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
 scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose
-ad.primitive_linearizations[scan_p] = _scan_linearization
+ad.primitive_linearizations[scan_p] = _scan_linearize
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.register_initial_style_primitive(scan_p)
 mlir.register_lowering(scan_p,

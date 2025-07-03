@@ -2092,7 +2092,8 @@ def to_gspmd_sharding(s: JSharding, ndim: int) -> GSPMDSharding:
 
 def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
                           donated_invars, out_shardings, out_layouts):
-  if any(isinstance(e, RefEffect) for e in closed_jaxpr.effects):
+  if (any(isinstance(e, RefEffect) for e in closed_jaxpr.effects) or
+      any(isinstance(a, AbstractRef) for a in closed_jaxpr.in_avals)):
     closed_jaxpr, inout_aliases, mut = _discharge_refs(closed_jaxpr)
     in_shardings = (*in_shardings, *(
         pjit.finalize_arg_sharding(c.sharding, c.committed) for c in mut.in_mut))

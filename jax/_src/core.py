@@ -555,6 +555,8 @@ class Primitive:
   # set for primitives that can skip canonicalization of values
   skip_canonicalization: bool = False
 
+  is_effectful = None
+
   def __init__(self, name: str):
     self.name = name
 
@@ -2423,6 +2425,7 @@ pytype_aval_mappings[MutableArray] = lambda x: x._aval
 def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
 mutable_array_p = Primitive('mutable_array')
+mutable_array_p.is_effectful = lambda params: True  # type: ignore
 mutable_array_p.ref_primitive = True
 
 class InternalMutableArrayEffect(effects.Effect):
@@ -2444,6 +2447,7 @@ def _mutable_array_impl(init_val):
 def freeze(ref):
   return freeze_p.bind(ref)
 freeze_p = Primitive('freeze')
+freeze_p.is_effectful = lambda params: True  # type: ignore
 freeze_p.ref_primitive = True
 
 @freeze_p.def_effectful_abstract_eval
@@ -3072,6 +3076,13 @@ def _check_jaxpr(
       else:
         env[v] = MutableTypecheckVal(aval, MutableQuasiDynamicData(qdd))
 
+  # # Don't return refs
+  if config.mutable_array_checks.value:
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    for v in jaxpr.outvars:
+      if isinstance(v.aval, AbstractRef):
+        raise JaxprTypeError("returned a ref!")
+
   # Check type annotations on lambda binders.
   for v in it.chain(jaxpr.constvars, jaxpr.invars):
     check_type(ctx_factory, env, v.aval)
@@ -3235,7 +3246,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
                            f"{substitute(v.aval)}")
     env[v] = x.val if type(x) is Literal else x
 
-  _check_jaxpr(ctx_factory, call_jaxpr)
+  check_jaxpr(call_jaxpr)
 
   invars, outvars = call_jaxpr.invars, call_jaxpr.outvars
   in_map : dict[Var,  InDBIdx] = {v:  InDBIdx(i) for i, v in enumerate( invars)}
