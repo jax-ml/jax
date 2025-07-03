@@ -590,18 +590,17 @@ NB_MODULE(_jax, m) {
         return xla::ValueOrThrow(DLPackManagedTensorToBuffer(
             tensor, device->device(), device->client(), stream, copy));
       },
-      nb::arg("dlpack"), nb::arg("device"), nb::arg("stream").none(),
-      nb::arg("copy").none() = nb::none(),
-      nb::sig(
-          // clang-format off
+      nb::arg("dlpack"), nb::arg("device"), nb::arg("stream").none(), nb::arg("copy").none() = nb::none(),
+    nb::sig(
+      // clang-format off
       "def dlpack_managed_tensor_to_buffer("
       "dlpack: typing_extensions.CapsuleType, "
       "device: Device, "
       "stream: int | None, "
-      "copy: bool | None = ..."
+      "copy: bool | None"
       ") -> ArrayImpl"
-          // clang-format on
-          ));
+      // clang-format on
+    ));
   m.def("cuda_array_interface_to_buffer",
         xla::ValueOrThrowWrapper(CudaArrayInterfaceToBuffer), nb::arg("cai"),
         nb::arg("gpu_backend").none() = nb::none(),
