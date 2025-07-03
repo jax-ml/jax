@@ -447,24 +447,29 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
   ASSERT_OK(VerifyOp(dma));
 }
 
-TEST_F(TpuOpsVerificationTest, IndirectDmaOnUnsupportedScalarSubcore) {
-  auto func_op =
-      Create<func::FuncOp>("scalar_kernel", builder().getFunctionType({}, {}));
-  func_op->setAttr(
-      TPUDialect::GetCoreTypeKey(),
-      CoreTypeAttr::get(builder().getContext(), CoreType::kScScalarSubcore));
-  builder().setInsertionPointToStart(func_op.addEntryBlock());
-  auto dma = Create<EnqueueIndirectDMAOp>(
-      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
-      /*target=*/AllocaI32({64, 32, 128}, MemorySpace::kVmem),
-      /*offsets=*/AllocaI32({64, 32}, MemorySpace::kVmem),
-      /*semaphore=*/AllocaSemaphore(),
-      /*add=*/false,
-      /*offset_filter=*/nullptr);
+TEST_F(TpuOpsVerificationTest, IndirectDmaOnUnsupportedCore) {
+  std::vector<CoreType> unsupported_cores = {CoreType::kScScalarSubcore,
+                                             CoreType::kTc};
+  for (CoreType unsupported_core : unsupported_cores) {
+    auto func_op = Create<func::FuncOp>("scalar_kernel",
+                                        builder().getFunctionType({}, {}));
+    func_op->setAttr(
+        TPUDialect::GetCoreTypeKey(),
+        CoreTypeAttr::get(builder().getContext(), unsupported_core));
+    builder().setInsertionPointToStart(func_op.addEntryBlock());
+    auto dma = Create<EnqueueIndirectDMAOp>(
+        /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+        /*target=*/AllocaI32({64, 32, 128}, MemorySpace::kVmem),
+        /*offsets=*/AllocaI32({64, 32}, MemorySpace::kVmem),
+        /*semaphore=*/AllocaSemaphore(),
+        /*add=*/false,
+        /*offset_filter=*/nullptr);
 
-  ASSERT_THAT(VerifyOp(dma),
-              StatusIs(_, HasSubstr("Enqueue indirect DMA is supported only on "
-                                    "the SC vector subcore")));
+    ASSERT_THAT(
+        VerifyOp(dma),
+        StatusIs(_, HasSubstr("Enqueue indirect DMA is supported only on "
+                              "the SC vector subcore")));
+  }
 }
 
 TEST_F(TpuOpsVerificationTest, IndirectDmaOnUnsupportedTc) {

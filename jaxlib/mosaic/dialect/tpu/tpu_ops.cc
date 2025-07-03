@@ -1381,7 +1381,6 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
         "Enqueue indirect DMA is supported only on the SC vector subcore");
   }
 
-
   const MemRefType source_ty = getMemRefType(getSource());
   const MemRefType target_ty = getMemRefType(getTarget());
 
