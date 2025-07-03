@@ -535,13 +535,14 @@ def _infer_params_impl(
     in_shardings_leaves = out_shardings_leaves = tuple(leaves)
     in_shardings_treedef = out_shardings_treedef = treedef
   else:
+    api_name = 'pjit' if ji.use_resource_env else 'jit'
     in_shardings_leaves = tuple(
-        _create_sharding_for_array(ctx_mesh, x, 'in_shardings', 'jit')
+        _create_sharding_for_array(ctx_mesh, x, 'in_shardings', api_name)
         for x in ji.in_shardings_leaves)
-    in_shardings_treedef = ji.in_shardings_treedef
     out_shardings_leaves = tuple(
-        _create_sharding_for_array(ctx_mesh, x, 'out_shardings', 'jit')
+        _create_sharding_for_array(ctx_mesh, x, 'out_shardings', api_name)
         for x in ji.out_shardings_leaves)
+    in_shardings_treedef = ji.in_shardings_treedef
     out_shardings_treedef = ji.out_shardings_treedef
 
   assert None not in in_shardings_leaves
@@ -981,8 +982,10 @@ def hashable_pytree(pytree):
 
 
 def _create_sharding_for_array(mesh, x, name, api_name):
-  if x is None and (mesh is None or mesh.empty):
-    return UNSPECIFIED
+  if x is None:
+    if api_name == 'jit' or mesh is None or mesh.empty:
+      return UNSPECIFIED
+    return sharding_impls.cached_named_sharding(mesh, PartitionSpec())
   if isinstance(x, (AUTO, UnspecifiedValue, Sharding)):
     return x
   if mesh is None:
@@ -1005,8 +1008,8 @@ def _create_sharding_for_array(mesh, x, name, api_name):
         f' site? Alternatively, provide `Sharding`s to {name} and'
         ' then the mesh context manager is not required.')
   # A nice user error is raised in prepare_axis_resources.
-  assert x is None or isinstance(x, PartitionSpec), x
-  return sharding_impls.create_mesh_pspec_sharding(mesh, x)
+  assert isinstance(x, PartitionSpec), x
+  return sharding_impls.cached_named_sharding(mesh, x)
 
 
 def _create_sharding_with_device_backend(device, backend):

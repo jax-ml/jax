@@ -1054,12 +1054,9 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
 
 
 @util.cache()
-def create_mesh_pspec_sharding(
-    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh,
-    pspec: PartitionSpec | None,
+def cached_named_sharding(
+    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh, pspec: PartitionSpec,
     memory_kind: str | None = None) -> NamedSharding:
-  if pspec is None:
-    pspec = PartitionSpec()
   return NamedSharding(mesh, pspec, memory_kind=memory_kind)
 
 
@@ -1067,8 +1064,7 @@ def _gspmd_to_named_sharding_via_mesh(
     out_s: GSPMDSharding, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
 ) -> NamedSharding:
   spec = parse_flatten_op_sharding(out_s._hlo_sharding, mesh)[0]
-  return create_mesh_pspec_sharding(
-      mesh, spec, memory_kind=out_s.memory_kind)
+  return cached_named_sharding(mesh, spec, out_s.memory_kind)
 
 
 def flatten_spec(spec):

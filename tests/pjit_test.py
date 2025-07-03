@@ -74,18 +74,14 @@ def create_array(global_shape, global_mesh, mesh_axes, global_data=None,
   if global_data is None:
     global_data = np.arange(
         math.prod(global_shape), dtype=dtype).reshape(global_shape)
-
-  if isinstance(mesh_axes, Sharding):
-    sharding = mesh_axes
-  else:
-    sharding = NamedSharding(global_mesh, mesh_axes)
-
+  sharding = (mesh_axes if isinstance(mesh_axes, Sharding) else
+              NamedSharding(global_mesh, mesh_axes))
   return array.make_array_from_callback(
       global_shape, sharding, lambda idx: global_data[idx]), global_data
 
 
-def _check_instance(self, x):
-  self.assertIsInstance(x, array.ArrayImpl)
+def spec_regex(s):
+  return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 
 
 @curry
@@ -115,7 +111,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     actual = f(x)
     expected = x
     self.assertAllClose(actual, expected, check_dtypes=False)
-    _check_instance(self, actual)
+    self.assertIsInstance(actual, array.ArrayImpl)
     self.assertLen(actual.addressable_shards, 1)
     self.assertAllClose(
         np.asarray(actual.addressable_shards[0].data), expected, check_dtypes=False)
@@ -135,7 +131,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     actual = f(x, x + 1)
     expected = x + (x + 1)
     self.assertAllClose(actual, expected, check_dtypes=False)
-    _check_instance(self, actual)
+    self.assertIsInstance(actual, array.ArrayImpl)
     self.assertLen(actual.addressable_shards, 2)
     self.assertAllClose(np.asarray(actual.addressable_shards[0].data), expected,
                         check_dtypes=False)
@@ -171,7 +167,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     actual = f(x, x + 1)
     expected = x + (x + 1)
     self.assertAllClose(actual[:3], expected[:3], check_dtypes=False)
-    _check_instance(self, actual)
+    self.assertIsInstance(actual, array.ArrayImpl)
     self.assertLen(actual.addressable_shards, 2)
     self.assertAllClose(np.asarray(actual.addressable_shards[0].data)[:3],
                         expected[:3], check_dtypes=False)
@@ -190,7 +186,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = x + (x + 1)
     self.assertEqual(mesh, jtu.create_mesh((2,), ('x')))
     self.assertAllClose(actual, expected, check_dtypes=False)
-    _check_instance(self, actual)
+    self.assertIsInstance(actual, array.ArrayImpl)
     self.assertLen(actual.addressable_shards, 2)
     self.assertAllClose(np.asarray(actual.addressable_shards[0].data), expected,
                         check_dtypes=False)
@@ -210,7 +206,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     actual = f(x, y)
     expected = x @ y
     self.assertAllClose(actual, expected, check_dtypes=False)
-    _check_instance(self, actual)
+    self.assertIsInstance(actual, array.ArrayImpl)
     self.assertLen(actual.addressable_shards, 4)
 
     split0, split1 = np.split(expected, 2)
@@ -279,7 +275,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     actual = f(x, x + 1)
     expected = x @ (x + 1)
     self.assertAllClose(actual, expected, check_dtypes=False)
-    _check_instance(self, actual)
+    self.assertIsInstance(actual, array.ArrayImpl)
     self.assertLen(actual.addressable_shards, 4)
 
     splits = np.split(expected, 4)
@@ -462,7 +458,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = (x + 1) * 2
     actual = f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
-    _check_instance(self, actual)
+    self.assertIsInstance(actual, array.ArrayImpl)
     self.assertLen(actual.addressable_shards, 2)
     self.assertAllClose(np.asarray(actual.addressable_shards[0].data), expected,
                         check_dtypes=False)
@@ -642,7 +638,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = jnp.arange(16.).reshape((4, 4))
     y = g(x)
     self.assertAllClose(y, jnp.sin(x).sum() + h.sum())
-    _check_instance(self, y)
+    self.assertIsInstance(y, array.ArrayImpl)
 
   @check_1d_2d_mesh(set_mesh=True)
   def testAutodiff(self, mesh, resources):
@@ -4961,9 +4957,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' cannot be empty'):
       jax.ShapeDtypeStruct((2, 2), np.float32, sharding=P('x'))
 
+  def test_use_mesh_none_out_sharding(self):
+    mesh = jtu.create_mesh((2,), 'x')
 
-def spec_regex(s):
-  return str(s).replace(r"(", r"\(").replace(r")", r"\)")
+    @partial(jax.jit, static_argnums=0, out_shardings=None)
+    def f(spec):
+      return jax.lax.with_sharding_constraint(jnp.arange(8), spec)
+
+    # no mesh context and mesh context behavior has to be the same
+    with jax.sharding.use_mesh(mesh):
+      out = f(P('x'))
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    out = f(NamedSharding(mesh, P('x')))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
 
 class ShardingInTypesTest(jtu.JaxTestCase):

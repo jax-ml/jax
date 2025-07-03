@@ -1238,7 +1238,7 @@ def _hlo_sharding_to_named_sharding(
     mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh):
   if hlo_sharding is None:
     return None
-  return sharding_impls.create_mesh_pspec_sharding(
+  return sharding_impls.cached_named_sharding(
       mesh, sharding_impls.parse_flatten_op_sharding(hlo_sharding, mesh)[0])
 
 
