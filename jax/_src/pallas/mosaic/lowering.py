@@ -3542,10 +3542,12 @@ def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr, collecti
 def _device_id_to_logical(
     ctx: LoweringRuleContext, device_id,
     device_id_type: primitives.DeviceIdType):
-  if device_id_type is primitives.DeviceIdType.MESH:
+  mesh_context = ctx.lowering_context.mesh_context
+  assert mesh_context is not None
+  def _mesh_to_logical(device_id):
     # Mesh means we are passed the mesh coordinates for the device
     device_ids = tree_util.tree_leaves(device_id)
-    mesh_strides = ctx.lowering_context.mesh_context.mesh_strides
+    mesh_strides = mesh_context.mesh_strides
 
     i32 = ir.IntegerType.get_signless(32)
     if len(device_ids) == 0:
@@ -3557,7 +3559,37 @@ def _device_id_to_logical(
             for a, b in zip(device_ids, mesh_strides)
         ),
     )
+
+  if device_id_type is primitives.DeviceIdType.MESH:
+    return _mesh_to_logical(device_id)
   elif device_id_type is primitives.DeviceIdType.LOGICAL:
+    return device_id
+  elif device_id_type is primitives.DeviceIdType.AXIS_DICT:
+
+    assert isinstance(device_id_dict := device_id, dict)
+    # Handle joint axes (i.e., one logical axis over >1 physical axes)
+    for axis in tuple(device_id_dict.keys()):
+      if isinstance(axis, tuple):
+        joint_idx = device_id_dict.pop(axis)
+        axis_names, mesh_shape = unzip2(
+            (n, s)
+            for n, s in zip(mesh_context.axis_names, mesh_context.mesh_shape)
+            if n in axis
+        )
+        for axis_index, axis_name in enumerate(axis_names):
+          axis_size = ir_constant(mesh_shape[axis_index])
+          minor_divisor = ir_constant(
+              np.prod(mesh_shape[axis_index + 1 :], dtype=np.int32)
+          )
+          idx = arith.remsi(arith.divsi(joint_idx, minor_divisor), axis_size)
+          device_id_dict[axis_name] = idx
+    device_id = []
+    for axis in mesh_context.axis_names:
+      if axis in device_id_dict:
+        device_id.append(device_id_dict[axis])
+      else:
+        device_id.append(_axis_index_rule(ctx, axis_name=axis))
+    device_id = _mesh_to_logical(tuple(device_id))
     return device_id
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
 

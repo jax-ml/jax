@@ -400,6 +400,17 @@ def dma_start_partial_discharge_rule(
                                   "implemented in dma_start_p")
       shard_axis = nonempty_axes[0]
       my_axis = jax.lax.axis_index(shard_axis)
+    elif device_id_type == primitives.DeviceIdType.AXIS_DICT:
+      assert isinstance(device_id_dict := device_id, dict)
+      device_id = []
+      for axis in nonempty_axes:
+        if axis in device_id_dict:
+          device_id.append(device_id_dict[axis])
+        else:
+          device_id.append(jax.lax.axis_index(axis))
+      device_id = tuple(device_id)
+      shard_axis = nonempty_axes[0]
+      my_axis = jax.lax.axis_index(shard_axis)
     else:
       raise ValueError(f"Unknown device_id_type: {device_id_type}")
     # Compute the update that is being sent to the current device.

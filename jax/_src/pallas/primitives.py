@@ -1030,6 +1030,7 @@ def _get_ref_and_transforms(ref):
 class DeviceIdType(enum.Enum):
   MESH = "mesh"
   LOGICAL = "logical"
+  AXIS_DICT = "axis_dict"
 
 
 def check_sem_avals(
