@@ -16,11 +16,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import dataclasses
 import enum
 import itertools
+from typing import cast
 
+from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 
@@ -58,27 +60,91 @@ class Variable(equations.Variable):
   def __init__(self, operation: ir.OpView, type: VariableType, index: int):
     super().__init__(VariableKey(operation, type, index))
 
+  @property
+  def is_operand(self) -> bool:
+    return self.key.type == VariableType.OPERAND
+
+  @property
+  def is_result(self) -> bool:
+    return self.key.type == VariableType.RESULT
+
+
+@dataclasses.dataclass(frozen=True)
+class Hint:
+  """Hints are used to model propagation of layouts across operations.
+
+  Since using `relayout`s is always an option in principle, propagation across
+  ops can not rely only on an equation system. Instead, we introduce hints as
+  an equation-like form of "soft constraints", i.e., it suggests that
+  `variable` should be equal to `expression`.
+  """
+  variable: Variable
+  expression: equations.Expression
+
+
+def choose_variable_assignment_from_hints(
+    hints: Sequence[Hint],
+) -> tuple[Variable, equations.ConstantExpression] | None:
+  """Attempts to choose a single variable assignment from a list of `Hint`s."""
+  for hint in hints:
+    if isinstance(hint.expression, equations.ConstantExpression):
+      return (hint.variable, hint.expression)
+  return None
+
+
+def simplify_hint(
+    h: Hint, assignments: dict[Variable, equations.ConstantExpression]
+) -> Hint:
+  """Like `equations.simplify_equation` but for `Hint`s."""
+  return dataclasses.replace(
+      h, expression=equations.simplify_expression(h.expression, assignments))
 
 def find_assignments_for(
     unknowns: set[equations.Variable],
-    equation_system: equations.EquationSystem
+    equation_system: equations.EquationSystem,
+    hints: Sequence[Hint],
 ) -> dict[Variable, equations.ConstantExpression] | equations.Unsatisfiable:
   """Attempts to find assignments that satisfy `equation_system` for `unknowns`.
+
+  Args:
+    unknowns: the set of variables that are unknown.
+    equation_system: the equation system to satisfy.
+    hints: a list of hints that may be used to introduce new assignments.
 
   Returns:
     - Unsatisfiable() if the equation system has unsatisfiable constraints.
     - A dictionary assigning all the unknown variables to `ConstantExpression`s
       such that the assignment satisfies the equation system otherwise.
   """
-  equation_system = equations.simplify(equation_system)
-  if isinstance(equation_system, equations.Unsatisfiable):
-    return equations.Unsatisfiable()
+  while True:
+    equation_system = equations.simplify(equation_system)
+    if isinstance(equation_system, equations.Unsatisfiable):
+      return equations.Unsatisfiable()
 
-  remaining_unknowns = equation_system.assignments.keys() - unknowns
-  # In this case, we have determined an assignment for all the unknown
-  # variables. Return their respective assignment.
-  if not remaining_unknowns:
-    return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
+    remaining_unknowns = unknowns - equation_system.assignments.keys()
+
+    # In this case, we have determined an assignment for all the unknown
+    # variables. Return their respective assignment.
+    if not remaining_unknowns:
+      return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
+
+    # Simplify the expressions in the remaining hints based on the current
+    # assignments, and eliminate hints that pertain to variables that already
+    # have an assignment.
+    hints = [simplify_hint(h, equation_system.assignments) for h in hints
+             if h.variable not in equation_system.assignments]
+
+    # If unknowns remain and we have fully simplified the system, we may still
+    # be able to make progress by extracting an assignment from a `Hint`. In a
+    # system that has otherwise been fully simplified, it is guaranteed that
+    # introducing a new assignment will yield a system that remains satisfiable
+    # if the original system was satisfiable---because this is a sign of an
+    # underdetermined system.
+    if (assignment := choose_variable_assignment_from_hints(hints)) is not None:
+      variable, expr = assignment
+      equation_system &= equations.EquationSystem(assignments={variable: expr})
+    else:
+      break
 
   raise NotImplementedError("Default assignment logic")
 
@@ -112,6 +178,18 @@ def _constant_equation_system(
     layout = fa.WGSplatFragLayout(shape=tuple(constant_op.result.type.shape))
     return equations.EquationSystem(assignments={variable: equations.ConstantExpression(layout)})
   return equations.EquationSystem()
+
+
+@_add_equation_system_derivation_rule(mgpu.LayoutCastOp)
+def _layout_cast_equation_system(
+    op: mgpu.LayoutCastOp
+) -> equations.EquationSystem:
+  in_variable = Variable(op, VariableType.OPERAND, 0)
+  out_variable = Variable(op, VariableType.RESULT, 0)
+  out_layout = equations.ConstantExpression(layouts_lib.from_layout_attr(op.new_layout))
+  return equations.EquationSystem(
+      assignments={out_variable: out_layout, in_variable: out_layout},
+  )
 
 
 def _ensure_all_layouts_are_set(op: ir.OpView):
@@ -193,29 +271,130 @@ def op_variables(op: ir.OpView) -> list[Variable]:
   return variables
 
 
+def producer_variable(variable: Variable) -> Variable:
+  """Given a variable, returns the corresponding result variable in its producer.
+
+  The variable has to represent an operand of its operation.
+  """
+  assert variable.is_operand
+  value = variable.key.operation.operands[variable.key.index]
+  producer = value.owner
+  if isinstance(producer, ir.Operation):
+    index = list(producer.results).index(value)
+    return Variable(producer.opview, VariableType.RESULT, index)
+
+  # Block case, useful for deriving layouts for ops
+  # depending on function parameters, or loop block arguments.
+  if isinstance(producer, ir.Block):
+    index = list(cast(ir.Block, producer).arguments).index(value)
+    return Variable(producer, VariableType.OPERAND, index)
+
+  raise TypeError(
+      f"Producer {producer} is not an operation nor a block: {type(producer)}."
+  )
+
+
+def consumer_variables(variable: Variable) -> Sequence[Variable]:
+  """Given a variable, returns the corresponding operand variables in its consumers.
+
+  The variable has to represent a result of its operation.
+  """
+  assert variable.is_result
+  consumer_variables: list[Variable] = []
+  # The layout can also be chosen from the layout of the consumers of the
+  # results.
+  for use in cast(ir.OpResult, variable.key.operation.results[variable.key.index]).uses:
+    consumer = use.owner.opview  # pytype: disable=attribute-error
+    index = use.operand_number
+    consumer_variables.append(Variable(consumer, VariableType.OPERAND, index))
+  return consumer_variables
+
+
+def equation_system_and_hints_for_op(
+    op: ir.OpView, rule: EquationSystemDerivationRule
+) -> tuple[equations.EquationSystem, list[Hint]]:
+  """Produces an equation system and a list of hints for the given op.
+
+  The equation system is derived directly from the given rule, and is not
+  further constrained. Hints are subsequently derived from this equation system
+  that relate the variables of the op to the producers of the op's operands and
+  the consumers of the op's results.
+  """
+  equation_system = rule(op)
+  all_variables: list[Variable] = op_variables(op)
+  visited: set[Variable] = set()
+  hints: list[Hint] = list()
+
+  for variable in all_variables:
+    if variable in visited:
+      continue
+    # Construct a list containing all the variables that are necessary equal to
+    # the current variable. Consider the following pseudo-program:
+    #
+    #   a = producer0()  # variable v0 is producer0's out_layouts[0]
+    #   b = producer1()  # variable v1 is producer1's out_layouts[0]
+    #   c = add(a, b)    # variable v2, v3, v4 are respectively add's in_layouts[0], in_layouts[1], and out_layouts[0]
+    #   consumer0(c)     # variable v5 is consumer0's in_layouts[0]
+    #   consumer1(c)     # variable v6 is consumer1's in_layouts[0]
+    #
+    # We know that v2 = v3 = v4, and we may want to propagate a layout from v0,
+    # v1, v5, or v6. For that reason, we capture all the connected variables,
+    # and then extract their producer/consumers to construct a `Hint`.
+    #
+    # We use a list here because we care about having a deterministic iteration
+    # order.
+    union: list[Variable] = [variable]
+    for equation in equation_system.equations:
+      lhs, rhs = equation.lhs, equation.rhs
+      if lhs == variable and isinstance(rhs, Variable) and rhs not in union:
+        union.append(rhs)
+      if rhs == variable and isinstance(lhs, Variable) and lhs not in union:
+        union.append(lhs)
+
+    producers = tuple(producer_variable(v) for v in union if v.is_operand)
+    consumers: list[Variable] = []
+    for v in union:
+      if v.is_result:
+        consumers.extend(consumer_variables(v))
+
+    if producers:
+      least_replicated_producer = equations.LeastReplicatedExpression(producers)
+      hint_expr = equations.MostReplicatedExpression(
+          (least_replicated_producer, *consumers)
+      )
+      hints.append(Hint(variable, hint_expr))
+    elif consumers:
+      hint_expr = equations.MostReplicatedExpression(tuple(consumers))
+      hints.append(Hint(variable, hint_expr))
+    visited.update(union)
+
+  return equation_system, [simplify_hint(h, equation_system.assignments) for h in hints]
+
+
 def infer_layout(module: ir.Module):
   global_equation_system = equations.EquationSystem()
+  all_hints: list[Hint] = []
   variables: set[Variable] = set()
 
   def gather_equations(op: ir.Operation):
     if not inference_utils.should_have_layout(op):
       return
-    elif equation_system_derivation_rule := _equation_system_derivation_rules.get(op.OPERATION_NAME, None):  # pytype: disable=attribute-error
+    elif rule := _equation_system_derivation_rules.get(op.OPERATION_NAME, None):  # pytype: disable=attribute-error
       pass
     else:
       raise NotImplementedError(f"No layout inference rule defined for {op}")
 
     variables.update(op_variables(op))
     nonlocal global_equation_system
-    global_equation_system &= equation_system_derivation_rule(op)
-    # TODO(bchetioui): add inter-op rules. This will be done very soon, it is
-    # just dropped from the initial version to make it easier to review.
+    equation_system, hints = equation_system_and_hints_for_op(op, rule)
+    global_equation_system &= equation_system
+    all_hints.extend(hints)
 
   for op in module.body:
     inference_utils.traverse_op(op, gather_equations)
 
   # Attempt to find assignments that satisfy the equation system.
-  solution = find_assignments_for(variables, global_equation_system)
+  solution = find_assignments_for(variables, global_equation_system, all_hints)
 
   if isinstance(solution, equations.Unsatisfiable):
     raise ValueError(
