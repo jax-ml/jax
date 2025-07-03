@@ -26,7 +26,7 @@ from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 
-from . import equations
+from . import equations as eqns
 from . import fragmented_array as fa
 from . import inference_utils
 from . import layouts as layouts_lib
@@ -55,7 +55,7 @@ class VariableKey:
 
 
 @dataclasses.dataclass(frozen=True)
-class Variable(equations.Variable):
+class Variable(eqns.Variable):
   """This variable represents an operand/result of a MLIR operation."""
   def __init__(self, operation: ir.OpView, type: VariableType, index: int):
     super().__init__(VariableKey(operation, type, index))
@@ -79,31 +79,33 @@ class Hint:
   `variable` should be equal to `expression`.
   """
   variable: Variable
-  expression: equations.Expression
+  expression: eqns.Expression
 
 
 def choose_variable_assignment_from_hints(
     hints: Sequence[Hint],
-) -> tuple[Variable, equations.ConstantExpression] | None:
+) -> tuple[Variable, eqns.ConstantExpression] | None:
   """Attempts to choose a single variable assignment from a list of `Hint`s."""
   for hint in hints:
-    if isinstance(hint.expression, equations.ConstantExpression):
+    if isinstance(hint.expression, eqns.ConstantExpression):
       return (hint.variable, hint.expression)
   return None
 
 
 def simplify_hint(
-    h: Hint, assignments: dict[Variable, equations.ConstantExpression]
+    h: Hint, assignments: dict[Variable, eqns.ConstantExpression]
 ) -> Hint:
-  """Like `equations.simplify_equation` but for `Hint`s."""
+  """Like `eqns.simplify_equation` but for `Hint`s."""
   return dataclasses.replace(
-      h, expression=equations.simplify_expression(h.expression, assignments))
+      h, expression=eqns.simplify_expression(h.expression, assignments)
+  )
+
 
 def find_assignments_for(
-    unknowns: set[equations.Variable],
-    equation_system: equations.EquationSystem,
+    unknowns: set[eqns.Variable],
+    equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
-) -> dict[Variable, equations.ConstantExpression] | equations.Unsatisfiable:
+) -> dict[Variable, eqns.ConstantExpression] | eqns.Unsatisfiable:
   """Attempts to find assignments that satisfy `equation_system` for `unknowns`.
 
   Args:
@@ -117,9 +119,9 @@ def find_assignments_for(
       such that the assignment satisfies the equation system otherwise.
   """
   while True:
-    equation_system = equations.simplify(equation_system)
-    if isinstance(equation_system, equations.Unsatisfiable):
-      return equations.Unsatisfiable()
+    equation_system = eqns.simplify(equation_system)
+    if isinstance(equation_system, eqns.Unsatisfiable):
+      return eqns.Unsatisfiable()
 
     remaining_unknowns = unknowns - equation_system.assignments.keys()
 
@@ -142,14 +144,14 @@ def find_assignments_for(
     # underdetermined system.
     if (assignment := choose_variable_assignment_from_hints(hints)) is not None:
       variable, expr = assignment
-      equation_system &= equations.EquationSystem(assignments={variable: expr})
+      equation_system &= eqns.EquationSystem(assignments={variable: expr})
     else:
       break
 
   raise NotImplementedError("Default assignment logic")
 
 
-EquationSystemDerivationRule = Callable[[ir.OpView], equations.EquationSystem]
+EquationSystemDerivationRule = Callable[[ir.OpView], eqns.EquationSystem]
 _equation_system_derivation_rules: dict[str, EquationSystemDerivationRule] = {}
 
 
@@ -167,8 +169,8 @@ def is_vector(v: ir.Value) -> bool:
 
 @_add_equation_system_derivation_rule(arith.ConstantOp)
 def _constant_equation_system(
-    constant_op: arith.ConstantOp
-) -> equations.EquationSystem:
+    constant_op: arith.ConstantOp,
+) -> eqns.EquationSystem:
   value = constant_op.value
   variable = Variable(constant_op, VariableType.RESULT, 0)
   if (
@@ -176,18 +178,20 @@ def _constant_equation_system(
       and ir.DenseElementsAttr(value).is_splat
   ):
     layout = fa.WGSplatFragLayout(shape=tuple(constant_op.result.type.shape))
-    return equations.EquationSystem(assignments={variable: equations.ConstantExpression(layout)})
-  return equations.EquationSystem()
+    return eqns.EquationSystem(
+        assignments={variable: eqns.ConstantExpression(layout)}
+    )
+  return eqns.EquationSystem()
 
 
 @_add_equation_system_derivation_rule(mgpu.LayoutCastOp)
-def _layout_cast_equation_system(
-    op: mgpu.LayoutCastOp
-) -> equations.EquationSystem:
+def _layout_cast_equation_system(op: mgpu.LayoutCastOp) -> eqns.EquationSystem:
   in_variable = Variable(op, VariableType.OPERAND, 0)
   out_variable = Variable(op, VariableType.RESULT, 0)
-  out_layout = equations.ConstantExpression(layouts_lib.from_layout_attr(op.new_layout))
-  return equations.EquationSystem(
+  out_layout = eqns.ConstantExpression(
+      layouts_lib.from_layout_attr(op.new_layout)
+  )
+  return eqns.EquationSystem(
       assignments={out_variable: out_layout, in_variable: out_layout},
   )
 
@@ -215,7 +219,7 @@ def _ensure_right_number_of_layouts(
     )
 
 
-def assign_layouts(solution: dict[Variable, equations.ConstantExpression]):
+def assign_layouts(solution: dict[Variable, eqns.ConstantExpression]):
   """Assigns the layouts in `solution` to the MLIR ops they belong to.
 
   This function requires that, for each MLIR op that appears in `solution`,
@@ -312,7 +316,7 @@ def consumer_variables(variable: Variable) -> Sequence[Variable]:
 
 def equation_system_and_hints_for_op(
     op: ir.OpView, rule: EquationSystemDerivationRule
-) -> tuple[equations.EquationSystem, list[Hint]]:
+) -> tuple[eqns.EquationSystem, list[Hint]]:
   """Produces an equation system and a list of hints for the given op.
 
   The equation system is derived directly from the given rule, and is not
@@ -358,13 +362,13 @@ def equation_system_and_hints_for_op(
         consumers.extend(consumer_variables(v))
 
     if producers:
-      least_replicated_producer = equations.LeastReplicatedExpression(producers)
-      hint_expr = equations.MostReplicatedExpression(
+      least_replicated_producer = eqns.LeastReplicatedExpression(producers)
+      hint_expr = eqns.MostReplicatedExpression(
           (least_replicated_producer, *consumers)
       )
       hints.append(Hint(variable, hint_expr))
     elif consumers:
-      hint_expr = equations.MostReplicatedExpression(tuple(consumers))
+      hint_expr = eqns.MostReplicatedExpression(tuple(consumers))
       hints.append(Hint(variable, hint_expr))
     visited.update(union)
 
@@ -372,7 +376,7 @@ def equation_system_and_hints_for_op(
 
 
 def infer_layout(module: ir.Module):
-  global_equation_system = equations.EquationSystem()
+  global_equation_system = eqns.EquationSystem()
   all_hints: list[Hint] = []
   variables: set[Variable] = set()
 
@@ -396,7 +400,7 @@ def infer_layout(module: ir.Module):
   # Attempt to find assignments that satisfy the equation system.
   solution = find_assignments_for(variables, global_equation_system, all_hints)
 
-  if isinstance(solution, equations.Unsatisfiable):
+  if isinstance(solution, eqns.Unsatisfiable):
     raise ValueError(
         "Failed to infer a possible set of layouts. This should never happen."
     )
