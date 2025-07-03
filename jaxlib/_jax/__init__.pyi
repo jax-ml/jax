@@ -1245,7 +1245,7 @@ def buffer_to_dlpack_managed_tensor(
     buffer: object, stream: int | None = None
 ) -> typing_extensions.CapsuleType: ...
 def dlpack_managed_tensor_to_buffer(
-    dlpack: typing_extensions.CapsuleType, device: Device, stream: int | None
+    dlpack: typing_extensions.CapsuleType, device: Device, stream: int | None, copy: bool | None = None
 ) -> ArrayImpl: ...
 def cuda_array_interface_to_buffer(
     cai: dict, gpu_backend: Client | None = None, device_id: int | None = None
