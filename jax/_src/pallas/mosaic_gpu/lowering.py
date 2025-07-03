@@ -285,7 +285,7 @@ def _run_scoped_resource_estimator(
   for v in jaxpr.invars:
     aval = v.aval
     if isinstance(aval.dtype, gpu_core.BarrierType):
-      multiplier = 1 if aval.dtype.for_tensor_core else ctx.arrival_multiplier
+      multiplier = 1 if aval.dtype.orders_tensor_core else ctx.arrival_multiplier
       rs += Resources(
           barrier_counts=collections.Counter([
               mgpu.Barrier(
@@ -725,7 +725,7 @@ def lower_pipelined_jaxpr_to_module(
       return gpu_core.WGMMAAccumulatorRef(aval.shape, aval.dtype)
     elif isinstance(aval, gpu_core.AbstractTMEMRef):
       return gpu_core.TMEM(aval.shape, aval.dtype, packed=aval.packed)
-    elif isinstance(aval, pallas_core.AbstractMemoryRef):
+    elif isinstance(aval, state_types.AbstractRef):
       return pallas_core.MemoryRef(aval.shape, aval.dtype, aval.memory_space)
     else:
       return gpu_core.SMEM(aval.shape, aval.dtype)
@@ -1534,24 +1534,14 @@ def _swap_lowering_rule(
   if not isinstance(value, mgpu.FragmentedArray):
     raise TypeError(f"Can only store arrays (got {value}).")
 
-  if isinstance(x_ref, tcgen05.TMEMRef):
-    transforms = jax.tree.unflatten(tree, leaves)
-    x_tmem, transforms = _handle_transforms(
-        ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
-    )
-    if transforms:
-      raise NotImplementedError(
-          f"Unimplemented transforms for TMEM refs. {transforms=}"
-      )
-    old_value = x_tmem.load(layout=value.layout)
-    x_tmem.store(value)
-    return old_value
-
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
     raise TypeError(f"Can only store to references (got {x_ref}).")
   v_aval = ctx.avals_in[1]
   transforms = jax.tree.unflatten(tree, leaves)
-  transposed_value = value.layout == mgpu.WGMMA_TRANSPOSED_LAYOUT
+  transposed_value = value.layout in (
+      mgpu.WGMMA_TRANSPOSED_LAYOUT,
+      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
+  )
   x_smem, transforms = _handle_transforms(
       ctx, x_ref, transforms, handle_transposes=not transposed_value,
       allow_peer_refs=True
@@ -2456,7 +2446,7 @@ def _run_scoped_lowering_rule(
             f" allocation (currently collective_axes={collective_axes})."
         )
       if isinstance(aval.dtype, gpu_core.BarrierType):
-        multiplier = (1 if aval.dtype.for_tensor_core else
+        multiplier = (1 if aval.dtype.orders_tensor_core else
                       ctx.estimator_ctx.arrival_multiplier)
         barrier_ref = alloc_stack.enter_context(
             ctx.module_ctx.reserve_barrier(

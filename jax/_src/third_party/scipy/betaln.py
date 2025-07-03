@@ -1,5 +1,5 @@
-from jax import lax
-import jax.numpy as jnp
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import promote_args_inexact
 

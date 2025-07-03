@@ -1017,7 +1017,9 @@ def _handle_consts_in_bwd(f, const_avals, *args):
   return [Zero(a) for a in const_avals] + list(f(*args))
 
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
-mlir.register_lowering(custom_vjp_call_p, _custom_jvp_vjp_call_lowering)
+# TODO(phawkins,mattjj): make this primitive cacheable.
+mlir.register_lowering(custom_vjp_call_p, _custom_jvp_vjp_call_lowering,
+                       cacheable=False)
 
 def _custom_vjp_call_typecheck(_, *in_avals, call_jaxpr, **kwargs):
   del in_avals, kwargs
@@ -1105,7 +1107,9 @@ def _custom_vjp_call_pp_rule(eqn: core.JaxprEqn,
 core.pp_eqn_rules[custom_vjp_call_p] = _custom_vjp_call_pp_rule
 
 batching.primitive_batchers[ad.custom_lin_p] = ad.raise_custom_vjp_error_on_jvp
-mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp)
+# TODO(phawkins,mattjj): make this primitive cacheable.
+mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp,
+                       cacheable=False)
 
 
 def custom_gradient(fun):

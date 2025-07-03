@@ -39,12 +39,13 @@ from jax._src import effects
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
+from jax._src.lib import ifrt_version
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect, sdy
-from jax._src import mesh
 from jax._src import pjit
 from jax._src import sharding
 from jax._src import sharding_impls
@@ -217,7 +218,7 @@ class Exported:
 
   def in_shardings_jax(
     self,
-    mesh: mesh.Mesh) -> Sequence[sharding.Sharding | None]:
+    mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings corresponding to self.in_shardings_hlo.
 
     The Exported object stores `in_shardings_hlo` as HloShardings, which are
@@ -257,7 +258,7 @@ class Exported:
 
   def out_shardings_jax(
       self,
-      mesh: mesh.Mesh) -> Sequence[sharding.Sharding | None]:
+      mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings corresponding to `self.out_shardings_hlo`.
 
     See documentation for in_shardings_jax.
@@ -693,7 +694,8 @@ def _export_lowered(
   # Shardy was used during lowering if we can find the Shardy mesh in the
   # module. Note that the mesh should have been lifted by the
   # `sdy-lift-inlined-meshes` pass in mlir.py.
-  shardy_enabled = has_sdy_meshes_in_frontend_attrs(mlir_module)
+  shardy_enabled = has_sdy_mesh(ir.SymbolTable(mlir_module.operation),
+                                mlir_module)
 
   mlir_module_serialized = _module_to_bytecode(mlir_module)
 
@@ -834,8 +836,15 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   else:
     target_version = hlo.get_version_from_compatibility_requirement(
       hlo.StablehloCompatibilityRequirement.WEEK_4)
-  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
-      mlir_str, target_version)
+  if jaxlib_extension_version >= 357 and ifrt_version >= 14:
+    module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
+        mlir_str, target_version, xb.get_backend().serialize_with_sdy)
+  else:
+    # pylint: disable=no-value-for-parameter
+    module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
+        mlir_str, target_version)
+    # pylint: disable=no-value-for-parameter
+
   return module_serialized
 
 
@@ -1004,6 +1013,9 @@ def _wrap_main_func(
                                  orig_main_args)
       func_dialect.ReturnOp([call.results[idx] for idx in new_main_result_indices])
     symbol_table.set_symbol_name(new_main_op, "main")
+    pipeline = passmanager.PassManager.parse(
+        'builtin.module(symbol-dce)')
+    pipeline.run(wrapped_module.operation)
 
   return wrapped_module
 
@@ -1121,7 +1133,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "shape_assertion",  # Used by shape_poly to evaluate assertions
 }
 
-check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|\[({}, )*{}\]"")$")
+check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|.*\[({}, )*{}\]"")$")
 
 def _check_module(mod: ir.Module, *,
                   disabled_checks: Sequence[DisabledSafetyCheck],
@@ -1147,7 +1159,7 @@ def _check_module(mod: ir.Module, *,
   module_uses_non_replicated_sharding = False
   def check_sharding(op: ir.Operation, loc: ir.Location):
     try:
-      sharding = (op.attributes["sdy.sharding"] if shardy_enabled else
+      sharding = (op.attributes["sharding"] if shardy_enabled else
                   op.attributes["mhlo.sharding"])
     except KeyError:
       pass
@@ -1176,6 +1188,8 @@ def _check_module(mod: ir.Module, *,
         disallowed_custom_call_ops.append(f"{op} at {op.location}")
       if call_target_name_attr == sharding_attr:
         check_sharding(op, op.location)
+    elif op_name == "sdy.sharding_constraint":
+      check_sharding(op, op.location)
 
   def walk_operations(op):
     check_op(op)
@@ -1224,7 +1238,7 @@ def _hlo_sharding_to_named_sharding(
     mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh):
   if hlo_sharding is None:
     return None
-  return sharding_impls.create_mesh_pspec_sharding(
+  return sharding_impls.cached_named_sharding(
       mesh, sharding_impls.parse_flatten_op_sharding(hlo_sharding, mesh)[0])
 
 
@@ -1432,8 +1446,7 @@ def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
   axes_names = tuple(a.name for a in axes)
   return mesh_lib.AbstractMesh(axes_sizes, axes_names)
 
-
-def has_sdy_meshes_in_frontend_attrs(submodule: ir.Module) -> bool:
+def has_sdy_meshes_in_frontend_attributes(submodule: ir.Module) -> bool:
   if "mhlo.frontend_attributes" not in submodule.operation.attributes:
     return False
   frontend_attributes = submodule.operation.attributes[
@@ -1441,26 +1454,39 @@ def has_sdy_meshes_in_frontend_attrs(submodule: ir.Module) -> bool:
   ]
   return "xla.sdy.meshes" in frontend_attributes
 
+def has_sdy_mesh(symtab: ir.SymbolTable, submodule: ir.Module) -> bool:
+  for mesh_name in ("mesh", "empty_mesh", "maximal_mesh_0"):
+    if mesh_name in symtab:
+      return isinstance(symtab[mesh_name], sdy.MeshOp)
+  return has_sdy_meshes_in_frontend_attributes(submodule)
+
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             exported: Exported):
   if exported.uses_global_constants:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
   submodule = ir.Module.parse(exported.mlir_module())
 
-  shardy_enabled = has_sdy_meshes_in_frontend_attrs(submodule)
+  symtab = ir.SymbolTable(submodule.operation)
+  shardy_enabled = has_sdy_mesh(symtab, submodule)
   if shardy_enabled:
-    with submodule.context:
-      # TODO(b/422690222): remove this pass once the bug is fixed.
-      pipeline = passmanager.PassManager.parse(
-          'builtin.module(xla-sdy-round-trip-import-shardy-attrs)')
-      pipeline.run(submodule.operation)
+    if not config.use_shardy_partitioner.value:
+      raise ValueError(
+          "The function was exported with shardy enabled but you are calling "
+          "it with Shardy disabled. Please enable Shardy using "
+          "`--jax_use_shardy_partitioner=True`.")
+    # TODO(b/422690222): remove this pass once we don't need to support 6m
+    # old exported modules.
+    if has_sdy_meshes_in_frontend_attributes(submodule):
+      with submodule.context:
+        pipeline = passmanager.PassManager.parse(
+            'builtin.module(xla-sdy-round-trip-import-shardy-attrs)')
+        pipeline.run(submodule.operation)
 
   with submodule.context:
     pipeline = passmanager.PassManager.parse(
         'builtin.module(sdy-lift-inlined-meshes)')
     pipeline.run(submodule.operation)
   mesh = None
-  symtab = ir.SymbolTable(submodule.operation)
   if shardy_enabled:
     mesh = get_mesh_from_symbol(symtab)
 

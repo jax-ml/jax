@@ -928,7 +928,7 @@ def _allreduce_impl(prim, pos_reducer, *args, axes, axis_index_groups):
   return [pos_reducer(arg, axes) for arg in args]
 
 def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
-  _check_axis_names(axes)
+  _check_axis_names(axes, 'psum')
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
   pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
   if axis_index_groups is not None:
@@ -949,7 +949,7 @@ def _psum_invariant_abstract_eval(name, *args, axes, axis_index_groups):
         *args, axes=axes, axis_index_groups=axis_index_groups)
 
   assert isinstance(axes, tuple)
-  _check_axis_names(axes)
+  _check_axis_names(axes, 'psum')
   arg_vma = [a.vma for a in args]
   # If intersection between arg_vma and axes is empty, error
   if any(not set(axes) & a for a in arg_vma):
@@ -985,12 +985,14 @@ def _pmin_pmax_abstract_eval(name, *args, axes, axis_index_groups):
   return _psum_invariant_abstract_eval(
       name, *args, axes=axes, axis_index_groups=axis_index_groups)
 
-def _check_axis_names(axes):
+def _check_axis_names(axes, api_name):
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
   axis_env = core.get_axis_env()
   for name in named_axes:
     if not axis_env.axis_exists(name):
-      raise NameError(f"unbound axis name: {name}")
+      raise NameError(
+          f"Found an unbound axis name: {name}. To fix this, please call"
+          f" {api_name} under `jax.shard_map`.")
 
 def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
   if axis_index_groups is not None and ("tpu" in ctx.module_context.platforms):
@@ -1166,7 +1168,7 @@ def _ppermute_batcher(axis_data, vals_in, dims_in, axis_name, perm):
   return v.take(perm_indices, d), d
 
 def _raise_to_shaped_abstract_eval(x, *, axis_name, **params):
-  _check_axis_names(axis_name)
+  _check_axis_names(axis_name, 'ppermute')
   collective_vma_rule('ppermute', axis_name, x)
   return x
 
@@ -1218,7 +1220,7 @@ mlir.lowerable_effects.add_type(SingleSideCollectiveEffect)
 
 
 def _psend_abstract_eval(x, *, axis_name, **params):
-  _check_axis_names(axis_name)
+  _check_axis_names(axis_name, 'psend')
   return abstract_token, {
       *map(core.NamedAxisEffect, axis_name),
       single_side_collective_effect,
@@ -1492,7 +1494,7 @@ def _all_to_all_effectful_abstract_eval(
   del tiled  # expand_dims and squeeze is done in `all_to_all` if `True`
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
-  _check_axis_names(axis_name)
+  _check_axis_names(axis_name, 'all_to_all')
   shape = list(input_aval.shape)
   axis_size = (
       _axis_size(axis_name)
@@ -1581,7 +1583,7 @@ def _ragged_all_to_all_effectful_abstract_eval(
         " size, but got shape {}".format(recv_sizes.shape)
     )
 
-  _check_axis_names(axis_name)
+  _check_axis_names(axis_name, 'ragged_all_to_all')
   out_aval = output.update(shape=output.shape, weak_type=False)
   effects = {*map(core.NamedAxisEffect, axis_name)}
   return out_aval, effects
@@ -1802,7 +1804,7 @@ def _all_gather_effectful_abstract_eval(
 ):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
-  _check_axis_names(axis_name)
+  _check_axis_names(axis_name, 'all_gather')
   new_shape = list(x_aval.shape)
   if tiled:
     new_shape[all_gather_dimension] *= axis_size
@@ -1920,7 +1922,7 @@ all_gather_invariant_p = core.Primitive('all_gather_invariant')
 def _all_gather_invariant_effectful_abstract_eval(
     x_aval, *, all_gather_dimension, axis_name, axis_size, tiled
 ):
-  _check_axis_names(axis_name)
+  _check_axis_names(axis_name, 'all_gather_invariant')
   new_shape = list(x_aval.shape)
   if tiled:
     new_shape[all_gather_dimension] *= axis_size
@@ -2026,7 +2028,7 @@ def _reduce_scatter_effectful_abstract_eval(
 ):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
-  _check_axis_names(axis_name)
+  _check_axis_names(axis_name, 'reduce_scatter')
   new_shape = list(x_aval.shape)
   scatter_dim_input_size = x_aval.shape[scatter_dimension]
   if tiled:
@@ -2244,7 +2246,7 @@ def _axis_index_lowering(ctx, *, axis_name):
 def _axis_index_effectful_abstract_eval(*, axis_name):
   effect = {core.NamedAxisEffect(axis_name)}
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
-  _check_axis_names(axis_name)
+  _check_axis_names(axis_name, 'axis_index')
   mesh = get_abstract_mesh()
   sharding = NamedSharding(mesh, P())
   vma = ((frozenset(axis_name) if mesh._any_axis_manual else frozenset())
@@ -2280,7 +2282,7 @@ def _pgather_impl(src, idx, *, axes):
 def _pgather_abstract_eval(src, idx, *, axes):
   # TODO: Avals with names rule: remove all axes from src, insert those from idx
   #       The order is important, because it is ok to re-insert one of the deleted axes!
-  _check_axis_names(axes)
+  _check_axis_names(axes, 'pgather')
   shape = list(src.shape)
   for axis in sorted((a for a in axes if isinstance(a, int)), reverse=True):
     del shape[axis]

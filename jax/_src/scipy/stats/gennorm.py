@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import lax
+from jax._src import lax
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 

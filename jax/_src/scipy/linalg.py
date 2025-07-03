@@ -15,17 +15,19 @@
 from __future__ import annotations
 
 from functools import partial
-
-import numpy as np
 import textwrap
 from typing import overload, Any, Literal
 
-import jax
-import jax.numpy as jnp
-from jax import jit, vmap, jvp
-from jax import lax
+import numpy as np
+
+from jax._src import config
 from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
+from jax._src.api import jit, vmap, jvp
 from jax._src.lax import linalg as lax_linalg
+from jax._src.numpy import linalg as jnp_linalg
+from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import (
     check_arraylike, promote_dtypes, promote_dtypes_inexact,
     promote_dtypes_complex)
@@ -352,7 +354,7 @@ def det(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
     Array([-2., 37.], dtype=float32)
   """
   del overwrite_a, check_finite  # unused
-  return jnp.linalg.det(a)
+  return jnp_linalg.det(a)
 
 
 @overload
@@ -604,7 +606,7 @@ def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
      Array([ 0.  ,  1.25, -0.5 ], dtype=float32)
   """
   del overwrite_a, check_finite  # unused
-  return jnp.linalg.inv(a)
+  return jnp_linalg.inv(a)
 
 
 @partial(jit, static_argnames=('overwrite_a', 'check_finite'))
@@ -729,7 +731,7 @@ def _lu(a: ArrayLike, permute_l: bool) -> tuple[Array, Array] | tuple[Array, Arr
   a, = promote_dtypes_inexact(jnp.asarray(a))
   lu, _, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
-  m, n = jnp.shape(a)
+  m, n = np.shape(a)
   p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m, dtype=permutation.dtype)[:, None], dtype=dtype))
   k = min(m, n)
   l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
@@ -997,7 +999,7 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
 @partial(jit, static_argnames=('assume_a', 'lower'))
 def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   if assume_a != 'pos':
-    return jnp.linalg.solve(a, b)
+    return jnp_linalg.solve(a, b)
 
   a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
   lax_linalg._check_solve_shapes(a, b)
@@ -1096,7 +1098,7 @@ def _solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str,
   a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
 
   # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
-  b_is_vector = jnp.ndim(a) == jnp.ndim(b) + 1
+  b_is_vector = np.ndim(a) == np.ndim(b) + 1
   if b_is_vector:
     b = b[..., None]
   out = lax_linalg.triangular_solve(a, b, left_side=True, lower=lower,
@@ -1230,7 +1232,7 @@ def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 1
     raise ValueError(f"Expected A to be a (batched) square matrix, got {A.shape=}.")
 
   if A.ndim > 2:
-    return jnp.vectorize(
+    return jnp_vectorize.vectorize(
       partial(expm, upper_triangular=upper_triangular, max_squarings=max_squarings),
       signature="(n,n)->(n,n)")(A)
 
@@ -1238,7 +1240,7 @@ def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 1
 
   def _nan(args):
     A, *_ = args
-    return jnp.full_like(A, jnp.nan)
+    return jnp.full_like(A, np.nan)
 
   def _compute(args):
     A, P, Q = args
@@ -1253,7 +1255,7 @@ def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 1
 def _calc_P_Q(A: Array) -> tuple[Array, Array, Array]:
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
     raise ValueError('expected A to be a square matrix')
-  A_L1 = jnp.linalg.norm(A,1)
+  A_L1 = jnp_linalg.norm(A,1)
   n_squarings: Array
   U: Array
   V: Array
@@ -1284,7 +1286,7 @@ def _solve_P_Q(P: ArrayLike, Q: ArrayLike, upper_triangular: bool = False) -> Ar
   if upper_triangular:
     return solve_triangular(Q, P)
   else:
-    return jnp.linalg.solve(Q, P)
+    return jnp_linalg.solve(Q, P)
 
 def _precise_dot(A: ArrayLike, B: ArrayLike) -> Array:
   return jnp.dot(A, B, precision=lax.Precision.HIGHEST)
@@ -1459,7 +1461,7 @@ def block_diag(*arrs: ArrayLike) -> Array:
   if len(arrs) == 0:
     arrs =  (jnp.zeros((1, 0)),)
   arrs = tuple(promote_dtypes(*arrs))
-  bad_shapes = [i for i, a in enumerate(arrs) if jnp.ndim(a) > 2]
+  bad_shapes = [i for i, a in enumerate(arrs) if np.ndim(a) > 2]
   if bad_shapes:
     raise ValueError("Arguments to jax.scipy.linalg.block_diag must have at "
                      "most 2 dimensions, got {} at argument {}."
@@ -1529,8 +1531,8 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   def _sturm(alpha, beta_sq, pivmin, alpha0_perturbation, x):
     """Implements the Sturm sequence recurrence."""
     n = alpha.shape[0]
-    zeros = jnp.zeros(x.shape, dtype=jnp.int32)
-    ones = jnp.ones(x.shape, dtype=jnp.int32)
+    zeros = jnp.zeros(x.shape, dtype=np.int32)
+    ones = jnp.ones(x.shape, dtype=np.int32)
 
     # The first step in the Sturm sequence recurrence
     # requires special care if x is equal to alpha[0].
@@ -1576,7 +1578,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
 
   alpha = jnp.asarray(d)
   beta = jnp.asarray(e)
-  supported_dtypes = (jnp.float32, jnp.float64, jnp.complex64, jnp.complex128)
+  supported_dtypes = (np.float32, np.float64, np.complex64, np.complex128)
   if alpha.dtype != beta.dtype:
     raise TypeError("diagonal and off-diagonal values must have same dtype, "
                     f"got {alpha.dtype} and {beta.dtype}")
@@ -1588,7 +1590,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   if n <= 1:
     return jnp.real(alpha)
 
-  if jnp.issubdtype(alpha.dtype, np.complexfloating):
+  if dtypes.issubdtype(alpha.dtype, np.complexfloating):
     alpha = jnp.real(alpha)
     beta_sq = jnp.real(beta * jnp.conj(beta))
     beta_abs = jnp.sqrt(beta_sq)
@@ -1625,13 +1627,13 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   # Determine the indices of the desired eigenvalues, based on select and
   # select_range.
   if select == 'a':
-    target_counts = jnp.arange(n, dtype=jnp.int32)
+    target_counts = jnp.arange(n, dtype=np.int32)
   elif select == 'i':
     if select_range is None:
       raise ValueError("for select='i', select_range must be specified.")
     if select_range[0] > select_range[1]:
       raise ValueError('Got empty index range in select_range.')
-    target_counts = jnp.arange(select_range[0], select_range[1] + 1, dtype=jnp.int32)
+    target_counts = jnp.arange(select_range[0], select_range[1] + 1, dtype=np.int32)
   elif select == 'v':
     # TODO(phawkins): requires dynamic shape support.
     raise NotImplementedError("eigh_tridiagonal(..., select='v') is not "
@@ -1649,7 +1651,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
 
   # Pre-broadcast the scalars used in the Sturm sequence for improved
   # performance.
-  target_shape = jnp.shape(target_counts)
+  target_shape = np.shape(target_counts)
   lower = jnp.broadcast_to(lower, shape=target_shape)
   upper = jnp.broadcast_to(upper, shape=target_shape)
   mid = 0.5 * (upper + lower)
@@ -1675,7 +1677,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   return mid
 
 @partial(jit, static_argnames=('side', 'method'))
-@jax.default_matmul_precision("float32")
+@config.default_matmul_precision("float32")
 def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float | None = None,
           max_iterations: int | None = None) -> tuple[Array, Array]:
   r"""Computes the polar decomposition.
@@ -1943,15 +1945,15 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Arra
     raise ValueError(f"Input array shapes must match: Z: {Z_arr.shape} vs. T: {T_arr.shape}")
 
   T_arr, Z_arr = promote_dtypes_complex(T_arr, Z_arr)
-  eps = jnp.finfo(T_arr.dtype).eps
+  eps = dtypes.finfo(T_arr.dtype).eps
   N = T_arr.shape[0]
 
   if N == 1:
     return T_arr, Z_arr
 
   def _update_T_Z(m, T, Z):
-    mu = jnp.linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
-    r = jnp.linalg.norm(jnp.array([mu[0], T[m, m-1]])).astype(T.dtype)
+    mu = jnp_linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
+    r = jnp_linalg.norm(jnp.array([mu[0], T[m, m-1]])).astype(T.dtype)
     c = mu[0] / r
     s = T[m, m-1] / r
     G = jnp.array([[c.conj(), s], [-s, c]], dtype=T.dtype)
@@ -1965,7 +1967,7 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Arra
 
     # T[:m+1, m-1:m+1] = T[:m+1, m-1:m+1] @ G.conj().T
     T_cols = lax.dynamic_slice_in_dim(T, m-1, 2, axis=1)
-    row_mask = jnp.arange(N)[:, jnp.newaxis] < m+1
+    row_mask = jnp.arange(N)[:, np.newaxis] < m+1
     T_zeroed_rows_dot_GH = jnp.where(row_mask, T_cols, 0) @ G.conj().T
     T_cols_new = jnp.where(~row_mask, T_cols, T_zeroed_rows_dot_GH)
     T = lax.dynamic_update_slice_in_dim(T, T_cols_new, m-1, axis=1)
@@ -2047,7 +2049,7 @@ def hessenberg(a: ArrayLike, *, calc_q: bool = False, overwrite_a: bool = False,
     Array(True, dtype=bool)
   """
   del overwrite_a, check_finite  # unused
-  n = jnp.shape(a)[-1]
+  n = np.shape(a)[-1]
   if n == 0:
     if calc_q:
       return jnp.zeros_like(a), jnp.zeros_like(a)
@@ -2142,7 +2144,7 @@ def toeplitz(c: ArrayLike, r: ArrayLike | None = None) -> Array:
     check_arraylike("toeplitz", c, r)
   return _toeplitz(jnp.atleast_1d(jnp.asarray(c)), jnp.atleast_1d(jnp.asarray(r)))
 
-@partial(jnp.vectorize, signature="(m),(n)->(m,n)")
+@partial(jnp_vectorize.vectorize, signature="(m),(n)->(m,n)")
 def _toeplitz(c: Array, r: Array) -> Array:
   ncols, = c.shape
   nrows, = r.shape
@@ -2185,7 +2187,7 @@ def hilbert(n: int) -> Array:
            [0.5       , 0.33333334, 0.25      ],
            [0.33333334, 0.25      , 0.2       ]], dtype=float32)
   """
-  a = lax.broadcasted_iota(jnp.float64, (n, 1), 0)
+  a = lax.broadcasted_iota(np.float64, (n, 1), 0)
   return 1/(a + a.T + 1)
 
 @partial(jit, static_argnames=("n", "kind",))
@@ -2230,7 +2232,7 @@ def pascal(n: int, kind: str | None = None) -> Array:
   if kind not in valid_kind:
     raise ValueError(f"Expected kind to be on of: {valid_kind}; got {kind}")
 
-  a = jnp.arange(n, dtype=jnp.float32)
+  a = jnp.arange(n, dtype=np.float32)
 
   L_n = _binom(a[:, None], a[None, :])
 

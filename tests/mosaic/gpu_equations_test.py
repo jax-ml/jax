@@ -74,11 +74,105 @@ class EquationSystemTest(parameterized.TestCase):
       )
 
   def test_equation_system_unknowns_are_all_the_variables_without_assignment(self):
-    v0, v1, v2 = V(0), V(1), V(2)
+    v0, v1, v2, v3 = V(0), V(1), V(2), V(3)
     layout = C(mgpu.WGSplatFragLayout((1, 1)))
+    least_replicated = equations.LeastReplicatedExpression((v2, v3))
+    most_replicated = equations.MostReplicatedExpression((least_replicated,))
     system = equations.EquationSystem(assignments={v0: layout},
-                                      equations=[Eq(v1, v2)])
-    self.assertSequenceEqual(system.unknowns(), [v1, v2])
+                                      equations=[Eq(v1, most_replicated)])
+    self.assertSequenceEqual(system.unknowns(), [v1, v2, v3])
+
+  def test_intersection_of_conflicting_systems_is_unsatisfiable(self):
+    v0 = V(0)
+    layout0, layout1 = [C(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
+    system0 = equations.EquationSystem(assignments={v0: layout0})
+    system1 = equations.EquationSystem(assignments={v0: layout1})
+    self.assertIsInstance(system0 & system1, equations.Unsatisfiable)
+
+  def test_intersection_of_compatible_systems_is_union_of_fields(self):
+    v0, v1, v2 = V(0), V(1), V(2)
+    layout0, layout1, layout2 = [C(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2, 3)]
+    system0 = equations.EquationSystem(equations=[Eq(v0, layout0)])
+    system1 = equations.EquationSystem(
+        assignments={v2: layout2},
+        equations=[Eq(v1, layout1)],
+    )
+    system_intersection = system0 & system1
+    self.assertEqual(
+        system_intersection,
+        equations.EquationSystem(
+            assignments={v2: layout2},
+            equations=[Eq(v0, layout0), Eq(v1, layout1)],
+        ),
+    )
+    self.assertSequenceEqual(system0.unknowns(), [v0])
+    self.assertSequenceEqual(system1.unknowns(), [v1])
+    self.assertSequenceEqual(system_intersection.unknowns(), [v0, v1])
+
+  def test_simplify_extracts_most_replicated_expression_correctly(self):
+    v0 = V(0)
+    shape = (1, 128)
+    layout0 = C(mgpu.WGSplatFragLayout(shape))
+    layout1 = C(mgpu.WGStridedFragLayout(shape, vec_size=1))
+    with self.subTest("most-replicated-expression-exists"):
+      system = equations.EquationSystem(
+          equations=[Eq(v0, equations.MostReplicatedExpression((layout0, layout1)))],
+      )
+      self.assertEqual(
+          equations.simplify(system),
+          equations.EquationSystem(assignments={v0: layout0})
+      )
+
+    with self.subTest("most-replicated-expression-is-unique-expression"):
+      system = equations.EquationSystem(
+          equations=[Eq(v0, equations.MostReplicatedExpression((layout0,)))],
+      )
+      self.assertEqual(
+          equations.simplify(system),
+          equations.EquationSystem(assignments={v0: layout0})
+      )
+
+    with self.subTest("most-replicated-expression-does-not-exist"):
+      v1 = V(1)
+      # We may need to relax this later---since we could actually add logic
+      # to the equation system to handle this case.
+      system = equations.EquationSystem(
+          equations=[Eq(v0, equations.MostReplicatedExpression((v1, layout1)))],
+      )
+      self.assertEqual(equations.simplify(system), system)
+
+  def test_simplify_extracts_least_replicated_expression_correctly(self):
+    v0 = V(0)
+    shape = (1, 128)
+    layout0 = C(mgpu.WGSplatFragLayout(shape))
+    layout1 = C(mgpu.WGStridedFragLayout(shape, vec_size=1))
+    with self.subTest("least-replicated-expression-exists"):
+      system = equations.EquationSystem(
+          equations=[Eq(v0, equations.LeastReplicatedExpression([layout0, layout1]))],
+      )
+      self.assertEqual(
+          equations.simplify(system),
+          equations.EquationSystem(assignments={v0: layout1})
+      )
+
+    with self.subTest("least-replicated-expression-is-unique-expression"):
+      system = equations.EquationSystem(
+          equations=[Eq(v0, equations.LeastReplicatedExpression((layout0,)))],
+      )
+      self.assertEqual(
+          equations.simplify(system),
+          equations.EquationSystem(assignments={v0: layout0})
+      )
+
+    with self.subTest("least-replicated-expression-does-not-exist"):
+      v1 = V(1)
+      # We may need to relax this later---since we could actually add logic
+      # to the equation system to handle this case.
+      system = equations.EquationSystem(
+          equations=[Eq(v0, equations.LeastReplicatedExpression((v1, layout0)))],
+      )
+      self.assertEqual(equations.simplify(system), system)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

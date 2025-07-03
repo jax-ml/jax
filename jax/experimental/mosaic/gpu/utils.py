@@ -799,23 +799,23 @@ class BarrierRef:
         1,
     )
 
-  def wait_parity(self, parity, for_tensor_core=False):
+  def wait_parity(self, parity, orders_tensor_core=False):
     i32 = ir.IntegerType.get_signless(32)
     ticks = arith.constant(i32, 10000000)
     parity = arith.extui(i32, parity)
     nvvm.mbarrier_try_wait_parity_shared(self.get_ptr(), parity, ticks)
-    if for_tensor_core:
+    if orders_tensor_core:
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
           [], "tcgen05.fence::after_thread_sync;", "",
           has_side_effects=True,
       )
 
-  def wait(self, for_tensor_core: bool = False):
+  def wait(self, orders_tensor_core: bool = False):
     parities = memref.load(self.phases, [])
     parity, new_parities = self.update_parities(parities)
     memref.store(new_parities, self.phases, [])
-    self.wait_parity(parity, for_tensor_core)
+    self.wait_parity(parity, orders_tensor_core)
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)
@@ -829,10 +829,10 @@ class BarrierRef:
       self,
       arrival_count: int = 1,
       can_complete: bool = True,
-      for_tensor_core: bool = False,
+      orders_tensor_core: bool = False,
   ):
     i64 = ir.IntegerType.get_signless(64)
-    if for_tensor_core:
+    if orders_tensor_core:
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
           [], "tcgen05.fence::before_thread_sync;", "",
@@ -904,12 +904,12 @@ class DialectBarrierRef:
   def __getitem__(self, offset: ir.Value | int) -> "DialectBarrierRef":
     return DialectBarrierRef(self.barrier_ref[offset])
 
-  def wait_parity(self, parity, for_tensor_core=False):
-    self.barrier_ref.wait_parity(parity, for_tensor_core)
+  def wait_parity(self, parity, orders_tensor_core=False):
+    self.barrier_ref.wait_parity(parity, orders_tensor_core)
 
-  def wait(self, for_tensor_core: bool = False):
+  def wait(self, orders_tensor_core: bool = False):
     assert self.barrier_ref.phases is not None
-    self.barrier_ref.wait(for_tensor_core)
+    self.barrier_ref.wait(orders_tensor_core)
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     return self.barrier_ref.update_parities(parities)
@@ -1001,12 +1001,12 @@ class CollectiveBarrierRef:
   def __getitem__(self, offset):
     return CollectiveBarrierRef(self.barrier[offset], self.cluster_mask)
 
-  def arrive(self, for_tensor_core: bool = False):
+  def arrive(self, orders_tensor_core: bool = False):
     """Arrives on a barrier in all blocks that share at least one of the coordinates along the collective dimensions.
 
     Note that unlike in arrive, each warpgroup arrives once.
     """
-    if for_tensor_core:
+    if orders_tensor_core:
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
           [], "tcgen05.fence::before_thread_sync;", "",

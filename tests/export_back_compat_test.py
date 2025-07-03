@@ -782,14 +782,23 @@ class CompatTest(bctu.CompatTestBase):
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
       return lax.ppermute(x, 'a', perm=perm)
 
-    data = tpu_Sharding.data_2023_03_16
-    if jax.config.jax_use_shardy_partitioner:
-      data = data["shardy"]
-    else:
-      data = data["gspmd"]
-    data = self.load_testdata(data)
-    with mesh:
-      self.run_one_test(func, data)
+    data = [
+        (tpu_Sharding.data_2023_03_16, []),
+        (tpu_Sharding.data_2025_06_30, None),
+    ]
+    # Due to changes in how Shardy is serialized, from using custom calls to
+    # natively serializing Shardy with StableHLO, we may need to override
+    # the expected custom call targets for old test data that was serialized
+    # with custom calls.
+    for data, custom_call_targets_override in data:
+      with mesh:
+        if jax.config.jax_use_shardy_partitioner:
+          self.run_one_test(
+              func, self.load_testdata(data["shardy"]),
+              expect_current_custom_calls=custom_call_targets_override)
+        else:
+          self.run_one_test(func, self.load_testdata(data["gspmd"]))
+
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_platform={platform}", platform=platform)
@@ -810,17 +819,25 @@ class CompatTest(bctu.CompatTestBase):
       return x + y
 
     if platform == "tpu":
-      data = annotate_data_placement.data_2025_04_07_tpu
+      data = [(annotate_data_placement.data_2025_04_07_tpu,
+               ["annotate_device_placement"]),
+              (annotate_data_placement.data_2025_06_30_tpu, None)]
     else:
-      data = annotate_data_placement.data_2025_04_07_cuda
+      data = [(annotate_data_placement.data_2025_04_07_cuda,
+               ["annotate_device_placement"]),
+              (annotate_data_placement.data_2025_06_30_cuda, None)]
 
-    if jax.config.jax_use_shardy_partitioner:
-      data = data["shardy"]
-    else:
-      data = data["gspmd"]
-    data = self.load_testdata(data)
-
-    self.run_one_test(func, data)
+    # Due to changes in how Shardy is serialized, from using custom calls to
+    # natively serializing Shardy with StableHLO, we may need to override
+    # the expected custom call targets for old test data that was serialized
+    # with custom calls.
+    for data, custom_call_targets_override in data:
+      if jax.config.jax_use_shardy_partitioner:
+        self.run_one_test(
+            func, self.load_testdata(data["shardy"]),
+            expect_current_custom_calls=custom_call_targets_override)
+      else:
+        self.run_one_test(func, self.load_testdata(data["gspmd"]))
 
   def test_tpu_stablehlo_dynamic_reduce_window_unary(self):
     # stablehlo.dynamic_reduce_window is used temporarily on TPU for a
@@ -992,13 +1009,22 @@ class ShardyCompatTest(bctu.CompatTestBase):
       return shard_map_func(x)
 
     data = [
-        shardy_sharding_ops_with_different_meshes.data_2025_02_12,
-        shardy_sharding_ops_with_different_meshes.data_2025_04_14,
+        (shardy_sharding_ops_with_different_meshes.data_2025_02_12, []),
+        (shardy_sharding_ops_with_different_meshes.data_2025_04_14, []),
+        (shardy_sharding_ops_with_different_meshes.data_2025_06_30, None),
     ]
 
-    for d in data:
+    # Due to changes in how Shardy is serialized, from using custom calls to
+    # natively serializing Shardy with StableHLO, we may need to override
+    # the expected custom call targets for old test data that was serialized
+    # with custom calls.
+    for data, custom_call_targets_override in data:
       with Mesh(devices, axis_names=('x')):
-        self.run_one_test(func, self.load_testdata(d))
+        self.run_one_test(
+            func, self.load_testdata(data),
+            expect_current_custom_calls=custom_call_targets_override)
+
+
 
 
 if __name__ == "__main__":

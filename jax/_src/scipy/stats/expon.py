@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 
-import jax.numpy as jnp
-from jax import lax
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
@@ -54,7 +55,7 @@ def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   log_scale = lax.log(scale)
   linear_term = lax.div(lax.sub(x, loc), scale)
   log_probs = lax.neg(lax.add(linear_term, log_scale))
-  return jnp.where(lax.lt(x, loc), -jnp.inf, log_probs)
+  return jnp.where(lax.lt(x, loc), -np.inf, log_probs)
 
 
 def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -264,6 +265,6 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   neg_scaled_q = lax.div(lax.sub(loc, q), scale)
   return jnp.where(
     jnp.isnan(q) | (q < 0) | (q > 1),
-    jnp.nan,
+    np.nan,
     lax.neg(lax.log1p(neg_scaled_q)),
   )

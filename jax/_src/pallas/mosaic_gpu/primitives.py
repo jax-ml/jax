@@ -51,7 +51,7 @@ WARP_SIZE = 32
 WARPGROUP_SIZE = 128
 
 
-_Ref = pallas_core.AbstractMemoryRef | state_types.TransformedRef
+_Ref = state.AbstractRef | state_types.TransformedRef
 Layout = gpu_core.Layout
 ParameterizedLayout = gpu_core.ParameterizedLayout
 
@@ -610,7 +610,7 @@ barrier_arrive_p.multiple_results = True
 def _barrier_arrive_abstract_eval(barrier, *args, **params):
   del args, params  # Unused.
   _check_ref(barrier, "barrier", gpu_core.SMEM)
-  if getattr(barrier.inner_aval.dtype, "for_tensor_core", False):
+  if getattr(barrier.inner_aval.dtype, "orders_tensor_core", False):
     raise ValueError("Cannot arrive on a tensor core barrier.")
   return (), {gpu_core._memory_effect}
 
@@ -651,7 +651,7 @@ def _barrier_arrive_lowering(
   return ()
 
 
-def barrier_arrive(barrier: pallas_core.AbstractMemoryRef) -> None:
+def barrier_arrive(barrier: state.AbstractRef) -> None:
   """Arrives at the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
       barrier, None, "barrier_arrive", force_trailing_indexer=False,
@@ -710,15 +710,15 @@ def _barrier_wait_lowering(
   barrier_aval = ctx.avals_in[0]
   transforms = transforms_treedef.unflatten(flat_transforms)
   indexer = _extract_barrier_indexer(transforms)
-  for_tensor_core = getattr(
-      barrier_aval.inner_aval.dtype, "for_tensor_core", False)
+  orders_tensor_core = getattr(
+      barrier_aval.inner_aval.dtype, "orders_tensor_core", False)
   if indexer is not None:
     barrier = barrier.__getitem__(*map(lowering._as_index, indexer.indices))
-  barrier.wait(for_tensor_core=for_tensor_core)
+  barrier.wait(orders_tensor_core=orders_tensor_core)
   return ()
 
 
-def barrier_wait(barrier: pallas_core.AbstractMemoryRef) -> None:
+def barrier_wait(barrier: state.AbstractRef) -> None:
   """Waits on the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
       barrier, None, "barrier_wait", force_trailing_indexer=False,
@@ -821,6 +821,13 @@ def wgmma(acc: gpu_core.WGMMAAbstractAccumulatorRef, a, b) -> None:
   if a.dtype != b.dtype:
     raise ValueError(f"Mixed input dtypes for matrix multiplication unsupported: lhs={a.dtype}, rhs={b.dtype}")
 
+  acc_transforms_leaves: list
+  if isinstance(acc, pallas_core.TransformedRef):
+    acc_transforms_leaves, acc_transforms_tree = jax.tree.flatten(acc.transforms)
+    acc = acc.ref
+  else:
+    acc_transforms_leaves, acc_transforms_tree = [], None
+
   if isinstance(a, pallas_core.TransformedRef):
     a_transforms_leaves, a_transforms_tree = jax.tree.flatten(a.transforms)
     a = a.ref
@@ -837,8 +844,10 @@ def wgmma(acc: gpu_core.WGMMAAbstractAccumulatorRef, a, b) -> None:
       acc,
       a,
       b,
+      *acc_transforms_leaves,
       *a_transforms_leaves,
       *b_transforms_leaves,
+      acc_transforms_tree=acc_transforms_tree,
       a_transforms_tree=a_transforms_tree,
       b_transforms_tree=b_transforms_tree,
   )
@@ -865,23 +874,22 @@ def _wgmma_ref_pp_eqn(
 ):
   del settings
   acc, a, b, *leaves = eqn.invars
-  a_transforms_treedef = eqn.params["a_transforms_tree"]
-  b_transforms_treedef = eqn.params["b_transforms_tree"]
-  split = getattr(a_transforms_treedef, "num_leaves", 0)
-  a_transforms = (
-      a_transforms_treedef.unflatten(leaves[:split])
-      if a_transforms_treedef is not None
-      else []
+  transform_treedefs = [
+      eqn.params["acc_transforms_tree"],
+      eqn.params["a_transforms_tree"],
+      eqn.params["b_transforms_tree"],
+  ]
+  transform_leaves = util.split_list(
+      leaves, [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
   )
-  b_transforms = (
-      b_transforms_treedef.unflatten(leaves[split:])
-      if b_transforms_treedef is not None
-      else []
+  acc_transforms, a_transforms, b_transforms = (
+      () if treedef is None else treedef.unflatten(leaves)
+      for treedef, leaves in zip(transform_treedefs, transform_leaves)
   )
   return pp.concat([
       pp.text("wgmma_ref"),
       pp.text(" "),
-      pp.text(jax_core.pp_var(acc, context)),
+      state_primitives.pp_ref_transforms(context, acc, acc_transforms),
       pp.text(" <- "),
       state_primitives.pp_ref_transforms(context, a, a_transforms),
       pp.text(" @ "),
@@ -909,15 +917,32 @@ def _wgmma_lowering(
     a,
     b,
     *transforms_leaves,
+    acc_transforms_tree,
     a_transforms_tree,
     b_transforms_tree,
 ):
   lhs_swizzle: int | None = None
-  if a_transforms_tree is not None:
-    a_transforms_leaves, b_transforms_leaves = util.split_list(
-        transforms_leaves, [a_transforms_tree.num_leaves]
-    )
-    a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
+  transform_treedefs = [
+      acc_transforms_tree, a_transforms_tree, b_transforms_tree
+  ]
+  transform_leaves = util.split_list(
+      transforms_leaves, [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
+  )
+  acc_transforms, a_transforms, b_transforms = (
+      None if treedef is None else treedef.unflatten(leaves)
+      for treedef, leaves in zip(transform_treedefs, transform_leaves)
+  )
+
+  acc_indices = None
+  if acc_transforms is not None:
+    if not all(isinstance(t, indexing.NDIndexer) for t in acc_transforms):
+      raise ValueError("WGMMA accumulator only supports indexing transforms")
+    acc_indexer = lowering.merge_indexers(acc_transforms)
+    if acc_indexer.int_indexer_shape:
+      raise NotImplementedError("int_indexer_shape non-empty")
+    acc_indices = lowering._ndindexer_indices(acc_indexer)
+
+  if a_transforms is not None:
     a, a_transforms = lowering._handle_transforms(
         ctx, a, a_transforms, handle_transposes=False, handle_reshapes=False
     )
@@ -938,14 +963,13 @@ def _wgmma_lowering(
       raise NotImplementedError("WGMMA lhs tiling does not fit swizzle")
   else:
     lhs_transpose = False
-    b_transforms_leaves = transforms_leaves  # type: ignore
     if not isinstance(a, mgpu.FragmentedArray):
       raise ValueError(
           "When WGMMA lhs is passed in as a ref, it must be transformed by"
           " swizzling and tiling appropriately."
       )
 
-  b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
+  assert b_transforms is not None
   b, b_transforms = lowering._handle_transforms(
       ctx, b, b_transforms, handle_transposes=False, handle_reshapes=False
   )
@@ -993,9 +1017,16 @@ def _wgmma_lowering(
     a = mgpu.memref_transpose(a, (1, 0, 3, 2))
   if rhs_transpose:
     b = mgpu.memref_transpose(b, (1, 0, 3, 2))
-  new_acc = mgpu.wgmma(acc, a, b, swizzle=rhs_swizzle)
+  acc_in = acc
+  if acc_indices is not None:
+    acc_in = mgpu.WGMMAAccumulator(_value=acc.value[acc_indices], _sync=False)
+  acc_out = mgpu.wgmma(acc_in, a, b, swizzle=rhs_swizzle)
+  if acc_indices is not None:
+    acc_value = acc.value.copy()
+    acc_value[acc_indices] = acc_out.value
+    acc_out = mgpu.WGMMAAccumulator(_value=acc_value, _sync=False)
   nvvm_dialect.wgmma_commit_group_sync_aligned()
-  return new_acc
+  return acc_out
 
 
 @lowering.register_lowering_rule(wgmma_p, mgpu.LoweringSemantics.Warpgroup)
@@ -1005,9 +1036,12 @@ def _wgmma_warpgroup_lowering(
     a,
     b,
     *transforms_leaves,
+    acc_transforms_tree,
     a_transforms_tree,
     b_transforms_tree,
 ):
+  if acc_transforms_tree is not None:
+    raise NotImplementedError
   if a_transforms_tree is not None:
     a_transforms_leaves, b_transforms_leaves = util.split_list(
         transforms_leaves, [a_transforms_tree.num_leaves]
@@ -1141,7 +1175,7 @@ def tcgen05_mma(acc: _Ref,
     a: The left-hand side. Must be a TMEM/SMEM Ref.
     b: The right-hand side. Must be an SMEM Ref.
     barrier: Optional barrier Ref for synchronizing with the tensor core.
-      Should have for_tensor_core set to True. If not specified, the MMA
+      Must have orders_tensor_core set to True. If not specified, the MMA
       completion should be explicitly observed by calling
       `tcgen05_commit_arrive`
     accumulate: Whether to accumulate into acc or overwrite it.
@@ -1241,10 +1275,10 @@ def _tcgen05_mma_abstract_eval(acc, a, b, accumulate,
 
   if arrive:
     barrier = barrier_and_transforms_leaves[0]
-    for_tensor_core = getattr(
-        barrier.inner_aval.dtype, "for_tensor_core", False)
-    if not for_tensor_core:
-      raise ValueError("MMA barrier must have for_tensor_core set to True.")
+    orders_tensor_core = getattr(
+        barrier.inner_aval.dtype, "orders_tensor_core", False)
+    if not orders_tensor_core:
+      raise ValueError("MMA barrier must have orders_tensor_core set to True.")
 
   return []
 
@@ -1409,8 +1443,8 @@ def tcgen05_commit_arrive(barrier: _Ref,
   """Arrive on a Barrier to track completion of a preceding `tcgen05_mma` call.
 
   Args:
-    barrier: Barrier Ref for synchronizing with the tensor core. Should have
-      for_tensor_core set to True.
+    barrier: Barrier Ref for synchronizing with the tensor core. Must have
+      orders_tensor_core set to True.
     collective_axis: The name of the cluster axis along which the
       MMA was performed if it was collective. The cluster axis should have a
       size of exactly 2, and must be on the minormost cluster axis.
@@ -1435,10 +1469,10 @@ def _tcgen05_commit_arrive_abstract_eval(barrier,
                                barrier_transforms_tree,
                                collective_axis):
   del (barrier_transforms_leaves, barrier_transforms_tree, collective_axis)
-  for_tensor_core = getattr(
-      barrier.inner_aval.dtype, "for_tensor_core", False)
-  if not for_tensor_core:
-    raise ValueError("MMA barrier must have for_tensor_core set to True.")
+  orders_tensor_core = getattr(
+      barrier.inner_aval.dtype, "orders_tensor_core", False)
+  if not orders_tensor_core:
+    raise ValueError("MMA barrier must have orders_tensor_core set to True.")
   return []
 
 
@@ -1515,7 +1549,12 @@ def _commit_tmem_lowering(_):
 
 
 def commit_tmem():
-  """Commits all writes to TMEM, making them visible to loads and MMA."""
+  """Commits all writes to TMEM issued by the current thread.
+
+  Once this function returns, the effects of calling ``async_store_tmem`` from
+  the current thread are visible to TMEM loads, MMA and barrier operations of
+  ``Barrier``s with ``orders_tensor_core=True``.
+  """
   commit_tmem_p.bind()
 
 
@@ -1570,7 +1609,7 @@ def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
 
 
 def commit_smem():
-  """Commits all writes to SMEM, making them visible to loads, TMA and WGMMA."""
+  """Commits all writes to SMEM, making them visible to TMA and MMA operations."""
   commit_smem_p.bind()
 
 
@@ -1719,7 +1758,7 @@ def _jaxpr_call_discharge(
 
 def jaxpr_call(
     jaxpr: jax_core.Jaxpr,
-    *refs: pallas_core.AbstractMemoryRef | state_types.TransformedRef,
+    *refs: state.AbstractRef | state_types.TransformedRef,
     program_ids: Sequence[jax.Array | None],
 ) -> Sequence[jax.Array]:
   """Internal primitive for calling a kernel jaxpr inside ``emit_pipeline``.
@@ -1778,7 +1817,7 @@ class RefType:
 
 
 def _undo_transforms(
-    raw_ref: pallas_core.AbstractMemoryRef,
+    raw_ref: state.AbstractRef,
     memory_transforms: Sequence[gpu_core.MemoryRefTransform],
 ):
   """Extract the `Transform`s that reverse the `MemoryRefTransform`s"""
@@ -1893,7 +1932,7 @@ def _inline_mgpu_abstract_eval(
       *itertools.chain.from_iterable(
           (state.ReadEffect(i), state.WriteEffect(i))
           for i, r in enumerate(flat_args)
-          if isinstance(r, pallas_core.AbstractMemoryRef)
+          if isinstance(r, state.AbstractRef)
       ),
   }
 
@@ -1954,7 +1993,7 @@ def _inline_mgpu_lowering_rule(
       flat_transformed.append(a)
       assert transforms is None
       continue
-    assert isinstance(aval, pallas_core.AbstractMemoryRef)
+    assert isinstance(aval, state.AbstractRef)
     a, user_transforms = lowering._handle_transforms(
         ctx, a, transforms, handle_transposes=False
     )
@@ -2037,3 +2076,144 @@ def load(
   if layout is not None:
     result = gpu_core.layout_cast(result, layout)
   return result
+
+
+async_load_tmem_p = jax_core.Primitive("async_load")
+
+def async_load_tmem(src: _Ref, idx = (), *, layout: Layout | None = None) -> jax.Array:
+  """Performs an asynchronous load from the TMEM array.
+
+  The load operation is only partly asynchronous. The returned array can be used
+  immediately, without any additional synchronization. However, it cannot be
+  assumed that the read from TMEM has completed when the function returns. If
+  you ever attempt to overwrite the read region, you should ensure that
+  ``wait_load_tmem`` has been called before that happens. Failure to do so
+  can result in nondeterministic data races.
+
+  For example, the following sequence of operations at the end of the kernel is
+  valid, even though the TMEM load is never awaited::
+
+    smem_ref[...] = plgpu.async_load_tmem(tmem_ref)
+    plgpu.commit_smem()
+    plgpu.copy_smem_to_gmem(smem_ref, gmem_ref)
+    plgpu.wait_smem_to_gmem(0)
+
+  However, if the kernel was persistent and might reuse the TMEM again, the
+  sequence should be extended with a call to ``wait_load_tmem``.
+
+  Args:
+    src: The TMEM reference to load from.
+    idx: An optional slice that specifies a subregion that will be loaded. All
+      data will be loaded if not specified.
+    layout: The optional layout hint to use for the resulting array.
+  """
+  src, src_transforms = state_primitives.get_ref_and_transforms(
+      src, idx, "async_load_tmem", force_trailing_indexer=True,
+  )
+  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
+      src_transforms
+  )
+  result = async_load_tmem_p.bind(
+      src, *flat_src_transforms, tree=src_transforms_treedef
+  )
+  if layout is not None:
+    result = gpu_core.layout_cast(result, layout)
+  return result
+
+@async_load_tmem_p.def_effectful_abstract_eval
+def _async_load_tmem_abstract_eval(src, *avals_flat, tree):
+  if src.memory_space != gpu_core.MemorySpace.TMEM:
+    raise ValueError("Async load only supports TMEM refs")
+  return state_primitives._get_abstract_eval(src, *avals_flat, tree=tree)
+
+@lowering.register_lowering_rule(async_load_tmem_p, mgpu.LoweringSemantics.Lane)
+def _async_load_tmem_lowering_rule(
+    ctx: lowering.LoweringRuleContext, x_ref, *leaves, tree
+):
+  assert isinstance(x_ref, tcgen05.TMEMRef)
+  transforms = jax.tree.unflatten(tree, leaves)
+  x_tmem, transforms = lowering._handle_transforms(
+      ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
+  )
+  if transforms:
+    raise NotImplementedError(
+        f"Unimplemented transforms for TMEM refs. {transforms=}"
+    )
+  layout_hint = None
+  if isinstance(ctx.out_layout_hint, mgpu.TiledLayout):
+    layout_hint = ctx.out_layout_hint
+  return x_tmem.load(layout=layout_hint)
+
+
+wait_load_tmem_p = jax_core.Primitive("wait_load_tmem")
+wait_load_tmem_p.multiple_results = True
+
+def wait_load_tmem():
+  """Awaits all previously asynchronous TMEM loads issued by the calling thread.
+
+  Once this function returns, the TMEM loads issued by the calling thread are
+  guaranteed to have completed. The read TMEM regions can be safely overwritten
+  by the calling thread, or any threads signalled through ``Barrier``s with
+  ``orders_tensor_core=True``.
+  """
+  wait_load_tmem_p.bind()
+
+
+@wait_load_tmem_p.def_effectful_abstract_eval
+def _wait_load_tmem_abstract_eval():
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(wait_load_tmem_p, mgpu.LoweringSemantics.Lane)
+def _wait_load_tmem_lowering(_):
+  tcgen05.wait_load_tmem()
+  return ()
+
+
+async_store_tmem_p = jax_core.Primitive("async_store_tmem")
+async_store_tmem_p.multiple_results = True
+
+def async_store_tmem(ref: _Ref, value):
+  """Stores the value to TMEM.
+
+  The store is asynchronous and is not guaranteed to be visible (e.g. by reads
+  or MMA operations) until ``commit_tmem`` has been called.
+
+  Args:
+    ref: The TMEM reference to store to.
+    value: The value to store.
+  """
+  ref, ref_transforms = state_primitives.get_ref_and_transforms(
+      ref, None, "async_store_tmem", force_trailing_indexer=True,
+  )
+  flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
+      ref_transforms
+  )
+  async_store_tmem_p.bind(
+      ref, value, *flat_ref_transforms, tree=ref_transforms_treedef
+  )
+
+@async_store_tmem_p.def_effectful_abstract_eval
+def _async_store_tmem_abstract_eval(ref, val, *avals_flat, tree):
+  if ref.memory_space != gpu_core.MemorySpace.TMEM:
+    raise ValueError("Async store only supports TMEM refs")
+  _, effects = state_primitives._swap_abstract_eval(
+      ref, val, *avals_flat, tree=tree
+  )
+  return (), effects
+
+@lowering.register_lowering_rule(async_store_tmem_p, mgpu.LoweringSemantics.Lane)
+def _async_store_tmem_lowering_rule(
+    ctx: lowering.LoweringRuleContext, x_ref, value, *leaves, tree
+):
+  assert isinstance(x_ref, tcgen05.TMEMRef)
+  transforms = jax.tree.unflatten(tree, leaves)
+  x_tmem, transforms = lowering._handle_transforms(
+      ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
+  )
+  if transforms:
+    raise NotImplementedError(
+        f"Unimplemented transforms for TMEM refs. {transforms=}"
+    )
+  x_tmem.store(value)
+  return ()

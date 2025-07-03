@@ -225,8 +225,10 @@ mlir.register_lowering(debug_callback_p, debug_callback_lowering,
                        platform="cpu")
 mlir.register_lowering(
     debug_callback_p, debug_callback_lowering, platform="gpu")
+# Debug callbacks use channel IDs on TPU, which require non-caching.
 mlir.register_lowering(
-    debug_callback_p, debug_callback_lowering, platform="tpu")
+    debug_callback_p, debug_callback_lowering, platform="tpu",
+    cacheable=False)
 
 def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # The default behavior for effectful primitives is to not stage them if

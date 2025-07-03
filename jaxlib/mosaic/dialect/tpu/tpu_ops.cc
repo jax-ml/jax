@@ -1208,11 +1208,20 @@ LogicalResult EnqueueDMAOp::verify() {
   if (target_sem_type.getRank() != 0) {
     return emitOpError("DMA target semaphore must be rank 0");
   }
+  auto source_ty = getMemRefType(getSource());
+  auto target_ty = getMemRefType(getTarget());
+  if (source_ty.getElementType() != target_ty.getElementType()) {
+    return emitOpError("DMA source and target element type mismatch");
+  }
+  if (source_ty.getShape() != target_ty.getShape()) {
+    return emitOpError("DMA source and target shape mismatch.");
+  }
+
   if (getDeviceId() || getCoreId()) {
     if (!getSourceSemaphore()) {
       return emitOpError(
-          "DMA source semaphore must be specified when "
-          "device_id or core_id is specified");
+          "DMA source semaphore must be specified when device_id or core_id is "
+          "specified");
     }
   }
   bool is_remote = getDeviceId() || getCoreId();
@@ -1371,7 +1380,6 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
     return emitOpError(
         "Enqueue indirect DMA is supported only on the SC vector subcore");
   }
-
 
   const MemRefType source_ty = getMemRefType(getSource());
   const MemRefType target_ty = getMemRefType(getTarget());

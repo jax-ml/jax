@@ -164,16 +164,29 @@ class PmapSharding : public Sharding {
 class GSPMDSharding : public Sharding {
  public:
   GSPMDSharding(nanobind::sequence devices, xla::OpSharding op_sharding,
-                nanobind::object memory_kind, nanobind::object device_list)
+                nanobind::object memory_kind)
+      : GSPMDSharding(
+            xla::make_nb_class<PyDeviceList>(nanobind::tuple(devices)),
+            xla::ValueOrThrow(xla::HloSharding::FromProto(op_sharding)),
+            std::move(memory_kind)) {}
+
+  GSPMDSharding(nanobind::sequence devices, xla::HloSharding op_sharding,
+                nanobind::object memory_kind)
+      : GSPMDSharding(
+            xla::make_nb_class<PyDeviceList>(nanobind::tuple(devices)),
+            std::move(op_sharding), std::move(memory_kind)) {}
+
+  GSPMDSharding(xla::nb_class_ptr<PyDeviceList> devices,
+                xla::OpSharding op_sharding, nanobind::object memory_kind)
       : GSPMDSharding(
             std::move(devices),
             xla::ValueOrThrow(xla::HloSharding::FromProto(op_sharding)),
-            std::move(memory_kind), std::move(device_list)) {}
+            std::move(memory_kind)) {}
 
-  GSPMDSharding(nanobind::sequence devices, xla::HloSharding op_sharding,
-                nanobind::object memory_kind, nanobind::object device_list);
+  GSPMDSharding(xla::nb_class_ptr<PyDeviceList> devices,
+                xla::HloSharding op_sharding, nanobind::object memory_kind);
 
-  const nanobind::tuple& devices() const { return devices_; }
+  xla::nb_class_ptr<PyDeviceList> devices() const { return devices_; }
   const nanobind::object& memory_kind() const { return memory_kind_; }
 
   size_t Hash() {
@@ -226,7 +239,7 @@ class GSPMDSharding : public Sharding {
     return hlo_sharding().IsReplicated();
   }
 
-  nanobind::tuple devices_;
+  xla::nb_class_ptr<PyDeviceList> devices_;
   xla::HloSharding hlo_sharding_;
   nanobind::object memory_kind_;
   std::optional<size_t> hash_;

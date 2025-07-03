@@ -488,7 +488,7 @@ def _saved_residuals(jaxpr: core.Jaxpr,
       if v in res_vars:
         if eqn.primitive is name_p or v in named_vars and (eqn := named_vars[v]):
           results.append((v.aval, f"named '{eqn.params['name']}' from {src}"))
-        elif str(eqn.primitive) == 'pjit':
+        elif eqn.primitive.name == 'jit':
           results.append((v.aval,
                           f"output of jitted function '{eqn.params['name']}' "
                           f"from {src}"))
@@ -533,8 +533,6 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
                   for p, nz in zip(out_primals, out_nz)]
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
-
-effects.remat_allowed_effects.add_type(lax_internal.InOutFeedEffect)
 
 def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
                        jaxpr: core.Jaxpr, **params):
@@ -698,26 +696,28 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
                 pe.PartialVal.known(next(ins_iter))
                 for aval, lin in zip(jaxpr.in_avals, in_lin)]
     assert next(ins_iter, None) is None
+
+    jaxpr_rematted, lin_jaxpr, out_uk, res_avals = \
+        pe.partial_eval_jaxpr_nounits(jaxpr, in_lin, False)
     with source_info_util.extend_name_stack('rematted_computation'):
-      lin_jaxpr, _, consts = pe.trace_to_jaxpr_nounits(
-          lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=jaxpr.jaxpr.debug_info),
-          in_pvals, False)
+      consts = core.jaxpr_as_fun(jaxpr_rematted)(*ins_flat)
 
     # Transpose the linear jaxpr (which only has linear inputs).
     out_cts_iter = iter(out_cts_flat)
     out_cts = [ad_util.Zero(aval) if zero else next(out_cts_iter)
                for aval, zero in zip(jaxpr.out_avals, out_zeros)]
     assert next(out_cts_iter, None) is None
-    dummy_args = [ad.UndefinedPrimal(v.aval) for v in lin_jaxpr.invars]
-    in_cts = ad.backward_pass(lin_jaxpr, False, consts, dummy_args, out_cts)
+    dummy_args = [ad.UndefinedPrimal(aval) for aval in lin_jaxpr.in_avals[len(consts):]]
+    in_cts = ad.backward_pass(lin_jaxpr.jaxpr, False, lin_jaxpr.consts,
+                              [*consts, *dummy_args], out_cts)
+    in_cts = in_cts[len(consts):]
 
     # Identify symbolic zeros in the resulting cotangents, and return nonzeros.
     in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
-  transposed_wrapped = lu.wrap_init(transposed,
-                                    debug_info=jaxpr.jaxpr.debug_info)
+  transposed_wrapped = lu.wrap_init(transposed, debug_info=jaxpr.jaxpr.debug_info)
   transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
       transposed_wrapped, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)

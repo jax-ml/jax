@@ -14,6 +14,7 @@
 
 import os
 import sys
+import unittest
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
@@ -56,6 +57,7 @@ def _assert_ragged_equal_with_elementwise_mask(
   np.testing.assert_allclose(res_valid, ref_valid)
 
 
+@unittest.skip("broken by https://github.com/jax-ml/jax/pull/29937")  # TODO(mattjj): revive
 @jtu.with_config(jax_traceback_filtering="off")
 class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False

@@ -34,8 +34,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     moved to the `jax.sharding` endpoint. So use `jax.sharding.reshard`,
     `jax.sharding.auto_axes` and `jax.sharding.explicit_axes` instead of their
     experimental endpoints.
-  * `lax.infeed` and `lax.outfeed` were removed as public APIs, after being
-    deprecated in JAX 0.6.
+  * `lax.infeed` and `lax.outfeed` were removed, after being deprecated in
+    JAX 0.6. The `transfer_to_infeed` and `transfer_from_outfeed` methods were
+    also removed the `Device` objects.
+  * The `name` attribute of the `pjit_p` primitive (exported as
+    `jax.extend.core.primitives.pjit_p`) has changed from `"pjit"` to `"jit"`.
+    This affects the string representations of jaxprs.
 
 * Deprecations:
   * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new

@@ -25,6 +25,7 @@ import jax
 from jax import dtypes
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src import sharding_impls
 from jax._src import tpu_custom_call
 from jax._src.interpreters import mlir
@@ -117,6 +118,7 @@ def pallas_call_tpu_lowering_rule(
     compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    metadata: frozen_dict.FrozenDict[str, str] | None,
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   del mesh, interpret  # Unused.
@@ -268,6 +270,7 @@ def pallas_call_tpu_lowering_rule(
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=mosaic_params.disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
+      metadata=dict(metadata) if metadata is not None else None,
   )
   _maybe_cast_to_bool = lambda x, aval: x.astype(
       jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x

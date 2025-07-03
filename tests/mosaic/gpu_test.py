@@ -780,11 +780,8 @@ class WGMMATest(TestCase):
       ),
       m=(64, 128, 192),
       n=(64, 128, 192),
-      k_steps=(1, 2),
       swizzle=(32, 64, 128),
       jax_out_dtype=(jnp.float16, jnp.float32),
-      rhs_tiling_kind=("large", "small", "small+no_transpose"),
-      lhs_tiling_kind=("large", "small", "small+no_transpose"),
   )
   def test_wgmma_basic_float(
       self,
@@ -793,55 +790,75 @@ class WGMMATest(TestCase):
       in_mlir_dtype_cls,
       m,
       n,
-      k_steps,
       swizzle,
       jax_out_dtype,
-      rhs_tiling_kind,
-      lhs_tiling_kind,
   ):
     self._test_wgmma_basic(
         m,
         n,
-        k_steps,
-        in_mlir_dtype_cls,
-        lhs_transpose,
-        rhs_transpose,
-        swizzle,
-        jax_out_dtype,
-        rhs_tiling_kind,
-        lhs_tiling_kind,
+        k_steps=2,  # Decrease to 1 to simplify debugging.
+        in_mlir_dtype_cls=in_mlir_dtype_cls,
+        lhs_transpose=lhs_transpose,
+        rhs_transpose=rhs_transpose,
+        swizzle=swizzle,
+        jax_out_dtype=jax_out_dtype,
+        lhs_tiling_kind="small+no_transpose" if lhs_transpose else "small",
+        rhs_tiling_kind="small+no_transpose" if rhs_transpose else "small",
     )
 
   @parameterized.product(
       in_mlir_dtype_cls=(I8Type,),
       m=(64, 128, 192),
       n=(64, 128, 192),
-      k_steps=(1, 2),
       swizzle=(32, 64, 128),
       jax_out_dtype=(jnp.int32,),
-      rhs_tiling_kind=("large", "small", "small+no_transpose"),
-      lhs_tiling_kind=("large", "small"),
   )
   def test_wgmma_basic_int(
-      self,
-      in_mlir_dtype_cls,
-      m,
-      n,
-      k_steps,
-      swizzle,
-      jax_out_dtype,
-      rhs_tiling_kind,
-      lhs_tiling_kind,
+      self, in_mlir_dtype_cls, m, n, swizzle, jax_out_dtype,
   ):
     self._test_wgmma_basic(
         m,
         n,
-        k_steps,
-        in_mlir_dtype_cls,
+        k_steps=2,  # Decrease to 1 to simplify debugging.
+        in_mlir_dtype_cls=in_mlir_dtype_cls,
         lhs_transpose=False,
         rhs_transpose=True,
         swizzle=swizzle,
         jax_out_dtype=jax_out_dtype,
+        rhs_tiling_kind="small",
+        lhs_tiling_kind="small+no_transpose",
+    )
+
+  @parameterized.product(
+      lhs_transpose=(False, True),
+      rhs_transpose=(False, True),
+      in_mlir_dtype_cls=(
+          ir.F32Type,
+          ir.F16Type,
+          ir.Float8E5M2Type,
+      ),
+      swizzle=(32, 64, 128),
+      rhs_tiling_kind=("large", "small", "small+no_transpose"),
+      lhs_tiling_kind=("large", "small", "small+no_transpose"),
+  )
+  def test_wgmma_transposes(
+      self,
+      lhs_transpose,
+      rhs_transpose,
+      in_mlir_dtype_cls,
+      swizzle,
+      rhs_tiling_kind,
+      lhs_tiling_kind,
+  ):
+    self._test_wgmma_basic(
+        m=128,
+        n=192,
+        k_steps=2,  # Decrease to 1 to simplify debugging.
+        in_mlir_dtype_cls=in_mlir_dtype_cls,
+        lhs_transpose=lhs_transpose,
+        rhs_transpose=rhs_transpose,
+        swizzle=swizzle,
+        jax_out_dtype=jnp.float32,
         rhs_tiling_kind=rhs_tiling_kind,
         lhs_tiling_kind=lhs_tiling_kind,
     )
@@ -1360,7 +1377,7 @@ class TCGen05Test(TestCase):
             acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
         )
         tcgen05.commit_arrive(barriers[2])
-      mma_barrier.wait(for_tensor_core=True)
+      mma_barrier.wait(orders_tensor_core=True)
       is_signed = True if jnp.issubdtype(in_jax_dtype, jnp.integer) else None
       acc.load(is_signed=is_signed).store_untiled(out, optimized=False)
 
@@ -1443,7 +1460,7 @@ class TCGen05Test(TestCase):
             acc, lhs_tmem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
         )
         tcgen05.commit_arrive(barriers[2])
-      mma_barrier.wait(for_tensor_core=True)
+      mma_barrier.wait(orders_tensor_core=True)
       acc.load().store_untiled(out, optimized=False)
 
     x_shape = (m, k)
@@ -1542,7 +1559,7 @@ class TCGen05Test(TestCase):
             accumulate=False,
         )
         tcgen05.commit_arrive(barriers[2])
-      barriers[2].wait(for_tensor_core=True)
+      barriers[2].wait(orders_tensor_core=True)
       acc.load().store_untiled(out, optimized=False)
 
     x_shape = (m, k)
@@ -1637,7 +1654,7 @@ class TCGen05Test(TestCase):
             acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False, collective=True
         )
         tcgen05.commit_arrive(barriers[2], collective=True, ctx=ctx)
-      mma_barrier.wait(for_tensor_core=True)
+      mma_barrier.wait(orders_tensor_core=True)
       m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
       acc.load().store_untiled(memref_slice(out, m_slice), optimized=False)
 
@@ -1751,7 +1768,7 @@ class TCGen05Test(TestCase):
             collective=True,
         )
         tcgen05.commit_arrive(barriers[2], collective=True, ctx=ctx)
-      mma_barrier.wait(for_tensor_core=True)
+      mma_barrier.wait(orders_tensor_core=True)
       m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
       acc.load().store_untiled(memref_slice(out, m_slice), optimized=False)
 
@@ -3090,22 +3107,25 @@ class LayoutTest(TestCase):
 
   @parameterized.product(
       dtype=[jnp.int16],  # TODO(apaszke): More dtypes
-      # TODO(apaszke): swizzle=64 <- not implemented in transfer_tiled right now
-      swizzle=[16, 32, 128],
+      swizzle=[16, 32, 64, 128],
+      layouts=[
+          (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT),
+          (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT),
+      ],
   )
-  def test_transpose_tiled(self, dtype, swizzle):
+  def test_transpose_tiled(self, dtype, swizzle, layouts):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
     col_tiling = swizzle // bw
-    m, n = 128, 256
+    m, n = 256, 192
     tiling = (8, col_tiling)
-    transpose_layout = fa.WGMMA_TRANSPOSED_LAYOUT
+    layout, transpose_layout = layouts
     def kernel(ctx, in_, out, smems):
       smem_in, smem_out, barrier = smems
       ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
       barrier.wait()
       t = mgpu.FragmentedArray.load_tiled(
-          smem_in, swizzle=swizzle, is_signed=True, layout=fa.WGMMA_LAYOUT
+          smem_in, swizzle=swizzle, is_signed=True, layout=layout
       )
       smem_out_t = memref_transpose(smem_out, (1, 0, 3, 2))
       t.to_layout(transpose_layout).store_tiled(smem_out_t, swizzle=swizzle)

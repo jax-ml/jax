@@ -211,55 +211,11 @@ class MemoryRef:
         self.shape, dtype, memory_space=self.memory_space
     )
 
-  def get_ref_aval(self) -> TransformedRef | AbstractMemoryRef:
+  def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
     # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
     # try to apply JAX ops to it.
-    return AbstractMemoryRef(
+    return state.AbstractRef(
         jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
-
-
-class AbstractMemoryRef(state.AbstractRef):
-  __slots__ = ["inner_aval", "memory_space"]
-
-  inner_aval: jax_core.ShapedArray
-
-  def __init__(self, inner_aval: jax_core.ShapedArray, memory_space: Any):
-    if isinstance(inner_aval, ShapedArrayWithMemorySpace):
-      if inner_aval.memory_space is not None:
-        assert inner_aval.memory_space == memory_space, (
-            f"Mismatched memory spaces: {inner_aval.memory_space=},"
-            f" {memory_space=}"
-        )
-    self.inner_aval = inner_aval
-    self.memory_space = memory_space
-
-  def __repr__(self) -> str:
-    return f'MemRef<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
-
-  def update_weak_type(self, weak_type):
-    return self.update(inner_aval=self.inner_aval.update_weak_type(weak_type))
-
-  def update_vma(self, vma):
-    return self.update(inner_aval=self.inner_aval.update_vma(vma))
-
-  def update(self, inner_aval=None, memory_space=None):
-    inner_aval = self.inner_aval if inner_aval is None else inner_aval
-    memory_space = self.memory_space if memory_space is None else memory_space
-    return AbstractMemoryRef(inner_aval, memory_space)
-
-  def to_tangent_aval(self):
-    return self.update(inner_aval=self.inner_aval.to_tangent_aval())
-
-  # TODO(dougalm, sharadmv): figure out how to avoid needing this
-  def normalize(self):
-    return state.AbstractRef(self.inner_aval).normalize()
-
-  def __eq__(self, other):
-    return (type(self) is type(other) and self.inner_aval == other.inner_aval
-            and self.memory_space == other.memory_space)
-
-  def __hash__(self):
-    return hash((self.__class__, self.inner_aval, self.memory_space))
 
 
 class MemorySpace(enum.Enum):
@@ -534,7 +490,7 @@ class BlockSpec:
       )
     else:
       block_array_aval = array_aval.update(shape=ref_block_shape)
-    block_aval = AbstractMemoryRef(block_array_aval, self.memory_space)
+    block_aval = state.AbstractRef(block_array_aval, self.memory_space)
 
     if (
         not jax_core.is_constant_shape(block_aval.shape)
@@ -652,7 +608,7 @@ class BlockMapping:
   # TODO(apaszke,sharadmv): Replace mapped dims in block_shape with a transform.
   # After all, it's just indexing out singleton dimensions.
   block_shape: tuple[BlockDim, ...]
-  transformed_block_aval: AbstractMemoryRef
+  transformed_block_aval: state.AbstractRef
   index_map_jaxpr: jax_core.ClosedJaxpr
   index_map_out_tree: tree_util.PyTreeDef
   array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
@@ -683,14 +639,14 @@ class BlockMapping:
     return new_self
 
   @property
-  def block_aval(self) -> AbstractMemoryRef:
+  def block_aval(self) -> state.AbstractRef:
     # If you hit this, make sure you take transforms into account and use either
     # ref_aval or transformed_block_aval.
     assert not self.transforms, "Lowering failed to handle transforms"
     return self.transformed_block_aval
 
   @property
-  def ref_aval(self) -> AbstractMemoryRef | TransformedRef:
+  def ref_aval(self) -> state.AbstractRef | TransformedRef:
     """Returns the abstract value of the Ref after transformations."""
     if not self.transforms:
       return self.transformed_block_aval

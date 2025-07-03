@@ -3611,7 +3611,7 @@ class APITest(jtu.JaxTestCase):
     outer_jaxpr, inner_jaxpr = jaxprs
 
     self.assertLen(outer_jaxpr.eqns, 1)
-    prim_name = 'pjit'
+    prim_name = 'jit'
     jaxpr_param = 'jaxpr'
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, f'{prim_name}')
     subjaxpr_1 = outer_jaxpr.eqns[0].params[f"{jaxpr_param}"]
@@ -4266,14 +4266,14 @@ class APITest(jtu.JaxTestCase):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
-    self.assertIn('pjit', str(jaxpr))
+    self.assertIn('jit', str(jaxpr))
 
     @partial(api.jit, inline=True)
     def f(x):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
-    self.assertNotIn('pjit', str(jaxpr))
+    self.assertNotIn('jit', str(jaxpr))
 
   # Repro for https://github.com/jax-ml/jax/issues/7229.
   def test_compute_with_large_transfer(self):
@@ -6762,6 +6762,44 @@ class RematTest(jtu.JaxTestCase):
       self.assertIn('x > 0', traceback.format_exc())
     else:
       assert False
+
+  def test_name_stack_annotation(self):
+    def g(x, y):
+      with jax.named_scope("g"):
+        return x @ y
+
+    def g1(x, y):
+      with jax.named_scope("g1"):
+        t = checkpoint_name(x @ y, "save_me")
+      return t
+
+    def f2(x, ws):
+      for i, w in enumerate(ws):
+        if i % 8 == 1:
+          x = g1(x, w)
+        else:
+          x = g(x, w)
+        x = jnp.tanh(x)
+      return jnp.sum(x)
+
+    @jax.remat
+    def f(x, ws):
+      return jax.named_call(jax.jit(f2), name='run_per_expert_shard')(x, ws)
+
+    def make_weight(i):
+      if i % 2 == 0:
+        return jnp.ones([64, 128])
+      else:
+        return jnp.ones([128, 64])
+
+    x = jnp.ones([64, 64])
+    ws = [make_weight(i) for i in range(2)]
+
+    out = f(x, ws)
+    vjp = jax.make_jaxpr(jax.vjp(functools.partial(f, x), ws)[1])(out)
+
+    s = vjp.jaxpr.pretty_print(name_stack=True)
+    self.assertEqual(s.count('rematted_computation'), 1)
 
 
 @jtu.with_config(jax_pprint_use_color=False)

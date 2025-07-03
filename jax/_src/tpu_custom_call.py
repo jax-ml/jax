@@ -24,6 +24,7 @@ import dataclasses
 import enum
 import functools
 import io
+import json
 from typing import Any
 
 import jax
@@ -270,6 +271,7 @@ def _tpu_custom_call_lowering(
     kernel_name: str | None,
     out_avals: Any,
     input_output_aliases: tuple[tuple[int, int], ...],
+    metadata: Any | None,
 ) -> ir.OpResultList:
   result_types = [mlir.aval_to_ir_type(aval) for aval in out_avals]
   axis_context = ctx.module_context.axis_context
@@ -315,7 +317,10 @@ def _tpu_custom_call_lowering(
       result_shapes=result_shapes,
       extra_attributes=extra_attributes,
   )
-
+  if metadata is not None:
+    call.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
+        dict(kernel_metadata=ir.StringAttr.get(json.dumps(metadata)))
+    )
   return call.results
 
 
@@ -595,6 +600,7 @@ def lower_module_to_custom_call(
     output_memory_spaces: tuple[MemorySpace | None, ...] | None,
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None,
+    metadata: Any | None = None,
 ) -> Sequence[ir.Value]:
   config = _lower_to_custom_call_config(
       module,
@@ -618,6 +624,7 @@ def lower_module_to_custom_call(
       kernel_name=kernel_name,
       out_avals=out_type,
       input_output_aliases=input_output_aliases,
+      metadata=metadata,
   )
 
 
@@ -638,6 +645,7 @@ def as_tpu_kernel(
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    metadata: Any | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   config = _lower_to_custom_call_config(
@@ -659,6 +667,7 @@ def as_tpu_kernel(
       out_type,
       kernel_name=kernel_name,
       input_output_aliases=input_output_aliases,
+      metadata=metadata,
   )
 
 
@@ -681,6 +690,7 @@ def lowered_as_tpu_kernel(
     serialization_format: int | None = None,
     internal_scratch_in_bytes: int | None = None,
     disable_bounds_checks: bool = False,
+    metadata: Any | None = None,
 ) -> Callable[..., Any]:
   device_type = _get_device_type(lowered_module)
   lowered_module_asm = lowered_module.operation.get_asm(
@@ -708,6 +718,7 @@ def lowered_as_tpu_kernel(
       out_type,
       kernel_name=kernel_name,
       input_output_aliases=input_output_aliases,
+      metadata=metadata,
   )
 
 
@@ -718,6 +729,7 @@ def _as_jax_callable(
     *,
     kernel_name: str | None,
     input_output_aliases: tuple[tuple[int, int], ...],
+    metadata: Any | None,
 ) -> Callable[..., Any]:
   unpack = False
   if not isinstance(out_type, collections.abc.Iterable):
@@ -734,6 +746,7 @@ def _as_jax_callable(
         kernel_name=kernel_name,
         out_avals=out_avals,
         input_output_aliases=input_output_aliases,
+        metadata=metadata,
     )
     return result[0] if unpack else result
 

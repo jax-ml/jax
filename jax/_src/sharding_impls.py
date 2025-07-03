@@ -33,6 +33,7 @@ from jax._src import source_info_util
 from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
     SdyArray, SdyDim, UnspecifiedValue, AUTO,
@@ -360,22 +361,20 @@ def _unpickle_gspmd_sharding(devices, op_sharding, memory_kind):
 
 @use_cpp_class(xc.GSPMDSharding)
 class GSPMDSharding(jsharding.Sharding):
-  _devices: tuple[Device, ...]
+  _devices: xc.DeviceList
   _hlo_sharding: xc.HloSharding
   _memory_kind: str | None
-  _device_list: xc.DeviceList | None
   _internal_device_list: xc.DeviceList
 
   @use_cpp_method()
-  def __init__(self, devices: Sequence[Device],
+  def __init__(self, devices: Sequence[Device] | xc.DeviceList,
                op_sharding: xc.OpSharding | xc.HloSharding,
-               *, memory_kind: str | None = None,
-               _device_list: xc.DeviceList | None = None):
-    self._devices = tuple(devices)
-    if isinstance(op_sharding, xc.OpSharding):
-      self._hlo_sharding = xc.HloSharding.from_proto(op_sharding)
-    else:
-      self._hlo_sharding = op_sharding
+               *, memory_kind: str | None = None):
+    self._devices = (devices if isinstance(devices, xc.DeviceList) else
+                     xc.DeviceList(tuple(devices)))
+    self._hlo_sharding = (xc.HloSharding.from_proto(op_sharding)
+                          if isinstance(op_sharding, xc.OpSharding) else
+                          op_sharding)
     self._memory_kind = memory_kind
 
   def __reduce__(self):
@@ -417,7 +416,7 @@ class GSPMDSharding(jsharding.Sharding):
 
   @property
   def num_devices(self) -> int:
-    return len(self.device_set)
+    return len(self._internal_device_list)
 
   @functools.cached_property
   def device_set(self) -> set[Device]:
@@ -432,7 +431,7 @@ class GSPMDSharding(jsharding.Sharding):
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return self._devices
+    return tuple(self._devices)
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return self._hlo_sharding
@@ -468,7 +467,7 @@ class GSPMDSharding(jsharding.Sharding):
 
   @classmethod
   def get_replicated(cls, device_assignment, *, memory_kind: str | None = None):
-    return cls(tuple(device_assignment), replicated_hlo_sharding,
+    return cls(device_assignment, replicated_hlo_sharding,
                memory_kind=memory_kind)
 
 
@@ -982,12 +981,15 @@ def make_key_array_phys_sharding(aval, sharding):
     return sharding.update(spec=PartitionSpec(*sharding.spec, *trailing_spec))
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
-    return GSPMDSharding(
-        sharding._device_assignment, physical_hlo_sharding(aval, hlos))
+    if jaxlib_extension_version >= 360:
+      return GSPMDSharding(
+          sharding._internal_device_list, physical_hlo_sharding(aval, hlos))
+    else:
+      return GSPMDSharding(
+          sharding._device_assignment, physical_hlo_sharding(aval, hlos))
 
 
-def physical_sharding(
-    aval, sharding: jsharding.Sharding) -> jsharding.Sharding:
+def physical_sharding(aval, sharding: jsharding.Sharding) -> jsharding.Sharding:
   return make_key_array_phys_sharding(aval, sharding)
 
 
@@ -1001,8 +1003,12 @@ def get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding):
   logical_op_sharding = phys_hlo_sharding.to_proto().clone()
   tad = partitions[:-elt_aval.ndim] + suffix
   logical_op_sharding.tile_assignment_dimensions = tad
-  return GSPMDSharding(phys_sharding._device_assignment,
-                       xc.HloSharding.from_proto(logical_op_sharding))
+  if jaxlib_extension_version >= 360:
+    return GSPMDSharding(phys_sharding._internal_device_list,
+                         xc.HloSharding.from_proto(logical_op_sharding))
+  else:
+    return GSPMDSharding(phys_sharding._device_assignment,
+                         xc.HloSharding.from_proto(logical_op_sharding))
 
 def check_replicated_trailing_dims(sharding: jsharding.Sharding,
                                    logical_shape, dtype):
@@ -1048,12 +1054,9 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
 
 
 @util.cache()
-def create_mesh_pspec_sharding(
-    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh,
-    pspec: PartitionSpec | None,
+def cached_named_sharding(
+    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh, pspec: PartitionSpec,
     memory_kind: str | None = None) -> NamedSharding:
-  if pspec is None:
-    pspec = PartitionSpec()
   return NamedSharding(mesh, pspec, memory_kind=memory_kind)
 
 
@@ -1061,8 +1064,7 @@ def _gspmd_to_named_sharding_via_mesh(
     out_s: GSPMDSharding, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
 ) -> NamedSharding:
   spec = parse_flatten_op_sharding(out_s._hlo_sharding, mesh)[0]
-  return create_mesh_pspec_sharding(
-      mesh, spec, memory_kind=out_s.memory_kind)
+  return cached_named_sharding(mesh, spec, out_s.memory_kind)
 
 
 def flatten_spec(spec):
@@ -1124,7 +1126,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
           f'PartitionSpec passed to {api_name} cannot contain axis'
           ' names that are of type Auto or Manual. Got PartitionSpec:'
           f' {sharding.spec} with axis name: {s} of type:'
-          f' {sharding.mesh._name_to_type[s]}, This error occurs at source: '
+          f' {sharding.mesh._name_to_type[s]}. This error occurs at source: '
           f' {source_info_util.summarize(source_info_util.current())}')
   return sharding
 

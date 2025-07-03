@@ -31,6 +31,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
+from jax._src import state
 from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.lib.mlir.dialects import arith as arith_dialect
@@ -48,8 +49,7 @@ import jax.numpy as jnp
 from jaxlib.mlir import ir
 
 
-_Ref = pallas_core.AbstractMemoryRef | state_types.TransformedRef
-AbstractMemoryRef = pallas_core.AbstractMemoryRef
+_Ref = state.AbstractRef | state_types.TransformedRef
 
 DimensionSemantics = Literal["parallel", "sequential"]
 
@@ -253,7 +253,7 @@ class GPUMemoryRef(pallas_core.MemoryRef):
       )
     else:
       ref = pallas_core.TransformedRef(
-          AbstractMemoryRef(aval, memory_space=self.memory_space), ()
+          state.AbstractRef(aval, memory_space=self.memory_space), ()
       )
     for t in reversed(self.transforms):
       ref = t.undo(ref)
@@ -334,7 +334,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
       byte_offset = 0
       for ref in jax.tree.leaves(ref_group):
         byte_offset = align_to(byte_offset, SMEM_ALIGNMENT)
-        assert isinstance(ref, pallas_core.AbstractMemoryRef) or isinstance(
+        assert isinstance(ref, state.AbstractRef) or isinstance(
             ref, pallas_core.TransformedRef
         )
         if not isinstance(ref, pallas_core.TransformedRef):
@@ -382,7 +382,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
   return tuple(flat_refs)
 
 
-class AbstractRefUnion(pallas_core.AbstractMemoryRef):
+class AbstractRefUnion(state.AbstractRef):
   refs: Sequence[_GPUMemoryRefTree]
 
   def __init__(
@@ -901,7 +901,7 @@ class BlockSpec(pallas_core.BlockSpec):
     )
     block_inner_aval = bm.block_aval.inner_aval
     for t in self.transforms:
-      block_inner_aval = t(block_inner_aval)
+      block_inner_aval = t(block_inner_aval)  # type: ignore[arg-type]
     return bm.replace(
         transformed_block_aval=bm.block_aval.update(
             inner_aval=block_inner_aval
@@ -926,7 +926,7 @@ class BarrierType(dtypes.ExtendedDType):
   name: ClassVar[str] = "barrier"
 
   num_arrivals: int
-  for_tensor_core: bool
+  orders_tensor_core: bool
 
   def __str__(self):
     return self.name
@@ -945,26 +945,29 @@ class ClusterBarrierType(dtypes.ExtendedDType):
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Barrier:
-  """Describes a barrier Ref.
+  """Describes a barrier reference.
 
   Attributes:
     num_arrivals: The number of arrivals that will be recorded by this barrier.
     num_barriers: The number of barriers that will be created. Individual
       barriers can be accessed by indexing into the barrier Ref.
-    for_tensor_core: Whether this barrier is used for synchronizing with
-      the tensor core. This should be set to True when waiting on Blackwell
-      (TC Gen 5) asynchronous matmul instructions.
+    orders_tensor_core: If False, a successfull wait from one thread does not
+      guarantee that the TensorCore-related operations in other threads have
+      completed. Similarly, when False any TensorCore operation in the waiting
+      thread is allowed to begin before the wait succeeds.
   """
   num_arrivals: int = 1
   num_barriers: int = 1
-  for_tensor_core: bool = False
+  orders_tensor_core: bool = False
 
-  def get_ref_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
-        [self.num_barriers], BarrierType(self.num_arrivals,
-                                         for_tensor_core=self.for_tensor_core)
+        [self.num_barriers],
+        BarrierType(
+            self.num_arrivals, orders_tensor_core=self.orders_tensor_core
+        ),
     )
-    return AbstractMemoryRef(aval, SMEM)
+    return state.AbstractRef(aval, SMEM)
 
   def __post_init__(self):
     if self.num_arrivals < 1:
@@ -977,11 +980,11 @@ class ClusterBarrier:
   collective_axes: tuple[str | tuple[str, ...], ...]
   num_barriers: int = 1
 
-  def get_ref_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
         [self.num_barriers], ClusterBarrierType(self.collective_axes)
     )
-    return AbstractMemoryRef(aval, SMEM)
+    return state.AbstractRef(aval, SMEM)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -990,7 +993,7 @@ class WGMMAAccumulatorRef:
   dtype: jnp.dtype = jnp.float32
   _init: Any = state_types.uninitialized
 
-  def get_ref_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     if self._init is not state_types.uninitialized:
       raise ValueError(
           "Preinitialized WGMMAAccumulatorRef only supported in pl.run_state."
@@ -1012,7 +1015,7 @@ def _wgmma_ref_type_mapping(ref: WGMMAAccumulatorRef):
 state_types._ref_type_aval_mappings[WGMMAAccumulatorRef] = _wgmma_ref_type_mapping
 
 
-class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
+class WGMMAAbstractAccumulatorRef(state.AbstractRef):
   __slots__ = ["inner_aval", "memory_space"]
 
   def __repr__(self) -> str:
@@ -1035,7 +1038,7 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
     return arr
 
 
-class AbstractTMEMRef(AbstractMemoryRef):
+class AbstractTMEMRef(state.AbstractRef):
   __slots__ = ["inner_aval", "memory_space", "packed", "collective"]
 
   def __init__(self, inner_aval, memory_space, packed, collective):
@@ -1219,6 +1222,7 @@ class Layout(enum.Enum):
   WG_STRIDED = enum.auto()
 
   TCGEN05 = enum.auto()
+  TCGEN05_TRANSPOSED = enum.auto()
   TCGEN05_TMEM_NATIVE = enum.auto()
   TCGEN05_ROW = enum.auto()
   TCGEN05_COL = enum.auto()
@@ -1252,6 +1256,9 @@ class Layout(enum.Enum):
       case Layout.TCGEN05:
         check_no_args()
         return mgpu.TCGEN05_LAYOUT
+      case Layout.TCGEN05_TRANSPOSED:
+        check_no_args()
+        return mgpu.TCGEN05_TRANSPOSED_LAYOUT
       case Layout.TCGEN05_ROW:
         check_no_args()
         return mgpu.TCGEN05_ROW_LAYOUT

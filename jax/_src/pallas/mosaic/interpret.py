@@ -27,6 +27,7 @@ import jax
 from jax import lax
 from jax._src import callback
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src.lax.control_flow import for_loop
 from jax._src import linear_util as lu
 from jax._src import source_info_util
@@ -2004,8 +2005,10 @@ def interpret_pallas_call(
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: InterpretParams,
+    metadata: frozen_dict.FrozenDict[str, str] | None,
 ):
   del debug, cost_estimate, out_avals
+  del metadata  # TODO(sharadmv): Add metadata to HLO.
 
   if isinstance(mesh, mosaic_core.TensorCoreMesh):
     # As a convenience for users, if we are interpreting a pl.core_map over a

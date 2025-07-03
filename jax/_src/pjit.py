@@ -61,6 +61,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
@@ -534,13 +535,14 @@ def _infer_params_impl(
     in_shardings_leaves = out_shardings_leaves = tuple(leaves)
     in_shardings_treedef = out_shardings_treedef = treedef
   else:
+    api_name = 'pjit' if ji.use_resource_env else 'jit'
     in_shardings_leaves = tuple(
-        _create_sharding_for_array(ctx_mesh, x, 'in_shardings', 'jit')
+        _create_sharding_for_array(ctx_mesh, x, 'in_shardings', api_name)
         for x in ji.in_shardings_leaves)
-    in_shardings_treedef = ji.in_shardings_treedef
     out_shardings_leaves = tuple(
-        _create_sharding_for_array(ctx_mesh, x, 'out_shardings', 'jit')
+        _create_sharding_for_array(ctx_mesh, x, 'out_shardings', api_name)
         for x in ji.out_shardings_leaves)
+    in_shardings_treedef = ji.in_shardings_treedef
     out_shardings_treedef = ji.out_shardings_treedef
 
   assert None not in in_shardings_leaves
@@ -980,8 +982,10 @@ def hashable_pytree(pytree):
 
 
 def _create_sharding_for_array(mesh, x, name, api_name):
-  if x is None and (mesh is None or mesh.empty):
-    return UNSPECIFIED
+  if x is None:
+    if api_name == 'jit' or mesh is None or mesh.empty:
+      return UNSPECIFIED
+    return sharding_impls.cached_named_sharding(mesh, PartitionSpec())
   if isinstance(x, (AUTO, UnspecifiedValue, Sharding)):
     return x
   if mesh is None:
@@ -1004,8 +1008,8 @@ def _create_sharding_for_array(mesh, x, name, api_name):
         f' site? Alternatively, provide `Sharding`s to {name} and'
         ' then the mesh context manager is not required.')
   # A nice user error is raised in prepare_axis_resources.
-  assert x is None or isinstance(x, PartitionSpec), x
-  return sharding_impls.create_mesh_pspec_sharding(mesh, x)
+  assert isinstance(x, PartitionSpec), x
+  return sharding_impls.cached_named_sharding(mesh, x)
 
 
 def _create_sharding_with_device_backend(device, backend):
@@ -1509,7 +1513,7 @@ def check_aval_layout_compatibility(
 
 # -------------------- pjit rules --------------------
 
-pjit_p = core.Primitive("pjit")
+pjit_p = core.Primitive("jit")
 pjit_p.multiple_results = True
 pjit_p.skip_canonicalization = True
 
@@ -2096,7 +2100,10 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   ctx.set_tokens_out(tokens_out)
   return out_nodes
 
-mlir.register_lowering(pjit_p, _pjit_lowering)
+# TODO(phawkins): this is marked uncacheable because it has its own cache and
+# because the cache breaks jaxpr metadata like source locations. We should fix
+# the metadata problem and consolidate the caches.
+mlir.register_lowering(pjit_p, _pjit_lowering, cacheable=False)
 
 
 def _pjit_batcher(axis_data, vals_in,
@@ -2148,8 +2155,7 @@ batching.ragged_prop_rules[pjit_p] = batching.ragged_mask_no_op_rule
 
 
 def _pjit_batcher_for_sharding(
-    s: Sharding | UnspecifiedValue,
-    dim: int | batching.RaggedAxis, spmd_axis_name: tuple[str, ...] | None,
+    s, dim: int | batching.RaggedAxis, spmd_axis_name: tuple[str, ...] | None,
     mesh, ndim: int):
   if isinstance(s, UnspecifiedValue):
     return s
@@ -2164,9 +2170,10 @@ def _pjit_batcher_for_sharding(
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)  # type: ignore
     new_op.tile_assignment_dimensions = tad
-    new_gs = GSPMDSharding(
-        s._device_assignment, new_op,
-        _device_list=getattr(s, '_internal_device_list', None))
+    if jaxlib_extension_version >= 360:
+      new_gs = GSPMDSharding(s._internal_device_list, new_op)
+    else:
+      new_gs = GSPMDSharding(s._device_assignment, new_op)
     return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]
   else:
     if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):

@@ -165,7 +165,7 @@ class NameStackTransformationTest(jtu.JaxTestCase):
 
     jaxpr = jax.make_jaxpr(f)(jnp.ones(2)).jaxpr
     jaxpr_param = 'jaxpr'
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
+    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo/vmap()')
     self.assertEqual(
         str(jaxpr.eqns[0].params[jaxpr_param].eqns[0].source_info.name_stack),
         'bar')
@@ -194,7 +194,7 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     g = jax.named_scope('foo')(lambda x, t: jax.jvp(f, (x,), (t,)))
     jaxpr = jax.make_jaxpr(g)(1., 1.).jaxpr
     jaxpr_param = 'jaxpr'
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
+    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo/jvp()')
     self.assertEqual(
         str(jaxpr.eqns[0].params[jaxpr_param].eqns[0].source_info.name_stack),
         'bar/baz')
@@ -453,8 +453,8 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
 
     if ifrt_version >= 13:
       hlo_text = _get_hlo(f)(jnp.arange(2.), True)
-      self.assertIn('foo/vmap(cond)/branch_0_fun/false/sub', hlo_text)
-      self.assertIn('foo/vmap(cond)/branch_1_fun/true/add', hlo_text)
+      self.assertIn('foo/vmap()/cond/branch_0_fun/false/sub', hlo_text)
+      self.assertIn('foo/vmap()/cond/branch_1_fun/true/add', hlo_text)
 
   def test_jvp_of_cond_transforms_name_stack(self):
 

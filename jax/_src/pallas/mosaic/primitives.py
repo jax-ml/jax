@@ -47,10 +47,13 @@ zip, unsafe_zip = util.safe_zip, zip
 repeat_p = jax_core.Primitive('repeat')
 
 def repeat(x, repeats, axis):
+  axis = util.canonicalize_axis(axis, x.ndim)
   return repeat_p.bind(x, repeats=repeats, axis=axis)
 
 @repeat_p.def_abstract_eval
 def _repeat_abstract_eval(x, *, repeats, axis):
+  if axis < 0 or axis >= len(x.shape):
+    raise ValueError(f"axis: {axis} is out of range [0, {len(x.shape)})")
   shape = list(x.shape)
   shape[axis] *= repeats
   return jax_core.ShapedArray(shape, x.dtype)
@@ -640,7 +643,7 @@ get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 
 @get_barrier_semaphore_p.def_abstract_eval
 def _get_barrier_semaphore_abstract_eval():
-  return pl_core.AbstractMemoryRef(
+  return state.AbstractRef(
       jax_core.ShapedArray((), pl_core.BarrierSemaphore()),
       tpu_core.MemorySpace.SEMAPHORE,
   )

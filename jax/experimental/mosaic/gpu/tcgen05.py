@@ -36,6 +36,7 @@ from .launch_context import LaunchContext
 TMEM_ROWS = 128
 TCGEN05_SMEM_DESCRIPTOR_BIT = 1 << 46
 LAYOUT = fa.TCGEN05_LAYOUT
+TRANSPOSED_LAYOUT = fa.TCGEN05_TRANSPOSED_LAYOUT
 ROW_LAYOUT = fa.TCGEN05_ROW_LAYOUT
 COL_LAYOUT = fa.TCGEN05_COL_LAYOUT
 
@@ -1173,5 +1174,13 @@ def commit_tmem():
   void = ir.Type.parse("!llvm.void")
   llvm.inline_asm(
       void, [], "tcgen05.wait::st.sync.aligned;", "", has_side_effects=True,
+  )
+  utils.warpgroup_barrier()
+
+
+def wait_load_tmem():
+  void = ir.Type.parse("!llvm.void")
+  llvm.inline_asm(
+      void, [], "tcgen05.wait::ld.sync.aligned;", "", has_side_effects=True,
   )
   utils.warpgroup_barrier()

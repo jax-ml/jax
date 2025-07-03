@@ -53,6 +53,11 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     num_gpus_per_task = 1
     num_tasks = num_gpus // num_gpus_per_task
 
+    if jax.device_count() < num_gpus:
+      raise unittest.SkipTest(
+          f"Test requires >={num_gpus} GPUs; got {jax.device_count()}."
+      )
+
     with contextlib.ExitStack() as exit_stack:
       subprocesses = []
       for task in range(num_tasks):
@@ -83,9 +88,9 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
       try:
         for proc in subprocesses:
           out, err = proc.communicate()
-          self.assertEqual(proc.returncode, 0)
+          self.assertEqual(proc.returncode, 0, msg=f"Process failed:\n\n{out}\n\n{err}")
           self.assertEqual(
-              out, f"{num_gpus_per_task},{num_gpus}", msg=f"Process failed:\n\n{err}",
+              out, f"{num_gpus_per_task},{num_gpus}", msg=f"Process failed:\n\n{out}\n\n{err}",
           )
       finally:
         for proc in subprocesses:

@@ -437,8 +437,6 @@ class Device:
   local_hardware_id: int | None
   def __repr__(self) -> str: ...
   def __str__(self) -> str: ...
-  def transfer_to_infeed(self, literal: _LiteralSlice): ...
-  def transfer_from_outfeed(self, shape: Shape): ...
   def memory(self, kind: str) -> Memory: ...
   def default_memory(self) -> Memory: ...
   def addressable_memories(self) -> list[Memory]: ...
@@ -833,8 +831,7 @@ class DistributedRuntimeClient:
 def get_distributed_runtime_service(
     address: str,
     num_nodes: int,
-    heartbeat_interval: int | None = ...,
-    max_missing_heartbeats: int | None = ...,
+    heartbeat_timeout: int | None = ...,
     cluster_register_timeout: int | None = ...,
     shutdown_timeout: int | None = ...,
 ) -> DistributedRuntimeService: ...
@@ -844,8 +841,7 @@ def get_distributed_runtime_client(
     rpc_timeout: int | None = ...,
     init_timeout: int | None = ...,
     shutdown_timeout: int | None = ...,
-    heartbeat_interval: int | None = ...,
-    max_missing_heartbeats: int | None = ...,
+    heartbeat_timeout: int | None = ...,
     missed_heartbeat_callback: Any | None = ...,
     shutdown_on_destruction: bool | None = ...,
     use_compression: bool | None = ...,

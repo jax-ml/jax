@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
@@ -46,7 +48,7 @@ def logpdf(x: ArrayLike, kappa: ArrayLike) -> Array:
   """
   x, kappa = promote_args_inexact('vonmises.logpdf', x, kappa)
   zero = _lax_const(kappa, 0)
-  return jnp.where(lax.gt(kappa, zero), kappa * (jnp.cos(x) - 1) - jnp.log(2 * jnp.pi * lax.bessel_i0e(kappa)), jnp.nan)
+  return jnp.where(lax.gt(kappa, zero), kappa * (jnp.cos(x) - 1) - jnp.log(2 * np.pi * lax.bessel_i0e(kappa)), np.nan)
 
 
 def pdf(x: ArrayLike, kappa: ArrayLike) -> Array:

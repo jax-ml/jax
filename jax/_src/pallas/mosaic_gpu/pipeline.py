@@ -28,6 +28,7 @@ from jax import api_util
 from jax import lax
 from jax._src import core
 from jax._src import linear_util as lu
+from jax._src import state
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
@@ -61,14 +62,14 @@ def _get_block_shape(spec: pallas_core.BlockSpec):
 class BufferedRef:
   spec: pallas_core.BlockSpec = dataclasses.field(metadata={"static": True})
   is_index_invariant: bool = dataclasses.field(metadata={"static": True})
-  gmem_ref: pallas_core.AbstractMemoryRef
+  gmem_ref: state.AbstractRef
   # ``None`` if the ref is pinned to GMEM; otherwise, has shape
   # [num_slots, *spec.block_shape].
-  smem_ref: pallas_core.AbstractMemoryRef | None
+  smem_ref: state.AbstractRef | None
 
   def get_ref_for_slot(
       self, slot: int | jax.Array
-  ) -> pallas_core.AbstractMemoryRef:
+  ) -> state.AbstractRef:
     if self.smem_ref is None:
       return self.gmem_ref
     return self.smem_ref.at[slot]
@@ -228,7 +229,7 @@ def emit_pipeline(
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
     max_concurrent_steps = cast(int, num_steps)
 
-  def pipeline(*gmem_refs: pallas_core.AbstractMemoryRef):
+  def pipeline(*gmem_refs: state.AbstractRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
     in_smem_refs, out_smem_refs = util.split_list(
         [
@@ -528,7 +529,7 @@ def emit_pipeline_warp_specialized(
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
     max_concurrent_steps = cast(int, num_steps)
 
-  def pipeline(*gmem_refs: pallas_core.AbstractMemoryRef):
+  def pipeline(*gmem_refs: state.AbstractRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
     if len(out_gmem_refs) != len(out_specs):
       raise ValueError(

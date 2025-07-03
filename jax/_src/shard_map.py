@@ -142,9 +142,13 @@ Infer = InferFromArgs()
 def _get_default_infer():
   return Infer
 
-# TODO(yashkatariya): We need a singleton which users can provide to `in_axes`
-# to tell smap to infer in_specs from args when mesh is fully explicit.
-def smap(f, /, *, in_axes=Infer, out_axes, axis_name: AxisName):
+def smap(f=None, /, *, in_axes=Infer, out_axes, axis_name: AxisName):
+  kwargs = dict(in_axes=in_axes, out_axes=out_axes, axis_name=axis_name)
+  if f is None:
+    return lambda g: _smap(g, **kwargs)
+  return _smap(f, **kwargs)
+
+def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
   if isinstance(axis_name, (list, tuple)):
     raise TypeError(
         f"smap axis_name should be a `str` or a `Hashable`, but got {axis_name}")
@@ -1397,7 +1401,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   unk_arg_tracers = [t for t in tracers if not t.is_known()]
   out_avals_sharded = [v.aval for v in jaxpr.outvars]
   unk_params = dict(mesh=mesh, in_specs=unk_in_specs,
-                    out_specs=unk_out_specs, jaxpr=jaxpr,
+                    out_specs=tuple(unk_out_specs), jaxpr=jaxpr,
                     check_vma=check_vma, manual_axes=manual_axes)
   out_avals = map(partial(_unshard_aval, mesh, check_vma), unk_out_specs,
                   out_avals_sharded)

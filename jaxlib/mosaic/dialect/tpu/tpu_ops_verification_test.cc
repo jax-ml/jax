@@ -26,6 +26,7 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
@@ -277,6 +278,39 @@ TEST_F(TpuOpsVerificationTest,
                  "Expected mask shape to be broadcastable to result shape.")));
 }
 
+TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaElementTypeMismatch) {
+  auto dma = Create<EnqueueDMAOp>(
+      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+      /*source_semaphore=*/AllocaSemaphore(),
+      /*target=*/
+      Create<memref::AllocaOp>(GetMemRefType({1024, 256, 128},
+                                             builder().getI64Type(),
+                                             MemorySpace::kHbm))
+          .getMemref(),
+      /*target_semaphore=*/AllocaSemaphore(),
+      /*device_id=*/nullptr,
+      /*core_id=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_, HasSubstr("DMA source and target element type mismatch")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaDynamicRankMismatch) {
+  auto dma = Create<EnqueueDMAOp>(
+      /*source=*/AllocaI32({ShapedType::kDynamic, 256, 128}, MemorySpace::kHbm),
+      /*source_semaphore=*/AllocaSemaphore(),
+      /*target=*/
+      AllocaI32({ShapedType::kDynamic, ShapedType::kDynamic, 128},
+                MemorySpace::kHbm),
+      /*target_semaphore=*/AllocaSemaphore(),
+      /*device_id=*/nullptr,
+      /*core_id=*/nullptr);
+
+  ASSERT_THAT(VerifyOp(dma),
+              StatusIs(_, HasSubstr("DMA source and target shape mismatch.")));
+}
+
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
        IndirectDmaHbmChunkGatherVerificationWorks) {
   auto dma = Create<EnqueueIndirectDMAOp>(
@@ -413,24 +447,29 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
   ASSERT_OK(VerifyOp(dma));
 }
 
-TEST_F(TpuOpsVerificationTest, IndirectDmaOnUnsupportedScalarSubcore) {
-  auto func_op =
-      Create<func::FuncOp>("scalar_kernel", builder().getFunctionType({}, {}));
-  func_op->setAttr(
-      TPUDialect::GetCoreTypeKey(),
-      CoreTypeAttr::get(builder().getContext(), CoreType::kScScalarSubcore));
-  builder().setInsertionPointToStart(func_op.addEntryBlock());
-  auto dma = Create<EnqueueIndirectDMAOp>(
-      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
-      /*target=*/AllocaI32({64, 32, 128}, MemorySpace::kVmem),
-      /*offsets=*/AllocaI32({64, 32}, MemorySpace::kVmem),
-      /*semaphore=*/AllocaSemaphore(),
-      /*add=*/false,
-      /*offset_filter=*/nullptr);
+TEST_F(TpuOpsVerificationTest, IndirectDmaOnUnsupportedCore) {
+  std::vector<CoreType> unsupported_cores = {CoreType::kScScalarSubcore,
+                                             CoreType::kTc};
+  for (CoreType unsupported_core : unsupported_cores) {
+    auto func_op = Create<func::FuncOp>("scalar_kernel",
+                                        builder().getFunctionType({}, {}));
+    func_op->setAttr(
+        TPUDialect::GetCoreTypeKey(),
+        CoreTypeAttr::get(builder().getContext(), unsupported_core));
+    builder().setInsertionPointToStart(func_op.addEntryBlock());
+    auto dma = Create<EnqueueIndirectDMAOp>(
+        /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+        /*target=*/AllocaI32({64, 32, 128}, MemorySpace::kVmem),
+        /*offsets=*/AllocaI32({64, 32}, MemorySpace::kVmem),
+        /*semaphore=*/AllocaSemaphore(),
+        /*add=*/false,
+        /*offset_filter=*/nullptr);
 
-  ASSERT_THAT(VerifyOp(dma),
-              StatusIs(_, HasSubstr("Enqueue indirect DMA is supported only on "
-                                    "the SC vector subcore")));
+    ASSERT_THAT(
+        VerifyOp(dma),
+        StatusIs(_, HasSubstr("Enqueue indirect DMA is supported only on "
+                              "the SC vector subcore")));
+  }
 }
 
 TEST_F(TpuOpsVerificationTest, IndirectDmaOnUnsupportedTc) {

@@ -94,6 +94,9 @@ class Transform(NamedTuple):
   def wrap(self, stack: list[str]):
     if stack:
       stack[-1] = f'{self.name}({stack[-1]})'
+    else:
+      stack.append(f'{self.name}()')
+
 
 @dataclasses.dataclass(frozen=True)
 class NameStack:

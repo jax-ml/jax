@@ -29,10 +29,10 @@ from jax._src import core
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
-from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lib import jaxlib_extension_version
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -86,23 +86,8 @@ def trivial_effect_lowering(ctx, *, effect):
 mlir.register_lowering(effect_p, trivial_effect_lowering)
 
 def function_effect_lowering(ctx, *, effect):
-  def _f(ctx):
-    ctx.set_tokens_out(ctx.tokens_in)
-    return []
-  func = mlir._emit_lowering_rule_as_fun(_f, ctx)
-
-  output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
-  effs = list(ctx.tokens_in.effects())
-  in_tokens = [ctx.tokens_in.get(eff) for eff in effs]
-  token_types = [mlir.token_type() for _ in effs]
-  output_types = [*token_types, *output_types]
-  flat_output_types = mlir.flatten_ir_types(output_types)
-  call = mlir.func_dialect.CallOp(flat_output_types,
-                                  mlir.ir.FlatSymbolRefAttr.get(func.name.value),
-                                  mlir.flatten_ir_values(in_tokens))
-  tokens, out = util.split_list(call.results, [len(ctx.tokens_in)])
-  ctx.set_tokens_out(mlir.TokenSet(zip(effs, tokens)))
-  return out
+  ctx.set_tokens_out(ctx.tokens_in)
+  return []
 
 callback_p = core.Primitive('callback')
 callback_p.multiple_results = True
@@ -354,9 +339,10 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
         'incorrect set of output token.'):
       f.lower(2.)
 
+  @unittest.skipIf(jaxlib_extension_version < 359, "Needs jaxlib changes")
   def test_nontrivial_lowering_with_ordered_effect_should_consume_token(self):
 
-    mlir.register_lowering(effect_p, function_effect_lowering)
+    mlir.register_lowering(effect_p, function_effect_lowering, inline=False)
 
     @jax.jit
     def f(x):
@@ -374,9 +360,10 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     self.assertIn('hlo.token', str(func.type.inputs[0]))
     self.assertIn('hlo.token', str(func.type.results[0]))
 
+  @unittest.skipIf(jaxlib_extension_version < 359, "Needs jaxlib changes")
   def test_nontrivial_lowering_with_unordered_effect_should_consume_token(self):
 
-    mlir.register_lowering(effect_p, function_effect_lowering)
+    mlir.register_lowering(effect_p, function_effect_lowering, inline=False)
 
     @jax.jit
     def f(x):

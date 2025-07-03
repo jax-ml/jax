@@ -59,6 +59,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import Layout, AutoLayout, Format
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -2085,9 +2086,12 @@ class AllArgsInfo(NamedTuple):
 def to_gspmd_sharding(s: JSharding, ndim: int) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
-  return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
-                        memory_kind=s.memory_kind,
-                        _device_list=getattr(s, '_internal_device_list', None))
+  if jaxlib_extension_version >= 360:
+    return GSPMDSharding(s._internal_device_list, s._to_xla_hlo_sharding(ndim),
+                         memory_kind=s.memory_kind)
+  else:
+    return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
+                         memory_kind=s.memory_kind)
 
 
 def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
@@ -2123,15 +2127,13 @@ def _concretize_abstract_out_shardings(shardings, avals, device_assignment,
                                        out_mem_kinds):
   if device_assignment is None:
     return shardings
-  if len(device_assignment) == 1:
-    return shardings
 
   out = []
   for s, a, mem_kind in zip(shardings, avals, out_mem_kinds):
-    if isinstance(s, UnspecifiedValue) and a.sharding is not None:
+    if isinstance(s, UnspecifiedValue) and isinstance(a, core.ShapedArray):
       if a.sharding.mesh.empty:
         out.append(s)
-      elif a.sharding.mesh._are_all_axes_auto:
+      elif a.sharding.mesh._are_all_axes_auto_or_manual:
         out.append(s)
       else:
         spec = (PartitionSpec(*[PartitionSpec.UNCONSTRAINED if sp is None else sp
@@ -2479,7 +2481,7 @@ def get_pspec_from_executable(
 
 def get_out_shardings_from_executable(
     xla_executable,
-    device_assignment: Sequence[xc.Device],
+    device_list: xc.DeviceList,
     num_out_avals: int,
     num_ordered_effects: int,
 ) -> Sequence[sharding_impls.GSPMDSharding] | None:
@@ -2494,9 +2496,14 @@ def get_out_shardings_from_executable(
 
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`.
-  if len(device_assignment) == 1:
-    return [sharding_impls.GSPMDSharding.get_replicated(device_assignment, memory_kind=mk)
-            for mk in omk]
+  if len(device_list) == 1:
+    if jaxlib_extension_version >= 360:
+      return [sharding_impls.GSPMDSharding.get_replicated(device_list, memory_kind=mk)
+              for mk in omk]
+    else:
+      da = tuple(device_list)
+      return [sharding_impls.GSPMDSharding.get_replicated(da, memory_kind=mk)
+              for mk in omk]
 
   _, out_op_shardings = get_op_sharding_from_executable(xla_executable)
   if not out_op_shardings:
@@ -2520,19 +2527,27 @@ def get_out_shardings_from_executable(
   assert len(out_op_shardings) == num_out_avals == len(omk), (
       len(out_op_shardings), num_out_avals, len(omk))
 
-  return [sharding_impls.GSPMDSharding(device_assignment, os, memory_kind=mk)
-          for os, mk in safe_zip(out_op_shardings, omk)]
+  if jaxlib_extension_version >= 360:
+    return [sharding_impls.GSPMDSharding(device_list, os, memory_kind=mk)
+            for os, mk in safe_zip(out_op_shardings, omk)]
+  else:
+    da = tuple(device_list)
+    return [sharding_impls.GSPMDSharding(da, os, memory_kind=mk)
+            for os, mk in safe_zip(out_op_shardings, omk)]
 
 
 def _get_in_shardings_from_xla(
-    xla_executable, device_assignment: Sequence[xc.Device], num_in_avals: int,
+    xla_executable, device_list: xc.DeviceList, num_in_avals: int,
     num_ordered_effects: int
   ) -> Sequence[GSPMDSharding] | None:
   """Returns input shardings from XLA."""
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`.
-  if len(device_assignment) == 1:
-    return [GSPMDSharding.get_replicated(device_assignment)] * num_in_avals
+  if len(device_list) == 1:
+    if jaxlib_extension_version >= 360:
+      return [GSPMDSharding.get_replicated(device_list)] * num_in_avals
+    else:
+      return [GSPMDSharding.get_replicated(tuple(device_list))] * num_in_avals
 
   in_op_shardings, _ = get_op_sharding_from_executable(xla_executable)
   if not in_op_shardings:
@@ -2544,8 +2559,11 @@ def _get_in_shardings_from_xla(
   assert len(in_op_shardings) == num_in_avals, (
       len(in_op_shardings), num_in_avals)
 
-  return [GSPMDSharding(device_assignment, os)
-          for os in in_op_shardings]
+  if jaxlib_extension_version >= 360:
+    return [GSPMDSharding(device_list, os) for os in in_op_shardings]
+  else:
+    da = tuple(device_list)
+    return [GSPMDSharding(da, os) for os in in_op_shardings]
 
 
 # TODO(yashkatariya): Remove this function after `AUTO` can return shardings
@@ -2760,8 +2778,8 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
 
 
 def _maybe_get_and_check_in_shardings(
-    xla_executable, in_shardings, device_assignment,
-    global_in_avals, num_ordered_effects):
+    xla_executable, in_shardings, device_list, global_in_avals,
+    num_ordered_effects):
   """Returns in_shardings extracted from XLA or checks and returns original
   shardings.
 
@@ -2772,8 +2790,7 @@ def _maybe_get_and_check_in_shardings(
   If in_sharding is unspecified, then the sharding returned by XLA is returned.
   """
   in_shardings_xla = _get_in_shardings_from_xla(
-      xla_executable, device_assignment, len(global_in_avals),
-      num_ordered_effects)
+      xla_executable, device_list, len(global_in_avals), num_ordered_effects)
   if in_shardings_xla is None:
     return in_shardings
 
@@ -2804,11 +2821,11 @@ def _maybe_get_and_check_in_shardings(
 
 
 def _maybe_get_and_check_out_shardings(
-    xla_executable, out_shardings, device_assignment, global_out_avals,
+    xla_executable, out_shardings, device_list, global_out_avals,
     num_ordered_effects
   ):
   out_shardings_xla = get_out_shardings_from_executable(
-      xla_executable, device_assignment, len(global_out_avals),
+      xla_executable, device_list, len(global_out_avals),
       num_ordered_effects)
   if out_shardings_xla is None:
     return out_shardings
@@ -2989,10 +3006,10 @@ class UnloadedMeshExecutable:
       if pmap_nreps == 1:
         assert mesh is None
         in_shardings = _maybe_get_and_check_in_shardings(
-            xla_executable, in_shardings, tuple(device_list), global_in_avals,
+            xla_executable, in_shardings, device_list, global_in_avals,
             len(ordered_effects))
         out_shardings = _maybe_get_and_check_out_shardings(
-            xla_executable, out_shardings, tuple(device_list), global_out_avals,
+            xla_executable, out_shardings, device_list, global_out_avals,
             len(ordered_effects))
       else:
         in_shardings, out_shardings, committed, device_list = _get_metadata_jit_pmap(

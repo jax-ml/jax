@@ -38,6 +38,7 @@ from jax._src import core
 from jax._src import prng
 from jax._src.shard_map import shard_map, smap
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
@@ -282,6 +283,9 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu")
   @config.use_shardy_partitioner(False)
   def test_psend_precv_basic_two_gpus(self):
+    if jaxlib_extension_version < 358:
+      self.skipTest("Test requires StableHLO v1.12.0 or higher.")
+
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
         jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
@@ -329,6 +333,9 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu")
   @config.use_shardy_partitioner(False)
   def test_psend_precv_basic_with_no_deadlock_cycle(self):
+    if jaxlib_extension_version < 358:
+      self.skipTest("Test requires StableHLO v1.12.0 or higher.")
+
     mesh = jtu.create_mesh((8,), 'x')
     a = jax.device_put(
         jnp.arange(8 * 8, dtype=jnp.float32).reshape((8, 8)),
@@ -392,6 +399,9 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu")
   @config.use_shardy_partitioner(False)
   def test_psend_precv_reverse(self):
+    if jaxlib_extension_version < 358:
+      self.skipTest("Test requires StableHLO v1.12.0 or higher.")
+
     mesh = jtu.create_mesh((8,), 'x')
     a = jax.device_put(
         jnp.arange(8 * 8, dtype=jnp.float32).reshape((8, 8)),
@@ -1720,8 +1730,8 @@ class ShardMapTest(jtu.JaxTestCase):
         # When devices == 1, the `sdy.manual_computation` is inlined.
         self.assertEqual(0, hlo_str.count('sdy.manual_computation'))
     else:
-      self.assertIn('call @shmap_body', hlo_str)
-      self.assertIn('call @shmap_body_0', hlo_str)
+      self.assertIn('call @shmap_body(', hlo_str)
+      self.assertIn('call @shmap_body_', hlo_str)
       self.assertIn('%arg0: tensor<1xf32>', hlo_str)
       self.assertIn('"[None]"', hlo_str)
       self.assertIn('%arg1: tensor<1xf32>', hlo_str)
@@ -2287,6 +2297,21 @@ class ShardMapTest(jtu.JaxTestCase):
 
     f_jac_sharded(w, x, x)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_random_choice_pvary(self, mesh):
+    B, C = 8, 3
+    key = jax.random.key(0)
+    keys = jax.random.split(key, B)
+    hoppable_clusters = jax.random.randint(key, (B, C), minval=0, maxval=2) == 1
+
+    @jax.vmap
+    def _update_samples(key, hoppable_clusters):
+      return jax.random.choice(key, a=jnp.arange(C), p=hoppable_clusters,
+                               replace=True)
+
+    shard_map(_update_samples, in_specs=(P('x'), P('x')),
+              out_specs=P('x'))(keys, hoppable_clusters)  # doesn't crash
+
   @parameterized.parameters(it.product(range(4), repeat=3))
   @jtu.run_on_devices("cpu")
   def test_forwarding_correctness(self, seed, num_input_fwd, num_output_fwd):
@@ -2376,6 +2401,22 @@ class ShardMapTest(jtu.JaxTestCase):
                                           argnums=(0, 1)))(np_inp1, np_inp2)
     self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
     self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
+
+  def test_psum_not_under_shmap_error(self):
+    mesh = jtu.create_mesh((2,), 'x')
+
+    @jax.jit
+    def f(x):
+      return jax.lax.psum(x, 'x')
+
+    with self.assertRaisesRegex(
+        NameError,
+        'Found an unbound axis name: x. To fix this, please call psum under'
+        ' `jax.shard_map`'):
+      f(jnp.arange(8.))
+
+    # fixes the above error
+    shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P())  # doesn't crash
 
   def test_shmap_auto_unreduced_error(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
@@ -3666,7 +3707,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',), axis_types=(AxisType.Auto,))
   def test_smap_replicated(self, mesh):
-    @partial(smap, in_axes=None, out_axes=None, axis_name='x')
+    @smap(in_axes=None, out_axes=None, axis_name='x')
     def f(x):
       return x * 2
     out = f(np.arange(8))

@@ -4831,14 +4831,7 @@ class CompositeTest(jtu.JaxTestCase):
 
 class RaggedTest(jtu.JaxTestCase):
 
-  @jtu.sample_product(
-      [
-          {'m': 64, 'k': 4, 'n': 3, 'num_groups': 1},
-          {'m': 64, 'k': 9, 'n': 8, 'num_groups': 2},
-      ],
-      dtype=jtu.dtypes.all_floating,
-  )
-  def test_ragged_dot(self, m, k, n, num_groups, dtype):
+  def _test_ragged_dot(self, m, k, n, num_groups, dtype):
     """Tests ragged_dot.
 
     The ragged_dot is tested against numpy reference implementation, and by
@@ -4869,6 +4862,32 @@ class RaggedTest(jtu.JaxTestCase):
     self._CompileAndCheck(lax.ragged_dot, args_maker)
     self._CheckAgainstNumpy(
         lax_reference.ragged_dot, lax.ragged_dot, args_maker)
+
+  @jtu.sample_product(
+      [
+          {"m": 64, "k": 4, "n": 3, "num_groups": 1},
+          {"m": 64, "k": 9, "n": 8, "num_groups": 2},
+      ],
+      dtype=jtu.dtypes.all_floating,
+  )
+  def test_ragged_dot(self, m, k, n, num_groups, dtype):
+    return self._test_ragged_dot(m, k, n, num_groups, dtype)
+
+  @parameterized.parameters([True, False])
+  def test_ragged_dot_use_ragged_dot_instruction(self, use_instruction):
+    with config.jax_ragged_dot_use_ragged_dot_instruction(use_instruction):
+      self._test_ragged_dot(16, 4, 3, 2, jnp.float32)
+      if jtu.test_device_matches(["tpu"]) and use_instruction:
+        self.assertIn(
+            "chlo.ragged_dot",
+            jax.jit(lax.ragged_dot)
+            .lower(
+                core.ShapedArray((16, 4), dtype=jnp.float32),
+                core.ShapedArray((2, 4, 3), dtype=jnp.float32),
+                core.ShapedArray((2,), dtype=jnp.int32),
+            )
+            .as_text(dialect="stablehlo"),
+        )
 
   @parameterized.parameters(
         { "m": 5, "k": 4, "n": 3, "num_groups": 1},

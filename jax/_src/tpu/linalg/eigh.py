@@ -32,21 +32,23 @@ from typing import NamedTuple
 
 import numpy as np
 
-import jax
+from jax._src import api
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import lax
 from jax._src import numpy as jnp
-import jax._src.numpy.linalg as jnp_linalg
 from jax._src.interpreters import mlir
+from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy import tensor_contractions
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
-from jax import lax
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
 from jax._src.tpu.linalg import qdwh
 from jax._src.tpu.linalg.stack import Stack
+from jax._src.typing import Array
 
 
 # QDWH-eigh is a recursive algorithm where the structure of the recursion
@@ -287,13 +289,13 @@ class _Subproblem(NamedTuple):
   in the workspace.
   """
   # The row offset of the block in the matrix of blocks.
-  offset: jax.Array
+  offset: Array
 
   # The size of the block.
-  size: jax.Array
+  size: Array
 
 
-@partial(jax.jit, static_argnames=('termination_size', 'subset_by_index'))
+@partial(api.jit, static_argnames=('termination_size', 'subset_by_index'))
 def _eigh_work(H, n, termination_size, subset_by_index):
   """ The main work loop performing the symmetric eigendecomposition of H.
   Each step recursively computes a projector into the space of eigenvalues
@@ -373,7 +375,7 @@ def _eigh_work(H, n, termination_size, subset_by_index):
     # and GPU eigendecompositions, and for those platforms this algorithm will
     # only do the right thing if termination_size == 1.
     H = _mask(H, (b, b))
-    eig_vecs, eig_vals = lax.linalg.eigh(H, sort_eigenvalues=False)
+    eig_vecs, eig_vals = lax_linalg.eigh(H, sort_eigenvalues=False)
     eig_vecs = _mask(eig_vecs, (b, b))
     eig_vals = _mask(eig_vals, (b,))
     eig_vecs = tensor_contractions.dot(V, eig_vecs)
@@ -565,7 +567,7 @@ def eigh(
     return eig_vals, eig_vecs
 
   n = N if n is None else n
-  with jax.default_matmul_precision(precision):
+  with config.default_matmul_precision(precision):
     eig_vals, eig_vecs = _eigh_work(
         H, n, termination_size=termination_size, subset_by_index=subset_by_index
     )
@@ -580,7 +582,7 @@ def eigh(
   return eig_vals, eig_vecs
 
 
-def _T(x: jax.Array) -> jax.Array:
+def _T(x: Array) -> Array:
   return lax.transpose(x, (*range(x.ndim - 2), x.ndim - 1, x.ndim - 2))
 
 

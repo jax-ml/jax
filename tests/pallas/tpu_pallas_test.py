@@ -20,6 +20,7 @@ import functools
 import gc
 import io
 import itertools
+import json
 import math
 import re
 import sys
@@ -2023,11 +2024,14 @@ class PallasCallTest(PallasBaseTest):
           ),
       )(x)
 
-  @parameterized.product(dtype=[jnp.bfloat16, jnp.float32])
-  def test_pltpu_repeat(self, dtype):
+  @parameterized.product(
+    dtype=[jnp.bfloat16, jnp.float32],
+    axis=[1, -1],
+  )
+  def test_pltpu_repeat(self, dtype, axis):
     def test_kernel(x_ref, o_ref):
       x = x_ref[...]
-      o_ref[...] = pltpu.repeat(x, 2, axis=1)
+      o_ref[...] = pltpu.repeat(x, 2, axis=axis)
 
     @jax.jit
     def test(x: jax.Array) -> jax.Array:
@@ -2363,15 +2367,22 @@ class PallasCallRefTransformTest(PallasBaseTest):
     )
     np.testing.assert_array_equal(y, expected)
 
-  @parameterized.product(slice_first=[True, False])
-  def test_load_bitcasted_ref(self, slice_first: bool):
+  @parameterized.product(
+      slice_first=[True, False], use_primitive_io_op=[False, True]
+  )
+  def test_load_bitcasted_ref(
+      self, slice_first: bool, use_primitive_io_op: bool
+  ):
     def kernel(x_ref, y_ref):
       ref = (
           x_ref.at[:8, :128].bitcast(jnp.int16)
           if slice_first
           else x_ref.bitcast(jnp.int16).at[:16, :128]
       )
-      y_ref[...] = ref[...]
+      if use_primitive_io_op:
+        pl.store(y_ref, ..., pl.load(ref, ...))
+      else:
+        y_ref[...] = ref[...]
 
     x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((16, 256))
     y = self.pallas_call(
@@ -2385,15 +2396,22 @@ class PallasCallRefTransformTest(PallasBaseTest):
     )
     np.testing.assert_array_equal(y, expected)
 
-  @parameterized.product(slice_first=[True, False])
-  def test_store_bitcasted_ref(self, slice_first):
+  @parameterized.product(
+      slice_first=[True, False], use_primitive_io_op=[False, True]
+  )
+  def test_store_bitcasted_ref(
+      self, slice_first: bool, use_primitive_io_op: bool
+  ):
     def kernel(x_ref, y_ref):
       ref = (
           y_ref.at[:8, :128].bitcast(jnp.bfloat16)
           if slice_first
           else y_ref.bitcast(jnp.bfloat16).at[:16, :128]
       )
-      ref[...] = x_ref[...]
+      if use_primitive_io_op:
+        pl.store(ref, ..., pl.load(x_ref, ...))
+      else:
+        ref[...] = x_ref[...]
 
     x = jnp.arange(16 * 128, dtype=jnp.bfloat16).reshape((16, 128))
     y = self.pallas_call(
@@ -3326,6 +3344,33 @@ class MiscellaneousTest(PallasBaseTest):
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
+
+
+class PallasKernelMetadataTest(PallasBaseTest):
+
+  @parameterized.parameters(
+      (dict(foo='bar'),),
+      (dict(foo='afjafo'),),
+      (dict(problem_info=json.dumps(dict(tiling_info=dict(bm=128, bk=128)))),),
+  )
+  def test_metadata_is_preserved(self, metadata):
+
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = x_ref[...] + y_ref[...]
+
+    x = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+    y = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+
+    @jax.jit
+    def f(x, y):
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          metadata=metadata,
+      )(x, y)
+
+    hlo = f.lower(x, y).compile().as_text()
+    self.assertIn(json.dumps(metadata), hlo)
 
 
 if __name__ == '__main__':
