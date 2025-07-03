@@ -59,10 +59,16 @@ struct VectorizationPattern
   using OpInterfaceRewritePattern<linalg::LinalgOp>::OpInterfaceRewritePattern;
   LogicalResult matchAndRewrite(linalg::LinalgOp op,
                                 PatternRewriter &rewriter) const override {
-    return vectorize(rewriter, op,
-                     /*inputVectorSizes=*/{},
-                     /*inputScalableVecDims=*/{},
-                     /*vectorizeNDExtract=*/false);
+    FailureOr<linalg::VectorizationResult> vectorResults =
+        vectorize(rewriter, op,
+                  /*inputVectorSizes=*/{},
+                  /*inputScalableVecDims=*/{},
+                  /*vectorizeNDExtract=*/false);
+    if (failed(vectorResults)) {
+      return failure();
+    }
+    rewriter.replaceOp(op, vectorResults->replacements);
+    return success();
   }
 };
 
