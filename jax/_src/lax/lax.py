@@ -4210,7 +4210,7 @@ def _sin_lowering(ctx, x, accuracy):
   return _nary_lower_hlo(hlo.sine, ctx, x, accuracy=accuracy)
 
 
-def _sin_p_lin(nzs, x, accuracy):
+def _sin_lin(nzs, x, accuracy):
   nz, = nzs
   cos_x = cos(x) # TODO: allow this to happen in the linearized computation (need to fix backward_pass)
   return (
@@ -4222,7 +4222,7 @@ def _sin_p_lin(nzs, x, accuracy):
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x, accuracy: mul(g, cos(x, accuracy=accuracy)))
-ad.primitive_linearizations[sin_p] = _sin_p_lin
+ad.primitive_linearizations[sin_p] = _sin_lin
 mlir.register_lowering(sin_p, _sin_lowering)
 core.pp_eqn_rules[sin_p] = _unary_with_accuracy_pp_rule
 batching.ragged_prop_rules[sin_p] = batching.ragged_mask_elementwise_rule

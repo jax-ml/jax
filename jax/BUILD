@@ -1140,6 +1140,7 @@ pytype_strict_library(
         ":mesh",
         ":partial_eval",
         ":source_info_util",
+        ":state_types",
         ":tree_util",
         ":util",
     ],

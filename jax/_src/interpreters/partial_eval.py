@@ -1805,7 +1805,9 @@ class JaxprStackFrame:
 
     jaxpr = Jaxpr(constvars, self.invars, outvars, self.eqns, jaxpr_effects,
                   debug_info, self.is_high)
+    config.enable_checks.value and core.check_jaxpr(jaxpr)
     jaxpr, constvals = _drop_unused_vars(jaxpr, constvals)
+    config.enable_checks.value and core.check_jaxpr(jaxpr)
     return jaxpr, list(constvals)
 
   def to_jaxpr2(self, out_tracers: Sequence[core.Tracer],
@@ -2013,13 +2015,8 @@ class DynamicJaxprTrace(core.Trace):
     # TODO(mattjj): make custom_lin have hashable params.
     # TODO(dougalm): add an attribute to primitives to mark primitives with
     # effectful abstract_eval rules.
-    if (
-        primitive.name == "custom_lin"
-        or config.dynamic_shapes.value
-        or any(
-            isinstance(aval, core.MutableQuasiDynamicData) for aval in aval_qdds
-        )
-    ):
+    if (primitive.name == "custom_lin" or config.dynamic_shapes.value or
+        primitive.is_effectful and primitive.is_effectful(params)):
       out_avals, effs = primitive.abstract_eval(*aval_qdds, **params)
     else:
       try:

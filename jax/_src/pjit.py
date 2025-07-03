@@ -1514,6 +1514,7 @@ def check_aval_layout_compatibility(
 # -------------------- pjit rules --------------------
 
 pjit_p = core.Primitive("jit")
+pjit_p.is_effectful = lambda params: bool(params['jaxpr'].effects)  # type: ignore
 pjit_p.multiple_results = True
 pjit_p.skip_canonicalization = True
 
@@ -2223,56 +2224,61 @@ def _pjit_jvp(primals_in, tangents_in,
 ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 
-def _pjit_linearization(nzs, *primals_in, jaxpr,
-                        in_shardings, out_shardings, in_layouts, out_layouts,
-                        donated_invars, ctx_mesh, name, keep_unused, inline,
-                        compiler_options_kvs):
-  primal_jaxpr, num_residuals, nzs_out, tangent_jaxpr = ad.linearize_jaxpr(jaxpr, nzs)
-  res_shardings = (UNSPECIFIED,) * num_residuals
-  res_layouts = (None,) * num_residuals
-  res_donated = (False,) * num_residuals
-  primal_out_shardings = res_shardings + tuple(out_shardings)
-  primal_out_layouts = res_layouts + tuple(out_layouts)
+def _pjit_linearize(nzs, *primals_in, jaxpr, in_shardings, out_shardings,
+                    in_layouts, out_layouts, donated_invars, ctx_mesh, name,
+                    keep_unused, inline, compiler_options_kvs):
+  primal_jaxpr, num_residuals_out, nzs_out, in_fwd_res, tangent_jaxpr = \
+      ad.linearize_jaxpr(jaxpr, nzs)
+  num_residuals_in = len(in_fwd_res)
+  num_primals_out = len(primal_jaxpr.out_avals) - num_residuals_out
+
+  res_shardings_in = (UNSPECIFIED,) * num_residuals_in
+  res_layouts_in = (None,) * num_residuals_in
+  res_donated = (False,) * num_residuals_in
+  primal_out_shardings = tuple(out_shardings) + (UNSPECIFIED,) * num_residuals_out
+  primal_out_layouts = tuple(out_layouts) + (None,) * num_residuals_out
+
+  config.enable_checks.value and core.check_jaxpr(primal_jaxpr.jaxpr)
+  config.enable_checks.value and core.check_jaxpr(tangent_jaxpr.jaxpr)
 
   def keep_where(l, should_keep):
     return tuple(x for x, keep in zip(l, should_keep) if keep)
 
   # Input-to-output forwarding.
   in_fwd = pe._jaxpr_forwarding(primal_jaxpr.jaxpr)
-  in_fwd_res, in_fwd_primal = split_list(in_fwd, [num_residuals])
-  in_fwd = in_fwd_res + [
+  in_fwd_primal, in_fwd_res_ = split_list(in_fwd, [num_primals_out])
+  assert all(f is None for f in in_fwd_res_)
+  in_fwd = [
       fwd if isinstance(os, UnspecifiedValue) and ol is None else None
       for os, ol, fwd in zip(out_shardings, out_layouts, in_fwd_primal)
-  ]
-  del in_fwd_res, in_fwd_primal
+  ] + in_fwd_res_
+  del in_fwd_res_, in_fwd_primal
   keep = [f is None for f in in_fwd]
   primal_jaxpr = pe.prune_closed_jaxpr_outputs(primal_jaxpr, keep)
   primal_out_shardings = keep_where(primal_out_shardings, keep)
   primal_out_layouts = keep_where(primal_out_layouts, keep)
-  kept_res, _ = split_list(keep, [num_residuals])
+  _, kept_res = split_list(keep, [num_primals_out])
   num_kept_residuals = sum(kept_res)
-  del keep, kept_res
+  del keep, kept_res, num_primals_out
 
   # Output-to-output forwarding.
-  num_out_primals = len(primal_jaxpr.jaxpr.outvars) - num_kept_residuals
-  res_vars, out_vars = split_list(primal_jaxpr.jaxpr.outvars, [num_kept_residuals])
+  num_primals_out = len(primal_jaxpr.out_avals) - num_kept_residuals
+  out_vars, res_vars = split_list(primal_jaxpr.jaxpr.outvars, [num_primals_out])
   idx_map = {id(v): i for i, v in enumerate(out_vars)}
-  offset = sum(id(v) not in idx_map for v in res_vars)
-  idx_map = {k: v + offset for k, v in idx_map.items()}
-  out_fwd = [idx_map.get(id(v)) for v in res_vars] + [None] * num_out_primals
+  out_fwd = [None] * num_primals_out + [idx_map.get(id(v)) for v in res_vars]
   keep = [f is None for f in out_fwd]
   primal_jaxpr = pe.prune_closed_jaxpr_outputs(primal_jaxpr, keep)
   primal_out_shardings = keep_where(primal_out_shardings, keep)
   primal_out_layouts = keep_where(primal_out_layouts, keep)
   del keep
 
-  def tangent_fun(consts_, *tangents):
+  def tangent_fun(residuals, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
-    nz_tangents_out = pjit_p.bind(*tangents_nz, *consts_,
-        jaxpr=tangent_jaxpr,
-        in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings,
+    nz_tangents_out = pjit_p.bind(
+        *residuals, *tangents_nz, jaxpr=tangent_jaxpr,
+        in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings_in,
         out_shardings=_filter_zeros(nzs_out, out_shardings),
-        in_layouts=_filter_zeros(nzs, in_layouts) + res_layouts,
+        in_layouts=_filter_zeros(nzs, in_layouts) + res_layouts_in,
         out_layouts=_filter_zeros(nzs_out, out_layouts),
         donated_invars=_filter_zeros(nzs, donated_invars) + res_donated,
         ctx_mesh=ctx_mesh,
@@ -2289,6 +2295,7 @@ def _pjit_linearization(nzs, *primals_in, jaxpr,
   def _filter_zeros(is_nz_l, l):
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
 
+  assert len(in_shardings) == len(primal_jaxpr.in_avals)
   ans = pjit_p.bind(*primals_in, jaxpr=primal_jaxpr,
                     in_shardings=in_shardings,
                     out_shardings=primal_out_shardings,
@@ -2302,11 +2309,12 @@ def _pjit_linearization(nzs, *primals_in, jaxpr,
                     compiler_options_kvs=compiler_options_kvs)
   ans = subs_list(out_fwd, ans, ans)
   ans = subs_list(in_fwd, primals_in, ans)
-  residuals_ans, primal_ans = split_list(ans, [num_residuals])
+  primal_ans, residuals_ans = split_list(ans, [len(ans) - num_residuals_out])
+  residuals_ans = subs_list(in_fwd_res, [*jaxpr.consts, *primals_in], residuals_ans)
 
   return primal_ans, nzs_out, residuals_ans, tangent_fun
 
-ad.primitive_linearizations[pjit_p] = _pjit_linearization
+ad.primitive_linearizations[pjit_p] = _pjit_linearize
 
 
 def _pjit_partial_eval(trace: pe.JaxprTrace,
