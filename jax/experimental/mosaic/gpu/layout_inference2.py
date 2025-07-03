@@ -57,21 +57,6 @@ class VariableKey:
 
 
 @dataclasses.dataclass(frozen=True)
-class Variable(eqns.Variable):
-  """This variable represents an operand/result of a MLIR operation."""
-  def __init__(self, operation: ir.OpView, type: VariableType, index: int):
-    super().__init__(VariableKey(operation, type, index))
-
-  @property
-  def is_operand(self) -> bool:
-    return self.key.type == VariableType.OPERAND
-
-  @property
-  def is_result(self) -> bool:
-    return self.key.type == VariableType.RESULT
-
-
-@dataclasses.dataclass(frozen=True)
 class Hint:
   """Hints are used to model propagation of layouts across operations.
 
@@ -80,32 +65,123 @@ class Hint:
   an equation-like form of "soft constraints", i.e., it suggests that
   `variable` should be equal to `expression`.
   """
-  variable: Variable
+  variable: eqns.Variable
   expression: eqns.Expression
 
 
-def choose_variable_assignment_from_hints(
-    hints: Sequence[Hint],
-) -> tuple[Variable, eqns.ConstantExpression] | None:
-  """Attempts to choose a single variable assignment from a list of `Hint`s."""
-  for hint in hints:
-    if isinstance(hint.expression, eqns.ConstantExpression):
-      return (hint.variable, hint.expression)
+def _least_replicated_hint_expression(
+    expressions: tuple[eqns.Expression, ...],
+) -> eqns.Expression | None:
+  """Extracts a least replicated constant expression out of multiple expressions.
+
+  This function is only safe to use for `Hint`s, because the simplifications it
+  does are not safe in the presence of incompatible layouts.
+
+  If all the layouts are compatible and the expressions are sufficiently
+  simplified to determine unambiguously what the appropriate least replicated
+  layout is, this function will return it.
+
+  If the layouts are not known to be compatible, but a layout with no
+  replication is present, this function will return it. This is reasonable to
+  do when consuming a `Hint`, but should not be done when simplifying an
+  expression as part of an `Equation`---since it may turn an `Unsatisfiable`
+  equation into one that is satisfiable.
+
+  Args:
+    expressions: a non-empty sequence of expressions.
+
+  Returns:
+    If there exists a constant expression such that it is less replicated than
+    all the other expressions in the sequence, then that expression is
+    returned---with the caveats outlined above. Otherwise, None is returned.
+  """
+  assert len(expressions) >= 1
+
+  for e in expressions:
+    # TODO(bchetioui): handle replication lattice between compatible layouts.
+    match e:
+      case eqns.ConstantExpression(value=fa.WGStridedFragLayout()):
+        return e
+      case eqns.ConstantExpression(value=fa.TiledLayout() as layout):
+        warp_replicated = any(isinstance(d, fa.Replicated) for d in layout.warp_dims)
+        lane_replicated = any(isinstance(d, fa.Replicated) for d in layout.lane_dims)
+        # In this case, the layout is not replicated at all, so by definition
+        # it is a valid choice for a least replicated expression.
+        if not warp_replicated and not lane_replicated:
+          return e
   return None
 
 
+def _most_replicated_hint_expression(
+    expressions: tuple[eqns.Expression, ...],
+) -> eqns.Expression | None:
+  """Extracts a most replicated constant expression out of multiple expressions.
+
+  This function is only safe to use for `Hint`s, because the simplifications it
+  does are not safe in the presence of incompatible layouts.
+
+  If all the layouts are compatible and the expressions are sufficiently
+  simplified to determine unambiguously what the appropriate most replicated
+  layout is, this function will return it.
+
+  If the layouts are not known to be compatible, but a layout with no
+  replication is present, this function will return it. This is reasonable to
+  do when consuming a `Hint`, but should not be done when simplifying an
+  expression as part of an `Equation`---since it may turn an `Unsatisfiable`
+  equation into one that is satisfiable.
+
+  Args:
+    expressions: a non-empty sequence of expressions.
+
+  Returns:
+    If there exists a constant expression such that it is more replicated than
+    all the other expressions in the sequence, then that expression is
+    returned---with the caveats outlined above. Otherwise, None is returned.
+  """
+  assert len(expressions) >= 1
+
+  for e in expressions:
+    # TODO(bchetioui): handle replication lattice between compatible layouts.
+    match e:
+      case eqns.ConstantExpression(value=fa.WGSplatFragLayout()):
+        return e
+
+  return None
+
+
+def extract_variable_assignment_from_hint(
+    hint: Hint,
+) -> tuple[eqns.Variable, eqns.ConstantExpression] | None:
+  """Attempts to extract a single variable assignment from a `Hint`."""
+  # TODO(bchetioui): allow specifying "forbidden assignments" when calling this
+  # function. This will allow us to maybe extract different assignments
+  # that satisfy a replication constraint in the case where replicated
+  # expressions are incompatible and several extractions are possible.
+  match hint.expression:
+    case eqns.ConstantExpression():
+      return (hint.variable, hint.expression)
+    case eqns.MostReplicatedExpression(expressions=expressions):
+      if (expr := _most_replicated_hint_expression(expressions)) is not None:
+        return (hint.variable, expr)
+    case eqns.LeastReplicatedExpression(expressions=expressions):
+      if (expr := _least_replicated_hint_expression(expressions)) is not None:
+        return (hint.variable, expr)
+    case _:
+      return None
+
+
 def simplify_hint(
-    h: Hint, assignments: dict[Variable, eqns.ConstantExpression]
+    h: Hint, assignments: dict[eqns.Variable, eqns.ConstantExpression]
 ) -> Hint:
   """Like `eqns.simplify_equation` but for `Hint`s."""
   return dataclasses.replace(
       h, expression=eqns.simplify_expression(h.expression, assignments))
 
 def find_assignments_for(
-    unknowns: set[Variable],
+    unknowns: set[eqns.Variable],
     equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
-) -> dict[Variable, eqns.ConstantExpression] | eqns.Unsatisfiable:
+) -> dict[eqns.Variable, eqns.ConstantExpression] | eqns.Unsatisfiable:
   """Attempts to find assignments that satisfy `equation_system` for `unknowns`.
 
   Args:
@@ -118,35 +194,39 @@ def find_assignments_for(
     - A dictionary assigning all the unknown variables to `ConstantExpression`s
       such that the assignment satisfies the equation system otherwise.
   """
-  while True:
-    equation_system = eqns.simplify(equation_system)
-    if isinstance(equation_system, eqns.Unsatisfiable):
-      return eqns.Unsatisfiable()
+  equation_system = eqns.simplify(equation_system)
+  if isinstance(equation_system, eqns.Unsatisfiable):
+    return eqns.Unsatisfiable()
 
-    remaining_unknowns = unknowns - equation_system.assignments.keys()
+  remaining_unknowns = unknowns - equation_system.assignments.keys()
+  # In this case, we have determined an assignment for all the unknown
+  # variables. Return their respective assignment.
+  if not remaining_unknowns:
+    return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
 
-    # In this case, we have determined an assignment for all the unknown
-    # variables. Return their respective assignment.
-    if not remaining_unknowns:
-      return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
+  # Simplify the expressions in the remaining hints based on the current
+  # assignments, and eliminate hints that pertain to variables that already
+  # have an assignment.
+  hints = [simplify_hint(h, equation_system.assignments) for h in hints
+            if h.variable not in equation_system.assignments]
 
-    # Simplify the expressions in the remaining hints based on the current
-    # assignments, and eliminate hints that pertain to variables that already
-    # have an assignment.
-    hints = [simplify_hint(h, equation_system.assignments) for h in hints
-             if h.variable not in equation_system.assignments]
-
-    # If unknowns remain and we have fully simplified the system, we may still
-    # be able to make progress by extracting an assignment from a `Hint`. In a
-    # system that has otherwise been fully simplified, it is guaranteed that
-    # introducing a new assignment will yield a system that remains satisfiable
-    # if the original system was satisfiable---because this is a sign of an
-    # underdetermined system.
-    if (assignment := choose_variable_assignment_from_hints(hints)) is not None:
+  # If unknowns remain and we have fully simplified the system, we may still
+  # be able to make progress by extracting an assignment from a `Hint`. This
+  # new assignment could make the system unsatisfiable, so we use a recursive
+  # call to be able to backtrack if necessary.
+  for hint in hints:
+    if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
       variable, expr = assignment
-      equation_system &= eqns.EquationSystem(assignments={variable: expr})
-    else:
-      break
+      new_equation_system = (
+          eqns.EquationSystem(assignments={variable: expr}) & equation_system)
+      if isinstance(new_equation_system, eqns.Unsatisfiable):
+        # This assignment is not compatible with the equation system.
+        continue
+      solution = find_assignments_for(unknowns, new_equation_system, hints)
+      if isinstance(solution, eqns.Unsatisfiable):
+        # This assignment is not compatible with the equation system.
+        continue
+      return solution
 
   # Here, we have not managed to find an assignment for all the unknown
   # variables, and our hints have not proven sufficient to unblock us. We now
@@ -187,7 +267,21 @@ def find_assignments_for(
   return eqns.Unsatisfiable()
 
 
-EquationSystemDerivationRule = Callable[[ir.OpView], eqns.EquationSystem]
+KeysForVariable = dict[eqns.Variable, list[VariableKey]]
+
+# An equation system derivation rule is a function that takes an MLIR operation
+# and returns an equation system, and a mapping from variables to variable keys.
+# The intended meaning of the mapping is that, for each variable key in the list
+# keyed by a given variable, the operand/result corresponding to that key has
+# the same layout as the variable.
+#
+# An `EquationSystemDerivationRule` must return a mapping such that the variable
+# key corresponding to each operand/result must appear in the mapping, and each
+# variable key in the mapping must be keyed by exactly one variable. Lastly,
+# the mapping must only refer to variables and variable keys that correspond to
+# the given operation.
+EquationSystemDerivationRule = Callable[
+    [ir.OpView], tuple[eqns.EquationSystem, KeysForVariable]]
 _equation_system_derivation_rules: dict[str, EquationSystemDerivationRule] = {}
 
 
@@ -208,26 +302,31 @@ def _constant_equation_system(
     constant_op: arith.ConstantOp
 ) -> eqns.EquationSystem:
   value = constant_op.value
-  variable = Variable(constant_op, VariableType.RESULT, 0)
+  key = VariableKey(constant_op, VariableType.RESULT, 0)
+  variable = eqns.Variable(key)
   if (
       ir.DenseElementsAttr.isinstance(value)
       and ir.DenseElementsAttr(value).is_splat
   ):
     layout = fa.WGSplatFragLayout(shape=tuple(constant_op.result.type.shape))
-    return eqns.EquationSystem(assignments={variable: eqns.ConstantExpression(layout)})
-  return eqns.EquationSystem()
+    system = eqns.EquationSystem(assignments={variable: eqns.ConstantExpression(layout)})
+  else:
+    system = eqns.EquationSystem()
+
+  return system, {variable: [key]}
 
 
 @_add_equation_system_derivation_rule(mgpu.LayoutCastOp)
 def _layout_cast_equation_system(
     op: mgpu.LayoutCastOp
-) -> eqns.EquationSystem:
-  in_variable = Variable(op, VariableType.OPERAND, 0)
-  out_variable = Variable(op, VariableType.RESULT, 0)
+) -> tuple[eqns.EquationSystem, KeysForVariable]:
+  in_key = VariableKey(op, VariableType.OPERAND, 0)
+  out_key = VariableKey(op, VariableType.RESULT, 0)
+  variable = eqns.Variable(in_key)
   out_layout = eqns.ConstantExpression(layouts_lib.from_layout_attr(op.new_layout))
   return eqns.EquationSystem(
-      assignments={out_variable: out_layout, in_variable: out_layout},
-  )
+      assignments={eqns.Variable(in_key): out_layout},
+  ), {variable: [in_key, out_key]}
 
 
 def _ensure_all_layouts_are_set(op: ir.OpView):
@@ -253,7 +352,7 @@ def _ensure_right_number_of_layouts(
     )
 
 
-def assign_layouts(solution: dict[Variable, eqns.ConstantExpression]):
+def assign_layouts(solution: dict[VariableKey, eqns.ConstantExpression]):
   """Assigns the layouts in `solution` to the MLIR ops they belong to.
 
   This function requires that, for each MLIR op that appears in `solution`,
@@ -261,18 +360,18 @@ def assign_layouts(solution: dict[Variable, eqns.ConstantExpression]):
   results.
   """
   solution_sorted_by_op = sorted(
-      solution.items(), key=lambda kv: id(kv[0].key.operation)
+      solution.items(), key=lambda kv: id(kv[0].operation)
   )
   solution_per_op = itertools.groupby(
-      solution_sorted_by_op, key=lambda kv: kv[0].key.operation
+      solution_sorted_by_op, key=lambda kv: kv[0].operation
   )
 
   for op, assignments in solution_per_op:
-    assignments_sorted_by_type = sorted(assignments, key=lambda kv: kv[0].key.type)
+    assignments_sorted_by_type = sorted(assignments, key=lambda kv: kv[0].type)
     assignments_by_type = {
         ty: list(group)
         for ty, group in itertools.groupby(
-            assignments_sorted_by_type, key=lambda kv: kv[0].key.type
+            assignments_sorted_by_type, key=lambda kv: kv[0].type
         )
     }
 
@@ -280,11 +379,11 @@ def assign_layouts(solution: dict[Variable, eqns.ConstantExpression]):
     out_assignments = assignments_by_type.get(VariableType.RESULT, [])
 
     in_layouts = [
-        ce.value for _, ce in sorted(in_assignments, key=lambda kv: kv[0].key.index)
+        ce.value for _, ce in sorted(in_assignments, key=lambda kv: kv[0].index)
     ]
     out_layouts = [
         ce.value
-        for _, ce in sorted(out_assignments, key=lambda kv: kv[0].key.index)
+        for _, ce in sorted(out_assignments, key=lambda kv: kv[0].index)
     ]
 
     _ensure_right_number_of_layouts(op, in_layouts, out_layouts)
@@ -294,109 +393,83 @@ def assign_layouts(solution: dict[Variable, eqns.ConstantExpression]):
     op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts_attrs)
 
 
-def op_variables(op: ir.OpView) -> list[Variable]:
-  """Returns all the operand and result variables for the given op."""
-  variables = [
-      Variable(op, VariableType.OPERAND, i)
+def op_variable_keys(op: ir.OpView) -> list[VariableKey]:
+  """Returns all the operand and result variable keys for the given op."""
+  keys = [
+      VariableKey(op, VariableType.OPERAND, i)
       for i, o in enumerate(op.operands)
       if is_vector(o)
   ]
-  variables.extend([
-      Variable(op, VariableType.RESULT, i)
+  keys.extend([
+      VariableKey(op, VariableType.RESULT, i)
       for i, o in enumerate(op.results)
       if is_vector(o)
   ])
-  return variables
+  return keys
 
 
-def producer_variable(variable: Variable) -> Variable:
-  """Given a variable, returns the corresponding result variable in its producer.
+def producer_variable_key(key: VariableKey) -> VariableKey:
+  """Given a variable key, returns the corresponding result variable key in its producer.
 
-  The variable has to represent an operand of its operation.
+  The variable key has to represent an operand of its operation.
   """
-  assert variable.is_operand
-  value = variable.key.operation.operands[variable.key.index]
+  assert key.type == VariableType.OPERAND
+  value = key.operation.operands[key.index]
   producer = value.owner
   if isinstance(producer, ir.Operation):
     index = list(producer.results).index(value)
-    return Variable(producer.opview, VariableType.RESULT, index)
+    return VariableKey(producer.opview, VariableType.RESULT, index)
 
   # Block case, useful for deriving layouts for ops
   # depending on function parameters, or loop block arguments.
   if isinstance(producer, ir.Block):
     index = list(cast(ir.Block, producer).arguments).index(value)
-    return Variable(producer, VariableType.OPERAND, index)
+    return VariableKey(producer, VariableType.OPERAND, index)
 
   raise TypeError(
       f"Producer {producer} is not an operation nor a block: {type(producer)}."
   )
 
 
-def consumer_variables(variable: Variable) -> Sequence[Variable]:
-  """Given a variable, returns the corresponding operand variables in its consumers.
+def consumer_variable_keys(key: VariableKey) -> Sequence[eqns.VariableKey]:
+  """Given a variable key, returns the corresponding operand variable keys in its consumers.
 
-  The variable has to represent a result of its operation.
+  The variable key has to represent a result of its operation.
   """
-  assert variable.is_result
-  consumer_variables: list[Variable] = []
+  assert key.type == VariableType.RESULT
+  consumer_keys: list[VariableKey] = []
   # The layout can also be chosen from the layout of the consumers of the
   # results.
-  for use in cast(ir.OpResult, variable.key.operation.results[variable.key.index]).uses:
+  for use in cast(ir.OpResult, key.operation.results[key.index]).uses:
     consumer = use.owner.opview  # pytype: disable=attribute-error
     index = use.operand_number
-    consumer_variables.append(Variable(consumer, VariableType.OPERAND, index))
-  return consumer_variables
+    consumer_keys.append(VariableKey(consumer, VariableType.OPERAND, index))
+  return consumer_keys
 
 
-def equation_system_and_hints_for_op(
-    op: ir.OpView, rule: EquationSystemDerivationRule
-) -> tuple[eqns.EquationSystem, list[Hint]]:
-  """Produces an equation system and a list of hints for the given op.
+def derive_hints(keys_for_variable: KeysForVariable) -> list[Hint]:
+  """Derives propagation hints from the given variable mapping."""
+  hints: list[Hint] = []
+  variable_for_key: dict[VariableKey, eqns.Variable] = {}
+  for variable, keys in keys_for_variable.items():
+    for k in keys:
+      if k in variable_for_key:
+        raise ValueError(
+            f"Key {k} is mapped to both {variable} and {variable_for_key[k]}"
+        )
+    variable_for_key |= {key: variable for key in keys}
 
-  The equation system is derived directly from the given rule, and is not
-  further constrained. Hints are subsequently derived from this equation system
-  that relate the variables of the op to the producers of the op's operands and
-  the consumers of the op's results.
-  """
-  equation_system = rule(op)
-  all_variables: list[Variable] = op_variables(op)
-  visited: set[Variable] = set()
-  hints: list[Hint] = list()
-
-  for variable in all_variables:
-    if variable in visited:
-      continue
-    # Construct a list containing all the variables that are necessary equal to
-    # the current variable. Consider the following pseudo-program:
-    #
-    #   a = producer0()  # variable v0 is producer0's out_layouts[0]
-    #   b = producer1()  # variable v1 is producer1's out_layouts[0]
-    #   c = add(a, b)    # variable v2, v3, v4 are respectively add's in_layouts[0], in_layouts[1], and out_layouts[0]
-    #   consumer0(c)     # variable v5 is consumer0's in_layouts[0]
-    #   consumer1(c)     # variable v6 is consumer1's in_layouts[0]
-    #
-    # We know that v2 = v3 = v4, and we may want to propagate a layout from v0,
-    # v1, v5, or v6. For that reason, we capture all the connected variables,
-    # and then extract their producer/consumers to construct a `Hint`.
-    #
-    # We use a list here because we care about having a deterministic iteration
-    # order.
-    union: list[Variable] = [variable]
-    for equation in equation_system.equations:
-      lhs, rhs = equation.lhs, equation.rhs
-      if lhs == variable and isinstance(rhs, Variable) and rhs not in union:
-        union.append(rhs)
-      if rhs == variable and isinstance(lhs, Variable) and lhs not in union:
-        union.append(lhs)
-
-    producers = tuple(producer_variable(v) for v in union if v.is_operand)
-    consumers: list[Variable] = []
-    for v in union:
-      if v.is_result:
-        consumers.extend(consumer_variables(v))
+  for variable, keys in keys_for_variable.items():
+    producers: list[eqns.Variable] = []
+    consumers: list[eqns.Variable] = []
+    for k in keys:
+      if k.type == VariableType.OPERAND:
+        producers.append(variable_for_key[producer_variable_key(k)])
+      elif k.type == VariableType.RESULT:
+        consumers.extend(variable_for_key[c] for c in consumer_variable_keys(k))
 
     if producers:
-      least_replicated_producer = eqns.LeastReplicatedExpression(producers)
+      least_replicated_producer = eqns.LeastReplicatedExpression(tuple(producers))
       hint_expr = eqns.MostReplicatedExpression(
           (least_replicated_producer, *consumers)
       )
@@ -404,15 +477,13 @@ def equation_system_and_hints_for_op(
     elif consumers:
       hint_expr = eqns.MostReplicatedExpression(tuple(consumers))
       hints.append(Hint(variable, hint_expr))
-    visited.update(union)
 
-  return equation_system, [simplify_hint(h, equation_system.assignments) for h in hints]
+  return hints
 
 
 def infer_layout(module: ir.Module):
   global_equation_system = eqns.EquationSystem()
-  all_hints: list[Hint] = []
-  variables: set[Variable] = set()
+  keys_for_variable: KeysForVariable = {}
 
   def gather_equations(op: ir.Operation):
     if not inference_utils.should_have_layout(op):
@@ -422,25 +493,31 @@ def infer_layout(module: ir.Module):
     else:
       raise NotImplementedError(f"No layout inference rule defined for {op}")
 
-    variables.update(op_variables(op))
+    equation_system, mapping = rule(op)
+    keys_for_variable.update(mapping)
     nonlocal global_equation_system
-    equation_system, hints = equation_system_and_hints_for_op(op, rule)
     global_equation_system &= equation_system
-    all_hints.extend(hints)
 
   for op in module.body:
     inference_utils.traverse_op(op, gather_equations)
 
+  assert not isinstance(global_equation_system, eqns.Unsatisfiable)
+  hints = [simplify_hint(h, global_equation_system.assignments) for h in derive_hints(keys_for_variable)]  # pytype: disable=attribute-error
+
   # Attempt to find assignments that satisfy the equation system.
-  solution = find_assignments_for(variables, global_equation_system, all_hints)
+  solution = find_assignments_for(
+      keys_for_variable.keys(), global_equation_system, hints
+  )
 
   if isinstance(solution, eqns.Unsatisfiable):
     raise ValueError(
         "Failed to infer a possible set of layouts. This should never happen."
     )
 
+  layout_for_key = {k: solution[v] for v, ks in keys_for_variable.items() for k in ks}
+
   # Assigns the layouts that we found to the ops.
-  assign_layouts(solution)
+  assign_layouts(layout_for_key)
 
   # Sanity check: ensure that all ops have the right number of in/out layouts.
   for op in module.body:
