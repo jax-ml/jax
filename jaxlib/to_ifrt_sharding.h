@@ -17,7 +17,6 @@ limitations under the License.
 #define JAXLIB_TO_IFRT_SHARDING_H_
 
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 #include "absl/status/statusor.h"

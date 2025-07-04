@@ -27,6 +27,7 @@ limitations under the License.
 #include "mlir/IR/Visitors.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/WalkResult.h"
 
 namespace jaxlib::mosaic {
 

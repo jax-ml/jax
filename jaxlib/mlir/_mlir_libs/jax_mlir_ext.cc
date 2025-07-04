@@ -31,7 +31,7 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
 #include "mlir-c/Dialect/Arith.h"  // IWYU pragma: keep
-#include "mlir-c/Dialect/ControlFlow.h"
+#include "mlir-c/Dialect/ControlFlow.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/Func.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/GPU.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/LLVM.h"  // IWYU pragma: keep
@@ -49,7 +49,6 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
-#include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "nanobind/nanobind.h"

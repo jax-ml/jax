@@ -19,7 +19,6 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <utility>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"

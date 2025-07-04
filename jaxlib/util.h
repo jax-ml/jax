@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "xla/pjrt/pjrt_future.h"
 #include "xla/python/ifrt/array.h"
 
 namespace xla {

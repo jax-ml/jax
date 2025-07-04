@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string_view>
 
 #if JAX_GPU_HAVE_64_BIT
@@ -29,8 +28,6 @@ limitations under the License.
 #include <limits>
 #endif
 
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "jaxlib/ffi_helpers.h"
 #include "jaxlib/gpu/blas_handle_pool.h"
