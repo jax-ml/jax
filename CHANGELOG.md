@@ -50,6 +50,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features:
   * Added {func}`jax.tree.broadcast` which implements a pytree prefix broadcasting helper.
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * The minimum NumPy version is 1.26 and the minimum SciPy version is 1.12.
 
