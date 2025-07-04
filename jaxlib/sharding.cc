@@ -342,18 +342,21 @@ void RegisterSharding(nb::module_& m) {
   PmapSharding::InitializeType();
 
   nb::class_<GSPMDSharding, Sharding>(m, "GSPMDSharding", nb::dynamic_attr())
-      .def(nb::init<nb::sequence, xla::OpSharding, nb::object>(),
-           nb::arg("devices"), nb::arg("op_sharding"),
-           nb::arg("memory_kind").none() = nb::none())
-      .def(nb::init<nb::sequence, xla::HloSharding, nb::object>(),
-           nb::arg("devices"), nb::arg("op_sharding"),
-           nb::arg("memory_kind").none() = nb::none())
+      // NOTE: We explicitly list the two PyDeviceList ctors first since they
+      // are the fast path and PyDeviceList conforms to `nb::sequence` so we
+      // can silently fall back to the slow sequence ctor(s).
       .def(nb::init<xla::nb_class_ptr<PyDeviceList>, xla::OpSharding,
                     nb::object>(),
            nb::arg("devices"), nb::arg("op_sharding"),
            nb::arg("memory_kind").none() = nb::none())
       .def(nb::init<xla::nb_class_ptr<PyDeviceList>, xla::HloSharding,
                     nb::object>(),
+           nb::arg("devices"), nb::arg("op_sharding"),
+           nb::arg("memory_kind").none() = nb::none())
+      .def(nb::init<nb::sequence, xla::OpSharding, nb::object>(),
+           nb::arg("devices"), nb::arg("op_sharding"),
+           nb::arg("memory_kind").none() = nb::none())
+      .def(nb::init<nb::sequence, xla::HloSharding, nb::object>(),
            nb::arg("devices"), nb::arg("op_sharding"),
            nb::arg("memory_kind").none() = nb::none())
       .def_prop_ro("_devices", &GSPMDSharding::devices)
