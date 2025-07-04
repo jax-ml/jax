@@ -47,8 +47,9 @@ from jax._src.state.types import AbstractRef, ReadEffect
 from jax._src.tree_util import PyTreeDef, treedef_tuple, register_static
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
-                           as_hashable_function, weakref_lru_cache, subs_list,
-                           HashableFunction, foreach, cache)
+                           as_hashable_function, weakref_lru_cache,
+                           multi_weakref_lru_cache, subs_list,
+                           HashableFunction, foreach)
 
 
 map, unsafe_map = safe_map, map
@@ -1625,7 +1626,7 @@ def move_outvars_to_back(jaxpr: ClosedJaxpr, to_move: Sequence[bool]) -> ClosedJ
   return _move_outvars_to_back(jaxpr, tuple(to_move))
 
 @weakref_lru_cache
-def _move_outvars_to_back(jaxpr, to_move):
+def _move_outvars_to_back(jaxpr: core.ClosedJaxpr, to_move):
   new_outvars = ([e for e, m in zip(jaxpr.jaxpr.outvars, to_move) if not m] +
                  [e for e, m in zip(jaxpr.jaxpr.outvars, to_move) if     m])
   return jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(outvars=new_outvars))
@@ -1893,7 +1894,7 @@ def _drop_unused_vars(constvars, constvals, eqns, outvars
   return constvars, constvals
 
 
-@cache()
+@multi_weakref_lru_cache
 def _cached_abstract_eval(primitive: core.Primitive, *aval_qdds, **params):
   return primitive.abstract_eval(*aval_qdds, **params)
 
@@ -2774,7 +2775,7 @@ def _linearize_of_pmap_hack(f: lu.WrappedFun, jaxpr, consts) -> tuple[Jaxpr, lis
 
 
 @weakref_lru_cache
-def lower_jaxpr(hi_jaxpr):
+def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr):
   lo_avals = [lo_ty for aval in hi_jaxpr.in_aval_qdds for lo_ty in aval.lo_ty()]
   f = lu.wrap_init(partial(lower_traceable, hi_jaxpr),
                    debug_info=hi_jaxpr.jaxpr.debug_info)
