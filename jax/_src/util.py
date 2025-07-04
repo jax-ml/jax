@@ -295,8 +295,8 @@ def cache(max_size=4096, trace_context_in_key=True):
     def wrapper(*args, **kwargs):
       if config.check_tracer_leaks.value:
         return f(*args, **kwargs)
-      return cached(config.trace_context() if trace_context_in_key else _ignore(),
-                    *args, **kwargs)
+      return cached(config.trace_lower_compile_context() if trace_context_in_key
+                    else _ignore(), *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
@@ -324,7 +324,8 @@ def weakref_lru_cache(call: Callable, maxsize=2048,
   """
   global _weakref_lru_caches
   cached_call = _weakref_lru_cache.weakref_lru_cache(
-      config.trace_context if trace_context_in_key else _ignore, call, maxsize
+      config.trace_lower_compile_context if trace_context_in_key else _ignore,
+      call, maxsize
   )
   _weakref_lru_caches.add(cached_call)
   return cached_call
