@@ -689,7 +689,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
                 E(variable, C(mgpu.WGMMA_COL_LAYOUT)),
             ]
         ),
-        hints={},
+        hints=[],
     )
     self.assertIsInstance(assignments, equations.Unsatisfiable)
 
