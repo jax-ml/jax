@@ -830,6 +830,7 @@ class BarrierRef:
       arrival_count: int = 1,
       can_complete: bool = True,
       orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
   ):
     i64 = ir.IntegerType.get_signless(64)
     if orders_tensor_core:
@@ -839,11 +840,20 @@ class BarrierRef:
           has_side_effects=True,
       )
     if can_complete:
-      if arrival_count > 1:
-        count = c(arrival_count - 1, ir.IntegerType.get_signless(32))
-        nvvm.mbarrier_arrive_nocomplete_shared(i64, self.get_ptr(), count)
-      nvvm.mbarrier_arrive_shared(i64, self.get_ptr())
+      pred_ptx = pred_constraint = ""
+      if predicate is not None:
+        pred_ptx = "@$2"
+        pred_constraint = ",b"
+      llvm.inline_asm(
+          ir.IntegerType.get_signless(64),
+          [self.get_ptr()] + ([predicate] if predicate is not None else []),
+          f"{pred_ptx} mbarrier.arrive.release.cta.shared::cta.b64 $0, [$1], {arrival_count};",
+          "=l,r" + pred_constraint,
+          has_side_effects=True,
+      )
     else:
+      if predicate is not None:
+        raise NotImplementedError("Predicate not supported for no-complete arrive")
       count = c(arrival_count, ir.IntegerType.get_signless(32))
       nvvm.mbarrier_arrive_nocomplete_shared(i64, self.get_ptr(), count)
 

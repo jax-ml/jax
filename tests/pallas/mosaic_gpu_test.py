@@ -3295,6 +3295,22 @@ class PallasCallSm100ATest(PallasSm100ATest):
     result = f(a, b)
     np.testing.assert_array_equal(result, a + b)
 
+  def test_arrive_wait_on_tc_barrier(self):
+    self.skip_if_wg_semantics()
+    def kernel(out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+      out_ref[...] = jnp.ones_like(out_ref)
+
+    f = plgpu.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_shapes=(  # type: ignore
+            plgpu.Barrier(num_arrivals=1, orders_tensor_core=True),
+        ),
+    )
+    np.testing.assert_array_equal(f(), np.ones((128,), np.float32))
+
 
 class PallasCallSm100AWGTest(
     PallasCallSm100ATest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
