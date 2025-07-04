@@ -23,7 +23,7 @@ from functools import partial
 import itertools as it
 import operator as op
 from typing import Any, NamedTuple, Union
-from weakref import ref
+from weakref import ref, WeakKeyDictionary
 
 from jax._src import ad_util
 from jax._src import api_util
@@ -1760,7 +1760,6 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
 
 class JaxprStackFrame:
   gensym: Callable[[AbstractValue], Var]
-  constid_to_tracer: dict[ConstId, Tracer]
   constvar_to_val: dict[Var, Any]
   eqns: list[JaxprEqn]
   invars: list[Var]
@@ -1769,11 +1768,9 @@ class JaxprStackFrame:
   is_high: bool
   mutable_qdds: list[tuple[Var, core.MutableQuasiDynamicData]]
 
-
   def __init__(self, debug_info: core.DebugInfo):
     self.gensym = core.gensym()
-    self.constid_to_tracer = {}
-    self.constvar_to_val = {}
+    self.constvar_to_val = WeakKeyDictionary()
     self.eqns = []      # cleared when we pop frame from main
     self.invars = []
     self.effects = set()
@@ -1914,7 +1911,6 @@ class DynamicJaxprTrace(core.Trace):
 
   def invalidate(self):
     # avoid cyclic refs
-    self.frame.constid_to_tracer = {}
     self.frame.constvar_to_val = {}
 
   def to_jaxpr_tracer(self, x, source_info: SourceInfo):
@@ -1949,16 +1945,12 @@ class DynamicJaxprTrace(core.Trace):
     return out_tracers
 
   def new_const(self, c, source_info: SourceInfo):
-    # TODO(mattjj): for ints, or hashable consts, don't rely on id
-    tracer = self.frame.constid_to_tracer.get(id(c))
-    if tracer is None:
-      aval = get_aval(c)
-      if aval.has_qdd:
-        with core.set_current_trace(self.parent_trace):
-          aval = core.AvalQDD(aval, core.cur_qdd(c))
-      aval = self._lift_tracers_in_aval(aval, source_info)
-      tracer = self._new_const(aval, c, source_info)
-    return tracer
+    aval = get_aval(c)
+    if aval.has_qdd:
+      with core.set_current_trace(self.parent_trace):
+        aval = core.AvalQDD(aval, core.cur_qdd(c))
+    aval = self._lift_tracers_in_aval(aval, source_info)
+    return self._new_const(aval, c, source_info)
 
   pure = lift = new_const
 
@@ -1969,7 +1961,6 @@ class DynamicJaxprTrace(core.Trace):
     else:
       var = self.frame.newvar(aval)
       tracer = DynamicJaxprTracer(self, aval, var, source_info)
-      self.frame.constid_to_tracer[id(c)] = tracer
       if isinstance(aval, core.AvalQDD):
         self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
       self.frame.constvar_to_val[var] = c
