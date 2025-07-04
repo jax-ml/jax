@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import assert_never, Any
+from typing import assert_never, Any, Callable
 
 from . import fragmented_array as fa
 
@@ -59,97 +59,172 @@ class MostReplicatedExpression:
 Expression = Variable | ConstantExpression | LeastReplicatedExpression | MostReplicatedExpression
 
 
-def least_replicated_expression(
-    expressions: tuple[Expression, ...],
-) -> Expression | None:
-  """Returns the least replicated expression out of multiple expressions.
+def meet_layouts(
+    layout1: fa.FragmentedLayout, layout2: fa.FragmentedLayout
+) -> fa.FragmentedLayout:
+  """Returns the "meet" of two layouts that are compatible up to replication.
 
-  The input expressions should correspond to "compatible" expressions (i.e.
-  expressions that produce identical layouts up to replication). Practically
-  speaking, the result is either a constant expression, or the single expression
-  in the sequence.
+  The "meet" of the two layouts is the most replicated layout that is compatible
+  with both layouts and at most as replicated as the least replicated of the
+  two layouts.
 
-  Args:
-    expressions: a non-empty sequence of expressions.
+  Two layouts are compatible up to replication iff:
+    - the two layouts are equal, or
+    - one of the layout is a `WGSplatFragLayout` that can be broadcasted to the
+      other layout's shape, or
+    - the two layouts are `TiledLayout`s and are equal, if we ignore their
+      replication dimensions.
 
-  Returns:
-    If there exists a constant expression such that it is less replicated than
-    all the other expressions in the sequence (or expressions contains a single
-    expression), then that  expression is returned. Otherwise, None is returned.
-  """
-  assert len(expressions) >= 1
-  if len(expressions) == 1:
-    return expressions[0]
-
-  for e in expressions:
-    # TODO(bchetioui): handle replication lattice between compatible layouts.
-    match e:
-      case ConstantExpression(value=fa.WGStridedFragLayout()):
-        return e
-      case ConstantExpression(value=layout) if isinstance(layout, fa.TiledLayout):
-        warp_replicated = isinstance(layout.warp_dim, fa.Replicated)
-        lane_replicated = any(isinstance(d, fa.Replicated) for d in layout.lane_dims)
-        # In this case, the layout is not replicated at all, so by definition
-        # it is the least replicated expression (assuming all the input
-        # expressions define compatible layouts).
-        if not warp_replicated and not lane_replicated:
-          return e
-  return None
-
-
-def most_replicated_expression(
-    expressions: tuple[Expression, ...],
-) -> Expression | None:
-  """Returns the most replicated expression out of multiple expressions.
-
-  The input expressions should correspond to "compatible" expressions (i.e.
-  expressions that produce identical layouts up to replication). Practically
-  speaking, the result is either a constant expression, or the single expression
-  in the sequence.
-
-  Args:
-    expressions: a non-empty sequence of expressions.
+  This is the dual of `join_layouts`.
 
   Returns:
-    If there exists a constant expression such that it is more replicated than
-    all the other expressions in the sequence (or expressions contains a single
-    expression), then that  expression is returned. Otherwise, None is returned.
+    The "meet" of the two layouts if both layouts are compatible up to
+    replication.
+
+  Raises:
+    ValueError: if the two layouts are not compatible up to replication.
   """
-  assert len(expressions) >= 1
-  if len(expressions) == 1:
-    return expressions[0]
+  if layout1 == layout2:
+    return layout1
 
-  for e in expressions:
-    # TODO(bchetioui): handle replication lattice between compatible layouts.
-    if isinstance(e, ConstantExpression):
-      layout = e.value
-      match layout:
-        case fa.WGSplatFragLayout():
-          return e
+  match (layout1, layout2):
+    case (fa.WGSplatFragLayout(), _):
+      if isinstance(layout2, fa.TiledLayout):
+        shape = layout2.base_tile_shape
+      else:
+        shape = layout2.shape
+      if layout1.can_broadcast_to(shape):
+        return layout2
+    case (_, fa.WGSplatFragLayout()):
+      if isinstance(layout1, fa.TiledLayout):
+        shape = layout1.base_tile_shape
+      else:
+        shape = layout1.shape
+      if layout2.can_broadcast_to(shape):
+        return layout1
+    case (fa.TiledLayout(), fa.TiledLayout()):
+      # TODO(bchetioui): handle `TiledLayout` replication.
+      raise NotImplementedError("TiledLayout replication not supported yet")
 
-  return None
+  raise ValueError(
+      f"Layouts {layout1} and {layout2} are not compatible up to replication."
+  )
+
+
+def join_layouts(
+    layout1: fa.FragmentedLayout, layout2: fa.FragmentedLayout
+) -> fa.FragmentedLayout:
+  """Returns the "join" of two layouts that are compatible up to replication.
+
+  The "join" of the two layouts is the least replicated layout that is compatible
+  with both layouts and at least as replicated as the most replicated of the
+  two layouts.
+
+  Two layouts are compatible up to replication iff:
+    - the two layouts are equal, or
+    - one of the layout is a `WGSplatFragLayout` that can be broadcasted to the
+      other layout's shape, or
+    - the two layouts are `TiledLayout`s and are equal, if we ignore their
+      replication dimensions.
+
+  This is the dual of `meet_layouts`.
+
+  Returns:
+    The "join" of the two layouts if both layouts are compatible up to
+    replication.
+
+  Raises:
+    ValueError: if the two layouts are not compatible up to replication.
+  """
+  if layout1 == layout2:
+    return layout1
+
+  match (layout1, layout2):
+    case (fa.WGSplatFragLayout(), _):
+      if isinstance(layout2, fa.TiledLayout):
+        shape = layout2.base_tile_shape
+      else:
+        shape = layout2.shape
+      if layout1.can_broadcast_to(shape):
+        return layout1
+    case (_, fa.WGSplatFragLayout()):
+      if isinstance(layout1, fa.TiledLayout):
+        shape = layout1.base_tile_shape
+      else:
+        shape = layout1.shape
+      if layout2.can_broadcast_to(shape):
+        return layout2
+    case (fa.TiledLayout(), fa.TiledLayout()):
+      # TODO(bchetioui): handle `TiledLayout` replication.
+      raise NotImplementedError("TiledLayout replication not supported yet")
+
+  raise ValueError(
+      f"Layouts {layout1} and {layout2} are not compatible up to replication."
+  )
+
+
+def simplify_replicated_expression(
+    expr: LeastReplicatedExpression | MostReplicatedExpression,
+    assignments: dict[Variable, ConstantExpression],
+    constructor: Callable[[tuple[Expression, ...]], Expression],
+    reducer: Callable[[ConstantExpression, ConstantExpression], ConstantExpression]
+) -> Expression | Unsatisfiable:
+  assert len(expr.expressions) >= 1
+
+  new_expressions: list[Expression] = []
+  # Use a set to eliminate duplicates, but preserve the order.
+  seen: set[Expression] = set()
+  for expr in expr.expressions:
+    simplified_expr = simplify_expression(expr, assignments)
+    if simplified_expr in seen:
+      continue
+    new_expressions.append(simplified_expr)
+    seen.add(simplified_expr)
+
+  if len(new_expressions) == 1:
+    return new_expressions[0]
+
+  consts = [e for e in new_expressions if isinstance(e, ConstantExpression)]
+  unknowns = [e for e in new_expressions if not isinstance(e, ConstantExpression)]
+
+  if consts:
+    const_red, *consts = consts
+    red = const_red
+    for cst in consts:
+      try:
+        red = ConstantExpression(reducer(red.value, cst.value))
+      except ValueError:
+        # The layouts are not compatible up to replication, this expression
+        # cannot be simplified.
+        return Unsatisfiable()
+  else:
+    red = None
+
+  if red is not None:
+    if unknowns:
+      return constructor((red, *unknowns))
+    return red
+
+  return constructor(tuple(unknowns))
 
 
 def simplify_expression(
     expr: Expression, assignments: dict[Variable, ConstantExpression]
-) -> Expression:
+) -> Expression | Unsatisfiable:
   """Simplifies an expression as much as is possible given a set of known variable assignments."""
-  simplify = simplify_expression
   match expr:
     case ConstantExpression():
       return expr
     case Variable():
       return assignments.get(expr, expr)
-    case MostReplicatedExpression(expressions=expressions):
-      reduced_expressions = tuple(simplify(e, assignments) for e in expressions)
-      if most_replicated := most_replicated_expression(reduced_expressions):
-        return simplify(most_replicated, assignments)
-      return MostReplicatedExpression(expressions=reduced_expressions)
-    case LeastReplicatedExpression(expressions=expressions):
-      reduced_expressions = tuple(simplify(e, assignments) for e in expressions)
-      if least_replicated := least_replicated_expression(reduced_expressions):
-        return simplify(least_replicated, assignments)
-      return LeastReplicatedExpression(expressions=reduced_expressions)
+    case MostReplicatedExpression():
+      return simplify_replicated_expression(
+          expr, assignments, MostReplicatedExpression, join_layouts
+      )
+    case LeastReplicatedExpression():
+      return simplify_replicated_expression(
+          expr, assignments, LeastReplicatedExpression, meet_layouts
+      )
     case _:
       assert_never(expr)
 
@@ -165,7 +240,7 @@ class Equation:
 
 def reduce_equation(
     eq: Equation, assignments: dict[Variable, ConstantExpression]
-) -> Solution:
+) -> Solution | Unsatisfiable:
   """Reduces an equation.
 
   Args:
@@ -188,6 +263,8 @@ def reduce_equation(
     case (ConstantExpression(), Variable()):
       return SatisfiedBy((rhs, lhs))
     case (ConstantExpression(), ConstantExpression()) if lhs != rhs:
+      return Unsatisfiable()
+    case _ if isinstance(lhs, Unsatisfiable) or isinstance(rhs, Unsatisfiable):
       return Unsatisfiable()
     case _ if lhs == rhs:
       return Tautological()

@@ -636,7 +636,7 @@ C = equations.ConstantExpression
 class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=InferenceImplementation.EQUATIONS):
   ...
 
-  def test_hint_extraction_for_op_works_correctly(self):
+  def test_hint_extraction_works_correctly(self):
     shape = (64,)
     bf16 = ir.BF16Type.get()
     layout = mgpu.WGMMA_ROW_LAYOUT
@@ -647,19 +647,20 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       cst = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attrs, type=ty))
       lc = layout_cast(cst, layouts.to_layout_attr(layout)).owner.opview
 
-    equation_system, hints = layout_inference2.equation_system_and_hints_for_op(
-        lc, layout_inference2._layout_cast_equation_system
-    )
+    cst_system, cst_mapping = layout_inference2._constant_equation_system(cst)
+    lc_system, lc_mapping = layout_inference2._layout_cast_equation_system(lc)
+    assignments = cst_system.assignments | lc_system.assignments
+    [hint_cst, hint_lc] = [
+        layout_inference2.simplify_hint(h, assignments) for h in
+        layout_inference2.derive_hints(cst_mapping | lc_mapping)
+    ]
 
-    in_variable, out_variable = layout_inference2.op_variables(lc)
-    [cst_out_variable] = layout_inference2.op_variables(cst)
+    self.assertEqual(hint_cst.variable.key.operation, cst)
+    self.assertEqual(hint_cst.expression, C(layout))
 
-    assignments = {v: C(layout) for v in [in_variable, out_variable]}
-
-    self.assertEqual(
-        equation_system, equations.EquationSystem(assignments=assignments)
-    )
-    self.assertEqual(hints, [H(in_variable, cst_out_variable)])
+    self.assertEqual(hint_lc.variable.key.operation, lc)
+    self.assertIsInstance(hint_lc.expression, equations.Variable)
+    self.assertEqual(hint_lc.expression.key.operation, cst)
 
   def test_unambiguous_hints_are_used_to_assign_variables_correctly(self):
     v0 = V(0)
@@ -680,7 +681,8 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       attrs = [ir.FloatAttr.get(bf16, i) for i in range(shape[0])]
       cst = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attrs, type=ty))
 
-    [variable] = layout_inference2.op_variables(cst)
+    [key] = layout_inference2.op_variable_keys(cst)
+    variable = equations.Variable(key)
     assignments = layout_inference2.find_assignments_for(
         {variable},
         equations.EquationSystem(
@@ -693,6 +695,22 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     )
     self.assertIsInstance(assignments, equations.Unsatisfiable)
 
+  def test_hint_that_would_make_system_unsatisfiable_is_not_used_in_solution(self):
+    v0, v1 = V(0), V(1)
+    splat_layout = C(mgpu.WGSplatFragLayout((1, 1)))
+    assignments = layout_inference2.find_assignments_for(
+        {v0},
+        equations.EquationSystem(
+            equations=[
+                E(v0, equations.MostReplicatedExpression([v1, C(mgpu.WGMMA_LAYOUT)]))
+            ]
+        ),
+        # The first hint would make the system unsatisfiable, but the second
+        # hint should be used to find a solution.
+        hints=[H(v1, C(mgpu.WGStridedFragLayout((1, 128), vec_size=1))),
+               H(v1, splat_layout)],
+    )
+    self.assertEqual(assignments, {v0: splat_layout})
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
