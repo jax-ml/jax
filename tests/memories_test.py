@@ -1682,6 +1682,25 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     scores = jnp.ones((16, 4, 4, 2))
     jax.jit(peer_forward)(x, experts, indices, scores)  # doesn't crash
 
+  def test_int4_host_compute(self):
+
+    @compute_on("device_host")
+    @jax.jit
+    def g(x):
+      return x + x
+
+    @jax.jit
+    def f(x):
+      y = g(x)
+      return 2 * y
+
+    inp = jnp.arange(4, dtype=jnp.uint4)
+    out = f(inp)
+    self.assertArraysEqual(out, 4 * inp)
+
+    lowered_text = f.lower(inp).as_text()
+    self.assertIn("_xla_compute_type", lowered_text)
+
 
 class StreamAnnotationTest(jtu.JaxTestCase):
 
