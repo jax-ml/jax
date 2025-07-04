@@ -493,6 +493,8 @@ class LaunchContext:
           tma_dtype = 1
         elif ir.Float8E4M3FNType.isinstance(ref_ty.element_type):
           tma_dtype = 1
+        elif ir.Float8E8M0FNUType.isinstance(ref_ty.element_type):
+          tma_dtype = 1
         else:
           raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")
         dtype_or_bitwidth = c(tma_dtype, i64)

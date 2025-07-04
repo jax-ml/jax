@@ -331,9 +331,9 @@ def mma(
       raise ValueError(
           f"A scale shape mismatch: expected (128, 4), got {a_scale.shape}"
       )
-    if a_scale.dtype != i32:
+    if a_scale.dtype != ir.Float8E8M0FNUType.get():
       raise ValueError(
-          f"A scale dtype mismatch: expected int32, got {a_scale.dtype}"
+          f"A scale dtype mismatch: expected f8e8m0fnu, got {a_scale.dtype}"
       )
     if n % 32:
       raise ValueError(
@@ -343,9 +343,9 @@ def mma(
       raise ValueError(
           f"B scale shape mismatch: expected (128, {n // 32}), got {b_scale.shape}"
       )
-    if b_scale.dtype != i32:
+    if b_scale.dtype != ir.Float8E8M0FNUType.get():
       raise ValueError(
-          f"B scale dtype mismatch: expected int32, got {b_scale.dtype}"
+          f"B scale dtype mismatch: expected f8e8m0fnu, got {b_scale.dtype}"
       )
 
   # Step 3. Compute the operand descriptors.
