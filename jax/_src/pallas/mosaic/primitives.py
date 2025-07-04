@@ -165,7 +165,7 @@ def _roll_lowering_rule(
 mlir.register_lowering(roll_p, _roll_lowering_rule)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class AsyncCopyDescriptor:
   src_ref: Any
   src_transforms: tuple[Transform, ...]
@@ -177,6 +177,7 @@ class AsyncCopyDescriptor:
   src_sem_transforms: tuple[Transform, ...] | None
   device_id: int | jax.Array | None
   device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH
+  core_id: int | jax.Array | None = None
 
   def __post_init__(self):
     if (self.src_sem is None) ^ (self.device_id is None):
@@ -199,6 +200,7 @@ class AsyncCopyDescriptor:
           self.dst_sem,
           self.dst_sem_transforms,
           self.device_id,
+          self.core_id,
       ))
     else:
       return tree_util.tree_flatten((
@@ -211,6 +213,7 @@ class AsyncCopyDescriptor:
           self.src_sem,
           self.src_sem_transforms,
           self.device_id,
+          self.core_id,
       ))
 
   def start(self, priority: int = 0):
@@ -262,6 +265,7 @@ def _dma_start_abstract_eval(*args, tree, device_id_type, priority):
       src_sem_aval,
       src_sem_transforms_avals,
       device_id_aval,
+      core_id_aval,
   ) = tree_util.tree_unflatten(tree, args)
   dst_sem_shape = dst_sem_aval.shape
   if dst_sem_transforms_avals:
@@ -297,6 +301,7 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
       src_sem,
       src_sem_transforms,
       device_id,
+      core_id,
   ) = tree_util.tree_unflatten(tree, invars)
   del src_sem_transforms
   # TODO(sharadmv): pretty print source semaphores and device id
@@ -330,6 +335,7 @@ def dma_start_partial_discharge_rule(
       src_sem,
       src_sem_transforms,
       device_id,
+      core_id,
   ) = tree_util.tree_unflatten(tree, args)
   (
       _,
@@ -340,6 +346,7 @@ def dma_start_partial_discharge_rule(
       dst_sem_transforms_avals,
       src_sem_aval,
       src_sem_transforms_avals,
+      _,
       _,
   ) = tree_util.tree_unflatten(tree, in_avals)
   del out_avals
@@ -464,6 +471,7 @@ def dma_start_partial_discharge_rule(
     new_vals += (do_discharge_src_sem() if src_sem_discharge else None,) # src_sem
     new_vals += (None,) * num_src_sem_transforms
     new_vals += (None,)  # device_id
+    new_vals += (None,)  # core_id
   assert (len(new_vals) ==
           len(in_avals)), f"{len(new_vals), new_vals} != {len(in_avals)}"
 
@@ -506,6 +514,7 @@ def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
       _,
       _,
       _,
+      _,
   ) = tree_util.tree_unflatten(tree, invars)
   return pp.concat([
       pp.text("dma_wait"),
@@ -524,7 +533,8 @@ def dma_wait_partial_discharge_rule(should_discharge,
   del out_avals, device_id_type
   _, _, dst_ref, dst_ref_transforms, dst_sem, dst_sem_transforms, _, _, _ = (
       tree_util.tree_unflatten(tree, args))
-  (_,
+  (
+      _,
       src_ref_transforms_avals,
       _,
       dst_ref_transforms_avals,
@@ -533,6 +543,7 @@ def dma_wait_partial_discharge_rule(should_discharge,
       src_sem_aval,
       src_sem_transforms_avals,
       device_id_aval,
+      core_id_aval,
   ) = tree_util.tree_unflatten(tree, in_avals)
 
   # The only one we can discharge is the dst semaphore. The provided
@@ -560,6 +571,7 @@ def dma_wait_partial_discharge_rule(should_discharge,
   new_vals += (None,) * len(tree_util.tree_leaves(src_sem_aval))  # src_sem
   new_vals += (None,) * len(tree_util.tree_leaves(src_sem_transforms_avals))
   new_vals += (None,) * len(tree_util.tree_leaves(device_id_aval)) # device_id
+  new_vals += (None,) * len(tree_util.tree_leaves(core_id_aval))  # core_id
   return new_vals, []
 state_discharge.register_partial_discharge_rule(dma_wait_p)(dma_wait_partial_discharge_rule)
 
@@ -584,7 +596,6 @@ def make_async_copy(src_ref, dst_ref, sem):
       None,
       None,
       None,
-      primitives.DeviceIdType.MESH,
   )
 
 
@@ -595,8 +606,15 @@ def async_copy(src_ref, dst_ref, sem, *, priority: int = 0):
   return copy_descriptor
 
 
-def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
-                           device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH):
+def make_async_remote_copy(
+    src_ref,
+    dst_ref,
+    send_sem,
+    recv_sem,
+    device_id,
+    device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
+    core_id=None,
+):
   """Creates a description of a remote copy operation.
 
   Copies data from src_ref on the current device to dst_ref on the device
@@ -612,6 +630,9 @@ def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
     recv_sem: The semaphore on the destination device.
     device_id: The device id of the destination device.
     device_id_type: The type of the device id.
+    core_id: The core id of the destination device. If None, the current core id
+      will be used.
+
   Returns:
     An AsyncCopyDescriptor.
   """
@@ -630,14 +651,25 @@ def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
       send_sem_transforms,
       device_id,
       device_id_type=device_id_type,
+      core_id=core_id,
   )
 
-def async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
-                      device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH):
-  copy_descriptor = make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem,
-                                           device_id, device_id_type)
+
+def async_remote_copy(
+    src_ref,
+    dst_ref,
+    send_sem,
+    recv_sem,
+    device_id,
+    device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
+    core_id=None,
+):
+  copy_descriptor = make_async_remote_copy(
+      src_ref, dst_ref, send_sem, recv_sem, device_id, device_id_type, core_id
+  )
   copy_descriptor.start()
   return copy_descriptor
+
 
 get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 
