@@ -697,6 +697,13 @@ class WGStridedFragLayout:
     for i in range(reg_num):
       yield arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))
 
+# NOTE: Two layouts are compatible up to replication iff:
+#
+# - the two layouts are equal, or
+# - one of the layout is a `WGSplatFragLayout` with compatible shape with the
+#   other layout, or
+# - the two layouts are `TiledLayout`s and are equal, if we ignore their
+#   replicated dimensions.
 
 FragmentedLayout = WGSplatFragLayout | WGStridedFragLayout | TiledLayout
 
