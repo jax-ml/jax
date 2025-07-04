@@ -1485,6 +1485,53 @@ class TCGen05Test(TestCase):
     rtol = 8e-4 if out_jax_dtype == jnp.float16 else 1e-7
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
 
+  def test_tmem_copy_scales(self):
+    dtype = jnp.int8
+
+    def kernel(ctx, src, out, scratch):
+      smem, barrier, tmem = scratch
+      ctx.async_copy(src_ref=src, dst_ref=smem, barrier=barrier)
+      barrier.wait()
+      with mgpu.single_thread():
+        tcgen05.async_copy_scales_smem_to_tmem(
+            mgpu.memref_reshape(smem, (32, 4, 4)), tmem
+        )
+        tcgen05.commit_arrive(barrier)
+      barrier.wait(orders_tensor_core=True)
+      # We print as i32, because i8 seems to overflow the CUDA printf buffer and
+      # produce a truncated output.
+      tcgen05.TMEMRef(
+          tmem.address,
+          (128, 4),
+          ir.IntegerType.get_signless(32),
+          tcgen05.tmem_default_layout(),
+      )._debug_print()
+      copy(src, out)
+
+    shape = (32, 16)
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    scratch_shape = [
+        x,
+        mgpu.TMABarrier(1),
+        mgpu.TMEM((128, 4), dtype, layout=tcgen05.scales_layout()),
+    ]
+    with self.capture_stdout() as stdout:
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+      )(x)
+    matches = 0
+    for l in stdout().splitlines():
+      if ":" not in l:
+        continue
+      idxs, value = l.split(":")
+      row, col = map(int, idxs[1:-1].split(","))
+      base = (row % 32) * 16 + col * 4
+      base %= 256  # int8 has very limited range
+      expected = base | (base + 1) << 8 | (base + 2) << 16 | (base + 3) << 24
+      self.assertEqual(int(value), expected)
+      matches += 1
+    self.assertEqual(matches, 128 * 4)
+
   @parameterized.product(
       in_jax_dtype=(jnp.float8_e5m2, jnp.float8_e4m3fn),
       m=(128,),  # TODO(apaszke): 256
