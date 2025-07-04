@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from typing import Callable
 
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -119,7 +120,8 @@ def create_instr_descriptor(
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
-def create_scaled_instr_descriptor(
+def _create_scaled_instr_descriptor(
+    get_input_encoding: Callable[[ir.Type], int],
     m: int,
     n: int,
     a_type: ir.Type,
@@ -133,13 +135,6 @@ def create_scaled_instr_descriptor(
   # Bits 0, 1 are reserved
   # We ignore sparsity (bit 2)
   # Bit 3 is reserved
-  def get_input_encoding(ty):
-    if ty == ir.Float8E4M3FNType.get():
-      return 0
-    elif ty == ir.Float8E5M2Type.get():
-      return 1
-    else:
-      raise NotImplementedError(f"Unsupported input dtype: {ty}")
   assert 0 <= b_scale_idx < 4
   desc |= b_scale_idx << 4  # B scale factor data ID, bits 4-5
   # Bit 6 is reserved
@@ -159,6 +154,26 @@ def create_scaled_instr_descriptor(
   desc |= a_scale_idx << 29  # A scale factor data ID, bits 29-30
   # Bit 31 is reserved
   return arith.constant(ir.IntegerType.get_signless(32), desc)
+
+
+def create_scaled_f8f6f4_instr_descriptor(*args, **kwargs):
+  def get_input_encoding(ty):
+    if ty == ir.Float8E4M3FNType.get():
+      return 0
+    elif ty == ir.Float8E5M2Type.get():
+      return 1
+    else:
+      raise NotImplementedError(f"Unsupported input dtype: {ty}")
+  return _create_scaled_instr_descriptor(get_input_encoding, *args, **kwargs)
+
+
+def create_scaled_f4_instr_descriptor(*args, **kwargs):
+  def get_input_encoding(ty):
+    if ty == ir.Float4E2M1FNType.get():
+      return 1
+    else:
+      raise NotImplementedError(f"Unsupported input dtype: {ty}")
+  return _create_scaled_instr_descriptor(get_input_encoding, *args, **kwargs)
 
 
 def mma(
@@ -285,6 +300,18 @@ def mma(
           f"Block-scaled MMA with element type {element_type} only supports f32"
           f" accumulators, but got: {d.dtype}"
       )
+  elif any(
+      t.isinstance(element_type) for t in {ir.Float4E2M1FNType}
+  ):
+    if not is_scaled:
+      raise ValueError(
+          f"MMA with element type {element_type} only supports block scaling"
+      )
+    if d.dtype != f32:
+      raise ValueError(
+          f"Block-scaled MMA with element type {element_type} only supports f32"
+          f" accumulators, but got: {d.dtype}"
+      )
   elif element_type == ir.IntegerType.get_signless(8):
     if d.dtype != s32:
       raise ValueError(
@@ -297,7 +324,7 @@ def mma(
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.
   m_group_elems = m  # We have already verified M is supported above.
-  k_group_elems = swizzle // utils.bytewidth(element_type)
+  k_group_elems = 8 * swizzle // utils.bitwidth(element_type)
   if n % 8:
     raise ValueError(f"N must be a multiple of 8, got: {n}")
   if n.bit_count() != 1:
@@ -326,16 +353,18 @@ def mma(
   # Check that the shapes and element types are correct for block scaling.
   if is_scaled:
     if collective:
-      raise ValueError("MMA with block scaling does not support collective")
+      raise NotImplementedError("MMA with block scaling does not support collective")
+    if m != 128:
+      raise NotImplementedError(f"MMA with block scaling requires M to be 128, got: {m}")
     if k_group_elems != 128:
-      raise ValueError(
-          f"MMA with block scaling requires swizzle to be 128, got: {swizzle}"
+      expected_swizzle = 128 // (8 // utils.bitwidth(element_type))
+      raise NotImplementedError(
+          "MMA with block scaling requires swizzle to be"
+          f" {expected_swizzle} for dtype {element_type}, got: {swizzle}"
       )
-    if k != 128:
-      raise NotImplementedError("Unrolling block scaled MMA along K not implemented")
-    if a_scale.shape != (128, 4):
+    if a_scale.shape != (m, 4):
       raise ValueError(
-          f"A scale shape mismatch: expected (128, 4), got {a_scale.shape}"
+          f"A scale shape mismatch: expected ({m}, 4), got {a_scale.shape}"
       )
     if a_scale.dtype != ir.Float8E8M0FNUType.get():
       raise ValueError(
@@ -345,9 +374,9 @@ def mma(
       raise ValueError(
           f"MMA with block scaling requires N to be divisible by 32, got: {n}"
       )
-    if b_scale.shape != (128, n // 32):
+    if b_scale.shape != (n, 4):
       raise ValueError(
-          f"B scale shape mismatch: expected (128, {n // 32}), got {b_scale.shape}"
+          f"B scale shape mismatch: expected ({n}, 4), got {b_scale.shape}"
       )
     if b_scale.dtype != ir.Float8E8M0FNUType.get():
       raise ValueError(
@@ -380,6 +409,16 @@ def mma(
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
   )
+
+  if is_scaled and utils.bitwidth(mma_element_type) == 4:
+    if a_fastest != mma_utils.Dim.K:
+      raise ValueError(
+          "4-bit block scaled MMA only supports K-fastest operands, but A is M-fastest"
+      )
+    if b_fastest != mma_utils.Dim.K:
+      raise ValueError(
+          "4-bit block scaled MMA only supports K-fastest operands, but B is N-fastest"
+      )
 
   # Step 4. Issue the instructions.
   true = arith.constant(ir.IntegerType.get_signless(1), 1)
@@ -446,20 +485,29 @@ def _do_mma(
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
-  elem_bytewidth = utils.bytewidth(element_type)
-  kn_tiling = swizzle // elem_bytewidth
-  instr_k = 32 // elem_bytewidth
-  packing = 4 // elem_bytewidth
+  elem_bitwidth = utils.bitwidth(element_type)
+  kn_tiling = 8 * swizzle // elem_bitwidth
+  instr_k = 8 * 32 // elem_bitwidth
+  packing = 8 * 4 // elem_bitwidth
   if (a_k_stride is not None and a_k_stride % 16) or b_k_stride % 16:
     raise ValueError
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
 
+  scale_steps = None
   if is_scaled:
-    if (not ir.Float8E5M2Type.isinstance(element_type) and
-        not ir.Float8E4M3FNType.isinstance(element_type)):
+    if (ir.Float8E5M2Type.isinstance(element_type) or
+        ir.Float8E4M3FNType.isinstance(element_type)):
+      kind = "mxf8f6f4.block_scale.scale_vec::1X"
+      scale_steps = 4
+      create_scaled_instr_descriptor = create_scaled_f8f6f4_instr_descriptor
+    elif ir.Float4E2M1FNType.isinstance(element_type):
+      assert not a_transpose and not b_transpose
+      kind = "mxf4.block_scale.scale_vec::2X"
+      scale_steps = 2
+      create_scaled_instr_descriptor = create_scaled_f4_instr_descriptor
+    else:
       raise NotImplementedError(f"Unsupported element type for block scaling: {element_type}")
-    kind = "mxf8f6f4.block_scale.scale_vec::1X"
     extra_args = (a_scale_addr, b_scale_addr)
     extra_ptx = "[$5], [$6], "
     extra_constraints = ",r,r"
@@ -476,16 +524,19 @@ def _do_mma(
       raise NotImplementedError(f"Unsupported input element type: {element_type}")
     extra_args = ()
     extra_constraints = extra_ptx = ""
+    create_scaled_instr_descriptor = None
 
   num_cta = 2 if collective else 1
   a_in_tmem = a_k_stride is None
   a_ptx = "[$1]" if a_in_tmem else "$1"
   a_ptx_constraint = "r" if a_in_tmem else "l"
   assert a_desc_or_addr.type == ir.IntegerType.get_signless(32 if a_in_tmem else 64)
+  assert scale_steps is None or scale_steps == kn_tiling // instr_k
   for k_step in range(kn_tiling // instr_k):
     if is_scaled:
+      scale_id = k_step * (4 // scale_steps)
       i_desc = create_scaled_instr_descriptor(
-          m, n, element_type, element_type, k_step, k_step, a_transpose, b_transpose
+          m, n, element_type, element_type, scale_id, scale_id, a_transpose, b_transpose
       )
     else:
       i_desc = create_instr_descriptor(
@@ -1205,7 +1256,6 @@ def wait_load_tmem():
   utils.warpgroup_barrier()
 
 
-
 def async_copy_scales_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef):
   """Asynchronously copies the scale data from SMEM to TMEM.
 
@@ -1214,36 +1264,56 @@ def async_copy_scales_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef):
   MMA issued in the same thread, no additional synchronization is needed.
 
   At the moment the function requires ``smem_ref`` to be contiguous and have a
-  shape of (32, 4, 4) for 8-bit scales, matching the scale layout for
+  shape of (MN // 128, 32, 16) for 8-bit scales (here MN stands for the size of
+  the non-contracting dimension which is M or N), matching the scale layout for
   .scale_vec::1X. See https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a-layout-1x
-  for more details.
+  for more details. Note that we always put the non-contracting dimension first.
+  If you have a (MN, 4) array of scales in JAX (where MN is divisible by 128),
+  you can prepare it for use in the kernel this way::
 
-  The TMEM ref is expected to have the logical shape of the scales (128, 4), and
+      scales.reshape(-1, 4, 32, 4).swapaxes(1, 2).reshape(-1, 32, 16)
+
+  The TMEM ref is expected to have the logical shape of the scales (MN, 4), and
   the layout created by ``scales_layout()``.
   """
+  i32 = ir.IntegerType.get_signless(32)
   smem_ty = ir.MemRefType(smem_ref.type)
   if (dtype := smem_ty.element_type) != tmem_ref.dtype:
     raise ValueError(f"Incompatible dtypes: SMEM has {dtype}, TMEM has {tmem_ref.dtype}")
-  expected_tmem_shape = (TMEM_ROWS, 32 // utils.bitwidth(dtype))
-  if tmem_ref.shape != expected_tmem_shape:
-    raise ValueError(f"TMEM has shape {tmem_ref.shape}, but only {expected_tmem_shape} is supported")
+  if dtype != ir.Float8E8M0FNUType.get():
+    raise NotImplementedError(f"Unsupported dtype: {dtype}, only f8e8m0fnu supported")
+  if tmem_ref.shape[0] % TMEM_ROWS:
+    raise ValueError(f"TMEM reference must have a multiple of {TMEM_ROWS} rows, but got {tmem_ref.shape[0]}")
+  if tmem_ref.shape[1] != 4:
+    raise ValueError(f"TMEM reference must have 4 colums, but got {tmem_ref.shape[1]}")
   if tmem_ref.layout != scales_layout():
     raise ValueError(f"TMEM layout {tmem_ref.layout} is not supported")
   smem_shape = tuple(smem_ty.shape)
-  expected_smem_shape = (TMEM_ROWS // 4, 4, 32 // utils.bitwidth(dtype))
+  expected_smem_shape = (tmem_ref.shape[0] // TMEM_ROWS, 32, 16)
   if smem_shape != expected_smem_shape:
     raise NotImplementedError(
-        f"SMEM has {smem_shape}, but only {expected_smem_shape} is supported"
+        f"SMEM has {smem_shape}, but expected {expected_smem_shape} for TMEM"
+        f" ref shape {tmem_ref.shape}"
     )
   strides, _ = smem_ty.get_strides_and_offset()
   if strides != utils.get_contiguous_strides(smem_shape):
     raise ValueError("Only copies from contiguous SMEM references are supported")
-  # The "core matrix" here is the same as in MMA: 8x(16 bytes).
-  desc = mma_utils.encode_descriptor(smem_ref, 0, 8 * 16, swizzle=None)
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [tmem_ref.address, desc],
-      "tcgen05.cp.cta_group::1.32x128b.warpx4 [$0], $1;",
-      "r,l",
-      has_side_effects=True,
-  )
+  row_tile_stride = strides[0]
+  if row_tile_stride % 4:
+    raise ValueError("Column tile stride must be a multiple of 4")
+  row_tile_stride_i32 = row_tile_stride // 4
+  smem_base_ptr = utils.memref_ptr(smem_ref, 3)
+  for row_tile in range(expected_smem_shape[0]):
+    load_ptr = utils.getelementptr(
+        smem_base_ptr, [row_tile * row_tile_stride_i32], i32
+    )
+    store_ptr = arith.addi(tmem_ref.address, arith.constant(i32, 4 * row_tile))
+    # The "core matrix" here is the same as in MMA: 8x(16 bytes).
+    desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [store_ptr, desc],
+        "tcgen05.cp.cta_group::1.32x128b.warpx4 [$0], $1;",
+        "r,l",
+        has_side_effects=True,
+    )
