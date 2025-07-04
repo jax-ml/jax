@@ -97,10 +97,9 @@ class NamedSharding(JSharding.Sharding):
   is sharded across ``x`` axis of the mesh, and the second dimension is sharded
   across ``y`` axis of the mesh.
 
-  The Distributed arrays and automatic parallelization
-  (https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#namedsharding-gives-a-way-to-express-shardings-with-names)
-  tutorial has more details and diagrams that explain how
-  :class:`Mesh` and :class:`PartitionSpec` are used.
+  The `Distributed arrays and automatic parallelization`_
+  and `Explicit Sharding`_ tutorials have more details and diagrams that
+  explain how :class:`Mesh` and :class:`PartitionSpec` are used.
 
   Args:
     mesh: A :class:`jax.sharding.Mesh` object.
@@ -113,6 +112,9 @@ class NamedSharding(JSharding.Sharding):
     >>> mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
     >>> spec = P('x', 'y')
     >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
+
+  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
 
   mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
