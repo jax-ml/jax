@@ -51,7 +51,7 @@ def print_environment_info(return_string: bool = False) -> str | None:
   process_count: {xb.process_count()}
   platform: {platform.uname()}""")
   for key, value in os.environ.items():
-    if key.startswith("JAX_"):
+    if key.startswith(("JAX_", "XLA_")):
       info += f"\n{key}={value}"
   nvidia_smi = try_nvidia_smi()
   if nvidia_smi:
