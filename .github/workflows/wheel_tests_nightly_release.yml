@@ -179,64 +179,64 @@ jobs:
     steps:
       - name: Download release wheels from GCS
         run: |
-          mkdir -p $(pwd)/dist
-          final_gcs_download_uri=${{ inputs.gcs_download_uri }}
+          mkdir -p dist
+          final_gcs_download_uri="${{ inputs.gcs_download_uri }}"
 
           # Get the major and minor version of Python.
           # E.g if python=3.11, then python_major_minor=311
           # E.g if python=3.13-nogil, then python_major_minor=313t
-          python_major_minor=${{ matrix.python }}
-          python_major_minor=$(echo "${python_major_minor//-nogil/t}" | tr -d '.')
+          python_major_minor="${{ matrix.python }}"
+          python_major_minor="$(echo "${python_major_minor//-nogil/t}" | tr -d '.')"
           python_major_minor="cp${python_major_minor%t}-cp${python_major_minor}-"
 
-          gcloud storage cp -r "${final_gcs_download_uri}"/jax*py3*none*any.whl $(pwd)/dist/
+          gcloud storage cp -r "${final_gcs_download_uri}"/jax*py3*none*any.whl dist/
 
-          jax_wheel=$(ls dist/jax*py3*none*any.whl 2>/dev/null)
-          echo "JAX_WHEEL=$jax_wheel" >> $GITHUB_ENV
+          jax_wheel="$(ls dist/jax*py3*none*any.whl 2>/dev/null)"
+          echo "JAX_WHEEL=$jax_wheel" >> "$GITHUB_ENV"
 
           if [[ "${{ inputs.download-jax-only-from-gcs }}" != "1" ]]; then
-            gcloud storage cp -r "${final_gcs_download_uri}/jaxlib*${python_major_minor}*linux*x86_64*.whl" $(pwd)/dist/
-            gcloud storage cp -r "${final_gcs_download_uri}/jax*cuda*plugin*${python_major_minor}*linux*x86_64*.whl" $(pwd)/dist/
-            gcloud storage cp -r "${final_gcs_download_uri}/jax*cuda*pjrt*linux*x86_64*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${final_gcs_download_uri}/jaxlib*${python_major_minor}*linux*x86_64*.whl" dist/
+            gcloud storage cp -r "${final_gcs_download_uri}/jax*cuda*plugin*${python_major_minor}*linux*x86_64*.whl" dist/
+            gcloud storage cp -r "${final_gcs_download_uri}/jax*cuda*pjrt*linux*x86_64*.whl" dist/
 
-            jaxlib_wheel=$(ls dist/jaxlib*${python_major_minor}*linux*x86_64*.whl 2>/dev/null)
-            jax_cuda_plugin_wheel=$(ls dist/jax*cuda*plugin*${python_major_minor}*linux*x86_64*.whl 2>/dev/null)
-            jax_cuda_pjrt_wheel=$(ls dist/jax*cuda*pjrt*linux*x86_64*.whl 2>/dev/null)
+            jaxlib_wheel="$(ls dist/jaxlib*"${python_major_minor}"*linux*x86_64*.whl 2>/dev/null)"
+            jax_cuda_plugin_wheel="$(ls dist/jax*cuda*plugin*"${python_major_minor}"*linux*x86_64*.whl 2>/dev/null)"
+            jax_cuda_pjrt_wheel="$(ls dist/jax*cuda*pjrt*linux*x86_64*.whl 2>/dev/null)"
 
-            echo "JAXLIB_WHEEL=$jaxlib_wheel" >> $GITHUB_ENV
-            echo "JAX_CUDA_PLUGIN_WHEEL=$jax_cuda_plugin_wheel" >> $GITHUB_ENV
-            echo "JAX_CUDA_PJRT_WHEEL=$jax_cuda_pjrt_wheel" >> $GITHUB_ENV
+            echo "JAXLIB_WHEEL=$jaxlib_wheel" >> "$GITHUB_ENV"
+            echo "JAX_CUDA_PLUGIN_WHEEL=$jax_cuda_plugin_wheel" >> "$GITHUB_ENV"
+            echo "JAX_CUDA_PJRT_WHEEL=$jax_cuda_pjrt_wheel" >> "$GITHUB_ENV"
           fi
       - name: Verify JAX CPU packages can be installed
         run: |
-          $PYTHON -m uv venv ~/test_cpu && source ~/test_cpu/bin/activate
+          "$PYTHON" -m uv venv ~/test_cpu && source ~/test_cpu/bin/activate
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
-            uv pip install $JAX_WHEEL
+            uv pip install "$JAX_WHEEL"
           else
-            uv pip install $JAX_WHEEL $JAXLIB_WHEEL
+            uv pip install "$JAX_WHEEL" "$JAXLIB_WHEEL"
           fi
       - name: Verify JAX TPU packages can be installed
         run: |
-          $PYTHON -m uv venv ~/test_tpu && source ~/test_tpu/bin/activate
+          "$PYTHON" -m uv venv ~/test_tpu && source ~/test_tpu/bin/activate
 
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
-            uv pip install $JAX_WHEEL[tpu]
+            uv pip install "$JAX_WHEEL"[tpu]
           else
-            uv pip install $JAX_WHEEL[tpu] $JAXLIB_WHEEL
+            uv pip install "$JAX_WHEEL"[tpu] "$JAXLIB_WHEEL"
           fi
       - name: Verify JAX CUDA packages can be installed (Nvidia Pip Packages)
         run: |
-          $PYTHON -m uv venv ~/test_cuda_pip && source ~/test_cuda_pip/bin/activate
+          "$PYTHON" -m uv venv ~/test_cuda_pip && source ~/test_cuda_pip/bin/activate
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
-            uv pip install $JAX_WHEEL[cuda]
+            uv pip install "$JAX_WHEEL"[cuda]
           else
-            uv pip install $JAX_WHEEL[cuda] $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL[with-cuda]
+            uv pip install "$JAX_WHEEL"[cuda] "$JAXLIB_WHEEL" "$JAX_CUDA_PJRT_WHEEL" "$JAX_CUDA_PLUGIN_WHEEL"[with-cuda]
           fi
       - name: Verify JAX CUDA packages can be installed (CUDA local)
         run: |
-          $PYTHON -m uv venv ~/test_cuda_local && source ~/test_cuda_local/bin/activate
+          "$PYTHON" -m uv venv ~/test_cuda_local && source ~/test_cuda_local/bin/activate
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
-            uv pip install $JAX_WHEEL[cuda12-local]
+            uv pip install "$JAX_WHEEL"[cuda12-local]
           else
-            uv pip install $JAX_WHEEL $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL
+            uv pip install "$JAX_WHEEL" "$JAXLIB_WHEEL" "$JAX_CUDA_PJRT_WHEEL" "$JAX_CUDA_PLUGIN_WHEEL"
           fi

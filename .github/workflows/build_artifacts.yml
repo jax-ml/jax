@@ -111,10 +111,10 @@ jobs:
           persist-credentials: false
       - name: Enable RBE if building on Linux x86 or Windows x86
         if: contains(inputs.runner, 'linux-x86') || contains(inputs.runner, 'windows-x86')
-        run: echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
+        run: echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> "$GITHUB_ENV"
       - name: Enable Bazel remote cache (with writes enabled) if building on Linux Aarch64
         if: contains(inputs.runner, 'linux-arm64')
-        run: echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> $GITHUB_ENV
+        run: echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> "$GITHUB_ENV"
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
@@ -126,7 +126,7 @@ jobs:
       - name: Upload artifacts to a GCS bucket (non-Windows runs)
         if: >-
           ${{ inputs.upload_artifacts_to_gcs && !contains(inputs.runner, 'windows-x86') }}
-        run:  gcloud storage cp -r "$(pwd)/dist/*.whl" "${{ inputs.gcs_upload_uri }}"/
+        run:  gcloud storage cp -r "dist/*.whl" "${{ inputs.gcs_upload_uri }}"/
       # Set shell to cmd to avoid path errors when using gcloud commands on Windows
       - name: Upload artifacts to a GCS bucket (Windows runs)
         if: >-

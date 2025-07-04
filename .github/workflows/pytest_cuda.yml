@@ -75,20 +75,20 @@ jobs:
           persist-credentials: false
       - name: Set env vars for use in artifact download URL
         run: |
-          os=$(uname -s | awk '{print tolower($0)}')
-          arch=$(uname -m)
+          os="$(uname -s | awk '{print tolower($0)}')"
+          arch="$(uname -m)"
 
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.11, then python_major_minor=311
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
-          python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
+          python_major_minor="$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')"
 
-          echo "OS=${os}" >> $GITHUB_ENV
-          echo "ARCH=${arch}" >> $GITHUB_ENV
+          echo "OS=${os}" >> "$GITHUB_ENV"
+          echo "ARCH=${arch}" >> "$GITHUB_ENV"
           # Python wheels follow a naming convention: standard wheels use the pattern
           # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
           # `*-cp<py_version>-cp<py_version>t-*`.
-          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
+          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> "$GITHUB_ENV"
       - name: Download wheels from GCS
         id: download-wheel-artifacts
         # Set continue-on-error to true to prevent actions from failing the workflow if this step
@@ -96,31 +96,31 @@ jobs:
         # informative error message.
         continue-on-error: true
         run: |
-          mkdir -p $(pwd)/dist
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+          mkdir -p dist
+          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
 
           # Do not download the jaxlib and CUDA plugin artifacts if we are testing a jax only
           # release.
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
             echo "JAX only release. Only downloading the jax wheel from the release bucket."
 
-            if [[ "${{ inputs.use-nvidia-pip-wheels }}" == false ]]; then
+            if [[ "${{ inputs.use-nvidia-pip-wheels }}" == "false" ]]; then
               # Install only the PJRT and JAX CUDA Plugin packages from PyPI. Nvidia CUDA packages
               # are used from the system.
-              echo "JAXCI_JAX_PYPI_EXTRAS=cuda12-local">> $GITHUB_ENV
+              echo "JAXCI_JAX_PYPI_EXTRAS=cuda12-local">> "$GITHUB_ENV"
             else
              # Install the PJRT, JAX CUDA Plugin, and Nvidia CUDA packages from PyPI.
-              echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> $GITHUB_ENV
+              echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> "$GITHUB_ENV"
             fi
           else
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" dist/ &&
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" dist/ &&
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" dist/
 
-             if [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]]; then
+             if [[ "${{ inputs.use-nvidia-pip-wheels }}" == "true" ]]; then
               # Install the Nvidia CUDA packages from PyPI. The wheels downloaded in the previous
               # step will be used for the PJRT and JAX CUDA Plugin packages.
-              echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> $GITHUB_ENV
+              echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> "$GITHUB_ENV"
              fi
           fi
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
@@ -134,20 +134,20 @@ jobs:
         run: |
           # For prerelease python 3.14, some pre-built dependency wheels aren't available,
           # so we need to download their deps or build them from source.
-          if [[ $JAXCI_PYTHON == "python3.14" ]]; then
+          if [[ "$JAXCI_PYTHON" == "python3.14" ]]; then
             # Build numpy from source
             # Need to include fixes for https://github.com/numpy/numpy/issues/28681.
-            $JAXCI_PYTHON -m uv pip install "git+https://github.com/numpy/numpy@v2.3.0"
+            "$JAXCI_PYTHON" -m uv pip install "git+https://github.com/numpy/numpy@v2.3.0"
 
             # Install build requirements for scipy
             apt update && apt upgrade -y && apt-get install -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
-            $JAXCI_PYTHON -m uv pip install "git+https://github.com/scipy/scipy@main"
+            "$JAXCI_PYTHON" -m uv pip install "git+https://github.com/scipy/scipy@main"
 
             # Install build requirements for pillow
             apt install -q -y libjpeg-dev --no-install-recommends
           fi
 
-          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+          "$JAXCI_PYTHON" -m uv pip install -r build/test-requirements.txt
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c

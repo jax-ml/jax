@@ -39,13 +39,13 @@ jobs:
           persist-credentials: false
       - name: Install Python dependencies
         run: |
-          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+          "$JAXCI_PYTHON" -m uv pip install -r build/test-requirements.txt
 
           # Install NumPy and SciPy with the oldest supported versions
-          $JAXCI_PYTHON -m uv pip install numpy==1.26.4 scipy==1.12.0
+          "$JAXCI_PYTHON" -m uv pip install numpy==1.26.4 scipy==1.12.0
 
           # Install JAX using the changes in the PR
-          $JAXCI_PYTHON -m uv pip install -e .[minimum-jaxlib]
+          "$JAXCI_PYTHON" -m uv pip install -e .[minimum-jaxlib]
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
