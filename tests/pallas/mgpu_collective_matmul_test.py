@@ -86,8 +86,6 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     # H100 SMEM limit is 228kB.
     if lhs_smem_size + rhs_smem_size > 228_000:
       self.skipTest("This configuration requires too much SMEM.")
-    if n_shard != block_n:
-      self.skipTest("n_shard must be equal to block_n for now.")
     if n_shard % block_n:
       self.skipTest("n_shard must be divisible by block_n for now.")
     if m_shard % block_m:
