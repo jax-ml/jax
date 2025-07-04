@@ -18,11 +18,14 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import os
 from functools import partial
+import itertools as it
 from typing import Any
 
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import core
+from jax._src import config
+from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src.util import weakref_lru_cache, safe_map, partition_list
@@ -53,7 +56,27 @@ def _initial_style_open_jaxpr(fun: Callable,
       lu.wrap_init(fun, debug_info=debug_info),
       in_tree)
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
-  return jaxpr, consts, out_tree()
+  seen = set()
+  deduped_consts = [c for c in consts if id(c) not in seen and not seen.add(id(c))]
+  jaxpr = _dedup_consts(jaxpr, tuple(id(c) for c in consts))
+  return jaxpr, deduped_consts, out_tree()
+
+# TODO(mattjj): We added _dedup_consts because the const-unifying logic in
+# _initial_style_jaxpr_with_common_consts apparently relies on each jaxpr's
+# consts being deduped. But that logic so complex, so maybe we can simplify.
+@weakref_lru_cache
+def _dedup_consts(jaxpr, const_ids):
+  newvars = {}
+  canonicalize = {v: newvars.setdefault(constid, v)
+                  for constid, v in zip(const_ids, jaxpr.constvars)}
+  eqns = [e.replace(invars=[canonicalize.get(x, x) if isinstance(x, core.Var)
+                            else x for x in e.invars]) for e in jaxpr.eqns]
+  idxs = {}
+  old_to_new = {i: idxs.setdefault(constid, len(idxs))
+                for i, constid in enumerate(const_ids)}
+  effs = {e.replace(input_index=old_to_new[e.input_index])
+          if isinstance(e, effects.JaxprInputEffect) else e for e in jaxpr.effects}
+  return jaxpr.replace(constvars=list(newvars.values()), eqns=eqns, effects=effs)
 
 @weakref_lru_cache
 def _initial_style_jaxpr(fun: Callable,
@@ -161,23 +184,29 @@ def _initial_style_jaxprs_with_common_consts(
     canonical_non_ref_indices.append(tuple(non_ref_indices))
 
   consts = [*canonical_refs, *canonical_non_refs]
-  jaxprs = tuple(_pad_jaxpr_constvars(jaxpr, i, (*canonical_ref_avals,), (*canonical_ref_indices,), (*canonical_non_ref_avals,), (*canonical_non_ref_indices,))
+  jaxprs = tuple(_pad_jaxpr_constvars(jaxpr, i, (*canonical_ref_avals,),
+                                      (*canonical_ref_indices,),
+                                      (*canonical_non_ref_avals,),
+                                      (*canonical_non_ref_indices,))
                  for i, jaxpr in enumerate(jaxprs))
   return jaxprs, consts, all_out_trees
 
 @weakref_lru_cache
 def _pad_jaxpr_constvars(jaxpr, i, canonical_ref_avals, canonical_ref_indices,
                          canonical_non_ref_avals, canonical_non_ref_indices):
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
   is_ref = [isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars]
   nonref_constvars, ref_constvars = partition_list(is_ref, jaxpr.constvars)
-  padded_ref_constvars  = map(core.Var, canonical_ref_avals)
-  padded_non_ref_constvars  = map(core.Var, canonical_non_ref_avals)
+  padded_ref_constvars = map(core.Var, canonical_ref_avals)
+  padded_non_ref_constvars = map(core.Var, canonical_non_ref_avals)
   for canonical_id, ref_var in zip(canonical_ref_indices[i], ref_constvars):
     padded_ref_constvars[canonical_id] = ref_var
   for canonical_id, non_ref_var in zip(canonical_non_ref_indices[i], nonref_constvars):
     padded_non_ref_constvars[canonical_id] = non_ref_var
   constvars = [*padded_ref_constvars, *padded_non_ref_constvars]
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
   jaxpr = jaxpr.replace(constvars=constvars)
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
   effects = pe.make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
                                   jaxpr.outvars, jaxpr.eqns)
   jaxpr = jaxpr.replace(effects=effects)
