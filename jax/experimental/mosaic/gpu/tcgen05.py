@@ -54,6 +54,12 @@ TMEM_NATIVE_LAYOUT = fa.TiledLayout(
     lane_dims=(-2,),
     vector_dim=-1,
 )
+TMEM_NATIVE_ROW_LAYOUT = fa.TiledLayout(
+    fa.Tiling(((128,), (32,), (1,))),
+    warp_dims=(-3,),
+    lane_dims=(-2,),
+    vector_dim=-1,
+)
 
 
 def create_instr_descriptor(
