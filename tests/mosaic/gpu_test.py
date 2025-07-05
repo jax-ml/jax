@@ -1533,54 +1533,42 @@ class TCGen05Test(TestCase):
     self.assertEqual(matches, 128 * 4)
 
   @parameterized.product(
-      in_jax_dtype=(jnp.float8_e5m2, jnp.float8_e4m3fn),
+      in_jax_dtype=(jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float4_e2m1fn),
       m=(128,),  # TODO(apaszke): 256
-      n=(128,),  # TODO(apaszke): 128, 256, 192, other non-power-of-2
+      n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
   )
   def test_mma_block_scaled(self, m, n, in_jax_dtype):
     out_jax_dtype = jnp.float32
     scale_jax_dtype = jnp.float8_e8m0fnu
-    swizzle = 128
+    swizzle = 128 // (8 // jnp.finfo(in_jax_dtype).bits)
     k_steps = 1
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
-    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
+    swizzle_elems = 8 * swizzle // bitwidth(in_mlir_dtype)
     k = swizzle_elems * k_steps
     lhs_tiling = rhs_tiling = (8, swizzle_elems)
 
     def kernel(ctx, lhs, rhs, lhs_scales_gmem, rhs_scales_gmem, out, scratch):
       lhs_smem, rhs_smem, lhs_scales_smem, rhs_scales_smem, barriers, mma_barrier, acc, lhs_scales, rhs_scales = scratch
-      ctx.async_copy(
-          src_ref=lhs,
-          dst_ref=lhs_smem,
+      operand_kwargs = dict(
           swizzle=swizzle,
           gmem_transform=mgpu.TileTransform(lhs_tiling),
-          barrier=barriers[0],
       )
-      ctx.async_copy(
-          src_ref=rhs,
-          dst_ref=rhs_smem,
-          swizzle=swizzle,
-          gmem_transform=mgpu.TileTransform(rhs_tiling),
-          barrier=barriers[1],
-      )
+      ctx.async_copy(src_ref=lhs, dst_ref=lhs_smem, barrier=barriers[0], **operand_kwargs)
+      ctx.async_copy(src_ref=rhs, dst_ref=rhs_smem, barrier=barriers[1], **operand_kwargs)
       ctx.async_copy(src_ref=lhs_scales_gmem, dst_ref=lhs_scales_smem, barrier=barriers[2])
       ctx.async_copy(src_ref=rhs_scales_gmem, dst_ref=rhs_scales_smem, barrier=barriers[3])
       for i in range(4):
         barriers[i].wait()
       with mgpu.single_thread():
-        tcgen05.async_copy_scales_smem_to_tmem(
-            mgpu.memref_reshape(lhs_scales_smem, (32, 4, 4)), lhs_scales
-        )
-        tcgen05.async_copy_scales_smem_to_tmem(
-            mgpu.memref_reshape(rhs_scales_smem, (32, 4, 4)), rhs_scales
-        )
+        tcgen05.async_copy_scales_smem_to_tmem(lhs_scales_smem, lhs_scales)
+        tcgen05.async_copy_scales_smem_to_tmem(rhs_scales_smem, rhs_scales)
         tcgen05.mma(
             acc,
             lhs_smem,
-            rhs_smem,
+            mgpu.memref_transpose(rhs_smem, (1, 0, 3, 2)),
             a_swizzle=swizzle,
             b_swizzle=swizzle,
             a_scale=lhs_scales,
@@ -1593,30 +1581,30 @@ class TCGen05Test(TestCase):
 
     x_shape = (m, k)
     x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
-    y_shape = (k, n)
+    y_shape = (n, k)
     y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
-        jax.ShapeDtypeStruct((32, 16), scale_jax_dtype),
-        jax.ShapeDtypeStruct((32, 16), scale_jax_dtype),
+        jax.ShapeDtypeStruct((m // 128, 32, 16), scale_jax_dtype),
+        jax.ShapeDtypeStruct((n // 128, 32, 16), scale_jax_dtype),
         mgpu.TMABarrier(4),
         mgpu.Barrier(1),
-        mgpu.TMEM((128, n), out_jax_dtype),
-        mgpu.TMEM((128, 4), scale_jax_dtype, layout=tcgen05.scales_layout()),
-        mgpu.TMEM((128, 4), scale_jax_dtype, layout=tcgen05.scales_layout()),
+        mgpu.TMEM((m, n), out_jax_dtype),
+        mgpu.TMEM((m, 4), scale_jax_dtype, layout=tcgen05.scales_layout()),
+        mgpu.TMEM((n, 4), scale_jax_dtype, layout=tcgen05.scales_layout()),
     ]
     ka, kb = jax.random.split(jax.random.key(1234), 2)
     a_scales = jax.lax.bitcast_convert_type(
-        jax.random.randint(ka, (128, 4), 122, 132, dtype=jnp.uint8), scale_jax_dtype
+        jax.random.randint(ka, (m, 4), 122, 132, dtype=jnp.uint8), scale_jax_dtype
     )
     b_scales = jax.lax.bitcast_convert_type(
-        jax.random.randint(kb, (128, 4), 122, 132, dtype=jnp.uint8), scale_jax_dtype
+        jax.random.randint(kb, (n, 4), 122, 132, dtype=jnp.uint8), scale_jax_dtype
     )
     def format_scales(scales):
-      assert scales.shape == (128, 4)
-      return scales.reshape(4, 32, 4).swapaxes(0, 1).reshape(32, 16)
+      assert scales.shape[0] % 128 == 0 and scales.shape[1] == 4
+      return scales.reshape(-1, 4, 32, 4).swapaxes(1, 2).reshape(-1, 32, 16)
     a_gpu_scales, b_gpu_scales = map(format_scales, (a_scales, b_scales))
     args = (x, y, a_gpu_scales, b_gpu_scales)
     z = mgpu.as_gpu_kernel(
@@ -1624,9 +1612,9 @@ class TCGen05Test(TestCase):
     )(*args)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     a_logical_scales = jnp.repeat(a_scales, 32, axis=1).astype(jnp.float32)
-    b_logical_scales = jnp.repeat(b_scales, 32, axis=1).T.astype(jnp.float32)
-    ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales)
-    atol = 2e-2 if out_jax_dtype == jnp.float16 else 2e-5
+    b_logical_scales = jnp.repeat(b_scales, 32, axis=1).astype(jnp.float32)
+    ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales).T
+    atol = 2e-2 if out_jax_dtype == jnp.float16 else 7e-5
     rtol = 8e-4 if out_jax_dtype == jnp.float16 else 5e-6
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
 
