@@ -96,6 +96,7 @@ def scan_with_remat_for(f, *args, **kwargs):
 
 SCAN_IMPLS_WITH_FOR = [
     (lax.scan, 'unroll1'),
+    (partial(lax.scan, unroll=0), 'unroll0'),
     (partial(lax.scan, unroll=2), 'unroll2'),
     (partial(lax.scan, _split_transpose=True), 'split_transpose'),
     (scan_with_new_checkpoint , 'new_checkpoint'),
@@ -2077,8 +2078,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testScanInvalidUnrollRaises(self):
     with self.assertRaisesRegex(ValueError, "`unroll` must be"):
       jax.lax.scan(lambda x, _: (x, x), 0, jnp.arange(5), unroll=-1)
-    with self.assertRaisesRegex(ValueError, "`unroll` must be"):
-      jax.lax.scan(lambda x, _: (x, x), 0, jnp.arange(5), unroll=0)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{scan_name}",
