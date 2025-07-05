@@ -282,9 +282,6 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
       return for_loop.for_loop(x.shape[0], body, (x, jnp.zeros_like(x)))
     _, f_vjp = jax.linearize(f, jnp.ones((5, 2, 32)))
     jaxpr = jax.make_jaxpr(f_vjp)(jnp.ones((5, 2, 32)))
-    consts = [v.aval for v in jaxpr.jaxpr.constvars
-              if v.aval.shape == (2, 32)]
-    self.assertLen(consts, 2)
 
     def loss(A):
       def step(x, _):

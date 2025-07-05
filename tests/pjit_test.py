@@ -3987,7 +3987,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     pjit_e, = [e for e in jaxpr.jaxpr.eqns if e.primitive.name == "jit"]
     inner_pjit_jaxpr = pjit_e.params["jaxpr"]
     if config.use_simplified_jaxpr_constants.value:
-      self.assertIs(const, jaxpr.consts[0])
+      self.assertEmpty(jaxpr.consts)
       self.assertEmpty(inner_pjit_jaxpr.consts)
     else:
       self.assertEmpty(jaxpr.consts)

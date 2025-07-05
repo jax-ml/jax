@@ -880,7 +880,10 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     def f(y):
       return input_effect(x, y, index=0)
     jaxpr = jax.make_jaxpr(f)(0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_partial_eval_custom(self):
     def f(_, y):
@@ -922,9 +925,15 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     def f(_):
       input_effect(x, index=0)
     jaxpr = jax.make_jaxpr(f)(0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
     jaxpr3, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False])
-    self.assertIn(InputEffect(0), jaxpr3.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr3.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr3.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_while_loop(self):
 
@@ -938,10 +947,16 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
         lax.while_loop(lambda _: True, body, y)
       return f
     jaxpr = jax.make_jaxpr(make_fun(0))(0)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(0), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(1), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
     def f(x):
       def body(y):
@@ -949,7 +964,10 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
         return 2 * y
       lax.while_loop(lambda _: (x > 0).all(), body, y)
     jaxpr = jax.make_jaxpr(f)(0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_scan(self):
     c = np.ones(2)
@@ -961,13 +979,22 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
         lax.scan(body, z, xs)
       return f
     jaxpr = jax.make_jaxpr(make_fun(0))(jnp.arange(8), 0)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(0), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(1), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(jnp.arange(8), 0)
-    self.assertIn(InputEffect(2), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(1), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(2), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(2))(jnp.arange(8), 0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_scan_with_dce(self):
     c = np.ones(2)
@@ -980,15 +1007,24 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       return f
     jaxpr = jax.make_jaxpr(make_fun(0))(jnp.arange(8), 0)
     jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(0), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(1), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(jnp.arange(8), 0)
     jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
-    self.assertIn(InputEffect(2), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(1), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(2), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(2))(jnp.arange(8), 0)
     jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_cond(self):
 
@@ -1005,10 +1041,16 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       return f
     # [c, pred, x]
     jaxpr = jax.make_jaxpr(make_fun(0))(0)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(0), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(1), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

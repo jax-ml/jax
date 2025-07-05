@@ -639,42 +639,10 @@ def _infer_params(
     phys_mesh = mesh_lib.thread_resources.env.physical_mesh
     with (_internal_use_concrete_mesh(phys_mesh),
           mesh_lib.use_abstract_mesh(phys_mesh.abstract_mesh)):
-      return _params_for_top_jit(_infer_params_internal(fun, ji, args, kwargs))
+      return _infer_params_internal(fun, ji, args, kwargs)
   else:
-    return _params_for_top_jit(_infer_params_internal(fun, ji, args, kwargs))
+    return _infer_params_internal(fun, ji, args, kwargs)
 
-def _params_for_top_jit(
-    p_and_args_flat: tuple[PjitParams, list[core.Value]]
-  ) -> tuple[PjitParams, list[core.Value]]:
-  if not config.use_simplified_jaxpr_constants.value:
-    return p_and_args_flat
-  # Normally for pjit we want to pass closed-over constants as inputs, not
-  # as `consts` in the embedded ClosedJaxpr. The `p.params['jaxpr']` contains
-  # such a ClosedJaxpr. But for the top-level jit, for now, we want to keep
-  # the calling convention where the consts are passed inside the ClosedJaxpr
-  # and are lowered as HLO constants, and only the actual inputs are passed
-  # as inputs. We have prepared such a ClosedJaxpr in `p.jaxpr_for_top_jit`,
-  # but we also need to adjust some other parameters and the `args_flat`.
-
-  # We cannot do this down the stack in `_infer_params_impl` because that
-  # function is under a cache which we don't want to be keyed on whether
-  # `core.trace_state_clean()`.
-  p, args_flat = p_and_args_flat
-  if (core.trace_state_clean() and
-      p.consts and
-      not any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in p.consts)):
-    new_jaxpr = p.jaxpr_for_top_jit
-    nr_consts = len(p.consts)
-    assert all(c is a for c, a in zip(new_jaxpr.consts, args_flat[:nr_consts]))
-    args_flat = args_flat[nr_consts:]
-    new_params = dict(p.params,
-                      jaxpr=new_jaxpr,
-                      in_shardings=p.params['in_shardings'][nr_consts:],
-                      in_layouts=p.params['in_layouts'][nr_consts:],
-                      donated_invars=p.params['donated_invars'][nr_consts:])
-    p = p._replace(consts=[], params=new_params)
-
-  return p, args_flat
 
 def _infer_params_internal(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
@@ -1401,24 +1369,15 @@ def _create_pjit_jaxpr(
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
     check_key_reuse_jaxpr(jaxpr)
 
-  if not config.use_simplified_jaxpr_constants.value:
-    # TODO(mattjj,yashkatariya): if we take the 'true' path then we *must* fall
-    # off the C++ dispatch fast path for correctness. Ensure that happens.
-    if any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in consts):
-      closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
-      final_consts = consts
-    else:
-      closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-      final_consts = []
-    return closed_jaxpr, final_consts, closed_jaxpr, global_out_avals
+  # TODO(mattjj,yashkatariya): if we take the 'true' path then we *must* fall
+  # off the C++ dispatch fast path for correctness. Ensure that happens.
+  if any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in consts):
+    closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
+    final_consts = consts
   else:
-    # See comments in _params_for_top_jit for why we need two ClosedJaxpr. We
-    # prepare them both here, because this is under a cache, to ensure that
-    # we use the same exact ClosedJaxpr in future calls, which in turn will enable
-    # downstream lowering and compilation caches.
-    # TODO(necula): we can use `pe.close_jaxpr` once we fix https://github.com/jax-ml/jax/issues/29803
-    closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
-    return closed_jaxpr, consts, core.ClosedJaxpr(jaxpr, consts), global_out_avals
+    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+    final_consts = []
+  return closed_jaxpr, final_consts, closed_jaxpr, global_out_avals
 
 
 @util.cache(max_size=4096, trace_context_in_key=False)
