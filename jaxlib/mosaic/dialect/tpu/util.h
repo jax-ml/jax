@@ -292,11 +292,6 @@ inline arith::ConstantOp I32Const(int32_t value, ArrayRef<int64_t> shape,
 
 std::optional<int64_t> getIntConst(Value v);
 
-// Returns true if the product of up to `shape.size() - 1` minor-most dimensions
-// in `shape` equals `target_size`. The major-most dimension is not considered.
-// Precondition: `shape` has at least 2 dimensions.
-bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size);
-
 // Recursively finds all non-trivial users of a given value, including those
 // accessed via `tpu.bitcast` or unary elementwise operations. However,
 // `tpu.bitcast` and unary element-wise operations are excluded from the

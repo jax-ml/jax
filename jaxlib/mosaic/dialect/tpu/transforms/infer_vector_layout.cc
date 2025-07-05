@@ -1529,13 +1529,11 @@ class VectorLayoutInferer {
     }
 
     // Shape cast (..., m, n, k * target_shape_[1]) -> (..., m, n * k *
-    // target_shape_[1]) for 32-bit types. We allow multiple major or minor
-    // dimensions to be folded or unfolded.
-    if (kNativeBitwidth == bitwidth && res_shape.size() >= 2 &&
+    // target_shape_[1]) for {32/16/8}-bit types. We allow multiple major or
+    // minor dimensions to be folded or unfolded.
+    if (bitwidth >= 8 && bitwidth <= kNativeBitwidth && res_shape.size() >= 2 &&
         src_shape.size() >= 2 && src_shape.back() % native_tiling[1] == 0 &&
-        res_shape.back() % native_tiling[1] == 0 &&
-        (mlir::tpu::canFoldMinorDimsToSize(src_shape, res_shape.back()) ||
-         mlir::tpu::canFoldMinorDimsToSize(res_shape, src_shape.back()))) {
+        res_shape.back() % native_tiling[1] == 0) {
       // TODO(jsreeram): Add support for picking space-efficient tilings for
       // small 2nd minor dim shapes.
       // Example 1: (4, 2, 1024) -> (4, 2048) If we infer src and tgt layout to

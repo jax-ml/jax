@@ -4720,34 +4720,56 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
 //
 // Arguments:
 //  src_vreg: The source vreg to copy a sublane from.
-//  src_sl_idx: The sublane index in src_vreg to copy from.
+//  src_sublane_idx: The sublane index in src_vreg to copy from.
 //  dst_vreg: The base vreg to copy the sublane into. May be null.
 //  dst_sl_idx: The sublane index in the result.
-//
+//  src_idx_in_sublane (optional): The index of the row within 'src_sublane_idx'
+//  to copy from.
+//  packing_factor (optional): The packing factor of the source type.
 // Returns:
-//  A new dst_vreg with the copied sublane.
-Value copyOneSublane(OpBuilder &builder, Value src_vreg, int src_sl_idx,
+//  A new dst_vreg with the copied sublane (or partial sublane if packing_factor
+//  > 1).
+Value copyOneSublane(OpBuilder &builder, Value src_vreg, int src_sublane_idx,
                      Value dst_vreg, int dst_sl_idx,
-                     const std::array<int64_t, 2> target_shape) {
+                     const std::array<int64_t, 2> target_shape,
+                     int src_idx_in_sublane = 0, int packing_factor = 1) {
+  int dst_sublane_idx = dst_sl_idx / packing_factor;
+  VectorType src_vreg_ty = cast<VectorType>(src_vreg.getType());
   src_vreg = builder.create<tpu::RotateOp>(
       src_vreg.getLoc(), src_vreg,
-      /*amount=*/(dst_sl_idx - src_sl_idx + target_shape[0]) % target_shape[0],
+      /*amount=*/(dst_sublane_idx - src_sublane_idx + target_shape[0]) %
+          target_shape[0],
       /*dimension=*/0, /*stride=*/nullptr, /*stride_dimension=*/nullptr);
   if (dst_vreg) {
-    auto boundIdxConst =
-        std::bind(IdxConst, std::placeholders::_1, builder, src_vreg.getLoc());
-    const int bitwidth =
-        cast<VectorType>(src_vreg.getType()).getElementTypeBitWidth();
+    int bitwidth = 32 / packing_factor;
     CHECK_EQ(bitwidth,
              cast<VectorType>(dst_vreg.getType()).getElementTypeBitWidth());
-    const VectorType vmask_ty =
-        getNativeVregOrVmaskType(builder.getI1Type(), bitwidth, target_shape);
-    auto sublanes_mask = builder.create<tpu::CreateMaskOp>(
-        src_vreg.getLoc(), vmask_ty,
-        ValueRange{boundIdxConst(dst_sl_idx), boundIdxConst(0)},
-        ValueRange{boundIdxConst(dst_sl_idx + 1),
-                   boundIdxConst(target_shape[1])});
-    src_vreg = builder.create<arith::SelectOp>(src_vreg.getLoc(), sublanes_mask,
+    const VectorType i32_vreg_ty =
+        getNativeVregType(builder.getI32Type(), target_shape);
+    src_vreg = builder.create<tpu::BitcastVregOp>(src_vreg.getLoc(),
+                                                  i32_vreg_ty, src_vreg);
+    // Shift the 32-bit word in the src_vreg so that src_idx_in_sublane is at
+    // the same position as dst_idx_in_sublane.
+    int dst_idx_in_sublane = dst_sl_idx % packing_factor;
+    auto i32_constant = [&](int32_t value) {
+      return builder.create<arith::ConstantOp>(
+          src_vreg.getLoc(),
+          DenseElementsAttr::get(i32_vreg_ty, static_cast<int32_t>(value)));
+    };
+    int shift = (dst_idx_in_sublane - src_idx_in_sublane) * bitwidth;
+    if (shift > 0) {
+      src_vreg = builder.create<arith::ShLIOp>(src_vreg.getLoc(), src_vreg,
+                                               i32_constant(shift));
+    } else if (shift < 0) {
+      src_vreg = builder.create<arith::ShRUIOp>(src_vreg.getLoc(), src_vreg,
+                                                i32_constant(-shift));
+    }
+    src_vreg = builder.create<tpu::BitcastVregOp>(
+        src_vreg.getLoc(), cast<VectorType>(src_vreg_ty), src_vreg);
+    Value mask = createSubelementMask(builder, src_vreg.getLoc(), bitwidth,
+                                      /*from=*/dst_sl_idx,
+                                      /*to=*/dst_sl_idx + 1, target_shape);
+    src_vreg = builder.create<arith::SelectOp>(src_vreg.getLoc(), mask,
                                                src_vreg, dst_vreg);
   }
   return src_vreg;
@@ -4864,13 +4886,11 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
         // (q * m, n * k) -> (q, m, n, k)
         // (q, m, n * k) -> (q * m, n, k)
         dst_shape.size() > 1 && src_shape.size() > 1 &&
-        (mlir::tpu::canFoldMinorDimsToSize(src_shape, dst_shape.back()) ||
-         mlir::tpu::canFoldMinorDimsToSize(dst_shape, src_shape.back())) &&
         dst_shape.back() % ctx.target_shape[1] == 0 &&
         src_shape.back() % ctx.target_shape[1] == 0 &&
         layout_in.offsets() == LayoutOffsets{0, 0} &&
         layout_in.hasNativeTiling(ctx.target_shape) &&
-        layout_in.bitwidth() == 32 &&
+        layout_in.bitwidth() <= 32 && layout_in.bitwidth() >= 8 &&
         layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
         layout_out == layout_in) {
       auto target_sublanes = ctx.target_shape[0];
@@ -4906,6 +4926,7 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
         }
         return indices;
       };
+      int packing_factor = 32 / layout_in.bitwidth();
       // Gather sublanes from src_vregs via rotating and selecting each relevant
       // sublane from the source, into the destination vreg.
       // Args:
@@ -4914,7 +4935,7 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
       // * src_vregs: the vregs to gather from.
       // Returns:
       // * a vreg with the gathered sublanes.
-      auto gather_sublanes = [target_sublanes](
+      auto gather_sublanes = [target_sublanes, packing_factor](
                                  RewriteContext &ctx, Operation &op,
                                  SmallVector<SmallVector<int64_t>>
                                      src_sublane_indices,
@@ -4926,15 +4947,19 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
              sublane_number < src_sublane_indices.size(); ++sublane_number) {
           SmallVector<int64_t> src_vreg_index =
               src_sublane_indices[sublane_number];
-          src_vreg_index[src_vreg_index.size() - 2] /= target_sublanes;
+          src_vreg_index[src_vreg_index.size() - 2] /=
+              target_sublanes * packing_factor;
           Value src_vreg = src_vregs(src_vreg_index);
-          int sublane_within_src_vreg =
+          int sublane =
               src_sublane_indices[sublane_number]
                                  [src_sublane_indices[sublane_number].size() -
-                                  2] %
-              target_sublanes;
+                                  2];
+          int sublane_within_src_vreg =
+              (sublane / packing_factor) % target_sublanes;
+          int idx_within_sublane = sublane % packing_factor;
           dst_vreg = copyOneSublane(builder, src_vreg, sublane_within_src_vreg,
-                                    dst_vreg, sublane_number, ctx.target_shape);
+                                    dst_vreg, sublane_number, ctx.target_shape,
+                                    idx_within_sublane, packing_factor);
         }
         return dst_vreg;
       };
@@ -4955,14 +4980,14 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
       dst_vregs.Each([&](absl::Span<const int64_t> dst_vreg_indices,
                          Value *dst_vreg) {
         indices.assign(dst_vreg_indices.begin(), dst_vreg_indices.end());
-        indices[indices.size() - 2] *= target_sublanes;
+        indices[indices.size() - 2] *= target_sublanes * packing_factor;
         int sublane_offset = to_linear_index(indices, dst_shape_in_sublanes);
-
         // Only move non-padding sublanes to the destination vreg.
-        int num_non_padding_sublanes = std::min(
-            dst_shape_in_sublanes[dst_shape_in_sublanes.size() - 2] -
-                dst_vreg_indices[dst_vreg_indices.size() - 2] * target_sublanes,
-            target_sublanes);
+        int num_non_padding_sublanes =
+            std::min(dst_shape_in_sublanes[dst_shape_in_sublanes.size() - 2] -
+                         dst_vreg_indices[dst_vreg_indices.size() - 2] *
+                             target_sublanes * packing_factor,
+                     target_sublanes * packing_factor);
         CHECK_EQ(dst_shape.back() % target_lanes, 0);
         int stride_in_sublanes = dst_shape.back() / target_lanes;
         SmallVector<SmallVector<int64_t>> gathered_sublanes(
