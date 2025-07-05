@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/refine_polymorphic_shapes.h"
+#include "xla/python/version.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
@@ -108,9 +109,14 @@ absl::StatusOr<XlaComputation> PyMlirModuleToXlaComputation(
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       ParseMlirModuleString(mlir_module, context));
   XlaComputation computation;
+#if JAX_IFRT_VERSION_NUMBER > 10
   TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
                                           return_tuple,
-                                          /*use_shardy=*/false));
+                                          /*exec_build_options=*/nullptr));
+#else
+  TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
+                                          return_tuple, /*use_shardy=*/false));
+#endif
   return computation;
 }
 
