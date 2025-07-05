@@ -304,6 +304,7 @@ def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
 def infer_tmem_cols_layout(
     shape: tuple[int, ...],
     dtype: jnp.dtype,
+    *,
     packed: bool,
     collective: bool,
     layout: tcgen05.TMEMLayout | None = None) -> tuple[int, tcgen05.TMEMLayout]:

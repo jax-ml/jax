@@ -315,7 +315,7 @@ def _run_scoped_resource_estimator(
         cols_used = aval.shape[1]
       else:
         cols_used, _ = gpu_core.infer_tmem_cols_layout(
-            aval.shape, aval.dtype, aval.collective, aval.packed)
+            aval.shape, aval.dtype, packed=aval.packed, collective=aval.collective)
       cols_used = tcgen05._alloc_ncols(cols_used, exact=False)
       if aval.collective:
         rs += Resources(tmem_collective_scratch_cols=cols_used)
@@ -447,7 +447,7 @@ class ModuleContext:
       packed: bool = False,
   ) -> ir.Value:
     cols_used, layout = gpu_core.infer_tmem_cols_layout(
-        struct.shape, struct.dtype, packed, collective, layout)
+        struct.shape, struct.dtype, packed=packed, collective=collective, layout=layout)
     if collective:
       off = arith_dialect.addi(
           self.tmem_collective_base_ptr,
@@ -1298,7 +1298,7 @@ def _extract_aliased_ref(
           )
         address = arith_dialect.addi(ref.address, _i32_constant(offset))
         _, tmem_layout = gpu_core.infer_tmem_cols_layout(
-            transformed_shape, dtype, packed, collective)
+            transformed_shape, dtype, packed=packed, collective=collective)
         ref = tcgen05.TMEMRef(
           address=address,
           shape=transformed_shape,
