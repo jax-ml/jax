@@ -1804,6 +1804,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "mutable_array_test",
     srcs = ["mutable_array_test.py"],
+    shard_count = {
+        "cpu": 5,
+    },
     deps = py_deps([
         "absl/testing",
         "numpy",
