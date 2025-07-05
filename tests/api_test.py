@@ -700,6 +700,22 @@ class JitTest(jtu.BufferDonationTestCase):
     num_live = len(client.live_executables())
     self.assertEqual(num_live_initial, num_live)
 
+  def test_pe_close_jaxpr_cache(self):
+    @jax.jit
+    def f(x):
+      return lax.cond(x, lambda: x, lambda: ~ x)
+
+    jaxpr = f.trace(True).jaxpr
+    pe.close_jaxpr.cache_clear()
+
+    res1 = pe.close_jaxpr(jaxpr.jaxpr)
+    res2 = pe.close_jaxpr(jaxpr.jaxpr)
+    keys_1 = pe.close_jaxpr.cache_keys()
+    self.assertGreater(len(keys_1), 0)
+    del jaxpr, res1, res2, keys_1
+    keys_2 = pe.close_jaxpr.cache_keys()
+    self.assertEmpty(keys_2, 0)
+
   def test_jit_shallow_copy(self):
     def f(x):
       return copy.copy(x)
