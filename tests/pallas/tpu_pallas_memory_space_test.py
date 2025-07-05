@@ -47,10 +47,15 @@ class TPUPallasMemorySpaceTest(jtu.JaxTestCase):
   def test_basic_input_memory_space_constraint(self, memory_space, color):
 
     def kernel(x_ref, y_ref):
-      y_ref[...] = x_ref[...]
+      pltpu.sync_copy(x_ref, y_ref)
 
     def g(x):
-      return pl.pallas_call(kernel, out_shape=x)(x)
+      return pl.pallas_call(
+          kernel,
+          out_shape=x,
+          in_specs=[pl.BlockSpec(memory_space=memory_space)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+      )(x)
 
     @jax.jit
     def f(x):
@@ -80,14 +85,20 @@ class TPUPallasMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.ANY, None),
   )
   def test_basic_output_memory_space_constraint(self, memory_space, color):
+    out_shape_ctor = memory_space
     if color is None:
-      memory_space = jax.ShapeDtypeStruct
+      out_shape_ctor = jax.ShapeDtypeStruct
 
     def kernel(x_ref, y_ref):
-      y_ref[...] = x_ref[...]
+      pltpu.sync_copy(x_ref, y_ref)
 
     def g(x):
-      return pl.pallas_call(kernel, out_shape=memory_space(x.shape, x.dtype))(x)
+      return pl.pallas_call(
+          kernel,
+          out_shape=out_shape_ctor(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          out_specs=pl.BlockSpec(memory_space=memory_space),
+      )(x)
 
     @jax.jit
     def f(x):
