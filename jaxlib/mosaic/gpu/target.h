@@ -16,7 +16,6 @@ limitations under the License.
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_GPU_TARGET_H_
 
 #include <string>
-#include <utility>
 
 #include "absl/status/statusor.h"
 

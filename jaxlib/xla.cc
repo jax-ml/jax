@@ -52,6 +52,7 @@ limitations under the License.
 #include "jaxlib/ifrt_proxy.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
+#include "jaxlib/py_values.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/distributed/client.h"

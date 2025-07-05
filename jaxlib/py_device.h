@@ -21,15 +21,12 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
-#include "xla/literal.h"
 #include "xla/python/ifrt/device.h"
-#include "xla/shape.h"
 
 namespace xla {
 

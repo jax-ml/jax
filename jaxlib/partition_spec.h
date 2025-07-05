@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef JAX_JAXLIB_PARTITION_SPEC_H_
 #define JAX_JAXLIB_PARTITION_SPEC_H_
 
-#include <vector>
+#include <cstddef>
 
 #include "nanobind/nanobind.h"
 
