@@ -1797,29 +1797,24 @@ class JaxprStackFrame:
     ) -> tuple[Jaxpr, list[Any]]:
     outvars = [t.val for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.items())
-    jaxpr_effects = make_jaxpr_effects(constvars, self.invars, outvars, self.eqns)
+    constvars, constvals = _drop_unused_vars(constvars, constvals, self.eqns, outvars)
+    effs = make_jaxpr_effects(constvars, self.invars, outvars, self.eqns)
 
     # TODO(dougalm): handle qdd for consts
     for v, qdd in self.mutable_qdds:
       v.final_qdd = qdd.cur_val
 
-    jaxpr = Jaxpr(constvars, self.invars, outvars, self.eqns, jaxpr_effects,
-                  debug_info, self.is_high)
-    config.enable_checks.value and core.check_jaxpr(jaxpr)
-    jaxpr, constvals = _drop_unused_vars(jaxpr, constvals)
-    config.enable_checks.value and core.check_jaxpr(jaxpr)
+    jaxpr = Jaxpr(constvars, self.invars, outvars, self.eqns, effs, debug_info,
+                  self.is_high)
     return jaxpr, list(constvals)
 
   def to_jaxpr2(self, out_tracers: Sequence[core.Tracer],
                 debug_info: core.DebugInfo):
+    outvars = [t.val for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.items())
-    expl_outvars = [t.val for t in out_tracers]
-    jaxpr_effects = make_jaxpr_effects(constvars, self.invars, expl_outvars,
-                                        self.eqns)
-    jaxpr = Jaxpr(constvars, self.invars, expl_outvars, self.eqns,
-                  jaxpr_effects, debug_info)
-    # We can't run check_jaxpr until after we normalize.
-    jaxpr, constvals = _drop_unused_vars(jaxpr, constvals)
+    constvars, constvals = _drop_unused_vars(constvars, constvals, self.eqns, outvars)
+    effs = make_jaxpr_effects(constvars, self.invars, outvars, self.eqns)
+    jaxpr = Jaxpr(constvars, self.invars, outvars, self.eqns, effs, debug_info)
     jaxpr, out_type = _add_implicit_outputs(jaxpr)
     config.enable_checks.value and core.check_jaxpr(jaxpr)
     return jaxpr, out_type, constvals
@@ -1866,9 +1861,9 @@ ForwardingRule = Callable[
 forwarding_rules: dict[Primitive, ForwardingRule] = {}
 
 
-def _drop_unused_vars(
-    jaxpr: Jaxpr, constvals: Sequence[Any]
-) -> tuple[Jaxpr, list[Any]]:
+def _drop_unused_vars(constvars, constvals, eqns, outvars
+                      ) -> tuple[list[Var], list[Any]]:
+  # modifies eqns in-place!
   def vars(atom: Atom) -> list[Var]:
     if isinstance(atom, Literal):
       return []
@@ -1876,16 +1871,13 @@ def _drop_unused_vars(
     if isinstance(aval, DShapedArray):
       return [atom] + [d for d in aval.shape if isinstance(d, Var)]
     return [atom]
-  used: set[Var] = {v for atom in jaxpr.outvars for v in vars(atom)}
-  for eqn in jaxpr.eqns[::-1]:
+  used: set[Var] = {v for atom in outvars for v in vars(atom)}
+  for eqn in eqns[::-1]:
     eqn.outvars = [v if v in used else DropVar(v.aval) for v in eqn.outvars]
     used.update(v for atom in eqn.invars for v in vars(atom))
-  cvars, constvals = unzip2(
-      (v, val) for v, val in zip(jaxpr.constvars, constvals) if v in used)
-  jaxpr._constvars = list(cvars)
-  jaxpr._effects = make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
-                                      jaxpr.outvars, jaxpr.eqns)
-  return jaxpr, list(constvals)
+  constvars, constvals = unzip2(
+      (v, val) for v, val in zip(constvars, constvals) if v in used)
+  return constvars, constvals
 
 
 @cache()
