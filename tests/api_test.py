@@ -5084,6 +5084,26 @@ class APITest(jtu.JaxTestCase):
             )
         )
 
+  def test_make_jaxpr_deduplicates_consts(self):
+    # We don't promise this behavior in the public API, but we've had it for a
+    # long time. This test checks we don't *unintentionally* break it.
+    c = np.ones(3)
+
+    @jax.make_jaxpr
+    def f():
+      return c, jnp.sum(c), c, jnp.sum(c)
+
+    self.assertLen(f().consts, 1)
+
+    d = np.zeros(3)
+
+    @jax.make_jaxpr
+    def g():
+      return jax.lax.cond(True,
+                          lambda: (c, jnp.sum(c), c),
+                          lambda: (c, jnp.sum(d), d))
+    self.assertLen(g().consts, 2)
+
 
 class RematTest(jtu.JaxTestCase):
 
