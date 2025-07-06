@@ -3574,6 +3574,11 @@ def full_like(x: ArrayLike | DuckTypedArray,
       sharding = x.sharding  # type: ignore
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
+  if config._check_vma.value:
+    # TODO(yashkatariya): Maybe use `shaped_abstractify` here instead of
+    # `typeof` because `x` can be anything that implements the
+    # `DuckTypedArray` protocol.
+    val = core.pvary(val, tuple(core.typeof(x).vma))
   return val
 
 
@@ -8747,7 +8752,6 @@ def _zero(x):
   x_aval = core.get_aval(x)
   out = full_like(x, shape=(), fill_value=0,
                   sharding=x_aval.sharding.update(spec=P()))
-  out = core.pvary(out, tuple(x_aval.vma))
   return out
 
 _ones: Callable = partial(full_like, fill_value=1)
@@ -8756,7 +8760,6 @@ def _one(x):
   x_aval = core.get_aval(x)
   out = full_like(x, shape=(), fill_value=1,
                   sharding=x_aval.sharding.update(spec=P()))
-  out = core.pvary(out, tuple(x_aval.vma))
   return out
 
 _twos: Callable = partial(full_like, fill_value=2)

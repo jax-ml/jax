@@ -2893,11 +2893,11 @@ class ShapeDtypeStruct:
 
 
 def _sds_aval_mapping(x):
-  # TODO(yashkatariya): Propagate vma to ShapedArray? This is only used for
-  # pallas right now and pallas doesn't use pytype_aval_mappings.
+  # TODO(yashkatariya): Change `vma` assignment to `x.vma` after ShapedArray
+  # can take `frozenset | None`
   aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
-      weak_type=x.weak_type)
+      weak_type=x.weak_type, vma=(frozenset() if x.vma is None else x.vma))
   return core.update_aval_with_sharding(aval, x.sharding)
 core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
 

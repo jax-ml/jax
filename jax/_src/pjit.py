@@ -287,16 +287,12 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun
   cpp_pjitted_f._jit_info = jit_info
-  # TODO(necula): move these to top-level; we don't need to do this for
-  # every jit
   cpp_jitted_f_class = type(cpp_pjitted_f)
   # TODO(necula): make clear_cache private, no need to have it part of the API
   cpp_jitted_f_class.clear_cache = jit_evict_fn
   cpp_jitted_f_class.lower = jit_lower
   cpp_jitted_f_class.trace = jit_trace
   cpp_jitted_f_class.eval_shape = jit_eval_shape
-  # We return directly the function produced by _xla.pjit, because we do not
-  # want to have Python in the dispatch path.
   return cpp_pjitted_f
 
 @api_boundary
@@ -327,8 +323,12 @@ def jit_eval_shape(jit_func, *args, **kwargs):
     else:
       s = out_s
     # TODO(yashkatariya): Add `Layout` to SDS.
-    out.append(api.ShapeDtypeStruct(a.shape, a.dtype, sharding=s,
-                                    weak_type=a.weak_type))
+    # TODO(yashkatariya): Change `vma` assignment to `a.vma` after ShapedArray
+    # can take `frozenset | None`
+    out.append(
+        api.ShapeDtypeStruct(
+            a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
+            vma=(a.vma if config._check_vma.value else None)))
   return tree_unflatten(p.out_tree, out)
 
 def jit_evict_fn(self):
