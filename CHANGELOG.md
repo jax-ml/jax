@@ -48,6 +48,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     deprecation in SciPy; use {func}`jax.scipy.special.sph_harm_y` instead.
   * From {mod}`jax.interpreters.xla`, the previously deprecated symbols
     `abstractify` and `pytype_aval_mappings` have been removed.
+  * `jax.extend.ffi` was removed after being deprecated in v0.5.0.
+    Use {mod}`jax.ffi` instead.
 
 ## JAX 0.6.2 (June 17, 2025)
 
