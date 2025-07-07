@@ -54,9 +54,9 @@ jobs:
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "TPU test (jaxlib=head)"
     with:
-      runner: "linux-x86-ct4p-240-4tpu-test"
-      cores: "4"
-      tpu-type: "v4-8"
+      runner: "linux-x86-ct5lp-8tpu-test"
+      cores: "8"
+      tpu-type: "v5e-8"
       python: "3.11"
       libtpu-version-type: "nightly"
       gcs_download_uri: ${{ needs.build-jax-artifacts.outputs.gcs_upload_uri }}
