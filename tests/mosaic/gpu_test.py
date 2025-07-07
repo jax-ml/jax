@@ -1486,16 +1486,14 @@ class TCGen05Test(TestCase):
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
 
   def test_tmem_copy_scales(self):
-    dtype = jnp.int8
+    dtype = jnp.float8_e8m0fnu
 
     def kernel(ctx, src, out, scratch):
       smem, barrier, tmem = scratch
       ctx.async_copy(src_ref=src, dst_ref=smem, barrier=barrier)
       barrier.wait()
       with mgpu.single_thread():
-        tcgen05.async_copy_scales_smem_to_tmem(
-            mgpu.memref_reshape(smem, (32, 4, 4)), tmem
-        )
+        tcgen05.async_copy_scales_smem_to_tmem(smem, tmem)
         tcgen05.commit_arrive(barrier)
       barrier.wait(orders_tensor_core=True)
       # We print as i32, because i8 seems to overflow the CUDA printf buffer and
@@ -1508,8 +1506,10 @@ class TCGen05Test(TestCase):
       )._debug_print()
       copy(src, out)
 
-    shape = (32, 16)
-    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    shape = (1, 32, 16)
+    x = jax.lax.bitcast_convert_type(
+        np.arange(math.prod(shape), dtype=np.uint8).reshape(shape), dtype
+    )
     scratch_shape = [
         x,
         mgpu.TMABarrier(1),
