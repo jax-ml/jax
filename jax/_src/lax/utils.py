@@ -80,7 +80,8 @@ def call_sharding_rule(prim, sh_rule, unreduced_rule, num_out, *avals, **kwargs)
   cur_mesh = mesh_lib.get_abstract_mesh()
   aval_mesh = _get_abstract_mesh_from_avals(avals)
   if ((cur_mesh.empty or cur_mesh._are_all_axes_auto_or_manual) and
-      (aval_mesh.empty or aval_mesh._are_all_axes_auto_or_manual)):
+      (aval_mesh.empty or aval_mesh._are_all_axes_auto_or_manual)
+  ) or all(aval.sharding.is_fully_replicated for aval in avals):
     aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
     s = NamedSharding(aval_mesh, P())
     s = call_unreduced_rule(prim, unreduced_rule, s, *avals, **kwargs)
