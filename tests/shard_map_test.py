@@ -979,13 +979,24 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(x):
       return x
 
-    x = jnp.arange(4 * 4).reshape(4, 4)
     s = NamedSharding(mesh, P(('z', 'x'), 'y'))
-    x = jax.device_put(x, s)
+    x = jax.device_put(jnp.arange(4 * 4).reshape(4, 4), s)
 
     f = jax.jit(jax.vmap(f))
     out = f(x)
     self.assertEqual(out.sharding, s)
+
+  @jtu.with_explicit_mesh((2, 2), ('data', 'model'))
+  def test_vmap_explicit_mesh_axis_single_axis(self, mesh):
+    x = jax.device_put(jnp.arange(4 * 4).reshape(4, 4), P('data', 'model'))
+
+    @shard_map(in_specs=P('model'), out_specs=P('model'))
+    def f(x):
+      return x
+
+    f = jax.jit(jax.vmap(f))
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('data', 'model')))
 
   def test_vmap_explicit_mesh_axis_error(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'),

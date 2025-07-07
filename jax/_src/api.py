@@ -1132,16 +1132,18 @@ def _mapped_axis_spec(args_flat, in_axes_flat):
     except (IndexError, TypeError):
       return None
 
-  temp_spec = None
+  out_spec = None
   for arg, i in zip(args_flat, in_axes_flat):
     if i is not None:
       spec = _get_spec(arg, i)
-      if temp_spec is not None and temp_spec != spec:
+      if out_spec is not None and out_spec != spec:
         raise ValueError(
             "Mapped away dimension of inputs passed to vmap should be sharded"
-            f" the same. Got inconsistent axis specs: {temp_spec} vs {spec}")
-      temp_spec = spec
-  return temp_spec
+            f" the same. Got inconsistent axis specs: {out_spec} vs {spec}")
+      out_spec = spec
+  if out_spec is not None and not isinstance(out_spec, tuple):
+    out_spec = (out_spec,)
+  return out_spec
 
 def _mapped_axis_size(fn, tree, vals, dims, name):
   if not vals:

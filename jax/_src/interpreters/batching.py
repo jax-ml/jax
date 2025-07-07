@@ -458,21 +458,23 @@ class AxisData:
   size : Any
   # Only one of spmd_axis_name and explicit_mesh_axis is set.
   spmd_name : Any
-  _explicit_mesh_axis: Any
+  # short for private `_explicit_mesh_axis`. The public property is called
+  # `.explicit_mesh_axis`
+  _ema: tuple[Any, ...] | None
 
   @property
   def explicit_mesh_axis(self):
-    if self._explicit_mesh_axis is None:
+    assert self._ema is None or isinstance(self._ema, tuple)
+    if self._ema is None:
       return None
     cur_mesh = mesh_lib.get_abstract_mesh()
     if cur_mesh.empty:
-      return self._explicit_mesh_axis
-    spec = (self._explicit_mesh_axis[0]
-            if isinstance(self._explicit_mesh_axis, tuple) else
-            self._explicit_mesh_axis)
-    if cur_mesh._name_to_type[spec] != mesh_lib.AxisType.Explicit:
+      return self._ema
+    ema0_type = cur_mesh._name_to_type[self._ema[0]]
+    assert all(cur_mesh._name_to_type[e] == ema0_type for e in self._ema)
+    if ema0_type != mesh_lib.AxisType.Explicit:
       return None
-    return self._explicit_mesh_axis
+    return self._ema
 
   def __repr__(self):
     return (f'AxisData(name={self.name}, size={self.size},'
