@@ -69,6 +69,8 @@ def update_logging_level_global(logging_level: str | None) -> None:
     logger.removeHandler(_jax_logger_handler)
     logger.setLevel(level)
   _logging_level_set.clear()
+  import sys
+  print(f"JAX: Setting TF_CPP_MIN_LOG_LEVEL to {logging_level}", file=sys.stderr)
   _set_TF_CPP_MIN_LOG_LEVEL(logging_level)
 
   if logging_level is None:
