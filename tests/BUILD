@@ -2151,6 +2151,18 @@ jax_py_test(
     ] + py_deps("absl/testing"),
 )
 
+jax_py_test(
+    name = "traceback_test",
+    srcs = ["traceback_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
 exports_files(
     [
         "api_test.py",
