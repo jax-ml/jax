@@ -959,17 +959,16 @@ class DebugInfoTest(jtu.JaxTestCase):
     if config.use_direct_linearize.value:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=<lambda>, arg_names=x,y,res_ct, result_paths=result[0],result[1]",
-          # TODO(necula): result_paths
-          "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=",
+          "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=result['c']",
           # TODO(necula): arg_names
-          "traced_for=jit, fun=my_g, arg_names=u,v,,, result_paths=result['c']",
+          "traced_for=jit, fun=my_g, arg_names=,,u,v, result_paths=result['c']",
       ]
     else:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=<lambda>, arg_names=x,y,res_ct, result_paths=result[0],result[1]",
           "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=result['c']",
             # TODO(necula): arg_names
-          "traced_for=jit, fun=my_g, arg_names=,,u,v, result_paths=result['c'],result['d']",
+          "traced_for=jit, fun=my_g, arg_names=u,v,,, result_paths=result['c'],result['d']",
       ]
 
     self._check_tracers_and_jaxprs(
@@ -1402,13 +1401,13 @@ class DebugInfoTest(jtu.JaxTestCase):
       ]
       if config.use_simplified_jaxpr_constants.value:
         expected_jaxpr_debug_infos.extend([
-            "traced_for=jit, fun=my_f, arg_names=,x,as_, result_paths=,",
+            "traced_for=jit, fun=my_f, arg_names=,x,as_, result_paths=result[0],result[1]",
             "traced_for=jit, fun=my_f, arg_names=,,, result_paths=result[0],result[1]",
         ])
       else:
         expected_jaxpr_debug_infos.extend([
-            "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
-            "traced_for=jit, fun=my_f, arg_names=as_,,, result_paths=result[0],result[1]",
+            "traced_for=jit, fun=my_f, arg_names=,,as_, result_paths=result[0],result[1]",
+            "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=result[0],result[1]",
         ])
     else:
       expected_jaxpr_debug_infos = [
@@ -1423,12 +1422,13 @@ class DebugInfoTest(jtu.JaxTestCase):
       if config.use_simplified_jaxpr_constants.value:
         expected_jaxpr_debug_infos.extend([
             "traced_for=jit, fun=my_f, arg_names=,x,as_, result_paths=result[0],result[1]",
-            "traced_for=jit, fun=my_f, arg_names=,,,x,as_, result_paths=result[0],result[1]",
+            # TODO(necula): arg_names
+            "traced_for=jit, fun=my_f, arg_names=,,,, result_paths=result[0],result[1]",
         ])
       else:
         expected_jaxpr_debug_infos.extend([
             "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=result[0],result[1]",
-            "traced_for=jit, fun=my_f, arg_names=,,x,as_, result_paths=result[0],result[1]",
+            "traced_for=jit, fun=my_f, arg_names=x,as_,,, result_paths=result[0],result[1]",
         ])
     self._check_tracers_and_jaxprs(
         jax.jit(the_grad),
@@ -1725,13 +1725,13 @@ class DebugInfoTest(jtu.JaxTestCase):
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=my_f, arg_names=x, result_paths=result",
           "traced_for=jit, fun=my_f, arg_names=x, result_paths=,",
-          "traced_for=jit, fun=my_f, arg_names=x,, result_paths=result"
+          "traced_for=jit, fun=my_f, arg_names=,x, result_paths=result"
       ]
     else:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=my_f, arg_names=x, result_paths=result",
           "traced_for=jit, fun=my_f, arg_names=x, result_paths=,",
-          "traced_for=jit, fun=my_f, arg_names=,x, result_paths=result"
+          "traced_for=jit, fun=my_f, arg_names=x,, result_paths=result"
       ]
 
     self._check_tracers_and_jaxprs(

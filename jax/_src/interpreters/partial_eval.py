@@ -1604,9 +1604,8 @@ def _move_binders_to_front(jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]
   arg_names = jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.in_avals))
   new_arg_names = _move_to_front(arg_names, to_move)
   dbg = jaxpr.jaxpr.debug_info._replace(arg_names=new_arg_names)
-  # TODO(necula): pass debug_info=dbg into update
   new_jaxpr = jaxpr.jaxpr.replace(
-      constvars=constvars, invars=new_invars, effects=new_effs)  # , debug_info=dbg)
+      constvars=constvars, invars=new_invars, effects=new_effs, debug_info=dbg)
   return core.ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
 def _renumber_effects(new_vars, old_vars, effs):
