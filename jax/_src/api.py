@@ -3131,11 +3131,7 @@ def clear_backends():
   xb._clear_backends()
   xb.local_devices.cache_clear()
   xb.process_count.cache_clear()
-  dispatch.xla_primitive_callable.cache_clear()
   util.clear_all_caches()
-  pjit._infer_params_cached.cache_clear()
-  pjit._pjit_lower_cached.cache_clear()
-  pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
   xc._xla.PjitFunctionCache.clear_all()
@@ -3166,7 +3162,6 @@ def clear_caches():
   # Clear all lu.cache, util.cache and util.weakref_lru_cache instances
   # (used for staging and Python-dispatch compiled executable caches).
   util.clear_all_caches()
-  util.clear_all_weakref_lru_caches()
 
   # Clear all C++ compiled executable caches for pjit
   pjit._cpp_pjit_cache_fun_only.clear()
@@ -3177,6 +3172,3 @@ def clear_caches():
   # Clear all C++ compiled executable caches for pmap
   for fun in _pmap_cache_clears:
     fun._cache_clear()
-
-  # Clear particular util.cache instances.
-  dispatch.xla_primitive_callable.cache_clear()

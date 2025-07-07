@@ -27,8 +27,26 @@ from jax._src.xla_bridge import (
 from jax._src.interpreters.pxla import (
   get_default_device as get_default_device
 )
-from jax._src import (
-    util as _util
-)
-add_clear_backends_callback = _util.cache_clearing_funs.add  # type: ignore
-del _util
+from jax._src import util as _util
+
+def add_clear_backends_callback(cache_clear):
+  # DEPRECATED: use `util.register_cache`.
+  class _BackendCacheDeprecated:
+    def __init__(self, cache_clear):
+      self._cache_clear = cache_clear
+
+    def cache_clear(self):
+      self._cache_clear()
+  register_backend_cache(_BackendCacheDeprecated(cache_clear),  # type: ignore
+                         str(cache_clear))
+
+def register_backend_cache(cache, for_what: str):
+  """Registers a cache, to be cleared when JAX clears the caches.
+
+  Args:
+    cache: an object supporting `cache_clear()`, `cache_info()`, and
+    `cache_keys()`, like the result of `functools.lru_cache()`.
+    for_what: a string to identify what this cache is used for. This is
+     used for debugging.
+  """
+  _util.register_cache(cache, for_what)

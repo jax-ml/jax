@@ -40,6 +40,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The `name` attribute of the `pjit_p` primitive (exported as
     `jax.extend.core.primitives.pjit_p`) has changed from `"pjit"` to `"jit"`.
     This affects the string representations of jaxprs.
+  * The (undocumented) function `jax.extend.backend.add_clear_backends_callback`
+    has been removed. Users should use `jax.extend.backend.register_backend_cache`
+    instead.
 
 * Deprecations:
   * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new
