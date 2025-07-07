@@ -2057,6 +2057,29 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
                           jnp.ones((128,), jnp.int32) * 3), axis=0)
     np.testing.assert_array_equal(result, expected)
 
+  @parameterized.parameters(
+    lax.add, lax.sub, lax.mul, lax.div, lax.rem, lax.bitwise_and,
+    lax.bitwise_or, lax.bitwise_xor, lax.max, lax.min,
+    lax.gt, lax.lt, lax.ge, lax.le, lax.eq, lax.ne,
+  )
+  def test_scalar_binary_op(self, op):
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(plgpu.kernel,
+                       out_shape=jax.ShapeDtypeStruct((), jnp.int32))
+    def kernel(y_ref):
+      @pl.core_map(warp_mesh)
+      def _():
+        warp_id = lax.axis_index("warp")
+        @pl.when(warp_id == 1)
+        def _():
+          x = jnp.array(1234, dtype=jnp.int32)
+          y = jnp.array(6543, dtype=jnp.int32)
+          y_ref[...] = op(x, y).astype(jnp.int32)
+    result = kernel()
+    x = jnp.array(1234, dtype=jnp.int32)
+    y = jnp.array(6543, dtype=jnp.int32)
+    np.testing.assert_array_equal(result, op(x, y).astype(jnp.int32))
+
   def test_errors_when_closing_over_array(self):
     # We currently do not allow closing over arrays when mapping over
     # a mesh, since we would need to present a view of the array local

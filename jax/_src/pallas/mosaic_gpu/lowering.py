@@ -1455,6 +1455,11 @@ def _get_lowering_rule(
   del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
   is_signed = mgpu_utils.is_signed(dtype)
+
+  if not ctx.avals_out[0].shape:  # The scalar case is simple.
+    val = memref_dialect.load(x_smem, [])
+    return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
+
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if len(tiling) != 2:
@@ -1470,11 +1475,6 @@ def _get_lowering_rule(
           x_smem, is_signed=is_signed, swizzle=swizzle, layout=layout, optimized=optimized
       )
     case ():
-      # Handle scalar indexing.
-      if not ctx.avals_out[0].shape:
-        val = memref_dialect.load(x_smem, [])
-        return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
-
       match ctx.out_layout_hint:
         case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
           ref_ty = ir.MemRefType(x_smem.type)
@@ -1528,9 +1528,20 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
 
 
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(
+    sp.swap_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp
+)
 def _swap_lowering_rule(
     ctx: LoweringRuleContext, x_ref, value, *leaves, tree
 ):
+  barrier = mgpu.warpgroup_barrier
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    if ctx.avals_out[0].shape:
+      raise NotImplementedError("Can only store scalars in warp-level lowering.")
+    i32 = ir.IntegerType.get_signless(32)
+    barrier = functools.partial(
+        nvvm_dialect.bar_warp_sync, arith_dialect.constant(i32, -1)
+    )
   if not isinstance(value, mgpu.FragmentedArray):
     raise TypeError(f"Can only store arrays (got {value}).")
 
@@ -1546,9 +1557,20 @@ def _swap_lowering_rule(
       ctx, x_ref, transforms, handle_transposes=not transposed_value,
       allow_peer_refs=True
   )
+  del x_ref  # Don't use x_ref anymore. Use x_smem instead!
+
   if ctx.module_ctx.auto_barriers:
-    mgpu.warpgroup_barrier()  # Make sure reads have completed before we write.
+    barrier()  # Make sure reads have completed before we write.
   match transforms:
+    case _ if not ctx.avals_out[0].shape:  # Scalar case.
+      old_value = mgpu.FragmentedArray.splat(
+          memref_dialect.load(x_smem, []),
+          shape=(),
+          is_signed=mgpu_utils.is_signed(v_aval.dtype),
+      )
+      memref_dialect.store(
+          _ensure_ir_value(value, ctx.avals_out[0].dtype), x_smem, []
+      )
     case (
         gpu_core.UnswizzleRef(swizzle),
         gpu_core.UntileRef(tiling),
@@ -1602,7 +1624,7 @@ def _swap_lowering_rule(
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
   if ctx.module_ctx.auto_barriers:
-    mgpu.warpgroup_barrier()  # Make sure the writes have completed.
+    barrier()  # Make sure the writes have completed.
   return old_value
 
 
@@ -1911,11 +1933,17 @@ def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
   return impl(x, y)
 
+
+def _div(x, y):
+  return x / y if ir.FloatType.isinstance(x.mlir_dtype) else x // y
+
+
 for semantics in [gpu_core.LANExWG_SEMANTICS, gpu_core.LANExWARP_SEMANTICS]:
   mosaic_lowering_rules[semantics].update({
     lax.add_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x + y),
     lax.sub_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x - y),
     lax.mul_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x * y),
+    lax.div_p: partial(_binary_op_lowering_rule, impl=_div),
     lax.rem_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x % y),
     lax.and_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x & y),
     lax.or_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x | y),
@@ -2030,14 +2058,6 @@ for op, si_pred, ui_pred, f_pred in [
       ui_pred=ui_pred,
       f_pred=f_pred,
   )
-
-
-@register_lowering_rule(lax.div_p, mgpu.LoweringSemantics.Lane)
-def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
-  x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
-  if ir.FloatType.isinstance(x.mlir_dtype):
-    return x / y
-  return x // y
 
 
 @register_lowering_rule(lax.integer_pow_p, mgpu.LoweringSemantics.Lane)
