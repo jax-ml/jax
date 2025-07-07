@@ -63,9 +63,8 @@ JAX: High performance array computing
       :link-type: ref
       :class-card: user-guides
 
-If you're looking to use JAX to train neural networks, start with the
-`JAX AI Stack Tutorials`_, and then check out the `JAX AI Stack Examples`_
-to see how JAX models can be implemented using the Flax_ framework.
+If you're looking to use JAX to train neural networks, check out the `JAX AI
+Stack`_!
 
 Ecosystem
 ---------
@@ -186,8 +185,7 @@ maintains an up-to-date list.
 .. _Grain: https://github.com/google/grain
 .. _Hugging Face Datasets: https://huggingface.co/docs/datasets/
 .. _JAX MD: https://jax-md.readthedocs.io/
-.. _JAX AI Stack Tutorials: https://docs.jaxstack.ai/en/latest/tutorials.html
-.. _JAX AI Stack Examples: https://docs.jaxstack.ai/en/latest/examples.html
+.. _JAX AI Stack: https://docs.jaxstack.ai/en/latest/getting_started.html
 .. _Keras: https://keras.io/
 .. _Levanter: https://github.com/stanford-crfm/levanter
 .. _Marin: https://github.com/marin-community/marin
