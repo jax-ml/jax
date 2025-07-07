@@ -2558,7 +2558,7 @@ def core_call_lowering(ctx: LoweringRuleContext,
 register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
 # TODO(phawkins): Not cacheable because of debug_print on TPU.
 register_lowering(core.closed_call_p,
-                  partial(core_call_lowering, name=None),
+                  partial(core_call_lowering, name="closed_call"),
                   cacheable=False)
 
 def map_compute_type(c_type: str) -> str:
