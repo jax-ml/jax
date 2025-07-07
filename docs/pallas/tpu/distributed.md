@@ -97,9 +97,22 @@ The `pltpu.make_async_remote_copy` function is used to create a remote DMA descr
 dma_descriptor = make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id)
 dma_descriptor.start() # Initiate the DMA (non-blocking).
 # ... do other work
-dma_descriptor.wait_send() # Block until all data has been sent.
-dma_descriptor.wait_recv() # Block until all data has been received.
+
+# Block until all data has been sent from this device.
+# Now it's safe to overwrite the data in src_ref on this device.
+dma_descriptor.wait_send()
+
+# Block until all data has been received by this device.
+# Now it's safe to start reading from dst_ref on this device.
+# This will hang unless somebody makes an identically shaped DMA with
+# device_id set to this device.
+dma_descriptor.wait_recv()
+
+# How do you know when it's safe to make another DMA to the same
+# dst_ref location on `device_id`? Read on..
 ```
+
+Note that `dma_descriptor.wait_recv()` does not mean waiting for `device_id` to receive all the data. Instead it means waiting for some other device to write to `dst_ref` on the _current device_ and signal its `recv_sem` by the expected value.
 
 As an example, let's visualize a DMA where we consider 4 devices (indexed 0, 1, 2, 3). We consider a scheme where device 0 copies to device 1, and device 2 & 3 copy to each other. In practice, we can create such an asymmetric communication pattern by using `@pl.when` to branch on the device ID.
 
