@@ -3018,6 +3018,20 @@ class MiscellaneousTest(PallasBaseTest):
           kernel, out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32)
       )(x)
 
+  @parameterized.parameters(range(33))
+  def test_shrui(self, shift_amount):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 15):
+      self.skipTest('Needs a newer libtpu')
+    x = np.arange(8192, dtype=jnp.uint32).reshape(128, 64)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = x_ref[...] >> shift_amount
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((128, 64), jnp.uint32)
+    )(x)
+    np.testing.assert_array_equal(out, np.right_shift(x, shift_amount))
+
   def test_retiling1(self):
     if not jtu.if_cloud_tpu_at_least(2025, 7, 2):
       self.skipTest('Needs a newer libtpu')

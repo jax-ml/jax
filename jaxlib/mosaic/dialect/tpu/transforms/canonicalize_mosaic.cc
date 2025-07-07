@@ -354,6 +354,53 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
   return op.getResult();
 };
 
+// Emulate shift right on unsigned types (arith.shuri) using shrsi and then mask
+// out the high bits.
+FailureOr<Value> canonicalize_shrui(const CanonicalizeContext &ctx,
+                                    Operation &operation) {
+  CanonicalBuilder builder(ctx, operation.getLoc(), &operation);
+  arith::ShRUIOp op = cast<arith::ShRUIOp>(operation);
+  auto result_ty = dyn_cast<VectorType>(op.getResult().getType());
+  if (!result_ty) {
+    return success();
+  }
+  auto element_type = result_ty.getElementType();
+  if (!element_type.isInteger()) {
+    return op.emitOpError() << "Only integer types supported";
+  }
+  if (element_type.getIntOrFloatBitWidth() != 32) {
+    return op.emitOpError() << "Only 32-bit integers supported";
+  }
+  if (element_type.isSignedInteger()) {
+    return success();
+  }
+  auto i32_res_vty =
+      VectorType::get(result_ty.getShape(), builder.getI32Type());
+  auto bitwidth_val = result_ty.getElementType().getIntOrFloatBitWidth();
+  auto bitwidth_minus_shifts = builder.create<arith::SubIOp>(
+      i32_res_vty,
+      builder.create<arith::ConstantOp>(
+          i32_res_vty,
+          SplatElementsAttr::get(
+              i32_res_vty, builder.getIntegerAttr(i32_res_vty.getElementType(),
+                                                  bitwidth_val))),
+      op.getRhs());
+  auto sign_shifted = builder.create<arith::ShRSIOp>(op.getRhs().getType(),
+                                                     op.getLhs(), op.getRhs());
+  auto ones = builder.create<arith::ConstantOp>(
+      i32_res_vty, SplatElementsAttr::get(
+                       i32_res_vty, builder.getOneAttr(builder.getI32Type())));
+  auto shifted_ones =
+      builder.create<arith::ShLIOp>(i32_res_vty, ones, bitwidth_minus_shifts);
+  auto mask_value =
+      builder.create<arith::SubIOp>(op.getRhs().getType(), shifted_ones, ones);
+  auto new_op = builder.create<arith::AndIOp>(op.getResult().getType(),
+                                              sign_shifted, mask_value);
+  op.replaceAllUsesWith(new_op);
+  op.erase();
+  return new_op;
+}
+
 FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
                                           Operation &op) {
   OpBuilder builder(&op);
@@ -1177,7 +1224,9 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {tpu::TruncFOp::getOperationName(), canonicalize_tpu_truncf},
       {tpu::ExtFOp::getOperationName(), canonicalize_tpu_extf},
       {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
-      {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
+      {tpu::RepeatOp::getOperationName(), canonicalize_repeat},
+      {arith::ShRUIOp::getOperationName(), canonicalize_shrui},
+  };
   return *rules;
 }
 
