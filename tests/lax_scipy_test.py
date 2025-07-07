@@ -343,6 +343,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     dtype=float_dtypes,
   )
   @jtu.ignore_warning(category=DeprecationWarning, message=".*scipy.special.lpmn.*")
+  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.lpmn has been removed.")
   def testLpmn(self, l_max, shape, dtype):
     if jtu.is_device_tpu_at_least(6):
       self.skipTest("TODO(b/364258243): fails on TPU v6+")
@@ -366,6 +367,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     dtype=float_dtypes,
   )
   @jtu.ignore_warning(category=DeprecationWarning, message=".*scipy.special.lpmn.*")
+  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.lpmn_values has been removed.")
   def testNormalizedLpmnValues(self, l_max, shape, dtype):
     rng = jtu.rand_uniform(self.rng(), low=-0.2, high=0.9)
     args_maker = lambda: [rng(shape, dtype)]
@@ -395,6 +397,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @jtu.ignore_warning(category=DeprecationWarning,
                       message=".*scipy.special.sph_harm.*")
+  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmAccuracy(self):
     m = jnp.arange(-3, 3)[:, None]
@@ -411,6 +414,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @jtu.ignore_warning(category=DeprecationWarning,
                       message=".*scipy.special.sph_harm.*")
+  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmOrderZeroDegreeZero(self):
     """Tests the spherical harmonics of order zero and degree zero."""
@@ -426,6 +430,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @jtu.ignore_warning(category=DeprecationWarning,
                       message=".*scipy.special.sph_harm.*")
+  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmOrderZeroDegreeOne(self):
     """Tests the spherical harmonics of order one and degree zero."""
@@ -441,6 +446,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @jtu.ignore_warning(category=DeprecationWarning,
                       message=".*scipy.special.sph_harm.*")
+  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmOrderOneDegreeOne(self):
     """Tests the spherical harmonics of order one and degree one."""
@@ -463,6 +469,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   )
   @jtu.ignore_warning(category=DeprecationWarning,
                       message=".*scipy.special.sph_harm.*")
+  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmForJitAndAgainstNumpy(self, l_max, num_z, dtype):
     """Tests against JIT compatibility and Numpy."""
@@ -489,6 +496,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @jtu.ignore_warning(category=DeprecationWarning,
                       message=".*scipy.special.sph_harm.*")
+  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmCornerCaseWithWrongNmax(self):
     """Tests the corner case where `n_max` is not the maximum value of `n`."""
