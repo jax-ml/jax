@@ -46,6 +46,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.dlpack.is_supported_dtype` function.
   * {func}`jax.scipy.special.sph_harm` has been deprecated following a similar
     deprecation in SciPy; use {func}`jax.scipy.special.sph_harm_y` instead.
+  * From {mod}`jax.interpreters.xla`, the previously deprecated symbols
+    `abstractify` and `pytype_aval_mappings` have been removed.
 
 ## JAX 0.6.2 (June 17, 2025)
 
