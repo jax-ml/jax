@@ -80,32 +80,65 @@ from jax._src.core import (
 
 
 from jax._src import core as _src_core
+
 _deprecations = {
     # Added 2024-12-11
-    "axis_frame": ("jax.core.axis_frame is deprecated.", _src_core.axis_frame),
-    "AxisName": ("jax.core.AxisName is deprecated.", _src_core.AxisName),
-    "ConcretizationTypeError": ("jax.core.ConcretizationTypeError is deprecated; "
-                                "use jax.errors.ConcretizationTypeError.",
-                                _src_core.ConcretizationTypeError),
-    "call_p": ("jax.core.call_p is deprecated. Use jax.extend.core.primitives.call_p",
-               _src_core.call_p),
-    "closed_call_p": ("jax.core.closed_call_p is deprecated. Use jax.extend.core.primitives.closed_call_p",
-                      _src_core.closed_call_p),
-    "get_type": ("jax.core.get_type is deprecated.", _src_core.get_aval),
-    "trace_state_clean": ("jax.core.trace_state_clean is deprecated.",
-                          _src_core.trace_state_clean),
-    "typecheck": ("jax.core.typecheck is deprecated.", _src_core.typecheck),
-    "typematch": ("jax.core.typematch is deprecated.", _src_core.typematch),
+    "axis_frame": (
+        "jax.core.axis_frame was deprecated in JAX v0.5.0.",
+        _src_core.axis_frame,
+    ),
+    "AxisName": (
+        (
+            "jax.core.AxisName was deprecated in JAX v0.5.0 and removed in JAX"
+            " v0.7.0."
+        ),
+        None,
+    ),
+    "ConcretizationTypeError": (
+        (
+            "jax.core.ConcretizationTypeError was deprecated in JAX v0.5.0 and"
+            " removed in JAX v0.7.0; use jax.errors.ConcretizationTypeError."
+        ),
+        None,
+    ),
+    "call_p": (
+        (
+            "jax.core.call_p was deprecated in JAX v0.5.0 and removed in JAX"
+            " v0.7.0. Use jax.extend.core.primitives.call_p"
+        ),
+        None,
+    ),
+    "closed_call_p": (
+        (
+            "jax.core.closed_call_p was deprecated in JAX v0.5.0 and removed in"
+            " JAX v0.7.0. Use jax.extend.core.primitives.closed_call_p"
+        ),
+        None,
+    ),
+    "get_type": (
+        (
+            "jax.core.get_type was deprecated in JAX v0.5.0 and removed in JAX"
+            " v0.7.0."
+        ),
+        None,
+    ),
+    "trace_state_clean": (
+        "jax.core.trace_state_clean was deprecated in JAX v0.5.0.",
+        _src_core.trace_state_clean,
+    ),
+    "typecheck": (
+        "jax.core.typecheck was deprecated in JAX v0.5.0.",
+        _src_core.typecheck,
+    ),
+    "typematch": (
+        "jax.core.typematch was deprecated in JAX v0.5.0.",
+        _src_core.typematch,
+    ),
 }
 
 import typing
 if typing.TYPE_CHECKING:
-  AxisName = _src_core.AxisName
-  ConcretizationTypeError = _src_core.ConcretizationTypeError
   axis_frame = _src_core.axis_frame
-  call_p = _src_core.call_p
-  closed_call_p = _src_core.closed_call_p
-  get_type = _src_core.get_aval
   trace_state_clean = _src_core.trace_state_clean
   typecheck = _src_core.typecheck
   typematch = _src_core.typematch

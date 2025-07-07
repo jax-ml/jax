@@ -31,16 +31,16 @@ _deprecations = {
     "get_topology_for_devices": (
         (
             "jax.lib.xla_client.get_topology_for_devices was deprecated in JAX"
-            " v0.6.0 and will be removed in JAX v0.7.0"
+            " v0.6.0 and removed in JAX v0.7.0"
         ),
-        _xc.get_topology_for_devices,
+        None,
     ),
     "mlir_api_version": (
         (
             "jax.lib.xla_client.mlir_api_version was deprecated in JAX v0.6.0"
-            " and will be removed in JAX v0.7.0"
+            " and removed in JAX v0.7.0"
         ),
-        58,
+        None,
     ),
     "Client": (
         (
@@ -96,8 +96,6 @@ _deprecations = {
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  get_topology_for_devices = _xc.get_topology_for_devices
-  mlir_api_version = 58
   Client = _xc.Client
   CompileOptions = _xc.CompileOptions
   DeviceAssignment = _xc.DeviceAssignment
