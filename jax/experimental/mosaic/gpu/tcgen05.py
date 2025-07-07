@@ -326,16 +326,18 @@ def mma(
   # Check that the shapes and element types are correct for block scaling.
   if is_scaled:
     if collective:
-      raise ValueError("MMA with block scaling does not support collective")
+      raise NotImplementedError("MMA with block scaling does not support collective")
+    if m != 128:
+      raise NotImplementedError(f"MMA with block scaling requires M to be 128, got: {m}")
     if k_group_elems != 128:
-      raise ValueError(
+      raise NotImplementedError(
           f"MMA with block scaling requires swizzle to be 128, got: {swizzle}"
       )
-    if k != 128:
-      raise NotImplementedError("Unrolling block scaled MMA along K not implemented")
-    if a_scale.shape != (128, 4):
+    if m_groups != 1 or k_groups != 1 or n_groups != 1:
+      raise NotImplementedError("MMA with block scaling does not support unrolling")
+    if a_scale.shape != (m, 4):
       raise ValueError(
-          f"A scale shape mismatch: expected (128, 4), got {a_scale.shape}"
+          f"A scale shape mismatch: expected ({m}, 4), got {a_scale.shape}"
       )
     if a_scale.dtype != ir.Float8E8M0FNUType.get():
       raise ValueError(
@@ -345,9 +347,9 @@ def mma(
       raise ValueError(
           f"MMA with block scaling requires N to be divisible by 32, got: {n}"
       )
-    if b_scale.shape != (128, n // 32):
+    if b_scale.shape != (n, 4):
       raise ValueError(
-          f"B scale shape mismatch: expected (128, {n // 32}), got {b_scale.shape}"
+          f"B scale shape mismatch: expected ({n}, 4), got {b_scale.shape}"
       )
     if b_scale.dtype != ir.Float8E8M0FNUType.get():
       raise ValueError(
@@ -1205,7 +1207,6 @@ def wait_load_tmem():
   utils.warpgroup_barrier()
 
 
-
 def async_copy_scales_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef):
   """Asynchronously copies the scale data from SMEM to TMEM.
 
@@ -1214,36 +1215,56 @@ def async_copy_scales_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef):
   MMA issued in the same thread, no additional synchronization is needed.
 
   At the moment the function requires ``smem_ref`` to be contiguous and have a
-  shape of (32, 4, 4) for 8-bit scales, matching the scale layout for
+  shape of (MN // 128, 32, 16) for 8-bit scales (here MN stands for the size of
+  the non-contracting dimension which is M or N), matching the scale layout for
   .scale_vec::1X. See https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a-layout-1x
-  for more details.
+  for more details. Note that we always put the non-contracting dimension first.
+  If you have a (MN, 4) array of scales in JAX (where MN is divisible by 128),
+  you can prepare it for use in the kernel this way::
 
-  The TMEM ref is expected to have the logical shape of the scales (128, 4), and
+      scales.reshape(-1, 4, 32, 4).swapaxes(1, 2).reshape(-1, 32, 16)
+
+  The TMEM ref is expected to have the logical shape of the scales (MN, 4), and
   the layout created by ``scales_layout()``.
   """
+  i32 = ir.IntegerType.get_signless(32)
   smem_ty = ir.MemRefType(smem_ref.type)
   if (dtype := smem_ty.element_type) != tmem_ref.dtype:
     raise ValueError(f"Incompatible dtypes: SMEM has {dtype}, TMEM has {tmem_ref.dtype}")
-  expected_tmem_shape = (TMEM_ROWS, 32 // utils.bitwidth(dtype))
-  if tmem_ref.shape != expected_tmem_shape:
-    raise ValueError(f"TMEM has shape {tmem_ref.shape}, but only {expected_tmem_shape} is supported")
+  if dtype != ir.Float8E8M0FNUType.get():
+    raise NotImplementedError(f"Unsupported dtype: {dtype}, only f8e8m0fnu supported")
+  if tmem_ref.shape[0] % TMEM_ROWS:
+    raise ValueError(f"TMEM reference must have a multiple of {TMEM_ROWS} rows, but got {tmem_ref.shape[0]}")
+  if tmem_ref.shape[1] != 4:
+    raise ValueError(f"TMEM reference must have 4 colums, but got {tmem_ref.shape[1]}")
   if tmem_ref.layout != scales_layout():
     raise ValueError(f"TMEM layout {tmem_ref.layout} is not supported")
   smem_shape = tuple(smem_ty.shape)
-  expected_smem_shape = (TMEM_ROWS // 4, 4, 32 // utils.bitwidth(dtype))
+  expected_smem_shape = (tmem_ref.shape[0] // TMEM_ROWS, 32, 16)
   if smem_shape != expected_smem_shape:
     raise NotImplementedError(
-        f"SMEM has {smem_shape}, but only {expected_smem_shape} is supported"
+        f"SMEM has {smem_shape}, but expected {expected_smem_shape} for TMEM"
+        f" ref shape {tmem_ref.shape}"
     )
   strides, _ = smem_ty.get_strides_and_offset()
   if strides != utils.get_contiguous_strides(smem_shape):
     raise ValueError("Only copies from contiguous SMEM references are supported")
-  # The "core matrix" here is the same as in MMA: 8x(16 bytes).
-  desc = mma_utils.encode_descriptor(smem_ref, 0, 8 * 16, swizzle=None)
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [tmem_ref.address, desc],
-      "tcgen05.cp.cta_group::1.32x128b.warpx4 [$0], $1;",
-      "r,l",
-      has_side_effects=True,
-  )
+  row_tile_stride = strides[0]
+  if row_tile_stride % 4:
+    raise ValueError("Column tile stride must be a multiple of 4")
+  row_tile_stride_i32 = row_tile_stride // 4
+  smem_base_ptr = utils.memref_ptr(smem_ref, 3)
+  for row_tile in range(expected_smem_shape[0]):
+    load_ptr = utils.getelementptr(
+        smem_base_ptr, [row_tile * row_tile_stride_i32], i32
+    )
+    store_ptr = arith.addi(tmem_ref.address, arith.constant(i32, 4 * row_tile))
+    # The "core matrix" here is the same as in MMA: 8x(16 bytes).
+    desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [store_ptr, desc],
+        "tcgen05.cp.cta_group::1.32x128b.warpx4 [$0], $1;",
+        "r,l",
+        has_side_effects=True,
+    )

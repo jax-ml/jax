@@ -192,14 +192,19 @@ def encode_addr(x: int):
 
 
 def encode_descriptor(
-    memref_arg,
+    ref_arg,
     leading_byte_offset: int,
     stride_byte_offset: int,
     swizzle: int | mgpu_dialect.SwizzlingMode | None,
     const_init: int = 0,
 ):
   i64 = ir.IntegerType.get_signless(64)
-  ptr_val = llvm.ptrtoint(i64, utils.memref_ptr(memref_arg, 3))
+  if isinstance(ref_arg.type, ir.MemRefType):
+    ptr = utils.memref_ptr(ref_arg, 3)
+  else:
+    ptr = ref_arg
+  assert ptr.type == ir.Type.parse("!llvm.ptr<3>"), ptr.type
+  ptr_val = llvm.ptrtoint(i64, ptr)
   c = lambda x: arith.constant(i64, x)
   if swizzle is None or swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle:
     swizzle_encoding = 0
