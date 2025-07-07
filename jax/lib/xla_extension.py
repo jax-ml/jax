@@ -16,21 +16,6 @@ import jax._src.lib
 from jax._src.lib import _jax
 
 _deprecations = {
-    # Finalized for JAX v0.6.0
-    "ArrayImpl": (
-        (
-            "jax.lib.xla_extension.ArrayImpl has been removed; use jax.Array"
-            " instead."
-        ),
-        None,
-    ),
-    "XlaRuntimeError": (
-        (
-            "jax.lib.xla_extension.XlaRuntimeError has been removed; use"
-            " jax.errors.JaxRuntimeError instead."
-        ),
-        None,
-    ),
     # Finalized for JAX v0.7.0
     "Device": (
         (
