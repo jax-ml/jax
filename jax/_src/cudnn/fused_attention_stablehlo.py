@@ -1062,11 +1062,13 @@ _dot_product_attention_fwd_lower = custom_partitioning(
 
 def _dot_product_attention_fwd_lower_wrapper(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    *score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, score_mod, is_training):
-  return _dot_product_attention_fwd_lower(query, key, value, bias, q_seqlen, kv_seqlen,
-    q_offsets, kv_offsets, score_mod_args, scale, seed, dropout_rate, variadic_args,
-    mask_type, layout, sliding_window_length, score_mod, is_training)
+    page_table_k, page_table_v, *score_mod_args, scale, seed, dropout_rate,
+    variadic_args, mask_type, layout, sliding_window_length, score_mod,
+    is_training):
+  return _dot_product_attention_fwd_lower(query, key, value, bias, q_seqlen,
+    kv_seqlen, q_offsets, kv_offsets, page_table_k, page_table_v,
+    score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, score_mod, is_training)
 
 def _dot_product_attention_fwd_infer_sharding_from_operands(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
@@ -1121,12 +1123,13 @@ _dot_product_attention_bwd_lower = custom_partitioning(
 
 def _dot_product_attention_bwd_lower_wrapper(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    activation, fwd_output, grad_output, *score_mod_args, scale, seed, dropout_rate,
-    variadic_args, mask_type, layout, sliding_window_length, score_mod):
+    activation, fwd_output, grad_output, *score_mod_args, scale, seed,
+    dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
+    score_mod):
   return _dot_product_attention_bwd_lower(query, key, value, bias, q_seqlen,
-    kv_seqlen, q_offsets, kv_offsets, activation, fwd_output, grad_output,
-    score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, score_mod)
+    kv_seqlen, q_offsets, kv_offsets, page_table_k, page_table_v, activation,
+    fwd_output, grad_output, score_mod_args, scale, seed, dropout_rate,
+    variadic_args, mask_type, layout, sliding_window_length, score_mod)
 
 def _dot_product_attention_bwd_infer_sharding_from_operands(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
