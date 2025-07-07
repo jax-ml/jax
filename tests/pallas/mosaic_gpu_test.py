@@ -2644,6 +2644,50 @@ class PallasCallSm100ATest(PallasSm100ATest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(x_result, x + 1)
 
+  def test_tmem_allocation_estimation(self):
+    """Make sure that we don't overestimate the TMEM allocation.
+
+    All of the refs below are packed and should fit into TMEM at once.
+    """
+    self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
+    swizzle_elems = 128 // jnp.dtype(jnp.bfloat16).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(128),
+    )
+    @functools.partial(
+        self.kernel,
+        out_shape=jnp.zeros((128, 256), jnp.bfloat16),
+        scratch_shapes=[
+            plgpu.TMEM((128, 256), jnp.bfloat16, packed=True),
+            plgpu.TMEM((128, 256), jnp.bfloat16, packed=True),
+            plgpu.TMEM((128, 256), jnp.bfloat16, packed=True),
+            plgpu.SMEM((128, 256), jnp.bfloat16, transforms=transforms),
+            plgpu.Barrier(),
+        ],
+        num_threads=1,
+        thread_name="x",
+    )
+    def kernel(x_ref, y_ref, tmem_ref1, tmem_ref2, tmem_ref3, smem_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      x_val = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05)
+      plgpu.async_store_tmem(tmem_ref1, x_val + 1)
+      plgpu.commit_tmem()
+      x_val = plgpu.async_load_tmem(tmem_ref1)
+      plgpu.async_store_tmem(tmem_ref2, x_val + 1)
+      plgpu.commit_tmem()
+      x_val = plgpu.async_load_tmem(tmem_ref2)
+      plgpu.async_store_tmem(tmem_ref3, x_val + 1)
+      plgpu.commit_tmem()
+      smem_ref[...] = plgpu.async_load_tmem(tmem_ref3)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem_ref, y_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jax.random.uniform(jax.random.key(0), shape=(128, 256), dtype=jnp.bfloat16)
+    x_result = jax.block_until_ready(kernel(x))
+    np.testing.assert_array_equal(x_result, x + 3)
+
   def test_tmem_ref_aliasing(self):
     self.skip_if_wg_semantics()
     swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
