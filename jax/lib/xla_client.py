@@ -19,65 +19,6 @@ def _heap_profile(client):
   return _gzip.compress(client.heap_profile())
 
 _deprecations = {
-    # Finalized 2025-03-25; remove after 2025-06-25
-    "FftType": (
-        (
-            "jax.lib.xla_client.FftType was removed in JAX v0.6.0; use"
-            " jax.lax.FftType."
-        ),
-        None,
-    ),
-    "PaddingType": (
-        (
-            "jax.lib.xla_client.PaddingType was removed in JAX v0.6.0;"
-            " this type is unused by JAX so there is no replacement."
-        ),
-        None,
-    ),
-    "dtype_to_etype": (
-        "dtype_to_etype was removed in JAX v0.6.0; use StableHLO instead.",
-        None,
-    ),
-    "shape_from_pyval": (
-        "shape_from_pyval was removed in JAX v0.6.0; use StableHLO instead.",
-        None,
-    ),
-    # Added Oct 11 2024, finalized 2025-04-09
-    "ops": (
-        "ops has been removed in JAX v0.6.0; use StableHLO instead.",
-        None,
-    ),
-    "register_custom_call_target": (
-        (
-            "register_custom_call_target has been removed in JAX v0.6.0; use"
-            " the JAX FFI instead (https://docs.jax.dev/en/latest/ffi.html)"
-        ),
-        None,
-    ),
-    "PrimitiveType": (
-        "PrimitiveType has been removed in JAX v0.6.0; use StableHLO instead.",
-        None,
-    ),
-    "Shape": (
-        "Shape has been removed in JAX v0.6.0; use StableHLO instead.",
-        None,
-    ),
-    "XlaBuilder": (
-        "XlaBuilder has been removed in JAX v0.6.0; use StableHLO instead.",
-        None,
-    ),
-    "XlaComputation": (
-        "XlaComputation has been removed in JAX v0.6.0; use StableHLO instead.",
-        None,
-    ),
-    # Added Nov 20 2024, finalized 2025-04-09
-    "ArrayImpl": (
-        (
-            "jax.lib.xla_client.ArrayImpl has been removed in JAX v0.6.0; use"
-            " jax.Array instead."
-        ),
-        None,
-    ),
     # Finalized for JAX v0.7.0
     "heap_profile": (
         (
