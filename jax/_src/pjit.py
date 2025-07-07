@@ -3055,8 +3055,11 @@ def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
         raise TypeError("Missing required keyword argument: 'out_sharding'")
     else:
       _out_sharding = out_sharding
+    axes_ = axes
+    if axes_ is None:
+      axes_ = mesh_lib.get_abstract_mesh().explicit_axes
     new_mesh = _get_new_mesh(
-        axes, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding,
+        axes_, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding,
         error_on_manual_to_auto_explicit=True)
     with mesh_lib.use_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
