@@ -1619,6 +1619,7 @@ def _ragged_all_to_all_transpose(
         lax.full(t.shape[0], 0, dtype='int32').at[output_offsets_].set(1)
         .at[output_offsets_ + recv_sizes].add(-1))
     mask = lax.expand_dims(mask, (*range(1, t.ndim),))
+    mask = lax.broadcast_in_dim(mask, shape=t.shape, broadcast_dimensions=tuple(range(t.ndim)))
     output_t = lax.select(mask, lax._zeros(t), t)
   return [operand_t, output_t] + [None] * 4
 
