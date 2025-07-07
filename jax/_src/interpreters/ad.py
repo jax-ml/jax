@@ -153,9 +153,10 @@ def linearize_jaxpr(
     nonzeros: Sequence[bool],
     allow_fwds: bool | Sequence[bool] = True,
 ) -> tuple[core.ClosedJaxpr, int, Sequence[bool], Sequence[int | None], core.ClosedJaxpr]:
-  if type(allow_fwds) is not bool:
-    allow_fwds = tuple(allow_fwds)
-  return _linearize_jaxpr(jaxpr, tuple(nonzeros), allow_fwds)
+  if type(allow_fwds) is bool:
+    allow_fwds = (allow_fwds,) * (len(jaxpr.consts) + len(jaxpr.jaxpr.invars))
+  assert len(allow_fwds) == (len(jaxpr.consts) + len(jaxpr.jaxpr.invars))
+  return _linearize_jaxpr(jaxpr, tuple(nonzeros), tuple(allow_fwds))
 
 @weakref_lru_cache
 @source_info_util.reset_name_stack()
@@ -197,7 +198,9 @@ def _linearize_jaxpr(
   tangent_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(tangent_jaxpr))
 
   in_primals = [t.primal for t in tracers]
-  id_map = {id(x):i for i, x in enumerate((*jaxpr.consts, *in_primals))}
+  fwd_inputs = (*jaxpr.consts, *in_primals)
+  id_map = {id(x):i for i, (x, allow) in enumerate(zip(fwd_inputs, allow_fwds))
+            if allow}
   fwds = [id_map.get(id(c)) for c in tangent_consts]
   tangent_consts = [c for c, f in zip(tangent_consts, fwds) if f is None]
   del tracers, in_primals

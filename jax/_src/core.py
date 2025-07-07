@@ -2418,7 +2418,7 @@ class MutableArray:
   committed = _committed = property(lambda self: self._buf._committed)
   def __getitem__(self, idx): return self._aval._getitem(self, idx)
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
-  def __repr__(self) -> str: return 'Mutable' + repr(self[...])
+  def __repr__(self) -> str: return 'Mutable' + repr(self._buf)
   def __len__(self) -> int: return self._aval._len(self)
 pytype_aval_mappings[MutableArray] = lambda x: x._aval
 
