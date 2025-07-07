@@ -130,25 +130,25 @@ def most_replicated_expression(
   return None
 
 
-def simplify_expression(
+def reduce_expression(
     expr: Expression, assignments: dict[Variable, ConstantExpression]
 ) -> Expression:
-  """Simplifies an expression as much as is possible given a set of known variable assignments."""
-  simplify = simplify_expression
+  """Reduces an expression as much as is possible given a set of known variable assignments."""
+  reduce = reduce_expression
   match expr:
     case ConstantExpression():
       return expr
     case Variable():
       return assignments.get(expr, expr)
     case MostReplicatedExpression(expressions=expressions):
-      reduced_expressions = tuple(simplify(e, assignments) for e in expressions)
+      reduced_expressions = tuple(reduce(e, assignments) for e in expressions)
       if most_replicated := most_replicated_expression(reduced_expressions):
-        return simplify(most_replicated, assignments)
+        return reduce(most_replicated, assignments)
       return MostReplicatedExpression(expressions=reduced_expressions)
     case LeastReplicatedExpression(expressions=expressions):
-      reduced_expressions = tuple(simplify(e, assignments) for e in expressions)
+      reduced_expressions = tuple(reduce(e, assignments) for e in expressions)
       if least_replicated := least_replicated_expression(reduced_expressions):
-        return simplify(least_replicated, assignments)
+        return reduce(least_replicated, assignments)
       return LeastReplicatedExpression(expressions=reduced_expressions)
     case _:
       assert_never(expr)
@@ -180,8 +180,8 @@ def reduce_equation(
           a variable.
       - Unknown(): if the equation contains remaining unknown variables.
   """
-  lhs = simplify_expression(eq.lhs, assignments)
-  rhs = simplify_expression(eq.rhs, assignments)
+  lhs = reduce_expression(eq.lhs, assignments)
+  rhs = reduce_expression(eq.rhs, assignments)
   match (lhs, rhs):
     case (Variable(), ConstantExpression()):
       return SatisfiedBy((lhs, rhs))
@@ -269,16 +269,16 @@ class Tautological:
 Solution = Unsatisfiable | SatisfiedBy | Unknown | Tautological
 
 
-def _simplify_system_once(
+def _reduce_system_once(
     equation_system: EquationSystem,
 ) -> EquationSystem | Unsatisfiable | None:
-  """Performs one simplification step over each equation in an equation system.
+  """Performs one reduction step over each equation in an equation system.
 
   Returns:
     - Unsatisfiable(): if the equation system is unsatisfiable.
-    - A new equation system if any equation was simplified.
+    - A new equation system if any equation was reduced.
     - None: if the equation system is not known unsatisfiable, but hasn't been
-      simplified.
+      reduced.
   """
   changed = False
   assignments: dict[Variable, ConstantExpression] = dict()
@@ -309,15 +309,15 @@ def _simplify_system_once(
   return None
 
 
-def simplify(equation_system: EquationSystem) -> EquationSystem | Unsatisfiable:
-  """Simplifies an equation system until it can no longer be simplified.
+def reduce(equation_system: EquationSystem) -> EquationSystem | Unsatisfiable:
+  """Reduces an equation system until it can no longer be reduced.
 
   Returns:
     - Unsatisfiable(): if the equation system is unsatisfiable.
-    - The maximally simplified equation system otherwise.
+    - The maximally reduced equation system otherwise.
   """
   while True:
-    match (new_system := _simplify_system_once(equation_system)):
+    match (new_system := _reduce_system_once(equation_system)):
       case None:
         break
       case Unsatisfiable():
