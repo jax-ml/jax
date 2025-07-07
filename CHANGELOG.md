@@ -44,6 +44,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Deprecations:
   * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new
     {func}`jax.dlpack.is_supported_dtype` function.
+  * {func}`jax.scipy.special.sph_harm` has been deprecated following a similar
+    deprecation in SciPy; use {func}`jax.scipy.special.sph_harm_y` instead.
 
 ## JAX 0.6.2 (June 17, 2025)
 
