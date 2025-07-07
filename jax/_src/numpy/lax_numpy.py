@@ -6409,14 +6409,18 @@ def _repeat(a: ArrayLike, *, repeats: ArrayLike, axis: int | None = None,
     if np.ndim(repeats) == 0 and np.ndim(arr) != 0:
       input_shape = arr.shape
       axis = _canonicalize_axis(axis, len(input_shape))
-      aux_axis = axis + 1
-      aux_shape: list[DimSize] = list(input_shape)
-      aux_shape.insert(aux_axis, operator.index(repeats) if core.is_constant_dim(repeats) else repeats)  # type: ignore
-      arr = lax.broadcast_in_dim(
-        arr, aux_shape, [i for i in range(len(aux_shape)) if i != aux_axis])
       result_shape: list[DimSize] = list(input_shape)
       result_shape[axis] *= repeats
-      return arr.reshape(result_shape)
+      if core.definitely_equal(input_shape[axis], 1):
+        return lax.broadcast_in_dim(arr, result_shape,
+                                    list(range(len(result_shape))))
+      else:
+        aux_axis = axis + 1
+        aux_shape: list[DimSize] = list(input_shape)
+        aux_shape.insert(aux_axis, operator.index(repeats) if core.is_constant_dim(repeats) else repeats)  # type: ignore
+        arr = lax.broadcast_in_dim(
+          arr, aux_shape, [i for i in range(len(aux_shape)) if i != aux_axis])
+        return arr.reshape(result_shape)
 
     repeats = np.ravel(repeats)
     if arr.ndim != 0:
