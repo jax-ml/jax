@@ -223,9 +223,8 @@ _mesh_object_dict = {}  # type: ignore
 class Mesh(BaseMesh, contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
 
-  See the Distributed arrays and automatic parallelization tutorial
-  (https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
-  and Explicit sharding tutorial (https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html)
+  See `Distributed arrays and automatic parallelization`_ and
+  `Explicit Sharding`_ tutorials.
 
   Args:
     devices: A NumPy ndarray object containing JAX device objects (as
@@ -250,6 +249,7 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
     >>> out = jax.jit(lambda x: x * 2)(arr)
     >>> assert out.sharding == NamedSharding(mesh, P('x', 'y'))
 
+  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
   .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
 
