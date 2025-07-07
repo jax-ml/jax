@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from typing import Callable
 
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -119,7 +120,8 @@ def create_instr_descriptor(
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
-def create_scaled_instr_descriptor(
+def _create_scaled_instr_descriptor(
+    get_input_encoding: Callable[[ir.Type], int],
     m: int,
     n: int,
     a_type: ir.Type,
@@ -133,13 +135,6 @@ def create_scaled_instr_descriptor(
   # Bits 0, 1 are reserved
   # We ignore sparsity (bit 2)
   # Bit 3 is reserved
-  def get_input_encoding(ty):
-    if ty == ir.Float8E4M3FNType.get():
-      return 0
-    elif ty == ir.Float8E5M2Type.get():
-      return 1
-    else:
-      raise NotImplementedError(f"Unsupported input dtype: {ty}")
   assert 0 <= b_scale_idx < 4
   desc |= b_scale_idx << 4  # B scale factor data ID, bits 4-5
   # Bit 6 is reserved
@@ -159,6 +154,26 @@ def create_scaled_instr_descriptor(
   desc |= a_scale_idx << 29  # A scale factor data ID, bits 29-30
   # Bit 31 is reserved
   return arith.constant(ir.IntegerType.get_signless(32), desc)
+
+
+def create_scaled_f8f6f4_instr_descriptor(*args, **kwargs):
+  def get_input_encoding(ty):
+    if ty == ir.Float8E4M3FNType.get():
+      return 0
+    elif ty == ir.Float8E5M2Type.get():
+      return 1
+    else:
+      raise NotImplementedError(f"Unsupported input dtype: {ty}")
+  return _create_scaled_instr_descriptor(get_input_encoding, *args, **kwargs)
+
+
+def create_scaled_f4_instr_descriptor(*args, **kwargs):
+  def get_input_encoding(ty):
+    if ty == ir.Float4E2M1FNType.get():
+      return 1
+    else:
+      raise NotImplementedError(f"Unsupported input dtype: {ty}")
+  return _create_scaled_instr_descriptor(get_input_encoding, *args, **kwargs)
 
 
 def mma(
@@ -285,6 +300,18 @@ def mma(
           f"Block-scaled MMA with element type {element_type} only supports f32"
           f" accumulators, but got: {d.dtype}"
       )
+  elif any(
+      t.isinstance(element_type) for t in {ir.Float4E2M1FNType}
+  ):
+    if not is_scaled:
+      raise ValueError(
+          f"MMA with element type {element_type} only supports block scaling"
+      )
+    if d.dtype != f32:
+      raise ValueError(
+          f"Block-scaled MMA with element type {element_type} only supports f32"
+          f" accumulators, but got: {d.dtype}"
+      )
   elif element_type == ir.IntegerType.get_signless(8):
     if d.dtype != s32:
       raise ValueError(
@@ -297,7 +324,7 @@ def mma(
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.
   m_group_elems = m  # We have already verified M is supported above.
-  k_group_elems = swizzle // utils.bytewidth(element_type)
+  k_group_elems = 8 * swizzle // utils.bitwidth(element_type)
   if n % 8:
     raise ValueError(f"N must be a multiple of 8, got: {n}")
   if n.bit_count() != 1:
@@ -330,11 +357,12 @@ def mma(
     if m != 128:
       raise NotImplementedError(f"MMA with block scaling requires M to be 128, got: {m}")
     if k_group_elems != 128:
+      assert utils.bitwidth(element_type) <= 8
+      expected_swizzle = 128 // (8 // utils.bitwidth(element_type))
       raise NotImplementedError(
-          f"MMA with block scaling requires swizzle to be 128, got: {swizzle}"
+          "MMA with block scaling requires swizzle to be"
+          f" {expected_swizzle} for dtype {element_type}, got: {swizzle}"
       )
-    if m_groups != 1 or k_groups != 1 or n_groups != 1:
-      raise NotImplementedError("MMA with block scaling does not support unrolling")
     if a_scale.shape != (m, 4):
       raise ValueError(
           f"A scale shape mismatch: expected ({m}, 4), got {a_scale.shape}"
@@ -382,6 +410,16 @@ def mma(
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
   )
+
+  if is_scaled and utils.bitwidth(mma_element_type) == 4:
+    if a_fastest != mma_utils.Dim.K:
+      raise ValueError(
+          "4-bit block scaled MMA only supports K-fastest operands, but A is M-fastest"
+      )
+    if b_fastest != mma_utils.Dim.K:
+      raise ValueError(
+          "4-bit block scaled MMA only supports K-fastest operands, but B is N-fastest"
+      )
 
   # Step 4. Issue the instructions.
   true = arith.constant(ir.IntegerType.get_signless(1), 1)
@@ -448,20 +486,29 @@ def _do_mma(
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
-  elem_bytewidth = utils.bytewidth(element_type)
-  kn_tiling = swizzle // elem_bytewidth
-  instr_k = 32 // elem_bytewidth
-  packing = 4 // elem_bytewidth
+  elem_bitwidth = utils.bitwidth(element_type)
+  kn_tiling = 8 * swizzle // elem_bitwidth
+  instr_k = 8 * 32 // elem_bitwidth
+  packing = 8 * 4 // elem_bitwidth
   if (a_k_stride is not None and a_k_stride % 16) or b_k_stride % 16:
     raise ValueError
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
 
+  scale_steps = None
   if is_scaled:
-    if (not ir.Float8E5M2Type.isinstance(element_type) and
-        not ir.Float8E4M3FNType.isinstance(element_type)):
+    if (ir.Float8E5M2Type.isinstance(element_type) or
+        ir.Float8E4M3FNType.isinstance(element_type)):
+      kind = "mxf8f6f4.block_scale.scale_vec::1X"
+      scale_steps = 4
+      create_scaled_instr_descriptor = create_scaled_f8f6f4_instr_descriptor
+    elif ir.Float4E2M1FNType.isinstance(element_type):
+      assert not a_transpose and not b_transpose
+      kind = "mxf4.block_scale.scale_vec::2X"
+      scale_steps = 2
+      create_scaled_instr_descriptor = create_scaled_f4_instr_descriptor
+    else:
       raise NotImplementedError(f"Unsupported element type for block scaling: {element_type}")
-    kind = "mxf8f6f4.block_scale.scale_vec::1X"
     extra_args = (a_scale_addr, b_scale_addr)
     extra_ptx = "[$5], [$6], "
     extra_constraints = ",r,r"
@@ -478,16 +525,20 @@ def _do_mma(
       raise NotImplementedError(f"Unsupported input element type: {element_type}")
     extra_args = ()
     extra_constraints = extra_ptx = ""
+    create_scaled_instr_descriptor = None
 
   num_cta = 2 if collective else 1
   a_in_tmem = a_k_stride is None
   a_ptx = "[$1]" if a_in_tmem else "$1"
   a_ptx_constraint = "r" if a_in_tmem else "l"
   assert a_desc_or_addr.type == ir.IntegerType.get_signless(32 if a_in_tmem else 64)
+  assert scale_steps is None or scale_steps == kn_tiling // instr_k
   for k_step in range(kn_tiling // instr_k):
     if is_scaled:
+      scale_vec_width = 4 // scale_steps
+      scale_id = k_step * scale_vec_width
       i_desc = create_scaled_instr_descriptor(
-          m, n, element_type, element_type, k_step, k_step, a_transpose, b_transpose
+          m, n, element_type, element_type, scale_id, scale_id, a_transpose, b_transpose
       )
     else:
       i_desc = create_instr_descriptor(

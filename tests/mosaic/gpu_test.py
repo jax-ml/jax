@@ -1533,20 +1533,20 @@ class TCGen05Test(TestCase):
     self.assertEqual(matches, 128 * 4)
 
   @parameterized.product(
-      in_jax_dtype=(jnp.float8_e5m2, jnp.float8_e4m3fn),
+      in_jax_dtype=(jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float4_e2m1fn),
       m=(128,),  # TODO(apaszke): 256
       n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
   )
   def test_mma_block_scaled(self, m, n, in_jax_dtype):
     out_jax_dtype = jnp.float32
     scale_jax_dtype = jnp.float8_e8m0fnu
-    swizzle = 128
+    swizzle = 128 // (8 // jnp.finfo(in_jax_dtype).bits)
     k_steps = 1
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
-    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
+    swizzle_elems = 8 * swizzle // bitwidth(in_mlir_dtype)
     k = swizzle_elems * k_steps
     lhs_tiling = rhs_tiling = (8, swizzle_elems)
 
@@ -1568,7 +1568,7 @@ class TCGen05Test(TestCase):
         tcgen05.mma(
             acc,
             lhs_smem,
-            rhs_smem,
+            mgpu.memref_transpose(rhs_smem, (1, 0, 3, 2)),
             a_swizzle=swizzle,
             b_swizzle=swizzle,
             a_scale=lhs_scales,
@@ -1581,7 +1581,7 @@ class TCGen05Test(TestCase):
 
     x_shape = (m, k)
     x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
-    y_shape = (k, n)
+    y_shape = (n, k)
     y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
     scratch_shape = [
@@ -1612,8 +1612,8 @@ class TCGen05Test(TestCase):
     )(*args)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     a_logical_scales = jnp.repeat(a_scales, 32, axis=1).astype(jnp.float32)
-    b_logical_scales = jnp.repeat(b_scales, 32, axis=1).T.astype(jnp.float32)
-    ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales)
+    b_logical_scales = jnp.repeat(b_scales, 32, axis=1).astype(jnp.float32)
+    ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales).T
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 7e-5
     rtol = 8e-4 if out_jax_dtype == jnp.float16 else 5e-6
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
