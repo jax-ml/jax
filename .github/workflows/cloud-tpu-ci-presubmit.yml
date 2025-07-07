@@ -54,7 +54,7 @@ jobs:
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "TPU test (jaxlib=head)"
     with:
-      runner: "linux-x86-ct4p-240-4tpu"
+      runner: "linux-x86-ct4p-240-4tpu-test"
       cores: "4"
       tpu-type: "v4-8"
       python: "3.11"
