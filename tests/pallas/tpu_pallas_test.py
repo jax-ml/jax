@@ -35,7 +35,6 @@ from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import _jax
-from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax._src.state import discharge as state_discharge
 from jax._src.state import utils as state_utils
 from jax.experimental import mesh_utils
@@ -98,7 +97,6 @@ class PallasBaseTest(jtu.JaxTestCase):
     if not jtu.test_device_matches(['tpu']) and not self.INTERPRET:
       self.skipTest('Test requires TPUs, or interpret mode')
     super().setUp()
-    _trace_kernel_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
