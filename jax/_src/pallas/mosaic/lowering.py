@@ -3562,7 +3562,9 @@ def _device_id_to_logical(
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
 
 
-@register_lowering_rule(primitives.semaphore_read_p)
+@register_lowering_rule(
+    primitives.semaphore_read_p, kernel_types=[*tpu_core.KernelType]
+)
 def _semaphore_read_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -3585,7 +3587,9 @@ def _semaphore_read_lowering_rule(
   return tpu.sem_read(sem)
 
 
-@register_lowering_rule(primitives.semaphore_signal_p)
+@register_lowering_rule(
+    primitives.semaphore_signal_p, kernel_types=[*tpu_core.KernelType]
+)
 def _semaphore_signal_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -3603,7 +3607,9 @@ def _semaphore_signal_lowering_rule(
   return []
 
 
-@register_lowering_rule(primitives.semaphore_wait_p)
+@register_lowering_rule(
+    primitives.semaphore_wait_p, kernel_types=[*tpu_core.KernelType]
+)
 def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem_aval, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
   sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
