@@ -2307,7 +2307,7 @@ def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
 
 
 @partial(jit, static_argnames=["method", "tol"])
-def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, method: Literal["eigen", "schur"] = "schur", tol: float = 1e-8) -> Array:
+def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: Literal["eigen", "schur"] = "schur", tol: float = 1e-8) -> Array:
     """
     Solves the Sylvester equation
     .. math::
