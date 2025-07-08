@@ -4392,6 +4392,45 @@ if hp is not None:
         np.testing.assert_array_equal(result, jax.lax.broadcast_in_dim(x, out_shape, dims))
       run()
 
+    @hp.given(hps.data())
+    def test_canonicalize_trivial_dims(self, data):
+      layout = data.draw(tiled_layouts((128, 1)))
+      trivial_dims = [
+          i
+          for i, d in fa.enumerate_negative(layout.tiled_tiling_shape)
+          if d == 1 and i != layout.vector_dim
+      ]
+      if not trivial_dims:
+        hp.assume(False)
+      # That should not happen in canonical layouts.
+      self.assertNoCommonElements(trivial_dims, layout.partitioned_warp_dims)
+      self.assertNoCommonElements(trivial_dims, layout.partitioned_lane_dims)
+      # vector_dim can be trivial.
+      canonical_layout = layout
+      use_trivial_dim = data.draw(
+          hps.lists(hps.booleans(), min_size=len(trivial_dims), max_size=len(trivial_dims))
+      )
+      hp.assume(any(use_trivial_dim))
+      for d, use in zip(trivial_dims, use_trivial_dim):
+        if not use:
+          continue
+        if data.draw(hps.booleans()):  # Should we put it in warp or lane dims?
+          new_warp_dims = list(layout.warp_dims)
+          position = data.draw(hps.integers(0, len(layout.warp_dims)))
+          new_warp_dims.insert(position, d)
+          layout = dataclasses.replace(
+              layout, warp_dims=tuple(new_warp_dims), _check_canonical=False
+          )
+        else:
+          new_lane_dims = list(layout.lane_dims)
+          position = data.draw(hps.integers(0, len(layout.lane_dims)))
+          new_lane_dims.insert(position, d)
+          layout = dataclasses.replace(
+              layout, lane_dims=tuple(new_lane_dims), _check_canonical=False
+          )
+      self.assertNotEqual(layout, canonical_layout)
+      self.assertEqual(layout.canonicalize(), canonical_layout)
+
 
 if __name__ == "__main__":
   absltest.main(argv=["python"], testLoader=jtu.JaxTestLoader())

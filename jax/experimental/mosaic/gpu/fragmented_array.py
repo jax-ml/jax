@@ -524,10 +524,9 @@ class TiledLayout:
   def canonicalize(self) -> TiledLayout:
     """Returns a version of this layout where tiling is canonical."""
     canonical_tiling = self.tiling.canonicalize()
-    if canonical_tiling == self.tiling:
-      return self
 
     s = self.base_tile_shape
+    tiled_tiling_shape = self.tiled_tiling_shape
     canonical_tiled_tiling_shape = canonical_tiling.tile_shape(s)[len(s):]
     offset = len(canonical_tiled_tiling_shape) - 1
 
@@ -553,7 +552,7 @@ class TiledLayout:
     #
     # which will yield offsets `4` for `warp_dims[0]`, `4` for `lane_dims[0]`,
     # and `0` for `vector_dim`.
-    for d in reversed(self.tiled_tiling_shape):
+    for d in reversed(tiled_tiling_shape):
       if offset >= 0 and d == canonical_tiled_tiling_shape[offset]:
         rev_removed_dims.append(False)
         offset -= 1
@@ -566,12 +565,15 @@ class TiledLayout:
     def replace_tiled_dim(d: int | Replicated):
       return d if isinstance(d, Replicated) else d + dim_offsets[d]
 
+    def is_nontrivial(d: int | Replicated):
+      return isinstance(d, Replicated) or tiled_tiling_shape[d] != 1
+
     return TiledLayout(
         canonical_tiling,
-        tuple(replace_tiled_dim(d) for d in self.warp_dims),
-        tuple(replace_tiled_dim(d) for d in self.lane_dims),
+        tuple(replace_tiled_dim(d) for d in self.warp_dims if is_nontrivial(d)),
+        tuple(replace_tiled_dim(d) for d in self.lane_dims if is_nontrivial(d)),
         replace_tiled_dim(self.vector_dim),
-        _check_canonical=True
+        _check_canonical=False,
     )
 
 
