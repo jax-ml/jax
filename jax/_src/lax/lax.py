@@ -4841,7 +4841,7 @@ def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
     return convert_element_type_p.bind(tangent, new_dtype=new_tangent_dtype,
                                        weak_type=weak_type, sharding=sharding)
 
-def _convert_elt_type_folding_rule(consts, eqn):
+def _convert_elt_type_folding_rule(consts, params, out_avals):
   # We constant-fold convert_element_types applied to constants if those
   # constants are Python builtin numeric types or numpy.ndarrays (so as not
   # to perform any device operations when constant-folding) and if the output
@@ -4851,29 +4851,30 @@ def _convert_elt_type_folding_rule(consts, eqn):
   # we output a Python builtin numeric type.
   # TODO(mattjj): allow constant-folding CPU-backed JAX arrays
   c, = consts
-  o, = eqn.outvars
-  new_dtype = eqn.params['new_dtype']
+  out_aval, = out_avals
+  new_dtype = params['new_dtype']
   if (type(c) in {np.ndarray, *dtypes.python_scalar_dtypes} and
-      isinstance(o.aval, core.UnshapedArray) and not np.shape(c) and
+      isinstance(out_aval, core.UnshapedArray) and not np.shape(c) and
       not dtypes.issubdtype(new_dtype, dtypes.extended)):
     out = np.array(c)
     if (dtypes.issubdtype(out.dtype, np.complexfloating) and
         not dtypes.issubdtype(new_dtype, np.complexfloating)):
       out = out.real
     out = out.astype(new_dtype)
-    if not o.aval.weak_type:
-      return [out], None
+    if not out_aval.weak_type:
+      return [out]
     out = out.item()
-    if core.get_aval(out).dtype is o.aval.dtype:
-      return [out], None
-  return [None], eqn
+    if core.get_aval(out).dtype is out_aval.dtype:
+      return [out]
+  return None
 
 def _convert_elt_type_fwd_rule(eqn):
-  v, = eqn.invars
-  if (v.aval.dtype == eqn.params['new_dtype'] and
-      v.aval.weak_type == eqn.params['weak_type'] and
-      not dtypes.issubdtype(v.aval.dtype, dtypes.extended) and
-      (eqn.params['sharding'] is None or eqn.params['sharding'] == v.aval.sharding)):
+  t, = eqn.invars
+  aval = t.aval
+  if (aval.dtype == eqn.params['new_dtype'] and
+      aval.weak_type == eqn.params['weak_type'] and
+      not dtypes.issubdtype(aval.dtype, dtypes.extended) and
+      (eqn.params['sharding'] is None or eqn.params['sharding'] == aval.sharding)):
     return [0], None
   else:
     return [None], eqn

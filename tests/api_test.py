@@ -5123,6 +5123,17 @@ class APITest(jtu.JaxTestCase):
     self.assertLen(g().consts, 2)
 
 
+  def test_implicit_dce(self):
+    def foo(x):
+      const = np.zeros((300,))
+      r = weakref.ref(const)
+      jnp.sin(const) + const
+      del const
+      assert r() is None, "oops, the constant wasn't DCE'd"
+      return x + x
+
+    jax.make_jaxpr(foo)(1.0)
+
 class RematTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -6196,7 +6207,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count(), 2)  # fwd execute_trivial, backward_pass on bwd
+    self.assertEqual(count(), 1)  # backward_pass on bwd
 
   def test_vjp_caching_static_argnums(self):
     identity = jax.remat(lambda x, y: jax.jit(lambda x: 2 * x if y else x)(x),
@@ -6205,7 +6216,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count(), 2)  # fwd execute_trivial, backward_pass on bwd
+    self.assertEqual(count(), 1)  # backward_pass on bwd
 
   def test_fwd_caching(self):
     # see above test also
