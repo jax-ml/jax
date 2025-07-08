@@ -42,6 +42,7 @@ These APIs are now accessed via :mod:`jax.tree`.
    tree_leaves
    tree_map
    tree_reduce
+   tree_reduce_associative
    tree_structure
    tree_transpose
    tree_unflatten
