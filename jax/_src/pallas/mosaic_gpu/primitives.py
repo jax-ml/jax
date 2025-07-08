@@ -54,6 +54,7 @@ WARPGROUP_SIZE = 128
 _Ref = state.AbstractRef | state_types.TransformedRef
 Layout = gpu_core.Layout
 ParameterizedLayout = gpu_core.ParameterizedLayout
+SomeLayout = gpu_core.SomeLayout
 
 
 def _check_ref(
@@ -1624,7 +1625,7 @@ def broadcasted_iota(
     shape: Sequence[int],
     dimension: int,
     *,
-    layout: Layout | None = None,
+    layout: SomeLayout | None = None,
 ) -> jax.Array:
   result = jax.lax.broadcasted_iota(dtype, shape, dimension)
   if layout is not None:
@@ -1810,7 +1811,7 @@ def jaxpr_call(
 class ShapeDtypeStruct:
   shape: tuple[int, ...]
   dtype: jnp.dtype
-  layout: ParameterizedLayout | Layout
+  layout: SomeLayout
 
 
 inline_mgpu_p = jax_core.Primitive("inline_mgpu_p")
@@ -2052,7 +2053,7 @@ def load(
     src: _Ref,
     idx,
     *,
-    layout: Layout | None = None,
+    layout: SomeLayout | None = None,
     optimized: bool = True,
 ) -> jax.Array:
   """Loads from a reference into an array with the specified layout.
@@ -2086,7 +2087,7 @@ def load(
 
 async_load_tmem_p = jax_core.Primitive("async_load")
 
-def async_load_tmem(src: _Ref, idx = (), *, layout: Layout | None = None) -> jax.Array:
+def async_load_tmem(src: _Ref, idx = (), *, layout: SomeLayout | None = None) -> jax.Array:
   """Performs an asynchronous load from the TMEM array.
 
   The load operation is only partly asynchronous. The returned array can be used

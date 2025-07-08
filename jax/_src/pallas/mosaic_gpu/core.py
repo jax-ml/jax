@@ -1276,6 +1276,7 @@ class Layout(enum.Enum):
       case Layout.TCGEN05_M64_COLLECTIVE:
         return tcgen05.fa_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
 
+
 @dataclasses.dataclass(frozen=True)
 class ParameterizedLayout:
   layout_cls: Layout
@@ -1288,3 +1289,6 @@ class ParameterizedLayout:
 
   def to_mgpu(self) -> mgpu.FragmentedLayout:
     return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
+
+
+SomeLayout = Layout | ParameterizedLayout
