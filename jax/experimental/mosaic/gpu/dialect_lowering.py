@@ -588,34 +588,35 @@ def _mgpu_layout_cast_op_lowering_rule(
   return [_fragmented_array_to_ir(out_array, op.result.type)]
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
-if hasattr(mgpu, "BroadcastInDimOp"):
-  @_register_lowering(mgpu.BroadcastInDimOp)
-  def _mgpu_broadcast_in_dim_op_lowering_rule(
-      _: LoweringContext, op: mgpu.BroadcastInDimOp
-  ) -> Sequence[ir.Value]:
-    in_ty = ir.VectorType(op.operand.type)
-    out_ty = ir.VectorType(op.result.type)
-    if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
-      raise NotImplementedError(
-          "Broadcast in dim with non-trivial broadcast dimensions is not"
-          f" supported: {op}"
-      )
+@_register_lowering(mgpu.BroadcastInDimOp)
+def _mgpu_broadcast_in_dim_op_lowering_rule(
+    _: LoweringContext, op: mgpu.BroadcastInDimOp
+) -> Sequence[ir.Value]:
+  in_ty = ir.VectorType(op.operand.type)
+  out_ty = ir.VectorType(op.result.type)
+  if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
+    raise NotImplementedError(
+        "Broadcast in dim with non-trivial broadcast dimensions is not"
+        f" supported: {op}"
+    )
 
-    broadcast_dims = list(op.broadcast_dimensions)
-    in_layout = inference_utils.in_layouts(op)[0]
-    operand_fa = _fragmented_array_from_ir(op.operand, in_layout)
+  broadcast_dims = list(op.broadcast_dimensions)
+  in_layout = inference_utils.in_layouts(op)[0]
+  operand_fa = _fragmented_array_from_ir(op.operand, in_layout)
 
-    if (operand_fa.layout == fa.WGMMA_ROW_LAYOUT and broadcast_dims == [0]):
-      out = operand_fa.broadcast_minor(out_ty.shape[1])
-    elif (operand_fa.layout == fa.WGMMA_COL_LAYOUT and broadcast_dims == [1]):
-      out = operand_fa.broadcast_in_dim(out_ty.shape, (1,), fa.WGMMA_LAYOUT)
-    else:
-      raise NotImplementedError(
-          "Broadcast in dim with non-trivial broadcast dimensions is not"
-          f" supported: {op}"
-      )
-    return [_fragmented_array_to_ir(out, out_ty)]
+  # TODO(bchetioui): handle the case where a target layout is provided. This
+  # will only be possible to enable on all paths once the minimum jaxlib is
+  # 0.7.0.
+  if (operand_fa.layout == fa.WGMMA_ROW_LAYOUT and broadcast_dims == [0]):
+    out = operand_fa.broadcast_minor(out_ty.shape[1])
+  elif (operand_fa.layout == fa.WGMMA_COL_LAYOUT and broadcast_dims == [1]):
+    out = operand_fa.broadcast_in_dim(out_ty.shape, (1,), fa.WGMMA_LAYOUT)
+  else:
+    raise NotImplementedError(
+        "Broadcast in dim with non-trivial broadcast dimensions is not"
+        f" supported: {op}"
+    )
+  return [_fragmented_array_to_ir(out, out_ty)]
 
 
 def swizzle_and_transforms_from_transforms_attr(

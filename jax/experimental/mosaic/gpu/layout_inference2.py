@@ -25,6 +25,9 @@ from typing import cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import func
+from jax._src.lib.mlir.dialects import math as mlir_math
+from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
 from . import equations as eqns
@@ -69,28 +72,107 @@ class Hint:
   expression: eqns.Expression
 
 
-def choose_variable_assignment_from_hints(
-    hints: Sequence[Hint],
-) -> tuple[eqns.Variable, eqns.ConstantExpression] | None:
-  """Attempts to choose a single variable assignment from a list of `Hint`s."""
-  for hint in hints:
-    if isinstance(hint.expression, eqns.ConstantExpression):
-      return (hint.variable, hint.expression)
-  return None
+def extract_constant_from_least_replicated_expression_for_hint(
+    expressions: tuple[eqns.Expression, ...],
+) -> eqns.Expression | None:
+  choices: list[eqns.Constant] = []
+  for e in expressions:
+    if (red := extract_constant_for_hint(e)) is not None:
+      choices.append(red)
+
+  if not choices:
+    return None
+
+  # We reduce the expression here in order to recover an unambiguous least
+  # replicated layout if it exists.
+  maybe_choice = eqns.reduce_expression(
+      eqns.LeastReplicated(tuple(choices)), {}
+  )
+
+  if isinstance(maybe_choice, eqns.Unsatisfiable):
+    return choices[0]
+
+  assert isinstance(maybe_choice, eqns.Constant)
+  return maybe_choice
 
 
-def reduce_hint(
-    h: Hint, assignments: dict[eqns.Variable, eqns.ConstantExpression]
-) -> Hint:
-  """Like `eqns.reduce_equation` but for `Hint`s."""
-  return dataclasses.replace(
-      h, expression=eqns.reduce_expression(h.expression, assignments))
+def extract_constant_from_most_replicated_expression_for_hint(
+    expressions: tuple[eqns.Expression, ...],
+) -> eqns.Expression | None:
+  assert len(expressions) >= 1
+  choices: list[eqns.Constant] = []
+  for e in expressions:
+    if (red := extract_constant_for_hint(e)) is not None:
+      choices.append(red)
+
+  if not choices:
+    return None
+
+  maybe_choice = eqns.reduce_expression(
+      eqns.MostReplicated(tuple(choices)), {}
+  )
+
+  if isinstance(maybe_choice, eqns.Unsatisfiable):
+    return choices[0]
+
+  assert isinstance(maybe_choice, eqns.Constant)
+  return maybe_choice
+
+
+def extract_constant_for_hint(e: eqns.Expression) -> eqns.Constant | None:
+  """Attempts to extract a `ConstantExpression` from a `Hint`'s `Expression`.
+
+  Returns `None` if no `ConstantExpression` could be reasonably extracted.
+  """
+  match e:
+    case eqns.Constant():
+      return e
+    case eqns.LeastReplicated():
+      return extract_constant_from_least_replicated_expression_for_hint(e.expressions)
+    case eqns.MostReplicated():
+      return extract_constant_from_most_replicated_expression_for_hint(e.expressions)
+    case eqns.Variable():
+      return None
+    case _:
+      raise NotImplementedError(f"Unsupported expression type: {type(e)}")
+
+
+def extract_variable_assignment_from_hint(
+    hint: Hint,
+) -> tuple[eqns.Variable, eqns.Constant] | None:
+  """Attempts to extract a single variable assignment from a `Hint`."""
+  # TODO(bchetioui): make this a generator. This will allow us to maybe extract
+  # different assignments that satisfy a replication constraint in the case
+  # where replicated expressions are incompatible and several extractions are
+  # possible.
+  red = extract_constant_for_hint(hint.expression)
+  return (hint.variable, red) if red is not None else None
+
+
+def reduce_hints(
+    hints: Sequence[Hint], assignments: dict[eqns.Variable, eqns.Constant]
+) -> Sequence[Hint]:
+  """Reduces a sequence of `Hint`s.
+
+  We reduce the `Hint`s' expressions, drop `Unsatisfiable` hints, and drop
+  `Hint`s pertaining to pre-existing assignments.
+  """
+  new_hints: list[Hint] = []
+  for h in hints:
+    if h.variable not in assignments:
+      reduced_expression = eqns.reduce_expression(h.expression, assignments)
+      if isinstance(reduced_expression, eqns.Unsatisfiable):
+        continue
+      new_hints.append(dataclasses.replace(h, expression=reduced_expression))
+
+  return new_hints
+
 
 def find_assignments_for(
     unknowns: set[eqns.Variable],
     equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
-) -> dict[eqns.Variable, eqns.ConstantExpression] | eqns.Unsatisfiable:
+) -> dict[eqns.Variable, eqns.Constant] | eqns.Unsatisfiable:
   """Attempts to find assignments that satisfy `equation_system` for `unknowns`.
 
   Args:
@@ -103,35 +185,46 @@ def find_assignments_for(
     - A dictionary assigning all the unknown variables to `ConstantExpression`s
       such that the assignment satisfies the equation system otherwise.
   """
-  while True:
-    equation_system = eqns.reduce(equation_system)
-    if isinstance(equation_system, eqns.Unsatisfiable):
-      return eqns.Unsatisfiable()
+  equation_system = eqns.reduce(equation_system)
+  if isinstance(equation_system, eqns.Unsatisfiable):
+    return eqns.Unsatisfiable()
 
-    remaining_unknowns = unknowns - equation_system.assignments.keys()
+  remaining_unknowns = unknowns - equation_system.assignments.keys()
+  # In this case, we have determined an assignment for all the unknown
+  # variables. Return their respective assignment.
+  if not remaining_unknowns:
+    return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
 
-    # In this case, we have determined an assignment for all the unknown
-    # variables. Return their respective assignment.
-    if not remaining_unknowns:
-      return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
+  # Reduce the expressions in the remaining hints based on the current
+  # assignments, and eliminate hints that pertain to variables that already
+  # have an assignment.
+  hints = reduce_hints(hints, equation_system.assignments)
 
-    # Reduce the expressions in the remaining hints based on the current
-    # assignments, and eliminate hints that pertain to variables that already
-    # have an assignment.
-    hints = [reduce_hint(h, equation_system.assignments) for h in hints
-             if h.variable not in equation_system.assignments]
-
-    # If unknowns remain and we have fully reduced the system, we may still
-    # be able to make progress by extracting an assignment from a `Hint`. In a
-    # system that has otherwise been fully reduced, it is guaranteed that
-    # introducing a new assignment will yield a system that remains satisfiable
-    # if the original system was satisfiable---because this is a sign of an
-    # underdetermined system.
-    if (assignment := choose_variable_assignment_from_hints(hints)) is not None:
+  # If unknowns remain and we have fully reduced the system, we may still
+  # be able to make progress by extracting an assignment from a `Hint`. This
+  # new assignment could make the system unsatisfiable, so we use a recursive
+  # call to be able to backtrack if necessary.
+  #
+  # Make a copy of the hints to allow deleting unnecessary hints from the list,
+  # without modifying the list being iterated over.
+  remaining_hints: list[Hint] = hints[:]
+  for i, hint in reversed(list(enumerate(hints))):
+    if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
       variable, expr = assignment
-      equation_system &= eqns.EquationSystem(assignments={variable: expr})
-    else:
-      break
+      new_equation_system = (
+          eqns.EquationSystem(assignments={variable: expr}) & equation_system)
+      if isinstance(new_equation_system, eqns.Unsatisfiable):
+        # This assignment is not compatible with the equation system.
+        continue
+      other_hints = remaining_hints[:i] + remaining_hints[i + 1:]
+      solution = find_assignments_for(unknowns, new_equation_system, other_hints)
+      if isinstance(solution, eqns.Unsatisfiable):
+        # This assignment is not compatible with the equation system. We remove
+        # it from the list of hints.
+        remaining_hints.pop(i)
+        continue
+      return solution
+  hints = remaining_hints
 
   # Here, we have not managed to find an assignment for all the unknown
   # variables, and our hints have not proven sufficient to unblock us. We now
@@ -156,7 +249,7 @@ def find_assignments_for(
     desired_vec_size = 8 // utils.bytewidth(ty.element_type)
     vec_size = min(max_vec_size, desired_vec_size)
     layout = fa.WGStridedFragLayout(shape=tuple(ty.shape), vec_size=vec_size)
-    new_assignment = {variable: eqns.ConstantExpression(layout)}
+    new_assignment = {variable: eqns.Constant(layout)}
     new_system = equation_system & eqns.EquationSystem(assignments=new_assignment)
     if isinstance(new_system, eqns.Unsatisfiable):
       # This assignment is not compatible with the equation system.
@@ -204,6 +297,88 @@ def is_vector(v: ir.Value) -> bool:
   return ir.VectorType.isinstance(v.type)
 
 
+def _pointwise_op_equation_system(
+    op: ir.OpView
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  all_operands_and_results = operands_and_results(op)
+  variable = eqns.Variable(all_operands_and_results[0])
+  return eqns.EquationSystem(), {variable: all_operands_and_results}
+
+
+for op in [
+    arith.AddIOp,
+    arith.AddFOp,
+    arith.AndIOp,
+    arith.BitcastOp,
+    arith.CmpFOp,
+    arith.CmpIOp,
+    arith.ExtFOp,
+    arith.ExtSIOp,
+    arith.ExtUIOp,
+    arith.FPToSIOp,
+    arith.FPToUIOp,
+    arith.MaximumFOp,
+    arith.MaxUIOp,
+    arith.MaxSIOp,
+    arith.MinimumFOp,
+    arith.MinUIOp,
+    arith.MinSIOp,
+    arith.MulIOp,
+    arith.MulFOp,
+    arith.OrIOp,
+    arith.FloorDivSIOp,
+    arith.DivUIOp,
+    arith.DivFOp,
+    arith.RemUIOp,
+    arith.RemSIOp,
+    arith.RemFOp,
+    arith.SIToFPOp,
+    arith.UIToFPOp,
+    arith.SubIOp,
+    arith.SubFOp,
+    arith.TruncFOp,
+    arith.TruncIOp,
+    arith.XOrIOp,
+    mlir_math.ExpOp,
+    mlir_math.Exp2Op,
+    mlir_math.LogOp,
+    mlir_math.RsqrtOp,
+    mlir_math.TanhOp,
+    vector.LoadOp,
+    vector.StoreOp,
+]:
+  _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
+
+
+@_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)
+def _optimization_barrier_equation_system(
+    op: ir.OpView
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  operand_or_results_for_variable: OperandOrResultsForVariable = {}
+
+  for i, operand in enumerate(op.operands):
+    if not is_vector(operand):
+      continue
+    variable = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, i))
+    operand_or_results_for_variable[variable] = [
+        OperandOrResult(op, VariableType.OPERAND, i),
+        OperandOrResult(op, VariableType.RESULT, i)
+    ]
+
+  return eqns.EquationSystem(), operand_or_results_for_variable
+
+
+@_add_equation_system_derivation_rule(vector.SplatOp)
+def _vector_splat_equation_system(
+    op: ir.OpView
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  result = OperandOrResult(op, VariableType.RESULT, 0)
+  variable = eqns.Variable(result)
+  layout = fa.WGSplatFragLayout(tuple(cast(ir.ShapedType, op.result.type).shape))
+  system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
+  return system, {variable: [result]}
+
+
 @_add_equation_system_derivation_rule(arith.ConstantOp)
 def _constant_equation_system(
     constant_op: arith.ConstantOp
@@ -216,7 +391,7 @@ def _constant_equation_system(
       and ir.DenseElementsAttr(value).is_splat
   ):
     layout = fa.WGSplatFragLayout(shape=tuple(constant_op.result.type.shape))
-    system = eqns.EquationSystem(assignments={variable: eqns.ConstantExpression(layout)})
+    system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
   else:
     system = eqns.EquationSystem()
 
@@ -230,10 +405,22 @@ def _layout_cast_equation_system(
   operand = OperandOrResult(op, VariableType.OPERAND, 0)
   result = OperandOrResult(op, VariableType.RESULT, 0)
   variable = eqns.Variable(operand)
-  out_layout = eqns.ConstantExpression(layouts_lib.from_layout_attr(op.new_layout))
+  out_layout = eqns.Constant(layouts_lib.from_layout_attr(op.new_layout))
   return eqns.EquationSystem(
       assignments={eqns.Variable(operand): out_layout},
   ), {variable: [operand, result]}
+
+
+@_add_equation_system_derivation_rule(mgpu.WGMMAOp)
+def _wgmma_equation_system(
+    op: mgpu.WGMMAOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  operands_or_results = operands_and_results(op)
+  variable = eqns.Variable(operands_or_results[0])
+  system = eqns.EquationSystem(
+      assignments={variable: eqns.Constant(fa.WGMMA_LAYOUT)}
+  )
+  return system, {variable: operands_or_results}
 
 
 def _ensure_all_layouts_are_set(op: ir.OpView):
@@ -259,7 +446,7 @@ def _ensure_right_number_of_layouts(
     )
 
 
-def assign_layouts(solution: dict[OperandOrResult, eqns.ConstantExpression]):
+def assign_layouts(solution: dict[OperandOrResult, eqns.Constant]):
   """Assigns the layouts in `solution` to the MLIR ops they belong to.
 
   This function requires that, for each MLIR op that appears in `solution`,
@@ -328,6 +515,7 @@ def producer_result(operand: OperandOrResult) -> OperandOrResult:
   # depending on function parameters, or loop block arguments.
   if isinstance(producer, ir.Block):
     index = list(cast(ir.Block, producer).arguments).index(value)
+    producer = producer.owner.opview
     return OperandOrResult(producer, VariableType.OPERAND, index)
 
   raise TypeError(
@@ -368,20 +556,28 @@ def derive_hints(
     consumers: list[eqns.Variable] = []
     for operand_or_result in operand_and_results:
       if operand_or_result.type == VariableType.OPERAND:
-        producers.append(
-            variable_for_operand_or_result[producer_result(operand_or_result)])
+        pr = producer_result(operand_or_result)
+        op = pr.operation
+        # TODO(bchetioui): migrate the tests to not use `FuncOp`s.
+        # Filter out `FuncOp` arguments, which can show up in tests, but are
+        # not relevant for layout inference.
+        if not isinstance(op, func.FuncOp):
+          producers.append(variable_for_operand_or_result[pr])
       elif operand_or_result.type == VariableType.RESULT:
-        for c in consumer_operands(operand_or_result):
-          consumers.append(variable_for_operand_or_result[c])
+        for co in consumer_operands(operand_or_result):
+          op = co.operation
+          # TODO(bchetioui): migrate the tests to not use `FuncOp`s.
+          # Filter out `FuncOp` arguments, which can show up in tests, but are
+          # not relevant for layout inference.
+          if not isinstance(op, func.FuncOp):
+            consumers.append(variable_for_operand_or_result[co])
 
     if producers:
-      least_replicated_producer = eqns.LeastReplicatedExpression(tuple(producers))
-      hint_expr = eqns.MostReplicatedExpression(
-          (least_replicated_producer, *consumers)
-      )
+      least_replicated_producer = eqns.LeastReplicated(tuple(producers))
+      hint_expr = eqns.MostReplicated((least_replicated_producer, *consumers))
       hints.append(Hint(variable, hint_expr))
     elif consumers:
-      hint_expr = eqns.MostReplicatedExpression(tuple(consumers))
+      hint_expr = eqns.MostReplicated(tuple(consumers))
       hints.append(Hint(variable, hint_expr))
 
   return hints
@@ -408,7 +604,7 @@ def infer_layout(module: ir.Module):
     inference_utils.traverse_op(op, gather_equations)
 
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
-  hints = [reduce_hint(h, global_equation_system.assignments) for h in derive_hints(operand_and_results_for_variable)]
+  hints = reduce_hints(derive_hints(operand_and_results_for_variable), global_equation_system.assignments)  # pytype: disable=attribute-error
 
   # Attempt to find assignments that satisfy the equation system.
   solution = find_assignments_for(

@@ -220,3 +220,94 @@ def from_layout_attr(
     raise NotImplementedError(
         f"Unsupported layout for conversion from MLIR attribute: {attr}"
     )
+
+
+def _splat_is_compatible_with_tiled(
+      l1: fa.WGSplatFragLayout, l2: fa.TiledLayout
+  ) -> bool:
+  # A splat layout is compatible with a tiled layout up to replication if each
+  # dimension in the shape of the splat layout is divisible by the corresponding
+  # dimension in the base tile shape.
+  s1, s2 = l1.shape, l2.base_tile_shape
+  return all(d1 % d2 == 0 for d1, d2 in zip(s1, s2))
+
+def meet_layouts(
+    layout1: fa.FragmentedLayout, layout2: fa.FragmentedLayout
+) -> fa.FragmentedLayout | None:
+  """Returns the "meet" of two layouts that are compatible up to replication.
+
+  The "meet" of the two layouts is the most replicated layout that is still
+  less replicated than the arguments.
+
+  This is the dual of `join_layouts`.
+
+  Returns:
+    The "meet" of the two layouts if both layouts are compatible up to
+    replication.
+
+  Raises:
+    ValueError: if the two layouts are not compatible up to replication.
+  """
+  if layout1 == layout2:
+    return layout1
+
+  match (layout1, layout2):
+    case (fa.WGSplatFragLayout(), _):
+      if isinstance(layout2, fa.TiledLayout):
+        if _splat_is_compatible_with_tiled(layout1, layout2):
+          return layout2
+      elif layout1.shape == layout2.shape:
+        return layout2
+    case (_, fa.WGSplatFragLayout()):
+      if isinstance(layout1, fa.TiledLayout):
+        if _splat_is_compatible_with_tiled(layout2, layout1):
+          return layout1
+      elif layout1.shape == layout2.shape:
+        return layout1
+    case (fa.TiledLayout(), fa.TiledLayout()):
+      # TODO(bchetioui): handle `TiledLayout` replication.
+      raise NotImplementedError("TiledLayout replication not supported yet")
+
+  # Layouts are not compatible up to replication.
+  return None
+
+
+def join_layouts(
+    layout1: fa.FragmentedLayout, layout2: fa.FragmentedLayout
+) -> fa.FragmentedLayout | None:
+  """Returns the "join" of two layouts that are compatible up to replication.
+
+  The "join" of the two layouts is the least replicated layout that is still
+  more replicated than the arguments.
+
+  This is the dual of `meet_layouts`.
+
+  Returns:
+    The "join" of the two layouts if both layouts are compatible up to
+    replication.
+
+  Raises:
+    ValueError: if the two layouts are not compatible up to replication.
+  """
+  if layout1 == layout2:
+    return layout1
+
+  match (layout1, layout2):
+    case (fa.WGSplatFragLayout(), _):
+      if isinstance(layout2, fa.TiledLayout):
+        if _splat_is_compatible_with_tiled(layout1, layout2):
+          return layout1
+      elif layout1.shape == layout2.shape:
+        return layout1
+    case (_, fa.WGSplatFragLayout()):
+      if isinstance(layout1, fa.TiledLayout):
+        if _splat_is_compatible_with_tiled(layout2, layout1):
+          return layout2
+      elif layout1.shape == layout2.shape:
+        return layout2
+    case (fa.TiledLayout(), fa.TiledLayout()):
+      # TODO(bchetioui): handle `TiledLayout` replication.
+      raise NotImplementedError("TiledLayout replication not supported yet")
+
+  # Layouts are not compatible up to replication.
+  return None
