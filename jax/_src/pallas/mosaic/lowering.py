@@ -554,12 +554,21 @@ class MosaicGridMapping:
   def has_communication(self) -> bool:
     nonlocal_axis_names = set()
     def _get_nonlocal_axis_names(jaxpr: jax_core.Jaxpr):
-      return {
+      axis_name_effects = {
           e.name
           for e in jaxpr.effects
           if isinstance(e, jax_core.NamedAxisEffect)
           and (not self.grid_names or e.name not in self.grid_names)
       }
+      # Comms effects catch the case where we have comms but don't actually have
+      # a named axis effect. We can remove these once all comms primitives
+      # require an axis name.
+      comms_effects = {
+          "comms"
+          for e in jaxpr.effects
+          if isinstance(e, primitives.CommsEffect)
+      }
+      return comms_effects | axis_name_effects
     nonlocal_axis_names.update(_get_nonlocal_axis_names(self.jaxpr))
     for bm in self.block_mappings:
       if bm is not None:

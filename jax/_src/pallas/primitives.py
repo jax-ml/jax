@@ -1128,7 +1128,16 @@ def semaphore_signal(
   )
 
 
-@semaphore_signal_p.def_abstract_eval
+# TODO(sharadmv,ivyzheng): remove this once we use axis dicts primarily
+class CommsEffect(effects.Effect):
+  pass
+_comms_effect = CommsEffect()
+effects.control_flow_allowed_effects.add_type(CommsEffect)
+effects.remat_allowed_effects.add_type(CommsEffect)
+effects.custom_derivatives_allowed_effects.add_type(CommsEffect)
+
+
+@semaphore_signal_p.def_effectful_abstract_eval
 def _semaphore_signal_abstract_eval(
     *avals,
     args_tree,
@@ -1145,12 +1154,14 @@ def _semaphore_signal_abstract_eval(
   check_sem_avals(sem_aval, sem_transforms_avals, "signal")
   if value_aval.dtype != jnp.dtype("int32"):
     raise ValueError("Must signal an int32 value.")
+  effs = set()
   if device_id_avals is not None:
     device_id_flat_avals = tree_util.tree_leaves(device_id_avals)
     for aval in device_id_flat_avals:
       if aval.dtype != jnp.dtype("int32"):
         raise ValueError("`device_id`s must be an int32 value.")
-  return []
+    effs.add(_comms_effect)
+  return [], effs
 
 
 def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
