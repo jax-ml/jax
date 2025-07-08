@@ -4354,9 +4354,6 @@ class APITest(jtu.JaxTestCase):
     # from https://github.com/jax-ml/jax/issues/7613
     import numpy.random as npr
 
-    def sigmoid(x):
-      return 1. / (1. + jnp.exp(-x))
-
     x = jnp.ones((1, 50))
     A = jnp.array(npr.randn(50, 50), dtype=x.dtype)
 

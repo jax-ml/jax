@@ -1487,7 +1487,6 @@ def _to_lojax(*hi_args, jaxpr, **params):
   hi_args = [*closed_over_himutables, *hi_args]
   params = _converted_mutables_add_params(len(closed_over_himutables), **params)
 
-
   # expand pjit params that must match number of lo inputs/outputs
   lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
   lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]

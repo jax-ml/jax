@@ -826,7 +826,7 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
       x_ref[...] += val
 
     vals = jnp.arange(3, dtype='int32')
-    with self.assertRaisesRegex(Exception, "unbatched mutable array"):
+    with self.assertRaisesRegex(Exception, "unbatched array reference"):
       jax.vmap(f)(vals)
 
   def test_vmap_aliased_arguments(self):
@@ -838,6 +838,16 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
         ValueError,
         "only one reference to a mutable array may be passed as an argument"):
       jax.vmap(f)(x_ref, x_ref)
+
+  def test_jvp_closed_over_ref_error(self):
+    ref = core.mutable_array(0.)
+    def f(x):
+      ref[...] = x
+      return x
+    with self.assertRaisesRegex(
+        Exception, "Move the array reference"):
+      jax.jvp(f, [1.], [1.])
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
