@@ -575,7 +575,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.assertNotIn("out_layouts", f.attributes)
 
   def test_optimization_barrier_op_propagates_user_layouts(self):
-    self.skip_if_equations()
     add = optimization_barrier = None
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
 
@@ -596,7 +595,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(optimization_barrier, [wgmma_layout, wgmma_layout])
 
   def test_optimization_barrier_op_propagates_producer_layouts(self):
-    self.skip_if_equations()
     add = optimization_barrier = None
     shape = (32, 4)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))

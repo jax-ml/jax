@@ -353,6 +353,24 @@ for op in [
   _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
 
 
+@_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)
+def _optimization_barrier_equation_system(
+    op: ir.OpView
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  operands_and_results_for_variable: OperandOrResultsForVariable = {}
+
+  for i, operand in enumerate(op.operands):
+    if not is_vector(operand):
+      continue
+    variable = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, i))
+    operands_and_results_for_variable[variable] = [
+        OperandOrResult(op, VariableType.OPERAND, i),
+        OperandOrResult(op, VariableType.RESULT, i)
+    ]
+
+  return eqns.EquationSystem(), operands_and_results_for_variable
+
+
 @_add_equation_system_derivation_rule(arith.ConstantOp)
 def _constant_equation_system(
     constant_op: arith.ConstantOp
