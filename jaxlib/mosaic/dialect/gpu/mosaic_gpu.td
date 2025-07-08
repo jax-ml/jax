@@ -380,13 +380,21 @@ def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
     `broadcast_dimensions` must have the same size as the rank of the input
     vector and for each input dimension, specifies which output dimension it
     corresponds to.
+
+    The operation may be ambiguous with regards to the expected target layout,
+    so we also allow setting an optional layout attribute.
   }];
 
   let arguments = (ins
     AnyVectorOfAnyRank:$operand,
 
     // Attributes
-    DenseI64ArrayAttr:$broadcast_dimensions
+    DenseI64ArrayAttr:$broadcast_dimensions,
+    OptionalAttr<AnyAttrOf<[
+      MosaicGPU_WGSplatFragLayout,
+      MosaicGPU_WGStridedFragLayout,
+      MosaicGPU_TiledLayout
+    ]>>:$layout
   );
 
   let results = (outs AnyVectorOfAnyRank);

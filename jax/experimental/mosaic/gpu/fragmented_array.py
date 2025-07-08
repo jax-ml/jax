@@ -697,7 +697,22 @@ class WGStridedFragLayout:
     for i in range(reg_num):
       yield arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))
 
-
+# NOTE: We say that two layouts are compatible up to replication if the two
+# layouts satisfy at least one of the following conditions together:
+#
+# - The two layouts are equal;
+# - One of the layouts is a `WGSplatFragLayout`, and
+#   * The other layout is a `WGStridedFragLayout` with the same shape;
+#   * The other layout is a `TiledLayout` that can be used to tile the shape
+#     embedded in the `WGSplatFragLayout`.
+#
+# If any of these conditions hold, then we are always able to substitute one
+# layout with the other without having to reorder any data in the underlying
+# array---i.e. a relayout is free.
+#
+# Note that there are other combinations of layouts for which relayout is free,
+# but we voluntarily narrowed down our definition to span a small, useful
+# subset.
 FragmentedLayout = WGSplatFragLayout | WGStridedFragLayout | TiledLayout
 
 
