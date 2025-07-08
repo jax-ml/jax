@@ -5097,7 +5097,7 @@ class RaggedTest(jtu.JaxTestCase):
           "out_shape": out_shape,
       }
       for lhs_shape, rhs_shape, group_sizes_shape, ragged_dnums, out_shape in [
-          (
+          ( # Ragged non-contracting.
               [11, 5],
               [3, 5, 7],
               [3],
@@ -5108,7 +5108,7 @@ class RaggedTest(jtu.JaxTestCase):
               ),
               (11, 7),
           ),
-          (
+          ( # Ragged contracting.
               [11, 5],
               [5, 7],
               [3],
@@ -5118,6 +5118,18 @@ class RaggedTest(jtu.JaxTestCase):
                   rhs_group_dimensions=[],
               ),
               (3, 11, 7),
+          ),
+          (  # Ragged contracting with batch dimensions.
+              [2, 11, 5],
+              [2, 5, 7],
+              [2, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([2], [1]), ([0], [0]),
+                  ),
+                  lhs_ragged_dimensions=[2],
+                  rhs_group_dimensions=[],
+              ),
+              (3, 2, 11, 7),
           ),
       ]
   )
