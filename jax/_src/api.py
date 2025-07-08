@@ -1521,7 +1521,7 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
   if global_axis_size is None:
     if xb.process_count(backend) == 1:
       global_axis_size = local_axis_size
-    elif in_devices:
+    elif in_devices is not None:
       global_axis_size = len(in_devices)
     else:
       global_axis_size = local_axis_size * xb.process_count(backend)
