@@ -23,7 +23,7 @@ import enum
 import logging
 import os
 import threading
-from typing import Any, Protocol, Sequence, Union
+from typing import Any, Protocol, Union
 
 from jaxlib import _jax as _xla
 
@@ -43,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 363
+_version = 362
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -70,8 +70,6 @@ def make_cpu_client(
     num_devices=None,
     get_local_topology_timeout_minutes=None,
     get_global_topology_timeout_minutes=None,
-    cross_host_transfer_socket_address=None,
-    cross_host_transport_addresses=None,
 ) -> Client:
   register_custom_call_handler('cpu', _xla.register_custom_call_target)
   register_custom_type_id_handler('cpu', _xla.register_custom_type_id)
@@ -84,8 +82,6 @@ def make_cpu_client(
       num_devices=num_devices,
       get_local_topology_timeout_minutes=get_local_topology_timeout_minutes,
       get_global_topology_timeout_minutes=get_global_topology_timeout_minutes,
-      cross_host_transfer_socket_address=cross_host_transfer_socket_address,
-      cross_host_transport_addresses=cross_host_transport_addresses or (),
   )
 
 
@@ -138,8 +134,6 @@ def make_c_api_client(
     plugin_name: str,
     options: _NameValueMapping | None = None,
     distributed_client: _xla.DistributedRuntimeClient | None = None,
-    cross_host_transfer_socket_address: str | None = None,
-    cross_host_transport_addresses: Sequence[str] | None = None,
 ):
   """Creates a PJRT C API client for a PJRT plugin.
 
@@ -156,13 +150,7 @@ def make_c_api_client(
   """
   if options is None:
     options = {}
-  return _xla.get_c_api_client(
-      plugin_name,
-      options,
-      distributed_client,
-      cross_host_transfer_socket_address,
-      cross_host_transport_addresses or (),
-  )
+  return _xla.get_c_api_client(plugin_name, options, distributed_client)
 
 
 def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:

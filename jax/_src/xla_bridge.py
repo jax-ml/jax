@@ -41,7 +41,6 @@ from jax._src import hardware_utils
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
@@ -115,21 +114,6 @@ _CPU_ENABLE_ASYNC_DISPATCH = config.bool_flag(
     "inline without async dispatch.",
 )
 
-CROSS_HOST_TRANSFER_SOCKET_ADDRESS = config.string_state(
-    name="jax_cross_host_transfer_socket_address",
-    default="",
-    help="Socket address to use for cross host device transfers via DCN. "
-    "Necessary only if the PjRt plugin does not support cross host transfers.",
-)
-
-CROSS_HOST_TRANSPORT_ADDRESSES = config.string_state(
-    name="jax_cross_host_transport_addresses",
-    default="",
-    help=(
-        "Comma-separated list of transport addresses to use for cross host "
-        "device transfers via DCN. If not set, defaults to [0.0.0.0:0] * 4."
-    ),
-)
 
 # Warn the user if they call fork(), because it's not going to go well for them.
 def _at_fork():
@@ -158,19 +142,7 @@ def make_tpu_client(
     _jax.initialize_pjrt_plugin('tpu')
   if options is None:
     options = {}
-  socket_address = CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value or None
-  transport_addresses = []
-  if CROSS_HOST_TRANSPORT_ADDRESSES.value:
-    transport_addresses = CROSS_HOST_TRANSPORT_ADDRESSES.value.split(",")
-  if jaxlib_extension_version < 363:
-    return _jax.get_c_api_client("tpu", options)
-  return _jax.get_c_api_client(
-      "tpu",
-      options,
-      distributed.global_state.client,
-      socket_address,
-      transport_addresses,
-  )
+  return _jax.get_c_api_client('tpu', options)
 
 
 def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
@@ -309,38 +281,22 @@ def make_cpu_client(
       assert collectives_impl is None
 
   num_devices = num_cpu_devices.value if num_cpu_devices.value >= 0 else None
-  socket_address = CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value or None
-  transport_addresses = []
-  if CROSS_HOST_TRANSPORT_ADDRESSES.value:
-    transport_addresses = CROSS_HOST_TRANSPORT_ADDRESSES.value.split(",")
-  if jaxlib_extension_version < 363:
-    return xla_client.make_cpu_client(
-        asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
-        distributed_client=distributed.global_state.client,
-        node_id=distributed.global_state.process_id,
-        num_nodes=distributed.global_state.num_processes,
-        collectives=collectives,
-        num_devices=num_devices,
-        get_local_topology_timeout_minutes=cpu_get_local_topology_timeout_minutes.value,
-        get_global_topology_timeout_minutes=cpu_get_global_topology_timeout_minutes.value,
-    )
   return xla_client.make_cpu_client(
-      asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
-      distributed_client=distributed.global_state.client,
-      node_id=distributed.global_state.process_id,
-      num_nodes=distributed.global_state.num_processes,
-      collectives=collectives,
-      num_devices=num_devices,
-      get_local_topology_timeout_minutes=cpu_get_local_topology_timeout_minutes.value,
-      get_global_topology_timeout_minutes=cpu_get_global_topology_timeout_minutes.value,
-      cross_host_transfer_socket_address=socket_address,
-      cross_host_transport_addresses=transport_addresses,
+    asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
+    distributed_client=distributed.global_state.client,
+    node_id=distributed.global_state.process_id,
+    num_nodes=distributed.global_state.num_processes,
+    collectives=collectives,
+    num_devices=num_devices,
+    get_local_topology_timeout_minutes=cpu_get_local_topology_timeout_minutes.value,
+    get_global_topology_timeout_minutes=cpu_get_global_topology_timeout_minutes.value,
   )
 
 
 register_backend_factory(
     "cpu", make_cpu_client, priority=0, fail_quietly=False
 )
+
 
 def get_num_nodes_from_gpu_topology(topology: str) -> int:
     try:
@@ -545,20 +501,8 @@ def register_plugin(
     if options is not None:
       updated_options.update(options() if callable(options) else options)
     updated_options.update(_options_from_jax_configs(plugin_name))
-    socket_address = CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value or None
-    transport_addresses = []
-    if CROSS_HOST_TRANSPORT_ADDRESSES.value:
-      transport_addresses = CROSS_HOST_TRANSPORT_ADDRESSES.value.split(",")
     if distributed.global_state.client is None:
-      if jaxlib_extension_version < 363:
-        return xla_client.make_c_api_client(plugin_name, updated_options, None)
-      return xla_client.make_c_api_client(
-          plugin_name,
-          updated_options,
-          None,
-          socket_address,
-          transport_addresses,
-      )
+      return xla_client.make_c_api_client(plugin_name, updated_options, None)
 
     distribute_options = {
         'node_id': distributed.global_state.process_id,
@@ -568,15 +512,8 @@ def register_plugin(
       distribute_options['slice_index'] = slice_index
     if options is not None:
       distribute_options.update(updated_options)
-    if jaxlib_extension_version < 363:
-      return xla_client.make_c_api_client(
-          plugin_name, distribute_options, distributed.global_state.client)
     return xla_client.make_c_api_client(
-        plugin_name,
-        distribute_options,
-        distributed.global_state.client,
-        socket_address,
-        transport_addresses,
+        plugin_name, distribute_options, distributed.global_state.client
     )
 
   if library_path and c_api:
