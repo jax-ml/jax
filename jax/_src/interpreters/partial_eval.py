@@ -1639,8 +1639,8 @@ class DynamicJaxprTracer(core.Tracer):
   def __init__(self, trace: DynamicJaxprTrace,
                aval: core.AbstractValue | core.AvalQDD,
                val : Atom,
-               parent : TracingEqn | None = None,
-               line_info: source_info_util.SourceInfo | None = None):
+               line_info: source_info_util.SourceInfo | None = None,
+               parent : TracingEqn | None = None):
     # TODO(dougalm): Remove aval. It's redundant now that we have val.
     if isinstance(aval, core.AvalQDD):
       assert aval.qdd is not None
@@ -1766,7 +1766,7 @@ class JaxprStackFrame:
   gensym: Callable[[AbstractValue], Var]
   constid_to_tracer: WeakValueDictionary[ConstId, DynamicJaxprTracer]
   constvar_to_val: dict[Var, Any]
-  tracing_eqns: list[ReferenceType(TracingEqn)]
+  tracing_eqns: list[ReferenceType[TracingEqn]]
   invars: list[Var]
   effects: core.Effects
   debug_info: core.DebugInfo
@@ -1943,6 +1943,7 @@ class DynamicJaxprTrace(core.Trace):
     self.frame = JaxprStackFrame(debug_info, auto_dce)
     self.parent_trace = parent_trace
 
+  # TODO(dougalm): we might be able to remove this since the refcounting should be doing it for us
   def invalidate(self):
     # avoid cyclic refs
     self.frame.constid_to_tracer = {}
@@ -1963,7 +1964,7 @@ class DynamicJaxprTrace(core.Trace):
     aval = var.aval
     if aval.has_qdd:
       aval = core.AvalQDD(aval, var.initial_qdd)
-    return DynamicJaxprTracer(self, aval, var, parent, source_info)
+    return DynamicJaxprTracer(self, aval, var, source_info, parent)
 
   def new_arg(self, aval, source_info: SourceInfo):
     var = self.frame.newvar(aval)
@@ -2021,7 +2022,7 @@ class DynamicJaxprTrace(core.Trace):
       return tracer
 
   def finalize_const(self, var, constid):
-    self.frame.constvar_to_val.pop(var)
+    self.frame.constvar_to_val.pop(var, None)
 
   def get_const(self, tracer) -> Any:
     atom = tracer.val

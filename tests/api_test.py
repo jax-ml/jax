@@ -5124,6 +5124,7 @@ class APITest(jtu.JaxTestCase):
 
 
   def test_implicit_dce(self):
+    @api.jit
     def foo(x):
       const = np.zeros((300,))
       r = weakref.ref(const)
@@ -5132,7 +5133,7 @@ class APITest(jtu.JaxTestCase):
       assert r() is None, "oops, the constant wasn't DCE'd"
       return x + x
 
-    jax.make_jaxpr(foo, dce=True)(1.0)
+    foo(1.0)
 
 class RematTest(jtu.JaxTestCase):
 
