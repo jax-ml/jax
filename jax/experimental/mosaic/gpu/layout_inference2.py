@@ -69,13 +69,12 @@ class Hint:
   expression: eqns.Expression
 
 
-def choose_variable_assignment_from_hints(
-    hints: Sequence[Hint],
+def extract_variable_assignment_from_hint(
+    hint: Hint,
 ) -> tuple[eqns.Variable, eqns.ConstantExpression] | None:
-  """Attempts to choose a single variable assignment from a list of `Hint`s."""
-  for hint in hints:
-    if isinstance(hint.expression, eqns.ConstantExpression):
-      return (hint.variable, hint.expression)
+  """Attempts to extract a single variable assignment from a `Hint`."""
+  if isinstance(hint.expression, eqns.ConstantExpression):
+    return (hint.variable, hint.expression)
   return None
 
 
@@ -103,35 +102,47 @@ def find_assignments_for(
     - A dictionary assigning all the unknown variables to `ConstantExpression`s
       such that the assignment satisfies the equation system otherwise.
   """
-  while True:
-    equation_system = eqns.reduce(equation_system)
-    if isinstance(equation_system, eqns.Unsatisfiable):
-      return eqns.Unsatisfiable()
+  equation_system = eqns.reduce(equation_system)
+  if isinstance(equation_system, eqns.Unsatisfiable):
+    return eqns.Unsatisfiable()
 
-    remaining_unknowns = unknowns - equation_system.assignments.keys()
+  remaining_unknowns = unknowns - equation_system.assignments.keys()
+  # In this case, we have determined an assignment for all the unknown
+  # variables. Return their respective assignment.
+  if not remaining_unknowns:
+    return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
 
-    # In this case, we have determined an assignment for all the unknown
-    # variables. Return their respective assignment.
-    if not remaining_unknowns:
-      return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
+  # Reduce the expressions in the remaining hints based on the current
+  # assignments, and eliminate hints that pertain to variables that already
+  # have an assignment.
+  hints = [reduce_hint(h, equation_system.assignments) for h in hints
+            if h.variable not in equation_system.assignments]
 
-    # Reduce the expressions in the remaining hints based on the current
-    # assignments, and eliminate hints that pertain to variables that already
-    # have an assignment.
-    hints = [reduce_hint(h, equation_system.assignments) for h in hints
-             if h.variable not in equation_system.assignments]
-
-    # If unknowns remain and we have fully reduced the system, we may still
-    # be able to make progress by extracting an assignment from a `Hint`. In a
-    # system that has otherwise been fully reduced, it is guaranteed that
-    # introducing a new assignment will yield a system that remains satisfiable
-    # if the original system was satisfiable---because this is a sign of an
-    # underdetermined system.
-    if (assignment := choose_variable_assignment_from_hints(hints)) is not None:
+  # If unknowns remain and we have fully reduced the system, we may still
+  # be able to make progress by extracting an assignment from a `Hint`. This
+  # new assignment could make the system unsatisfiable, so we use a recursive
+  # call to be able to backtrack if necessary.
+  #
+  # Make a copy of the hints to allow deleting unnecessary hints from the list,
+  # without modifying the list being iterated over.
+  remaining_hints: list[Hint] = hints[:]
+  for i, hint in reversed(list(enumerate(hints))):
+    if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
       variable, expr = assignment
-      equation_system &= eqns.EquationSystem(assignments={variable: expr})
-    else:
-      break
+      new_equation_system = (
+          eqns.EquationSystem(assignments={variable: expr}) & equation_system)
+      if isinstance(new_equation_system, eqns.Unsatisfiable):
+        # This assignment is not compatible with the equation system.
+        continue
+      other_hints = remaining_hints[:i] + remaining_hints[i + 1:]
+      solution = find_assignments_for(unknowns, new_equation_system, other_hints)
+      if isinstance(solution, eqns.Unsatisfiable):
+        # This assignment is not compatible with the equation system. We remove
+        # it from the list of hints.
+        remaining_hints.pop(i)
+        continue
+      return solution
+  hints = remaining_hints
 
   # Here, we have not managed to find an assignment for all the unknown
   # variables, and our hints have not proven sufficient to unblock us. We now

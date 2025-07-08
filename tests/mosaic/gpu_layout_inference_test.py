@@ -27,6 +27,7 @@ from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
@@ -667,10 +668,12 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     assignments = layout_inference2.find_assignments_for(
         {v0},
         equations.EquationSystem(),
-        # Voluntarily use conflicting hints to check that we use the first one.
+        # Voluntarily use conflicting hints to check that we use one of them
+        # deterministically. This may require updating if we decide to change
+        # the traversal order in the future.
         [H(v0, C(mgpu.WGMMA_ROW_LAYOUT)), H(v0, C(mgpu.WGMMA_COL_LAYOUT))],
     )
-    self.assertEqual(assignments, {v0: C(mgpu.WGMMA_ROW_LAYOUT)})
+    self.assertEqual(assignments, {v0: C(mgpu.WGMMA_COL_LAYOUT)})
 
   def test_cannot_find_assignments_for_unsatisfiable_equation_system(self):
     shape = (64,)
@@ -695,6 +698,27 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     )
     self.assertIsInstance(assignments, equations.Unsatisfiable)
 
+  def test_hint_that_would_make_system_unsatisfiable_is_not_used_in_solution(self):
+    with ir.InsertionPoint(self.module.body):
+      ty = ir.VectorType.get((32, 4), ir.BF16Type.get())
+      op0, op1 = [llvm.mlir_undef(ty).owner.opview for _ in range(2)]
+    [kv0] = layout_inference2.operands_and_results(op0)
+    [kv1] = layout_inference2.operands_and_results(op1)
+    v0, v1 = equations.Variable(kv0), equations.Variable(kv1)
+    splat_layout = C(mgpu.WGSplatFragLayout((128, 256)))
+    assignments = layout_inference2.find_assignments_for(
+        {v0},
+        equations.EquationSystem(
+            equations=[
+                E(v0, equations.MostReplicatedExpression([v1, C(mgpu.WGMMA_LAYOUT)]))
+            ]
+        ),
+        # The first hint would make the system unsatisfiable, but the second
+        # hint should be used to find a solution.
+        hints=[H(v1, C(mgpu.WGStridedFragLayout((1, 128), vec_size=1))),
+               H(v1, splat_layout)],
+    )
+    self.assertEqual(assignments, {v0: splat_layout})
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
