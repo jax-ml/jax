@@ -3451,6 +3451,7 @@ class APITest(jtu.JaxTestCase):
         r"containing an array, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
       api.pmap(lambda x: x)({})
 
+  @jtu.thread_unsafe_test()  # counting compilations isn't thread-safe
   def test_pmap_global_cache(self):
     def f(x, y):
       return x, y
