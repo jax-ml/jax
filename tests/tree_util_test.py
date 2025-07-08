@@ -499,6 +499,13 @@ class TreeTest(jtu.JaxTestCase):
                                 is_leaf=lambda l: isinstance(l, tuple))
     self.assertEqual(out, (1, 2, 3, 4, 5, 6))
 
+  def testTreeReduceAssociativeWithIsLeafArgument(self):
+    out = tree_util.tree_reduce_associative(
+        lambda x, y: x + y, [(1, 2), [(3, 4), (5, 6)]],
+        is_leaf=lambda l: isinstance(l, tuple),
+    )
+    self.assertEqual(out, (1, 2, 3, 4, 5, 6))
+
   @parameterized.parameters(
       tree_util.tree_leaves,
       lambda tree, is_leaf: tree_util.tree_flatten(tree, is_leaf)[0])
@@ -1499,6 +1506,23 @@ class TreeAliasTest(jtu.JaxTestCase):
     self.assertEqual(
       jax.tree.reduce(func, obj, is_leaf=is_leaf),
       tree_util.tree_reduce(func, obj, is_leaf=is_leaf),
+    )
+
+  def test_tree_reduce_associative(self):
+    func = lambda a, b: a + b
+    obj = [1, 2, (3, 4)]
+    self.assertEqual(
+      jax.tree.reduce_associative(func, obj),
+      tree_util.tree_reduce_associative(func, obj),
+    )
+
+  def test_tree_reduce_associative_is_leaf(self):
+    func = lambda a, b: a + b
+    obj = [(1, 2), (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+      jax.tree.reduce_associative(func, obj, is_leaf=is_leaf),
+      tree_util.tree_reduce_associative(func, obj, is_leaf=is_leaf),
     )
 
   def test_tree_structure(self):
