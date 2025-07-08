@@ -4204,19 +4204,24 @@ if hp is not None:
     assert math.prod(initial_tile) >= 128
     tiles = [initial_tile]
     dim_offset = len(initial_tile)
-    # TODO: Generate layouts with multiple warp dims
-    warp_dim = fa.Replicated(4)
     if draw(hps.booleans()):
+      warp_dims = [fa.Replicated(2) if draw(hps.booleans()) else None for _ in range(2)]
+    else:
+      warp_dims = [fa.Replicated(4) if draw(hps.booleans()) else None]
+    for i, dim in enumerate(warp_dims):
+      if isinstance(dim, fa.Replicated):
+        continue
+      dim_size = 4 // len(warp_dims)
       warp_dim = draw(
           hps.sampled_from(
-              [i for i, t in enumerate(tiles[-1]) if t % 4 == 0]
+              [i for i, t in enumerate(tiles[-1]) if t % dim_size == 0]
           )
       )
       warp_tile = list(tiles[-1])
-      warp_tile[warp_dim] //= 4
-      warp_dim += dim_offset
+      warp_tile[warp_dim] //= dim_size
+      warp_dims[i] = dim_offset + warp_dim
       tiles.append(warp_tile)
-      dim_offset += len(tiles[-1])
+      dim_offset += len(warp_tile)
     lane_dims = [fa.Replicated(2) if draw(hps.booleans()) else None for _ in range(5)]
     for i, dim in enumerate(lane_dims):
       if isinstance(dim, fa.Replicated):
@@ -4247,8 +4252,10 @@ if hp is not None:
     vector_dim += dim_offset
     dim_offset += len(vector_tile)  # This is the remainder after tiling!
 
-    if not isinstance(warp_dim, fa.Replicated):
-      warp_dim = warp_dim - dim_offset
+    warp_dims = tuple(
+        d if isinstance(d, fa.Replicated) else d - dim_offset
+        for d in warp_dims
+    )
     lane_dims = tuple(
         d if isinstance(d, fa.Replicated) else d - dim_offset
         for d in lane_dims
@@ -4256,7 +4263,7 @@ if hp is not None:
     vector_dim = vector_dim - dim_offset
     return fa.TiledLayout(
         tiling=fa.Tiling(tuple(map(tuple, tiles))),
-        warp_dims=(warp_dim,),
+        warp_dims=warp_dims,
         lane_dims=lane_dims,
         vector_dim=vector_dim,
         _check_canonical=False,
@@ -4285,10 +4292,24 @@ if hp is not None:
         shape, layout = draw(shape_and_tiled_layout(vector_transfer=True))
         rank = len(shape)
         reduced_dims = draw(hps.sets(hps.integers(0, rank - 1), min_size=1))
-        dtype = draw(hps.sampled_from([jnp.float32, jnp.bfloat16]))
+        dtype = draw(hps.sampled_from([jnp.int32, jnp.int16]))
         return shape, layout, tuple(reduced_dims), dtype
 
+      warp_replicated_major = fa.TiledLayout(
+          fa.Tiling(((2,), (1,))), (fa.Replicated(2,), -2), (fa.Replicated(32,),), -1
+      )
+      warp_replicated_minor = fa.TiledLayout(
+          fa.Tiling(((2,), (1,))), (-2, fa.Replicated(2,)), (fa.Replicated(32,),), -1
+      )
+      warp_row_col_layout = fa.TiledLayout(
+          fa.Tiling(((2, 2), (1,))), (-3, -2), (fa.Replicated(32,),), -1
+      )
+
       @hp.given(strategy())
+      @hp.example(((16,), warp_replicated_major, (0,), jnp.int32))
+      @hp.example(((16,), warp_replicated_minor, (0,), jnp.int32))
+      @hp.example(((16, 16), warp_row_col_layout, (0,), jnp.int32))
+      @hp.example(((16, 16), warp_row_col_layout, (1,), jnp.int32))
       def run(args):
         shape, layout, reduced_dims, dtype = args
         out_shape = list(shape)
@@ -4296,9 +4317,9 @@ if hp is not None:
           del out_shape[d]
         def kernel(ctx, src, dst, scratch):
           del ctx
-          arr = fa.FragmentedArray.load_untiled(src, layout=layout, optimized=False)
-          arr.reduce("max", reduced_dims, scratch).store_untiled(dst, optimized=False)
-        x = jax.random.normal(jax.random.key(1234), shape, dtype)
+          arr = fa.FragmentedArray.load_untiled(src, layout=layout, optimized=False, is_signed=True)
+          arr.reduce("add", reduced_dims, scratch).store_untiled(dst, optimized=False)
+        x = jax.random.randint(jax.random.key(1234), shape, -1000, 1000, dtype)
         out_type = jax.ShapeDtypeStruct(out_shape, dtype)
         scratch_type = jax.ShapeDtypeStruct((2048,), dtype)
         hp.assume(layout.vector_length <= 16)  # Otherwise we run out of scratch
@@ -4309,7 +4330,7 @@ if hp is not None:
         except NotImplementedError:
           hp.assume(False)
           return
-        np.testing.assert_array_equal(result, x.max(reduced_dims))
+        np.testing.assert_array_equal(result, x.sum(reduced_dims, dtype=dtype))
       run()
 
     def test_slice(self):

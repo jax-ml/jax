@@ -332,7 +332,7 @@ class TiledLayout:
         *self.partitioned_warp_dims, *self.partitioned_lane_dims, self.vector_dim,
     }
     if len(dims_set) != len(self.partitioned_warp_dims) + len(self.partitioned_lane_dims) + 1:
-      raise ValueError
+      raise ValueError("Duplicate partitioning dimensions")
     for d in dims_set:
       if d >= 0:
         raise ValueError("All dimensions must be negative")
@@ -2044,8 +2044,6 @@ class FragmentedArray:
         assert lane_stride == WARP_SIZE, lane_stride
       # Reduce across warps in the warpgroup, if necessary.
       if any(reduced_dims[d] for d in layout.partitioned_warp_dims):
-        if not all(reduced_dims[d] for d in layout.partitioned_warp_dims):
-          raise NotImplementedError("Reductions between subsets of warps")
         if scratch is None:
           raise ValueError(
               "scratch must be provided when cross-warp reduction is required"
@@ -2081,14 +2079,29 @@ class FragmentedArray:
             out_reg, scratch, [arith.muli(store_idx, c(vec_len, index))]
         )
         utils.warpgroup_barrier()
-        scratch_vec = vector.load(
-            ir.VectorType.get((WARPS_IN_WARPGROUP * vec_len,), self.mlir_dtype),
-            scratch,
-            [arith.muli(arith.index_cast(index, spill_base), c(vec_len, index))],
-        )
+        if any(isinstance(d, Replicated) for d in layout.warp_dims):
+          raise NotImplementedError("Reductions across partially replicated warps")
+        # warp_idx & warp_group_mask gives you the reduction group of the current warp.
+        if all(reduced_dims[d] for d in layout.partitioned_warp_dims):
+          warp_offsets, warp_group_mask = range(WARPS_IN_WARPGROUP), 0
+        else:
+          # 4 has only two non-trivial prime factors: 2 and 2.
+          assert len(layout.partitioned_warp_dims) == 2
+          if reduced_dims[layout.partitioned_warp_dims[0]]:
+            warp_offsets, warp_group_mask = [0, 2], 1
+          else:
+            assert reduced_dims[layout.partitioned_warp_dims[1]]
+            warp_offsets, warp_group_mask = [0, 1], 2
+        reg_ty = out_reg.type
         out_reg = None
-        for w in range(WARPS_IN_WARPGROUP):
-          part = utils.vector_slice(scratch_vec, slice(w * vec_len, (w + 1) * vec_len))
+        warp_reduction_group = arith.andi(warp_idx, arith.constant(i32, warp_group_mask))
+        for warp_offset in warp_offsets:
+          reduced_warp = arith.addi(warp_reduction_group, c(warp_offset, i32))
+          load_idx = arith.index_cast(
+              index,
+              arith.muli(arith.addi(spill_base, reduced_warp), c(vec_len, i32)),
+          )
+          part = vector.load(reg_ty, scratch, [load_idx])
           out_reg = part if out_reg is None else op(out_reg, part)
         utils.warpgroup_barrier()  # Make sure everyone is done using scratch.
       out_regs[out_idx] = out_reg
