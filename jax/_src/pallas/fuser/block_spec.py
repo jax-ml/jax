@@ -16,13 +16,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import enum
 import functools
 import threading
 from typing import Any, Protocol
-from collections.abc import Callable, Sequence
 
 import jax
 from jax import lax
@@ -36,6 +36,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.fuser import fuser_utils
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -1627,30 +1628,65 @@ def _reshape_pull_rule(
   aval_out = ctx.avals_out[0]
   assert isinstance(aval_out, core.ShapedArray)
 
-  # Handle the case where we reshape from (..., n/l, l) -> (..., n * l)
-  if _pattern_match_sublanes_to_lanes_reshape(aval_in, aval_out):
-    block_shape = tuple(block_spec.block_shape)
-    if not isinstance(block_shape[-1], (int, pallas_core.Blocked)):
-      raise NotImplementedError(
-          f'reshape must use Blocked block size on lanes: {block_shape}'
-      )
-    last_dim = _block_size(block_shape[-1])
-    if last_dim % 128 != 0:
-      raise NotImplementedError(
-          'reshape with non-128 aligned block size on lanes not supported yet'
-      )
-    # We can now reshape last dim from d -> (d/128, 128)
-    new_block_shape = block_shape[:1] + (last_dim // 128, 128)
+  block_shape = tuple(map(_block_size, block_spec.block_shape))
+  shape_in = aval_in.shape
+  shape_out = aval_out.shape
+  assert np.prod(shape_in) == np.prod(shape_out)
+
+  # Handle merged dims; i.e. (..., m, n, ...) -> (..., m * n, ...).
+  i = 0
+  j = 0
+  merged_dims = tuple([] for _ in shape_out)
+
+  while i < len(shape_in) and j < len(shape_out):
+    while not merged_dims[j] or np.prod(merged_dims[j]) < shape_out[j]:
+      merged_dims[j].append(shape_in[i])
+      i += 1
+
+    if np.prod(merged_dims[j]) > shape_out[j]:
+      break  # Dimension has been split (or something more complex).
+
+    j += 1
+
+  if (i == len(shape_in)) and (j == len(shape_out)):
+    new_block_shape = []
+    new_grids = []
+
+    for d, bd, merged in zip(shape_out, block_shape, merged_dims):
+      if not isinstance(bd, (int, pallas_core.Blocked)):
+        raise NotImplementedError('reshape merge must use `Blocked` block size')
+
+      num_blocks = pallas_utils.cdiv(d, bd)
+      new_block_dims = []
+      for md in reversed(merged):
+        if bd % md == 0:
+          new_block_dims.append(md)
+          bd //= md
+        elif md % bd == 0:
+          new_block_dims.append(bd)
+          bd = 1
+        else:
+          raise NotImplementedError('unsupported reshape merge')
+
+      new_block_dims.reverse()
+      new_block_shape.extend(new_block_dims)
+      new_grid = [np.int32(md // bd) for md, bd in zip(merged, new_block_dims)]
+      new_grids.append(tuple(new_grid))
+
+      if np.prod(new_grid) != num_blocks:
+        raise NotImplementedError('reshape merge must maintain grid size')
 
     def new_index_map(*args):
-      idx = block_spec.index_map(*args)
-      return *idx, 0
+      idxs = (
+          jnp.unravel_index(idx, new_grid) if len(new_grid) > 1 else (idx,)
+          for idx, new_grid in zip(block_spec.index_map(*args), new_grids)
+      )
+      return sum(idxs, ())
 
-    return [pallas_core.BlockSpec(new_block_shape, new_index_map)]
+    return [pallas_core.BlockSpec(tuple(new_block_shape), new_index_map)]
 
   # Handle the case where we reshape from (..., n * l) -> (..., n, l)
   if _pattern_match_lanes_to_sublanes_reshape(aval_in, aval_out):
-    block_shape = tuple(block_spec.block_shape)
     if not isinstance(block_shape[-1], (int, pallas_core.Blocked)):
       raise NotImplementedError(
           f'reshape must use Blocked block size on lanes: {block_shape}'
