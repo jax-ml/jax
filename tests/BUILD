@@ -2134,6 +2134,9 @@ jax_multiplatform_test(
     shard_count = {
         "gpu": 4,
     },
+    tags = [
+        "multiaccelerator",
+    ],
     deps = py_deps([
         "absl/testing",
         "numpy",
