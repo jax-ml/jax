@@ -382,11 +382,7 @@ def _reorder_shards(x, new_s, copy_semantics: CopySemantics):
 @util.cache()
 def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   """Returns True if src->dst is a supported cross-host transfer."""
-  backend = xla_bridge.get_backend()
-  # There is experimental support for cross-host device transfers on
-  # statically-linked TFRT TPU and CUDA backends only.
-  if (xla_bridge.process_count() == 1 or not
-      getattr(backend, 'supports_cross_host_transfers', False)):
+  if xla_bridge.process_count() == 1:
     return False
   if (src_sharding._internal_device_list.device_kind !=
       dst_sharding._internal_device_list.device_kind):
@@ -397,9 +393,22 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   # This check excludes the case where the source and destination shardings
   # have the same process index sets but there are shards that require
   # cross-host transfers. This case is supportable but expensive to check for.
-  return (src_sharding._internal_device_list.process_indices !=
-          dst_sharding._internal_device_list.process_indices)
-
+  different_process_inds = (
+      src_sharding._internal_device_list.process_indices !=
+      dst_sharding._internal_device_list.process_indices)
+  backend = xla_bridge.get_backend()
+  # If a cross-host device transfer is requested but the backend does not
+  # support it, then the user must set the flags to enable DCN-based transfers.
+  if (different_process_inds and
+      not getattr(backend, 'supports_cross_host_transfers', False) and
+      not xla_bridge.CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value):
+    raise ValueError(
+        f"The backend ({backend.platform}, {backend.platform_version}) does "
+        "not support cross-host device transfers via ICI/NCCL. Please set "
+        "jax_cross_host_transfer_socket_address and (optionally) "
+        "jax_cross_host_transport_addresses flags to enable DCN-based cross "
+        "host device transfers.")
+  return different_process_inds
 
 @dataclasses.dataclass(frozen=True)
 class _DeferredShardArg:
@@ -443,7 +452,6 @@ def _device_put_sharding_impl(x, aval, device, copy):
       assert isinstance(s, Sharding)
       return _different_device_order_reshard(x, s, copy)
 
-    # There is experimental support for cross-host device transfers on TFRT TPU.
     if (isinstance(x, array.ArrayImpl) and x._committed
         and _is_supported_cross_host_transfer(x.ndim, x.sharding, s)):
       return xc.batched_copy_array_to_devices_with_sharding(
