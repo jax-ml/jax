@@ -27,7 +27,6 @@ _deprecations = {
         ),
         None,
     ),
-    # Added April 4 2025.
     "get_topology_for_devices": (
         (
             "jax.lib.xla_client.get_topology_for_devices was deprecated in JAX"
@@ -42,6 +41,14 @@ _deprecations = {
         ),
         None,
     ),
+    "DeviceAssignment": (
+        (
+            "jax.lib.xla_client.DeviceAssignment was deprecated in JAX v0.6.0"
+            " and removed in JAX v0.7.0"
+        ),
+        None,
+    ),
+    # Added April 4 2025.
     "Client": (
         (
             "jax.lib.xla_client.Client was deprecated in JAX v0.6.0 and will be"
@@ -55,13 +62,6 @@ _deprecations = {
             " will be removed in JAX v0.7.0"
         ),
         _xc.CompileOptions,
-    ),
-    "DeviceAssignment": (
-        (
-            "jax.lib.xla_client.DeviceAssignment was deprecated in JAX v0.6.0"
-            " and will be removed in JAX v0.7.0"
-        ),
-        _xc.DeviceAssignment,
     ),
     "Frame": (
         (
@@ -98,7 +98,6 @@ import typing as _typing
 if _typing.TYPE_CHECKING:
   Client = _xc.Client
   CompileOptions = _xc.CompileOptions
-  DeviceAssignment = _xc.DeviceAssignment
   Frame = _xc.Frame
   HloSharding = _xc.HloSharding
   OpSharding = _xc.OpSharding

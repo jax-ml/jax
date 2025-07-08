@@ -58,7 +58,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `ConcretizationTypeError`, `call_p`, `closed_call_p`, and `get_type`
     have been removed.
   * From {mod}`jax.lib.xla_client`, the previously deprecated symbols
-    `get_topology_for_devices` and `mlir_api_version` have been removed.
+    `DeviceAssignment`, `get_topology_for_devices`, and `mlir_api_version`
+    have been removed.
   * `jax.extend.ffi` was removed after being deprecated in v0.5.0.
     Use {mod}`jax.ffi` instead.
 
