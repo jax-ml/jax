@@ -406,9 +406,10 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
   @functools.cached_property
   def _repr(self):
     if self.empty:
-      return "Mesh(device_ids=[], axis_names=())"
+      return "Mesh(axis_sizes=(), axis_names=())"
     atr = f", axis_types={self._axis_types}"
-    return f"Mesh(device_ids={self.device_ids!r}, axis_names={self.axis_names!r}{atr})"
+    return (f"Mesh(axis_sizes={self.device_ids.shape}, "
+            f"axis_names={self.axis_names!r}{atr})")
 
   def __repr__(self):
     return self._repr
