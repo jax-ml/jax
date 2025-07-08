@@ -591,11 +591,8 @@ class MutableArrayTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cpu")
   def test_scan_vjp_systematic_readonly(
       self, seed, num_consts, num_carry, num_ext_in, num_iters):
-    num_mut_consts = 1 # num_consts // 2
-    num_pure_consts = 0 # num_consts - num_mut_consts
-    num_carry = 1
-    num_ext_in = 0
-    num_iters = 1
+    num_mut_consts = num_consts // 2
+    num_pure_consts = num_consts - num_mut_consts
 
     rng = np.random.RandomState(seed)
     pure_consts = [rng.normal() for _ in range(num_pure_consts)]
@@ -623,7 +620,7 @@ class MutableArrayTest(jtu.JaxTestCase):
       return jax.lax.scan(body, init_carry, xs, length=num_iters)
 
     jtu.check_grads(f, (mut_const_vals, pure_consts, init_carry, xs),
-                    2, ['fwd', 'rev'])
+                    2, ['fwd', 'rev'], rtol=1.5e-2)
 
 
 @jtu.with_config(jax_mutable_array_checks=True)

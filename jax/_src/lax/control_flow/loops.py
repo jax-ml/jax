@@ -633,8 +633,9 @@ def _scan_linearize(nzs, *primals_in, reverse: bool, length: int, num_consts:
                     Sequence[bool], unroll: int, _split_transpose: bool):
   const_nz, init_nz, xs_nz = split_list(nzs, [num_consts, num_carry])
   carry_nz = init_nz
-  allow_fwds = [(i < num_consts or i >= num_consts + num_carry) and
-                not isinstance(x, np.ndarray) for i, x in enumerate(primals_in)]
+  allow_fwds = ([True] * len(jaxpr.consts) +
+                [(i < num_consts or i >= num_consts + num_carry) and
+                 not isinstance(x, np.ndarray) for i, x in enumerate(primals_in)])
   for _ in range(1 + num_carry):
     nzs = const_nz + carry_nz + xs_nz
     primal_jaxpr, num_res_out, nzs_out, in_fwd_res, tangent_jaxpr = \
@@ -905,7 +906,7 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
   is_mutable = [isinstance(a, AbstractRef) for a in const_avals]
   immut_consts_dot, mut_consts_bar = partition_list(is_mutable, consts_dot)
   jaxpr = _rearrange_mutable_const_binders(jaxpr, num_ires, num_consts - num_ires)
-  del is_mutable, const_avals
+  del const_avals, consts_dot
   # Unpack the rest of the args.
   carry_dot, xs_dot, eres = split_list(rest, [num_carry, sum(xs_lin)])
   # Check that pure tangent values are all UndefinedPrimals, and mutable
@@ -1032,8 +1033,9 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
         for mask in outs_mask
     ]
 
-  ct_consts, ct_init, ct_xs = split_list(outs, [len(immut_consts_dot), len(carry_dot)])
-  return [None] * (num_ires + len(mut_consts_bar)) + ct_consts + ct_init + ct_xs + [None] * num_eres
+  ct_immut_consts, ct_init, ct_xs = split_list(outs, [len(immut_consts_dot), len(carry_dot)])
+  ct_consts = merge_lists(is_mutable, ct_immut_consts, [None] * len(mut_consts_bar))
+  return [None] * num_ires + ct_consts + ct_init + ct_xs + [None] * num_eres
 
 
 # transpose_scan_jaxpr converts the jaxpr signature:
