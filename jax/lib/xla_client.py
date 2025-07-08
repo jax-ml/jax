@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import gzip as _gzip
 from jax._src.lib import xla_client as _xc
-
-def _heap_profile(client):
-  return _gzip.compress(client.heap_profile())
 
 _deprecations = {
     # Finalized for JAX v0.7.0
@@ -104,9 +100,7 @@ if _typing.TYPE_CHECKING:
   Traceback = _xc.Traceback
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
-del _heap_profile
 del _xc
