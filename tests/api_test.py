@@ -5132,7 +5132,7 @@ class APITest(jtu.JaxTestCase):
       assert r() is None, "oops, the constant wasn't DCE'd"
       return x + x
 
-    jax.make_jaxpr(foo)(1.0)
+    jax.make_jaxpr(foo, dce=True)(1.0)
 
 class RematTest(jtu.JaxTestCase):
 
@@ -7043,7 +7043,7 @@ class DCETest(jtu.JaxTestCase):
       return out
     jaxpr = api.make_jaxpr(f)([1., 2., 3., 4., 5., 6., 7., 8., 9., 10.]).jaxpr
     self.assertLen(jaxpr.eqns, 1)
-    self.assertLen(jaxpr.eqns[0].params['jaxpr'].jaxpr.eqns, 5)
+    self.assertLen(jaxpr.eqns[0].params['jaxpr'].jaxpr.eqns, 4)
 
     # If we use the value at index 8 only, all the hidden sequence must be kept
     # and no eqns can be pruned.

@@ -1772,9 +1772,9 @@ class JaxprStackFrame:
   debug_info: core.DebugInfo
   is_high: bool
   mutable_qdds: list[tuple[Var, core.MutableQuasiDynamicData]]
+  auto_dce: bool
 
-
-  def __init__(self, debug_info: core.DebugInfo):
+  def __init__(self, debug_info: core.DebugInfo, auto_dce: bool):
     self.gensym = core.gensym()
     self.constid_to_tracer = WeakValueDictionary()
     self.constvar_to_val = {}
@@ -1784,10 +1784,12 @@ class JaxprStackFrame:
     self.debug_info = debug_info
     self.is_high = False
     self.mutable_qdds = []
+    self.auto_dce = auto_dce
 
   def add_eqn(self, eqn: core.TracingEqn):
     assert isinstance(eqn, TracingEqn)
-    self.tracing_eqns.append(ref(eqn))
+    r = (lambda: eqn) if (eqn.effects or not self.auto_dce) else ref(eqn)
+    self.tracing_eqns.append(r)
 
   def get_eqns(self):
     eqns = []
@@ -1934,10 +1936,11 @@ class TracingEqn:
 class DynamicJaxprTrace(core.Trace):
   __slots__ = ("frame", "tag", "parent_trace")
 
-  def __init__(self, debug_info: core.DebugInfo, parent_trace=None, lower=False):
+  def __init__(self, debug_info: core.DebugInfo, parent_trace=None, lower=False,
+               auto_dce=True):
     super().__init__()
     self.requires_low = lower
-    self.frame = JaxprStackFrame(debug_info)
+    self.frame = JaxprStackFrame(debug_info, auto_dce)
     self.parent_trace = parent_trace
 
   def invalidate(self):
