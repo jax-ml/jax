@@ -1349,26 +1349,30 @@ LogicalResult EnqueueIndirectDMAOp::verifyScatter(
 }
 
 namespace {
-bool HasHbmOrVmemSharedMemorySpace(MemRefType ty) {
+bool hasHbmOrVmemSharedMemorySpace(MemRefType ty) {
   return HasMemorySpace(ty, MemorySpace::kHbm) ||
          HasMemorySpace(ty, MemorySpace::kVmemShared);
 }
-}  // namespace
 
-FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
-  const MemRefType source_ty = getMemRefType(getSource());
-  const MemRefType target_ty = getMemRefType(getTarget());
-  if (HasHbmOrVmemSharedMemorySpace(source_ty) &&
+FailureOr<bool> isGather(Operation& op, Value source, Value target) {
+  const MemRefType source_ty = getMemRefType(source);
+  const MemRefType target_ty = getMemRefType(target);
+  if (hasHbmOrVmemSharedMemorySpace(source_ty) &&
       HasMemorySpace(target_ty, MemorySpace::kVmem)) {
     return true;
   }
   if (HasMemorySpace(source_ty, MemorySpace::kVmem) &&
-      HasHbmOrVmemSharedMemorySpace(target_ty)) {
+      hasHbmOrVmemSharedMemorySpace(target_ty)) {
     return false;
   }
-  return emitOpError(
+  return op.emitOpError(
       "The transfer must be between HBM and VMEM, or between VMEM_SHARED and "
       "VMEM");
+}
+}  // namespace
+
+FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
+  return mlir::tpu::isGather(*getOperation(), getSource(), getTarget());
 }
 
 LogicalResult EnqueueIndirectDMAOp::verify() {
@@ -1424,8 +1428,7 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
 LogicalResult WaitDMAOp::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
-    emitOpError("DMA wait semaphore must be rank 0");
-    return failure();
+    return emitOpError("DMA wait semaphore must be rank 0");
   }
   return success();
 }
@@ -1439,10 +1442,29 @@ void WaitDMA2Op::build(OpBuilder &builder, OperationState &state,
 LogicalResult WaitDMA2Op::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
-    emitOpError("DMA wait semaphore must be rank 0");
-    return failure();
+    return emitOpError("DMA wait semaphore must be rank 0");
   }
   return success();
+}
+
+FailureOr<bool> WaitIndirectDMAOp::isGather() {
+  return mlir::tpu::isGather(*getOperation(), getSrc(), getDst());
+}
+
+LogicalResult WaitIndirectDMAOp::verify() {
+  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core)) {
+    return issuing_core;
+  }
+  if (*issuing_core != CoreType::kScVectorSubcore) {
+    return emitOpError(
+        "Wait indirect DMA is supported only on the SC vector subcore");
+  }
+  MemRefType sem_type = getMemRefType(getSemaphore());
+  if (sem_type.getRank() != 0) {
+    return emitOpError("Indirect DMA wait semaphore must be rank 0");
+  }
+  return isGather();
 }
 
 LogicalResult RegionOp::verify() {
