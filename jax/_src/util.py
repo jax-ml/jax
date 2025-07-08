@@ -334,18 +334,12 @@ def weakref_lru_cache(call: Callable, maxsize=2048,
   and strong refs to all subsequent operations. In all other respects it should
   behave similar to `functools.lru_cache`.
   """
-  global _weakref_lru_caches
   cached_call = _weakref_lru_cache.weakref_lru_cache(
       config.trace_context if trace_context_in_key else _ignore, call, maxsize
   )
-  _weakref_lru_caches.add(cached_call)
+  register_cache(cached_call, str(call))
   return cached_call
 
-_weakref_lru_caches = weakref.WeakSet()  # type: ignore
-
-def clear_all_weakref_lru_caches():
-  for cached_call in _weakref_lru_caches:
-    cached_call.cache_clear()
 
 class Unhashable:
   __slots__ = ["val"]
