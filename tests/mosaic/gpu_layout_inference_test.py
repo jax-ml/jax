@@ -650,17 +650,11 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     cst_system, cst_mapping = layout_inference2._constant_equation_system(cst)
     lc_system, lc_mapping = layout_inference2._layout_cast_equation_system(lc)
     assignments = cst_system.assignments | lc_system.assignments
-    [hint_cst, hint_lc] = [
-        layout_inference2.reduce_hint(h, assignments) for h in
-        layout_inference2.derive_hints(cst_mapping | lc_mapping)
-    ]
+    [hint_cst] = layout_inference2.reduce_hints(
+        layout_inference2.derive_hints(cst_mapping | lc_mapping), assignments)
 
     self.assertEqual(hint_cst.variable.key.operation, cst)
     self.assertEqual(hint_cst.expression, C(layout))
-
-    self.assertEqual(hint_lc.variable.key.operation, lc)
-    self.assertIsInstance(hint_lc.expression, equations.Variable)
-    self.assertEqual(hint_lc.expression.key.operation, cst)
 
   def test_unambiguous_hints_are_used_to_assign_variables_correctly(self):
     v0 = V(0)

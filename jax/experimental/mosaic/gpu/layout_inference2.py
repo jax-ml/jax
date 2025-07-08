@@ -149,12 +149,24 @@ def extract_variable_assignment_from_hint(
   red = extract_constant_for_hint(hint.expression)
   return (hint.variable, red) if red is not None else None
 
-def reduce_hint(
-    h: Hint, assignments: dict[eqns.Variable, eqns.ConstantExpression]
-) -> Hint:
-  """Like `eqns.reduce_equation` but for `Hint`s."""
-  return dataclasses.replace(
-      h, expression=eqns.reduce_expression(h.expression, assignments))
+def reduce_hints(
+    hints: Sequence[Hint], assignments: dict[eqns.Variable, eqns.ConstantExpression]
+) -> Sequence[Hint]:
+  """Reduces a sequence of `Hint`s.
+
+  We reduce the `Hint`s' expressions, drop `Unsatisfiable` hints, and drop
+  `Hint`s pertaining to pre-existing assignments.
+  """
+  new_hints: list[Hint] = []
+  for h in hints:
+    if h.variable not in assignments:
+      reduced_expression = eqns.reduce_expression(h.expression, assignments)
+      if isinstance(reduced_expression, eqns.Unsatisfiable):
+        continue
+      new_hints.append(dataclasses.replace(h, expression=reduced_expression))
+
+  return new_hints
+
 
 def find_assignments_for(
     unknowns: set[eqns.Variable],
@@ -186,8 +198,7 @@ def find_assignments_for(
   # Reduce the expressions in the remaining hints based on the current
   # assignments, and eliminate hints that pertain to variables that already
   # have an assignment.
-  hints = [reduce_hint(h, equation_system.assignments) for h in hints
-            if h.variable not in equation_system.assignments]
+  hints = reduce_hints(hints, equation_system.assignments)
 
   # If unknowns remain and we have fully reduced the system, we may still
   # be able to make progress by extracting an assignment from a `Hint`. This
@@ -490,7 +501,7 @@ def infer_layout(module: ir.Module):
     inference_utils.traverse_op(op, gather_equations)
 
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
-  hints = [reduce_hint(h, global_equation_system.assignments) for h in derive_hints(operand_and_results_for_variable)]
+  hints = reduce_hints(derive_hints(operand_and_results_for_variable), global_equation_system.assignments)  # pytype: disable=attribute-error
 
   # Attempt to find assignments that satisfy the equation system.
   solution = find_assignments_for(
