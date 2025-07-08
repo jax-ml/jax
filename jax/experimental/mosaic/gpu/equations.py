@@ -17,9 +17,10 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import assert_never, Any
+from typing import assert_never, Any, Callable
 
 from . import fragmented_array as fa
+from . import layouts as layouts_lib
 
 
 VariableKey = Any
@@ -59,97 +60,70 @@ class MostReplicatedExpression:
 Expression = Variable | ConstantExpression | LeastReplicatedExpression | MostReplicatedExpression
 
 
-def least_replicated_expression(
-    expressions: tuple[Expression, ...],
-) -> Expression | None:
-  """Returns the least replicated expression out of multiple expressions.
+def reduce_replicated_expression(
+    input_expr: LeastReplicatedExpression | MostReplicatedExpression,
+    assignments: dict[Variable, ConstantExpression],
+    reducer: Callable[[fa.FragmentedLayout, fa.FragmentedLayout], fa.FragmentedLayout | None]
+) -> Expression | Unsatisfiable:
+  assert input_expr.expressions
 
-  The input expressions should correspond to "compatible" expressions (i.e.
-  expressions that produce identical layouts up to replication). Practically
-  speaking, the result is either a constant expression, or the single expression
-  in the sequence.
+  new_expressions: list[Expression] = []
+  # Use a set to eliminate duplicates, but preserve the order.
+  seen: set[Expression] = set()
+  for expr in input_expr.expressions:
+    reduced_expr = reduce_expression(expr, assignments)
+    if isinstance(reduced_expr, Unsatisfiable):
+      return Unsatisfiable()
+    if reduced_expr in seen:
+      continue
+    new_expressions.append(reduced_expr)
+    seen.add(reduced_expr)
 
-  Args:
-    expressions: a non-empty sequence of expressions.
+  if len(new_expressions) == 1:
+    return new_expressions[0]
 
-  Returns:
-    If there exists a constant expression such that it is less replicated than
-    all the other expressions in the sequence (or expressions contains a single
-    expression), then that  expression is returned. Otherwise, None is returned.
-  """
-  assert len(expressions) >= 1
-  if len(expressions) == 1:
-    return expressions[0]
+  consts = [e for e in new_expressions if isinstance(e, ConstantExpression)]
+  unknowns = [e for e in new_expressions if not isinstance(e, ConstantExpression)]
 
-  for e in expressions:
-    # TODO(bchetioui): handle replication lattice between compatible layouts.
-    match e:
-      case ConstantExpression(value=fa.WGStridedFragLayout()):
-        return e
-      case ConstantExpression(value=layout) if isinstance(layout, fa.TiledLayout):
-        warp_replicated = isinstance(layout.warp_dim, fa.Replicated)
-        lane_replicated = any(isinstance(d, fa.Replicated) for d in layout.lane_dims)
-        # In this case, the layout is not replicated at all, so by definition
-        # it is the least replicated expression (assuming all the input
-        # expressions define compatible layouts).
-        if not warp_replicated and not lane_replicated:
-          return e
-  return None
+  if consts:
+    const_red, *consts = consts
+    red = const_red
+    for cst in consts:
+      red_value = reducer(red.value, cst.value)
+      if red_value is None:
+        # The layouts are not compatible up to replication, this expression
+        # cannot be simplified.
+        return Unsatisfiable()
+      red = ConstantExpression(red_value)
+  else:
+    red = None
 
+  constructor = type(input_expr)
+  if red is not None:
+    if unknowns:
+      return constructor((red, *unknowns))
+    return red
 
-def most_replicated_expression(
-    expressions: tuple[Expression, ...],
-) -> Expression | None:
-  """Returns the most replicated expression out of multiple expressions.
-
-  The input expressions should correspond to "compatible" expressions (i.e.
-  expressions that produce identical layouts up to replication). Practically
-  speaking, the result is either a constant expression, or the single expression
-  in the sequence.
-
-  Args:
-    expressions: a non-empty sequence of expressions.
-
-  Returns:
-    If there exists a constant expression such that it is more replicated than
-    all the other expressions in the sequence (or expressions contains a single
-    expression), then that  expression is returned. Otherwise, None is returned.
-  """
-  assert len(expressions) >= 1
-  if len(expressions) == 1:
-    return expressions[0]
-
-  for e in expressions:
-    # TODO(bchetioui): handle replication lattice between compatible layouts.
-    if isinstance(e, ConstantExpression):
-      layout = e.value
-      match layout:
-        case fa.WGSplatFragLayout():
-          return e
-
-  return None
+  return constructor(tuple(unknowns))
 
 
 def reduce_expression(
     expr: Expression, assignments: dict[Variable, ConstantExpression]
-) -> Expression:
+) -> Expression | Unsatisfiable:
   """Reduces an expression as much as is possible given a set of known variable assignments."""
-  reduce = reduce_expression
   match expr:
     case ConstantExpression():
       return expr
     case Variable():
       return assignments.get(expr, expr)
-    case MostReplicatedExpression(expressions=expressions):
-      reduced_expressions = tuple(reduce(e, assignments) for e in expressions)
-      if most_replicated := most_replicated_expression(reduced_expressions):
-        return reduce(most_replicated, assignments)
-      return MostReplicatedExpression(expressions=reduced_expressions)
-    case LeastReplicatedExpression(expressions=expressions):
-      reduced_expressions = tuple(reduce(e, assignments) for e in expressions)
-      if least_replicated := least_replicated_expression(reduced_expressions):
-        return reduce(least_replicated, assignments)
-      return LeastReplicatedExpression(expressions=reduced_expressions)
+    case MostReplicatedExpression():
+      return reduce_replicated_expression(
+          expr, assignments, layouts_lib.join_layouts
+      )
+    case LeastReplicatedExpression():
+      return reduce_replicated_expression(
+          expr, assignments, layouts_lib.meet_layouts
+      )
     case _:
       assert_never(expr)
 
@@ -165,7 +139,7 @@ class Equation:
 
 def reduce_equation(
     eq: Equation, assignments: dict[Variable, ConstantExpression]
-) -> Solution:
+) -> Solution | Unsatisfiable:
   """Reduces an equation.
 
   Args:
@@ -189,9 +163,13 @@ def reduce_equation(
       return SatisfiedBy((rhs, lhs))
     case (ConstantExpression(), ConstantExpression()) if lhs != rhs:
       return Unsatisfiable()
+    case _ if isinstance(lhs, Unsatisfiable) or isinstance(rhs, Unsatisfiable):
+      return Unsatisfiable()
     case _ if lhs == rhs:
       return Tautological()
     case _:
+      # This is covered above. Add a check here to appease the type checker.
+      assert not isinstance(lhs, Unsatisfiable) and not isinstance(rhs, Unsatisfiable)
       return Unknown(Equation(lhs, rhs))
 
 

@@ -133,11 +133,8 @@ class EquationSystemTest(parameterized.TestCase):
       )
 
     with self.subTest("most-replicated-expression-does-not-exist"):
-      v1 = V(1)
-      # We may need to relax this later---since we could actually add logic
-      # to the equation system to handle this case.
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.MostReplicatedExpression((v1, layout1)))],
+          equations=[Eq(v0, equations.MostReplicatedExpression((layout1, v0)))],
       )
       self.assertEqual(equations.reduce(system), system)
 
@@ -165,13 +162,58 @@ class EquationSystemTest(parameterized.TestCase):
       )
 
     with self.subTest("least-replicated-expression-does-not-exist"):
-      v1 = V(1)
-      # We may need to relax this later---since we could actually add logic
-      # to the equation system to handle this case.
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.LeastReplicatedExpression((v1, layout0)))],
+          equations=[Eq(v0, equations.LeastReplicatedExpression((layout0, v0)))],
       )
       self.assertEqual(equations.reduce(system), system)
+
+  def test_reduce_most_replicated_expression_reduces_compatible_layouts(self):
+    splat_layout = C(mgpu.WGSplatFragLayout((128, 64)))
+    tiled_layout = C(mgpu.WGMMA_LAYOUT)
+    self.assertEqual(
+        equations.reduce_expression(
+            equations.MostReplicatedExpression((splat_layout, tiled_layout)),
+            {},
+        ),
+        splat_layout,
+    )
+
+  def test_reduce_most_replicated_expression_is_unsatisfiable_for_incompatible_layouts(
+      self,
+  ):
+    splat_layout = C(mgpu.WGSplatFragLayout((1, 2)))
+    tiled_layout = C(mgpu.WGMMA_LAYOUT)
+    self.assertIsInstance(
+        equations.reduce_expression(
+            equations.MostReplicatedExpression((splat_layout, tiled_layout)),
+            {},
+        ),
+        equations.Unsatisfiable,
+    )
+
+  def test_reduce_least_replicated_expression_reduces_compatible_layouts(self):
+    splat_layout = C(mgpu.WGSplatFragLayout((128, 64)))
+    tiled_layout = C(mgpu.WGMMA_LAYOUT)
+    self.assertEqual(
+        equations.reduce_expression(
+            equations.LeastReplicatedExpression((splat_layout, tiled_layout)),
+            {},
+        ),
+        tiled_layout,
+    )
+
+  def test_reduce_least_replicated_expression_is_unsatisfiable_for_incompatible_layouts(
+      self,
+  ):
+    splat_layout = C(mgpu.WGSplatFragLayout((1, 2)))
+    tiled_layout = C(mgpu.WGMMA_LAYOUT)
+    self.assertIsInstance(
+        equations.reduce_expression(
+            equations.LeastReplicatedExpression((splat_layout, tiled_layout)),
+            {},
+        ),
+        equations.Unsatisfiable,
+    )
 
 
 if __name__ == "__main__":

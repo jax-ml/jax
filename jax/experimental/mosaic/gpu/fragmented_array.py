@@ -697,7 +697,6 @@ class WGStridedFragLayout:
     for i in range(reg_num):
       yield arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))
 
-
 FragmentedLayout = WGSplatFragLayout | WGStridedFragLayout | TiledLayout
 
 
