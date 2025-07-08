@@ -2081,7 +2081,7 @@ class DynamicJaxprTrace(core.Trace):
     maybe_consts_out = try_constant_folding(primitive, tracers, params, out_avals)
     if maybe_consts_out is not None:
       eqn = None
-      out_tracers = maybe_consts_out
+      out_tracers = map(partial(self.new_const, source_info=source_info), maybe_consts_out)
     else:
       eqn, out_tracers = self.make_eqn(tracers, out_avals, primitive, params,
                                        effs, source_info=source_info)
