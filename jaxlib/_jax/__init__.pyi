@@ -580,8 +580,6 @@ def get_tfrt_cpu_client(
     num_devices: int | None = ...,
     get_local_topology_timeout_minutes: int | None = ...,
     get_global_topology_timeout_minutes: int | None = ...,
-    cross_host_transfer_socket_address: str | None = ...,
-    cross_host_transport_addresses: Sequence[str] = ...,
 ) -> Client: ...
 def get_mock_gpu_client(
     asynchronous: bool = ...,
@@ -595,8 +593,6 @@ def get_c_api_client(
     platform_name: str,
     options: Mapping[str, str | int | list[int] | float | bool],
     distributed_client: DistributedRuntimeClient | None = ...,
-    cross_host_transfer_socket_address: str | None = ...,
-    cross_host_transport_addresses: Sequence[str] = ...,
 ) -> Client: ...
 def get_default_c_api_topology(
     platform_name: str,
