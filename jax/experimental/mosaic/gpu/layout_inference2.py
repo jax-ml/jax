@@ -25,6 +25,9 @@ from typing import cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import func
+from jax._src.lib.mlir.dialects import math as mlir_math
+from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
 from . import equations as eqns
@@ -297,6 +300,59 @@ def is_vector(v: ir.Value) -> bool:
   return ir.VectorType.isinstance(v.type)
 
 
+def _pointwise_op_equation_system(
+    op: ir.OpView
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  all_operands_and_results = operands_and_results(op)
+  variable = eqns.Variable(all_operands_and_results[0])
+  return eqns.EquationSystem(), {variable: all_operands_and_results}
+
+
+for op in [
+    arith.AddIOp,
+    arith.AddFOp,
+    arith.AndIOp,
+    arith.BitcastOp,
+    arith.CmpFOp,
+    arith.CmpIOp,
+    arith.ExtFOp,
+    arith.ExtSIOp,
+    arith.ExtUIOp,
+    arith.FPToSIOp,
+    arith.FPToUIOp,
+    arith.MaximumFOp,
+    arith.MaxUIOp,
+    arith.MaxSIOp,
+    arith.MinimumFOp,
+    arith.MinUIOp,
+    arith.MinSIOp,
+    arith.MulIOp,
+    arith.MulFOp,
+    arith.OrIOp,
+    arith.FloorDivSIOp,
+    arith.DivUIOp,
+    arith.DivFOp,
+    arith.RemUIOp,
+    arith.RemSIOp,
+    arith.RemFOp,
+    arith.SIToFPOp,
+    arith.UIToFPOp,
+    arith.SubIOp,
+    arith.SubFOp,
+    arith.TruncFOp,
+    arith.TruncIOp,
+    arith.XOrIOp,
+    mlir_math.ExpOp,
+    mlir_math.Exp2Op,
+    mlir_math.LogOp,
+    mlir_math.RsqrtOp,
+    mlir_math.TanhOp,
+    vector.LoadOp,
+    vector.StoreOp,
+]:
+  _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
+
+
 @_add_equation_system_derivation_rule(arith.ConstantOp)
 def _constant_equation_system(
     constant_op: arith.ConstantOp
@@ -421,6 +477,7 @@ def producer_result(operand: OperandOrResult) -> OperandOrResult:
   # depending on function parameters, or loop block arguments.
   if isinstance(producer, ir.Block):
     index = list(cast(ir.Block, producer).arguments).index(value)
+    producer = producer.owner.opview
     return OperandOrResult(producer, VariableType.OPERAND, index)
 
   raise TypeError(
@@ -461,11 +518,21 @@ def derive_hints(
     consumers: list[eqns.Variable] = []
     for operand_or_result in operand_and_results:
       if operand_or_result.type == VariableType.OPERAND:
-        producers.append(
-            variable_for_operand_or_result[producer_result(operand_or_result)])
+        pr = producer_result(operand_or_result)
+        op = pr.operation
+        # TODO(bchetioui): migrate the tests to not use `FuncOp`s.
+        # Filter out `FuncOp` arguments, which can show up in tests, but are
+        # not relevant for layout inference.
+        if not isinstance(op, func.FuncOp):
+          producers.append(variable_for_operand_or_result[pr])
       elif operand_or_result.type == VariableType.RESULT:
-        for c in consumer_operands(operand_or_result):
-          consumers.append(variable_for_operand_or_result[c])
+        for co in consumer_operands(operand_or_result):
+          op = co.operation
+          # TODO(bchetioui): migrate the tests to not use `FuncOp`s.
+          # Filter out `FuncOp` arguments, which can show up in tests, but are
+          # not relevant for layout inference.
+          if not isinstance(op, func.FuncOp):
+            consumers.append(variable_for_operand_or_result[co])
 
     if producers:
       least_replicated_producer = eqns.LeastReplicatedExpression(tuple(producers))

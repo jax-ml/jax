@@ -218,7 +218,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       mgpu.WGStridedFragLayout(shape=(32, 4), vec_size=1),
   )
   def test_pointwise_op_propagates_argument_layouts(self, layout):
-    self.skip_if_equations()
     add = None
 
     def body(lhs, rhs):
@@ -238,7 +237,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(add, [layout_attr])
 
   def test_infer_layout_cast_layout(self):
-    self.skip_if_equations()
     add = cast = None
 
     shape = (128, 64)
@@ -342,7 +340,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(red, [out_layout_attr])
 
   def test_infer_layout_traverses_ops_correctly(self):
-    self.skip_if_equations()
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
     add = None
@@ -485,7 +482,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       self.checkOutLayouts(while_op, result_layouts)
 
   def test_infer_layout_has_no_layout_for_non_vector_types(self):
-    self.skip_if_equations()
     shape = (32, 4)
     elt_ty = ir.BF16Type.get()
 
@@ -512,15 +508,12 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.assertEmpty(vector_store.attributes["out_layouts"])
 
   @parameterized.parameters(
-      mgpu.WGStridedFragLayout((32, 4), vec_size=1),
+      mgpu.WGStridedFragLayout((64, 16), vec_size=1),
       mgpu.WGMMA_LAYOUT,
   )
-  def test_infer_layout_picks_non_splat_layout_over_splat_layout(
-      self, layout
-  ):
-    self.skip_if_equations()
+  def test_infer_layout_picks_non_splat_layout_over_splat_layout(self, layout):
     add = None
-    shape = (32, 4)
+    shape = (64, 16)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
     non_splat_layout = layouts.to_layout_attr(layout)
 
@@ -541,7 +534,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(add, [non_splat_layout])
 
   def test_infer_layout_preserves_splat_layouts_in_producers(self):
-    self.skip_if_equations()
     add0 = add1 = None
     shape = (32, 4)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
@@ -570,8 +562,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(add1, [strided_layout])
 
   def test_infer_layout_does_not_assign_default_layouts_to_func(self):
-    self.skip_if_equations()
-
     def body(lhs, rhs):
       arith.AddFOp(lhs, rhs)
 
