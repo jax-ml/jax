@@ -810,8 +810,10 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       ((2, 4096), (1, 64), (1, 1, 1, 64), (2, 0, 1, 1)),
       # Merge two pairs of dimensions.
       ((8, 1024), (1, 256), (1, 1, 2, 128), (0, 2, 3, 0)),
+      # Merge three dims and expand in trailing dim.
+      ((64, 128, 1), (4, 128, 1), (1, 1, 4, 128), (0, 1, 0, 3)),
   )
-  def test_reshape_merge_dims(
+  def test_reshape(
       self, shape, block_shape, expected_x_block_shape, expected_x_index
   ):
     f = lambda x: x.reshape(shape)

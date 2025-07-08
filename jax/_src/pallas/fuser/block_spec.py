@@ -1636,19 +1636,21 @@ def _reshape_pull_rule(
   # Handle merged dims; i.e. (..., m, n, ...) -> (..., m * n, ...).
   i = 0
   j = 0
-  merged_dims = tuple([] for _ in shape_out)
+  merged_dims = []
 
   while i < len(shape_in) and j < len(shape_out):
-    while not merged_dims[j] or np.prod(merged_dims[j]) < shape_out[j]:
-      merged_dims[j].append(shape_in[i])
+    merged = []
+    while not merged or np.prod(merged) < shape_out[j]:
+      merged.append(shape_in[i])
       i += 1
 
-    if np.prod(merged_dims[j]) > shape_out[j]:
+    if np.prod(merged) > shape_out[j]:
       break  # Dimension has been split (or something more complex).
 
+    merged_dims.append(merged)
     j += 1
 
-  if (i == len(shape_in)) and (j == len(shape_out)):
+  if (i == len(shape_in)) and np.prod(shape_out[j:]) == 1:
     new_block_shape = []
     new_grids = []
 
@@ -1677,6 +1679,7 @@ def _reshape_pull_rule(
         raise NotImplementedError('reshape merge must maintain grid size')
 
     def new_index_map(*args):
+      # NOTE: The `zip` will drop indices for any trailing `1` dims.
       idxs = (
           jnp.unravel_index(idx, new_grid) if len(new_grid) > 1 else (idx,)
           for idx, new_grid in zip(block_spec.index_map(*args), new_grids)
