@@ -746,6 +746,16 @@ class TMEMLayout(fa.TiledLayout):
     self.check_type(shape, dtype)
     return math.prod(shape) // TMEM_ROWS // self.vector_length
 
+  def canonicalize(self) -> "TMEMLayout":
+    layout = super().canonicalize()
+    return TMEMLayout(
+        layout.tiling,
+        layout.warp_dims,
+        layout.lane_dims,
+        layout.vector_dim,
+        _check_canonical=False,
+    )
+
 
 def _infer_tmem_layout(shape: tuple[int, int], collective: bool, packing: int) -> TMEMLayout:
   if len(shape) != 2:
