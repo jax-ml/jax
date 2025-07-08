@@ -53,6 +53,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     deprecation in SciPy; use {func}`jax.scipy.special.sph_harm_y` instead.
   * From {mod}`jax.interpreters.xla`, the previously deprecated symbols
     `abstractify` and `pytype_aval_mappings` have been removed.
+  * From {mod}`jax.core`, the previously deprecated symbols `AxisName`,
+    `ConcretizationTypeError`, `call_p`, `closed_call_p`, and `get_type`
+    have been removed.
+  * From {mod}`jax.lib.xla_client`, the previously deprecated symbols
+    `get_topology_for_devices` and `mlir_api_version` have been removed.
   * `jax.extend.ffi` was removed after being deprecated in v0.5.0.
     Use {mod}`jax.ffi` instead.
 
