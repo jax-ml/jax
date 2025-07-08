@@ -635,7 +635,6 @@ C = equations.ConstantExpression
 
 
 class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=InferenceImplementation.EQUATIONS):
-  ...
 
   def test_hint_extraction_works_correctly(self):
     shape = (64,)
@@ -705,20 +704,50 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     [kv0] = layout_inference2.operands_and_results(op0)
     [kv1] = layout_inference2.operands_and_results(op1)
     v0, v1 = equations.Variable(kv0), equations.Variable(kv1)
-    splat_layout = C(mgpu.WGSplatFragLayout((128, 256)))
+    splat_layout = C(mgpu.WGSplatFragLayout((3, 128)))
     assignments = layout_inference2.find_assignments_for(
         {v0},
         equations.EquationSystem(
             equations=[
-                E(v0, equations.MostReplicatedExpression([v1, C(mgpu.WGMMA_LAYOUT)]))
+                E(
+                    v0,
+                    equations.MostReplicatedExpression(
+                        [v1, C(mgpu.WGStridedFragLayout((3, 128), vec_size=1))]
+                    ),
+                )
             ]
         ),
         # The first hint would make the system unsatisfiable, but the second
         # hint should be used to find a solution.
-        hints=[H(v1, C(mgpu.WGStridedFragLayout((1, 128), vec_size=1))),
-               H(v1, splat_layout)],
+        hints=[H(v1, C(mgpu.WGMMA_LAYOUT)), H(v1, splat_layout)],
     )
     self.assertEqual(assignments, {v0: splat_layout})
+
+  def test_hint_can_be_chosen_when_constant_exists_in_least_replicated_expression(self):
+    v0, v1 = V(0), V(1)
+    layout = C(mgpu.WGMMA_LAYOUT)
+    assignment = layout_inference2.extract_variable_assignment_from_hint(
+        H(v0, equations.LeastReplicatedExpression([layout, v1])),
+    )
+    self.assertEqual(assignment, (v0, layout))
+
+  def test_hint_cannot_be_chosen_when_constant_exists_in_most_replicated_expression(self):
+    v0, v1 = V(0), V(1)
+    layout = C(mgpu.WGSplatFragLayout((1, 128)))
+    assignment = layout_inference2.extract_variable_assignment_from_hint(
+        H(v0, equations.MostReplicatedExpression([layout, v1])),
+    )
+    self.assertEqual(assignment, (v0, layout))
+
+  def test_hint_is_still_extracted_when_underlying_expression_is_unsatisfiable(self):
+    v0, v1 = V(0), V(1)
+    layout0 = C(mgpu.WGSplatFragLayout((1, 128)))
+    layout1 = C(mgpu.WGSplatFragLayout((1, 129)))
+    _, expr = layout_inference2.extract_variable_assignment_from_hint(
+        H(v0, equations.LeastReplicatedExpression(
+            [layout0, equations.MostReplicatedExpression([layout1, v1])])),
+    )
+    self.assertIn(expr, {layout0, layout1})
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

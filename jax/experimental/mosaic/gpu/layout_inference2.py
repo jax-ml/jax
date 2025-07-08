@@ -69,14 +69,85 @@ class Hint:
   expression: eqns.Expression
 
 
+def extract_constant_from_least_replicated_expression_for_hint(
+    expressions: tuple[eqns.Expression, ...],
+) -> eqns.Expression | None:
+  choices: list[eqns.ConstantExpression] = []
+  for e in expressions:
+    if (red := extract_constant_for_hint(e)) is not None:
+      choices.append(red)
+
+  if not choices:
+    return None
+
+  # We reduce the expression here in order to recover an unambiguous least
+  # replicated layout if it exists.
+  maybe_choice = eqns.reduce_expression(
+      eqns.LeastReplicatedExpression(tuple(choices)), {}
+  )
+
+  if isinstance(maybe_choice, eqns.Unsatisfiable):
+    # TODO(bchetioui): consider other choices.
+    return choices[0]
+
+  assert isinstance(maybe_choice, eqns.ConstantExpression)
+  return maybe_choice
+
+
+def extract_constant_from_most_replicated_expression_for_hint(
+    expressions: tuple[eqns.Expression, ...],
+) -> eqns.Expression | None:
+  assert len(expressions) >= 1
+  choices: list[eqns.ConstantExpression] = []
+  for e in expressions:
+    if (red := extract_constant_for_hint(e)) is not None:
+      choices.append(red)
+
+  if not choices:
+    return None
+
+  maybe_choice = eqns.reduce_expression(
+      eqns.MostReplicatedExpression(tuple(choices)), {}
+  )
+
+  if isinstance(maybe_choice, eqns.Unsatisfiable):
+    # TODO(bchetioui): consider other choices.
+    return choices[0]
+
+  assert isinstance(maybe_choice, eqns.ConstantExpression)
+  return maybe_choice
+
+
+def extract_constant_for_hint(
+    e: eqns.Expression
+) -> eqns.ConstantExpression | None:
+  """Attempts to extract a `ConstantExpression` from a `Hint`'s `Expression`.
+
+  Returns `None` if no `ConstantExpression` could be reasonably extracted.
+  """
+  match e:
+    case eqns.ConstantExpression():
+      return e
+    case eqns.LeastReplicatedExpression():
+      return extract_constant_from_least_replicated_expression_for_hint(e.expressions)
+    case eqns.MostReplicatedExpression():
+      return extract_constant_from_most_replicated_expression_for_hint(e.expressions)
+    case eqns.Variable():
+      return None
+    case _:
+      raise NotImplementedError(f"Unsupported expression type: {type(e)}")
+
+
 def extract_variable_assignment_from_hint(
     hint: Hint,
 ) -> tuple[eqns.Variable, eqns.ConstantExpression] | None:
   """Attempts to extract a single variable assignment from a `Hint`."""
-  if isinstance(hint.expression, eqns.ConstantExpression):
-    return (hint.variable, hint.expression)
-  return None
-
+  # TODO(bchetioui): make this a generator. This will allow us to maybe extract
+  # different assignments that satisfy a replication constraint in the case
+  # where replicated expressions are incompatible and several extractions are
+  # possible.
+  red = extract_constant_for_hint(hint.expression)
+  return (hint.variable, red) if red is not None else None
 
 def reduce_hint(
     h: Hint, assignments: dict[eqns.Variable, eqns.ConstantExpression]
