@@ -1512,7 +1512,7 @@ def _interpret_jaxpr(
       elif prim is for_loop.for_p:
         raise NotImplementedError('for_p')
 
-      elif prim is pjit.pjit_p:
+      elif prim is pjit.jit_p:
         def f(*args, jaxpr):
           return _interpret(jaxpr.jaxpr, *jaxpr.consts, *args)
         invals = deferred_invals()
@@ -1521,7 +1521,7 @@ def _interpret_jaxpr(
             lu.wrap_init(functools.partial(f, jaxpr=eqn.params['jaxpr']),
                         debug_info=eqn.params['jaxpr'].jaxpr.debug_info),
             in_avals)
-        out = pjit.pjit_p.bind(*invals, **(eqn.params | {'jaxpr': new_jaxpr}))
+        out = pjit.jit_p.bind(*invals, **(eqn.params | {'jaxpr': new_jaxpr}))
 
       elif prim is primitives.run_scoped_p:
         if eqn.params['collective_axes']:

@@ -111,7 +111,7 @@ def _nan_check_posthook(fun, args, kwargs, output):
       buffers.extend([shard.data for shard in leaf.addressable_shards])
 
   try:
-    dispatch.check_special(pjit.pjit_p.name, buffers)
+    dispatch.check_special(pjit.jit_p.name, buffers)
   except api_util.InternalFloatingPointError as e:
     assert config.debug_nans.value or config.debug_infs.value
     if hasattr(fun, '_fun'):

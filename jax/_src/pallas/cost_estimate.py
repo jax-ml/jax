@@ -237,7 +237,7 @@ def _pjit_cost_rule(ctx, *, jaxpr: jax_core.ClosedJaxpr, **_):
       transcendentals=inner_cost.transcendentals,
       bytes_accessed=inner_cost.bytes_accessed,
   )
-register_cost_rule(pjit.pjit_p, _pjit_cost_rule)
+register_cost_rule(pjit.jit_p, _pjit_cost_rule)
 
 def _custom_vjp_rule(ctx, *, call_jaxpr: jax_core.ClosedJaxpr, **_):
   del ctx

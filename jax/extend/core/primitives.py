@@ -222,6 +222,7 @@ from jax._src.lax.linalg import (
 )
 
 from jax._src.pjit import (
+    jit_p as jit_p,
     pjit_p as pjit_p,
     sharding_constraint_p as sharding_constraint_p,
 )

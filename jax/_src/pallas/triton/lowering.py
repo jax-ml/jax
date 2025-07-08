@@ -2503,7 +2503,7 @@ triton_lowering_rules[lax.argmin_p] = functools.partial(
 )
 
 
-@register_lowering(pjit.pjit_p)
+@register_lowering(pjit.jit_p)
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   if jaxpr.consts:
     raise NotImplementedError

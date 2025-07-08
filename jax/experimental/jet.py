@@ -763,7 +763,7 @@ def _pjit_jet_rule(primals_in, series_in, **params):
       'out_layouts': params['out_layouts'] + (None,) * num_series_out,
       'donated_invars': params['donated_invars'] + (False,) * num_series_in,
   }
-  result = pjit.pjit_p.bind(*primals_and_series, **new_params)
+  result = pjit.jit_p.bind(*primals_and_series, **new_params)
   return tree_unflatten(out_tree_def(), result)
 
-jet_rules[pjit.pjit_p] = _pjit_jet_rule
+jet_rules[pjit.jit_p] = _pjit_jet_rule

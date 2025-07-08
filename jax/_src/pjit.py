@@ -146,7 +146,7 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
       core.check_eval_args(args_flat)
       out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
     else:
-      out_flat = pjit_p.bind(*args_flat, **p.params)
+      out_flat = jit_p.bind(*args_flat, **p.params)
       compiled = None
       profiler = None
   except stages.DeviceAssignmentMismatchError as e:
@@ -1513,14 +1513,15 @@ def check_aval_layout_compatibility(
 
 # -------------------- pjit rules --------------------
 
-pjit_p = core.Primitive("jit")
-pjit_p.is_effectful = lambda params: bool(params['jaxpr'].effects)  # type: ignore
-pjit_p.multiple_results = True
-pjit_p.skip_canonicalization = True
+jit_p = core.Primitive("jit")
+jit_p.is_effectful = lambda params: bool(params['jaxpr'].effects)  # type: ignore
+jit_p.multiple_results = True
+jit_p.skip_canonicalization = True
+pjit_p = jit_p  # TODO(frostig): remove
 
 def _is_high(jaxpr, **_) -> bool:
   return jaxpr.jaxpr.is_high
-pjit_p.is_high = _is_high  # type: ignore
+jit_p.is_high = _is_high  # type: ignore
 
 def _to_lojax(*hi_args, jaxpr, **params):
   # convert closed-over boxes to explicit args
@@ -1542,7 +1543,7 @@ def _to_lojax(*hi_args, jaxpr, **params):
 
   # lower the jaxpr and bind it using lo input values
   lo_jaxpr = pe.lower_jaxpr(jaxpr)
-  all_outs = pjit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
+  all_outs = jit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
   out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
 
   # collect and apply mutations
@@ -1562,7 +1563,7 @@ def _to_lojax(*hi_args, jaxpr, **params):
   assert next(lo_outs_, None) is None
 
   return hi_outs
-pjit_p.to_lojax = _to_lojax
+jit_p.to_lojax = _to_lojax
 
 def _converted_mutables_add_params(
     n, *, donated_invars, in_shardings, in_layouts, **params):
@@ -1880,7 +1881,7 @@ def _pjit_call_impl(*args, jaxpr,
       tree_util.dispatch_registry, pxla.cc_shard_arg,
       _get_cpp_global_cache(cache_key.contains_explicit_attributes))(*args)
 
-pjit_p.def_impl(_pjit_call_impl)
+jit_p.def_impl(_pjit_call_impl)
 
 
 def _pjit_lower(*args, **kwargs):
@@ -1944,7 +1945,7 @@ def pjit_staging_rule(trace, source_info, *args, **params):
                   out_layouts=out_layouts)
     outvars = map(trace.frame.newvar, _out_type(jaxpr))
     eqn = core.new_jaxpr_eqn(
-      [arg.var for arg in args], outvars, pjit_p, params,
+      [arg.var for arg in args], outvars, jit_p, params,
       jaxpr.effects, source_info)
     trace.frame.add_eqn(eqn)
     out_tracers = [pe.DynamicJaxprTracer(trace, v.aval, v, source_info)
@@ -1962,13 +1963,13 @@ def pjit_staging_rule(trace, source_info, *args, **params):
     new_params = dict(params, jaxpr=jaxpr, in_shardings=in_shardings,
                       in_layouts=in_layouts, donated_invars=donated_invars)
     out_tracers = trace.default_process_primitive(
-        pjit_p, (*args, *consts), new_params, source_info=source_info)
+        jit_p, (*args, *consts), new_params, source_info=source_info)
   else:
     out_tracers = trace.default_process_primitive(
-        pjit_p, args, params, source_info=source_info)
+        jit_p, args, params, source_info=source_info)
 
   return out_tracers
-pe.custom_staging_rules[pjit_p] = pjit_staging_rule
+pe.custom_staging_rules[jit_p] = pjit_staging_rule
 
 
 def _pjit_forwarding(jaxpr, out_shardings, out_layouts):
@@ -1992,7 +1993,7 @@ def pjit_forwarding_rule(eqn):
   new_eqn = eqn.replace(params=new_params, outvars=new_outvars)
   return in_fwd, new_eqn
 # TODO(mattjj): Remove pjit_forwarding_rule and also in staging rule.
-pe.forwarding_rules[pjit_p] = pjit_forwarding_rule
+pe.forwarding_rules[jit_p] = pjit_forwarding_rule
 
 
 # TODO(mattjj): remove/trivialize this when jaxprs have type annotation on them,
@@ -2014,14 +2015,14 @@ def _out_type(jaxpr: core.ClosedJaxpr) -> list[core.AbstractValue]:
 
 
 def _pjit_typecheck(ctx_factory, *in_atoms, jaxpr, **params):
-  return core._check_call(ctx_factory, pjit_p, in_atoms,
+  return core._check_call(ctx_factory, jit_p, in_atoms,
                           dict(params, call_jaxpr=jaxpr.jaxpr))
-core.custom_typechecks[pjit_p] = _pjit_typecheck
+core.custom_typechecks[jit_p] = _pjit_typecheck
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
   return jaxpr.out_avals, jaxpr.effects
-pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
+jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
 def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
@@ -2036,7 +2037,7 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
     num_devices = axis_ctx.num_devices
   elif isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     num_devices = axis_ctx.mesh.size
-  key = (pjit_p, name, jaxpr, effects, num_devices,
+  key = (jit_p, name, jaxpr, effects, num_devices,
          pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),  # pytype: disable=wrong-arg-types
          pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),  # pytype: disable=wrong-arg-types
          in_layouts, out_layouts, api_name)
@@ -2099,7 +2100,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # TODO(phawkins): this is marked uncacheable because it has its own cache and
 # because the cache breaks jaxpr metadata like source locations. We should fix
 # the metadata problem and consolidate the caches.
-mlir.register_lowering(pjit_p, _pjit_lowering, cacheable=False)
+mlir.register_lowering(jit_p, _pjit_lowering, cacheable=False)
 
 
 def _pjit_batcher(axis_data, vals_in,
@@ -2128,7 +2129,7 @@ def _pjit_batcher(axis_data, vals_in,
     raise NotImplementedError(
         'Concrete layouts are not supported for vmap(jit).')
 
-  vals_out = pjit_p.bind(
+  vals_out = jit_p.bind(
     *vals_in,
     jaxpr=new_jaxpr,
     in_shardings=in_shardings,
@@ -2146,8 +2147,8 @@ def _pjit_batcher(axis_data, vals_in,
       vals_in, vals_out, axes_out)
   return vals_out, resolved_axes_out
 
-batching.fancy_primitive_batchers[pjit_p] = _pjit_batcher
-batching.ragged_prop_rules[pjit_p] = batching.ragged_mask_no_op_rule
+batching.fancy_primitive_batchers[jit_p] = _pjit_batcher
+batching.ragged_prop_rules[jit_p] = batching.ragged_mask_no_op_rule
 
 
 def _pjit_batcher_for_sharding(
@@ -2202,7 +2203,7 @@ def _pjit_jvp(primals_in, tangents_in,
     return (x for nz, x in zip(is_nz_l, l) if nz)
   _filter_zeros_in = partial(_filter_zeros, is_nz_tangents_in)
   _filter_zeros_out = partial(_filter_zeros, is_nz_tangents_out)
-  outputs = pjit_p.bind(
+  outputs = jit_p.bind(
       *primals_in, *_filter_zeros_in(tangents_in),
       jaxpr=jaxpr_jvp,
       in_shardings=(*in_shardings, *_filter_zeros_in(in_shardings)),
@@ -2221,7 +2222,7 @@ def _pjit_jvp(primals_in, tangents_in,
   tangents_out_it = iter(tangents_out)
   return primals_out, [next(tangents_out_it) if nz else ad.Zero(aval)
                        for nz, aval in zip(is_nz_tangents_out, jaxpr.out_avals)]
-ad.primitive_jvps[pjit_p] = _pjit_jvp
+ad.primitive_jvps[jit_p] = _pjit_jvp
 
 
 def _pjit_linearize(nzs, *primals_in, jaxpr, in_shardings, out_shardings,
@@ -2274,7 +2275,7 @@ def _pjit_linearize(nzs, *primals_in, jaxpr, in_shardings, out_shardings,
 
   def tangent_fun(residuals, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
-    nz_tangents_out = pjit_p.bind(
+    nz_tangents_out = jit_p.bind(
         *residuals, *tangents_nz, jaxpr=tangent_jaxpr,
         in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings_in,
         out_shardings=_filter_zeros(nzs_out, out_shardings),
@@ -2296,17 +2297,17 @@ def _pjit_linearize(nzs, *primals_in, jaxpr, in_shardings, out_shardings,
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
 
   assert len(in_shardings) == len(primal_jaxpr.in_avals)
-  ans = pjit_p.bind(*primals_in, jaxpr=primal_jaxpr,
-                    in_shardings=in_shardings,
-                    out_shardings=primal_out_shardings,
-                    in_layouts=in_layouts,
-                    out_layouts=primal_out_layouts,
-                    donated_invars=donated_invars,
-                    ctx_mesh=ctx_mesh,
-                    name=name,
-                    keep_unused=keep_unused,
-                    inline=inline,
-                    compiler_options_kvs=compiler_options_kvs)
+  ans = jit_p.bind(*primals_in, jaxpr=primal_jaxpr,
+                   in_shardings=in_shardings,
+                   out_shardings=primal_out_shardings,
+                   in_layouts=in_layouts,
+                   out_layouts=primal_out_layouts,
+                   donated_invars=donated_invars,
+                   ctx_mesh=ctx_mesh,
+                   name=name,
+                   keep_unused=keep_unused,
+                   inline=inline,
+                   compiler_options_kvs=compiler_options_kvs)
   ans = subs_list(out_fwd, ans, ans)
   ans = subs_list(in_fwd, primals_in, ans)
   primal_ans, residuals_ans = split_list(ans, [len(ans) - num_residuals_out])
@@ -2314,7 +2315,7 @@ def _pjit_linearize(nzs, *primals_in, jaxpr, in_shardings, out_shardings,
 
   return primal_ans, nzs_out, residuals_ans, tangent_fun
 
-ad.primitive_linearizations[pjit_p] = _pjit_linearize
+ad.primitive_linearizations[jit_p] = _pjit_linearize
 
 
 def _pjit_partial_eval(trace: pe.JaxprTrace,
@@ -2387,7 +2388,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
 
   # Bind known things to pjit_p.
   known_inputs = [pv.get_known() for pv in in_pvals if pv.is_known()]
-  all_known_outs = pjit_p.bind(*known_inputs, **known_params)
+  all_known_outs = jit_p.bind(*known_inputs, **known_params)
   # Add back in the output fwds.
   all_known_outs = subs_list(out_fwd, all_known_outs, all_known_outs)
   # Add back in the input fwds.
@@ -2436,7 +2437,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
   unknown_tracers_in = [*unknown_tracers_in, *residual_tracers]
   eqn = pe.new_eqn_recipe(trace, unknown_tracers_in,
                           unknown_tracers_out,
-                          pjit_p,
+                          jit_p,
                           unknown_params,
                           unknown_jaxpr.effects,
                           source_info_util.current())
@@ -2445,7 +2446,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
     trace.effect_handles.append(pe.EffectHandle(unknown_tracers_in, eqn))  # type: ignore
   return merge_lists(unknown_outs, known_out_vals, unknown_tracers_out)
 
-pe.custom_partial_eval_rules[pjit_p] = _pjit_partial_eval
+pe.custom_partial_eval_rules[jit_p] = _pjit_partial_eval
 
 
 def _pjit_partial_eval_custom_params_updater(
@@ -2494,7 +2495,7 @@ def _pjit_partial_eval_custom_params_updater(
   assert len(new_params_staged['out_layouts']) == len(params_staged['jaxpr'].out_avals)
   return new_params_known, new_params_staged
 
-pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
+pe.partial_eval_jaxpr_custom_rules[jit_p] = \
     partial(pe.closed_call_partial_eval_custom_rule, 'jaxpr',
             _pjit_partial_eval_custom_params_updater)
 
@@ -2542,7 +2543,7 @@ def _pjit_transpose(cts_in, *primals_in,
       tree_unflatten(cts_out_treedef, [object()] * cts_out_treedef.num_leaves))
 
   try:
-    nz_cts_out = pjit_p.bind(
+    nz_cts_out = jit_p.bind(
         *primals_and_nz_cts_in,
         jaxpr=transpose_jaxpr,
         in_shardings=transpose_in_shardings,
@@ -2568,7 +2569,7 @@ def _pjit_transpose(cts_in, *primals_in,
       api_util._raise_no_nan_in_deoptimized(e)
 
   return tree_unflatten(cts_out_treedef, nz_cts_out)
-ad.primitive_transposes[pjit_p] = _pjit_transpose
+ad.primitive_transposes[jit_p] = _pjit_transpose
 
 
 @weakref_lru_cache
@@ -2610,7 +2611,7 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
         eqn.primitive, new_params, dced_jaxpr.effects, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
 
-pe.dce_rules[pjit_p] = dce_jaxpr_pjit_rule
+pe.dce_rules[jit_p] = dce_jaxpr_pjit_rule
 
 
 def _pjit_pp_rule(eqn: core.JaxprEqn,
@@ -2643,7 +2644,7 @@ def _pjit_pp_rule(eqn: core.JaxprEqn,
   del params["name"]
   return core._pp_eqn(eqn, context, settings, params=["name"] + sorted(params))
 
-core.pp_eqn_rules[pjit_p] = _pjit_pp_rule
+core.pp_eqn_rules[jit_p] = _pjit_pp_rule
 
 
 # -------------------- with_sharding_constraint --------------------

@@ -238,7 +238,7 @@ def _while_resource_estimator(
   )
 
 
-@_register_resource_estimator(pjit.pjit_p)
+@_register_resource_estimator(pjit.jit_p)
 def _pjit_resource_estimator(
     ctx: ResourceEstimatorContext,
     *args,
@@ -1658,8 +1658,8 @@ def _swap_lowering_rule_wg(
   return old_value
 
 
-@register_lowering_rule(pjit.pjit_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(pjit.pjit_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(pjit.jit_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(pjit.jit_p, mgpu.LoweringSemantics.Warpgroup)
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **kwargs):
   if jaxpr.consts:
     raise NotImplementedError

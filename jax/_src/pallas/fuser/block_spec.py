@@ -1745,7 +1745,7 @@ def _reshape_eval_rule(
 # Higher order primitives
 
 
-@register_usage_rule(pjit.pjit_p)
+@register_usage_rule(pjit.jit_p)
 def _jit_usage_rule(
     ctx, used_out: list[set[Usage]], *, jaxpr: core.ClosedJaxpr, **_
 ):
@@ -1754,7 +1754,7 @@ def _jit_usage_rule(
   return in_usages
 
 
-@register_eval_rule(pjit.pjit_p)
+@register_eval_rule(pjit.jit_p)
 def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
   jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
   if consts:
@@ -1786,7 +1786,7 @@ def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
   return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
 
 
-@register_pull_block_spec_rule(pjit.pjit_p)
+@register_pull_block_spec_rule(pjit.jit_p)
 def _jit_pull_block_spec_rule(
     ctx: PullRuleContext, out_block_specs, *, jaxpr, **kwargs
 ):
@@ -2167,7 +2167,7 @@ def _custom_vjp_call_push_rule(
   return _push_block_spec_jaxpr(call_jaxpr.jaxpr, *block_specs)
 
 
-@register_push_block_spec_rule(pjit.pjit_p)
+@register_push_block_spec_rule(pjit.jit_p)
 def _pjit_push_rule(ctx, *block_specs, jaxpr: core.ClosedJaxpr, **_):
   assert not jaxpr.consts
   return _push_block_spec_jaxpr(jaxpr.jaxpr, *block_specs)

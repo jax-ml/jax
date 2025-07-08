@@ -3633,7 +3633,7 @@ def _pjit(*args: TfVal,
   return tuple(sharded_results)
 
 
-tf_impl_with_avals[pjit.pjit_p] = _pjit
+tf_impl_with_avals[pjit.jit_p] = _pjit
 
 
 def _pjit_sharding_constraint(arg: TfVal, *,

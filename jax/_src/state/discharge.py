@@ -1148,8 +1148,7 @@ def run_state_reference(f: Callable[..., None]):
     return in_tree.unflatten(out_flat)
   return wrapped
 
-
-@register_discharge_rule(pjit.pjit_p)
+@register_discharge_rule(pjit.jit_p)
 def _pjit_state_discharge_rule(
     in_avals, out_avals, *args, jaxpr, in_shardings, out_shardings,
     in_layouts, out_layouts, **params):
@@ -1168,7 +1167,7 @@ def _pjit_state_discharge_rule(
   new_out_shardings = (sharding_impls.UNSPECIFIED,) * len(discharged_jaxpr.outvars)
   new_in_layouts = (None,) * len(discharged_jaxpr.invars)
   new_out_layouts = (None,) * len(discharged_jaxpr.outvars)
-  out_and_ref_vals = pjit.pjit_p.bind(
+  out_and_ref_vals = pjit.jit_p.bind(
       *args, jaxpr=discharged_closed_jaxpr, in_shardings=new_in_shardings,
       out_shardings=new_out_shardings, in_layouts=new_in_layouts,
       out_layouts=new_out_layouts, **params)

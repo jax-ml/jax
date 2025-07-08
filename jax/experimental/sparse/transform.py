@@ -802,7 +802,7 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
       None for _ in range(len(sp_call_jaxpr.out_avals) - len(out_layouts))
   )
 
-  out_flat = pjit.pjit_p.bind(
+  out_flat = pjit.jit_p.bind(
       *args_flat,
       jaxpr=sp_call_jaxpr,
       in_shardings=in_shardings,
@@ -817,7 +817,7 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
       compiler_options_kvs=compiler_options_kvs)
   return arrays_to_spvalues(spenv, tree_unflatten(out_tree, out_flat))
 
-sparse_rules_bcoo[pjit.pjit_p] = _pjit_sparse
+sparse_rules_bcoo[pjit.jit_p] = _pjit_sparse
 
 
 def _duplicate_for_sparse_spvalues(spvalues, params):

@@ -3275,7 +3275,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
   return if_op.results
 
 
-@register_lowering_rule(pjit.pjit_p, kernel_types=[*tpu_core.KernelType])
+@register_lowering_rule(pjit.jit_p, kernel_types=[*tpu_core.KernelType])
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
   return jaxpr_subcomp(lowering_context, jaxpr.jaxpr, *args)

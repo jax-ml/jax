@@ -18,6 +18,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * New features:
   * Added `jax.P` which is an alias for `jax.sharding.PartitionSpec`.
+  * `jax.extend.core.primitives.pjit_p` has been renamed to `jit_p`, although
+    `pjit_p` is still exported as an alias for the time being.
 
 * Breaking changes:
   * {func}`jax.jit` now requires `fun` to be passed by position, and additional
