@@ -6376,7 +6376,7 @@ mlir.register_lowering(ragged_dot_general_p,
                        mlir.lower_fun(_ragged_dot_general_impl,
                                       multiple_results=False))
 
-for platform in ['tpu']:
+for platform in ['tpu', 'gpu']:
   mlir.register_lowering(
       ragged_dot_general_p,
       partial(_ragged_dot_general_lower, platform=platform),
