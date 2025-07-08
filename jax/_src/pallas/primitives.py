@@ -1132,6 +1132,7 @@ def semaphore_signal(
 class CommsEffect(effects.Effect):
   pass
 _comms_effect = CommsEffect()
+effects.lowerable_effects.add_type(CommsEffect)
 effects.control_flow_allowed_effects.add_type(CommsEffect)
 effects.remat_allowed_effects.add_type(CommsEffect)
 effects.custom_derivatives_allowed_effects.add_type(CommsEffect)
