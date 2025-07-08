@@ -36,13 +36,13 @@ class Variable:
 
 
 @dataclasses.dataclass(frozen=True)
-class ConstantExpression:
+class Constant:
   """Wraps a known layout."""
   value: fa.FragmentedLayout
 
 
 @dataclasses.dataclass(frozen=True)
-class LeastReplicatedExpression:
+class LeastReplicated:
   expressions: tuple[Expression, ...]
 
   def __post_init__(self):
@@ -50,19 +50,19 @@ class LeastReplicatedExpression:
 
 
 @dataclasses.dataclass(frozen=True)
-class MostReplicatedExpression:
+class MostReplicated:
   expressions: tuple[Expression, ...]
 
   def __post_init__(self):
     assert len(self.expressions) >= 1
 
 
-Expression = Variable | ConstantExpression | LeastReplicatedExpression | MostReplicatedExpression
+Expression = Variable | Constant | LeastReplicated | MostReplicated
 
 
 def reduce_replicated_expression(
-    input_expr: LeastReplicatedExpression | MostReplicatedExpression,
-    assignments: dict[Variable, ConstantExpression],
+    input_expr: LeastReplicated | MostReplicated,
+    assignments: dict[Variable, Constant],
     reducer: Callable[[fa.FragmentedLayout, fa.FragmentedLayout], fa.FragmentedLayout | None]
 ) -> Expression | Unsatisfiable:
   assert input_expr.expressions
@@ -82,8 +82,8 @@ def reduce_replicated_expression(
   if len(new_expressions) == 1:
     return new_expressions[0]
 
-  consts = [e for e in new_expressions if isinstance(e, ConstantExpression)]
-  unknowns = [e for e in new_expressions if not isinstance(e, ConstantExpression)]
+  consts = [e for e in new_expressions if isinstance(e, Constant)]
+  unknowns = [e for e in new_expressions if not isinstance(e, Constant)]
 
   if consts:
     const_red, *consts = consts
@@ -94,7 +94,7 @@ def reduce_replicated_expression(
         # The layouts are not compatible up to replication, this expression
         # cannot be simplified.
         return Unsatisfiable()
-      red = ConstantExpression(red_value)
+      red = Constant(red_value)
   else:
     red = None
 
@@ -108,19 +108,19 @@ def reduce_replicated_expression(
 
 
 def reduce_expression(
-    expr: Expression, assignments: dict[Variable, ConstantExpression]
+    expr: Expression, assignments: dict[Variable, Constant]
 ) -> Expression | Unsatisfiable:
   """Reduces an expression as much as is possible given a set of known variable assignments."""
   match expr:
-    case ConstantExpression():
+    case Constant():
       return expr
     case Variable():
       return assignments.get(expr, expr)
-    case MostReplicatedExpression():
+    case MostReplicated():
       return reduce_replicated_expression(
           expr, assignments, layouts_lib.join_layouts
       )
-    case LeastReplicatedExpression():
+    case LeastReplicated():
       return reduce_replicated_expression(
           expr, assignments, layouts_lib.meet_layouts
       )
@@ -138,7 +138,7 @@ class Equation:
 
 
 def reduce_equation(
-    eq: Equation, assignments: dict[Variable, ConstantExpression]
+    eq: Equation, assignments: dict[Variable, Constant]
 ) -> Solution | Unsatisfiable:
   """Reduces an equation.
 
@@ -157,11 +157,11 @@ def reduce_equation(
   lhs = reduce_expression(eq.lhs, assignments)
   rhs = reduce_expression(eq.rhs, assignments)
   match (lhs, rhs):
-    case (Variable(), ConstantExpression()):
+    case (Variable(), Constant()):
       return SatisfiedBy((lhs, rhs))
-    case (ConstantExpression(), Variable()):
+    case (Constant(), Variable()):
       return SatisfiedBy((rhs, lhs))
-    case (ConstantExpression(), ConstantExpression()) if lhs != rhs:
+    case (Constant(), Constant()) if lhs != rhs:
       return Unsatisfiable()
     case _ if isinstance(lhs, Unsatisfiable) or isinstance(rhs, Unsatisfiable):
       return Unsatisfiable()
@@ -181,7 +181,7 @@ class EquationSystem:
   variables). Equations describe relationships between variables, and can be
   used to determine assignments for unknown (free) variables.
   """
-  assignments: dict[Variable, ConstantExpression] = dataclasses.field(
+  assignments: dict[Variable, Constant] = dataclasses.field(
       default_factory=dict
   )
   equations: list[Equation] = dataclasses.field(default_factory=list)
@@ -196,12 +196,12 @@ class EquationSystem:
           if expr not in seen_variables and expr not in self.assignments:
             seen_variables.add(expr)
             free_variables.append(expr)
-        case ConstantExpression():
+        case Constant():
           ...
-        case MostReplicatedExpression(expressions=expressions):
+        case MostReplicated(expressions=expressions):
           for e in expressions:
             extract_variables(e)
-        case LeastReplicatedExpression(expressions=expressions):
+        case LeastReplicated(expressions=expressions):
           for e in expressions:
             extract_variables(e)
         case _:
@@ -227,7 +227,7 @@ class Unsatisfiable:
 
 @dataclasses.dataclass(frozen=True)
 class SatisfiedBy:
-  assignment: tuple[Variable, ConstantExpression]
+  assignment: tuple[Variable, Constant]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -259,7 +259,7 @@ def _reduce_system_once(
       reduced.
   """
   changed = False
-  assignments: dict[Variable, ConstantExpression] = dict()
+  assignments: dict[Variable, Constant] = dict()
   equations: list[Equation] = []
   for equation in equation_system.equations:
     match (result := reduce_equation(equation, equation_system.assignments)):

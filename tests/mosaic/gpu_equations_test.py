@@ -22,7 +22,7 @@ from jax.experimental.mosaic.gpu import equations
 
 config.parse_flags_with_absl()
 
-C = equations.ConstantExpression
+C = equations.Constant
 Eq = equations.Equation
 V = equations.Variable
 
@@ -76,8 +76,8 @@ class EquationSystemTest(parameterized.TestCase):
   def test_equation_system_unknowns_are_all_the_variables_without_assignment(self):
     v0, v1, v2, v3 = V(0), V(1), V(2), V(3)
     layout = C(mgpu.WGSplatFragLayout((1, 1)))
-    least_replicated = equations.LeastReplicatedExpression((v2, v3))
-    most_replicated = equations.MostReplicatedExpression((least_replicated,))
+    least_replicated = equations.LeastReplicated((v2, v3))
+    most_replicated = equations.MostReplicated((least_replicated,))
     system = equations.EquationSystem(assignments={v0: layout},
                                       equations=[Eq(v1, most_replicated)])
     self.assertSequenceEqual(system.unknowns(), [v1, v2, v3])
@@ -116,7 +116,7 @@ class EquationSystemTest(parameterized.TestCase):
     layout1 = C(mgpu.WGStridedFragLayout(shape, vec_size=1))
     with self.subTest("most-replicated-expression-exists"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.MostReplicatedExpression((layout0, layout1)))],
+          equations=[Eq(v0, equations.MostReplicated((layout0, layout1)))],
       )
       self.assertEqual(
           equations.reduce(system),
@@ -125,7 +125,7 @@ class EquationSystemTest(parameterized.TestCase):
 
     with self.subTest("most-replicated-expression-is-unique-expression"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.MostReplicatedExpression((layout0,)))],
+          equations=[Eq(v0, equations.MostReplicated((layout0,)))],
       )
       self.assertEqual(
           equations.reduce(system),
@@ -134,7 +134,7 @@ class EquationSystemTest(parameterized.TestCase):
 
     with self.subTest("most-replicated-expression-does-not-exist"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.MostReplicatedExpression((layout1, v0)))],
+          equations=[Eq(v0, equations.MostReplicated((layout1, v0)))],
       )
       self.assertEqual(equations.reduce(system), system)
 
@@ -145,7 +145,7 @@ class EquationSystemTest(parameterized.TestCase):
     layout1 = C(mgpu.WGStridedFragLayout(shape, vec_size=1))
     with self.subTest("least-replicated-expression-exists"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.LeastReplicatedExpression([layout0, layout1]))],
+          equations=[Eq(v0, equations.LeastReplicated([layout0, layout1]))],
       )
       self.assertEqual(
           equations.reduce(system),
@@ -154,7 +154,7 @@ class EquationSystemTest(parameterized.TestCase):
 
     with self.subTest("least-replicated-expression-is-unique-expression"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.LeastReplicatedExpression((layout0,)))],
+          equations=[Eq(v0, equations.LeastReplicated((layout0,)))],
       )
       self.assertEqual(
           equations.reduce(system),
@@ -163,7 +163,7 @@ class EquationSystemTest(parameterized.TestCase):
 
     with self.subTest("least-replicated-expression-does-not-exist"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.LeastReplicatedExpression((layout0, v0)))],
+          equations=[Eq(v0, equations.LeastReplicated((layout0, v0)))],
       )
       self.assertEqual(equations.reduce(system), system)
 
@@ -172,7 +172,7 @@ class EquationSystemTest(parameterized.TestCase):
     tiled_layout = C(mgpu.WGMMA_LAYOUT)
     self.assertEqual(
         equations.reduce_expression(
-            equations.MostReplicatedExpression((splat_layout, tiled_layout)),
+            equations.MostReplicated((splat_layout, tiled_layout)),
             {},
         ),
         splat_layout,
@@ -185,7 +185,7 @@ class EquationSystemTest(parameterized.TestCase):
     tiled_layout = C(mgpu.WGMMA_LAYOUT)
     self.assertIsInstance(
         equations.reduce_expression(
-            equations.MostReplicatedExpression((splat_layout, tiled_layout)),
+            equations.MostReplicated((splat_layout, tiled_layout)),
             {},
         ),
         equations.Unsatisfiable,
@@ -196,7 +196,7 @@ class EquationSystemTest(parameterized.TestCase):
     tiled_layout = C(mgpu.WGMMA_LAYOUT)
     self.assertEqual(
         equations.reduce_expression(
-            equations.LeastReplicatedExpression((splat_layout, tiled_layout)),
+            equations.LeastReplicated((splat_layout, tiled_layout)),
             {},
         ),
         tiled_layout,
@@ -209,7 +209,7 @@ class EquationSystemTest(parameterized.TestCase):
     tiled_layout = C(mgpu.WGMMA_LAYOUT)
     self.assertIsInstance(
         equations.reduce_expression(
-            equations.LeastReplicatedExpression((splat_layout, tiled_layout)),
+            equations.LeastReplicated((splat_layout, tiled_layout)),
             {},
         ),
         equations.Unsatisfiable,

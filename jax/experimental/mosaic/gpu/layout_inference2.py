@@ -74,34 +74,44 @@ class Hint:
 
 def extract_constant_from_least_replicated_expression_for_hint(
     expressions: tuple[eqns.Expression, ...],
-) -> eqns.Expression | None:
-  choices: list[eqns.ConstantExpression] = []
+) -> eqns.Constant | None:
+  choices: list[eqns.Constant] = []
   for e in expressions:
     if (red := extract_constant_for_hint(e)) is not None:
       choices.append(red)
 
   if not choices:
+    return None
+
+  # Special case: if there is only one choice and there was only one
+  # subexpression, we can return it directly.
+  if len(choices) == 1 and len(expressions) == 1:
+    return choices[0]
+
+  # If all the choices are replicated, then we should return `None`. Propagating
+  # replicated layouts upwards in general is not safe.
+  if all(layouts_lib.is_replicated(c.value) for c in choices):
     return None
 
   # We reduce the expression here in order to recover an unambiguous least
   # replicated layout if it exists.
   maybe_choice = eqns.reduce_expression(
-      eqns.LeastReplicatedExpression(tuple(choices)), {}
+      eqns.LeastReplicated(tuple(choices)), {}
   )
 
   if isinstance(maybe_choice, eqns.Unsatisfiable):
     # TODO(bchetioui): consider other choices.
-    return choices[0]
+    return next(c for c in choices if not layouts_lib.is_replicated(c.value))
 
-  assert isinstance(maybe_choice, eqns.ConstantExpression)
+  assert isinstance(maybe_choice, eqns.Constant)
   return maybe_choice
 
 
 def extract_constant_from_most_replicated_expression_for_hint(
     expressions: tuple[eqns.Expression, ...],
-) -> eqns.Expression | None:
+) -> eqns.Constant | None:
   assert len(expressions) >= 1
-  choices: list[eqns.ConstantExpression] = []
+  choices: list[eqns.Constant] = []
   for e in expressions:
     if (red := extract_constant_for_hint(e)) is not None:
       choices.append(red)
@@ -110,30 +120,28 @@ def extract_constant_from_most_replicated_expression_for_hint(
     return None
 
   maybe_choice = eqns.reduce_expression(
-      eqns.MostReplicatedExpression(tuple(choices)), {}
+      eqns.MostReplicated(tuple(choices)), {}
   )
 
   if isinstance(maybe_choice, eqns.Unsatisfiable):
     # TODO(bchetioui): consider other choices.
     return choices[0]
 
-  assert isinstance(maybe_choice, eqns.ConstantExpression)
+  assert isinstance(maybe_choice, eqns.Constant)
   return maybe_choice
 
 
-def extract_constant_for_hint(
-    e: eqns.Expression
-) -> eqns.ConstantExpression | None:
+def extract_constant_for_hint(e: eqns.Expression) -> eqns.Constant | None:
   """Attempts to extract a `ConstantExpression` from a `Hint`'s `Expression`.
 
   Returns `None` if no `ConstantExpression` could be reasonably extracted.
   """
   match e:
-    case eqns.ConstantExpression():
+    case eqns.Constant():
       return e
-    case eqns.LeastReplicatedExpression():
+    case eqns.LeastReplicated():
       return extract_constant_from_least_replicated_expression_for_hint(e.expressions)
-    case eqns.MostReplicatedExpression():
+    case eqns.MostReplicated():
       return extract_constant_from_most_replicated_expression_for_hint(e.expressions)
     case eqns.Variable():
       return None
@@ -143,7 +151,7 @@ def extract_constant_for_hint(
 
 def extract_variable_assignment_from_hint(
     hint: Hint,
-) -> tuple[eqns.Variable, eqns.ConstantExpression] | None:
+) -> tuple[eqns.Variable, eqns.Constant] | None:
   """Attempts to extract a single variable assignment from a `Hint`."""
   # TODO(bchetioui): make this a generator. This will allow us to maybe extract
   # different assignments that satisfy a replication constraint in the case
@@ -152,8 +160,9 @@ def extract_variable_assignment_from_hint(
   red = extract_constant_for_hint(hint.expression)
   return (hint.variable, red) if red is not None else None
 
+
 def reduce_hints(
-    hints: Sequence[Hint], assignments: dict[eqns.Variable, eqns.ConstantExpression]
+    hints: Sequence[Hint], assignments: dict[eqns.Variable, eqns.Constant]
 ) -> Sequence[Hint]:
   """Reduces a sequence of `Hint`s.
 
@@ -175,7 +184,7 @@ def find_assignments_for(
     unknowns: set[eqns.Variable],
     equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
-) -> dict[eqns.Variable, eqns.ConstantExpression] | eqns.Unsatisfiable:
+) -> dict[eqns.Variable, eqns.Constant] | eqns.Unsatisfiable:
   """Attempts to find assignments that satisfy `equation_system` for `unknowns`.
 
   Args:
@@ -252,7 +261,7 @@ def find_assignments_for(
     desired_vec_size = 8 // utils.bytewidth(ty.element_type)
     vec_size = min(max_vec_size, desired_vec_size)
     layout = fa.WGStridedFragLayout(shape=tuple(ty.shape), vec_size=vec_size)
-    new_assignment = {variable: eqns.ConstantExpression(layout)}
+    new_assignment = {variable: eqns.Constant(layout)}
     new_system = equation_system & eqns.EquationSystem(assignments=new_assignment)
     if isinstance(new_system, eqns.Unsatisfiable):
       # This assignment is not compatible with the equation system.
@@ -353,6 +362,35 @@ for op in [
   _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
 
 
+@_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)
+def _optimization_barrier_equation_system(
+    op: ir.OpView
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  operand_or_results_for_variable: OperandOrResultsForVariable = {}
+
+  for i, operand in enumerate(op.operands):
+    if not is_vector(operand):
+      continue
+    variable = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, i))
+    operand_or_results_for_variable[variable] = [
+        OperandOrResult(op, VariableType.OPERAND, i),
+        OperandOrResult(op, VariableType.RESULT, i)
+    ]
+
+  return eqns.EquationSystem(), operand_or_results_for_variable
+
+
+@_add_equation_system_derivation_rule(vector.SplatOp)
+def _vector_splat_equation_system(
+    op: ir.OpView
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  result = OperandOrResult(op, VariableType.RESULT, 0)
+  variable = eqns.Variable(result)
+  layout = fa.WGSplatFragLayout(tuple(cast(ir.ShapedType, op.result.type).shape))
+  system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
+  return system, {variable: [result]}
+
+
 @_add_equation_system_derivation_rule(arith.ConstantOp)
 def _constant_equation_system(
     constant_op: arith.ConstantOp
@@ -365,7 +403,7 @@ def _constant_equation_system(
       and ir.DenseElementsAttr(value).is_splat
   ):
     layout = fa.WGSplatFragLayout(shape=tuple(constant_op.result.type.shape))
-    system = eqns.EquationSystem(assignments={variable: eqns.ConstantExpression(layout)})
+    system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
   else:
     system = eqns.EquationSystem()
 
@@ -379,10 +417,22 @@ def _layout_cast_equation_system(
   operand = OperandOrResult(op, VariableType.OPERAND, 0)
   result = OperandOrResult(op, VariableType.RESULT, 0)
   variable = eqns.Variable(operand)
-  out_layout = eqns.ConstantExpression(layouts_lib.from_layout_attr(op.new_layout))
+  out_layout = eqns.Constant(layouts_lib.from_layout_attr(op.new_layout))
   return eqns.EquationSystem(
       assignments={eqns.Variable(operand): out_layout},
   ), {variable: [operand, result]}
+
+
+@_add_equation_system_derivation_rule(mgpu.WGMMAOp)
+def _wgmma_equation_system(
+    op: mgpu.WGMMAOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  operands_or_results = operands_and_results(op)
+  variable = eqns.Variable(operands_or_results[0])
+  system = eqns.EquationSystem(
+      assignments={variable: eqns.Constant(fa.WGMMA_LAYOUT)}
+  )
+  return system, {variable: operands_or_results}
 
 
 def _ensure_all_layouts_are_set(op: ir.OpView):
@@ -408,7 +458,7 @@ def _ensure_right_number_of_layouts(
     )
 
 
-def assign_layouts(solution: dict[OperandOrResult, eqns.ConstantExpression]):
+def assign_layouts(solution: dict[OperandOrResult, eqns.Constant]):
   """Assigns the layouts in `solution` to the MLIR ops they belong to.
 
   This function requires that, for each MLIR op that appears in `solution`,
@@ -535,13 +585,11 @@ def derive_hints(
             consumers.append(variable_for_operand_or_result[co])
 
     if producers:
-      least_replicated_producer = eqns.LeastReplicatedExpression(tuple(producers))
-      hint_expr = eqns.MostReplicatedExpression(
-          (least_replicated_producer, *consumers)
-      )
+      least_replicated_producer = eqns.LeastReplicated(tuple(producers))
+      hint_expr = eqns.MostReplicated((least_replicated_producer, *consumers))
       hints.append(Hint(variable, hint_expr))
     elif consumers:
-      hint_expr = eqns.MostReplicatedExpression(tuple(consumers))
+      hint_expr = eqns.MostReplicated(tuple(consumers))
       hints.append(Hint(variable, hint_expr))
 
   return hints

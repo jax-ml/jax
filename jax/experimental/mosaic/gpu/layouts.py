@@ -15,6 +15,7 @@
 """Layout utilities."""
 
 import re
+from typing import assert_never
 
 from jax._src.lib.mlir import ir
 from . import fragmented_array as fa
@@ -327,3 +328,17 @@ def join_layouts(
 
   # Layouts are not compatible up to replication.
   return None
+
+
+def is_replicated(layout: fa.FragmentedLayout) -> bool:
+  match layout:
+    case fa.WGSplatFragLayout():
+      return True
+    case fa.WGStridedFragLayout():
+      return False
+    case fa.TiledLayout():
+      is_warp_replicated = any(isinstance(d, fa.Replicated) for d in layout.warp_dims)
+      is_lane_replicated = any(isinstance(d, fa.Replicated) for d in layout.lane_dims)
+      return is_warp_replicated or is_lane_replicated
+    case _:
+      assert_never(layout)
