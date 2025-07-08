@@ -33,6 +33,8 @@ source ./ci/utilities/install_wheels_locally.sh
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
+"$JAXCI_PYTHON" -m uv pip install pytest-timeout
+
 # Print all the installed packages
 echo "Installed packages:"
 "$JAXCI_PYTHON" -m uv pip list
@@ -67,7 +69,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" -vv --full-trace --log-cli-level=DEBUG --tb=short \
     --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
-    --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
+    --maxfail=20 --timeout=300 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
   echo "Finished single accelerator test"
 
   # Run Pallas printing tests, which need to run with I/O capturing disabled.
