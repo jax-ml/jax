@@ -30,7 +30,7 @@ P = jax.sharding.PartitionSpec
 partial = functools.partial
 
 
-class TPUPallasMemorySpaceTest(jtu.JaxTestCase):
+class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
@@ -45,20 +45,27 @@ class TPUPallasMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.ANY, None),
   )
   def test_basic_input_memory_space_constraint(self, memory_space, color):
+    if not jtu.if_cloud_tpu_at_least(2025, 7, 10):
+      self.skipTest('Needs a newer libTPU')
 
     def kernel(x_ref, y_ref):
-      y_ref[...] = x_ref[...]
+      pltpu.sync_copy(x_ref, y_ref)
 
     def g(x):
-      return pl.pallas_call(kernel, out_shape=x)(x)
+      return pl.pallas_call(
+          kernel,
+          out_shape=x,
+          in_specs=[pl.BlockSpec(memory_space=memory_space)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+      )(x)
 
     @jax.jit
     def f(x):
       x = pltpu.with_memory_space_constraint(x, memory_space=memory_space)
       if color is None:
-        self.assertIsNone(pltpu.get_memory_space(x))
+        assert not hasattr(jax.typeof(x), 'memory_space')
       else:
-        self.assertEqual(pltpu.get_memory_space(x), memory_space)
+        self.assertEqual(jax.typeof(x).memory_space, memory_space)
       x = g(x)
       return x
 
@@ -80,14 +87,24 @@ class TPUPallasMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.ANY, None),
   )
   def test_basic_output_memory_space_constraint(self, memory_space, color):
+    if not jtu.if_cloud_tpu_at_least(2025, 7, 10):
+      self.skipTest('Needs a newer libTPU')
+
+    out_shape_ctor = memory_space
     if color is None:
-      memory_space = jax.ShapeDtypeStruct
+      out_shape_ctor = jax.ShapeDtypeStruct
 
     def kernel(x_ref, y_ref):
-      y_ref[...] = x_ref[...]
+      pltpu.sync_copy(x_ref, y_ref)
 
     def g(x):
-      return pl.pallas_call(kernel, out_shape=memory_space(x.shape, x.dtype))(x)
+      return pl.pallas_call(
+          kernel,
+          out_shape=out_shape_ctor(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          out_specs=pl.BlockSpec(memory_space=memory_space),
+          debug=True,
+      )(x)
 
     @jax.jit
     def f(x):
@@ -105,6 +122,64 @@ class TPUPallasMemorySpaceTest(jtu.JaxTestCase):
           f'"output_memory_colors":["{color}"]',
           hlo,
       )
+
+
+class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.if_cloud_tpu_at_least(2025, 6, 10):
+      self.skipTest('Needs a newer libTPU')
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Needs a newer TPU')
+
+  @parameterized.parameters(
+      (pltpu.VMEM, 1),
+      (pltpu.HBM, 0),
+      (pltpu.ANY, None),
+  )
+  def test_basic_ref_memory_space_constraint(self, memory_space, color):
+
+    @jax.jit
+    def f(x):
+      x_ref = jax.experimental.mutable_array(x, memory_space=memory_space)
+      y_ref = jax.experimental.mutable_array(
+          pl.empty_like(x), memory_space=memory_space
+      )
+      self.assertEqual(jax.typeof(x_ref).memory_space, memory_space)
+      self.assertEqual(jax.typeof(y_ref).memory_space, memory_space)
+
+      @pl.core_map(mesh=pltpu.create_tensorcore_mesh('core'))
+      def _():
+        if jax.typeof(x_ref).memory_space is pltpu.VMEM:
+          y_ref[...] = x_ref[...]
+        else:
+          pltpu.sync_copy(x_ref, y_ref)
+
+      return y_ref[...]
+
+    x = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+    num_cores = jax.devices()[0].num_cores
+    if num_cores > 1 and memory_space == pltpu.VMEM:
+      with self.assertRaisesRegex(
+          NotImplementedError,
+          'TensorCoreMesh does not support VMEM inputs/outputs when there are'
+          ' >1 cores. Use HBM or ANY instead.',
+      ):
+        f.lower(x).compile()
+      return
+    lowered = f.lower(x)
+    compiled = lowered.compile()
+    hlo = compiled.as_text()
+    if color is None:
+      self.assertIn('"input_memory_space_colors":[]', hlo)
+    else:
+      self.assertIn(
+          f'"input_memory_space_colors":[{{"operand_index":"0","color":"{color}","shape_index":[]}},{{"operand_index":"1","color":"{color}","shape_index":[]}}]',
+          hlo,
+      )
+    y = compiled(x)
+    np.testing.assert_array_equal(y, x)
 
 
 if __name__ == '__main__':

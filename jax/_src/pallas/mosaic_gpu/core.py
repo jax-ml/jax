@@ -304,6 +304,7 @@ def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
 def infer_tmem_cols_layout(
     shape: tuple[int, ...],
     dtype: jnp.dtype,
+    *,
     packed: bool,
     collective: bool,
     layout: tcgen05.TMEMLayout | None = None) -> tuple[int, tcgen05.TMEMLayout]:
@@ -1204,18 +1205,50 @@ def _layout_cast_abstract_eval(x, new_layout):
   return x
 
 
-def layout_cast(x: Any, new_layout: Layout | ParameterizedLayout):
+def layout_cast(x: Any, new_layout: SomeLayout):
   """Casts the layout of the given array."""
   return layout_cast_p.bind(x, new_layout=new_layout)
 
 
-class Layout(enum.Enum):
+class SomeLayout:
+
+  def reduce(self, axes: int | Sequence[int]) -> "SomeLayout":
+    if isinstance(axes, int):
+      axes = (axes,)
+    return ReducedLayout(self, axes)
+
+  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
+    raise NotImplementedError
+
+
+@dataclasses.dataclass(frozen=True)
+class ParameterizedLayout(SomeLayout):
+  layout_cls: Layout
+  args: Sequence[Any]
+  kwargs: Any
+
+  def __post_init__(self):
+    object.__setattr__(self, "args", tuple(self.args))
+    object.__setattr__(self, "kwargs", frozen_dict.FrozenDict(self.kwargs))
+
+  def to_mgpu(self) -> mgpu.FragmentedLayout:
+    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
+
+
+@dataclasses.dataclass(frozen=True)
+class ReducedLayout(SomeLayout):
+  layout: SomeLayout
+  axes: Sequence[int]
+
+  def to_mgpu(self) -> mgpu.FragmentedLayout:
+    layout = self.layout.to_mgpu()
+    if not isinstance(layout, mgpu.TiledLayout):
+      raise ValueError("Only TiledLayout supports reductions.")
+    return layout.reduce(self.axes)
+
+class Layout(SomeLayout, enum.Enum):
   #: [m, n] matrix, where m % 64 == 0 == n % 8.
   WGMMA = enum.auto()
-  #: [m] matrix, where m % 64 == 0.
-  WGMMA_ROW = enum.auto()
-  #: [n] matrix, where n % 8 == 0.
-  WGMMA_COL = enum.auto()
   WGMMA_TRANSPOSED = enum.auto()
 
   WG_SPLAT = enum.auto()
@@ -1223,10 +1256,8 @@ class Layout(enum.Enum):
 
   TCGEN05 = enum.auto()
   TCGEN05_TRANSPOSED = enum.auto()
-  TCGEN05_TMEM_NATIVE = enum.auto()
-  TCGEN05_ROW = enum.auto()
-  TCGEN05_COL = enum.auto()
   TCGEN05_M64_COLLECTIVE = enum.auto()
+  TCGEN05_TMEM_NATIVE = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
@@ -1243,12 +1274,6 @@ class Layout(enum.Enum):
       case Layout.WGMMA:
         check_no_args()
         return mgpu.WGMMA_LAYOUT
-      case Layout.WGMMA_ROW:
-        check_no_args()
-        return mgpu.WGMMA_ROW_LAYOUT
-      case Layout.WGMMA_COL:
-        check_no_args()
-        return mgpu.WGMMA_COL_LAYOUT
       case Layout.WG_SPLAT:
         return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
       case Layout.WG_STRIDED:
@@ -1259,27 +1284,16 @@ class Layout(enum.Enum):
       case Layout.TCGEN05_TRANSPOSED:
         check_no_args()
         return mgpu.TCGEN05_TRANSPOSED_LAYOUT
-      case Layout.TCGEN05_ROW:
-        check_no_args()
-        return mgpu.TCGEN05_ROW_LAYOUT
-      case Layout.TCGEN05_COL:
-        check_no_args()
-        return mgpu.TCGEN05_COL_LAYOUT
       case Layout.TCGEN05_TMEM_NATIVE:
         check_no_args()
-        return mgpu.tcgen05.TMEM_NATIVE_LAYOUT
+        return tcgen05.TMEM_NATIVE_LAYOUT
       case Layout.TCGEN05_M64_COLLECTIVE:
         return tcgen05.fa_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
 
-@dataclasses.dataclass(frozen=True)
-class ParameterizedLayout:
-  layout_cls: Layout
-  args: Sequence[Any]
-  kwargs: Any
 
-  def __post_init__(self):
-    object.__setattr__(self, "args", tuple(self.args))
-    object.__setattr__(self, "kwargs", frozen_dict.FrozenDict(self.kwargs))
-
-  def to_mgpu(self) -> mgpu.FragmentedLayout:
-    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
+# TODO(apaszke): Adjust the users and remove these backfills.
+Layout.WGMMA_ROW = Layout.WGMMA.reduce(1)
+Layout.WGMMA_COL = Layout.WGMMA.reduce(0)
+Layout.TCGEN05_ROW = Layout.TCGEN05.reduce(1)
+Layout.TCGEN05_COL = Layout.TCGEN05.reduce(0)
+Layout.TCGEN05_TMEM_NATIVE_ROW = Layout.TCGEN05_TMEM_NATIVE.reduce(1)

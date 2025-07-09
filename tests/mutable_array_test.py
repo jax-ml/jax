@@ -22,6 +22,7 @@ import jax
 from jax._src import core
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.util import safe_map, safe_zip
 from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
 
@@ -31,7 +32,11 @@ config.parse_flags_with_absl()
 
 jtu.request_cpu_devices(8)
 
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
+
+@jtu.with_config(jax_use_direct_linearize=True)
 class MutableArrayTest(jtu.JaxTestCase):
 
   @parameterized.parameters([True, False])
@@ -503,6 +508,120 @@ class MutableArrayTest(jtu.JaxTestCase):
     expected = 2. * jnp.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @parameterized.parameters([False, True])
+  def test_grad_jit_readonly(self, jit):
+    def f(x):
+      x_ref = core.mutable_array(jnp.zeros_like(x))
+      x_ref[...] = x
+      return x_ref[...]
+
+    if jit:
+      f = jax.jit(f)
+
+    jtu.check_grads(f, (1.5,), 2, ['fwd', 'rev'])
+
+  def test_grad_jit_readonly_1(self):
+    @jax.jit
+    def f(x):
+      x_ref = core.mutable_array(x)
+
+      def inner():
+        return jnp.sin(x_ref[...])
+
+      return inner()
+
+    jtu.check_grads(f, (1.5,), 2, ['fwd', 'rev'])
+
+  def test_grad_jit_readonly_2(self):
+    def f(x):
+      x_ref = core.mutable_array(x)
+
+      @jax.jit
+      def inner():
+        return jnp.sin(x_ref[...])
+
+      return inner()
+
+    jtu.check_grads(f, (1.5,), 2, ['fwd', 'rev'])
+
+  @jtu.sample_product(
+      seed=range(6),
+      num_consts=range(2, 6),
+      num_args=[0, 3],
+  )
+  @jtu.run_on_devices("cpu")
+  def test_jit_vjp_systematic_readonly(self, seed, num_consts, num_args):
+    num_mut_consts = num_consts // 2
+    num_pure_consts = num_consts - num_mut_consts
+
+    rng = np.random.RandomState(seed)
+    pure_consts = [rng.normal() for _ in range(num_pure_consts)]
+    mut_const_vals = [rng.normal() for _ in range(num_mut_consts)]
+
+    args = [rng.normal() for _ in range(num_args)]
+
+    mutable_bools = rng.permutation([True] * num_mut_consts +
+                                    [False] * num_pure_consts)
+
+    def f(mut_const_vals, pure_consts, args):
+      consts = pure_consts[:], map(core.mutable_array, mut_const_vals)
+
+      @jax.jit
+      def inner(args):
+        tot = 0.
+        for is_mut in mutable_bools:
+          const = consts[int(is_mut)].pop()
+          if is_mut: const = const[...]
+          tot += jnp.sin(const)
+        for x in args:
+          tot += jnp.sin(x)
+        return tot
+
+      return inner(args)
+
+    jtu.check_grads(f, (mut_const_vals, pure_consts, args), 2, ['rev'])
+
+  @jtu.sample_product(
+      seed=range(6),
+      num_consts=range(2, 6),
+      num_carry=[0, 3],
+      num_ext_in=[0, 3],
+      num_iters=[1, 3],
+  )
+  @jtu.run_on_devices("cpu")
+  def test_scan_vjp_systematic_readonly(
+      self, seed, num_consts, num_carry, num_ext_in, num_iters):
+    num_mut_consts = num_consts // 2
+    num_pure_consts = num_consts - num_mut_consts
+
+    rng = np.random.RandomState(seed)
+    pure_consts = [rng.normal() for _ in range(num_pure_consts)]
+    mut_const_vals = [rng.normal() for _ in range(num_mut_consts)]
+
+    init_carry = [rng.normal() for _ in range(num_carry)]
+    xs = [rng.normal(size=num_iters) for _ in range(num_ext_in)]
+
+    mutable_bools = rng.permutation([True] * num_mut_consts +
+                                    [False] * num_pure_consts)
+
+    def f(mut_const_vals, pure_consts, c, xs):
+      consts = pure_consts[:], map(core.mutable_array, mut_const_vals)
+
+      def body(c, x):
+        tot = 0.
+        for is_mut in mutable_bools:
+          const = consts[int(is_mut)].pop()
+          if is_mut: const = const[...]
+          tot += jnp.sin(const)
+        new_c = [jnp.sin(carry) + tot for carry in c]
+        y = sum(map(jnp.sin, x)) * 1.0
+        return new_c, y
+
+      return jax.lax.scan(body, init_carry, xs, length=num_iters)
+
+    jtu.check_grads(f, (mut_const_vals, pure_consts, init_carry, xs),
+                    2, ['fwd', 'rev'], rtol=1.5e-2)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
@@ -647,18 +766,17 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
       f(x_ref, x_ref)
 
-  # TODO(mattjj): re-enable test after direct-linearize
-  # @parameterized.parameters([False, True])
-  # def test_argument_aliases_custom_vjp_fwd(self, jit):
-  #   @jax.custom_vjp
-  #   def f(x_ref, y_ref):
-  #     ...
-  #   f.defvjp(lambda x_ref, y_ref: (None, None), lambda _, g: (None, None))
-  #   if jit:
-  #     f = jax.jit(f)
-  #   x_ref = core.mutable_array(0.)
-  #   with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
-  #     jax.vjp(f, x_ref, x_ref)
+  @parameterized.parameters([False, True])
+  def test_argument_aliases_custom_vjp_fwd(self, jit):
+    @jax.custom_vjp
+    def f(x_ref, y_ref):
+      ...
+    f.defvjp(lambda x_ref, y_ref: (None, None), lambda _, g: (None, None))
+    if jit:
+      f = jax.jit(f)
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
+      jax.vjp(f, x_ref, x_ref)
 
   # TODO(mattjj): add test test_closure_and_argument_aliases_custom_vjp
 

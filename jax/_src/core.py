@@ -555,6 +555,8 @@ class Primitive:
   # set for primitives that can skip canonicalization of values
   skip_canonicalization: bool = False
 
+  is_effectful = None
+
   def __init__(self, name: str):
     self.name = name
 
@@ -2416,13 +2418,14 @@ class MutableArray:
   committed = _committed = property(lambda self: self._buf._committed)
   def __getitem__(self, idx): return self._aval._getitem(self, idx)
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
-  def __repr__(self) -> str: return 'Mutable' + repr(self[...])
+  def __repr__(self) -> str: return 'Mutable' + repr(self._buf)
   def __len__(self) -> int: return self._aval._len(self)
 pytype_aval_mappings[MutableArray] = lambda x: x._aval
 
-def mutable_array(init_val):
-  return mutable_array_p.bind(init_val)
+def mutable_array(init_val, *, memory_space: Any = None):
+  return mutable_array_p.bind(init_val, memory_space=memory_space)
 mutable_array_p = Primitive('mutable_array')
+mutable_array_p.is_effectful = lambda params: True  # type: ignore
 mutable_array_p.ref_primitive = True
 
 class InternalMutableArrayEffect(effects.Effect):
@@ -2431,12 +2434,17 @@ internal_mutable_array_effect = InternalMutableArrayEffect()
 effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 
 @mutable_array_p.def_effectful_abstract_eval
-def mutable_array_abstract_eval(init_aval):
+def mutable_array_abstract_eval(init_aval, *, memory_space: Any):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  return AbstractRef(init_aval), {internal_mutable_array_effect}
+  return (AbstractRef(init_aval, memory_space=memory_space),
+          {internal_mutable_array_effect})
 
 @mutable_array_p.def_impl
-def _mutable_array_impl(init_val):
+def _mutable_array_impl(init_val, *, memory_space: Any):
+  if memory_space is not None:
+    raise NotImplementedError(
+        "mutable_array with memory space only works inside of a `jit`."
+    )
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
   return MutableArray(AbstractRef(get_aval(init_val)), _array_copy(init_val))
@@ -2444,6 +2452,7 @@ def _mutable_array_impl(init_val):
 def freeze(ref):
   return freeze_p.bind(ref)
 freeze_p = Primitive('freeze')
+freeze_p.is_effectful = lambda params: True  # type: ignore
 freeze_p.ref_primitive = True
 
 @freeze_p.def_effectful_abstract_eval
@@ -2934,6 +2943,7 @@ def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
   """Determine whether `t1` and `t2` are equivalent. Ignores weak_type."""
   t1 = t1.normalize()
   t2 = t2.normalize()
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   if t1 == t2:
     return True
   elif (isinstance(t1, (ShapedArray, DShapedArray)) and
@@ -2944,6 +2954,11 @@ def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
     # See https://github.com/jax-ml/jax/issues/26474
     return (t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
             and t1.vma == t2.vma)  # type: ignore
+  elif isinstance(t1, AbstractRef) and isinstance(t2, AbstractRef):
+    # We want to use the regular typecheck for ShapedArray here.
+    return ((t1.memory_space is None or t2.memory_space is None  # type: ignore
+            or t1.memory_space == t2.memory_space)  # type: ignore
+            and typematch(t1.inner_aval, t2.inner_aval))  # type: ignore
   else:
     return False
 
@@ -3071,6 +3086,13 @@ def _check_jaxpr(
         env[v] = v
       else:
         env[v] = MutableTypecheckVal(aval, MutableQuasiDynamicData(qdd))
+
+  # # Don't return refs
+  if config.mutable_array_checks.value:
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    for v in jaxpr.outvars:
+      if isinstance(v.aval, AbstractRef):
+        raise JaxprTypeError("returned a ref!")
 
   # Check type annotations on lambda binders.
   for v in it.chain(jaxpr.constvars, jaxpr.invars):
@@ -3235,7 +3257,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
                            f"{substitute(v.aval)}")
     env[v] = x.val if type(x) is Literal else x
 
-  _check_jaxpr(ctx_factory, call_jaxpr)
+  check_jaxpr(call_jaxpr)
 
   invars, outvars = call_jaxpr.invars, call_jaxpr.outvars
   in_map : dict[Var,  InDBIdx] = {v:  InDBIdx(i) for i, v in enumerate( invars)}

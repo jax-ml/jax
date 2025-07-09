@@ -569,7 +569,7 @@ def _get_ref_and_transforms(ref):
   return ref, ()
 
 
-def make_async_copy(src_ref, dst_ref, sem):
+def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
   src_ref, src_transforms = _get_ref_and_transforms(src_ref)
   dst_ref, dst_transforms = _get_ref_and_transforms(dst_ref)
@@ -588,15 +588,23 @@ def make_async_copy(src_ref, dst_ref, sem):
   )
 
 
-def async_copy(src_ref, dst_ref, sem, *, priority: int = 0):
+def async_copy(
+    src_ref, dst_ref, sem, *, priority: int = 0
+) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
   copy_descriptor = make_async_copy(src_ref, dst_ref, sem)
   copy_descriptor.start(priority=priority)
   return copy_descriptor
 
 
-def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
-                           device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH):
+def make_async_remote_copy(
+    src_ref,
+    dst_ref,
+    send_sem,
+    recv_sem,
+    device_id,
+    device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
+) -> AsyncCopyDescriptor:
   """Creates a description of a remote copy operation.
 
   Copies data from src_ref on the current device to dst_ref on the device
@@ -612,6 +620,7 @@ def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
     recv_sem: The semaphore on the destination device.
     device_id: The device id of the destination device.
     device_id_type: The type of the device id.
+
   Returns:
     An AsyncCopyDescriptor.
   """
@@ -632,12 +641,20 @@ def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
       device_id_type=device_id_type,
   )
 
-def async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
-                      device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH):
+
+def async_remote_copy(
+    src_ref,
+    dst_ref,
+    send_sem,
+    recv_sem,
+    device_id,
+    device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
+) -> AsyncCopyDescriptor:
   copy_descriptor = make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem,
                                            device_id, device_id_type)
   copy_descriptor.start()
   return copy_descriptor
+
 
 get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 
@@ -760,31 +777,6 @@ def wrap_pallas_seed(*seeds, impl):
   return join_key_p.bind(*seeds, impl=impl)
 
 
-with_memory_space_constraint_p = jax_core.Primitive(
-    'with_memory_space_constraint')
-
-@with_memory_space_constraint_p.def_impl
-def with_memory_space_constraint_impl(x, *, memory_space):
-  del x, memory_space
-  raise ValueError("Cannot eagerly run with_memory_space_constraint.")
-
-
-@with_memory_space_constraint_p.def_abstract_eval
-def with_memory_space_constraint_abstract_eval(x, *, memory_space):
-  if not isinstance(x, jax_core.ShapedArray):
-    raise NotImplementedError("with_memory_space_constraint only supports "
-                              "arrays.")
-  return pl_core.ShapedArrayWithMemorySpace(
-      x.shape, x.dtype, memory_space=memory_space
-  )
-
-def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
-  del ctx, memory_space
-  return [x]
-mlir.register_lowering(
-    with_memory_space_constraint_p, with_memory_space_constraint_lowering_rule
-)
-
 def with_memory_space_constraint(
     x: jax.Array, memory_space: Any
 ) -> jax.Array:
@@ -811,11 +803,5 @@ def with_memory_space_constraint(
     raise NotImplementedError(
         "with_memory_space_constraint only supports HBM and VMEM."
     )
-  return with_memory_space_constraint_p.bind(x, memory_space=memory_space)
-
-def get_memory_space(x: jax.Array) -> Any:
-  """Queries the memory space of an array."""
-  aval = jax_core.get_aval(x)
-  if isinstance(aval, pl_core.ShapedArrayWithMemorySpace):
-    return aval.memory_space
-  return None
+  return pl_core.with_memory_space_constraint_p.bind(
+      x, memory_space=memory_space)

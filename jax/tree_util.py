@@ -65,6 +65,7 @@ from jax._src.tree_util import (
     tree_map_with_path as tree_map_with_path,
     tree_map as tree_map,
     tree_reduce as tree_reduce,
+    tree_reduce_associative as tree_reduce_associative,
     tree_structure as tree_structure,
     tree_transpose as tree_transpose,
     tree_unflatten as tree_unflatten,

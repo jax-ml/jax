@@ -256,7 +256,7 @@ def get_intermediate_shardings(
         continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       out.append((s, source_info))
-    elif eqn.primitive is pjit.pjit_p:
+    elif eqn.primitive is pjit.jit_p:
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       out.extend((i, source_info) for i in eqn.params['in_shardings'])
       out.extend((o, source_info) for o in eqn.params['out_shardings'])

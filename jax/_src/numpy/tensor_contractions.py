@@ -450,7 +450,8 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
 def tensordot(a: ArrayLike, b: ArrayLike,
               axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
               *, precision: lax.PrecisionLike = None,
-              preferred_element_type: DTypeLike | None = None) -> Array:
+              preferred_element_type: DTypeLike | None = None,
+              out_sharding: NamedSharding | P | None = None) -> Array:
   """Compute the tensor dot product of two N-dimensional arrays.
 
   JAX implementation of :func:`numpy.linalg.tensordot`.
@@ -556,8 +557,10 @@ def tensordot(a: ArrayLike, b: ArrayLike,
     msg = ("tensordot axes argument must be an int, a pair of ints, or a pair "
            "of lists/tuples of ints.")
     raise TypeError(msg)
-  result = lax.dot_general(a, b, (contracting_dims, ((), ())),
-                           precision=precision, preferred_element_type=preferred_element_type)
+  result = lax.dot_general(
+      a, b, (contracting_dims, ((), ())), precision=precision,
+      preferred_element_type=preferred_element_type,
+      out_sharding=out_sharding)
   return lax._convert_element_type(result, preferred_element_type, output_weak_type)
 
 

@@ -54,6 +54,7 @@ WARPGROUP_SIZE = 128
 _Ref = state.AbstractRef | state_types.TransformedRef
 Layout = gpu_core.Layout
 ParameterizedLayout = gpu_core.ParameterizedLayout
+SomeLayout = gpu_core.SomeLayout
 
 
 def _check_ref(
@@ -610,8 +611,6 @@ barrier_arrive_p.multiple_results = True
 def _barrier_arrive_abstract_eval(barrier, *args, **params):
   del args, params  # Unused.
   _check_ref(barrier, "barrier", gpu_core.SMEM)
-  if getattr(barrier.inner_aval.dtype, "orders_tensor_core", False):
-    raise ValueError("Cannot arrive on a tensor core barrier.")
   return (), {gpu_core._memory_effect}
 
 
@@ -642,12 +641,20 @@ def _barrier_arrive_lowering(
     *flat_transforms,
     transforms_treedef,
 ):
-  del ctx  # Unused.
   transforms = transforms_treedef.unflatten(flat_transforms)
   indexer = _extract_barrier_indexer(transforms)
   if indexer is not None:
     barrier = barrier.__getitem__(*map(lowering._as_index, indexer.indices))
-  barrier.arrive()
+  sem_dtype = ctx.avals_in[0].inner_aval.dtype  # typing: ignore
+  if getattr(sem_dtype, "orders_tensor_core", False):
+    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+      raise NotImplementedError("barrier_arrive on barriers with orders_tensor_core=True")
+    # We only do a single arrival for barriers with orders_tensor_core=True,
+    # so we need to perfom a separate warpgroup barrier.
+    mgpu_utils.warpgroup_barrier()
+    barrier.arrive(orders_tensor_core=True, predicate=ctx.module_ctx.single_lane_predicate)
+  else:
+    barrier.arrive()
   return ()
 
 
@@ -1618,7 +1625,7 @@ def broadcasted_iota(
     shape: Sequence[int],
     dimension: int,
     *,
-    layout: Layout | None = None,
+    layout: SomeLayout | None = None,
 ) -> jax.Array:
   result = jax.lax.broadcasted_iota(dtype, shape, dimension)
   if layout is not None:
@@ -1804,7 +1811,7 @@ def jaxpr_call(
 class ShapeDtypeStruct:
   shape: tuple[int, ...]
   dtype: jnp.dtype
-  layout: ParameterizedLayout | Layout
+  layout: SomeLayout
 
 
 inline_mgpu_p = jax_core.Primitive("inline_mgpu_p")
@@ -2046,7 +2053,7 @@ def load(
     src: _Ref,
     idx,
     *,
-    layout: Layout | None = None,
+    layout: SomeLayout | None = None,
     optimized: bool = True,
 ) -> jax.Array:
   """Loads from a reference into an array with the specified layout.
@@ -2080,7 +2087,7 @@ def load(
 
 async_load_tmem_p = jax_core.Primitive("async_load")
 
-def async_load_tmem(src: _Ref, idx = (), *, layout: Layout | None = None) -> jax.Array:
+def async_load_tmem(src: _Ref, idx = (), *, layout: SomeLayout | None = None) -> jax.Array:
   """Performs an asynchronous load from the TMEM array.
 
   The load operation is only partly asynchronous. The returned array can be used

@@ -43,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 361
+_version = 362
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -508,17 +508,6 @@ register_custom_call_as_batch_partitionable = (
 
 Traceback = _xla.Traceback
 Frame = _xla.Frame
-
-
-@contextlib.contextmanager
-def tracebacks(enabled=True):
-  """Context manager that enables or disables traceback collection."""
-  saved = _xla.tracebacks_enabled()
-  _xla.set_tracebacks_enabled(enabled)
-  try:
-    yield
-  finally:
-    _xla.set_tracebacks_enabled(saved)
 
 
 @contextlib.contextmanager

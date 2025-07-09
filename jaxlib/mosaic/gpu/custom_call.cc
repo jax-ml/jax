@@ -338,6 +338,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mosaic::gpu::registerGpuLaunchLoweringPass();
     mosaic::gpu::registerConvertGpuToLLVMPass();
     mosaic::gpu::registerByvalInsertionPass();
+    mosaic::gpu::registerNvvmAttrInsertionPass();
     mlir::arith::registerArithExpandOpsPass();
     mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
     return true;
@@ -372,6 +373,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true}),
         gpu.module(cse),
         gpu.module(mosaic-byval-insertion),
+        gpu.module(mosaic-nvvm-attr-insertion),
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
         ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly},

@@ -112,8 +112,7 @@ def debug_callback_batching_rule(args, dims, **params):
   """Unrolls the debug callback across the mapped axis."""
   axis_size = next(x.shape[i] for x, i in zip(args, dims)
                    if i is not None)
-  # TODO(sharadmv): implement in terms of rolled loop unstead of
-  # unrolled.
+  # TODO(sharadmv): implement in terms of rolled loop unstead of unrolled.
   def get_arg_at_dim(i, dim, arg):
     if dim is batching.not_mapped:
       # Broadcast unmapped argument

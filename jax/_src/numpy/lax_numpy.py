@@ -4875,7 +4875,7 @@ def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
     - :func:`jax.numpy.concatenate`: concatenation along existing axes.
     - :func:`jax.numpy.vstack`: stack vertically, i.e. along axis 0.
     - :func:`jax.numpy.hstack`: stack horizontally, i.e. along axis 1.
-    - :func:`jax.numpy.hstack`: stack depth=wise, i.e. along axis 2.
+    - :func:`jax.numpy.dstack`: stack depth-wise, i.e. along axis 2.
 
   Examples:
     Scalar values:

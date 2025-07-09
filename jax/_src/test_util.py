@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Generator, Iterable, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
@@ -333,7 +333,7 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
 
 
 @contextmanager
-def collect_lowered_jaxprs() -> Generator[Sequence[tuple[core.ClosedJaxpr,
+def collect_lowered_jaxprs() -> Iterator[Sequence[tuple[core.ClosedJaxpr,
                                                          mlir.ir.Module]]]:
   """
   Collects all the pairs of (jaxpr, mlir_module) that are lowered.
@@ -490,11 +490,11 @@ class CudaArchSpecificTest:
 
   def skip_unless_sm90a(self):
     if not is_cuda_compute_capability_equal("9.0"):
-      self.skipTest("Only works on GPU with capability sm90a")
+      self.skipTest("Only works on GPU with capability sm90a")  # pytype: disable=attribute-error
 
   def skip_unless_sm100a(self):
     if not is_cuda_compute_capability_equal("10.0"):
-      self.skipTest("Only works on GPU with capability sm100a")
+      self.skipTest("Only works on GPU with capability sm100a")  # pytype: disable=attribute-error
 
 
 def _get_device_tags():
@@ -591,7 +591,7 @@ def pytest_mark_if_available(marker: str):
   """A decorator for test classes or methods to pytest.mark if installed."""
   def wrap(func_or_class):
     try:
-      import pytest
+      import pytest  # pytype: disable=import-error
     except ImportError:
       return func_or_class
     return getattr(pytest.mark, marker)(func_or_class)
@@ -1872,7 +1872,7 @@ class vectorize_with_mpmath(np.vectorize):
 
   def __call__(self, *args, **kwargs):
     mp_args = []
-    context = None
+    context: Any = None
     for a in args:
       if isinstance(a, (np.ndarray, np.floating, np.complexfloating)):
         mp_args.append(self.nptomp(a))
@@ -2247,7 +2247,7 @@ def setup_hypothesis(max_examples=30) -> None:
       the default "deterministic" profile.
   """
   try:
-    import hypothesis as hp
+    import hypothesis as hp  # pytype: disable=import-error
   except (ModuleNotFoundError, ImportError):
     return
 

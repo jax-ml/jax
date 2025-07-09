@@ -204,6 +204,13 @@ def _tuples_differ(xs, ys):
   differences = jax.tree.leaves(jax.tree.map(lambda x, y: x != y, xs, ys))
   return functools.reduce(lambda x, y: x | y, differences, False)
 
+def _tuple_all_binop(binop, xs, ys):
+  """Dynamic reduce_all calculation with a user-provided comparison op."""
+  differences = jax.tree.leaves(jax.tree.map(lambda x, y: binop(x, y), xs, ys))
+  return functools.reduce(lambda x, y: x & y, differences, True)
+
+_tuple_lt = functools.partial(_tuple_all_binop, lambda x, y: x < y)
+
 
 def _grid_size(grid):
   """Dynamic grid size calculation."""
@@ -404,6 +411,8 @@ class BufferedRefBase:
     raise NotImplementedError()
 
 
+# TODO(justinfu): Refactor and rename slot fields to reflect cumulative values
+# instead of slot index.
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
 class BufferedRef(BufferedRefBase):
@@ -422,6 +431,11 @@ class BufferedRef(BufferedRefBase):
     copy_out_slot: current slot to copy out for the working buffer.
     wait_in_slot: current slot to wait in for the working buffer.
     wait_out_slot: current slot to wait out for the working buffer.
+    next_fetch_smem: Holds the next grid indices to fetch for lookahead. This
+      is the SMEM backing buffer used to persist state between pipeline
+      invocations.
+    next_fetch_sreg: Holds the next grid indices to fetch for lookahead. This
+      is the register state used to track the indices within the pipeline loop.
     sem_recvs: Multiple buffered semaphores for input DMAs.
     sem_sends: Multiple buffered semaphores for output DMAs.
     block_shape: passthrough property for the BlockSpec's block_shape.
@@ -449,6 +463,8 @@ class BufferedRef(BufferedRefBase):
   _wait_in_slot_reg: int | jax.Array | None
   _copy_out_slot_reg: int | jax.Array | None
   _wait_out_slot_reg: int | jax.Array | None
+  next_fetch_smem: Sequence[jax.Array] | None
+  next_fetch_sreg: Sequence[jax.Array] | None
   sem_recvs: SemaphoreTuple | None
   sem_sends: SemaphoreTuple | None
   # TODO(ramiroleal): Improve prefetch/postyeet interface to avoid
@@ -479,6 +495,11 @@ class BufferedRef(BufferedRefBase):
     return self.memory_space != VMEM
 
   @property
+  def use_lookahead(self) -> bool:
+    """Whether this buffer allows lookahead for fetching blocks."""
+    return self.next_fetch_smem is not None
+
+  @property
   def buffer_count(self) -> int:
     """Returns the number of buffers used for multiple buffering."""
     if self.memory_space == VMEM:
@@ -498,6 +519,8 @@ class BufferedRef(BufferedRefBase):
             self._wait_in_slot_reg,
             self._copy_out_slot_reg,
             self._wait_out_slot_reg,
+            self.next_fetch_smem,
+            self.next_fetch_sreg,
             self.sem_recvs,
             self.sem_sends,
             self.swap,
@@ -515,7 +538,9 @@ class BufferedRef(BufferedRefBase):
 
   @classmethod
   def create(cls, spec: pl.BlockSpec, dtype, buffer_type, buffer_count,
-             needs_swap_ref=True) -> BufferedRef:
+             needs_swap_ref=True,
+             grid_rank=None,
+             use_lookahead=False) -> BufferedRef:
     """Create a BufferedRef.
 
     Args:
@@ -524,6 +549,8 @@ class BufferedRef(BufferedRefBase):
       buffer_type: enum indicating whether this is an input, output, or in/out
         accumulator buffered reference.
       needs_swap_ref: whether a swap slots tracker needs to be allocated.
+      grid_rank: rank of the pipeline grid.
+      use_lookahead: whether to enable pipeline lookahead.
 
     Returns:
       Initialized BufferedRef
@@ -551,12 +578,18 @@ class BufferedRef(BufferedRefBase):
           _wait_in_slot_reg=None,
           _copy_out_slot_reg=None,
           _wait_out_slot_reg=None,
+          next_fetch_smem=None,
+          next_fetch_sreg=None,
           sem_recvs=None,
           sem_sends=None,
           swap=None,
       )
     else:
       memory_space = SMEM if spec.memory_space == SMEM else VMEM
+      if use_lookahead and grid_rank is None:
+        raise ValueError(
+            "grid_rank must be specified when use_lookahead is True."
+        )
       return cls(
           _spec=spec,
           dtype=dtype,
@@ -571,6 +604,9 @@ class BufferedRef(BufferedRefBase):
           _wait_in_slot_reg=None,
           _copy_out_slot_reg=None,
           _wait_out_slot_reg=None,
+          next_fetch_smem=[SMEM((1,), jnp.int32) for _ in range(
+              grid_rank)] if use_lookahead else None,
+          next_fetch_sreg=None,
           sem_recvs=(
               None
               if buffer_type is BufferType.OUTPUT
@@ -585,9 +621,11 @@ class BufferedRef(BufferedRefBase):
       )
 
   @classmethod
-  def input(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+  def input(cls, spec, dtype, buffer_count=2, needs_swap_ref=True,
+            grid_rank=None, use_lookahead=False):
     return cls.create(spec, dtype, BufferType.INPUT, buffer_count,
-                      needs_swap_ref)
+                      needs_swap_ref, grid_rank=grid_rank,
+                      use_lookahead=use_lookahead)
 
   @classmethod
   def output(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
@@ -619,6 +657,11 @@ class BufferedRef(BufferedRefBase):
   def with_spec(self, spec: pl.BlockSpec) -> BufferedRef:
     """Returns a new BufferedRef with the given block spec."""
     return dataclasses.replace(self, _spec=spec)
+
+  def with_next_fetch(
+    self, next_fetch: Sequence[jax.Array] | None = None,
+  ):
+    return dataclasses.replace(self, next_fetch_sreg=next_fetch)
 
   def with_slot_index(
       self,
@@ -653,55 +696,73 @@ class BufferedRef(BufferedRefBase):
       if self.is_output:
         slot = self.current_copy_out_slot
       else:
-        # We use the previous slot because the wait slot gets incremented
-        # before reading the current slot.
-        slot = self.prev_wait_in_slot
+        slot = self.current_wait_in_slot
       return self.window_ref.at[(slot, *buffer_slice)]
 
   @property
-  def current_copy_in_slot(self):
-    """Index in multiple buffer corresponding to the current slot."""
+  def cumulative_copy_in(self):
+    """The cumulative number of copy_ins issued on this buffer."""
     if self._copy_in_slot_reg is not None:
       val = self._copy_in_slot_reg
     else:
       val = self.copy_in_slot[0]
-    return lax.rem(val, jnp.uint32(self.buffer_count))
+    return val
 
   @property
-  def current_copy_out_slot(self):
-    """Index in multiple buffer corresponding to the current copy slot."""
+  def current_copy_in_slot(self):
+    """Index in multiple buffer corresponding to the current slot."""
+    return lax.rem(self.cumulative_copy_in, jnp.uint32(self.buffer_count))
+
+  @property
+  def cumulative_copy_out(self):
+    """The cumulative number of copy_outs issued on this buffer."""
     if self._copy_out_slot_reg is not None:
       val = self._copy_out_slot_reg
     else:
       val = self.copy_out_slot[0]
-    return lax.rem(val, jnp.uint32(self.buffer_count))
+    return val
+
+  @property
+  def current_copy_out_slot(self):
+    """Index in multiple buffer corresponding to the current copy slot."""
+    return lax.rem(self.cumulative_copy_out, jnp.uint32(self.buffer_count))
+
+  @property
+  def cumulative_wait_in(self):
+    """The cumulative number of wait_ins issued on this buffer."""
+    if self._wait_in_slot_reg is not None:
+      val = self._wait_in_slot_reg
+    else:
+      val = self.wait_in_slot[0]
+    return val
 
   @property
   def current_wait_in_slot(self):
     """Index in multiple buffer corresponding to the current wait slot."""
-    if self._wait_in_slot_reg is not None:
-      val = self._wait_in_slot_reg
-    else:
-      val = self.wait_in_slot[0]
-    return lax.rem(val, jnp.uint32(self.buffer_count))
+    return lax.rem(self.cumulative_wait_in, jnp.uint32(self.buffer_count))
 
   @property
-  def current_wait_out_slot(self):
-    """Index in multiple buffer corresponding to the current wait slot."""
+  def cumulative_wait_out(self):
+    """The cumulative number of wait_outs issued on this buffer."""
     if self._wait_out_slot_reg is not None:
       val = self._wait_out_slot_reg
     else:
       val = self.wait_out_slot[0]
-    return lax.rem(val, jnp.uint32(self.buffer_count))
+    return val
 
   @property
-  def prev_wait_in_slot(self):
-    """Index in multiple buffer corresponding to the previous wait slot."""
-    if self._wait_in_slot_reg is not None:
-      val = self._wait_in_slot_reg
-    else:
-      val = self.wait_in_slot[0]
-    return lax.rem(val - 1, jnp.uint32(self.buffer_count))
+  def current_wait_out_slot(self):
+    """Index in multiple buffer corresponding to the current wait slot."""
+    return lax.rem(self.cumulative_wait_out, jnp.uint32(self.buffer_count))
+
+  @property
+  def next_fetch_indices(self):
+    """Returns the next grid indices to fetch from if using lookahead."""
+    if not self.use_lookahead:
+      raise ValueError("Can only get fetch indices if using lookahead.")
+    if self.next_fetch_sreg is not None:
+      return self.next_fetch_sreg
+    return tuple(smem[0] for smem in self.next_fetch_smem)
 
   def bind_existing_ref(self, window_ref, indices):
     """For handling VMEM references, the pipeline aliases the existing ref."""
@@ -748,6 +809,9 @@ class BufferedRef(BufferedRefBase):
     if self.is_input:
       self.copy_in_slot[0] = 0
       self.wait_in_slot[0] = 0
+      if self.use_lookahead:
+        for i in range(len(self.next_fetch_smem)):
+          self.next_fetch_smem[i][0] = 0
     if self.is_output:
       self.copy_out_slot[0] = 0
       self.wait_out_slot[0] = 0
@@ -819,7 +883,12 @@ class BufferedRef(BufferedRefBase):
       copy_out = self.copy_out_slot[0] if self.is_output else None
       wait_in = self.wait_in_slot[0] if self.is_input else None
       wait_out = self.wait_out_slot[0] if self.is_output else None
-      return (copy_in, copy_out, wait_in, wait_out)
+      if self.use_lookahead:
+        next_fetch = tuple(self.next_fetch_smem[i][0] for i in range(
+            len(self.next_fetch_smem)))
+      else:
+        next_fetch = None
+      return (copy_in, copy_out, wait_in, wait_out, next_fetch)
     def _no_load():
       copy_in = copy_out = wait_in = wait_out = None
       # Need to make sure that we return a non-none value to make sure
@@ -831,15 +900,26 @@ class BufferedRef(BufferedRefBase):
       if self.is_output:
         copy_out = _ensure_not_none(self._copy_out_slot_reg)
         wait_out = _ensure_not_none(self._wait_out_slot_reg)
-      return (copy_in, copy_out, wait_in, wait_out)
-    (copy_in_slot, copy_out_slot, wait_in_slot, wait_out_slot
-     ) = lax.cond(predicate, _do_load, _no_load)
-    return self.with_slot_index(
+      if self.use_lookahead:
+        if self.next_fetch_sreg is None:
+          next_fetch = tuple(jnp.int32(0) for _ in range(
+              len(self.next_fetch_smem)))
+        else:
+          next_fetch = self.next_fetch_sreg
+      else:
+        next_fetch = None
+      return (copy_in, copy_out, wait_in, wait_out, next_fetch)
+    (copy_in_slot, copy_out_slot, wait_in_slot, wait_out_slot,
+     next_fetch) = lax.cond(predicate, _do_load, _no_load)
+    bref = self.with_slot_index(
         copy_in_slot=copy_in_slot,
         copy_out_slot=copy_out_slot,
         wait_in_slot=wait_in_slot,
         wait_out_slot=wait_out_slot,
     )
+    if bref.next_fetch_smem is not None:
+      bref = bref.with_next_fetch(next_fetch=next_fetch)
+    return bref
 
   def save_slots(self, predicate: bool | jax.Array = True):
     """Save slot information from registers."""
@@ -852,6 +932,10 @@ class BufferedRef(BufferedRefBase):
         self.copy_in_slot[0] = self._copy_in_slot_reg
         assert self._wait_in_slot_reg is not None
         self.wait_in_slot[0] = self._wait_in_slot_reg
+        if self.use_lookahead:
+          assert self.next_fetch_sreg is not None
+          for i in range(len(self.next_fetch_smem)):
+            self.next_fetch_smem[i][0] = self.next_fetch_sreg[i]
       if self.is_output:
         assert self._copy_out_slot_reg is not None
         self.copy_out_slot[0] = self._copy_out_slot_reg
@@ -978,6 +1062,63 @@ class BufferedRef(BufferedRefBase):
       ).astype(self.window_ref.dtype)
 
 
+def fetch_until_full_slots(buffered_ref, src_ref,
+                           grid,
+                           grid_offsets,
+                           predicate: jax.Array | bool = True,
+                           use_sreg_for_state: bool = False,
+                           update_slots: bool = True):
+  """Continually fetch values until all copy_in slots are full."""
+  if not buffered_ref.use_lookahead:
+    raise ValueError("fetch_until_full_slots requires lookahead.")
+  add_offset = lambda x: tuple(
+      i + j for i, j in zip(x, grid_offsets, strict=True))
+  index_inbound = lambda x: _tuple_lt(x, grid)
+  increment_indices = lambda x: _next_index(x, grid, allow_overflow=True)
+  def as_uint32(x):
+    if isinstance(x, bool):
+      return jnp.uint32(x)
+    else:
+      return x.astype(jnp.uint32)
+
+  def _loop_cond(carry):
+    _, next_indices, cumulative_copy_in = carry
+    has_slots = cumulative_copy_in < (
+        buffered_ref.cumulative_wait_in + buffered_ref.buffer_count)
+    in_bounds = index_inbound(next_indices)
+    return predicate & has_slots & in_bounds
+
+  def _loop_body(carry):
+    current_indices, next_indices, cumulative_copy_in = carry
+    cur_indices_offset = add_offset(current_indices)
+    next_indices_offset = add_offset(next_indices)
+    block_indices = buffered_ref.compute_index(*cur_indices_offset)
+    next_block_indices = buffered_ref.compute_index(*next_indices_offset)
+    will_change = _tuples_differ(block_indices, next_block_indices)
+    pred = will_change
+    bref = buffered_ref.with_slot_index(copy_in_slot=cumulative_copy_in)
+    @pl.when(pred)
+    def _start():
+      bref.copy_in(src_ref, next_indices_offset)  # pylint: disable=cell-var-from-loop
+    next_copy_in = cumulative_copy_in + as_uint32(pred)
+    next_next_indices = increment_indices(next_indices)
+    return next_indices, next_next_indices, next_copy_in
+  current_indices = buffered_ref.next_fetch_indices
+  next_fetch = increment_indices(current_indices)
+  final_indices, _, final_copy_in_slot = lax.while_loop(
+      _loop_cond, _loop_body,
+      (current_indices, next_fetch, buffered_ref.cumulative_copy_in))
+
+  buffered_ref = buffered_ref.with_next_fetch(final_indices)
+  if update_slots:
+    if use_sreg_for_state:
+      buffered_ref = buffered_ref.with_slot_index(
+          copy_in_slot=final_copy_in_slot)
+    else:
+      buffered_ref.copy_in_slot[0] = final_copy_in_slot
+  return buffered_ref, final_copy_in_slot
+
+
 # Helper to tree map over BufferedRefs as leaves.
 map_brefs = functools.partial(
     jax.tree.map,
@@ -1011,15 +1152,36 @@ def _filter_indices(
 
 
 def _next_index(
-    indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...]
+    indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...],
+    allow_overflow: bool = False,
 ) -> tuple[int | jax.Array, ...]:
+  """Increments the grid indices by one.
+
+  Args:
+    indices: the current grid indices.
+    grid: the pallas grid.
+    allow_overflow: whether to allow the indices to overflow the grid.
+      If False (default), indices will wrap around to zero after reaching the
+      maximum grid size. If True, the bounds on the first grid position
+      will be ignored.
+
+  Returns:
+    The next grid indices.
+  """
   out = []
   carry: bool | jax.Array = True
-  for i, g in reversed(list(zip(indices, grid, strict=True))):
+  for position, (i, g) in enumerate(
+      reversed(list(zip(indices, grid, strict=True)))):
     inc = jax.lax.select(carry, i + 1, i)
-    carry = inc == g
+    if allow_overflow and (position == len(grid) - 1):
+      carry = False
+    else:
+      carry = inc == g
     out.append(jax.lax.select(carry, 0, inc))
-  return _filter_indices(tuple(reversed(out)), grid)
+  if allow_overflow:
+    return tuple(reversed(out))
+  else:
+    return _filter_indices(tuple(reversed(out)), grid)
 
 
 def _prev_index(
@@ -1068,6 +1230,7 @@ class Scheduler:
     """
     self.step = step
     self.grid = grid
+    self.grid_offsets = grid_offsets
     self.num_stages = num_stages
     self.first_cycle = first_cycle
     self.last_cycle = last_cycle
@@ -1100,6 +1263,8 @@ class Scheduler:
         i + j
         for i, j in zip(next_indices, grid_offsets, strict=True)
     )
+    self.add_offset = lambda x: tuple(i + j for i, j in zip(x, grid_offsets,
+                                                            strict=True))
     # TODO(justinfu): Don't recompute these on each iteration.
     # fetch_indices stores the grid indices indexed by the amount of lookahead.
     # i.e. fetch_indices[2] contains the grid indices 2 iterations
@@ -1184,22 +1349,36 @@ class Scheduler:
 
       if not buffered_ref.is_input or not buffered_ref.is_buffered:
         return buffered_ref
-      grid_indices = self.indices
-      @pl.when(do_copy)
-      def _start():
-        buffered_ref.copy_in(src_ref, grid_indices)
-      buffered_ref = buffered_ref.advance_copy_in_slot(do_copy)
-      for i in range(buffered_ref.buffer_count - 2):
-        next_grid_indices = self.fetch_indices[i+1]
-        block_indices = buffered_ref.compute_index(*grid_indices)
-        next_block_indices = buffered_ref.compute_index(*next_grid_indices)
-        will_change = _tuples_differ(block_indices, next_block_indices)
-        @pl.when(do_copy & will_change)
+
+      if buffered_ref.use_lookahead:
+        @pl.when(self.first_step_ever & do_copy)
         def _start():
-          buffered_ref.copy_in(src_ref, next_grid_indices)  # pylint: disable=cell-var-from-loop
-        grid_indices = next_grid_indices
-        buffered_ref = buffered_ref.advance_copy_in_slot(do_copy & will_change)
-      return buffered_ref
+          buffered_ref.copy_in(src_ref,
+            self.add_offset(buffered_ref.next_fetch_indices))  # pylint: disable=cell-var-from-loop
+        buffered_ref = buffered_ref.advance_copy_in_slot(do_copy)
+
+        buffered_ref, _ = fetch_until_full_slots(buffered_ref,
+                                              src_ref, self.grid,
+                                              self.grid_offsets,
+                                              self.first_step_ever & do_copy,
+                                              self.use_sreg_for_state)
+      else:
+        grid_indices = self.indices
+        @pl.when(do_copy)
+        def _start():
+          buffered_ref.copy_in(src_ref, grid_indices)
+        buffered_ref = buffered_ref.advance_copy_in_slot(do_copy)
+        for i in range(buffered_ref.buffer_count - 2):
+          next_grid_indices = self.fetch_indices[i+1]
+          block_indices = buffered_ref.compute_index(*grid_indices)
+          next_block_indices = buffered_ref.compute_index(*next_grid_indices)
+          will_change = _tuples_differ(block_indices, next_block_indices)
+          @pl.when(do_copy & will_change)  # pylint: disable=cell-var-from-loop
+          def _start():
+            buffered_ref.copy_in(src_ref, next_grid_indices)  # pylint: disable=cell-var-from-loop
+          grid_indices = next_grid_indices
+          buffered_ref = buffered_ref.advance_copy_in_slot(do_copy & will_change)
+    return buffered_ref
 
   def wait_in(self, buffered_ref, src_ref, schedule=None) -> "BufferedRef":
     if schedule is None:
@@ -1225,21 +1404,29 @@ class Scheduler:
           # so this is usually just setting the accumulator to 0.
           buffered_ref.set_accumulator(self.init_accumulators)
     lax.cond(pred, _wait, _no_wait)
-    buffered_ref = buffered_ref.advance_wait_in_slot(pred & buffered_ref.is_input)
     return buffered_ref
 
   def copy_in(self, buffered_ref, src_ref, schedule=None) -> "BufferedRef":
     if schedule is None:
       schedule = _default_schedule
     pred = schedule['copy_in'](self, buffered_ref, src_ref)
+    if not buffered_ref.is_input:
+      return buffered_ref
 
-    @pl.when(pred)
-    @self._named_scope("ep_copy_in")
-    def _send():
-      if buffered_ref.is_input and buffered_ref.is_buffered:
-        buffered_ref.copy_in(src_ref,
-          self.fetch_indices[buffered_ref.buffer_count-1])
-    return buffered_ref.advance_copy_in_slot(pred & buffered_ref.is_input)
+    if buffered_ref.use_lookahead:
+      buffered_ref, _ = fetch_until_full_slots(buffered_ref,
+        src_ref, self.grid, self.grid_offsets, predicate=True,
+        use_sreg_for_state=self.use_sreg_for_state)
+    else:
+      @pl.when(pred)
+      @self._named_scope("ep_copy_in")
+      def _send():
+        if buffered_ref.is_input and buffered_ref.is_buffered:
+          buffered_ref.copy_in(src_ref,
+            self.fetch_indices[buffered_ref.buffer_count-1])
+      buffered_ref = buffered_ref.advance_copy_in_slot(
+          pred & buffered_ref.is_input)
+    return buffered_ref
 
   # --> Call prefetch here to grab the first inputs of next cycle.
 
@@ -1251,26 +1438,50 @@ class Scheduler:
 
     if not buffered_ref.is_input or not buffered_ref.is_buffered:
       return
-    pred = pred & self.last_step
-    grid_indices = self.indices
-    for i in range(buffered_ref.buffer_count - 1):
-      next_grid_indices = self.fetch_indices[i+1]
-      block_indices = buffered_ref.compute_index(*grid_indices)
-      next_block_indices = buffered_ref.compute_index(*next_grid_indices)
-      if i == 0:
-        # If the prefetch predicate triggers, we already know that the
-        # first block needs to be copied.
-        should_prefetch = True
-      else:
-        should_prefetch = _tuples_differ(block_indices, next_block_indices)
 
-      @pl.when(pred & should_prefetch)
+    if buffered_ref.use_lookahead:
+      buffered_ref = buffered_ref.with_next_fetch(
+          jax.tree.map(jnp.zeros_like, buffered_ref.next_fetch_sreg))
+      @pl.when(pred)
+      def _start():
+        buffered_ref.copy_in(
+            src_ref, self.add_offset(buffered_ref.next_fetch_sreg))  # pylint: disable=cell-var-from-loop
+      buffered_ref = buffered_ref.advance_copy_in_slot(pred)
+
+      buffered_ref, final_copy_in_slot = fetch_until_full_slots(
+          buffered_ref, src_ref, self.grid, self.grid_offsets,
+          predicate=pred, use_sreg_for_state=self.use_sreg_for_state,
+          update_slots=False)
+      @pl.when(pred)
       def _():
-        buffered_ref.copy_in(src_ref, next_grid_indices)  # pylint: disable=cell-var-from-loop
-      buffered_ref = buffered_ref.advance_copy_in_slot(pred & should_prefetch)
-      grid_indices = next_grid_indices
-    if self.use_sreg_for_state:
-      buffered_ref.save_slots()
+        if self.use_sreg_for_state:
+          bref = buffered_ref.with_slot_index(copy_in_slot=final_copy_in_slot)
+          bref.save_slots()
+        else:
+          buffered_ref.copy_in_slot[0] = final_copy_in_slot
+          raise NotImplementedError()
+    else:
+      pred = pred & self.last_step
+      grid_indices = self.indices
+      for i in range(buffered_ref.buffer_count - 1):
+        next_grid_indices = self.fetch_indices[i+1]
+        block_indices = buffered_ref.compute_index(*grid_indices)
+        next_block_indices = buffered_ref.compute_index(*next_grid_indices)
+        if i == 0:
+          # If the prefetch predicate triggers, we already know that the
+          # first block needs to be copied.
+          should_prefetch = True
+        else:
+          should_prefetch = _tuples_differ(block_indices, next_block_indices)
+
+        @pl.when(pred & should_prefetch)
+        def _():
+          buffered_ref.copy_in(src_ref, next_grid_indices)  # pylint: disable=cell-var-from-loop
+        buffered_ref = buffered_ref.advance_copy_in_slot(pred & should_prefetch)
+        grid_indices = next_grid_indices
+      if self.use_sreg_for_state:
+        buffered_ref.save_slots()
+    return
 
   def wait_out(self, buffered_ref, dst_ref, schedule=None) -> "BufferedRef":
     if schedule is None:
@@ -1333,6 +1544,17 @@ class Scheduler:
     if self.use_sreg_for_state:
       buffered_ref.save_slots()
 
+  def advance_slots(self, buffered_ref, schedule=None):
+    if schedule is None:
+      schedule = _default_schedule
+
+    if buffered_ref.is_input:
+      pred = schedule['advance_wait_in'](self, buffered_ref, schedule)
+      buffered_ref = buffered_ref.advance_wait_in_slot(pred)
+    # Currently we advance copy_in and output slots after their respective
+    # operation.
+    return buffered_ref
+
   # END SCHEDULE --------------------------------------------------------------
 
 
@@ -1351,6 +1573,8 @@ _default_schedule = dict(
     prologue_copy_in=lambda s, bref, _: s.first_step_ever,
     # We assume that the source ref changed for prefetch.
     wait_in=lambda s, bref, _: s.has_changed(bref) | s.first_step,
+    advance_wait_in=lambda s, bref, _: (
+        s.will_change_current(bref) | s.last_step),
     copy_in=lambda s, bref, _: s.will_change_fetch(bref) & ~s.out_of_fetch(
         bref),
     # We assume that the source ref changed. E.g. because of a CM DMA.
@@ -1373,6 +1597,7 @@ _fixed_schedule = dict(
     prologue_copy_in=lambda s, bref, _: s.first_step_ever,
     # We don't assume that the source ref changed for prefetch.
     wait_in=lambda s, bref, _: s.has_changed(bref) | s.first_step_ever,
+    advance_wait_in=lambda s, bref, _: s.will_change_current(bref),
     copy_in=lambda s, bref, _: s.will_change_fetch(bref) & ~s.out_of_fetch(
         bref),
     # We don't assume that the source ref changed.
@@ -1426,6 +1651,8 @@ def make_pipeline_allocations(
     out_specs=None,
     should_accumulate_out=False,
     needs_swap_ref=True,
+    grid=None,
+    use_lookahead=False,
 ):
   """Create BufferedRefs for the pipeline.
 
@@ -1439,11 +1666,16 @@ def make_pipeline_allocations(
     should_accumulate_out: booleans to indicate which outputs should be treated
       as accumulators.
     needs_swap_ref: whether a swap slots tracker needs to be allocated.
+    grid: grid to use for the pipeline.
+    use_lookahead: whether to enable lookahead for the pipeline. Requires
+      the pipeline to use SREGs for state.
 
   Returns:
     A list of BufferedRefs, one corresponding to each ref specified in the
     in_specs and out_specs.
   """
+  if use_lookahead and grid is None:
+    raise ValueError("Grid must be specified when using lookahead.")
   # TODO(levskaya): generalize argument tree handling here and in emit_pipeline.
   num_in_specs = len(in_specs)
   if not isinstance(in_specs, (list, tuple)):
@@ -1461,7 +1693,8 @@ def make_pipeline_allocations(
     if in_spec.pipeline_mode is not None:
       buffer_count = in_spec.pipeline_mode.buffer_count
     return BufferedRef.input(in_spec, in_ref.dtype, buffer_count,
-                             needs_swap_ref)
+                             needs_swap_ref, grid_rank=len(grid),
+                             use_lookahead=use_lookahead)
   in_brefs = jax.tree.map(make_input_bref, in_specs, in_refs)
   def make_output_bref(out_spec, out_ref, accumulate):
     buffer_count = 2
@@ -1615,6 +1848,7 @@ def emit_pipeline(
     trace_scopes: bool = True,
     no_pipelining: bool = False,
     use_sreg_for_state: bool = False,
+    use_lookahead: bool = False,
 ):
   """Creates a function to emit a manual pallas pipeline.
 
@@ -1646,6 +1880,10 @@ def emit_pipeline(
       related bugs.
     use_sreg_for_state: optional bool, indicates whether to use sregs for
       current_slot state.
+    use_lookahead: optional bool, indicates whether to use lookahead on
+      input buffers. Enabling lookahead allows the pipeline to begin fetching
+      the next changed block as soon as a slot is available, no matter how
+      many iterations ahead that block is. Requires use_sreg_for_state=True.
   """
   if any(not isinstance(d, (int, jax.Array)) for d in grid):
     grid_types = tuple(type(d) for d in grid)
@@ -1738,6 +1976,8 @@ def emit_pipeline(
               out_specs=out_specs,
               should_accumulate_out=should_accumulate_out,
               needs_swap_ref=needs_swap_ref,
+              grid=grid,
+              use_lookahead=use_lookahead,
           ),
       )
     if isinstance(allocations, list):
@@ -1810,6 +2050,8 @@ def emit_pipeline(
                     lambda: None)
             if use_sreg_for_state:
               brefs = map_brefs(lambda x: x.load_slots(do_postyeet), brefs)
+
+        brefs = map_brefs(scheduler.advance_slots, brefs, schedule)
         # Unbind window_refs for VMEM-backed buffers. Without this
         # we will be returning TransformedRefs which are not valid
         # JAX types.
@@ -1822,11 +2064,6 @@ def emit_pipeline(
       scheduler = make_scheduler(0, initial_indices)
       brefs = map_brefs(scheduler.alias_local_refs, allocations, refs)
       map_brefs(lambda bref: bref.init_slots(), brefs)
-      # Note: We advance the wait_in slot because current_ref for inputs
-      # returns the previous wait_in slot, which would be out of bounds (-1)
-      # if we did not increment it.
-      # TODO(justinfu): Clean-up this logic.
-      brefs = map_inputs(lambda x: x.advance_wait_in_slot(), brefs)
       if postyeet is not None or prefetch is not None:
         raise NotImplementedError("Prefetch/Postyeet not supported")
       if any(bref.is_accumulator for bref in brefs):
@@ -1884,6 +2121,7 @@ def emit_pipeline_with_allocations(
     out_specs=None,
     should_accumulate_out=False,
     use_sreg_for_state=False,
+    use_lookahead=False,
 ):
   """Creates pallas pipeline and top-level allocation preparation functions.
 
@@ -1896,6 +2134,10 @@ def emit_pipeline_with_allocations(
       as accumulators.
     use_sreg_for_state: optional bool, indicates whether to use sregs for
       current_slot state.
+    use_lookahead: optional bool, indicates whether to use lookahead on
+      input buffers. Enabling lookahead allows the pipeline to begin fetching
+      the next changed block as soon as a slot is available, no matter how
+      many iterations ahead that block is. Requires use_sreg_for_state=True.
 
   Returns:
     (emit_pipeline, make_allocations) function pair, where:
@@ -1908,13 +2150,16 @@ def emit_pipeline_with_allocations(
   make_allocations = functools.partial(make_pipeline_allocations,
                     in_specs=in_specs,
                     out_specs=out_specs,
-                    should_accumulate_out=should_accumulate_out)
+                    should_accumulate_out=should_accumulate_out,
+                    grid=grid,
+                    use_lookahead=use_lookahead)
   pipeline = emit_pipeline(
       body,
       grid=grid,
       in_specs=in_specs,
       out_specs=out_specs,
       should_accumulate_out=should_accumulate_out,
-      use_sreg_for_state=use_sreg_for_state)
+      use_sreg_for_state=use_sreg_for_state,
+      use_lookahead=use_lookahead)
 
   return pipeline, make_allocations

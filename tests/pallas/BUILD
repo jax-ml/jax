@@ -537,6 +537,7 @@ jax_multiplatform_test(
         "tpu_v5p",
     ],
     deps = [
+        "//jax:experimental",
         "//jax:pallas_tpu",
     ] + py_deps([
         "absl/testing",

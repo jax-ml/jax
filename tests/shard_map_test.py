@@ -979,13 +979,24 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(x):
       return x
 
-    x = jnp.arange(4 * 4).reshape(4, 4)
     s = NamedSharding(mesh, P(('z', 'x'), 'y'))
-    x = jax.device_put(x, s)
+    x = jax.device_put(jnp.arange(4 * 4).reshape(4, 4), s)
 
     f = jax.jit(jax.vmap(f))
     out = f(x)
     self.assertEqual(out.sharding, s)
+
+  @jtu.with_explicit_mesh((2, 2), ('data', 'model'))
+  def test_vmap_explicit_mesh_axis_single_axis(self, mesh):
+    x = jax.device_put(jnp.arange(4 * 4).reshape(4, 4), P('data', 'model'))
+
+    @shard_map(in_specs=P('model'), out_specs=P('model'))
+    def f(x):
+      return x
+
+    f = jax.jit(jax.vmap(f))
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('data', 'model')))
 
   def test_vmap_explicit_mesh_axis_error(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'),
@@ -2401,6 +2412,29 @@ class ShardMapTest(jtu.JaxTestCase):
                                           argnums=(0, 1)))(np_inp1, np_inp2)
     self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
     self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_eval_shape_vma(self, mesh):
+    k1, k2 = jax.random.split(jax.random.key(123))
+    p = jax.random.uniform(k1, shape=5, out_sharding=P())
+    x = jax.random.uniform(k2, shape=(1024, 5), out_sharding=P('x'))
+
+    def f(p, x):
+      return jnp.einsum('i, i->', x, p)
+
+    @shard_map(in_specs=(P(), P('x')), out_specs=P('x'))
+    def g(p, x):
+      def _grad(f, p, x):
+        _, vjp_fun =  jax.vjp(f, p, x)
+        y_eval_shape = jax.eval_shape(f, p, x)
+        self.assertEqual(core.typeof(y_eval_shape).vma, frozenset('x'))
+        one = jax.lax.full_like(y_eval_shape, 1)
+        self.assertEqual(core.typeof(one).vma, frozenset('x'))
+        return vjp_fun(one)
+      return jax.lax.map(partial(_grad, f, p), x)
+
+    g(p, x)  # doesn't crash
+    jax.jit(g)(p, x)  # doesn't crash
 
   def test_psum_not_under_shmap_error(self):
     mesh = jtu.create_mesh((2,), 'x')

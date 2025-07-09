@@ -458,6 +458,42 @@ def tree_reduce(function: Callable[[T, Any], T],
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf), initializer)
 
 
+class Unspecified:
+  pass
+
+
+def _parallel_reduce(
+    sequence: list[T],
+    operation: Callable[[T, T], T],
+    identity: T | Unspecified = Unspecified(),
+) -> T:
+  length = len(sequence)
+  if length == 0:
+    if isinstance(identity, Unspecified):
+      raise TypeError("Must specify identity for parallel reduction of empty sequence.")
+    return identity
+  elif length == 1:
+    return sequence[0]
+  else:
+    index = length // 2
+    a = _parallel_reduce(sequence[:index], operation, identity)
+    b = _parallel_reduce(sequence[index:], operation, identity)
+    return operation(a, b)
+
+
+@export
+def tree_reduce_associative(
+    operation: Callable[[T, T], T],
+    tree: Any,
+    *,
+    identity: T | Unspecified = Unspecified(),
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> T:
+  """Alias of :func:`jax.tree.reduce_associative`."""
+  sequence = tree_leaves(tree, is_leaf=is_leaf)
+  return _parallel_reduce(sequence, operation, identity)
+
+
 @export
 def tree_all(tree: Any, *, is_leaf: Callable[[Any], bool] | None = None) -> bool:
   """Alias of :func:`jax.tree.all`."""

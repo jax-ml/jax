@@ -41,7 +41,6 @@ from jax._src import hardware_utils
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
-from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
@@ -297,21 +296,6 @@ def make_cpu_client(
 register_backend_factory(
     "cpu", make_cpu_client, priority=0, fail_quietly=False
 )
-
-
-def _check_cuda_compute_capability(devices_to_check):
-  for idx in devices_to_check:
-    compute_cap = cuda_versions.cuda_compute_capability(idx)
-    if compute_cap < MIN_COMPUTE_CAPABILITY:
-      warnings.warn(
-        f"Device {idx} has CUDA compute capability {compute_cap/10} which is "
-        "lower than the minimum supported compute capability "
-        f"{MIN_COMPUTE_CAPABILITY/10}. See "
-        "https://docs.jax.dev/en/latest/installation.html#nvidia-gpu for "
-        "more details",
-        RuntimeWarning
-      )
-
 
 
 def get_num_nodes_from_gpu_topology(topology: str) -> int:

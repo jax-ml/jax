@@ -445,7 +445,7 @@ def wgmma(
   )
 
 
-def wgmma_fence(array: fa.FragmentedArray):
+def wgmma_fence(array: fa.FragmentedArray) -> fa.FragmentedArray:
   """Fences the array construction from WGMMA instructions.
 
   LLVM treats in-register computation as pure and can move it after the fence,

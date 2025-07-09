@@ -930,7 +930,7 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
   new_out_shardings = (*[sharding] * num_out_error_vals, *out_shardings)
   new_out_layouts = (*[None] * num_out_error_vals, *out_layouts)
 
-  err_and_out = pjit.pjit_p.bind(
+  err_and_out = pjit.jit_p.bind(
       *new_vals_in,
       jaxpr=checked_jaxpr,
       in_shardings=new_in_shardings,
@@ -945,7 +945,7 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
       compiler_options_kvs=compiler_options_kvs,
   )
   return tree_unflatten(out_tree, err_and_out)
-error_checks[pjit.pjit_p] = pjit_error_check
+error_checks[pjit.jit_p] = pjit_error_check
 
 
 def remat_error_check(error, enabled_errors, *vals_in, jaxpr, **params):

@@ -62,7 +62,8 @@ from jax._src.custom_derivatives import lift_jvp
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import sharding_impls
-from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse
+from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse, BCOO
+from jax.experimental.sparse.bcsr import BCSR
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.lib import pytree
@@ -72,7 +73,6 @@ from jax._src.util import safe_map, safe_zip, split_list
 from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.numpy import indexing as jnp_indexing
 from jax.experimental import sparse
-from jax.experimental.sparse import BCOO, BCSR
 
 sparse_rules_bcoo : dict[core.Primitive, Callable] = {}
 sparse_rules_bcsr : dict[core.Primitive, Callable] = {}
@@ -802,7 +802,7 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
       None for _ in range(len(sp_call_jaxpr.out_avals) - len(out_layouts))
   )
 
-  out_flat = pjit.pjit_p.bind(
+  out_flat = pjit.jit_p.bind(
       *args_flat,
       jaxpr=sp_call_jaxpr,
       in_shardings=in_shardings,
@@ -817,7 +817,7 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
       compiler_options_kvs=compiler_options_kvs)
   return arrays_to_spvalues(spenv, tree_unflatten(out_tree, out_flat))
 
-sparse_rules_bcoo[pjit.pjit_p] = _pjit_sparse
+sparse_rules_bcoo[pjit.jit_p] = _pjit_sparse
 
 
 def _duplicate_for_sparse_spvalues(spvalues, params):

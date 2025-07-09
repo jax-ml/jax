@@ -300,16 +300,28 @@ def cache(max_size=4096, trace_context_in_key=True):
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
-    cache_clearing_funs.add(wrapper.cache_clear)
+    register_cache(wrapper, str(f))
     return wrapper
   return wrap
 
-cache_clearing_funs = weakref.WeakSet()  # type: ignore
+# Maps caches to the name of the callable they apply to. All caches in
+# this dictionary support `cache_clear()`.
+_caches: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
+
+def register_cache(cache: Any, for_what: str):
+  """Registers a cache with JAX's cache management.
+
+  Args:
+    cache: an object supporting `cache_clear()`, `cache_info()`, and
+    `cache_keys()`, like the result of `functools.lru_cache()`.
+    for_what: a string to identify what this cache is used for. This is
+     used for debugging.
+"""
+  _caches[cache] = for_what
 
 def clear_all_caches():
-  global cache_clearing_funs
-  for clear in cache_clearing_funs:
-    clear()
+  for cache in _caches.keys():
+    cache.cache_clear()
 
 memoize = cache(max_size=None)
 
@@ -322,18 +334,12 @@ def weakref_lru_cache(call: Callable, maxsize=2048,
   and strong refs to all subsequent operations. In all other respects it should
   behave similar to `functools.lru_cache`.
   """
-  global _weakref_lru_caches
   cached_call = _weakref_lru_cache.weakref_lru_cache(
       config.trace_context if trace_context_in_key else _ignore, call, maxsize
   )
-  _weakref_lru_caches.add(cached_call)
+  register_cache(cached_call, str(call))
   return cached_call
 
-_weakref_lru_caches = weakref.WeakSet()  # type: ignore
-
-def clear_all_weakref_lru_caches():
-  for cached_call in _weakref_lru_caches:
-    cached_call.cache_clear()
 
 class Unhashable:
   __slots__ = ["val"]

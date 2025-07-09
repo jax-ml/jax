@@ -276,11 +276,8 @@ def _infer_memref_view_transforms(op: memref.ViewOp) -> OptionalTransforms:
 
 
 def _get_tile_and_swizzle_transforms(
-    transforms: ir.ArrayAttr | None,
+    transforms: ir.ArrayAttr,
 ) -> tuple[ir.Attribute, ir.Attribute]:
-  if transforms is None:
-    return
-
   if len(transforms) == 2:
     tile_transform, swizzle_transform = transforms
     if not (

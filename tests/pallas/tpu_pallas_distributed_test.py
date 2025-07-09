@@ -296,6 +296,36 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     expected = jnp.concatenate([x[-8:], x[:-8]])
     np.testing.assert_allclose(y, expected)
 
+  def test_barrier_semaphore_no_axis_name(self):
+    def kernel(x_ref, y_ref):
+      num_devices = lax.axis_size('x')
+      barrier_sem = pltpu.get_barrier_semaphore()
+      for i in range(num_devices):
+        pltpu.semaphore_signal(barrier_sem, device_id=i)
+      pltpu.semaphore_wait(barrier_sem, num_devices)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    x = jnp.arange(8 * 128).reshape((8, 128))
+
+    def body(x):
+      return pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          out_shape=x,
+          compiler_params=pltpu.CompilerParams(collective_id=0),
+      )(x)
+
+    device_mesh = mesh_utils.create_device_mesh(
+        (jax.device_count(),), jax.devices())
+    mesh = jax.sharding.Mesh(device_mesh, ['x'])
+    y = jax.jit(
+        shard_map.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False
+        )
+    )(x)
+    np.testing.assert_allclose(y, x)
+
 
 class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
 

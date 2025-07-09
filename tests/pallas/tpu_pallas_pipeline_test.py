@@ -358,8 +358,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
           [3, 3, 3, 3, 3, 3, 3, 7, 6, 6],
           [0, 1, 2, 3, 4, 5, 0, 1, 2, 3],
       ],
+      use_lookahead=[True, False],
   )
-  def test_block_gather(self, in_block_indices, in_buffer_count, out_buffer_count):
+  def test_block_gather(self, in_block_indices, in_buffer_count,
+                        out_buffer_count, use_lookahead):
     # Excercises pipeline with repeated input block indices.
     block_size = 128
     x = jnp.reshape(jnp.arange(1024 * 128), (1024, 128))
@@ -378,6 +380,8 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
           ],
           out_specs=pl.BlockSpec((128, 128), lambda i: (i, 0),
             pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
+          use_sreg_for_state=use_lookahead,
+          use_lookahead=use_lookahead,
       )(x_hbm_ref, o_hbm_ref)
     fn = pl.pallas_call(
         copy_kernel,
@@ -514,11 +518,14 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
           [3, 3, 7, 7, 5, 3, 3],
           [5],
       ],
-      use_sreg_for_state=[True, False]
+      use_sreg_for_state=[True, False],
+      use_lookahead=[True, False],
   )
   def test_block_gather_with_multiple_cycles(
       self, in_block_indices, in_buffer_count, out_buffer_count,
-      use_sreg_for_state):
+      use_sreg_for_state, use_lookahead):
+    if use_lookahead and not use_sreg_for_state:
+      self.skipTest('use_lookahead requires use_sreg_for_state=True')
     # Exercises pipeline with repeated input block indices.
     block_size = 128
     x = jnp.reshape(jnp.arange(1024 * 128), (1024, 128))
@@ -541,6 +548,7 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
                                  lambda i: (i + blk_idx_offset[0], 0),
             pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
           use_sreg_for_state=use_sreg_for_state,
+          use_lookahead=use_lookahead,
       )
       def prefetch(x_bref, o_bref, scheduler):
         del o_bref

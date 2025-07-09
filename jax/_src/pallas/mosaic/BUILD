@@ -15,7 +15,7 @@
 # Package for Mosaic-specific Pallas extensions
 
 load("@rules_python//python:defs.bzl", "py_library")
-load("//jaxlib:jax.bzl", "py_deps")
+load("//jaxlib:jax.bzl", "py_deps", "pytype_strict_library")
 
 package(
     default_applicable_licenses = [],
@@ -93,27 +93,36 @@ py_library(
     ] + py_deps("numpy"),
 )
 
-py_library(
+pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
     deps = [
         ":core",
         ":error_handling",
         ":primitives",
+        ":random",
         "//jax",
         "//jax:ad_util",
+        "//jax:api",
         "//jax:checkify",
+        "//jax:cloud_tpu_init",
         "//jax:core",
         "//jax:custom_derivatives",
         "//jax:debugging",
         "//jax:dtypes",
+        "//jax:export",
+        "//jax:lax",
         "//jax:mesh",
         "//jax:mlir",
         "//jax:mosaic",
         "//jax:partial_eval",
+        "//jax:random",
         "//jax:source_info_util",
+        "//jax:traceback_util",
+        "//jax:typing",
         "//jax:util",
         "//jax:xla",
+        "//jax:xla_bridge",
         "//jax/_src/lib",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),

@@ -1804,6 +1804,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "mutable_array_test",
     srcs = ["mutable_array_test.py"],
+    shard_count = {
+        "cpu": 5,
+    },
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -2131,6 +2134,9 @@ jax_multiplatform_test(
     shard_count = {
         "gpu": 4,
     },
+    tags = [
+        "multiaccelerator",
+    ],
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -2146,6 +2152,18 @@ jax_py_test(
         "//jax:experimental",
         "//jax:test_util",
     ] + py_deps("absl/testing"),
+)
+
+jax_py_test(
+    name = "traceback_test",
+    srcs = ["traceback_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 exports_files(

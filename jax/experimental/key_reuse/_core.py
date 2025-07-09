@@ -219,7 +219,7 @@ def key_reuse_signature_from_eqn(eqn: core.JaxprEqn) -> KeyReuseSignature:
 
 
 def key_reuse_signature_from_primitive(prim, *args, **params):
-  if prim == pjit.pjit_p:
+  if prim == pjit.jit_p:
     return jaxpr_type_signature(params['jaxpr'].jaxpr)
   if prim not in key_reuse_signatures:
     # TODO(jakevdp) should we generate an unknown signature here?
@@ -451,7 +451,7 @@ key_reuse_signatures[lax.concatenate_p] = _concatenate_signature
 def _pjit_key_type_signature(eqn):
   return jaxpr_type_signature(eqn.params['jaxpr'].jaxpr)
 
-key_reuse_signatures[pjit.pjit_p] = _pjit_key_type_signature
+key_reuse_signatures[pjit.jit_p] = _pjit_key_type_signature
 
 @dynamic_key_reuse_signature
 def _shard_map_type_signature(eqn):
@@ -577,8 +577,8 @@ def call_impl_with_key_reuse_checks(prim: core.Primitive, raw_impl: Callable[...
     # TODO(jakevdp): should we use an unknown signature here?
     return raw_impl(*args, **kwargs)
   signature = key_reuse_signature_from_primitive(prim, *args, **kwargs)
-  funcname = "jit-compiled function" if prim == pjit.pjit_p else str(prim)
-  consts = kwargs['jaxpr'].consts if prim == pjit.pjit_p else []
+  funcname = "jit-compiled function" if prim == pjit.jit_p else str(prim)
+  consts = kwargs['jaxpr'].consts if prim == pjit.jit_p else []
   signature.check_signature(*args, *consts, funcname=funcname)
   result = raw_impl(*args, **kwargs)
   signature.update_consumption([*args, *consts], result if prim.multiple_results else [result])

@@ -63,6 +63,7 @@ traceback_util.register_exclusion(__file__)
 # `Ref((3,), np.dtype('float32'))` leads to a jaxpr eqn printed like
 #   a:f32[3] <- x[]
 get_p = core.Primitive("get")
+get_p.is_effectful = lambda params: True  # type: ignore
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
 batching.ragged_prop_rules[get_p] = batching.ragged_mask_transfer_identity
 
@@ -124,6 +125,7 @@ def ref_get(
 # are `ShapedArray((), np.dtype('int32'))` leads to a jaxpr eqn printed like
 #   x:Ref{f32[3]}[i, j] <- a
 swap_p = core.Primitive("swap")
+swap_p.is_effectful = lambda params: True  # type: ignore
 swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
 
 
@@ -185,6 +187,7 @@ def ref_set(
 # _ = swap ref c *idx
 # ```
 addupdate_p = core.Primitive('addupdate')
+addupdate_p.is_effectful = lambda params: True  # type: ignore
 addupdate_p.multiple_results = True
 addupdate_p.def_impl(partial(dispatch.apply_primitive, addupdate_p))
 
@@ -386,23 +389,26 @@ core.pp_eqn_rules[addupdate_p] = _addupdate_pp_rule
 
 def _get_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, *idx = primals
-  assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, *_ = tangents
-  assert isinstance(ref_tangent.aval, AbstractRef)
-  return (get_p.bind(ref_primal, *idx, **params),
-          get_p.bind(ref_tangent, *idx, **params))
+  out_primal = get_p.bind(ref_primal, *idx, **params)
+  if isinstance(ref_tangent, ad_util.Zero):
+    out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
+  else:
+    out_tangent = get_p.bind(ref_tangent, *idx, **params)
+  return out_primal, out_tangent
 ad.primitive_jvps[get_p] = _get_jvp
 
 def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
-  assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, x_tangent, *_ = tangents
-  # if type(ref_tangent) is ad_util.Zero:
-  #   raise Exception("you're an idiot")
-  assert isinstance(ref_tangent.aval, AbstractRef)
-  x_tangent = ad_util.instantiate(x_tangent)
-  return (swap_p.bind(ref_primal, x_primal, *idx, **params),
-          swap_p.bind(ref_tangent, x_tangent, *idx, **params))
+  out_primal = swap_p.bind(ref_primal, x_primal, *idx, **params)
+  if isinstance(ref_tangent, ad_util.Zero) and isinstance(x_tangent, ad_util.Zero):
+    out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
+  else:
+    assert not isinstance(ref_tangent, ad_util.Zero)
+    x_tangent = ad_util.instantiate(x_tangent)
+    out_tangent = swap_p.bind(ref_tangent, x_tangent, *idx, **params)
+  return out_primal, out_tangent
 ad.primitive_jvps[swap_p] = _swap_jvp
 
 def addupdate_jvp_rule(primals: list[Any], tangents: list[Any], **params: Any):
@@ -424,7 +430,6 @@ def _get_transpose(g, ref, *idx, **params):
 ad.primitive_transposes[get_p] = _get_transpose
 
 def _swap_transpose(g, ref, x, *idx, **params):
-  del x  # old value doesn't matter anymore
   # swap transpose is swap
   x_bar = swap_p.bind(ref, ad_util.instantiate(g), *idx, **params)
   return [None, x_bar] + [None] * len(idx)
@@ -775,14 +780,25 @@ mlir.register_lowering(
 
 # === AD rules for mutable arrays ===
 
-def _mut_jvp(primals, tangents):
+def _mut_jvp(primals, tangents, *, memory_space):
   (init_val,), (init_val_dot,) = primals, tangents
-  primal_out = core.mutable_array_p.bind(init_val)
+  primal_out = core.mutable_array_p.bind(init_val, memory_space=memory_space)
   if type(init_val_dot) is ad_util.Zero:
-    tangent_out = core.mutable_array_p.bind(ad_util.zeros_like_aval(init_val_dot.aval))
+    tangent_out = core.mutable_array_p.bind(
+        ad_util.zeros_like_aval(init_val_dot.aval), memory_space=memory_space)
   else:
-    tangent_out = core.mutable_array_p.bind(init_val_dot)
+    tangent_out = core.mutable_array_p.bind(init_val_dot,
+                                            memory_space=memory_space)
   return primal_out, tangent_out
+
+def _mut_lin(nzs, x, *, memory_space):
+  nz, = nzs
+  x_ref = core.mutable_array_p.bind(x, memory_space=memory_space)
+  def mut_lin(_, x_dot):
+    return core.mutable_array_p.bind(ad_util.instantiate(x_dot),
+                                     memory_space=memory_space)
+  return x_ref, True, None, mut_lin
 
 ad.primitive_jvps[core.mutable_array_p] = _mut_jvp
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
+ad.primitive_linearizations[core.mutable_array_p] = _mut_lin

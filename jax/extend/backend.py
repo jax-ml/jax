@@ -18,6 +18,9 @@
 from jax._src.api import (
   clear_backends as clear_backends,
 )
+from jax._src.compiler import (
+    get_compile_options as get_compile_options,
+)
 from jax._src.xla_bridge import (
   backends as backends,
   backend_xla_version as backend_xla_version,
@@ -30,5 +33,5 @@ from jax._src.interpreters.pxla import (
 from jax._src import (
     util as _util
 )
-add_clear_backends_callback = _util.cache_clearing_funs.add  # type: ignore
+register_backend_cache = _util.register_cache  # type: ignore
 del _util

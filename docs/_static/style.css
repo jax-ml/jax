@@ -218,7 +218,8 @@ body:has(.hero) .bd-container {
 
 .color-cards + p {
   background: #E8EAED;
-  padding: 24px 12px 48px 12px;
+  padding: 24px 12px 25px 12px;
+  text-align: center;
   font-weight: 600;
   color: #222832;
   border-radius: 0 0 24px 24px;

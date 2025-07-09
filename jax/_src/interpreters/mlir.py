@@ -1816,7 +1816,9 @@ def lower_jaxpr_to_fun(
         [num_dim_vars, num_tokens])
     tokens_in = TokenSet(zip(effects, token_args))
     args: list[IrValues] = unflattened_args
-    consts = [ir_constant(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
+    unique_consts = {id(c): ir_constant(xla.canonicalize_dtype(c))
+                     for c in jaxpr.consts}
+    consts = [unique_consts[id(c)] for c in jaxpr.consts]
     out_vals, tokens_out = jaxpr_subcomp(
         ctx, jaxpr.jaxpr, name_stack, tokens_in,
         consts, *args, dim_var_values=dim_var_values)
@@ -2402,12 +2404,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
   return results
 
 def _ir_consts(consts) -> list[IrValues]:
-  unique_consts = {id(const): const for const in consts}
-  ir_consts = {
-      id_: ir_constant(xla.canonicalize_dtype(const))
-      for id_, const in unique_consts.items()
-  }
-  return [ir_consts[id(const)] for const in consts]
+  uniq_consts = {id(c): ir_constant(xla.canonicalize_dtype(c)) for c in consts}
+  return [uniq_consts[id(c)] for c in consts]
 
 
 def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
@@ -2560,7 +2558,7 @@ def core_call_lowering(ctx: LoweringRuleContext,
 register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
 # TODO(phawkins): Not cacheable because of debug_print on TPU.
 register_lowering(core.closed_call_p,
-                  partial(core_call_lowering, name=None),
+                  partial(core_call_lowering, name="closed_call"),
                   cacheable=False)
 
 def map_compute_type(c_type: str) -> str:

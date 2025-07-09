@@ -2096,7 +2096,8 @@ def to_gspmd_sharding(s: JSharding, ndim: int) -> GSPMDSharding:
 
 def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
                           donated_invars, out_shardings, out_layouts):
-  if any(isinstance(e, RefEffect) for e in closed_jaxpr.effects):
+  if (any(isinstance(e, RefEffect) for e in closed_jaxpr.effects) or
+      any(isinstance(a, AbstractRef) for a in closed_jaxpr.in_avals)):
     closed_jaxpr, inout_aliases, mut = _discharge_refs(closed_jaxpr)
     in_shardings = (*in_shardings, *(
         pjit.finalize_arg_sharding(c.sharding, c.committed) for c in mut.in_mut))
@@ -2429,6 +2430,7 @@ class MeshComputation(stages.Lowering):
             f" {[d.id for d in self._device_list]} on platform"
             f" {self._device_list[0].platform.upper()}")
       compilation_device_list = device_list
+    assert isinstance(compilation_device_list, (type(None), xc.DeviceList))
 
     if self._executable is None or compiler_options_kvs or device_assignment:
       executable = UnloadedMeshExecutable.from_hlo(
@@ -2485,6 +2487,8 @@ def get_out_shardings_from_executable(
     num_out_avals: int,
     num_ordered_effects: int,
 ) -> Sequence[sharding_impls.GSPMDSharding] | None:
+  assert isinstance(device_list, xc.DeviceList)
+
   try:
     omk = xla_executable.get_output_memory_kinds()[0]
     if num_ordered_effects > 0:
@@ -2543,6 +2547,7 @@ def _get_in_shardings_from_xla(
   """Returns input shardings from XLA."""
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`.
+  assert isinstance(device_list, xc.DeviceList)
   if len(device_list) == 1:
     if jaxlib_extension_version >= 360:
       return [GSPMDSharding.get_replicated(device_list)] * num_in_avals
@@ -2969,6 +2974,7 @@ class UnloadedMeshExecutable:
           "device_assignment cannot be `None` during compilation. Please pass a"
           " tuple of devices to `.compile(device_assignment=)`")
 
+    assert isinstance(device_list, xc.DeviceList)
     in_shardings = tuple(maybe_concretize_mesh(i, device_list)
                          for i in in_shardings)
     out_shardings = tuple(maybe_concretize_mesh(o, device_list)

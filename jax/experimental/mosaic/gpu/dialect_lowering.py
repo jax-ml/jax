@@ -23,7 +23,6 @@ import operator
 from typing import Any, cast
 from collections.abc import Sequence
 
-from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -48,8 +47,6 @@ from . import launch_context
 from . import layouts
 from . import utils
 from . import wgmma
-
-# mypy: ignore-errors
 
 
 @dataclasses.dataclass()
@@ -77,7 +74,7 @@ class LoweringContext:
       raise ValueError(f"{op} is missing a layout and can not be lowered.")
 
     new_results = lowering_rule(self, op)
-    if new_results is not RECURSED:
+    if not isinstance(new_results, Recursed):
       for old, new in zip(op.results, new_results):
         old.replace_all_uses_with(new)
       self.lowered_operations.add(op)
@@ -257,14 +254,10 @@ def _initialize_barrier_op_lowering_rule(
       barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
 
 
-# TODO(bchetioui): remove once minimum jaxlib >= 0.5.3.
-OptimizationBarrierOp = getattr(mgpu, "OptimizationBarrierOp", None)
-
-
-@_register_lowering(OptimizationBarrierOp)
+@_register_lowering(mgpu.OptimizationBarrierOp)
 def _optimization_barrier_op_lowering_rule(
     _: LoweringContext,
-    op: OptimizationBarrierOp,
+    op: mgpu.OptimizationBarrierOp,
 ) -> Sequence[ir.Value]:
   if not all(ir.VectorType.isinstance(operand.type) for operand in op.operands):
     raise NotImplementedError(
@@ -342,7 +335,10 @@ def _check_transforms_and_swizzle_are_supported(
       )
   }
 
-  tile_transforms = partitioned_transforms.get(True, [])
+  tile_transforms = cast(
+      list[launch_context.TileTransform],
+      partitioned_transforms.get(True, []),
+  )
   other_transforms = partitioned_transforms.get(False, [])
 
   if len(tile_transforms) > 1:
@@ -697,6 +693,7 @@ def _transformed_smem_ref_type(
   for t in transforms:
     shape = list(t.transform_shape(shape))
 
+  minor_to_major_stride_order: tuple[int, ...]
   if transposed:
     # The expected output is a transposed ref and `shape` is already transposed.
     # We need to compute the correct strides to match the shape.
@@ -863,23 +860,24 @@ for op, source_is_signed, target_is_signed in [
 def _unary_op_lowering_rule(
     _: LoweringContext,
     op: Any,
-    impl: Callable[[fa.FragmentedArray], fa.FragmentedArray],
+    impl: Callable[..., fa.FragmentedArray],
     is_signed: bool | None = None,
 ) -> Sequence[ir.Value]:
   in_layouts = inference_utils.in_layouts(op)
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
-  kwargs = {}
-  if hasattr(op, "fastmath"):
-    kwargs = dict(
-        approx=op.fastmath == ir.Attribute.parse("#arith.fastmath<afn>")
-    )
   a = _fragmented_array_from_ir(op.operand, layout, is_signed)
-  return [_fragmented_array_to_ir(impl(a, **kwargs), op.result.type)]
+  if hasattr(op, "fastmath"):
+    approx = op.fastmath == ir.Attribute.parse("#arith.fastmath<afn>")
+    result_fa = impl(a, approx=approx)
+  else:
+    result_fa = impl(a)
+
+  return [_fragmented_array_to_ir(result_fa, op.result.type)]
 
 
-for op, impl, is_signed in [
+for op, unary_impl, is_signed in [
     (mlir_math.RsqrtOp, fa.FragmentedArray.rsqrt, None),
     (mlir_math.ExpOp, fa.FragmentedArray.exp, None),
     (mlir_math.Exp2Op, fa.FragmentedArray.exp2, None),
@@ -887,7 +885,7 @@ for op, impl, is_signed in [
     (mlir_math.TanhOp, fa.FragmentedArray.tanh, None),
 ]:
   _lowerings[op.OPERATION_NAME] = functools.partial(
-      _unary_op_lowering_rule, impl=impl, is_signed=is_signed
+      _unary_op_lowering_rule, impl=unary_impl, is_signed=is_signed
   )
 
 
@@ -908,7 +906,7 @@ def _binary_op_lowering_rule(
   return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
-for op, impl, is_signed in [
+for op, binary_impl, is_signed in [
     (arith.AddIOp, operator.add, False),
     (arith.AddFOp, operator.add, None),
     (arith.SubIOp, operator.sub, False),
@@ -932,7 +930,7 @@ for op, impl, is_signed in [
     (arith.MinimumFOp, fa.FragmentedArray.min, None),
 ]:
   _lowerings[op.OPERATION_NAME] = functools.partial(
-      _binary_op_lowering_rule, impl=impl, is_signed=is_signed
+      _binary_op_lowering_rule, impl=binary_impl, is_signed=is_signed
   )
 
 
@@ -1061,6 +1059,7 @@ def _mgpu_wgmma_op_lowering_rule(
           f"Non-matching swizzles of operands a and b in WGMMA: {a_swizzle} !="
           f" {b_swizzle}"
       )
+    assert unwrapped_a_ref is not None
     a_operand = unwrapped_a_ref
 
   new_acc = wgmma.wgmma(acc, a_operand, unwrapped_b_ref, swizzle=b_swizzle)
@@ -1149,24 +1148,22 @@ def _slice_smem(result: ir.Type, offset: ir.Value):
   return builtin.unrealized_conversion_cast([result], [view])
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.2.
-if jaxlib.version >= (0, 6, 2):
-  @_register_lowering(mgpu.WithTransformsOp)
-  def _mgpu_with_transforms_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.WithTransformsOp
-  ) -> Sequence[ir.Value]:
-    """Lowering rule for mgpu.WithTransformsOp.
-    This is a noop that simply returns its input.
-    """
-    del ctx
+@_register_lowering(mgpu.WithTransformsOp)
+def _mgpu_with_transforms_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.WithTransformsOp
+) -> Sequence[ir.Value]:
+  """Lowering rule for mgpu.WithTransformsOp.
+  This is a noop that simply returns its input.
+  """
+  del ctx
 
-    [in_transforms] = inference_utils.in_transforms(op)
-    unwrapped_source_ref = unwrap_transformed_memref(op.ref, in_transforms)
-    out_transforms = inference_utils.out_transforms(op)[0]
-    wrapped_ref = wrap_transformed_memref(
-        unwrapped_source_ref, op.result.type, out_transforms
-    )
-    return [wrapped_ref]
+  [in_transforms] = inference_utils.in_transforms(op)
+  unwrapped_source_ref = unwrap_transformed_memref(op.ref, in_transforms)
+  out_transforms = inference_utils.out_transforms(op)[0]
+  wrapped_ref = wrap_transformed_memref(
+      unwrapped_source_ref, op.result.type, out_transforms
+  )
+  return [wrapped_ref]
 
 
 def _tile_transform_offsets(
@@ -1458,8 +1455,8 @@ def _flatten_ir_values(
     reconstruct the vectors from the per-register  values.
   """
   fa_layouts_it = iter(fa_layouts)
-  result = []
-  templates = []
+  result: list[ir.Value] = []
+  templates: list[_VectorTemplate | None] = []
   for v in values:
     if ir.VectorType.isinstance(v.type):
       fa = _fragmented_array_from_ir(v, next(fa_layouts_it))

@@ -265,10 +265,11 @@ def _merge_dyn_shape(
 
 def _dyn_shape_staging_rule(trace, source_info, prim, out_aval, *args,
                             **params):
-  out_tracer = pe.DynamicJaxprTracer(trace, out_aval, source_info)
-  eqn = pe.new_jaxpr_eqn([trace.getvar(x) for x in args],
-                         [trace.makevar(out_tracer)],
+  var = trace.frame.newvar(out_aval)
+  eqn = pe.new_jaxpr_eqn([x.val for x in args],
+                         [var],
                          prim, params, core.no_effects, source_info)
+  out_tracer = pe.DynamicJaxprTracer(trace, out_aval, var, source_info)
   trace.frame.add_eqn(eqn)
   return out_tracer
 
@@ -3573,6 +3574,11 @@ def full_like(x: ArrayLike | DuckTypedArray,
       sharding = x.sharding  # type: ignore
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
+  if config._check_vma.value:
+    # TODO(yashkatariya): Maybe use `shaped_abstractify` here instead of
+    # `typeof` because `x` can be anything that implements the
+    # `DuckTypedArray` protocol.
+    val = core.pvary(val, tuple(core.typeof(x).vma))
   return val
 
 
@@ -4209,7 +4215,7 @@ def _sin_lowering(ctx, x, accuracy):
   return _nary_lower_hlo(hlo.sine, ctx, x, accuracy=accuracy)
 
 
-def _sin_p_lin(nzs, x, accuracy):
+def _sin_lin(nzs, x, accuracy):
   nz, = nzs
   cos_x = cos(x) # TODO: allow this to happen in the linearized computation (need to fix backward_pass)
   return (
@@ -4221,7 +4227,7 @@ def _sin_p_lin(nzs, x, accuracy):
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x, accuracy: mul(g, cos(x, accuracy=accuracy)))
-ad.primitive_linearizations[sin_p] = _sin_p_lin
+ad.primitive_linearizations[sin_p] = _sin_lin
 mlir.register_lowering(sin_p, _sin_lowering)
 core.pp_eqn_rules[sin_p] = _unary_with_accuracy_pp_rule
 batching.ragged_prop_rules[sin_p] = batching.ragged_mask_elementwise_rule
@@ -6370,7 +6376,7 @@ mlir.register_lowering(ragged_dot_general_p,
                        mlir.lower_fun(_ragged_dot_general_impl,
                                       multiple_results=False))
 
-for platform in ['tpu']:
+for platform in ['tpu', 'gpu']:
   mlir.register_lowering(
       ragged_dot_general_p,
       partial(_ragged_dot_general_lower, platform=platform),
@@ -8746,7 +8752,6 @@ def _zero(x):
   x_aval = core.get_aval(x)
   out = full_like(x, shape=(), fill_value=0,
                   sharding=x_aval.sharding.update(spec=P()))
-  out = core.pvary(out, tuple(x_aval.vma))
   return out
 
 _ones: Callable = partial(full_like, fill_value=1)
@@ -8755,7 +8760,6 @@ def _one(x):
   x_aval = core.get_aval(x)
   out = full_like(x, shape=(), fill_value=1,
                   sharding=x_aval.sharding.update(spec=P()))
-  out = core.pvary(out, tuple(x_aval.vma))
   return out
 
 _twos: Callable = partial(full_like, fill_value=2)

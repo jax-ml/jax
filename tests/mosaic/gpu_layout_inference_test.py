@@ -27,6 +27,7 @@ from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
@@ -217,7 +218,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       mgpu.WGStridedFragLayout(shape=(32, 4), vec_size=1),
   )
   def test_pointwise_op_propagates_argument_layouts(self, layout):
-    self.skip_if_equations()
     add = None
 
     def body(lhs, rhs):
@@ -237,7 +237,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(add, [layout_attr])
 
   def test_infer_layout_cast_layout(self):
-    self.skip_if_equations()
     add = cast = None
 
     shape = (128, 64)
@@ -341,7 +340,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(red, [out_layout_attr])
 
   def test_infer_layout_traverses_ops_correctly(self):
-    self.skip_if_equations()
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
     add = None
@@ -484,7 +482,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       self.checkOutLayouts(while_op, result_layouts)
 
   def test_infer_layout_has_no_layout_for_non_vector_types(self):
-    self.skip_if_equations()
     shape = (32, 4)
     elt_ty = ir.BF16Type.get()
 
@@ -511,15 +508,12 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.assertEmpty(vector_store.attributes["out_layouts"])
 
   @parameterized.parameters(
-      mgpu.WGStridedFragLayout((32, 4), vec_size=1),
+      mgpu.WGStridedFragLayout((64, 16), vec_size=1),
       mgpu.WGMMA_LAYOUT,
   )
-  def test_infer_layout_picks_non_splat_layout_over_splat_layout(
-      self, layout
-  ):
-    self.skip_if_equations()
+  def test_infer_layout_picks_non_splat_layout_over_splat_layout(self, layout):
     add = None
-    shape = (32, 4)
+    shape = (64, 16)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
     non_splat_layout = layouts.to_layout_attr(layout)
 
@@ -540,7 +534,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(add, [non_splat_layout])
 
   def test_infer_layout_preserves_splat_layouts_in_producers(self):
-    self.skip_if_equations()
     add0 = add1 = None
     shape = (32, 4)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
@@ -569,8 +562,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(add1, [strided_layout])
 
   def test_infer_layout_does_not_assign_default_layouts_to_func(self):
-    self.skip_if_equations()
-
     def body(lhs, rhs):
       arith.AddFOp(lhs, rhs)
 
@@ -584,7 +575,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.assertNotIn("out_layouts", f.attributes)
 
   def test_optimization_barrier_op_propagates_user_layouts(self):
-    self.skip_if_equations()
     add = optimization_barrier = None
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
 
@@ -605,7 +595,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(optimization_barrier, [wgmma_layout, wgmma_layout])
 
   def test_optimization_barrier_op_propagates_producer_layouts(self):
-    self.skip_if_equations()
     add = optimization_barrier = None
     shape = (32, 4)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
@@ -630,13 +619,12 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 V = equations.Variable
 H = layout_inference2.Hint
 E = equations.Equation
-C = equations.ConstantExpression
+C = equations.Constant
 
 
 class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=InferenceImplementation.EQUATIONS):
-  ...
 
-  def test_hint_extraction_for_op_works_correctly(self):
+  def test_hint_extraction_works_correctly(self):
     shape = (64,)
     bf16 = ir.BF16Type.get()
     layout = mgpu.WGMMA_ROW_LAYOUT
@@ -647,29 +635,26 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       cst = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attrs, type=ty))
       lc = layout_cast(cst, layouts.to_layout_attr(layout)).owner.opview
 
-    equation_system, hints = layout_inference2.equation_system_and_hints_for_op(
-        lc, layout_inference2._layout_cast_equation_system
-    )
+    cst_system, cst_mapping = layout_inference2._constant_equation_system(cst)
+    lc_system, lc_mapping = layout_inference2._layout_cast_equation_system(lc)
+    assignments = cst_system.assignments | lc_system.assignments
+    [hint_cst] = layout_inference2.reduce_hints(
+        layout_inference2.derive_hints(cst_mapping | lc_mapping), assignments)
 
-    in_variable, out_variable = layout_inference2.op_variables(lc)
-    [cst_out_variable] = layout_inference2.op_variables(cst)
-
-    assignments = {v: C(layout) for v in [in_variable, out_variable]}
-
-    self.assertEqual(
-        equation_system, equations.EquationSystem(assignments=assignments)
-    )
-    self.assertEqual(hints, [H(in_variable, cst_out_variable)])
+    self.assertEqual(hint_cst.variable.key.operation, cst)
+    self.assertEqual(hint_cst.expression, C(layout))
 
   def test_unambiguous_hints_are_used_to_assign_variables_correctly(self):
     v0 = V(0)
     assignments = layout_inference2.find_assignments_for(
         {v0},
         equations.EquationSystem(),
-        # Voluntarily use conflicting hints to check that we use the first one.
+        # Voluntarily use conflicting hints to check that we use one of them
+        # deterministically. This may require updating if we decide to change
+        # the traversal order in the future.
         [H(v0, C(mgpu.WGMMA_ROW_LAYOUT)), H(v0, C(mgpu.WGMMA_COL_LAYOUT))],
     )
-    self.assertEqual(assignments, {v0: C(mgpu.WGMMA_ROW_LAYOUT)})
+    self.assertEqual(assignments, {v0: C(mgpu.WGMMA_COL_LAYOUT)})
 
   def test_cannot_find_assignments_for_unsatisfiable_equation_system(self):
     shape = (64,)
@@ -680,7 +665,8 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       attrs = [ir.FloatAttr.get(bf16, i) for i in range(shape[0])]
       cst = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attrs, type=ty))
 
-    [variable] = layout_inference2.op_variables(cst)
+    [key] = layout_inference2.operands_and_results(cst)
+    variable = equations.Variable(key)
     assignments = layout_inference2.find_assignments_for(
         {variable},
         equations.EquationSystem(
@@ -689,10 +675,61 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
                 E(variable, C(mgpu.WGMMA_COL_LAYOUT)),
             ]
         ),
-        hints={},
+        hints=[],
     )
     self.assertIsInstance(assignments, equations.Unsatisfiable)
 
+  def test_hint_that_would_make_system_unsatisfiable_is_not_used_in_solution(self):
+    with ir.InsertionPoint(self.module.body):
+      ty = ir.VectorType.get((32, 4), ir.BF16Type.get())
+      op0, op1 = [llvm.mlir_undef(ty).owner.opview for _ in range(2)]
+    [kv0] = layout_inference2.operands_and_results(op0)
+    [kv1] = layout_inference2.operands_and_results(op1)
+    v0, v1 = equations.Variable(kv0), equations.Variable(kv1)
+    splat_layout = C(mgpu.WGSplatFragLayout((3, 128)))
+    assignments = layout_inference2.find_assignments_for(
+        {v0},
+        equations.EquationSystem(
+            equations=[
+                E(
+                    v0,
+                    equations.MostReplicated(
+                        [v1, C(mgpu.WGStridedFragLayout((3, 128), vec_size=1))]
+                    ),
+                )
+            ]
+        ),
+        # The first hint would make the system unsatisfiable, but the second
+        # hint should be used to find a solution.
+        hints=[H(v1, C(mgpu.WGMMA_LAYOUT)), H(v1, splat_layout)],
+    )
+    self.assertEqual(assignments, {v0: splat_layout})
+
+  def test_hint_can_be_chosen_when_constant_exists_in_least_replicated_expression(self):
+    v0, v1 = V(0), V(1)
+    layout = C(mgpu.WGMMA_LAYOUT)
+    assignment = layout_inference2.extract_variable_assignment_from_hint(
+        H(v0, equations.LeastReplicated([layout, v1])),
+    )
+    self.assertEqual(assignment, (v0, layout))
+
+  def test_hint_cannot_be_chosen_when_constant_exists_in_most_replicated_expression(self):
+    v0, v1 = V(0), V(1)
+    layout = C(mgpu.WGSplatFragLayout((1, 128)))
+    assignment = layout_inference2.extract_variable_assignment_from_hint(
+        H(v0, equations.MostReplicated([layout, v1])),
+    )
+    self.assertEqual(assignment, (v0, layout))
+
+  def test_hint_is_still_extracted_when_underlying_expression_is_unsatisfiable(self):
+    v0, v1 = V(0), V(1)
+    layout0 = C(mgpu.WGSplatFragLayout((1, 128)))
+    layout1 = C(mgpu.WGSplatFragLayout((1, 129)))
+    _, expr = layout_inference2.extract_variable_assignment_from_hint(
+        H(v0, equations.LeastReplicated(
+            [layout0, equations.MostReplicated([layout1, v1])])),
+    )
+    self.assertIn(expr, {layout0, layout1})
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

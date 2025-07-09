@@ -80,8 +80,6 @@ from typing import Any
 from absl import logging
 
 import numpy as np
-# Import some NumPy symbols so that we can parse repr(ndarray).
-from numpy import array, float32
 
 import jax
 from jax import tree_util
@@ -94,6 +92,9 @@ from jax._src import stages
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 
+# Alias some NumPy symbols so that we can parse repr(ndarray).
+array = np.array
+float32 = np.float32
 
 CURRENT_TESTDATA_VERSION = 1
 

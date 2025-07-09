@@ -238,7 +238,7 @@ def _while_resource_estimator(
   )
 
 
-@_register_resource_estimator(pjit.pjit_p)
+@_register_resource_estimator(pjit.jit_p)
 def _pjit_resource_estimator(
     ctx: ResourceEstimatorContext,
     *args,
@@ -315,7 +315,7 @@ def _run_scoped_resource_estimator(
         cols_used = aval.shape[1]
       else:
         cols_used, _ = gpu_core.infer_tmem_cols_layout(
-            aval.shape, aval.dtype, aval.collective, aval.packed)
+            aval.shape, aval.dtype, packed=aval.packed, collective=aval.collective)
       cols_used = tcgen05._alloc_ncols(cols_used, exact=False)
       if aval.collective:
         rs += Resources(tmem_collective_scratch_cols=cols_used)
@@ -335,15 +335,17 @@ def _run_scoped_resource_estimator(
           f"Unsupported memory space: {aval.memory_space}")
   return rs + _estimate_resources(ctx, jaxpr)
 
+REDUCE_SCRATCH_ELEMS = 128 * 2  # vector of 2 elements per lane in each WG
 
 @_register_resource_estimator(lax.reduce_sum_p)
-def _reduce_sum_resource_estimator(
+@_register_resource_estimator(lax.reduce_max_p)
+def _reduce_resource_estimator(
     ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, *, axes
 ) -> Resources:
   del ctx, axes  # Unused.
-  # We don't need shmem for some reductons, but it depends on the layout, so we
-  # conservatively request some scratch space.
-  return Resources(smem_scratch_bytes=4 * x_aval.dtype.itemsize)
+  # We don't need SMEM for some reductions, but it depends on the layout, so we
+  # conservatively request the maximum scratch space we might need.
+  return Resources(smem_scratch_bytes=REDUCE_SCRATCH_ELEMS * x_aval.dtype.itemsize)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -447,7 +449,7 @@ class ModuleContext:
       packed: bool = False,
   ) -> ir.Value:
     cols_used, layout = gpu_core.infer_tmem_cols_layout(
-        struct.shape, struct.dtype, packed, collective, layout)
+        struct.shape, struct.dtype, packed=packed, collective=collective, layout=layout)
     if collective:
       off = arith_dialect.addi(
           self.tmem_collective_base_ptr,
@@ -1298,7 +1300,7 @@ def _extract_aliased_ref(
           )
         address = arith_dialect.addi(ref.address, _i32_constant(offset))
         _, tmem_layout = gpu_core.infer_tmem_cols_layout(
-            transformed_shape, dtype, packed, collective)
+            transformed_shape, dtype, packed=packed, collective=collective)
         ref = tcgen05.TMEMRef(
           address=address,
           shape=transformed_shape,
@@ -1455,6 +1457,11 @@ def _get_lowering_rule(
   del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
   is_signed = mgpu_utils.is_signed(dtype)
+
+  if not ctx.avals_out[0].shape:  # The scalar case is simple.
+    val = memref_dialect.load(x_smem, [])
+    return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
+
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if len(tiling) != 2:
@@ -1470,11 +1477,6 @@ def _get_lowering_rule(
           x_smem, is_signed=is_signed, swizzle=swizzle, layout=layout, optimized=optimized
       )
     case ():
-      # Handle scalar indexing.
-      if not ctx.avals_out[0].shape:
-        val = memref_dialect.load(x_smem, [])
-        return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
-
       match ctx.out_layout_hint:
         case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
           ref_ty = ir.MemRefType(x_smem.type)
@@ -1528,9 +1530,20 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
 
 
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(
+    sp.swap_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp
+)
 def _swap_lowering_rule(
     ctx: LoweringRuleContext, x_ref, value, *leaves, tree
 ):
+  barrier = mgpu.warpgroup_barrier
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    if ctx.avals_out[0].shape:
+      raise NotImplementedError("Can only store scalars in warp-level lowering.")
+    i32 = ir.IntegerType.get_signless(32)
+    barrier = functools.partial(
+        nvvm_dialect.bar_warp_sync, arith_dialect.constant(i32, -1)
+    )
   if not isinstance(value, mgpu.FragmentedArray):
     raise TypeError(f"Can only store arrays (got {value}).")
 
@@ -1546,9 +1559,20 @@ def _swap_lowering_rule(
       ctx, x_ref, transforms, handle_transposes=not transposed_value,
       allow_peer_refs=True
   )
+  del x_ref  # Don't use x_ref anymore. Use x_smem instead!
+
   if ctx.module_ctx.auto_barriers:
-    mgpu.warpgroup_barrier()  # Make sure reads have completed before we write.
+    barrier()  # Make sure reads have completed before we write.
   match transforms:
+    case _ if not ctx.avals_out[0].shape:  # Scalar case.
+      old_value = mgpu.FragmentedArray.splat(
+          memref_dialect.load(x_smem, []),
+          shape=(),
+          is_signed=mgpu_utils.is_signed(v_aval.dtype),
+      )
+      memref_dialect.store(
+          _ensure_ir_value(value, ctx.avals_out[0].dtype), x_smem, []
+      )
     case (
         gpu_core.UnswizzleRef(swizzle),
         gpu_core.UntileRef(tiling),
@@ -1602,7 +1626,7 @@ def _swap_lowering_rule(
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
   if ctx.module_ctx.auto_barriers:
-    mgpu.warpgroup_barrier()  # Make sure the writes have completed.
+    barrier()  # Make sure the writes have completed.
   return old_value
 
 
@@ -1636,8 +1660,8 @@ def _swap_lowering_rule_wg(
   return old_value
 
 
-@register_lowering_rule(pjit.pjit_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(pjit.pjit_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(pjit.jit_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(pjit.jit_p, mgpu.LoweringSemantics.Warpgroup)
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **kwargs):
   if jaxpr.consts:
     raise NotImplementedError
@@ -1703,32 +1727,44 @@ def _broadcast_in_dim_lowering_rule(
   [x_aval] = ctx.avals_in
   [y_aval] = ctx.avals_out
   x = _ensure_fa(x, x_aval.dtype)
-  if (
-      broadcast_dimensions == tuple(range(x_aval.ndim))
-      and y_aval.ndim == x_aval.ndim + 1
-      and x.layout in (mgpu.WGMMA_ROW_LAYOUT, mgpu.TCGEN05_ROW_LAYOUT)
-  ):
-    if x.layout == mgpu.WGMMA_ROW_LAYOUT:
-      new_layout = mgpu.WGMMA_LAYOUT
-    elif x.layout == mgpu.TCGEN05_ROW_LAYOUT:
-      new_layout = mgpu.TCGEN05_LAYOUT
-    else:
-      raise NotImplementedError(f"Unsupported layout: {x.layout}")
-    return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, new_layout)
-  if (
-      broadcast_dimensions == (1,)
-      and y_aval.ndim == x_aval.ndim + 1
-      and x.layout in (mgpu.WGMMA_COL_LAYOUT, mgpu.TCGEN05_COL_LAYOUT)
-  ):
-    # XXX: WGMMA_COL_LAYOUT == TCGEN05_COL_LAYOUT, so there's no way to
-    # distinguish between them! Layout hints are necessary for that.
-    new_layout = ctx.out_layout_hint or mgpu.WGMMA_LAYOUT
-    return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, new_layout)
-  if broadcast_dimensions:
-    raise NotImplementedError(
-        f"Unsupport broadcast {broadcast_dimensions} for layout: {x.layout}"
+  rank_diff = y_aval.ndim - x_aval.ndim
+  if (isinstance(x.layout, mgpu.WGSplatFragLayout) and
+      broadcast_dimensions == tuple(range(rank_diff, rank_diff + x_aval.ndim))):
+    return x.broadcast(shape)
+  if not isinstance(layout := x.layout, mgpu.TiledLayout):
+    raise NotImplementedError(f"Unsupported layout: {x.layout}")
+  if any(d1 >= d2 for d1, d2 in zip(broadcast_dimensions[:-1], broadcast_dimensions[1:])):
+    raise NotImplementedError("broadcast_dimensions must be strictly increasing")
+  new_dims = [d for d in range(y_aval.ndim) if d not in broadcast_dimensions]
+  if (new_layout := ctx.out_layout_hint) is None:
+    candidates = (
+      mgpu.WGMMA_LAYOUT,
+      mgpu.WGMMA_TRANSPOSED_LAYOUT,
+      mgpu.TCGEN05_LAYOUT,
+      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
+      tcgen05.TMEM_NATIVE_LAYOUT,
+      tcgen05.fa_m64_collective_layout(y_aval.shape[-1]),
     )
-  return x.broadcast(shape)
+    for candidate in candidates:
+      if len(candidate.base_tile_shape) != len(shape):
+        continue
+      if candidate.reduce(new_dims) == layout:
+        if new_layout is None:
+          new_layout = candidate
+        elif candidate == mgpu.TCGEN05_LAYOUT and new_layout == mgpu.WGMMA_LAYOUT:
+          continue  # Choosing WGMMA_LAYOUT for backwards compatibility.
+        else:
+          raise NotImplementedError(
+              "Multiple options for the layout of the broadcast result (found"
+              f" at least {new_layout} and {candidate}). Use plgpu.layout_cast"
+              " on the output to suggest the desired output layout."
+          )
+  if new_layout is None:
+    raise NotImplementedError(
+        "No compatible layout found for the broadcast result. Use"
+        " plgpu.layout_cast on the output to suggest the desired output layout."
+    )
+  return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, new_layout)
 
 
 @register_lowering_rule(
@@ -1904,11 +1940,17 @@ def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
   return impl(x, y)
 
+
+def _div(x, y):
+  return x / y if ir.FloatType.isinstance(x.mlir_dtype) else x // y
+
+
 for semantics in [gpu_core.LANExWG_SEMANTICS, gpu_core.LANExWARP_SEMANTICS]:
   mosaic_lowering_rules[semantics].update({
     lax.add_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x + y),
     lax.sub_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x - y),
     lax.mul_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x * y),
+    lax.div_p: partial(_binary_op_lowering_rule, impl=_div),
     lax.rem_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x % y),
     lax.and_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x & y),
     lax.or_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x | y),
@@ -2025,14 +2067,6 @@ for op, si_pred, ui_pred, f_pred in [
   )
 
 
-@register_lowering_rule(lax.div_p, mgpu.LoweringSemantics.Lane)
-def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
-  x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
-  if ir.FloatType.isinstance(x.mlir_dtype):
-    return x / y
-  return x // y
-
-
 @register_lowering_rule(lax.integer_pow_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.integer_pow_p, mgpu.LoweringSemantics.Warpgroup)
 def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
@@ -2141,8 +2175,7 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   return math_dialect.log(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
-@register_lowering_rule(lax.reduce_sum_p, mgpu.LoweringSemantics.Lane)
-def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
+def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes):
   [x_aval] = ctx.avals_in
   match x.layout:
     case mgpu.WGStridedFragLayout():
@@ -2158,30 +2191,27 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
         )
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
       with ctx.module_ctx.scratch_view([scratch_ty]) as [scratch]:
-        return x.reduce("add", axes, scratch)
+        return x.reduce(op, axes, scratch)
     case mgpu.TiledLayout():
-      if axes != (x_aval.ndim - 1,):
-        raise NotImplementedError
-      if not jnp.issubdtype(x_aval.dtype, jnp.floating):
-        raise NotImplementedError
-      return x.reduce("add", axes[0])
+      if len(axes) != 1:
+        raise NotImplementedError("Multi-axis reductions not supported")
+      reduced_dim = x.layout.tiling.tile_dimension(axes[0])
+      if any(reduced_dim[d] for d in x.layout.partitioned_warp_dims):
+        scratch_ty = jax.ShapeDtypeStruct(shape=(REDUCE_SCRATCH_ELEMS,), dtype=x_aval.dtype)
+        ctx = ctx.module_ctx.scratch_view([scratch_ty])
+      else:
+        ctx = contextlib.nullcontext([None])
+      with ctx as [scratch]:
+        return x.reduce(op, axes[0], scratch=scratch)
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 
-
-@register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Lane)
-def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
-  [x_aval] = ctx.avals_in
-  match x.layout:
-    case mgpu.TiledLayout():
-      if axes != (x_aval.ndim - 1,):
-        raise NotImplementedError
-      if not jnp.issubdtype(x_aval.dtype, jnp.floating):
-        raise NotImplementedError
-      return x.reduce("max", axes[0])
-    case _:
-      raise NotImplementedError(f"Unsupported layout {x.layout}")
-
+register_lowering_rule(lax.reduce_sum_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_reduce_lowering_rule, "add")
+)
+register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_reduce_lowering_rule, "max")
+)
 
 def _reduce_lowering_rule_wg(
     kind: vector_dialect.CombiningKind,

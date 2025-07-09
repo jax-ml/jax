@@ -700,6 +700,23 @@ class JitTest(jtu.BufferDonationTestCase):
     num_live = len(client.live_executables())
     self.assertEqual(num_live_initial, num_live)
 
+  def test_pe_close_jaxpr_cache_leak(self):
+    @jax.jit
+    def f(x):
+      return lax.cond(x, lambda: x, lambda: ~ x)
+
+    jaxpr = f.trace(True).jaxpr
+    jax_util.clear_all_caches()
+
+    res1 = pe.close_jaxpr(jaxpr.jaxpr)
+    res2 = pe.close_jaxpr(jaxpr.jaxpr)
+    self.assertIs(res1, res2)
+    keys_1 = pe.close_jaxpr.cache_keys()
+    self.assertGreater(len(keys_1), 0)
+    del jaxpr, res1, res2, keys_1
+    keys_2 = pe.close_jaxpr.cache_keys()
+    self.assertEmpty(keys_2, 0)
+
   def test_jit_shallow_copy(self):
     def f(x):
       return copy.copy(x)
@@ -3434,6 +3451,7 @@ class APITest(jtu.JaxTestCase):
         r"containing an array, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
       api.pmap(lambda x: x)({})
 
+  @jtu.thread_unsafe_test()  # counting compilations isn't thread-safe
   def test_pmap_global_cache(self):
     def f(x, y):
       return x, y
@@ -5083,6 +5101,26 @@ class APITest(jtu.JaxTestCase):
                 test_enum_field=TestEnum.A,
             )
         )
+
+  def test_make_jaxpr_deduplicates_consts(self):
+    # We don't promise this behavior in the public API, but we've had it for a
+    # long time. This test checks we don't *unintentionally* break it.
+    c = np.ones(3)
+
+    @jax.make_jaxpr
+    def f():
+      return c, jnp.sum(c), c, jnp.sum(c)
+
+    self.assertLen(f().consts, 1)
+
+    d = np.zeros(3)
+
+    @jax.make_jaxpr
+    def g():
+      return jax.lax.cond(True,
+                          lambda: (c, jnp.sum(c), c),
+                          lambda: (c, jnp.sum(d), d))
+    self.assertLen(g().consts, 2)
 
 
 class RematTest(jtu.JaxTestCase):

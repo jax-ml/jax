@@ -331,7 +331,7 @@ class LaunchContext:
   cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
   tma_descriptors: dict[
-      tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...]],
+      tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any],
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
   is_device_collective: bool = False
@@ -488,11 +488,15 @@ class LaunchContext:
           tma_dtype = 6
         elif ir.BF16Type.isinstance(ref_ty.element_type):
           tma_dtype = 7
-        # We treat 8 bit floats as 8 bit integers
+        # We treat narrow floats as integers
         elif ir.Float8E5M2Type.isinstance(ref_ty.element_type):
           tma_dtype = 1
         elif ir.Float8E4M3FNType.isinstance(ref_ty.element_type):
           tma_dtype = 1
+        elif ir.Float8E8M0FNUType.isinstance(ref_ty.element_type):
+          tma_dtype = 1
+        elif ir.Float4E2M1FNType.isinstance(ref_ty.element_type):
+          tma_dtype = 0
         else:
           raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")
         dtype_or_bitwidth = c(tma_dtype, i64)

@@ -78,6 +78,7 @@ def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
     return [package]
 
 _py_deps = {
+    "absl-all": ["@pypi//absl_py"],
     "absl/logging": ["@pypi//absl_py"],
     "absl/testing": ["@pypi//absl_py"],
     "absl/flags": ["@pypi//absl_py"],

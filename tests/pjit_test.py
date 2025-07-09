@@ -4972,6 +4972,44 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = f(NamedSharding(mesh, P('x')))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
+  def test_lowering_cache_hit_inputs_with_different_mesh(self):
+    mesh1 = jtu.create_mesh((2, 2), ('x', 'y'))
+    devs = jax.devices()[:4]
+    mesh2 = Mesh(np.asarray(devs[::-1]).reshape(2, 2), ('x', 'y'))
+
+    np_inp = np.arange(16).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, NamedSharding(mesh1, P('x', 'y')))
+    arr2 = jax.device_put(np_inp, NamedSharding(mesh2, P('x', 'y')))
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    with (jtu.count_pjit_cpp_cache_miss() as cpp_count,
+          jtu.count_jit_and_pmap_lowerings() as lowering_count):
+      f(arr1)
+      f(arr2)
+    self.assertEqual(cpp_count(), 2)
+    self.assertEqual(lowering_count(), 1)
+
+  def test_single_device_lowering_cache_hit_diff_devices(self):
+    if jax.device_count() < 2:
+      self.skipTest('Requires device_count() >= 2')
+    np_inp = np.arange(16).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, SingleDeviceSharding(jax.devices()[0]))
+    arr2 = jax.device_put(np_inp, SingleDeviceSharding(jax.devices()[1]))
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    with (jtu.count_pjit_cpp_cache_miss() as cpp_count,
+          jtu.count_jit_and_pmap_lowerings() as lowering_count):
+      f(arr1)
+      f(arr2)
+    self.assertEqual(cpp_count(), 2)
+    self.assertEqual(lowering_count(), 1)
+
 
 class ShardingInTypesTest(jtu.JaxTestCase):
 
@@ -7726,6 +7764,23 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def f(x, y):
       out = jnp.matmul(x, y, out_sharding=P('x'))
+      self.assertEqual(out.aval.sharding.spec, P('x', None))
+      return out
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out, np.dot(np_inp1, np_inp2))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jnp_tensordot(self, mesh):
+    np_inp1 = np.arange(16).reshape(8, 2)
+    np_inp2 = np.arange(12).reshape(2, 6)
+    arr1 = jax.device_put(np_inp1, P('x', 'y'))
+    arr2 = jax.device_put(np_inp2, P('x', 'y'))
+
+    @jax.jit
+    def f(x, y):
+      out = jnp.tensordot(x, y, axes=([1], [0]), out_sharding=P('x', None))
       self.assertEqual(out.aval.sharding.spec, P('x', None))
       return out
 

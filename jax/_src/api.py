@@ -111,7 +111,7 @@ def _nan_check_posthook(fun, args, kwargs, output):
       buffers.extend([shard.data for shard in leaf.addressable_shards])
 
   try:
-    dispatch.check_special(pjit.pjit_p.name, buffers)
+    dispatch.check_special(pjit.jit_p.name, buffers)
   except api_util.InternalFloatingPointError as e:
     assert config.debug_nans.value or config.debug_infs.value
     if hasattr(fun, '_fun'):
@@ -1132,16 +1132,18 @@ def _mapped_axis_spec(args_flat, in_axes_flat):
     except (IndexError, TypeError):
       return None
 
-  temp_spec = None
+  out_spec = None
   for arg, i in zip(args_flat, in_axes_flat):
     if i is not None:
       spec = _get_spec(arg, i)
-      if temp_spec is not None and temp_spec != spec:
+      if out_spec is not None and out_spec != spec:
         raise ValueError(
             "Mapped away dimension of inputs passed to vmap should be sharded"
-            f" the same. Got inconsistent axis specs: {temp_spec} vs {spec}")
-      temp_spec = spec
-  return temp_spec
+            f" the same. Got inconsistent axis specs: {out_spec} vs {spec}")
+      out_spec = spec
+  if out_spec is not None and not isinstance(out_spec, tuple):
+    out_spec = (out_spec,)
+  return out_spec
 
 def _mapped_axis_size(fn, tree, vals, dims, name):
   if not vals:
@@ -1519,7 +1521,7 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
   if global_axis_size is None:
     if xb.process_count(backend) == 1:
       global_axis_size = local_axis_size
-    elif in_devices:
+    elif in_devices is not None:
       global_axis_size = len(in_devices)
     else:
       global_axis_size = local_axis_size * xb.process_count(backend)
@@ -2893,11 +2895,11 @@ class ShapeDtypeStruct:
 
 
 def _sds_aval_mapping(x):
-  # TODO(yashkatariya): Propagate vma to ShapedArray? This is only used for
-  # pallas right now and pallas doesn't use pytype_aval_mappings.
+  # TODO(yashkatariya): Change `vma` assignment to `x.vma` after ShapedArray
+  # can take `frozenset | None`
   aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
-      weak_type=x.weak_type)
+      weak_type=x.weak_type, vma=(frozenset() if x.vma is None else x.vma))
   return core.update_aval_with_sharding(aval, x.sharding)
 core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
 
@@ -3131,11 +3133,7 @@ def clear_backends():
   xb._clear_backends()
   xb.local_devices.cache_clear()
   xb.process_count.cache_clear()
-  dispatch.xla_primitive_callable.cache_clear()
   util.clear_all_caches()
-  pjit._infer_params_cached.cache_clear()
-  pjit._pjit_lower_cached.cache_clear()
-  pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
   xc._xla.PjitFunctionCache.clear_all()
@@ -3166,8 +3164,6 @@ def clear_caches():
   # Clear all lu.cache, util.cache and util.weakref_lru_cache instances
   # (used for staging and Python-dispatch compiled executable caches).
   util.clear_all_caches()
-  util.clear_all_weakref_lru_caches()
-
   # Clear all C++ compiled executable caches for pjit
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
@@ -3177,6 +3173,3 @@ def clear_caches():
   # Clear all C++ compiled executable caches for pmap
   for fun in _pmap_cache_clears:
     fun._cache_clear()
-
-  # Clear particular util.cache instances.
-  dispatch.xla_primitive_callable.cache_clear()
