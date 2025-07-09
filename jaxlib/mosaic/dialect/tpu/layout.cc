@@ -452,8 +452,12 @@ SmallVector<int64_t> VectorLayout::tileArrayShape(
   int64_t& second_minor = *(src_shape.end() - 2);
   int64_t& minor = *(src_shape.end() - 1);
   second_minor =
-      llvm::divideCeil(offsets_[0].value_or(0) + second_minor, vreg_slice[0]);
-  minor = llvm::divideCeil(offsets_[1].value_or(0) + minor, vreg_slice[1]);
+      offsets_[0].has_value()
+          ? llvm::divideCeil(*offsets_[0] + second_minor, vreg_slice[0])
+          : 1;
+  minor = offsets_[1].has_value()
+              ? llvm::divideCeil(*offsets_[1] + minor, vreg_slice[1])
+              : 1;
   if (!res_is_implicit) {
     CHECK_GE(src_shape.size(), 2);
     eraseImplicit(src_shape);
