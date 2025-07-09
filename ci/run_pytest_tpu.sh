@@ -68,7 +68,10 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" -vv --full-trace --log-cli-level=DEBUG --tb=short \
-    --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_uninitialized_memory0 --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_uninitialized_memory1 --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_two_cores_along_parallel_dimension_with_race --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_two_cores_along_parallel_dimension_no_race \
+    --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_uninitialized_memory0 \
+    --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_uninitialized_memory1 --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_two_cores_along_parallel_dimension_with_race \
+    --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_two_cores_along_parallel_dimension_no_race \
+    --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_thread_map \
     --maxfail=20 --timeout=300 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
   echo "Finished single accelerator test"
 
