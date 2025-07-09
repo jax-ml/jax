@@ -2211,6 +2211,8 @@ class FragmentedArray:
       raise NotImplementedError(self.layout, layout)
     if any(d1 >= d2 for d1, d2 in zip(source_dimensions, source_dimensions[1:])):
       raise NotImplementedError("source_dimensions must be strictly increasing")
+    if len(layout.base_tile_shape) != len(shape):
+      raise NotImplementedError("Tiling rank different than broadcast result rank")
     new_dimensions = sorted(set(range(len(shape))) - set(source_dimensions))
     expected_layout = layout.reduce(new_dimensions)
     if expected_layout != self.layout:

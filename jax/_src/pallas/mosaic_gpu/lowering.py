@@ -1725,39 +1725,44 @@ def _broadcast_in_dim_lowering_rule(
   [x_aval] = ctx.avals_in
   [y_aval] = ctx.avals_out
   x = _ensure_fa(x, x_aval.dtype)
-  if (
-      broadcast_dimensions == tuple(range(x_aval.ndim))
-      and y_aval.ndim == x_aval.ndim + 1
-      and x.layout in (mgpu.WGMMA_ROW_LAYOUT, mgpu.TCGEN05_ROW_LAYOUT)
-  ):
-    if x.layout == mgpu.WGMMA_ROW_LAYOUT:
-      new_layout = mgpu.WGMMA_LAYOUT
-    elif x.layout == mgpu.TCGEN05_ROW_LAYOUT:
-      new_layout = mgpu.TCGEN05_LAYOUT
-    else:
-      raise NotImplementedError(f"Unsupported layout: {x.layout}")
-    return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, new_layout)
-  if (
-      broadcast_dimensions == (1,)
-      and y_aval.ndim == x_aval.ndim + 1
-      and x.layout in (mgpu.WGMMA_COL_LAYOUT, mgpu.TCGEN05_COL_LAYOUT)
-  ):
-    # XXX: WGMMA_COL_LAYOUT == TCGEN05_COL_LAYOUT, so there's no way to
-    # distinguish between them! Layout hints are necessary for that.
-    new_layout = ctx.out_layout_hint or mgpu.WGMMA_LAYOUT
-    return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, new_layout)
-  if (
-      broadcast_dimensions == (0,)
-      and y_aval.ndim == x_aval.ndim + 1
-      and x.layout == tcgen05.TMEM_NATIVE_ROW_LAYOUT
-  ):
-    new_layout = ctx.out_layout_hint or tcgen05.TMEM_NATIVE_LAYOUT
-    return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, new_layout)
-  if broadcast_dimensions:
-    raise NotImplementedError(
-        f"Unsupport broadcast {broadcast_dimensions} for layout: {x.layout}"
+  rank_diff = y_aval.ndim - x_aval.ndim
+  if (isinstance(x.layout, mgpu.WGSplatFragLayout) and
+      broadcast_dimensions == tuple(range(rank_diff, rank_diff + x_aval.ndim))):
+    return x.broadcast(shape)
+  if not isinstance(layout := x.layout, mgpu.TiledLayout):
+    raise NotImplementedError(f"Unsupported layout: {x.layout}")
+  if any(d1 >= d2 for d1, d2 in zip(broadcast_dimensions[:-1], broadcast_dimensions[1:])):
+    raise NotImplementedError("broadcast_dimensions must be strictly increasing")
+  new_dims = [d for d in range(y_aval.ndim) if d not in broadcast_dimensions]
+  if (new_layout := ctx.out_layout_hint) is None:
+    candidates = (
+      mgpu.WGMMA_LAYOUT,
+      mgpu.WGMMA_TRANSPOSED_LAYOUT,
+      mgpu.TCGEN05_LAYOUT,
+      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
+      tcgen05.TMEM_NATIVE_LAYOUT,
+      tcgen05.fa_m64_collective_layout(y_aval.shape[-1]),
     )
-  return x.broadcast(shape)
+    for candidate in candidates:
+      if len(candidate.base_tile_shape) != len(shape):
+        continue
+      if candidate.reduce(new_dims) == layout:
+        if new_layout is None:
+          new_layout = candidate
+        elif candidate == mgpu.TCGEN05_LAYOUT and new_layout == mgpu.WGMMA_LAYOUT:
+          continue  # Choosing WGMMA_LAYOUT for backwards compatibility.
+        else:
+          raise NotImplementedError(
+              "Multiple options for the layout of the broadcast result (found"
+              f" at least {new_layout} and {candidate}). Use plgpu.layout_cast"
+              " on the output to suggest the desired output layout."
+          )
+  if new_layout is None:
+    raise NotImplementedError(
+        "No compatible layout found for the broadcast result. Use"
+        " plgpu.layout_cast on the output to suggest the desired output layout."
+    )
+  return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, new_layout)
 
 
 @register_lowering_rule(

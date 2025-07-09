@@ -1926,8 +1926,17 @@ class PallasCallTest(PallasTest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_allclose(x_result, op(x, axis=axis), atol=1e-5)
 
-  @parameterized.parameters((0,), (1,))
-  def test_broadcast_in_dim_tcgen05_layout(self, axis):
+  @parameterized.product(
+      layout=(
+          plgpu.Layout.WGMMA,
+          plgpu.Layout.TCGEN05,
+          plgpu.Layout.TCGEN05_TMEM_NATIVE,
+          plgpu.Layout.TCGEN05_M64_COLLECTIVE(128),
+      ),
+      axis=(0, 1),
+      hint=(True, False),
+  )
+  def test_broadcast_in_dim(self, layout, axis, hint):
     self.skip_if_wg_semantics()
 
     @functools.partial(
@@ -1938,18 +1947,17 @@ class PallasCallTest(PallasTest):
             plgpu.SMEM((128, 128), jnp.float32),
             plgpu.Barrier(),
         ],
-        num_threads=1,
-        thread_name="x",
     )
     def kernel(x_ref, y_ref, smem_ref, smem_out_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
-      if axis == 0:
-        reduced = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05_COL)
-      else:
-        reduced = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05_ROW)
+      reduced_layout = layout.reduce(axis)
+      reduced = plgpu.load(smem_ref, (), layout=reduced_layout)
       broadcasted = lax.broadcast_in_dim(reduced, (128, 128), [1 - axis])
-      broadcasted = plgpu.layout_cast(broadcasted, plgpu.Layout.TCGEN05)
+      if hint:
+        broadcasted = plgpu.layout_cast(broadcasted, layout)
+      # Note that without the hint, the layout of broadcasted is not guaranteed
+      # to be the same as the layout argument!
       smem_out_ref[...] = broadcasted
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_out_ref, y_ref)
