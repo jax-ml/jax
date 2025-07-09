@@ -73,7 +73,8 @@ PyTreeDef = tree_util.PyTreeDef
 # `Read/Write/Accum` effects.
 
 def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
-                    should_discharge: bool | Sequence[bool] = True
+                    should_discharge: bool | Sequence[bool] = True,
+                    auto_dce: bool = True
                     ) -> tuple[core.Jaxpr, list[Any]]:
   """Converts a jaxpr that takes in `Ref`s into one that doesn't."""
   if isinstance(should_discharge, bool):
@@ -84,7 +85,7 @@ def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
                                     should_discharge, consts),
                             debug_info=jaxpr.debug_info)
-  new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals)
+  new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals, auto_dce=auto_dce)
   return new_jaxpr, new_consts
 
 @dataclasses.dataclass
