@@ -4347,7 +4347,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     input_shardings, _ = f.lower(inp, inp).compile().input_shardings
     self.assertLen(input_shardings, 2)
 
-  def test_aot_out_info(self):
+  def test_lowered_out_info(self):
     inp = np.arange(8, dtype=np.int32)
     out_info = jax.jit(lambda x: x).lower((inp, inp)).out_info
     self.assertEqual(out_info[0].shape, (8,))
@@ -4356,6 +4356,26 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out_info[1].dtype, np.int32)
     self.assertEqual(out_info[0].sharding, None)
     self.assertEqual(out_info[1].sharding, None)
+
+  def test_lowered_out_info_mesh(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    arr = jax.device_put(np.arange(8, dtype=np.int32),
+                         NamedSharding(mesh, P('x')))
+    lowered = jax.jit(lambda x: x * 2).lower(arr)
+    out_info = lowered.out_info
+    self.assertEqual(out_info.shape, (8,))
+    self.assertEqual(out_info.dtype, np.int32)
+    self.assertEqual(out_info.sharding, None)
+
+  def test_compiled_out_info(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    arr = jax.device_put(np.arange(8, dtype=np.int32),
+                         NamedSharding(mesh, P('x')))
+    compiled = jax.jit(lambda x: x * 2).lower(arr).compile()
+    out_info = compiled.out_info
+    self.assertEqual(out_info.shape, (8,))
+    self.assertEqual(out_info.dtype, np.int32)
+    self.assertEqual(out_info.sharding, NamedSharding(mesh, P('x')))
 
   def test_jit_trace(self):
     def f(x):

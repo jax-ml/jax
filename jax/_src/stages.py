@@ -427,6 +427,13 @@ class Compiled(Stage):
     except NotImplementedError:
       return None
 
+  @property
+  def out_info(self):  # PyTree of OutInfo
+    out_avals = self._executable.out_avals
+    out_shardings = self._executable._out_shardings
+    return self.out_tree.unflatten(
+        [OutInfo(o.shape, o.dtype, s) for o, s in zip(out_avals, out_shardings)])
+
   def runtime_executable(self) -> Any | None:
     """An arbitrary object representation of this executable.
 
