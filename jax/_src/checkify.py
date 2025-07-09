@@ -842,7 +842,7 @@ def checkify_while_body_jaxpr(
     c_consts, vals = split_list(c_consts_and_vals, [c_consts_num])
     out = body_f(*vals)
     # This checks if the next cond application will error
-    _ = cond_f(*c_consts, *out)
+    lax.dce_sink(cond_f(*c_consts, *out))
     return out
   new_body_f_ = lu.wrap_init(new_body_f, debug_info=body_jaxpr.jaxpr.debug_info)
   c_consts_avals = cond_jaxpr.in_avals[:c_consts_num]
