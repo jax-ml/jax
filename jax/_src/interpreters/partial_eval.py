@@ -2368,7 +2368,9 @@ def _check_no_returned_refs(
       loc = result_paths[i] and f' at output tree path {result_paths[i]}'
       frame = t._trace.frame
       v = t.val
-      eqn = next((e for e in frame.eqns if v in e.outvars), None)
+      eqns = frame.get_eqns()
+      # TODO(dougalm): something more efficient
+      eqn = next((e for e in eqns if v in e.outvars), None)
       if eqn:
         assert eqn.primitive is core.mutable_array_p
         origin_info = ('\n\nThe returned mutable array was created on line '
