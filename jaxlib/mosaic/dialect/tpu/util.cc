@@ -346,18 +346,6 @@ std::optional<int64_t> getIntConst(Value v) {
   return std::nullopt;
 }
 
-bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size) {
-  CHECK_GE(shape.size(), 2);
-  int64_t product = shape.back();
-  for (int i = shape.size() - 2; i >= 1; --i) {
-    product *= shape[i];
-    if (product >= target_size) {
-      break;
-    }
-  }
-  return product == target_size;
-}
-
 SmallVector<Operation *> getNontrivialTransitiveUsers(Value v) {
   auto isUnaryElementwise = [](Operation *op) {
     if (!op->hasTrait<mlir::OpTrait::Elementwise>()) {
