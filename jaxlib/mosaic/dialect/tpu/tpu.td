@@ -789,6 +789,11 @@ def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure]> {
   }];
 }
 
+// Returns the ID of the current device.
+//
+// On the input to the compiler the return value is a logical ID in the XLA
+// device assignment. It changes to a physical ID after the
+// logical-to-physical-device-id pass.
 def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
   let arguments = (ins);
   let results = (outs I32:$result);
