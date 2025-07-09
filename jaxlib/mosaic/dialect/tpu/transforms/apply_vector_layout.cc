@@ -4557,12 +4557,6 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     for (int64_t d : dims) {
       int64_t d_size = src_vregs.dim(d);
       src_slice_start.insert(src_slice_start.begin() + d, 0);
-      if (!src_layout.offsets()[0].has_value() && d == src_rank - 2) {
-        d_size = 1;
-      }
-      if (!src_layout.offsets()[1].has_value() && d == src_rank - 1) {
-        d_size = 1;
-      }
       src_slice_end.insert(src_slice_end.begin() + d, d_size);
     }
     xla::Array<Value> reduced_vregs =
@@ -6695,13 +6689,10 @@ std::pair<VectorLayout, xla::Array<Value>> materializeOffsets(
   const int64_t irank = new_vregs.num_dimensions();
   SmallVector<int64_t> idxs(irank);
   SmallVector<int64_t> replicated_dims;
-  SmallVector<int64_t> limits(toArrayRef(vregs.dimensions()));
   if (!layout.offsets()[0].has_value()) {
-    limits[irank - 2] = 1;
     replicated_dims.push_back(irank - 2);
   }
   if (!layout.offsets()[1].has_value()) {
-    limits[irank - 1] = 1;
     replicated_dims.push_back(irank - 1);
   }
   do {
@@ -6710,7 +6701,7 @@ std::pair<VectorLayout, xla::Array<Value>> materializeOffsets(
       new_vregs(idxs) = vreg;
     } while (incrementIndexSubsequence(idxs, ArrayRef(replicated_dims),
                                        toArrayRef(new_vregs.dimensions())));
-  } while (incrementIndex(idxs, limits));
+  } while (incrementIndex(idxs, vregs.dimensions()));
   return {new_layout, new_vregs};
 }
 
@@ -7411,6 +7402,10 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
           // retileToReducedSublanes does not support offset changes
           src.offsets()[0].value_or(0) < dst_vreg_slice[0] &&
           src.offsets()[1].value_or(0) < dst_vreg_slice[1]) {
+        // retileToReducedSublanes does not support replicated offsets.
+        std::tie(src, vregs) = materializeOffsets(
+            ctx, vty.getShape(), src, vregs,
+            {src.offsets()[0].value_or(0), src.offsets()[1].value_or(0)});
         VectorLayout dst(src.bitwidth(), src.offsets(), dst_tiling,
                          src.implicit_dim());
         return std::pair(dst, retileToReducedSublanes(
