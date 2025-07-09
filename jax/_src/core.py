@@ -2824,7 +2824,7 @@ def unmapped_aval(size: AxisSize, axis: int | None,
 
 def _map_shaped_array(
     size: int, axis: int | None, aval: ShapedArray) -> ShapedArray:
-  # assert axis is None or aval.shape[axis] == size
+  assert axis is None or aval.shape[axis] == size
   if axis is None:
     return aval
   sharding = aval.sharding.update(spec=tuple_delete(aval.sharding.spec, axis))

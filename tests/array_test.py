@@ -1072,7 +1072,7 @@ class ShardingTest(jtu.JaxTestCase):
   def test_mesh_repr(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'))
     mesh_repr = repr(mesh)
-    self.assertIn('device_ids', mesh_repr)
+    self.assertIn('axis_sizes', mesh_repr)
     self.assertIn('axis_names', mesh_repr)
 
   def test_are_shardings_equivalent(self):

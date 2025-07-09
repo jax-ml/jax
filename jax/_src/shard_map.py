@@ -618,7 +618,6 @@ def _as_manual_mesh(mesh, manual_axes: frozenset) -> AbstractMesh:
   return mesh.abstract_mesh.update_axis_types(
       {n: AxisType.Manual for n in manual_axes})
 
-
 def _extend_axis_env(mesh, manual_axes):
   return core.extend_axis_env_nd([(k, v) for k, v in mesh.shape.items()
                                   if k in manual_axes])
@@ -976,19 +975,15 @@ def order_wrt_mesh(mesh, x):
 
 def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
                     check_vma, manual_axes):
-  if len(manual_axes) < len(mesh.axis_names):
-    raise NotImplementedError
   del prim
   if isinstance(mesh, AbstractMesh):
     concrete_mesh = get_concrete_mesh()
     mesh = concrete_mesh if concrete_mesh is not None else mesh
     mesh = get_mesh_from_args(args, mesh)
   cur_mesh = get_abstract_mesh()
-  args = map(partial(_unmatch_spec, mesh, check_vma, context_mesh=cur_mesh),
-             in_specs, args)
+  args = map(partial(_unmatch_spec, mesh, check_vma, cur_mesh), in_specs, args)
   in_vma = map(_spec_to_vma, in_specs)
-  outs, out_vma = _run_shmap(fun, mesh, manual_axes, args, in_vma, check_vma,
-                             cur_mesh)
+  outs, out_vma = _run_shmap(fun, mesh, manual_axes, args, in_vma, check_vma)
   out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
   _check_names(out_specs_thunk(), out_avals)  # pytype: disable=wrong-arg-types
   if check_vma:
@@ -1001,8 +996,9 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
              outs)
 core.EvalTrace.process_shard_map = _shard_map_impl
 
-def _run_shmap(f, mesh, manual_axes, args, vmas, check_vma, context_mesh):
-  trace = ShardMapTrace(mesh, manual_axes, check_vma, context_mesh)
+def _run_shmap(f, mesh, manual_axes, args, vmas, check_vma):
+  assert not mesh.manual_axes
+  trace = ShardMapTrace(mesh, manual_axes, check_vma)
   in_tracers = map(partial(ShardMapTracer, trace), vmas, args)
   inner_mesh = _as_manual_mesh(mesh, manual_axes)
   with (core.set_current_trace(trace), _extend_axis_env(mesh, manual_axes),
@@ -1011,8 +1007,30 @@ def _run_shmap(f, mesh, manual_axes, args, vmas, check_vma, context_mesh):
     outs, out_vma = unzip2(map(trace.to_val_vma_pair, ans))
   return outs, out_vma
 
+def _unmatch_spec2(mesh, prev_manual, spec, x) -> JaxType:
+  with (core.eval_context(), api.disable_jit(False),
+        use_abstract_mesh(mesh.abstract_mesh)):
+    return api.jit(HashablePartial(_unmatch2, mesh, prev_manual, spec))(x)
 
-def _unmatch_spec(mesh: Mesh, check_vma, in_spec, x: JaxType, context_mesh
+def _unmatch2(mesh, prev_manual, spec, x):
+  src = P(order_wrt_mesh(mesh, prev_manual), *spec)
+  newly_manual = _spec_to_vma(spec)
+  dst = P(order_wrt_mesh(mesh, prev_manual | newly_manual))
+  return shard_map(lambda x: x, in_specs=src, out_specs=dst)(x)
+
+def _match_spec2(mesh, prev_manual, spec, x) -> JaxType:
+  with (core.eval_context(), api.disable_jit(False),
+        use_abstract_mesh(mesh.abstract_mesh)):
+    return api.jit(HashablePartial(_match2, mesh, prev_manual, spec))(x)
+
+def _match2(mesh, prev_manual, spec, x):
+  newly_manual = _spec_to_vma(spec)
+  src = P(order_wrt_mesh(mesh, prev_manual | newly_manual))
+  dst = P(order_wrt_mesh(mesh, prev_manual), *spec)
+  return shard_map(lambda x: x, in_specs=src, out_specs=dst)(x)
+
+
+def _unmatch_spec(mesh: Mesh, check_vma, context_mesh, in_spec, x: JaxType
                   ) -> JaxType:
   with (core.eval_context(), api.disable_jit(False),
         use_abstract_mesh(context_mesh)):
@@ -1069,19 +1087,18 @@ def _maybe_check_special(outs):
     raise FloatingPointError(f'Invalid value ({e.ty}) encountered in sharded computation.') from None
 
 class ShardMapTrace(core.Trace):
-  __slots__ = ("mesh", "manual_axes", "check", "context_mesh")
+  __slots__ = ("mesh", "manual_axes", "check", "amesh")
 
-  mesh: Mesh
+  mesh: Mesh  # outer concrete or abstract mesh
   manual_axes: frozenset[AxisName]
   check: bool
-  context_mesh: AbstractMesh
 
-  def __init__(self, mesh, manual_axes, check, context_mesh):
+  def __init__(self, mesh, manual_axes, check):
     super().__init__()
     self.mesh = mesh
     self.manual_axes = manual_axes
     self.check = check
-    self.context_mesh = context_mesh
+    self.amesh = mesh.abstract_mesh
 
   def to_val_vma_pair(self, val):
     if isinstance(val, ShardMapTracer):
@@ -1089,7 +1106,7 @@ class ShardMapTrace(core.Trace):
     elif isinstance(val, Tracer):
       raise Exception(f"Shouldn't have any non-shard_map tracers: {val}")
     else:
-      val_ = _unmatch_spec(self.mesh, self.check, P(), val, self.context_mesh)
+      val_ = _unmatch_spec(self.mesh, self.check, self.amesh, P(), val)
       return val_, frozenset()
 
   def process_primitive(self, prim, tracers, params):
@@ -1110,9 +1127,9 @@ class ShardMapTrace(core.Trace):
     else:
       f = HashablePartial(
           _prim_applier, prim, self.check, tuple(params.items()), self.mesh,
-          in_specs, out_specs)
+          self.manual_axes, in_specs, out_specs)
       with (core.eval_context(), api.disable_jit(False), config.debug_nans(False),
-            config.debug_infs(False), use_abstract_mesh(self.context_mesh)):
+            config.debug_infs(False), use_abstract_mesh(self.amesh)):
         out_vals = api.jit(f)(*in_vals)
       _maybe_check_special(out_vals)
     if prim.multiple_results:
@@ -1120,6 +1137,34 @@ class ShardMapTrace(core.Trace):
                  else [out_vma] * len(out_vals))
       return map(partial(ShardMapTracer, self), out_vma, out_vals)
     return ShardMapTracer(self, out_vma, out_vals)
+
+  def process_shard_map(self, prim, fun, args, mesh, in_specs,
+                        out_specs_thunk, check_vma, manual_axes):
+    # Check consistency between outer and inner shmaps on explicitly passed
+    # mesh and check_vma.
+    if isinstance(mesh, Mesh):
+      if mesh != self.mesh: raise Exception
+    del mesh
+    if check_vma != self.check:  # TODO(mattjj): add check in jit path
+      raise Exception
+    del check_vma
+
+    in_vals, in_vmas = unzip2(map(self.to_val_vma_pair, args))
+    trace = ShardMapTrace(self.mesh, manual_axes | self.manual_axes, self.check)
+    in_vmas_ = [vma | _spec_to_vma(s) for vma, s in zip(in_vmas, in_specs)]
+    in_vals_ = [_unmatch_spec2(self.mesh, self.manual_axes, spec, x)
+                for x, spec in zip(in_vals, in_specs)]
+    in_tracers = map(partial(ShardMapTracer, trace), in_vmas_, in_vals_)
+    inner_mesh = _as_manual_mesh(self.mesh, manual_axes | self.manual_axes)
+    with (core.set_current_trace(trace), _extend_axis_env(self.mesh, manual_axes),
+          use_abstract_mesh(inner_mesh)):
+      ans = fun.call_wrapped(*in_tracers)
+      out_vals_, out_vmas_ = unzip2(map(trace.to_val_vma_pair, ans))
+    out_specs = out_specs_thunk()
+    out_vals = [_match_spec2(self.mesh, self.manual_axes, spec, x)
+                for x, spec in zip(out_vals_, out_specs)]
+    out_vmas = [v - _spec_to_vma(spec) for v, spec in zip(out_vmas_, out_specs)]
+    return map(partial(ShardMapTracer, self), out_vmas, out_vals)
 
   def process_call(self, call_primitive, fun, tracers, params):
     raise NotImplementedError(
@@ -1139,7 +1184,7 @@ class ShardMapTrace(core.Trace):
     del prim, jvp, symbolic_zeros
     in_vals, in_vma = unzip2(map(self.to_val_vma_pair, tracers))
     out_vals, out_vma = _run_shmap(fun, self.mesh, self.manual_axes, in_vals,
-                                   in_vma, self.check, self.context_mesh)
+                                   in_vma, self.check)
     return map(partial(ShardMapTracer, self), out_vma, out_vals)
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
@@ -1152,7 +1197,7 @@ class ShardMapTrace(core.Trace):
     del prim, fwd, bwd, out_trees, symbolic_zeros
     in_vals, in_vma = unzip2(map(self.to_val_vma_pair, tracers))
     out_vals, out_vma = _run_shmap(fun, self.mesh, self.manual_axes, in_vals,
-                                   in_vma, self.check, self.context_mesh)
+                                   in_vma, self.check)
     return map(partial(ShardMapTracer, self), out_vma, out_vals)
 
 
@@ -1171,16 +1216,18 @@ class ShardMapTracer(core.Tracer):
   @property
   def aval(self):
     aval = core.get_aval(self.val)
-    out = core.mapped_aval(self._trace.mesh.size, 0, aval)
+    vma = self.vma if self._trace.check else self._trace.manual_axes
+    size = prod(self._trace.mesh.shape[n] for n in vma)
+    out = core.mapped_aval(size, 0, aval)
     new_sharding = NamedSharding(
-        _as_manual_mesh(self._trace.mesh, self._trace.manual_axes),
+        _as_manual_mesh(self._trace.amesh, self._trace.manual_axes),
         out.sharding.spec)  # pytype: disable=attribute-error
     vma = self.vma if config._check_vma.value else frozenset()
     return out.update(sharding=new_sharding, vma=vma)
 
   def to_concrete_value(self):
     if self.vma == frozenset():
-      with core.eval_context(), use_abstract_mesh(self._trace.context_mesh):
+      with core.eval_context(), use_abstract_mesh(self._trace.amesh):
         return core.to_concrete_value(self.val[0])
     else:
       return None
@@ -1188,7 +1235,7 @@ class ShardMapTracer(core.Tracer):
   def __str__(self) -> str:
     pb_names = set(self._trace.mesh.axis_names) - self.vma
     self = pvary(self, tuple(pb_names))
-    with core.eval_context(), use_abstract_mesh(self._trace.context_mesh):
+    with core.eval_context(), use_abstract_mesh(self._trace.amesh):
       blocks = list(self.val)
     mesh = self._trace.mesh
     axis_names = f"({', '.join(map(str, mesh.axis_names))},)"
@@ -1198,13 +1245,15 @@ class ShardMapTracer(core.Tracer):
 
   __repr__ = __str__  # for debuggers, like `p x`
 
-def _prim_applier(prim, check_vma, params_tup, mesh, in_specs, out_specs, *args):
+def _prim_applier(prim, check_vma, params_tup, concrete_mesh, manual_axes,
+                  in_specs, out_specs, *args):
   def apply(*args):
     outs = prim.bind(*map(_rem_singleton, args), **dict(params_tup))
     return tree_map(_add_singleton, outs)
   out_specs = list(out_specs) if type(out_specs) is tuple else out_specs
-  return shard_map(apply, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
-                   check_vma=check_vma)(*args)
+  return shard_map(apply, mesh=concrete_mesh, in_specs=in_specs,
+                   out_specs=out_specs, check_vma=check_vma,
+                   axis_names=manual_axes)(*args)
 
 eager_rules: dict[core.Primitive, Callable] = {}
 
