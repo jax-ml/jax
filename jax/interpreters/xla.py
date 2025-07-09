@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from jax._src.interpreters.xla import (
-  canonicalize_dtype as canonicalize_dtype,
+  canonicalize_dtype as _deprecated_canonicalize_dtype,
   canonicalize_dtype_handlers as canonicalize_dtype_handlers,
 )
 
@@ -44,8 +44,23 @@ _deprecations = {
         ),
         None,
     ),
+    # Added in JAX v0.7.0
+    "canonicalize_dtype": (
+        (
+            "jax.interpreters.xla.canonicalize_dtype was deprecated in JAX"
+            " v0.7.0 and will be removed in JAX v0.8.0. For canonicalizing"
+            " dtypes, prefer jax.dtypes.canonicalize_dtype. For checking whether"
+            " an object is a valid jax input, prefer jax.core.valid_jaxtype."
+        ),
+        _deprecated_canonicalize_dtype,
+    )
 }
 
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  canonicalize_dtype = _deprecated_canonicalize_dtype
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing

@@ -54,6 +54,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     deprecation in SciPy; use {func}`jax.scipy.special.sph_harm_y` instead.
   * From {mod}`jax.interpreters.xla`, the previously deprecated symbols
     `abstractify` and `pytype_aval_mappings` have been removed.
+  * {func}`jax.interpreters.xla.canonicalize_dtype` is deprecated. For
+    canonicalizing dtypes, prefer {func}`jax.dtypes.canonicalize_dtype`.
+    For checking whether an object is a valid jax input, prefer
+    {func}`jax.core.valid_jaxtype`.
   * From {mod}`jax.core`, the previously deprecated symbols `AxisName`,
     `ConcretizationTypeError`, `call_p`, `closed_call_p`, `get_type`, and
     `typecheck` have been removed.
