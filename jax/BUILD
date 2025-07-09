@@ -1454,6 +1454,7 @@ py_library_providing_imports_info(
         "@cuda_nvcc//:ptxas",
         "@nvidia_nvshmem//:libnvshmem_device",
     ],
+    lib_rule = pytype_strict_library,
     visibility = [
         ":mosaic_gpu_users",
     ],
@@ -1462,6 +1463,9 @@ py_library_providing_imports_info(
         ":core",
         ":jax",
         ":mlir",
+        ":sharding_impls",
+        ":stages",
+        ":util",
         "//jax/_src/lib",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",

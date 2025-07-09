@@ -335,7 +335,10 @@ def _check_transforms_and_swizzle_are_supported(
       )
   }
 
-  tile_transforms = partitioned_transforms.get(True, [])
+  tile_transforms = cast(
+      list[launch_context.TileTransform],
+      partitioned_transforms.get(True, []),
+  )
   other_transforms = partitioned_transforms.get(False, [])
 
   if len(tile_transforms) > 1:

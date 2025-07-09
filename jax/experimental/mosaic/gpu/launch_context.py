@@ -331,7 +331,7 @@ class LaunchContext:
   cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
   tma_descriptors: dict[
-      tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...]],
+      tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any],
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
   is_device_collective: bool = False

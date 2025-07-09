@@ -83,7 +83,7 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
 
 
 try:
-  from nvidia import nvshmem
+  from nvidia import nvshmem  # pytype: disable=import-error
 except ImportError:
   # Try to find the nvshmem library in Bazel runfiles.
   if PYTHON_RUNFILES:
@@ -669,6 +669,7 @@ def _lower_as_gpu_kernel(
   sym_tab.insert(global_scratch)
   module.operation.verify()
 
+  assert launch_ctx is not None
   return module, out_shape, unwrap_output_tuple, launch_ctx
 
 
@@ -828,7 +829,7 @@ def as_torch_gpu_kernel(
     lowering_semantics: LoweringSemantics = LoweringSemantics.Lane,
 ):
   try:
-    import torch
+    import torch  # pytype: disable=import-error
   except ImportError:
     raise RuntimeError("as_torch_gpu_kernel requires PyTorch")
   torch.cuda.init()  # Make sure CUDA context is set up.
@@ -838,13 +839,17 @@ def as_torch_gpu_kernel(
   elif not isinstance(in_shape, tuple):
     in_shape = (in_shape,)
 
+  # TODO(slebedev): Make this a parameter.
+  inout_shape = ()
+
   flat_out_types, out_treedef = jax.tree.flatten(out_shape)
   expected_arg_treedef = jax.tree.structure(in_shape)
 
   module, out_shape, unwrap_output_tuple, launch_ctx = (
       _lower_as_gpu_kernel(
-          body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          lowering_semantics, module_name, kernel_name, prof_spec
+          body, grid, cluster, block, in_shape, out_shape, inout_shape,
+          smem_scratch_shape, lowering_semantics, module_name, kernel_name,
+          prof_spec
       )
   )
 
@@ -868,7 +873,7 @@ def as_torch_gpu_kernel(
 
   # Get our hands on the compilation and unload functions
   try:
-    import jax_plugins.xla_cuda12 as cuda_plugin
+    import jax_plugins.xla_cuda12 as cuda_plugin  # pytype: disable=import-error
   except ImportError:
     raise RuntimeError("as_torch_gpu_kernel only works with recent jaxlib builds "
                        "that use backend plugins")

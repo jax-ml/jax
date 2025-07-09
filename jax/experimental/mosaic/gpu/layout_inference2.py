@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Sequence, Set
 import dataclasses
 import enum
 import itertools
@@ -74,7 +74,7 @@ class Hint:
 
 def extract_constant_from_least_replicated_expression_for_hint(
     expressions: tuple[eqns.Expression, ...],
-) -> eqns.Expression | None:
+) -> eqns.Constant | None:
   choices: list[eqns.Constant] = []
   for e in expressions:
     if (red := extract_constant_for_hint(e)) is not None:
@@ -99,7 +99,7 @@ def extract_constant_from_least_replicated_expression_for_hint(
 
 def extract_constant_from_most_replicated_expression_for_hint(
     expressions: tuple[eqns.Expression, ...],
-) -> eqns.Expression | None:
+) -> eqns.Constant | None:
   assert len(expressions) >= 1
   choices: list[eqns.Constant] = []
   for e in expressions:
@@ -171,7 +171,7 @@ def reduce_hints(
 
 
 def find_assignments_for(
-    unknowns: set[eqns.Variable],
+    unknowns: Set[eqns.Variable],
     equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
 ) -> dict[eqns.Variable, eqns.Constant] | eqns.Unsatisfiable:
@@ -209,7 +209,7 @@ def find_assignments_for(
   #
   # Make a copy of the hints to allow deleting unnecessary hints from the list,
   # without modifying the list being iterated over.
-  remaining_hints: list[Hint] = hints[:]
+  remaining_hints: list[Hint] = [*hints]
   for i, hint in reversed(list(enumerate(hints))):
     if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
       variable, expr = assignment
@@ -409,10 +409,11 @@ def _ensure_all_layouts_are_set(op: ir.OpView):
       op, inference_utils.in_layouts(op), inference_utils.out_layouts(op)
   )
 
+
 def _ensure_right_number_of_layouts(
     op: ir.OpView,
-    in_layouts: list[fa.FragmentedLayout | ir.Attribute],
-    out_layouts: list[fa.FragmentedLayout | ir.Attribute],
+    in_layouts: Sequence[fa.FragmentedLayout | ir.Attribute],
+    out_layouts: Sequence[fa.FragmentedLayout | ir.Attribute],
 ):
   """Ensures that the right number of in/out layouts are provided for an op."""
   if len(in_layouts) != sum(map(is_vector, op.operands)):
@@ -425,7 +426,9 @@ def _ensure_right_number_of_layouts(
     )
 
 
-def assign_layouts(solution: dict[OperandOrResult, eqns.Constant]):
+def assign_layouts(
+    solution: dict[OperandOrResult, eqns.Constant],
+) -> None:
   """Assigns the layouts in `solution` to the MLIR ops they belong to.
 
   This function requires that, for each MLIR op that appears in `solution`,
