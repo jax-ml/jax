@@ -619,7 +619,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 V = equations.Variable
 H = layout_inference2.Hint
 E = equations.Equation
-C = equations.ConstantExpression
+C = equations.Constant
 
 
 class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=InferenceImplementation.EQUATIONS):
@@ -693,7 +693,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
             equations=[
                 E(
                     v0,
-                    equations.MostReplicatedExpression(
+                    equations.MostReplicated(
                         [v1, C(mgpu.WGStridedFragLayout((3, 128), vec_size=1))]
                     ),
                 )
@@ -709,7 +709,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     v0, v1 = V(0), V(1)
     layout = C(mgpu.WGMMA_LAYOUT)
     assignment = layout_inference2.extract_variable_assignment_from_hint(
-        H(v0, equations.LeastReplicatedExpression([layout, v1])),
+        H(v0, equations.LeastReplicated([layout, v1])),
     )
     self.assertEqual(assignment, (v0, layout))
 
@@ -717,7 +717,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     v0, v1 = V(0), V(1)
     layout = C(mgpu.WGSplatFragLayout((1, 128)))
     assignment = layout_inference2.extract_variable_assignment_from_hint(
-        H(v0, equations.MostReplicatedExpression([layout, v1])),
+        H(v0, equations.MostReplicated([layout, v1])),
     )
     self.assertEqual(assignment, (v0, layout))
 
@@ -726,8 +726,8 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     layout0 = C(mgpu.WGSplatFragLayout((1, 128)))
     layout1 = C(mgpu.WGSplatFragLayout((1, 129)))
     _, expr = layout_inference2.extract_variable_assignment_from_hint(
-        H(v0, equations.LeastReplicatedExpression(
-            [layout0, equations.MostReplicatedExpression([layout1, v1])])),
+        H(v0, equations.LeastReplicated(
+            [layout0, equations.MostReplicated([layout1, v1])])),
     )
     self.assertIn(expr, {layout0, layout1})
 
