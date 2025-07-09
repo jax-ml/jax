@@ -44,7 +44,6 @@ from jax._src.pallas import primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.util import (
-    foreach,
     safe_map,
     safe_zip,
     split_list,

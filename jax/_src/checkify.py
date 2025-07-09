@@ -472,7 +472,7 @@ def _reduce_any_error(error: Error):
 ## check_p primitive
 
 check_p = core.Primitive('check')
-check_p.is_effectful = lambda _: True
+check_p.is_effectful = lambda _: True  # type: ignore
 check_p.multiple_results = True  # zero results
 
 
