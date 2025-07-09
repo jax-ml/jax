@@ -1974,7 +1974,7 @@ class DynamicJaxprTrace(core.Trace):
     return tracer
 
   def make_eqn(self, in_tracers, out_avals, primitive, params,
-               effects, ctx = None, source_info=None):
+               effects, source_info=None, ctx = None):
     source_info = source_info or source_info_util.new_source_info()
     ctx = ctx or JaxprEqnContext(
         compute_on.current_compute_type(),
@@ -1988,8 +1988,8 @@ class DynamicJaxprTrace(core.Trace):
     out_tracers = [self.var_to_tracer(v, source_info, eqn) for v in outvars]
     return eqn, out_tracers
 
-  def emit_eqn(self, in_tracers, out_avals, primitive, params, effects, ctx=None, source_info=None):
-    eqn, out_tracers = self.make_eqn(in_tracers, out_avals, primitive, params, effects, ctx, source_info)
+  def emit_eqn(self, in_tracers, out_avals, primitive, params, effects, source_info=None, ctx=None):
+    eqn, out_tracers = self.make_eqn(in_tracers, out_avals, primitive, params, effects, source_info, ctx)
     self.frame.add_eqn(eqn)
     return out_tracers
 
@@ -2739,7 +2739,7 @@ def inline_jaxpr_into_trace(
       out_tracers = map(partial(trace.new_const, source_info=src_), maybe_consts)
     else:
       out_tracers = trace.emit_eqn(in_tracers, out_avals, eqn.primitive,
-                                   eqn.params, eqn.effects, eqn.ctx, src_)
+                                   eqn.params, eqn.effects, src_, eqn.ctx)
     foreach(env.setdefault, eqn.outvars, out_tracers)
 
   return map(partial(inline_atom, src), jaxpr.outvars)
