@@ -71,7 +71,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
     --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_thread_map \
     --deselect=tests/pallas/tpu_pallas_test.py::PallasCallTraceTest::test_run_scoped \
-    --deselect=
+    --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_thread_map \
     --maxfail=20 --timeout=300 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
   echo "Finished single accelerator test"
 
