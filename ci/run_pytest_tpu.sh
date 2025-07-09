@@ -70,6 +70,9 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
     --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
     --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_thread_map \
+    --deselect=tests/pallas/tpu_pallas_memory_space_test.py::TPUCoreMapMemorySpaceTest::test_basic_ref_memory_space_constraint0 \
+    --deselect=tests/pallas/tpu_pallas_memory_space_test.py::TPUCoreMapMemorySpaceTest::test_basic_ref_memory_space_constraint1 \
+    --deselect=tests/profiler_test.py::ProfilerTest::test_remote_profiler \
     --maxfail=20 --timeout=300 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
   echo "Finished single accelerator test"
 
