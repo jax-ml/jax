@@ -55,8 +55,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * From {mod}`jax.interpreters.xla`, the previously deprecated symbols
     `abstractify` and `pytype_aval_mappings` have been removed.
   * From {mod}`jax.core`, the previously deprecated symbols `AxisName`,
-    `ConcretizationTypeError`, `call_p`, `closed_call_p`, and `get_type`
-    have been removed.
+    `ConcretizationTypeError`, `call_p`, `closed_call_p`, `get_type`, and
+    `typecheck` have been removed.
   * From {mod}`jax.lib.xla_client`, the previously deprecated symbols
     `DeviceAssignment`, `get_topology_for_devices`, and `mlir_api_version`
     have been removed.

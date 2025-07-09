@@ -127,8 +127,8 @@ _deprecations = {
         _src_core.trace_state_clean,
     ),
     "typecheck": (
-        "jax.core.typecheck was deprecated in JAX v0.5.0.",
-        _src_core.typecheck,
+        "jax.core.typecheck was deprecated in JAX v0.5.0 and removed in JAX v0.7.0.",
+        None,
     ),
     "typematch": (
         "jax.core.typematch was deprecated in JAX v0.5.0.",
@@ -140,7 +140,6 @@ import typing
 if typing.TYPE_CHECKING:
   axis_frame = _src_core.axis_frame
   trace_state_clean = _src_core.trace_state_clean
-  typecheck = _src_core.typecheck
   typematch = _src_core.typematch
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
