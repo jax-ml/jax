@@ -1945,6 +1945,7 @@ class DynamicJaxprTrace(core.Trace):
 
   # TODO(dougalm): we might be able to remove this since the refcounting should be doing it for us
   def invalidate(self):
+    super().invalidate()
     # avoid cyclic refs
     self.frame.constid_to_tracer = {}
     self.frame.constvar_to_val = {}
