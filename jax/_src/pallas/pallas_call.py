@@ -1002,7 +1002,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
     i, *_ = carry
     return i < num_iterations
   def body(carry):
-    i, loop_idx = carry
+    i, loop_idx, blocks = carry
     if grid_mapping.local_grid_env is not None:
       local_grid_env = grid_mapping.local_grid_env(loop_idx, grid)
     else:
@@ -1017,12 +1017,12 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
           for bm in grid_mapping.block_mappings]
     # We perform a dynamic slice on the i/o blocks, which will be checked by
     # checkify for OOB accesses.
-    foreach(hlo_interpreter._dynamic_slice, start_indices, block_shapes,
+    blocks = map(hlo_interpreter._dynamic_slice, start_indices, block_shapes,
         [*input_args, *output_args], is_indexing_dim)
-    return (i + 1, hlo_interpreter._get_next_indices(grid, loop_idx))
+    return (i + 1, hlo_interpreter._get_next_indices(grid, loop_idx), blocks)
   def f(_):
-    lax.while_loop(
-        cond, body, (jnp.int32(0), grid_start_indices)
+    return lax.while_loop(
+        cond, body, (jnp.int32(0), grid_start_indices, [jnp.zeros(shape) for shape in block_shapes])
     )
   flat_args, jaxpr_in_tree = jax.tree_util.tree_flatten((jnp.int32(0),))
   wrapped_loop, _ = api_util.flatten_fun_nokwargs(
@@ -1033,7 +1033,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     avals_in = map(jax_core.get_aval, flat_args)
     traced_loop, _, consts = pe.trace_to_jaxpr_dynamic(
-        wrapped_loop, list(avals_in))
+        wrapped_loop, list(avals_in), auto_dce=False)
     traced_loop = jax_core.ClosedJaxpr(traced_loop, consts)
   out_error, _ = checkify.checkify_jaxpr(
       traced_loop, checkify.index_checks, error, flat_args)
