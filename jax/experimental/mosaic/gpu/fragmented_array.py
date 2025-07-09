@@ -1548,11 +1548,18 @@ class FragmentedArray:
     base_tile_shape = self.layout.base_tile_shape
     if len(base_tile_shape) != len(self.shape):
       raise NotImplementedError("Tiling has different rank than array")
-    if any(
-        b % t or l % t
-        for b, l, t in zip(base_idx, slice_shape, base_tile_shape, strict=True)
-    ):
-      raise NotImplementedError("Only tile aligned slicing supported")
+    if any(b % t for b, t in zip(base_idx, base_tile_shape, strict=True)):
+      raise ValueError(
+          "Base indices of array slices must be aligned to the beginning of a"
+          f" tile. The array uses a tiling of {base_tile_shape}, but your base"
+          f" indices are {base_idx}. Consider using a different array layout."
+      )
+    if any(l % t for l, t in zip(slice_shape, base_tile_shape, strict=True)):
+      raise ValueError(
+          "The slice shape must be a multiple of the tile shape. The array"
+          f" uses a tiling of {base_tile_shape}, but your slice shape is"
+          f" {slice_shape}. Consider using a different array layout."
+      )
     register_slices = tuple(
         slice(b // t, (b + l) // t)
         for b, l, t in zip(base_idx, slice_shape, base_tile_shape, strict=True)
