@@ -21,6 +21,7 @@ namespace gpu {
 
 void registerByvalInsertionPass();
 void registerConvertGpuToLLVMPass();
+void registerNvvmAttrInsertionPass();
 
 }  // namespace gpu
 }  // namespace mosaic
