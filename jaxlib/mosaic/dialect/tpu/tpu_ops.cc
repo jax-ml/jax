@@ -1608,21 +1608,15 @@ LogicalResult LogOp::verify() {
   if (is_sc_core && getInputs().size() > 1) {
     return emitOpError("SC logging only supports 0 or 1 inputs");
   }
-  if (is_sc_core && getInputs().size() == 1) {
-    Type input_type = getInputs().front().getType();
-    if (!llvm::isa<MemRefType, IntegerType, FloatType, IndexType>(input_type)) {
-      return emitOpError("SC logging only supports memrefs or scalars");
+  if (*logging_core == CoreType::kScScalarSubcore) {
+    for (mlir::Value input : getInputs()) {
+      if (llvm::isa<VectorType>(input.getType())) {
+        return emitOpError(
+            "SC scalar subcore does not support logging vectors");
+      }
     }
   }
-  switch (*logging_core) {
-    case CoreType::kTc:
-    case CoreType::kScScalarSubcore:
-      return success();
-    case CoreType::kScVectorSubcore:
-      return emitOpError("Log op is not supported on the SC vector subcore");
-  }
-  return emitOpError(absl::StrFormat("Unexpected core type: %s",
-                                     stringifyCoreType(*logging_core)));
+  return success();
 }
 
 LogicalResult WeirdOp::verify() {
