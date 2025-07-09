@@ -53,9 +53,9 @@ from jax._src.lax.control_flow.common import (
     _make_closed_jaxpr)
 from jax._src.lax.other import logaddexp
 from jax._src.pjit import auto_axes, PartitionSpec as P
-from jax._src.mesh import get_abstract_mesh
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import discharge as state_discharge, AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
@@ -2443,16 +2443,21 @@ def _scan_leaf(leaf, batch_elems, num_batches, batch_size):
     raise ValueError(
         '0th dimension of leaf passed to `jax.lax.map` should be replicated.'
         f' Got {aval.str_short(True, True)}')
-  if get_abstract_mesh()._are_all_axes_explicit:
-    out_s = aval.sharding.update(spec=P(None, None, *aval.sharding.spec[1:]))
-    return auto_axes(f, out_sharding=out_s)(leaf)
+
+  out_s = aval.sharding.update(spec=P(None, None, *aval.sharding.spec[1:]))
+  out_s = canonicalize_sharding(out_s, 'lax.map')
+  if out_s is not None and out_s.mesh._any_axis_explicit:
+    return auto_axes(f, out_sharding=out_s, axes=out_s.mesh.explicit_axes)(leaf)
   return f(leaf)
 
 def _remainder_leaf(leaf, batch_elems):
   def f(l):
     return l[batch_elems:]
-  if get_abstract_mesh()._are_all_axes_explicit:
-    return auto_axes(f, out_sharding=core.typeof(leaf).sharding)(leaf)
+  sharding = canonicalize_sharding(core.typeof(leaf).sharding, 'lax.map')
+  if sharding is not None and sharding.mesh._any_axis_explicit:
+    return auto_axes(
+        f, out_sharding=sharding, axes=sharding.mesh.explicit_axes
+    )(leaf)
   return f(leaf)
 
 def _batch_and_remainder(x, batch_size: int):

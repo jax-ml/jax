@@ -38,6 +38,7 @@ from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.pjit import auto_axes
+from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.tree_util import tree_flatten
 from jax._src.typing import Array, ArrayLike, StaticScalar
 from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update
@@ -611,7 +612,12 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
     internal_ds = partial(slicing.dynamic_slice, slice_sizes=slice_sizes,
                           allow_negative_indices=allow_negative_indices)
     if out_sharding is not None:
-      arr = auto_axes(internal_ds, out_sharding=out_sharding)(arr, start_indices)
+      out_sharding = canonicalize_sharding(out_sharding, 'take')
+      arr = auto_axes(
+          internal_ds,
+          out_sharding=out_sharding,
+          axes=out_sharding.mesh.explicit_axes,  # type: ignore
+      )(arr, start_indices)
     else:
       arr = internal_ds(arr, start_indices)
   if int_indices:
@@ -651,7 +657,9 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=mode, fill_value=fill_value, normalize_indices=normalize_indices)
   if out_sharding is not None:
-    return auto_axes(internal_gather, out_sharding=out_sharding
+    out_sharding = canonicalize_sharding(out_sharding, 'take')
+    return auto_axes(internal_gather, out_sharding=out_sharding,
+                     axes=out_sharding.mesh.explicit_axes,  # type: ignore
                      )(arr, dynamic_idx)
   return internal_gather(arr, dynamic_idx)
 

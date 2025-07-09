@@ -6445,6 +6445,181 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out2 = core.jaxpr_as_fun(jaxpr)(arr)
     self.assertEqual(out2[0].sharding, NamedSharding(mesh, P('x', None)))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_auto_mode_mix_dual_sharded_output(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @partial(auto_axes, axes='x', out_sharding=P('x', 'y'))
+    def h(y):
+      self.assertEqual(y.aval.sharding.spec, P(None, 'y'))
+      z = jnp.sin(y)
+      self.assertEqual(z.aval.sharding.spec, P(None, 'y'))
+      a = jnp.einsum('xy,yz->xz', z, z.T, out_sharding=P(None, 'y'))
+      self.assertEqual(a.aval.sharding.spec, P(None, 'y'))
+      return a
+
+    @jax.jit
+    def g(x):
+      y = x * 2
+      a = h(y)
+      self.assertEqual(a.aval.sharding.spec, P('x', 'y'))
+      return a
+
+    out = g(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+    jaxpr = g.trace(arr).jaxpr
+    out2 = core.jaxpr_as_fun(jaxpr)(arr)
+    self.assertEqual(out2[0].sharding, NamedSharding(mesh, P('x', 'y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_auto_mode_mix_repeat(self, mesh):
+    np_inp = np.arange(16).reshape(8, 1, 2)
+    s = NamedSharding(mesh, P('x', None, 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @partial(auto_axes, axes='x', out_sharding=P('x', None, 'y'))
+    def h(y):
+      return jnp.repeat(y, 2, axis=1)
+
+    @jax.jit
+    def g(x):
+      y = x * 2
+      a = h(y)
+      self.assertEqual(a.aval.sharding.spec, P('x', None, 'y'))
+      return a
+
+    out = g(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None, 'y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_manual_mode_mix_repeat(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    def h(y):
+      return jnp.repeat(y, 2, axis=1, out_sharding=P(None, 'y'))
+
+    @jax.jit
+    def g(x):
+      y = x * 2
+      a = jax.shard_map(
+          h,
+          out_specs=P('x'),
+          axis_names={'x'},
+      )(y)
+      self.assertEqual(a.aval.sharding.spec, P('x', 'y'))
+      return a
+
+    out = g(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_manual_mode_mix_repeat_no_out_sharding(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 1, 2)
+    s = NamedSharding(mesh, P('x', None, 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    def h(y):
+      return jnp.repeat(y, 2, axis=1)
+
+    @jax.jit
+    def g(x):
+      y = x * 2
+      a = jax.shard_map(
+          h,
+          out_specs=P('x'),
+          axis_names={'x'},
+      )(y)
+      self.assertEqual(a.aval.sharding.spec, P('x', None, 'y'))
+      return a
+
+    out = g(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None, 'y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_manual_mode_mix_random_no_out_sharding(self, mesh):
+    s = NamedSharding(mesh, P('x'))
+    keys = jax.random.split(jax.random.key(0), 2)
+    keys = reshard(keys, s)
+
+    def h(key):
+      key = key.squeeze(0)
+      arr = jax.random.normal(key, (1, 4))
+      return reshard(arr, P(None, 'y'))
+
+    @jax.jit
+    def g(keys):
+      a = jax.shard_map(
+          h,
+          out_specs=P('x'),
+          axis_names={'x'},
+      )(keys)
+      self.assertEqual(a.aval.sharding.spec, P('x', 'y'))
+      return a
+    out = g(keys)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_manual_mode_mix_random(self, mesh):
+    self.skipTest('Failing.')
+    s = NamedSharding(mesh, P('x'))
+    keys = jax.random.split(jax.random.key(0), 2)
+    keys = reshard(keys, s)
+
+    def h(key):
+      key = key.squeeze(0)
+      return jax.random.normal(key, (1, 4), out_sharding=P(None, 'y'))
+
+    @jax.jit
+    def g(keys):
+      a = jax.shard_map(
+          h,
+          out_specs=P('x'),
+          axis_names={'x'},
+      )(keys)
+      self.assertEqual(a.aval.sharding.spec, P('x', 'y'))
+      return a
+    out = g(keys)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_manual_mode_mix_scatter_gather(self, mesh):
+    x = np.random.uniform(size=(mesh.size * 2, 4))
+    i = np.random.randint(0, x.shape[1], len(x))
+    j = np.random.randint(0, x.shape[1], len(x))
+    x = jax.device_put(x, P('x', 'y'))
+    i = jax.device_put(i, P('y'))
+    j = jax.device_put(j, P('y'))
+
+    @jax.jit
+    @partial(jax.shard_map, out_specs=P('x'), axis_names={'x'})
+    def f1(x, i, j):
+      x_a_j = x.at[:, j].get(out_sharding=jax.typeof(i).sharding)
+      return x.at[:, i].set(x_a_j)
+    f1(x,i,j)  # doesn't crash
+
+  @config.numpy_rank_promotion('allow')
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_manual_mode_mix_map(self, mesh):  # pylint: disable=unused-argument
+    def simple_func(w, x):
+      return jnp.sum(w * x, axis=-1)
+
+    w = jax.device_put(np.arange(4, dtype=np.float32), P())
+    x = jax.device_put(np.ones((2, 5, 2, 4), dtype=np.float32),
+                       P('x', None, 'y', None))
+
+    for batch_size in (None, 2):
+      @jax.jit
+      @partial(jax.shard_map, out_specs=P('x'), axis_names={'x'})
+      def map_fn(x, w):
+        return jax.lax.map(partial(simple_func, w), x.squeeze(0),
+            batch_size=batch_size)  # pylint: disable=cell-var-from-loop
+      map_fn(x, w)  # doesn't crash
+
   @jtu.with_explicit_mesh((4,), ('x',))
   def test_concat_vmap(self, mesh):
     @jax.jit

@@ -58,6 +58,7 @@ from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.numpy.sorting import argsort, sort
 from jax._src.numpy.vectorize import vectorize
+from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.typing import (
   Array, ArrayLike, DType, DTypeLike, DeprecatedArg, DimSize, Shape, SupportsShape
 )
@@ -6351,7 +6352,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
     return _auto_repeat(_repeat, a, repeats, axis, total_repeat_length,
                         out_sharding)
   ctx_mesh = get_abstract_mesh()
-  if ctx_mesh._are_all_axes_explicit:
+  if ctx_mesh._any_axis_explicit:
     aval = core.typeof(a)
     if axis is None or aval.sharding.spec[axis] is not None:
       raise ValueError(
@@ -6369,14 +6370,19 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
         "Please pass sharding to `jnp.repeat` via `out_sharding` parameter.")
 
 def _auto_repeat(fun, a, repeats, axis, total_repeat_length, out_sharding):
+  out_sharding = canonicalize_sharding(out_sharding, 'repeat')
   if total_repeat_length is None:
     return auto_axes(partial(fun, repeats=repeats, axis=axis,
                              total_repeat_length=total_repeat_length),
-                     out_sharding=out_sharding)(a)
+                     out_sharding=out_sharding,
+                     axes=out_sharding.mesh.explicit_axes  # type: ignore
+                     )(a)
   else:
     return auto_axes(
         partial(fun, axis=axis, total_repeat_length=total_repeat_length),
-        out_sharding=out_sharding)(a, repeats=repeats)
+        out_sharding=out_sharding,
+        axes=out_sharding.mesh.explicit_axes  # type: ignore
+        )(a, repeats=repeats)
 
 def _repeat(a: ArrayLike, *, repeats: ArrayLike, axis: int | None = None,
             total_repeat_length: int | None = None) -> Array:

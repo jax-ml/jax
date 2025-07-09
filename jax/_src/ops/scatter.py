@@ -37,6 +37,7 @@ from jax._src.numpy import indexing
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
 from jax._src.pjit import auto_axes
+from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.typing import Array, ArrayLike
 
 
@@ -86,7 +87,9 @@ def _scatter_update(x: ArrayLike, idx: Index, y: ArrayLike, scatter_op: Callable
       unique_indices=unique_indices, mode=mode,
       normalize_indices=normalize_indices)
   if out_sharding is not None:
-    return auto_axes(internal_scatter, out_sharding=out_sharding
+    out_sharding = canonicalize_sharding(out_sharding, 'scatter')  # type: ignore
+    return auto_axes(internal_scatter, out_sharding=out_sharding,
+                     axes=out_sharding.mesh.explicit_axes  # type: ignore
                      )(x, y, dynamic_idx)
   return internal_scatter(x, y, dynamic_idx)
 
