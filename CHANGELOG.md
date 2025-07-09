@@ -62,6 +62,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     have been removed.
   * `jax.extend.ffi` was removed after being deprecated in v0.5.0.
     Use {mod}`jax.ffi` instead.
+  * {func}`jax.lib.xla_bridge.get_compile_options` is deprecated, and replaced by
+    {func}`jax.extend.backend.get_compile_options`.
 
 ## JAX 0.6.2 (June 17, 2025)
 

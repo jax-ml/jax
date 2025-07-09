@@ -64,6 +64,7 @@ pytype_strict_library(
     srcs = ["backend.py"],
     deps = [
         "//jax:api",
+        "//jax:compiler",
         "//jax:util",
         "//jax:xla_bridge",
     ],
