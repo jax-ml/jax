@@ -196,9 +196,10 @@ class CustomCallBackendConfig:
         if input_memory_space not in (
             MemorySpace.HBM,
             MemorySpace.VMEM,
+            MemorySpace.SMEM,
         ):
           raise NotImplementedError(
-              "input_memory_space_colors only supports HBM and VMEM"
+              "input_memory_space_colors only supports HBM, VMEM and SMEM"
           )
         if comma:
           config.write(b",")

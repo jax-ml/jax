@@ -780,20 +780,23 @@ mlir.register_lowering(
 
 # === AD rules for mutable arrays ===
 
-def _mut_jvp(primals, tangents):
+def _mut_jvp(primals, tangents, *, memory_space):
   (init_val,), (init_val_dot,) = primals, tangents
-  primal_out = core.mutable_array_p.bind(init_val)
+  primal_out = core.mutable_array_p.bind(init_val, memory_space=memory_space)
   if type(init_val_dot) is ad_util.Zero:
-    tangent_out = core.mutable_array_p.bind(ad_util.zeros_like_aval(init_val_dot.aval))
+    tangent_out = core.mutable_array_p.bind(
+        ad_util.zeros_like_aval(init_val_dot.aval), memory_space=memory_space)
   else:
-    tangent_out = core.mutable_array_p.bind(init_val_dot)
+    tangent_out = core.mutable_array_p.bind(init_val_dot,
+                                            memory_space=memory_space)
   return primal_out, tangent_out
 
-def _mut_lin(nzs, x):
+def _mut_lin(nzs, x, *, memory_space):
   nz, = nzs
-  x_ref = core.mutable_array_p.bind(x)
+  x_ref = core.mutable_array_p.bind(x, memory_space=memory_space)
   def mut_lin(_, x_dot):
-    return core.mutable_array_p.bind(ad_util.instantiate(x_dot))
+    return core.mutable_array_p.bind(ad_util.instantiate(x_dot),
+                                     memory_space=memory_space)
   return x_ref, True, None, mut_lin
 
 ad.primitive_jvps[core.mutable_array_p] = _mut_jvp

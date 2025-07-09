@@ -1211,6 +1211,30 @@ class CostEstimate:
     ).encode("ascii")
 
 
+def get_memory_space_aval(aval: jax_core.AbstractValue) -> Any:
+  """Queries the memory space of an array."""
+  if isinstance(aval, ShapedArrayWithMemorySpace):
+    return aval.memory_space
+  if isinstance(aval, state.AbstractRef):
+    if aval.memory_space is not None:
+      return aval.memory_space
+    return get_memory_space_aval(aval.inner_aval)
+  return None
+
+def _get_sds(aval: jax_core.AbstractValue):
+  match aval:
+    case state.AbstractRef(inner_aval=inner_aval):
+      if aval.memory_space is not None:
+        return aval.memory_space(aval.shape, aval.dtype)
+      return _get_sds(inner_aval)
+    case ShapedArrayWithMemorySpace():
+      return aval.memory_space(aval.shape, aval.dtype)
+    case jax_core.ShapedArray():
+      return jax.ShapeDtypeStruct(aval.shape, aval.dtype)
+    case _:
+      raise ValueError(f"Unsupported abstract value: {aval}")
+
+
 core_map_p = jax_core.Primitive("core_map")
 core_map_p.multiple_results = True
 
@@ -1299,6 +1323,32 @@ class Mesh(Protocol):
 _core_map_mesh_rules: dict[type[Any], Callable[..., Any]] = {}
 
 
+with_memory_space_constraint_p = jax_core.Primitive(
+    'with_memory_space_constraint')
+
+@with_memory_space_constraint_p.def_impl
+def with_memory_space_constraint_impl(x, *, memory_space):
+  del x, memory_space
+  raise ValueError("Cannot eagerly run with_memory_space_constraint.")
+
+
+@with_memory_space_constraint_p.def_abstract_eval
+def with_memory_space_constraint_abstract_eval(x, *, memory_space):
+  if not isinstance(x, jax_core.ShapedArray):
+    raise NotImplementedError("with_memory_space_constraint only supports "
+                              "arrays.")
+  return ShapedArrayWithMemorySpace(
+      x.shape, x.dtype, memory_space=memory_space
+  )
+
+def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
+  del ctx, memory_space
+  return [x]
+mlir.register_lowering(
+    with_memory_space_constraint_p, with_memory_space_constraint_lowering_rule
+)
+
+
 def default_mesh_discharge_rule(
     in_avals,
     out_avals,
@@ -1327,32 +1377,49 @@ def default_mesh_discharge_rule(
       for eff in jaxpr.effects
       if isinstance(eff, state_types.WriteEffect)
   )
-  spec = BlockSpec(memory_space=memory_space)
-  from jax._src.pallas import pallas_call  # Avoid circular dependency.
+  in_memory_spaces = [get_memory_space_aval(aval) for aval in in_avals]
+  in_memory_spaces = [
+      memory_space if m is None else m for m in in_memory_spaces
+  ]
+  @jax.jit
+  def jitted(*args):
+    args = [
+        with_memory_space_constraint_p.bind(arg, memory_space=memory_space)
+        if memory_space is not None else arg
+        for arg, memory_space in zip(args, in_memory_spaces)
+    ]
+    in_specs = [
+        BlockSpec(memory_space=memory_space) for memory_space in in_memory_spaces
+    ]
+    out_specs = [in_specs[idx] for idx in modified_idxs]
+    out_shapes = [_get_sds(in_avals[idx]) for idx in modified_idxs]
+    from jax._src.pallas import pallas_call  # Avoid circular dependency.
 
-  outs = pallas_call._pallas_call(
-      body,
-      name=name,
-      out_shape=[in_avals[idx] for idx in modified_idxs],
-      input_output_aliases={
-          in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
-      },
-      grid_spec=GridSpec(
-          grid=tuple(mesh.shape.items()),
-          in_specs=[spec] * len(in_avals),
-          out_specs=[spec] * len(modified_idxs),
-      ),
-      mesh=mesh,
-      compiler_params=compiler_params,
-      interpret=interpret,
-      debug=debug,
-      cost_estimate=cost_estimate,
-  )(*args)
+    outs = pallas_call._pallas_call(
+        body,
+        name=name,
+        out_shape=out_shapes,
+        input_output_aliases={
+            in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
+        },
+        grid_spec=GridSpec(
+            grid=tuple(mesh.shape.items()),
+            in_specs=in_specs,
+            out_specs=out_specs,
+        ),
+        mesh=mesh,
+        compiler_params=compiler_params,
+        interpret=interpret,
+        debug=debug,
+        cost_estimate=cost_estimate,
+    )(*args)
   # ``outs`` lacks the unmodified inputs. Add them back in.
-  all_outs = [None] * len(args)
-  for out_idx, in_idx in enumerate(modified_idxs):
-    all_outs[in_idx] = outs[out_idx]
-  return all_outs, ()
+    all_outs = [None] * len(args)
+    for out_idx, in_idx in enumerate(modified_idxs):
+      all_outs[in_idx] = outs[out_idx]
+    return all_outs
+  out = jitted(*args)
+  return out, ()
 
 
 @state_discharge.register_discharge_rule(core_map_p)

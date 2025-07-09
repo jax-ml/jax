@@ -777,31 +777,6 @@ def wrap_pallas_seed(*seeds, impl):
   return join_key_p.bind(*seeds, impl=impl)
 
 
-with_memory_space_constraint_p = jax_core.Primitive(
-    'with_memory_space_constraint')
-
-@with_memory_space_constraint_p.def_impl
-def with_memory_space_constraint_impl(x, *, memory_space):
-  del x, memory_space
-  raise ValueError("Cannot eagerly run with_memory_space_constraint.")
-
-
-@with_memory_space_constraint_p.def_abstract_eval
-def with_memory_space_constraint_abstract_eval(x, *, memory_space):
-  if not isinstance(x, jax_core.ShapedArray):
-    raise NotImplementedError("with_memory_space_constraint only supports "
-                              "arrays.")
-  return pl_core.ShapedArrayWithMemorySpace(
-      x.shape, x.dtype, memory_space=memory_space
-  )
-
-def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
-  del ctx, memory_space
-  return [x]
-mlir.register_lowering(
-    with_memory_space_constraint_p, with_memory_space_constraint_lowering_rule
-)
-
 def with_memory_space_constraint(
     x: jax.Array, memory_space: Any
 ) -> jax.Array:
@@ -828,11 +803,5 @@ def with_memory_space_constraint(
     raise NotImplementedError(
         "with_memory_space_constraint only supports HBM and VMEM."
     )
-  return with_memory_space_constraint_p.bind(x, memory_space=memory_space)
-
-def get_memory_space(x: jax.Array) -> Any:
-  """Queries the memory space of an array."""
-  aval = jax_core.get_aval(x)
-  if isinstance(aval, pl_core.ShapedArrayWithMemorySpace):
-    return aval.memory_space
-  return None
+  return pl_core.with_memory_space_constraint_p.bind(
+      x, memory_space=memory_space)

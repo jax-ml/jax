@@ -31,6 +31,7 @@ from jax._src import frozen_dict
 from jax._src.lax.control_flow import for_loop
 from jax._src import linear_util as lu
 from jax._src import source_info_util
+from jax._src.interpreters import mlir
 from jax._src.pallas.mosaic import core as mosaic_core
 from jax._src.pallas.mosaic import primitives as mosaic_primitives
 from jax._src.pallas.mosaic import verification
@@ -1880,6 +1881,30 @@ def _get_randomized_grid_coordinates(
 
   return tuple(grid_point_coordinates)
 
+# TODO(sharadmv, jburnim): add support for memory space constraints
+remove_memory_space_p = jax_core.Primitive('remove_memory_space')
+
+@remove_memory_space_p.def_abstract_eval
+def _remove_memory_space_abstract_eval(x):
+  if isinstance(x, pallas_core.ShapedArrayWithMemorySpace):
+    if (
+        x.memory_space is None
+        or x.memory_space is pallas_core.MemorySpace.ANY
+        or x.memory_space is mosaic_core.MemorySpace.ANY
+        or x.memory_space is mosaic_core.MemorySpace.HBM
+    ):
+      return jax_core.ShapedArray(x.shape, x.dtype)
+    raise NotImplementedError(f'Unsupported memory space: {x.memory_space}')
+  return x
+
+def _remove_memory_space_impl(x):
+  return x
+
+def _remove_memory_space_lowering(_, x):
+  return [x]
+mlir.register_lowering(remove_memory_space_p, _remove_memory_space_lowering)
+
+
 
 def _get_grid_point(
     loop_indices: tuple[Array, ...],
@@ -2018,6 +2043,7 @@ def interpret_pallas_call(
     interpret_params = dataclasses.replace(
         interpret_params, num_cores_per_device=mesh.devices.shape[0])
 
+  args = [remove_memory_space_p.bind(a) for a in args]
   # args contains: *dynamic_grid_sizes, *index, *inputs.  (No consts?)
   dynamic_grid_args, scalars, input_args = split_list(
       args,

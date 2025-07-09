@@ -437,8 +437,7 @@ class AbstractRef(core.AbstractValue):
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval
-            and (self.memory_space is None
-                 or self.memory_space == other.memory_space))
+            and self.memory_space == other.memory_space)
 
   def __hash__(self):
     return hash((self.__class__, self.inner_aval, self.memory_space))

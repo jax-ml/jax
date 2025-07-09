@@ -629,7 +629,8 @@ def _check_block_mappings(
           "rank >= 1. " + err_details())
 
     if (
-        memory_space == tpu_core.MemorySpace.ANY
+        (memory_space == tpu_core.MemorySpace.ANY
+         or memory_space == tpu_core.MemorySpace.HBM)
         and not bm.has_trivial_window()
     ):
       raise ValueError(
@@ -772,6 +773,7 @@ def lower_jaxpr_to_module(
           bm.block_aval.memory_space)
       if (
           tpu_memory_space == tpu_core.MemorySpace.ANY
+          or tpu_memory_space == tpu_core.MemorySpace.HBM
           or tpu_memory_space == tpu_core.MemorySpace.SEMAPHORE
       ):
         # We checked above that the block does not require windowing.

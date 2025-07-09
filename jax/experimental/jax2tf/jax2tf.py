@@ -1558,6 +1558,7 @@ tf_not_yet_impl = [
     "repeat",
     "roll",
     "with_memory_space_constraint",
+    "remove_memory_space",
     # temporary pending cudnn fix, see https://github.com/jax-ml/jax/pull/23740
     "bias_fwd",
     "bias_bwd",
