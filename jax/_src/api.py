@@ -2396,7 +2396,6 @@ def make_jaxpr(
   { lambda ; a:f32[]. let
       b:f32[] = cos a
       c:f32[] = sin a
-      _:f32[] = sin b
       d:f32[] = cos b
       e:f32[] = mul 1.0:f32[] d
       f:f32[] = neg e
