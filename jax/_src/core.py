@@ -638,6 +638,7 @@ class GenericEffect(Effect):
 generic_effect = GenericEffect()
 generic_effect_set = {generic_effect}
 effects.lowerable_effects.add_type(GenericEffect)
+effects.control_flow_allowed_effects.add_type(GenericEffect)
 
 def _generic_abstract_eval(abstract_eval):
   def abstract_eval_(*args, **kwargs):
