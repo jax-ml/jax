@@ -92,6 +92,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.SMEM, 4),
       (pltpu.HBM, 0),
       (pltpu.ANY, None),
+      (pltpu.HOST, 6),
   )
   def test_basic_output_memory_space_constraint(self, memory_space, color):
     if not jtu.if_cloud_tpu_at_least(2025, 7, 10):
