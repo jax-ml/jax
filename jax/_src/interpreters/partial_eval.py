@@ -1949,6 +1949,8 @@ class DynamicJaxprTrace(core.Trace):
     # avoid cyclic refs
     self.frame.constid_to_tracer = {}
     self.frame.constvar_to_val = {}
+    self.frame.tracing_eqns = []  # thunk -> eqn -> in_tracers -> trace ->
+                                  # -> frame -> tracing_eqns -> thunk
 
   def to_jaxpr_tracer(self, x, source_info: SourceInfo):
     if isinstance(x, DynamicJaxprTracer) and x._trace is self:
@@ -2314,10 +2316,12 @@ def trace_to_jaxpr_dynamic(
     *,
     keep_inputs: list[bool] | None = None,
     lower: bool = False,
+    auto_dce: bool = True,
 ) -> tuple[Jaxpr, list[AbstractValue], list[Any]]:
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
   parent_trace = core.trace_ctx.trace
-  trace = DynamicJaxprTrace(fun.debug_info, parent_trace=parent_trace, lower=lower)
+  trace = DynamicJaxprTrace(fun.debug_info, parent_trace=parent_trace,
+                            lower=lower, auto_dce=auto_dce)
   # Name stacks are reset because the name stacks on jaxpr equations should be
   # rooted at the enclosing jaxpr.
   with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
