@@ -78,6 +78,7 @@ CMEM = MemorySpace.CMEM
 SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
 HBM = MemorySpace.HBM
+HOST = MemorySpace.HOST
 SEMAPHORE = MemorySpace.SEMAPHORE
 
 import typing as _typing  # pylint: disable=g-import-not-at-top

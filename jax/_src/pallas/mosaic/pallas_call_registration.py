@@ -93,6 +93,8 @@ def _get_memory_space_from_aval(
       return tpu_custom_call.MemorySpace.SMEM
     case tpu_core.MemorySpace.SEMAPHORE:
       return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
+    case tpu_core.MemorySpace.HOST:
+      return tpu_custom_call.MemorySpace.HOST
   return None
 
 
