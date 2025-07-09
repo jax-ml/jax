@@ -335,15 +335,17 @@ def _run_scoped_resource_estimator(
           f"Unsupported memory space: {aval.memory_space}")
   return rs + _estimate_resources(ctx, jaxpr)
 
+REDUCE_SCRATCH_ELEMS = 128 * 2  # vector of 2 elements per lane in each WG
 
 @_register_resource_estimator(lax.reduce_sum_p)
-def _reduce_sum_resource_estimator(
+@_register_resource_estimator(lax.reduce_max_p)
+def _reduce_resource_estimator(
     ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, *, axes
 ) -> Resources:
   del ctx, axes  # Unused.
-  # We don't need shmem for some reductons, but it depends on the layout, so we
-  # conservatively request some scratch space.
-  return Resources(smem_scratch_bytes=4 * x_aval.dtype.itemsize)
+  # We don't need SMEM for some reductions, but it depends on the layout, so we
+  # conservatively request the maximum scratch space we might need.
+  return Resources(smem_scratch_bytes=REDUCE_SCRATCH_ELEMS * x_aval.dtype.itemsize)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2173,8 +2175,7 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   return math_dialect.log(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
-@register_lowering_rule(lax.reduce_sum_p, mgpu.LoweringSemantics.Lane)
-def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
+def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes):
   [x_aval] = ctx.avals_in
   match x.layout:
     case mgpu.WGStridedFragLayout():
@@ -2190,30 +2191,27 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
         )
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
       with ctx.module_ctx.scratch_view([scratch_ty]) as [scratch]:
-        return x.reduce("add", axes, scratch)
+        return x.reduce(op, axes, scratch)
     case mgpu.TiledLayout():
-      if axes != (x_aval.ndim - 1,):
-        raise NotImplementedError
-      if not jnp.issubdtype(x_aval.dtype, jnp.floating):
-        raise NotImplementedError
-      return x.reduce("add", axes[0])
+      if len(axes) != 1:
+        raise NotImplementedError("Multi-axis reductions not supported")
+      reduced_dim = x.layout.tiling.tile_dimension(axes[0])
+      if any(reduced_dim[d] for d in x.layout.partitioned_warp_dims):
+        scratch_ty = jax.ShapeDtypeStruct(shape=(REDUCE_SCRATCH_ELEMS,), dtype=x_aval.dtype)
+        ctx = ctx.module_ctx.scratch_view([scratch_ty])
+      else:
+        ctx = contextlib.nullcontext([None])
+      with ctx as [scratch]:
+        return x.reduce(op, axes[0], scratch=scratch)
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 
-
-@register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Lane)
-def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
-  [x_aval] = ctx.avals_in
-  match x.layout:
-    case mgpu.TiledLayout():
-      if axes != (x_aval.ndim - 1,):
-        raise NotImplementedError
-      if not jnp.issubdtype(x_aval.dtype, jnp.floating):
-        raise NotImplementedError
-      return x.reduce("max", axes[0])
-    case _:
-      raise NotImplementedError(f"Unsupported layout {x.layout}")
-
+register_lowering_rule(lax.reduce_sum_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_reduce_lowering_rule, "add")
+)
+register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_reduce_lowering_rule, "max")
+)
 
 def _reduce_lowering_rule_wg(
     kind: vector_dialect.CombiningKind,

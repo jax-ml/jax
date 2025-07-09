@@ -1889,11 +1889,16 @@ class PallasCallTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel(x), x)
 
-  @parameterized.parameters(
-      (jnp.sum,),
-      (jnp.max,)
+  @parameterized.product(
+      layout=(
+          plgpu.Layout.WGMMA,
+          plgpu.Layout.TCGEN05,
+          plgpu.Layout.TCGEN05_TMEM_NATIVE,
+          plgpu.Layout.TCGEN05_M64_COLLECTIVE(128),
+      ),
+      op=(jnp.sum, jnp.max),
   )
-  def test_reduce_with_tcgen05_layout(self, op):
+  def test_reduce_with_layout(self, layout, op):
     self.skip_if_wg_semantics()
     axis = -1
     swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
@@ -1909,13 +1914,11 @@ class PallasCallTest(PallasTest):
             plgpu.SMEM((128,), jnp.float32),
             plgpu.Barrier(),
         ],
-        num_threads=1,
-        thread_name="x",
     )
     def kernel(x_ref, y_ref, smem_ref, smem_reduced_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
-      x_val = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05)
+      x_val = plgpu.load(smem_ref, (), layout=layout)
       smem_reduced_ref[...] = op(x_val, axis=axis)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_reduced_ref, y_ref)
