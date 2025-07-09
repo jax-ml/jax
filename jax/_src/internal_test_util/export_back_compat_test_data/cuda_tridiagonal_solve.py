@@ -15,7 +15,10 @@
 # ruff: noqa
 
 import datetime
-from numpy import array, float32
+import numpy as np
+
+array = np.array
+float32 = np.float32
 
 data_2025_06_16 = {}
 

@@ -62,7 +62,8 @@ from jax._src.custom_derivatives import lift_jvp
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import sharding_impls
-from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse
+from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse, BCOO
+from jax.experimental.sparse.bcsr import BCSR
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.lib import pytree
@@ -72,7 +73,6 @@ from jax._src.util import safe_map, safe_zip, split_list
 from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.numpy import indexing as jnp_indexing
 from jax.experimental import sparse
-from jax.experimental.sparse import BCOO, BCSR
 
 sparse_rules_bcoo : dict[core.Primitive, Callable] = {}
 sparse_rules_bcsr : dict[core.Primitive, Callable] = {}

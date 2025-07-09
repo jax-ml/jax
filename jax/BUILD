@@ -15,7 +15,6 @@
 # JAX is Autograd and XLA
 
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
-load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "buffer_callback_internal_users",
@@ -193,7 +192,7 @@ package_group(
 )
 
 # JAX-private test utilities.
-py_library(
+pytype_strict_library(
     # This build target is required in order to use private test utilities in jax._src.test_util,
     # and its visibility is intentionally restricted to discourage its use outside JAX itself.
     # JAX does provide some public test utilities (see jax/test_util.py);
@@ -208,14 +207,28 @@ py_library(
         ":internal",
     ] + jax_test_util_visibility,
     deps = [
+        ":api",
+        ":cloud_tpu_init",
         ":compilation_cache_internal",
+        ":config",
+        ":core",
+        ":deprecations",
+        ":dtypes",
         ":jax",
+        ":mesh",
+        ":mlir",
+        ":monitoring",
+        ":numpy",
         ":public_test_util",
+        ":typing",
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
 # TODO(necula): break the internal_test_util into smaller build targets.
-py_library(
+pytype_strict_library(
     name = "internal_test_util",
     srcs = [
         "_src/internal_test_util/__init__.py",
@@ -230,41 +243,50 @@ py_library(
     deps = if_building_jaxlib(
         if_building = [
             ":jax",
+            ":lazy_loader",
+            ":dtypes",
+            ":deprecations",
+            ":test_util",
+            ":util",
         ],
         if_not_building = [],
     ) + py_deps("numpy"),
 )
 
-py_library(
+pytype_strict_library(
     name = "internal_test_harnesses",
     srcs = ["_src/internal_test_util/test_harnesses.py"],
     visibility = [":internal"] + jax_internal_test_harnesses_visibility,
     deps = if_building_jaxlib(
         if_building = [
             ":ad_util",
+            ":api",
             ":config",
             ":jax",
+            ":lax",
+            ":random",
             ":test_util",
             "//jax/_src/lib",
         ],
         if_not_building = [],
-    ) + py_deps("numpy"),
+    ) + py_deps("numpy") + py_deps("absl/testing"),
 )
 
-py_library(
+pytype_strict_library(
     name = "test_multiprocess",
     srcs = ["_src/test_multiprocess.py"],
     visibility = [":internal"],
     deps = if_building_jaxlib(
         if_building = [
             ":jax",
+            ":xla_bridge",
             ":test_util",
         ],
         if_not_building = [],
-    ),
+    ) + py_deps("absl-all"),
 )
 
-py_library(
+pytype_strict_library(
     name = "internal_export_back_compat_test_util",
     srcs = ["_src/internal_test_util/export_back_compat_test_util.py"],
     visibility = [
@@ -272,14 +294,17 @@ py_library(
     ] + jax_internal_export_back_compat_test_util_visibility,
     deps = if_building_jaxlib(
         if_building = [
+            ":core",
             ":jax",
+            ":stages",
             ":test_util",
+            ":xla_bridge",
         ],
         if_not_building = [],
-    ) + py_deps("numpy"),
+    ) + py_deps("numpy") + py_deps("absl/logging"),
 )
 
-py_library(
+pytype_strict_library(
     name = "internal_export_back_compat_test_data",
     srcs = glob([
         "_src/internal_test_util/export_back_compat_test_data/*.py",
@@ -1089,12 +1114,13 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "lax_reference",
     srcs = ["_src/lax_reference.py"],
     visibility = [":internal"] + jax_visibility("lax_reference"),
     deps = [
         ":core",
+        ":dtypes",
         ":util",
     ] + py_deps("numpy") + py_deps("scipy") + py_deps("opt_einsum"),
 )
@@ -1490,7 +1516,7 @@ pytype_strict_library(
     deps = py_deps("epath"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "experimental_profiler",
     srcs = ["experimental/profiler.py"],
     visibility = ["//visibility:public"],
@@ -1499,11 +1525,12 @@ pytype_library(
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "experimental_transfer",
     srcs = ["experimental/transfer.py"],
     deps = [
         ":jax",
+        ":util",
         "//jax/_src/lib",
     ],
 )
@@ -1753,12 +1780,12 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "internal_mesh_utils",
     srcs = ["_src/mesh_utils.py"],
     deps = [
         ":xla_bridge",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -1949,7 +1976,7 @@ py_library_providing_imports_info(
     ] + py_deps("absl/logging") + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "stax",
     srcs = [
         "example_libraries/stax.py",
@@ -1958,7 +1985,7 @@ pytype_library(
     deps = [":jax"],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "experimental_sparse",
     srcs = glob(
         [
@@ -1968,12 +1995,29 @@ pytype_library(
     ),
     visibility = ["//visibility:public"],
     deps = [
+        ":ad",
+        ":api",
+        ":api_util",
+        ":batching",
+        ":config",
+        ":core",
+        ":custom_derivatives",
+        ":dtypes",
         ":ffi",
         ":jax",
-    ],
+        ":lax",
+        ":mlir",
+        ":numpy",
+        ":partial_eval",
+        ":sharding_impls",
+        ":traceback_util",
+        ":typing",
+        ":util",
+        "//jax/_src/lib",
+    ] + py_deps("numpy") + py_deps("scipy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "sparse_test_util",
     srcs = [
         "experimental/sparse/test_util.py",
@@ -1982,34 +2026,54 @@ pytype_library(
     deps = [
         ":experimental_sparse",
         ":jax",
+        ":lax",
         ":test_util",
+        ":typing",
+        ":util",
     ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "optimizers",
     srcs = [
         "example_libraries/optimizers.py",
     ],
     visibility = ["//visibility:public"],
-    deps = [":jax"] + py_deps("numpy"),
+    deps = [
+        ":jax",
+        ":util",
+    ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "ode",
     srcs = ["experimental/ode.py"],
     visibility = ["//visibility:public"],
-    deps = [":jax"],
+    deps = [
+        ":core",
+        ":jax",
+        ":numpy",
+        ":util",
+    ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "jet",
     srcs = ["experimental/jet.py"],
     visibility = ["//visibility:public"],
-    deps = [":jax"],
+    deps = [
+        ":ad_util",
+        ":api",
+        ":core",
+        ":jax",
+        ":lax",
+        ":partial_eval",
+        ":sharding_impls",
+        ":util",
+    ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "experimental_host_callback",
     srcs = [
         "experimental/__init__.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
@@ -2018,18 +2082,27 @@ pytype_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":api",
+        ":callback",
+        ":config",
+        ":core",
+        ":dtypes",
+        ":earray",
         ":jax",
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "compilation_cache",
     srcs = [
         "experimental/compilation_cache/__init__.py",
         "experimental/compilation_cache/compilation_cache.py",
     ],
     visibility = ["//visibility:public"],
-    deps = [":jax"],
+    deps = [
+        ":compilation_cache_internal",
+        ":jax",
+    ],
 )
 
 pytype_strict_library(
@@ -2053,7 +2126,7 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "mesh_utils",
     srcs = ["experimental/mesh_utils.py"],
     visibility = ["//visibility:public"],
@@ -2085,7 +2158,7 @@ pytype_strict_library(
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "mosaic",
     srcs = [
         "experimental/mosaic/__init__.py",
@@ -2098,7 +2171,7 @@ pytype_library(
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "random",
     srcs = [
         "_src/prng.py",
@@ -2111,28 +2184,38 @@ pytype_library(
         ":batching",
         ":config",
         ":core",
+        ":dtypes",
         ":ffi",
         ":lax",
+        ":mesh",
         ":mlir",
         ":numpy",
         ":pretty_printer",
         ":sharding_impls",
         ":source_info_util",
+        ":tree_util",
         ":typing",
         ":util",
         ":xla",
+        ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "rnn",
     srcs = ["experimental/rnn.py"],
     visibility = ["//visibility:public"],
-    deps = [":jax"],
+    deps = [
+        ":core",
+        ":custom_derivatives",
+        ":jax",
+        ":lax",
+        ":typing",
+    ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "experimental_colocated_python",
     srcs = [
         "experimental/colocated_python/__init__.py",
@@ -2145,6 +2228,7 @@ pytype_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":api",
         ":api_util",
         ":jax",
         ":traceback_util",
@@ -2156,13 +2240,13 @@ pytype_library(
     ] + py_deps("numpy") + py_deps("cloudpickle"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "experimental_buffer_callback",
     srcs = [
         "experimental/buffer_callback.py",
     ],
     visibility = [":buffer_callback_users"],
     deps = [
-        ":jax",
+        ":buffer_callback",
     ],
 )

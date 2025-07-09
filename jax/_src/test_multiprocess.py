@@ -22,12 +22,12 @@ import subprocess
 import time
 
 from absl import app
-from absl import flags
+import absl.flags
 import jax
 from jax import config
 from jax._src import distributed
 try:
-  import portpicker
+  import portpicker  # pytype: disable=import-error
 except ImportError:
   portpicker = None
 
@@ -35,23 +35,23 @@ from absl.testing import absltest
 from jax._src import test_util as jtu
 
 
-_NUM_PROCESSES = flags.DEFINE_integer(
+_NUM_PROCESSES = absl.flags.DEFINE_integer(
     "num_processes", None, "Number of processes to use."
 )
 
-_GPUS_PER_PROCESS = flags.DEFINE_integer(
+_GPUS_PER_PROCESS = absl.flags.DEFINE_integer(
     "gpus_per_process",
     0,
     "Number of GPUs per worker process.",
 )
 
-_MULTIPROCESS_TEST_WORKER_ID = flags.DEFINE_integer(
+_MULTIPROCESS_TEST_WORKER_ID = absl.flags.DEFINE_integer(
     "multiprocess_test_worker_id",
     -1,
     "Worker id. Set by main test process; should not be set by users.",
 )
 
-_MULTIPROCESS_TEST_CONTROLLER_ADDRESS = flags.DEFINE_string(
+_MULTIPROCESS_TEST_CONTROLLER_ADDRESS = absl.flags.DEFINE_string(
     "multiprocess_test_controller_address",
     "",
     "Address of the JAX controller. Set by the main test process; should not be"
