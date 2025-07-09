@@ -1980,17 +1980,16 @@ def _make_lengths_same(sharding, ndim):
     return sharding.update(spec=P(*pspec[:ndim], unreduced=pspec.unreduced))
   assert False, "unreachable"
 
-# TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
-# Collective too.
 def modify_spec_for_auto_manual(spec, mesh) -> P:
-  new_spec = []
+  new_spec = []  # type: ignore
   for s in spec:
-    if not s:
-      new_spec.append(s)
+    if s is None:
+      new_spec.append(s)  # type: ignore
+    elif isinstance(s, tuple):
+      new_spec.append(tuple(
+          p for p in s if mesh._name_to_type[p] == AxisType.Explicit))
     else:
-      temp_s = s[0] if isinstance(s, tuple) else s
-      new_spec.append(s if mesh._name_to_type[temp_s] == AxisType.Explicit
-                      else None)
+      new_spec.append(s if mesh._name_to_type[s] == AxisType.Explicit else None)  # type: ignore
   new_unreduced = {u for u in spec.unreduced
                    if mesh._name_to_type[u] == AxisType.Explicit}
   new_reduced = {u for u in spec.reduced

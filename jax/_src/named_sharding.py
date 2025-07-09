@@ -283,12 +283,11 @@ def get_array_mapping(
 class SdyDim:
   axes: Sequence[str]
   is_open: bool
-  priority: int | None = None
 
   def build(self) -> sdy.DimensionShardingAttr:
     return sdy.DimensionShardingAttr.get(
         [sdy.AxisRefAttr.get(axis) for axis in self.axes],
-        is_closed=not self.is_open, priority=self.priority)
+        is_closed=not self.is_open)
 
   def __repr__(self):
     return f'SdyDim({self._custom_repr()})'
@@ -298,8 +297,7 @@ class SdyDim:
     open_repr = ''
     if self.is_open:
       open_repr = ', ?' if self.axes else '?'
-    priority_repr = '' if self.priority is None else f'p{self.priority}'
-    return f'{{{axes_repr}{open_repr}}}{priority_repr}'
+    return f'{{{axes_repr}{open_repr}}}'
 
 def _get_axes(axes, mesh_shape):
   if not axes:
@@ -351,9 +349,7 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArray, mesh):
   if mesh._any_axis_auto:
     dim_shardings, used_axes = [], []  # type: ignore
     for d in sdy_sharding.dim_shardings:
-      # TODO(yashkatariya): Maybe if any mesh axis is auto, mark all axes as open?
-      dim_shardings.append(SdyDim(axes=[], is_open=True)
-                           if not d.axes and not d.is_open else d)
+      dim_shardings.append(SdyDim(axes=d.axes, is_open=True))
       used_axes.extend(d.axes)
     remaining_axes = set(mesh.axis_names) - set(used_axes)
     replicated_axes = tuple(r for r in remaining_axes
@@ -498,6 +494,19 @@ def _check_unique_resources(pspec: PartitionSpec, arg_name: str, mesh=None
             f' for {mesh_lib.show_axes(multiple_uses)}'),
         mesh=mesh, pspec=pspec)
 
+def check_pspec_mix_axis_type(mesh, pspec):
+  for spec in pspec:
+    if isinstance(spec, tuple):
+      if all(mesh._name_to_type[spec[0]] == mesh._name_to_type[p]
+             for p in spec):
+        continue
+      if any(mesh._name_to_type[p] == AxisType.Manual for p in spec):
+        raise ValueError(
+            'Tuple subset of `PartitionSpec` cannot contain `Manual` mixed'
+            f' with `Auto` or `Explicit`. Got pspec {pspec} and subset'
+            f' {spec} with axis types:'
+            f' ({", ".join(str(mesh._name_to_type[p]) for p in spec)})')
+
 def _check_mesh_resource_axis(mesh, pspec):
   for p in pspec:
     if p is PartitionSpec.UNCONSTRAINED or p is None:
@@ -508,11 +517,7 @@ def _check_mesh_resource_axis(mesh, pspec):
         raise ValueError(
             f"Resource axis: {r} of {pspec} "
             f"is not found in mesh: {tuple(mesh.shape.keys())}.")
-    if not all(mesh._name_to_type[p[0]] == mesh._name_to_type[r] for r in p):
-      raise ValueError(
-          'AxisTypes should be the same in a tuple subset of PartitionSpec:'
-          f' {pspec}. Got subset {p} with axis'
-          f' types: ({", ".join(str(mesh._name_to_type[r]) for r in p)})')
+  check_pspec_mix_axis_type(mesh, pspec)
   if (AxisType.Auto not in mesh._axis_types_dict and
       PartitionSpec.UNCONSTRAINED in pspec):
     raise ValueError(

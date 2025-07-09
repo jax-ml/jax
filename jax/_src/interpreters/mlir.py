@@ -1137,15 +1137,11 @@ def all_unconstrained(s, aval):
 class UnconstrainedVariants(NamedTuple):
   contains_unconstrained: bool
   all_unconstrained: bool
-  unconstrained_dims: set[int] | None
 
 def _get_unconstrained_variants(s, aval) -> UnconstrainedVariants:
   us = contains_unconstrained(s)
-  unconstrained_dims = ({i for i, p in enumerate(s.spec)  # pytype: disable=attribute-error
-                         if p is PartitionSpec.UNCONSTRAINED} if us else None)
   return UnconstrainedVariants(
-      contains_unconstrained=us, all_unconstrained=all_unconstrained(s, aval),
-      unconstrained_dims=unconstrained_dims)
+      contains_unconstrained=us, all_unconstrained=all_unconstrained(s, aval))
 
 
 def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
@@ -1842,9 +1838,14 @@ def lower_jaxpr_to_fun(
             not uv.all_unconstrained):
           if config.use_shardy_partitioner.value:
             s = modify_sdy_sharding_wrt_axis_types(s, o_aval.sharding.mesh)
+            unconstrained_dims = None  # delete this after shardy is default
+          else:
+            unconstrained_dims = (
+                set(range(o_aval.ndim)) if o_aval.sharding.mesh._any_axis_auto
+                else None)
           temp_flat_outputs.append(wrap_with_sharding_op(
               entry_lowering_ctx, o, o_aval, s,
-              unspecified_dims=uv.unconstrained_dims))
+              unspecified_dims=unconstrained_dims))
         else:
           temp_flat_outputs.append(o)
       flat_outputs = temp_flat_outputs
@@ -2898,9 +2899,7 @@ def lower_with_sharding_in_types(ctx, op, aval, sharding_proto=None):
             if sharding_proto is None else sharding_proto)
     unspecified_dims = None
     if aval.sharding.mesh._any_axis_auto:
-      # TODO(yashkatariya): Maybe if any mesh axis is auto, mark all axes
-      # as unspecified?
-      unspecified_dims = {i for i, s in enumerate(aval.sharding.spec) if s is None}
+      unspecified_dims = set(range(aval.ndim))
     return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
 
 

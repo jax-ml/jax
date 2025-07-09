@@ -4868,9 +4868,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
     lowered_text = g.lower(arr).as_text()
     if config.use_shardy_partitioner.value:
-      self.assertIn('<@mesh, [{?}, {"y"}]>', lowered_text)
+      self.assertIn('<@mesh, [{?}, {"y", ?}]>', lowered_text)
     else:
-      self.assertIn("unspecified_dims=[0]", lowered_text)
+      self.assertIn("unspecified_dims=[0,1]", lowered_text)
 
   def test_prng_key_wsc(self):
     mesh = jtu.create_mesh((2,), 'x')
@@ -6175,11 +6175,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       else:
         self.assertTrue(lowered_text.count("unspecified_dims") == 4)
 
-    with self.assertRaisesRegex(
-        ValueError,
-        "AxisTypes should be the same in a tuple subset of PartitionSpec"):
-      NamedSharding(mesh2, P(('x', 'y')))
-
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_where_with_scalar(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
@@ -6417,9 +6412,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     if config.use_shardy_partitioner.value:
       self.assertTrue(lowered_text.count(
-          '[{"x"}, {?}, {?}], replicated={"y"}') == 3)
+          '[{"x", ?}, {?}, {?}], replicated={"y"}') == 3)
     else:
-      self.assertTrue(lowered_text.count("unspecified_dims=[1,2]") == 3)
+      self.assertTrue(lowered_text.count("unspecified_dims=[0,1,2]") == 3)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_auto_mode_mix(self, mesh):
@@ -8218,6 +8213,29 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.jit(f)(jnp.ones((2, 3)))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
+                          axis_types=(AxisType.Explicit, AxisType.Auto))
+  def test_mix_axis_type_in_pspec(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, P(('x', 'y'), None))
+
+    @jax.jit
+    def f(x):
+      self.assertEqual(x.aval.sharding.spec, P('x', None))
+      out = x * 2
+      self.assertEqual(out.aval.sharding.spec, P('x', None))
+      return out
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp * 2)
+
+    lowered_text = f.lower(arr).as_text()
+    if config.use_shardy_partitioner.value:
+      self.assertEqual(lowered_text.count("{?}"), 3)
+      self.assertEqual(lowered_text.count('{"x", ?}'), 3)
+    else:
+      self.assertEqual(lowered_text.count('unspecified_dims=[0,1]'), 3)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
@@ -8989,8 +9007,8 @@ class ShardyTest(jtu.JaxTestCase):
         mesh_shape=(('data', 4), ('model', 8), ('expert', 2)),
         dim_shardings=[
             sharding_impls.SdyDim(axes=['data', 'expert'], is_open=False),
-            sharding_impls.SdyDim(axes=['model'], is_open=True, priority=2)])
-    self.assertEqual(repr(sharding), "SdyArray([{'data', 'expert'}, {'model', ?}p2])")
+            sharding_impls.SdyDim(axes=['model'], is_open=True)])
+    self.assertEqual(repr(sharding), "SdyArray([{'data', 'expert'}, {'model', ?}])")
 
   def test_array_sharding_repr_with_logical_ids(self):
     abstract_mesh = jax.sharding.AbstractMesh((4, 8, 2), ('x', 'y', 'z'))
@@ -9002,9 +9020,9 @@ class ShardyTest(jtu.JaxTestCase):
 
   def test_dimension_sharding_repr(self):
     dim_sharding = sharding_impls.SdyDim(
-        axes=['data', 'model'], is_open=True, priority=2)
+        axes=['data', 'model'], is_open=True)
     self.assertEqual(repr(dim_sharding),
-                     "SdyDim({'data', 'model', ?}p2)")
+                     "SdyDim({'data', 'model', ?})")
 
   def test_tensor_dialect(self):
     # While this doesn't emit any `mlir::TensorDialect` ops, some pass in the
