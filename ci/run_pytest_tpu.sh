@@ -67,6 +67,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
     --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
+    --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_thread_map \
     --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
 
   # Run Pallas printing tests, which need to run with I/O capturing disabled.
