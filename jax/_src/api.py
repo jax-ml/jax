@@ -2784,10 +2784,11 @@ class ShapeDtypeStruct:
     dtype: a dtype-like object
     sharding: (optional) a :class:`jax.Sharding` object
   """
-  __slots__ = ["shape", "dtype", "sharding", "_dll", "weak_type", "vma"]
+  __slots__ = ["shape", "dtype", "sharding", "_dll", "weak_type", "vma",
+               "is_ref"]
 
   def __init__(self, shape, dtype, *, sharding=None, weak_type=False,
-               vma=None):
+               vma=None, is_ref=False):
     self.shape = tuple(shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
@@ -2824,6 +2825,7 @@ class ShapeDtypeStruct:
           "`vma` argument passed to ShapeDtypeStruct should be of type `set`"
           f" or `frozenset`. Got type {type(vma)}")
     self.vma = None if vma is None else frozenset(vma)
+    self.is_ref = is_ref
 
   size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
@@ -2843,8 +2845,9 @@ class ShapeDtypeStruct:
     l = f", format={self._dll}" if self._dll is not None else ""
     wt = f", weak_type={self.weak_type}" if self.weak_type else ""
     vma = f", vma={self.vma}" if self.vma else ""
+    is_ref = f", is_ref={self.is_ref}" if self.is_ref else ""
     return (f"{type(self).__name__}(shape={self.shape}, "
-            f"dtype={self.dtype.name}{sh}{l}{wt}{vma})")
+            f"dtype={self.dtype.name}{sh}{l}{wt}{vma}{is_ref})")
 
   __str__ = __repr__
 
@@ -2853,15 +2856,15 @@ class ShapeDtypeStruct:
       return False
     else:
       return ((self.shape, self.dtype, self.sharding, self._dll,
-               self.weak_type, self.vma) ==
+               self.weak_type, self.vma, self.is_ref) ==
               (other.shape, other.dtype, other.sharding, other._dll,
-               other.weak_type, other.vma))
+               other.weak_type, other.vma, other.is_ref))
 
   def __hash__(self):
     # TODO(frostig): avoid the conversion from dict by addressing
     # https://github.com/jax-ml/jax/issues/8182
     return hash((self.shape, self.dtype, self.sharding, self._dll,
-                 self.weak_type, self.vma))
+                 self.weak_type, self.vma, self.is_ref))
 
   def __setattr__(self, name, value):
     if hasattr(self, name):
@@ -2891,7 +2894,8 @@ class ShapeDtypeStruct:
         dtype=kwargs.pop('dtype', self.dtype),
         sharding=sharding,
         weak_type=kwargs.pop('weak_type', self.weak_type),
-        vma=kwargs.pop('vma', self.vma))
+        vma=kwargs.pop('vma', self.vma),
+        is_ref=kwargs.pop('is_ref', self.is_ref))
 
 
 def _sds_aval_mapping(x):
@@ -2900,7 +2904,11 @@ def _sds_aval_mapping(x):
   aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type, vma=(frozenset() if x.vma is None else x.vma))
-  return core.update_aval_with_sharding(aval, x.sharding)
+  aval = core.update_aval_with_sharding(aval, x.sharding)
+  if x.is_ref:
+    from jax._src.state.types import AbstractRef
+    return AbstractRef(aval)
+  return aval
 core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
 
 

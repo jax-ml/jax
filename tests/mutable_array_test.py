@@ -87,6 +87,28 @@ class MutableArrayTest(jtu.JaxTestCase):
     expected[1] += 5
     self.assertAllClose(x_mut[...], expected)
 
+  def test_sharded_aot_mutable_sds(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    arr = jax.device_put(np.arange(8.), NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def f(x_mut):
+      x_mut[...] += 1.
+      x_mut[0] += 1
+      x_mut[1] += 5
+
+    sds_mut = jax.ShapeDtypeStruct(arr.shape, arr.dtype, sharding=arr.sharding,
+                                   is_ref=True)
+    compiled = f.lower(sds_mut).compile()
+
+    x_mut = core.mutable_array(arr)
+    compiled(x_mut)
+
+    expected = np.arange(8.) + 1
+    expected[0] += 1
+    expected[1] += 5
+    self.assertAllClose(x_mut[...], expected)
+
   @parameterized.parameters([True, False])
   def test_multiple_inputs_and_outputs(self, jit):
     def f(x_mut, y, z_mut, w):
