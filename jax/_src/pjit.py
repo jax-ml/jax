@@ -1517,7 +1517,6 @@ jit_p = core.Primitive("jit")
 jit_p.is_effectful = lambda params: bool(params['jaxpr'].effects)  # type: ignore
 jit_p.multiple_results = True
 jit_p.skip_canonicalization = True
-pjit_p = jit_p  # TODO(frostig): remove
 
 def _is_high(jaxpr, **_) -> bool:
   return jaxpr.jaxpr.is_high

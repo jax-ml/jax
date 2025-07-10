@@ -18,8 +18,6 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * New features:
   * Added `jax.P` which is an alias for `jax.sharding.PartitionSpec`.
-  * `jax.extend.core.primitives.pjit_p` has been renamed to `jit_p`, although
-    `pjit_p` is still exported as an alias for the time being.
   * Added {func}`jax.tree.reduce_associative`.
 
 * Breaking changes:
@@ -40,9 +38,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * `lax.infeed` and `lax.outfeed` were removed, after being deprecated in
     JAX 0.6. The `transfer_to_infeed` and `transfer_from_outfeed` methods were
     also removed the `Device` objects.
-  * The `name` attribute of the `pjit_p` primitive (exported as
-    `jax.extend.core.primitives.pjit_p`) has changed from `"pjit"` to `"jit"`.
-    This affects the string representations of jaxprs.
+  * The `jax.extend.core.primitives.pjit_p` primitive has been renamed to
+    `jit_p`, and its `name` attribute has changed from `"pjit"` to `"jit"`.
+    This affects the string representations of jaxprs. The same primitive is no
+    longer exported from the `jax.experimental.pjit` module.
   * The (undocumented) function `jax.extend.backend.add_clear_backends_callback`
     has been removed. Users should use `jax.extend.backend.register_backend_cache`
     instead.

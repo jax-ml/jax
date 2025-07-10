@@ -62,7 +62,6 @@ import numpy as np
 from jax import lax
 from jax import api_util
 import jax.numpy as jnp
-from jax.experimental import pjit
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten,)
 
@@ -70,6 +69,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
 from jax._src import linear_util as lu
+from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal

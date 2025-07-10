@@ -607,6 +607,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:jet",
         "//jax:stax",
+        "//jax/extend:core",
     ] + py_deps([
         "absl/testing",
         "numpy",
