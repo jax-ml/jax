@@ -442,7 +442,7 @@ class LaunchContext:
           else:
             try:
               # We try to reproduce the gmem_peer_id computation on the host.
-              peer_id = _recompute_peer_id(gmem_peer_id)
+              peer_id = _recompute_peer_id(gmem_peer_id, fuel=16)
             except ReplicationError as e:
               raise ValueError(
                   "Failed to recompute the async_copy peer id on the host"
