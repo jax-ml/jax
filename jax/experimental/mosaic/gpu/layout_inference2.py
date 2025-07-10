@@ -83,6 +83,18 @@ def extract_constant_from_least_replicated_expression_for_hint(
   if not choices:
     return None
 
+  # Special case: if there is only one choice and there was only one
+  # subexpression, we can return it directly.
+  if len(choices) == 1 and len(expressions) == 1:
+    return choices[0]
+
+  # If all the choices are replicated, then we should return `None`. Propagating
+  # replicated layouts upwards in general is not safe.
+  # TODO(bchetioui): replace this hint workaround by constraints in equations,
+  # and remove this filter.
+  if all(layouts_lib.has_any_replication(c.value) for c in choices):
+    return None
+
   # We reduce the expression here in order to recover an unambiguous least
   # replicated layout if it exists.
   maybe_choice = eqns.reduce_expression(
@@ -91,7 +103,7 @@ def extract_constant_from_least_replicated_expression_for_hint(
 
   if isinstance(maybe_choice, eqns.Unsatisfiable):
     # TODO(bchetioui): consider other choices.
-    return choices[0]
+    return next(c for c in choices if not layouts_lib.has_any_replication(c.value))
 
   assert isinstance(maybe_choice, eqns.Constant)
   return maybe_choice
