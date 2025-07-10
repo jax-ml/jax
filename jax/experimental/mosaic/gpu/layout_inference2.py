@@ -382,6 +382,17 @@ def _optimization_barrier_equation_system(
   return eqns.EquationSystem(), operand_or_results_for_variable
 
 
+@_add_equation_system_derivation_rule(vector.SplatOp)
+def _vector_splat_equation_system(
+    op: ir.OpView
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  result = OperandOrResult(op, VariableType.RESULT, 0)
+  variable = eqns.Variable(result)
+  layout = fa.WGSplatFragLayout(tuple(cast(ir.ShapedType, op.result.type).shape))
+  system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
+  return system, {variable: [result]}
+
+
 @_add_equation_system_derivation_rule(arith.ConstantOp)
 def _constant_equation_system(
     constant_op: arith.ConstantOp

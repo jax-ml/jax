@@ -185,21 +185,19 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
   @parameterized.parameters(True, False)
   def test_infer_splat_layout_for_vector_splat(self, rhs_splat):
-    self.skip_if_equations()
-    add = splat = None
     shape = (16, 8)
     layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
 
-    def body(lhs, rhs):
-      nonlocal add, splat
+    with ir.InsertionPoint(self.module.body):
+      bf16 = ir.BF16Type.get()
+      # TODO(bchetioui): use `llvm.mlir_undef` here once it is supported.
+      lhs = arith.ConstantOp(bf16, ir.FloatAttr.get(bf16, 0))
+      ty = ir.VectorType.get(shape, bf16)
+      attrs = [ir.FloatAttr.get(bf16, i) for i in range(shape[0] * shape[1])]
+      rhs = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attrs, type=ty))
       rhs = layout_cast(rhs, layout) if rhs_splat else rhs
       splat = vector.SplatOp(rhs.type, lhs)
       add = arith.AddFOp(splat.result, rhs)
-
-    with ir.InsertionPoint(self.module.body):
-      elt_type = ir.BF16Type.get()
-      ty = ir.VectorType.get(shape, elt_type)
-      func.FuncOp.from_py_func(elt_type, ty)(body)
 
     self.infer_layout(self.module)
 
