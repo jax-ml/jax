@@ -715,6 +715,37 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
+  def test_custom_primitive_op_args_must_match_args_of_terminator(self):
+    def kernel():
+      shape = (128,)
+      elt_ty = ir.F32Type.get()
+      ty = ir.VectorType.get(shape, elt_ty)
+      out_layouts = ir.ArrayAttr.get([
+          layouts.to_layout_attr(mgpu.WGStridedFragLayout.from_shaped_type(ty))
+      ])
+
+      op = mgpu.dialect.CustomPrimitiveOp(
+          result=[ty],
+          operands_=[],
+          in_layouts=[],
+          in_transforms=[],
+          out_layouts=out_layouts,
+      )
+      block = op.body.blocks.append()
+      with ir.InsertionPoint(block):
+        v = llvm.mlir_undef(ir.VectorType.get([256], ir.F32Type.get()))
+        mgpu.dialect.ReturnOp(operands_=[v])
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(name="kernel")(kernel)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"type of return operand 0 \('vector<256xf32>'\) doesn't match the"
+        r" result type \('vector<128xf32>'\) in custom_primitive",
+    ):
+      self.module.operation.verify()
+
 
 class DialectLoweringTest(MosaicGpuTest):
 

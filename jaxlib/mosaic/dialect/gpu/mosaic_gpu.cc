@@ -449,6 +449,28 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult ReturnOp::verify() {
+  auto custom_primitive_op = cast<CustomPrimitiveOp>((*this)->getParentOp());
+
+  // The operand number and types must match the custom primitive signature.
+  const auto& results = custom_primitive_op->getResultTypes();
+  if (getNumOperands() != results.size())
+    return emitOpError("has ")
+           << getNumOperands() << " operands, but enclosing custom_primitive (@"
+           << custom_primitive_op->getName() << ") returns " << results.size();
+
+  for (unsigned i = 0, e = results.size(); i != e; ++i)
+    if (getOperand(i).getType() != results[i])
+      return emitError() << "type of return operand " << i << " ("
+                         << getOperand(i).getType()
+                         << ") doesn't match the result type (" << results[i]
+                         << ")"
+                         << " in custom_primitive @"
+                         << custom_primitive_op->getName();
+
+  return llvm::success();
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST

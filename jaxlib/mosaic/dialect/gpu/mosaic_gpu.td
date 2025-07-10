@@ -18,6 +18,7 @@ limitations under the License.
 
 include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
 include "mlir/Dialect/LLVMIR/BasicPtxBuilderInterface.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/BuiltinAttributeInterfaces.td"
@@ -506,7 +507,28 @@ def MosaicGPU_OptimizationBarrierOp : Op<MosaicGPU_Dialect, "optimization_barrie
   }];
 }
 
-def MosaicGPU_CustomPrimitiveOp : Op<MosaicGPU_Dialect, "custom_primitive", []> {
+def MosaicGPU_ReturnOp : Op<MosaicGPU_Dialect, "return",
+    [Pure, ReturnLike, Terminator, HasParent<"CustomPrimitiveOp">]>
+{
+  let summary = "Terminator for the region in a `CustomPrimitiveOp`";
+  let description = [{
+    The `return` op is a terminator that indicates the end of execution
+    within a `CustomPrimitiveOp`'s region. It can optionally return some values,
+    which become the results of the parent `CustomPrimitiveOp`.
+
+    The declared results of the parent `CustomPrimitiveOp` must match the
+    operand types of this op.
+  }];
+
+  // The operand's type must match the parent CustomPrimitiveOp's result type.
+  let arguments = (ins Variadic<VectorOfAnyRankOf<[AnyType]>>:$operands);
+  let assemblyFormat = [{ attr-dict ($operands^ `:` type($operands))? }];
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_CustomPrimitiveOp : Op<MosaicGPU_Dialect, "custom_primitive",
+    [IsolatedFromAbove, SingleBlockImplicitTerminator<"ReturnOp">]>
+{
   let summary = "Allows defining a custom Mosaic GPU primitive.";
   let description = [{
     Allows defining a custom Mosaic GPU primitive.
