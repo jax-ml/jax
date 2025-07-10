@@ -3581,9 +3581,45 @@ def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr, collecti
   return region.results
 
 
+def _device_id_dict_to_mesh(ctx: LoweringRuleContext, device_id_dict):
+  mesh_context = ctx.lowering_context.mesh_context
+  assert mesh_context is not None
+  zipped_metadata = zip(mesh_context.axis_names, mesh_context.mesh_shape)
+  physical_axis_dict = {}
+  # Handle joint axes (i.e., one logical axis over >1 physical axes)
+  for axis, idx in device_id_dict.items():
+    if isinstance(axis, tuple):
+      axis_names, mesh_shape = unzip2(
+          (name, shape) for name, shape in zipped_metadata if name in axis
+      )
+      for axis_index, axis_name in enumerate(axis_names):
+        axis_size = ir_constant(mesh_shape[axis_index])
+        minor_divisor = ir_constant(
+            np.prod(mesh_shape[axis_index + 1 :], dtype=np.int32)
+        )
+        device_idx = arith.remsi(arith.divsi(idx, minor_divisor), axis_size)
+        physical_axis_dict[axis_name] = device_idx
+    else:
+      physical_axis_dict[axis] = idx
+  device_id = []
+  for axis in mesh_context.axis_names:
+    if axis in physical_axis_dict:
+      device_id.append(physical_axis_dict[axis])
+    else:
+      device_id.append(_axis_index_rule(ctx, axis_name=axis))
+  return tuple(device_id)
+
+
 def _device_id_to_logical(
     ctx: LoweringRuleContext, device_id,
     device_id_type: primitives.DeviceIdType):
+  if isinstance(device_id, dict):
+    if device_id_type is not primitives.DeviceIdType.MESH:
+      raise ValueError(
+          "`device_id_type` must be MESH if `device_id` is a dict,"
+          f" got: {device_id_type = }."
+      )
+    device_id = _device_id_dict_to_mesh(ctx, device_id)
   if device_id_type is primitives.DeviceIdType.MESH:
     assert (mesh_context := ctx.lowering_context.mesh_context)
     # Mesh means we are passed the mesh coordinates for the device

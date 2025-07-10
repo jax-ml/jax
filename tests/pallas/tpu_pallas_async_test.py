@@ -388,6 +388,72 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
     y = f(x)
     np.testing.assert_array_equal(y, x)
 
+  @parameterized.product(joint_axis=[True, False])
+  def test_device_id_as_axis_dict(self, joint_axis):
+    if jax.device_count() < 2:
+      self.skipTest('Requires at least 2 devices for a 2d mesh.')
+    xdim, ydim = 2, jax.device_count() // 2
+    mesh = jax.make_mesh((xdim, ydim), ('x', 'y'))
+
+    xlocal, ylocal = 8, 128
+    if joint_axis:
+      axis_name = ('x', 'y')
+      pspec = P(('x', 'y'), None)
+      input_arr = jax.device_put(
+          jax.random.uniform(jax.random.key(0), (xlocal * xdim * ydim, ylocal)),
+          jax.sharding.NamedSharding(mesh, pspec),
+      )
+    else:
+      axis_name = 'x'
+      pspec = P('x', 'y')
+      input_arr = jax.device_put(
+          jax.random.uniform(jax.random.key(0), (xlocal * xdim, ylocal * ydim)),
+          jax.sharding.NamedSharding(mesh, pspec),
+      )
+
+    def copy_kernel(input_ref, output_ref, send_sem, recv_sem, local_copy_sem):
+      xid = jax.lax.axis_index(axis_name)
+      x0_local_copy = pltpu.make_async_copy(
+          src_ref=input_ref, dst_ref=output_ref, sem=local_copy_sem
+      )
+      copy_x0_to_x1 = pltpu.make_async_remote_copy(
+          src_ref=input_ref,
+          dst_ref=output_ref,
+          send_sem=send_sem,
+          recv_sem=recv_sem,
+          device_id={axis_name: 1},
+      )
+
+      @pl.when(xid == 0)
+      def _():
+        copy_x0_to_x1.start()
+        x0_local_copy.start()
+        x0_local_copy.wait()
+        copy_x0_to_x1.wait_send()
+      @pl.when(xid == 1)
+      def _():
+        copy_x0_to_x1.wait_recv()
+
+    copy = pl.pallas_call(
+        copy_kernel,
+        out_shape=jax.ShapeDtypeStruct((xlocal, ylocal), jnp.float32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        scratch_shapes=[pltpu.SemaphoreType.DMA] * 3,
+    )
+
+    # Wrap the kernel within a shard_map to call.
+    pallas_out = jax.jit(
+        jax.shard_map(
+            copy, mesh=mesh, in_specs=pspec, out_specs=pspec, check_vma=False
+        )
+    )(input_arr)
+
+    # x=1 devices are flushed with x=0 device contents
+    np.testing.assert_array_equal(input_arr[:xlocal], pallas_out[:xlocal])
+    np.testing.assert_array_equal(pallas_out[:xlocal],
+                                  pallas_out[xlocal:(2*xlocal)])
+
 
 def make_async_remote_copy(axis_name: str, direction: str = 'right',
                            target_memory_space=None):

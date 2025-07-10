@@ -44,6 +44,9 @@ Slice = indexing.Slice
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
+IntDeviceId = int | jax.Array
+MultiDimDeviceId = tuple[IntDeviceId, ...] | dict[str | tuple[str, ...], IntDeviceId]
+
 repeat_p = jax_core.Primitive('repeat')
 
 def repeat(x, repeats, axis):
@@ -175,7 +178,7 @@ class AsyncCopyDescriptor:
   dst_sem_transforms: tuple[Transform, ...]
   src_sem: int | jax.Array | None
   src_sem_transforms: tuple[Transform, ...] | None
-  device_id: int | jax.Array | None
+  device_id: MultiDimDeviceId | IntDeviceId | None
   device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH
 
   def __post_init__(self):
@@ -378,6 +381,16 @@ def dma_start_partial_discharge_rule(
     # TODO(justinfu): Verify that code only works in SPMD mode.
     axis_env = jax_core.get_axis_env()
     nonempty_axes = [name for name in axis_env.axis_sizes if name is not None]
+    if isinstance(device_id, dict):
+      if device_id_type is not primitives.DeviceIdType.MESH:
+        raise ValueError(
+            "`device_id_type` must be MESH if `device_id` is a dict,"
+            f" got: {device_id_type = }."
+        )
+      device_id_list = []
+      for axis in nonempty_axes:
+        device_id_list.append(device_id.get(axis, jax.lax.axis_index(axis)))
+      device_id = tuple(device_id_list)
     if device_id_type == primitives.DeviceIdType.LOGICAL:
       if len(nonempty_axes) > 1:
         raise NotImplementedError("Sharding with more than one named axis not "
@@ -602,7 +615,7 @@ def make_async_remote_copy(
     dst_ref,
     send_sem,
     recv_sem,
-    device_id,
+    device_id: MultiDimDeviceId | IntDeviceId | None,
     device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
 ) -> AsyncCopyDescriptor:
   """Creates a description of a remote copy operation.
@@ -618,7 +631,7 @@ def make_async_remote_copy(
     dst_ref: The destination Reference.
     send_sem: The semaphore on the source device.
     recv_sem: The semaphore on the destination device.
-    device_id: The device id of the destination device.
+    device_id: The device id of the destination device. It could be a tuple.
     device_id_type: The type of the device id.
 
   Returns:
@@ -628,6 +641,11 @@ def make_async_remote_copy(
   send_sem, send_sem_transforms = _get_ref_and_transforms(send_sem)
   dst_ref, dst_transforms = _get_ref_and_transforms(dst_ref)
   recv_sem, recv_sem_transforms = _get_ref_and_transforms(recv_sem)
+  if device_id_type == primitives.DeviceIdType.LOGICAL:
+    assert not isinstance(
+        device_id, tuple | dict
+    ), "LOGICAL device_id_type does not support device_id as a tuple or dict."
+
   return AsyncCopyDescriptor(
       src_ref,
       src_transforms,
