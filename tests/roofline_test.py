@@ -940,6 +940,140 @@ class RooflineTest(jtu.JaxTestCase):
     # total = 140
     self.assertEqual(result.unfused_hbm_bytes, 140)
 
+  def _assert_scatter_hbm_bytes_is_correct(
+      self,
+      result: roofline.RooflineResult,
+      indices: jnp.ndarray,
+      updates: jnp.ndarray,
+  ):
+    self.assertEqual(
+        result.unfused_hbm_bytes,
+        3 * updates.size * updates.dtype.itemsize
+        + indices.size * indices.dtype.itemsize,
+    )
+
+  @jtu.parameterized.named_parameters(
+      dict(
+          testcase_name="scatter_add",
+          scatter_fn=jax.lax.scatter_add,
+      ),
+      dict(
+          testcase_name="scatter_max",
+          scatter_fn=jax.lax.scatter_max,
+      ),
+      dict(
+          testcase_name="scatter_min",
+          scatter_fn=jax.lax.scatter_min,
+      ),
+      dict(
+          testcase_name="scatter_mul",
+          scatter_fn=jax.lax.scatter_mul,
+      ),
+      dict(
+          testcase_name="scatter_sub",
+          scatter_fn=jax.lax.scatter_sub,
+      ),
+  )
+  def test_scatter_unary_roofline(self, scatter_fn):
+    operand = jnp.zeros((3, 3), dtype=jnp.float32)
+    indices = jnp.zeros((2, 1), dtype=jnp.int32)
+    updates = jnp.ones((2, 3), dtype=jnp.float32)
+
+    f = lambda x, y, z: scatter_fn(
+        x,
+        y,
+        z,
+        dimension_numbers=jax.lax.ScatterDimensionNumbers(
+            update_window_dims=(1,),
+            inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,),
+        ),
+    )
+
+    _, result = roofline.roofline(f)(operand, indices, updates)
+
+    # The `update_jaxpr` computation is a simple unary op, which has 1 flop, and
+    # is applied for each element in the updates tensor, which has size 2 * 3.
+    self.assertEqual(result.unfused_flops, 1 * 2 * 3)
+    self._assert_scatter_hbm_bytes_is_correct(result, indices, updates)
+
+  def test_scatter_with_batching_dims_roofline(self):
+    operand = jnp.zeros((5, 3, 3), dtype=jnp.float32)
+    indices = jnp.zeros((5, 1), dtype=jnp.int32)
+    updates = jnp.zeros((5, 3), dtype=jnp.float32)
+
+    # Use `scatter_add` as an example.
+    f = lambda x, y, z: jax.lax.scatter_add(
+        x,
+        y,
+        z,
+        dimension_numbers=jax.lax.ScatterDimensionNumbers(
+            update_window_dims=(1,),
+            inserted_window_dims=(1,),
+            operand_batching_dims=(0,),
+            scatter_indices_batching_dims=(0,),
+            scatter_dims_to_operand_dims=(1,),
+        ),
+    )
+
+    _, result = roofline.roofline(f)(operand, indices, updates)
+
+    # The `update_jaxpr` computation is a simple add, which has 1 flop, and
+    # is applied for each element in the updates tensor, which has size 5 * 3.
+    self.assertEqual(result.unfused_flops, 1 * 5 * 3)
+    self._assert_scatter_hbm_bytes_is_correct(result, indices, updates)
+
+  def test_scatter_roofline(self):
+    operand = jnp.zeros((3, 3), dtype=jnp.float32)
+    indices = jnp.zeros((2, 1), dtype=jnp.int32)
+    updates = jnp.ones((2, 3), dtype=jnp.float32)
+
+    dimension_numbers = jax.lax.ScatterDimensionNumbers(
+        update_window_dims=(1,),
+        inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,),
+    )
+
+    f = lambda x, y, z: jax.lax.scatter(
+        x,
+        y,
+        z,
+        dimension_numbers=dimension_numbers,
+    )
+
+    _, result = roofline.roofline(f)(operand, indices, updates)
+
+    # There is no update computation, so 0 flops.
+    self.assertEqual(result.unfused_flops, 0)
+    # Memory is still accessed though.
+    self._assert_scatter_hbm_bytes_is_correct(result, indices, updates)
+
+  def test_scatter_apply_roofline(self):
+    operand = jnp.zeros((3, 3), dtype=jnp.float32)
+    indices = jnp.ones((2, 1), dtype=jnp.int32)
+    updates = jnp.ones((2, 3), dtype=jnp.float32)
+
+    f = lambda x, y, z: jax.lax.scatter_apply(
+        operand=x,
+        scatter_indices=y,
+        func=example_function,
+        update_shape=z.shape,
+        dimension_numbers=lax.ScatterDimensionNumbers(
+            update_window_dims=(1,),
+            inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,),
+        ),
+        indices_are_sorted=True,
+        mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+    )
+
+    _, result = roofline.roofline(f)(operand, indices, updates)
+
+    # `example_function` should take 3 flops per element, and we compute it for
+    # each element in the updates tensor, which has size 2 * 3.
+    self.assertEqual(result.unfused_flops, 3 * 2 * 3)
+    self._assert_scatter_hbm_bytes_is_correct(result, indices, updates)
+
   def test_select_n_roofline(self):
     which = jnp.zeros((4, 8), dtype=int)
     cases = (
