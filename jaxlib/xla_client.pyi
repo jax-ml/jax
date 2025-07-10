@@ -66,6 +66,8 @@ def make_cpu_client(
     num_devices: int | None = ...,
     get_local_topology_timeout_minutes: int | None = ...,
     get_global_topology_timeout_minutes: int | None = ...,
+    cross_host_transfer_socket_address: str | None = ...,
+    cross_host_transport_addresses: Sequence[str] | None = ...,
 ) -> Client: ...
 def make_gpu_client(
     distributed_client: DistributedRuntimeClient | None = ...,
@@ -87,6 +89,8 @@ def make_c_api_client(
     plugin_name: str,
     options: _NameValueMapping | None = None,
     distributed_client: DistributedRuntimeClient | None = None,
+    cross_host_transfer_socket_address: str | None = ...,
+    cross_host_transport_addresses: Sequence[str] | None = ...,
 ) -> Client: ...
 def pjrt_plugin_loaded(plugin_name: str) -> bool: ...
 def load_pjrt_plugin_dynamically(
