@@ -1457,11 +1457,19 @@ jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
 
 
 def lower_as_mlir(
-    f, *args, dynamic_shapes=False, device=None, static_argnames=(), **kwargs
+    f,
+    *args,
+    dynamic_shapes=False,
+    device=None,
+    static_argnames=(),
+    platforms=None,
+    **kwargs,
 ) -> mlir.ir.Module:
   with pallas_export_experimental(dynamic_shapes):
     f = jax.jit(f, device=device, static_argnames=static_argnames)
-    exported = export(f, platforms=["tpu"])(*args, **kwargs)
+    if platforms is None:
+      platforms = ["tpu"]
+    exported = export(f, platforms=platforms)(*args, **kwargs)
     stablehlo = exported.mlir_module()
 
   return stablehlo  # type: ignore[return-value]
