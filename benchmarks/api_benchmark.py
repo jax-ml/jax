@@ -72,9 +72,10 @@ class AnEnum(enum.IntEnum):
 @google_benchmark.register
 def eager_unary_dispatch(state):
   a = jax.device_put(1)
-  lax.neg(a)
+  x = lax.neg(a)
   while state:
-    lax.neg(a)
+    x = lax.neg(a)
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -98,9 +99,10 @@ def eager_binary_dispatch(state):
 def eager_binary(state):
   a = jax.device_put(1)
   b = jax.device_put(2)
-  lax.add(a, b).block_until_ready()
+  x = lax.add(a, b).block_until_ready()
   while state:
-    lax.add(a, b).block_until_ready()
+    x = lax.add(a, b).block_until_ready()
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -131,10 +133,11 @@ def jit_simple_dispatch(state):
   a = jax.device_put(1)
   b = jax.device_put(2)
   f = jax.jit(operator.add)
-  f(a, b)
+  x = f(a, b)
 
   while state:
-    f(a, b)
+    x = f(a, b)
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -152,10 +155,11 @@ def jit_simple_dispatch_array(state):
   a = jax.device_put(1)
   b = jax.device_put(2)
   f = jax.jit(operator.add)
-  f(a, b)
+  x = f(a, b)
 
   while state:
-    f(a, b)
+    x = f(a, b)
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -269,10 +273,11 @@ def jit_dispatch_without_transfer(state):
   imgs = jax.device_put(imgs)
 
   f = jax.jit(lambda x: x+1)
-  f(imgs)
+  x = f(imgs)
 
   while state:
-    f(imgs)
+    x = f(imgs)
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -280,7 +285,7 @@ def jit_dispatch_with_transfer(state):
   imgs = np.ones((128, 224, 224), np.float32)
 
   f = jax.jit(lambda x: x+1)
-  f(imgs).block_until_ready()
+  x = f(imgs).block_until_ready()
 
   while state:
     x = f(imgs)
@@ -308,6 +313,8 @@ def pmap_trivial_dispatch_8_devices(state):
 
   while state:
     a, b = f(a, b)
+  a.block_until_ready()
+  b.block_until_ready()
 
 
 @google_benchmark.register
@@ -344,6 +351,8 @@ def pmap_simple_dispatch_8_devices(state):
 
   while state:
     a, b = f(a, b)
+  a.block_until_ready()
+  b.block_until_ready()
 
 
 @google_benchmark.register
@@ -371,6 +380,7 @@ def pmap_simple_dispatch_8_devices_100_args(state):
 
   while state:
     args = f(*args)
+  args[0].block_until_ready()
 
 
 @google_benchmark.register
@@ -395,6 +405,7 @@ def _run_sda_index_bench(state, num_devices):
   while state:
     for i in range(num_devices):
       _ = x[i]
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -592,6 +603,7 @@ def pjit_simple_benchmark(state, num_devices, num_args, use_aot=False):
 
   while state:
     x = f(x)
+  x[0].block_until_ready()
 
 
 @google_benchmark.register
