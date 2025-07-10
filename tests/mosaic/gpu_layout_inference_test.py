@@ -31,7 +31,7 @@ from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
-from jax.experimental.mosaic.gpu import equations
+from jax.experimental.mosaic.gpu import equations as eqns
 from jax.experimental.mosaic.gpu import layout_inference2
 from jax.experimental.mosaic.gpu import layouts
 
@@ -614,10 +614,10 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(optimization_barrier, [splat_layout])
 
 
-V = equations.Variable
+V = eqns.Variable
 H = layout_inference2.Hint
-E = equations.Equation
-C = equations.Constant
+E = eqns.Equation
+C = eqns.Constant
 
 
 class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=InferenceImplementation.EQUATIONS):
@@ -646,7 +646,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     v0 = V(0)
     assignments = layout_inference2.find_assignments_for(
         {v0},
-        equations.EquationSystem(),
+        eqns.EquationSystem(),
         # Voluntarily use conflicting hints to check that we use one of them
         # deterministically. This may require updating if we decide to change
         # the traversal order in the future.
@@ -664,10 +664,10 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       cst = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attrs, type=ty))
 
     [key] = layout_inference2.operands_and_results(cst)
-    variable = equations.Variable(key)
+    variable = eqns.Variable(key)
     assignments = layout_inference2.find_assignments_for(
         {variable},
-        equations.EquationSystem(
+        eqns.EquationSystem(
             equations=[
                 E(variable, C(mgpu.WGMMA_ROW_LAYOUT)),
                 E(variable, C(mgpu.WGMMA_COL_LAYOUT)),
@@ -675,7 +675,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
         ),
         hints=[],
     )
-    self.assertIsInstance(assignments, equations.Unsatisfiable)
+    self.assertIsInstance(assignments, eqns.Unsatisfiable)
 
   def test_hint_that_would_make_system_unsatisfiable_is_not_used_in_solution(self):
     with ir.InsertionPoint(self.module.body):
@@ -683,15 +683,15 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       op0, op1 = [llvm.mlir_undef(ty).owner.opview for _ in range(2)]
     [kv0] = layout_inference2.operands_and_results(op0)
     [kv1] = layout_inference2.operands_and_results(op1)
-    v0, v1 = equations.Variable(kv0), equations.Variable(kv1)
+    v0, v1 = eqns.Variable(kv0), eqns.Variable(kv1)
     splat_layout = C(mgpu.WGSplatFragLayout((3, 128)))
     assignments = layout_inference2.find_assignments_for(
         {v0},
-        equations.EquationSystem(
+        eqns.EquationSystem(
             equations=[
                 E(
                     v0,
-                    equations.MostReplicated(
+                    eqns.MostReplicated(
                         [v1, C(mgpu.WGStridedFragLayout((3, 128), vec_size=1))]
                     ),
                 )
@@ -707,7 +707,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     v0, v1 = V(0), V(1)
     layout = C(mgpu.WGMMA_LAYOUT)
     assignment = layout_inference2.extract_variable_assignment_from_hint(
-        H(v0, equations.LeastReplicated([layout, v1])),
+        H(v0, eqns.LeastReplicated([layout, v1])),
     )
     self.assertEqual(assignment, (v0, layout))
 
@@ -715,7 +715,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     v0, v1 = V(0), V(1)
     layout = C(mgpu.WGSplatFragLayout((1, 128)))
     assignment = layout_inference2.extract_variable_assignment_from_hint(
-        H(v0, equations.MostReplicated([layout, v1])),
+        H(v0, eqns.MostReplicated([layout, v1])),
     )
     self.assertEqual(assignment, (v0, layout))
 
@@ -723,12 +723,11 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     v0, v1 = V(0), V(1)
     layout0 = C(mgpu.WGSplatFragLayout((1, 128)))
     layout1 = C(mgpu.WGStridedFragLayout((1, 256), vec_size=2))
-    hint_expr = equations.LeastReplicated(
-        [layout0, equations.MostReplicated([layout1, v1])]
+    hint_expr = eqns.LeastReplicated(
+[layout0, eqns.MostReplicated([layout1, v1])]
     )
     self.assertIsInstance(
-        equations.reduce_expression(hint_expr, {v1: layout1}),
-        equations.Unsatisfiable
+        eqns.reduce_expression(hint_expr, {v1: layout1}), eqns.Unsatisfiable
     )
     _, expr = layout_inference2.extract_variable_assignment_from_hint(
         H(v0, hint_expr))
@@ -741,10 +740,9 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     layout0 = C(mgpu.WGSplatFragLayout((1, 128)))
     layout1 = C(mgpu.WGSplatFragLayout((1, 129)))
     assignment = layout_inference2.extract_variable_assignment_from_hint(
-        H(v0, equations.LeastReplicated([v1, layout0, layout1])),
+        H(v0, eqns.LeastReplicated([v1, layout0, layout1])),
     )
     self.assertIsNone(assignment)
-
 
   @parameterized.parameters("registers", "shared")
   def test_infer_wgmma_layout_correctly(self, lhs_memory_space):
