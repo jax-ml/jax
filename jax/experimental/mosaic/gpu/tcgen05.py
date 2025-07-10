@@ -729,21 +729,21 @@ class TMEMLayout(fa.TiledLayout):
   unsupported).
   """
 
-  def check_type(self, shape: tuple[int, ...], dtype: ir.Type):
+  def check_type(self, shape: tuple[int, ...], bitwidth: int):
     if len(shape) != 2:
       raise ValueError(f"TMEM can only represent 2D shapes, got {shape}")
     if any(s % t for s, t in zip(shape, self.base_tile_shape)):
       raise ValueError(
           f"{shape} is divisible into tiles of shape {self.base_tile_shape}"
       )
-    if self.vector_length not in {1, fully_packed := 32 // utils.bitwidth(dtype)}:
+    if self.vector_length not in {1, fully_packed := 32 // bitwidth}:
       raise ValueError(
-          f"For {utils.bitwidth(dtype)}-bit types, the vector length must be 1 "
-          f"or {fully_packed} , but got: {self.vector_length}"
+          f"For {bitwidth}-bit types, the vector length must be 1 or"
+          f" {fully_packed} , but got: {self.vector_length}"
       )
 
-  def cols_in_shape(self, shape: tuple[int, int], dtype: ir.Type):
-    self.check_type(shape, dtype)
+  def cols_in_shape(self, shape: tuple[int, int], bitwidth: int):
+    self.check_type(shape, bitwidth)
     return math.prod(shape) // TMEM_ROWS // self.vector_length
 
   def canonicalize(self) -> "TMEMLayout":
@@ -888,7 +888,7 @@ class TMEMRef:
         )
       layout = _infer_tmem_layout(shape, collective, packing=1)
     else:
-      layout.check_type(shape, dtype)
+      layout.check_type(shape, utils.bitwidth(dtype))
     # TODO: Do we have to do this??
     # warp_idx = utils.warp_idx(sync=False)
     # tmem_addr = arith.ori(tmem_addr, arith.shli(warp_idx, utils.c(21, i32)))
@@ -1016,7 +1016,7 @@ class TMEMRef:
 
   def _debug_print(self):
     i32 = ir.IntegerType.get_signless(32)
-    num_cols = self.layout.cols_in_shape(self.shape, self.dtype)
+    num_cols = self.layout.cols_in_shape(self.shape, utils.bitwidth(self.dtype))
     lane = arith.remui(utils.thread_idx(), arith.constant(i32, utils.WARPGROUP_SIZE))
     for c in range(num_cols):
       val = llvm.inline_asm(

@@ -313,8 +313,10 @@ def _run_scoped_resource_estimator(
         assert aval.shape[0] == 128
         cols_used = aval.shape[1]
       else:
-        cols_used, _ = gpu_core.infer_tmem_cols_layout(
-            aval.shape, aval.dtype, packed=aval.packed, collective=aval.collective)
+        cols_used = aval.layout.cols_in_shape(
+            aval.shape, dtypes.bit_width(aval.dtype)
+        )
+      # TODO(apaszke): Remove this. We only need to align the outermost allocation.
       cols_used = tcgen05._alloc_ncols(cols_used, exact=False)
       if aval.collective:
         rs += Resources(tmem_collective_scratch_cols=cols_used)
@@ -441,12 +443,9 @@ class ModuleContext:
       self,
       struct: jax.ShapeDtypeStruct,
       *,
-      layout: tcgen05.TMEMLayout | None = None,
-      collective: bool = False,
-      packed: bool = False,
+      layout: tcgen05.TMEMLayout,
+      collective: bool,
   ) -> Iterator[ir.Value]:
-    cols_used, layout = gpu_core.infer_tmem_cols_layout(
-        struct.shape, struct.dtype, packed=packed, collective=collective, layout=layout)
     if collective:
       off = arith_dialect.addi(
           self.tmem_collective_base_ptr,
@@ -461,6 +460,9 @@ class ModuleContext:
         shape=struct.shape,
         dtype=mgpu_utils.dtype_to_ir_type(struct.dtype),
         layout=layout)
+    cols_used = layout.cols_in_shape(
+        struct.shape, dtypes.bit_width(struct.dtype)
+    )
     if collective:
       self.tmem_collective_used_cols += cols_used
       yield tmem_ref
@@ -745,7 +747,10 @@ def lower_pipelined_jaxpr_to_module(
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
       return gpu_core.WGMMAAccumulatorRef(aval.shape, aval.dtype)
     elif isinstance(aval, gpu_core.AbstractTMEMRef):
-      return gpu_core.TMEM(aval.shape, aval.dtype, packed=aval.packed)
+      return gpu_core.GPUMemoryRef(
+          aval.shape, aval.dtype, gpu_core.TMEM,
+          transforms=(), layout=aval.layout, collective=aval.collective,
+      )
     elif isinstance(aval, state_types.AbstractRef):
       return pallas_core.MemoryRef(aval.shape, aval.dtype, aval.memory_space)
     else:
@@ -1309,35 +1314,27 @@ def _extract_aliased_ref(
   match transforms:
     case (
         gpu_core.ExtractAliasedRef(
-            dtype, transformed_shape, offset, packed, collective
+            dtype, transformed_shape, offset, layout
         ),
         *other_transforms,
     ):
       mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
       if isinstance(ref, tcgen05.TMEMRef):
-        assert packed is not None
-        assert collective is not None
+        assert layout is not None
         if ref.shape[0] != transformed_shape[0]:
           raise ValueError(
               "TMEM aliasing only supported for Refs with the same first"
               f" dimension, got {ref.shape[0]} != {transformed_shape[0]}."
           )
         address = arith_dialect.addi(ref.address, _i32_constant(offset))
-        _, tmem_layout = gpu_core.infer_tmem_cols_layout(
-            transformed_shape, dtype, packed=packed, collective=collective
-        )
         ref = tcgen05.TMEMRef(
-            address=address,
-            shape=transformed_shape,
-            dtype=mgpu_utils.dtype_to_ir_type(dtype),
-            layout=tmem_layout,
-        )
+          address=address,
+          shape=transformed_shape,
+          dtype=mgpu_utils.dtype_to_ir_type(dtype),
+          layout=layout)
       else:
-        assert packed is None
-        assert collective is None
-        ref_bits = math.prod(transformed_shape) * mgpu_utils.bitwidth(
-            mlir_dtype
-        )
+        assert layout is None
+        ref_bits = math.prod(transformed_shape) * mgpu_utils.bitwidth(mlir_dtype)
         if ref_bits % 8:
           raise NotImplementedError("Only byte-aligned bitcasts are supported.")
         assert offset % gpu_core.SMEM_ALIGNMENT == 0
@@ -2546,14 +2543,10 @@ def _run_scoped_lowering_rule(
         input_refs.append(input_ref)
         should_discharge.append(False)
       elif aval.memory_space == gpu_core.TMEM:
-        if isinstance(aval, gpu_core.AbstractRefUnion):
-          packed = False
-        else:
-          packed = aval.packed
         input_ref = alloc_stack.enter_context(
             ctx.module_ctx.alloc_tmem(
                 jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
-                packed=packed,
+                layout=aval.layout,
                 collective=aval.collective,
             )
         )
