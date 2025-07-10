@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import cast
+from typing import Any, cast
 import warnings
 
 import jax
@@ -103,7 +103,10 @@ def pallas_call_lowering(
     # We guarantee zero-initialization of the GMEM scratch at the moment, which
     # is important for semaphores.
     def zero_init_gmem_scratch():
-      return [lax.zeros_like_array(s) for s in lowering_result.gmem_scratch_shapes]
+      return [
+          lax.zeros_like_array(cast(Any, s))
+          for s in lowering_result.gmem_scratch_shapes
+      ]
     scratch_args = mlir.lower_fun(
         zero_init_gmem_scratch, multiple_results=True
     )(ctx.replace(avals_in=()))

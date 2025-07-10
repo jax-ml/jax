@@ -645,7 +645,7 @@ def _barrier_arrive_lowering(
   indexer = _extract_barrier_indexer(transforms)
   if indexer is not None:
     barrier = barrier.__getitem__(*map(lowering._as_index, indexer.indices))
-  sem_dtype = ctx.avals_in[0].inner_aval.dtype  # typing: ignore
+  sem_dtype = ctx.avals_in[0].inner_aval.dtype  # type: ignore
   if getattr(sem_dtype, "orders_tensor_core", False):
     if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
       raise NotImplementedError("barrier_arrive on barriers with orders_tensor_core=True")
@@ -718,7 +718,8 @@ def _barrier_wait_lowering(
   transforms = transforms_treedef.unflatten(flat_transforms)
   indexer = _extract_barrier_indexer(transforms)
   orders_tensor_core = getattr(
-      barrier_aval.inner_aval.dtype, "orders_tensor_core", False)
+      barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # type: ignore
+  )
   if indexer is not None:
     barrier = barrier.__getitem__(*map(lowering._as_index, indexer.indices))
   barrier.wait(orders_tensor_core=orders_tensor_core)
