@@ -894,8 +894,8 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
     AnyMemRef:$target,
     AnyTypeOf<[MemRefOf<[I32]>, VectorOfRankAndType<[1], [I32]>]>:$offsets,
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
-    DefaultValuedAttr<BoolAttr, "false">:$add,
-    OptionalAttr<I32Attr>:$offset_filter
+    Optional<I32>:$offset_filter,
+    DefaultValuedAttr<BoolAttr, "false">:$add
   );
   let hasVerifier = 1;
   let extraClassDeclaration = extraBaseClassDeclaration # [{
