@@ -17,6 +17,12 @@ Remember to align the itemized text with the first line of an item within a list
 
   * Added a new decorator {func}`jax.experimental.pallas.loop` which allows
     to write stateless loops as functions.
+  * Added new multiple buffering and lookahead functionality to
+    {func}`jax.experimental.pallas.tpu.emit_pipeline`. Input buffers can now
+    be multiple-buffered with more than 2 buffers and support a lookahead option
+    to fetch blocks that are an arbitrary number of grid iterations ahead
+    rather than the immediate next iterations. Additionally, pipeline state
+    can now be held in registers to reduce scalar memory usage.
 
 * Deprecations
 
