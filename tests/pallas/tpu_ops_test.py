@@ -244,17 +244,18 @@ class OpsTest(PallasBaseTest):
     result = self.pallas_call(body, out_shape=out)(x)
     np.testing.assert_array_equal(result, x.astype(jnp.float32) + 1.0)
 
-  def test_tpu_signed_int_upcast(self):
+  @parameterized.parameters([jnp.uint4, jnp.int4])
+  def test_tpu_int4_upcast(self, dtype):
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("TPUv5+ needed for integer matmuls")
 
     def body(x_ref, o_ref):
-      # Test cast from int4 -> int8
+      # Test cast from (u)int4 -> int8
       ux = lax.convert_element_type(x_ref[...], jnp.int8)
       o_ref[...] = jax.lax.dot(ux, ux, preferred_element_type=jnp.int32)
 
     out = jax.ShapeDtypeStruct((128, 128), jnp.int32)
-    x = jnp.arange(128 * 128, dtype=jnp.int4).reshape((128, 128))
+    x = jnp.arange(128 * 128, dtype=dtype).reshape((128, 128))
     result = self.pallas_call(body, out_shape=out)(x)
     np.testing.assert_array_equal(
         result,

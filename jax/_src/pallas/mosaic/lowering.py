@@ -2240,6 +2240,8 @@ def _dot_general_lowering_rule(
 def _convert_helper(x: Array, *, to_dtype: jnp.dtype) -> Array:
   # Helper function for dtype conversion
   from_dtype = x.dtype
+  from_bitwidth = pallas_utils.dtype_bitwidth(from_dtype)
+  to_bitwidth = pallas_utils.dtype_bitwidth(to_dtype)
   if from_dtype == jnp.bool_:
     x = x.astype(jnp.int32)
     return _convert_helper(x, to_dtype=to_dtype)
@@ -2247,20 +2249,20 @@ def _convert_helper(x: Array, *, to_dtype: jnp.dtype) -> Array:
     # Lower float32 or (u)int32 -> bool to cmp neq %in, 0
     # TODO(apaszke,mvoz): Move the upcasts for cmpi to the Mosaic canonicalizer.
     if jnp.issubdtype(from_dtype, jnp.floating):
-      if from_dtype.itemsize < 4:
+      if from_bitwidth < 32:
         x = x.astype(jnp.float32)
     elif jnp.issubdtype(from_dtype, jnp.integer):
-      if from_dtype.itemsize < 4:
+      if from_bitwidth < 32:
         x = x.astype(jnp.int32)
     return x != jnp.asarray(0, dtype=x.dtype)
   if jnp.issubdtype(from_dtype, jnp.signedinteger):
-    if from_dtype.itemsize < 4:
+    if from_bitwidth < 32:
       x = x.astype(jnp.int32)
-    if jnp.issubdtype(to_dtype, jnp.floating) and to_dtype.itemsize < 4:
+    if jnp.issubdtype(to_dtype, jnp.floating) and to_bitwidth < 32:
       x = x.astype(jnp.float32)
     return x.astype(to_dtype)
   if jnp.issubdtype(from_dtype, jnp.unsignedinteger):
-    if from_dtype.itemsize < 4:
+    if from_bitwidth < 32:
       x = x.astype(jnp.uint32)
     # unsigned -> float is unsupported. We fall through and raise at the bottom.
     if not jnp.issubdtype(to_dtype, jnp.floating):
@@ -2294,25 +2296,30 @@ def _convert_element_type_lowering_rule(
   floating = jnp.floating
   integer = jnp.integer
   signed = jnp.signedinteger
-  both_32bit = old_dtype.itemsize == 4 and new_dtype.itemsize == 4
+  unsigned = jnp.unsignedinteger
+  old_bitwidth = pallas_utils.dtype_bitwidth(old_dtype)
+  new_bitwidth = pallas_utils.dtype_bitwidth(new_dtype)
+  both_32bit = old_bitwidth == 32 and new_bitwidth == 32
   if _from(floating) and _to(floating):
     forward_compat = ctx.forward_compatible or is_cloud_tpu_older_than(
         2025, 6, 29
     )
-    if old_dtype.itemsize < new_dtype.itemsize and (
-        new_dtype.itemsize == 4 or not forward_compat
+    if old_bitwidth < new_bitwidth and (
+        new_bitwidth == 32 or not forward_compat
     ):
       return arith.extf(out_type, x)
-    elif old_dtype.itemsize > new_dtype.itemsize and (
-        old_dtype.itemsize == 4 or not forward_compat
+    elif old_bitwidth > new_bitwidth and (
+        old_bitwidth == 32 or not forward_compat
     ):
       return arith.truncf(out_type, x)
   elif _from(integer) and _to(integer):
-    if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
-      if not (_from(signed) and _to(signed)):
-        raise NotImplementedError(f"Unsupported cast: {old_dtype} -> {new_dtype}")
-      return arith.extsi(out_type, x)
-    elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
+    if old_bitwidth < new_bitwidth and new_bitwidth == 32:
+      if (_from(unsigned) and _to(unsigned)):
+        return arith.extui(out_type, x)
+      if (_from(signed) and _to(signed)):
+        return arith.extsi(out_type, x)
+      raise NotImplementedError(f"Unsupported cast: {old_dtype} -> {new_dtype}")
+    elif old_bitwidth > new_bitwidth and old_bitwidth == 32:
       return arith.trunci(out_type, x)
     elif jnp.iinfo(old_dtype).bits == jnp.iinfo(new_dtype).bits:
       # This case triggers when casting signed to unsigned or vice versa.
@@ -2325,7 +2332,7 @@ def _convert_element_type_lowering_rule(
         or both_32bit
     ):
       return arith.sitofp(out_type, x)
-  elif old_dtype == jnp.bool_ and _to(integer) and new_dtype.itemsize == 4:
+  elif old_dtype == jnp.bool_ and _to(integer) and new_bitwidth == 32:
     return arith.extui(out_type, x)
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
                    multiple_results=False)(ctx, x)
