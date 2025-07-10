@@ -63,6 +63,25 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
+namespace {
+
+int32_t GetBaseLaunchId(std::optional<std::string> fingerprint,
+                        ifrt::LoadedExecutableRef executable) {
+  int32_t ret = 0;
+  if (fingerprint.has_value()) {
+    ret = tsl::Fingerprint32(*fingerprint);
+  }
+  // Don't use the device fingerprint for executables running on single process.
+  // Pmap and replicated executables for example will only populate the local
+  // device to the loaded executable and all devices will have different devices
+  // fingerprints.
+  if (!executable->devices()->IsFullyAddressable()) {
+    ret += executable->devices()->fingerprint();
+  }
+  return ret;
+}
+
+}  // namespace
 
 namespace nb = nanobind;
 
@@ -90,8 +109,7 @@ PyLoadedExecutable::PyLoadedExecutable(
       ifrt_loaded_executable_(std::move(ifrt_loaded_executable)),
       traceback_(std::move(traceback)),
       fingerprint_(std::move(fingerprint)),
-      next_launch_id_(
-          fingerprint_.has_value() ? tsl::Fingerprint32(*fingerprint_) : 1) {
+      next_launch_id_(GetBaseLaunchId(fingerprint_, ifrt_loaded_executable_)) {
   CHECK(PyGILState_Check());
   if (fingerprint_) {
     VLOG(1) << "Fingerprint for executable " << ifrt_loaded_executable_->name()
