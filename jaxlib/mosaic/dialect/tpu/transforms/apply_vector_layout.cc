@@ -3700,12 +3700,12 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
               load_op.emitOpError("Not implemented");
               return absl::UnimplementedError("");
             }
+            Value padding = builder.create<arith::ConstantOp>(
+                target_ty.getElementType(),
+                builder.getZeroAttr(target_ty.getElementType()));
             tile = builder.create<vector::TransferReadOp>(
-                target_ty, base_addr, idxs, load_map,
-                // TODO(tlongeri): Not sure whether we are obeying the semantics
-                // of in_bounds, but our lowering ignores it and this path will
-                // removed soon anyway.
-                SmallVector<bool>(2, true));
+                target_ty, base_addr, idxs, load_map, padding, /*mask=*/nullptr,
+                /*in_bounds=*/builder.getBoolArrayAttr({true, true}));
           } else {
             const SmallVector<bool> sublane_mask(ctx.target_shape[0], true);
             const auto sublane_mask_attr =
