@@ -724,12 +724,29 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
   def test_hint_is_still_extracted_when_underlying_expression_is_unsatisfiable(self):
     v0, v1 = V(0), V(1)
     layout0 = C(mgpu.WGSplatFragLayout((1, 128)))
-    layout1 = C(mgpu.WGSplatFragLayout((1, 129)))
-    _, expr = layout_inference2.extract_variable_assignment_from_hint(
-        H(v0, equations.LeastReplicated(
-            [layout0, equations.MostReplicated([layout1, v1])])),
+    layout1 = C(mgpu.WGStridedFragLayout((1, 256), vec_size=2))
+    hint_expr = equations.LeastReplicated(
+        [layout0, equations.MostReplicated([layout1, v1])]
     )
-    self.assertIn(expr, {layout0, layout1})
+    self.assertIsInstance(
+        equations.reduce_expression(hint_expr, {v1: layout1}),
+        equations.Unsatisfiable
+    )
+    _, expr = layout_inference2.extract_variable_assignment_from_hint(
+        H(v0, hint_expr))
+    self.assertEqual(expr, layout1)
+
+  def test_least_replicated_hint_is_not_resolved_when_all_known_choices_are_replicated(
+      self,
+  ):
+    v0, v1 = V(0), V(1)
+    layout0 = C(mgpu.WGSplatFragLayout((1, 128)))
+    layout1 = C(mgpu.WGSplatFragLayout((1, 129)))
+    assignment = layout_inference2.extract_variable_assignment_from_hint(
+        H(v0, equations.LeastReplicated([v1, layout0, layout1])),
+    )
+    self.assertIsNone(assignment)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
