@@ -8458,7 +8458,7 @@ def _propagate_mem_kind_copy(in_mem_kind):
   return in_mem_kind
 pxla.memory_kind_propagate_rule[copy_p] = _propagate_mem_kind_copy
 
-# the dce_sink_p primitive marks a value as "used" from the perspective of DCE
+# The dce_sink_p primitive marks a value as "used" from the perspective of DCE
 # so the computation producing it won't be eliminated.
 def dce_sink(val):
   tree_util.tree_map(dce_sink_p.bind, val)

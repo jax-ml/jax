@@ -7854,7 +7854,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         f_bar(x, y, a, b)  # doesn't crash
 
         grad_jaxpr = f_bar.trace(x, y, a, b).jaxpr
-        reshard_eqn = grad_jaxpr.eqns[2].params['jaxpr'].eqns[0]
+        reshard_eqn = grad_jaxpr.eqns[4].params['jaxpr'].eqns[0]
         self.assertEqual(reshard_eqn.params['dst_sharding'].spec.reduced,
                         frozenset('y'))
         self.assertEqual(reshard_eqn.params['dst_sharding'].spec.unreduced,

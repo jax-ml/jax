@@ -606,7 +606,7 @@ class Primitive:
     return effectful_abstract_eval
 
   def def_effectful_abstract_eval2(self, abstract_eval):
-    self.abstract_eval = _generic_abstract_eval(abstract_eval)
+    self.abstract_eval = _generic_effectful_abstract_eval(abstract_eval)
     return abstract_eval
 
   def def_bind_with_trace(self, bind_with_trace):
@@ -639,8 +639,9 @@ generic_effect = GenericEffect()
 generic_effect_set = {generic_effect}
 effects.lowerable_effects.add_type(GenericEffect)
 effects.control_flow_allowed_effects.add_type(GenericEffect)
+effects.custom_derivatives_allowed_effects.add_type(GenericEffect)
 
-def _generic_abstract_eval(abstract_eval):
+def _generic_effectful_abstract_eval(abstract_eval):
   def abstract_eval_(*args, **kwargs):
     return abstract_eval(*args, **kwargs), generic_effect_set
   return abstract_eval_

@@ -1937,7 +1937,7 @@ class DynamicJaxprTrace(core.Trace):
   __slots__ = ("frame", "tag", "parent_trace")
 
   def __init__(self, debug_info: core.DebugInfo, parent_trace=None, lower=False,
-               auto_dce=True):
+               auto_dce=False):
     super().__init__()
     self.requires_low = lower
     self.frame = JaxprStackFrame(debug_info, auto_dce)
@@ -2316,7 +2316,7 @@ def trace_to_jaxpr_dynamic(
     *,
     keep_inputs: list[bool] | None = None,
     lower: bool = False,
-    auto_dce: bool = True,
+    auto_dce: bool = False,
 ) -> tuple[Jaxpr, list[AbstractValue], list[Any]]:
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
   parent_trace = core.trace_ctx.trace

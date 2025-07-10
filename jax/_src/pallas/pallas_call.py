@@ -99,6 +99,8 @@ def _pallas_call_abstract_eval(
     # Report effects that will be introduced when running/lowering
     # mosaic_tpu_interpret.mosaic_tpu_interpret.interpret_pallas_call .
     effs = mosaic_tpu_interpret.get_interpret_effects()
+  elif getattr(params.get('compiler_params', None), 'has_side_effects', False):
+    effs = jax_core.generic_effect_set
   else:
     effs = jax_core.no_effects
 

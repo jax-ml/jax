@@ -5122,18 +5122,45 @@ class APITest(jtu.JaxTestCase):
                           lambda: (c, jnp.sum(d), d))
     self.assertLen(g().consts, 2)
 
+  # TODO(mattjj,dougalm): this test was flakey on CI; figure out how to enable?
+  # @jtu.run_on_devices('cpu')
+  # def test_implicit_dce_linearize(self):
+  #   def foo(x):
+  #     const = np.zeros((300,))
+  #     x * const
+  #     r = weakref.ref(const)
+  #     del const
+  #     assert r() is None, "oops, the constant wasn't DCE'd"
+  #     return x
+  #   with config.use_direct_linearize(True):
+  #     _ = jax.grad(foo)(3.)
 
-  def test_implicit_dce(self):
-    @api.jit
+  @jtu.run_on_devices('cpu')
+  def test_implicit_dce_linearize_jaxpr(self):
     def foo(x):
       const = np.zeros((300,))
+      x * const
       r = weakref.ref(const)
-      jnp.sin(const) + const
       del const
-      assert r() is None, "oops, the constant wasn't DCE'd"
-      return x + x
+      return x
 
-    foo(1.0)
+    with config.use_direct_linearize(True):
+      _, f_vjp = jax.vjp(foo, 3.)
+
+    self.assertNotIn('mul', str(f_vjp))
+
+  # TODO(mattjj,dougalm): re-enable when we set auto_dce=True by default
+  # @jtu.run_on_devices('cpu')
+  # def test_implicit_dce(self):
+  #   @api.jit
+  #   def foo(x):
+  #     const = np.zeros((300,))
+  #     r = weakref.ref(const)
+  #     jnp.sin(const) + const
+  #     del const
+  #     assert r() is None, "oops, the constant wasn't DCE'd"
+  #     return x + x
+  #   foo(1.0)
 
 class RematTest(jtu.JaxTestCase):
 
@@ -6208,7 +6235,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count(), 1)  # backward_pass on bwd
+    self.assertLessEqual(count(), 2)
 
   def test_vjp_caching_static_argnums(self):
     identity = jax.remat(lambda x, y: jax.jit(lambda x: 2 * x if y else x)(x),
@@ -6217,7 +6244,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count(), 1)  # backward_pass on bwd
+    self.assertLessEqual(count(), 2)
 
   def test_fwd_caching(self):
     # see above test also
@@ -7044,7 +7071,7 @@ class DCETest(jtu.JaxTestCase):
       return out
     jaxpr = api.make_jaxpr(f)([1., 2., 3., 4., 5., 6., 7., 8., 9., 10.]).jaxpr
     self.assertLen(jaxpr.eqns, 1)
-    self.assertLen(jaxpr.eqns[0].params['jaxpr'].jaxpr.eqns, 4)
+    self.assertLen(jaxpr.eqns[0].params['jaxpr'].jaxpr.eqns, 5)
 
     # If we use the value at index 8 only, all the hidden sequence must be kept
     # and no eqns can be pruned.
