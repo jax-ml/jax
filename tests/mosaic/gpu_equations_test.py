@@ -37,12 +37,41 @@ class EquationSystemTest(parameterized.TestCase):
     )
     self.assertIsInstance(equations.reduce(system), equations.Unsatisfiable)
 
-  def test_reduce_equation_system_removes_tautological_equations(self):
+  def test_equation_system_is_unsatisfiable_if_constraints_are_unsatisfiable(
+      self,
+  ):
+    v0 = V(0)
+    layout0, layout1 = [C(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
+    system = equations.EquationSystem(
+        assignments={v0: layout0},
+        constraints=[equations.Relayout(v0, layout1)],
+    )
+    self.assertIsInstance(equations.reduce(system), equations.Unsatisfiable)
+
+  @parameterized.parameters(*equations._SUPPORTED_TILED_RELAYOUTS)
+  def test_reduce_equation_system_removes_satisfed_relayouts(self, src, tgt):
+    system = equations.EquationSystem(
+        constraints=[equations.Relayout(C(src), C(tgt))],
+    )
+    self.assertEqual(equations.reduce(system), equations.EquationSystem())
+
+  def test_relayout_constraint_does_not_hold_for_incompatible_layouts(self):
+    self.assertFalse(
+        equations.Relayout(
+            C(mgpu.WGMMA_ROW_LAYOUT), C(mgpu.WGMMA_COL_LAYOUT)
+        ).holds()
+    )
+
+  def test_reduce_equation_system_removes_tautological_equations_and_constraints(
+      self,
+  ):
     v0, v1 = V(0), V(1)
     system = equations.EquationSystem(
         equations=[Eq(v0, v1), Eq(v0, v0)],
+        constraints=[equations.Relayout(v0, v0)],
     )
     self.assertLen(equations.reduce(system).equations, 1)
+    self.assertEmpty(equations.reduce(system).constraints)
 
   def test_reduce_equation_system_of_simplified_system_is_noop(self):
     v0, v1 = V(0), V(1)
