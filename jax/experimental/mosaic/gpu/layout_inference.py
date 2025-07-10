@@ -24,6 +24,7 @@ from typing import cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
@@ -272,16 +273,13 @@ def _infer_optimization_barrier_op_layout(
 
   for i, result in enumerate(filter(is_array, op.results)):
     possible_layouts = set()
-    for op_operand_use in cast(ir.OpResult, result).uses:
-      consumer = op_operand_use.owner
-      op_user = consumer.operands[op_operand_use.operand_number]
-      layout = inference_utils.in_layout_for_operand(consumer, op_user)
-      if layout is not None:
-        possible_layouts.add(layout)
-      if possible_layouts and layouts[i] is None:
-        # TODO(bchetioui): we could actually just pick any user layout here,
-        # and optimize later. This is fine for now.
-        layouts[i] = _choose_representative_layout(possible_layouts)
+    layout = _infer_layout_from_users(result)
+    if layout is not None:
+      possible_layouts.add(layout)
+    if possible_layouts and layouts[i] is None:
+      # TODO(bchetioui): we could actually just pick any user layout here,
+      # and optimize later. This is fine for now.
+      layouts[i] = _choose_representative_layout(possible_layouts)
 
   # TODO(bchetioui): handle annotating layout for only certain operands.
   # Otherwise, layouts may not get propagated through optimization barriers, if
@@ -292,6 +290,18 @@ def _infer_optimization_barrier_op_layout(
   return layouts, layouts
 
 
+def _infer_layout_from_users(
+    value: ir.Value,
+) -> ir.Attribute | None:
+  for use in cast(ir.OpResult, value).uses:
+    consumer = use.owner
+    operand = consumer.operands[use.operand_number]
+    layout = inference_utils.in_layout_for_operand(consumer, operand)
+    if layout is not None:
+      return layout
+  return None
+
+
 @partial(_add_layout_inference_rule, arith.ConstantOp)
 def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
   if not ir.VectorType.isinstance(constant_op.result.type):
@@ -299,7 +309,6 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
 
   shaped_ty = cast(ir.ShapedType, constant_op.result.type)
   value = constant_op.value
-  layout = None
   if (
       ir.DenseElementsAttr.isinstance(value)
       and ir.DenseElementsAttr(value).is_splat
@@ -313,15 +322,8 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
   # arbitrarily choose any one of them for the constant, since we expect
   # whichever choice we make to lead to N-1 relayouts, which all have the same
   # cost.
-  #
-  # We assign a strided layout if the constant has no user, for completeness.
-  elif constant_op.result.uses:
-    for use in cast(ir.OpResult, constant_op.result).uses:
-      consumer = use.owner
-      operand = consumer.operands[use.operand_number]
-      layout = inference_utils.in_layout_for_operand(consumer, operand)
-      if layout is not None:
-        break
+  else:
+    layout = _infer_layout_from_users(constant_op.result)
 
   # If the constant is not a splat, has no user, or a layout could not be
   # determined from looking at the users, we assign a strided layout for
@@ -331,6 +333,14 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
         fa.WGStridedFragLayout.from_shaped_type(shaped_ty)
     )
 
+  return [], [layout]
+
+
+@partial(_add_layout_inference_rule, llvm.UndefOp)
+def _infer_undef_op_layout(op: llvm.UndefOp) -> OptionalLayouts:
+  layout = _infer_layout_from_users(op.result)
+  if layout is None:
+    return None
   return [], [layout]
 
 
@@ -716,7 +726,7 @@ def infer_layout(module: ir.Module):
     )
 
   # Backwards pass
-  for op in module.body:
+  for op in reversed(list(module.body)):
     inference_utils.traverse_op(
         op, inference_step, inference_utils.TraversalOrder.BACKWARDS
     )

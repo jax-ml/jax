@@ -25,7 +25,6 @@ from typing import cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
-from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import vector
 import numpy as np
@@ -574,20 +573,10 @@ def derive_hints(
     for operand_or_result in operand_and_results:
       if operand_or_result.type == VariableType.OPERAND:
         pr = producer_result(operand_or_result)
-        op = pr.operation
-        # TODO(bchetioui): migrate the tests to not use `FuncOp`s.
-        # Filter out `FuncOp` arguments, which can show up in tests, but are
-        # not relevant for layout inference.
-        if not isinstance(op, func.FuncOp):
-          producers.append(variable_for_operand_or_result[pr])
+        producers.append(variable_for_operand_or_result[pr])
       elif operand_or_result.type == VariableType.RESULT:
         for co in consumer_operands(operand_or_result):
-          op = co.operation
-          # TODO(bchetioui): migrate the tests to not use `FuncOp`s.
-          # Filter out `FuncOp` arguments, which can show up in tests, but are
-          # not relevant for layout inference.
-          if not isinstance(op, func.FuncOp):
-            consumers.append(variable_for_operand_or_result[co])
+          consumers.append(variable_for_operand_or_result[co])
 
     if producers:
       least_replicated_producer = eqns.LeastReplicated(tuple(producers))
