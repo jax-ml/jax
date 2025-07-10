@@ -746,5 +746,30 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     self.assertIsNone(assignment)
 
 
+  @parameterized.parameters("registers", "shared")
+  def test_infer_wgmma_layout_correctly(self, lhs_memory_space):
+    f32 = ir.F32Type.get()
+    shape = (64, 64)
+
+    with ir.InsertionPoint(self.module.body):
+      ty = ir.VectorType.get(shape, f32)
+      attrs = [ir.FloatAttr.get(f32, float(i)) for i in range(shape[0] * shape[1])]
+      acc = arith.constant(ty, ir.DenseElementsAttr.get(attrs, ty))
+      rhs = llvm.mlir_undef(ir.MemRefType.get(shape, f32))
+      lhs = rhs if lhs_memory_space == "shared" else acc
+      wgmma_op = mgpu.dialect.WGMMAOp(acc, lhs, rhs)
+
+    self.infer_layout(self.module)
+
+    wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
+    in_layouts = [wgmma_layout]
+    out_layouts = [wgmma_layout]
+    if lhs_memory_space == "registers":
+      in_layouts.append(wgmma_layout)
+
+    self.checkInLayouts(wgmma_op, in_layouts)
+    self.checkOutLayouts(wgmma_op, out_layouts)
+
+
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

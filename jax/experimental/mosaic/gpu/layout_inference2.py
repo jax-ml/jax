@@ -425,6 +425,18 @@ def _layout_cast_equation_system(
   ), {variable: [operand, result]}
 
 
+@_add_equation_system_derivation_rule(mgpu.WGMMAOp)
+def _wgmma_equation_system(
+    op: mgpu.WGMMAOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  operands_or_results = operands_and_results(op)
+  variable = eqns.Variable(operands_or_results[0])
+  system = eqns.EquationSystem(
+      assignments={variable: eqns.Constant(fa.WGMMA_LAYOUT)}
+  )
+  return system, {variable: operands_or_results}
+
+
 def _ensure_all_layouts_are_set(op: ir.OpView):
   if not inference_utils.should_have_layout(op):
     return
