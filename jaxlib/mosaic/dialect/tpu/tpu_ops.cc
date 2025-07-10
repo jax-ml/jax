@@ -1018,16 +1018,6 @@ LogicalResult MatmulOp::verify() {
     // position 0. Future extensions to this will be to:
     // 1. Support multiple batch dims
     // 2. Support batch dims in any position in the output dim order
-    if (lhs_non_contracting_dims.size() != 1) {
-      emitOpError(
-          "Not implemented: lhs non contracting dims must be of size 1");
-      return failure();
-    }
-    if (rhs_non_contracting_dims.size() != 1) {
-      emitOpError(
-          "Not implemented: rhs non contracting dims must be of size 1");
-      return failure();
-    }
 
     // A bit long winded, but the invariants we enforce below are:
     // 1. The output order idx is 0 (lhs) or 1 (rhs)
