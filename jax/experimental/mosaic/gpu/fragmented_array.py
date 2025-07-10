@@ -2106,18 +2106,17 @@ class FragmentedArray:
             out_reg, scratch, [arith.muli(store_idx, c(vec_len, index))]
         )
         utils.warpgroup_barrier()
-        if any(isinstance(d, Replicated) for d in layout.warp_dims):
-          raise NotImplementedError("Reductions across partially replicated warps")
         # warp_idx & warp_group_mask gives you the reduction group of the current warp.
-        if all(reduced_dims[d] for d in layout.partitioned_warp_dims):
+        if all(isinstance(d, int) and reduced_dims[d] for d in layout.warp_dims):
           warp_offsets, warp_group_mask = range(WARPS_IN_WARPGROUP), 0
         else:
           # 4 has only two non-trivial prime factors: 2 and 2.
-          assert len(layout.partitioned_warp_dims) == 2
-          if reduced_dims[layout.partitioned_warp_dims[0]]:
+          assert len(layout.warp_dims) == 2
+          wd0, wd1 = layout.warp_dims
+          if isinstance(wd0, int) and reduced_dims[wd0]:
             warp_offsets, warp_group_mask = [0, 2], 1
           else:
-            assert reduced_dims[layout.partitioned_warp_dims[1]]
+            assert isinstance(wd1, int) and reduced_dims[wd1]
             warp_offsets, warp_group_mask = [0, 1], 2
         reg_ty = out_reg.type
         out_reg = None
