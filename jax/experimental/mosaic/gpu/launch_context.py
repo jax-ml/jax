@@ -324,6 +324,29 @@ class _DefaultPredicate:
   pass
 
 
+def _find_kernel_argument_for_gmem_ref(
+    gmem_ref: ir.Value,
+) -> builtin.UnrealizedConversionCastOp:
+  """Returns the kernel argument value for a given gmem_ref.
+
+  The kernel argument is expected to be an unrealized conversion cast. This
+  function will recursively go up block arguments in case of nested blocks.
+  """
+  if not isinstance(gmem_ref.type, ir.MemRefType):
+    raise ValueError(f"Expected {gmem_ref} to have a memref type.")
+
+  while isinstance(gmem_ref, ir.BlockArgument):
+    gmem_ref = gmem_ref.owner.owner.operands[gmem_ref.arg_number]
+
+  # TODO(apaszke): This is a very approximate check. Improve it!
+  if not isinstance(gmem_ref.owner.opview, builtin.UnrealizedConversionCastOp):
+    raise NotImplementedError(
+        f"Expected {gmem_ref.owner} to be an unrealized conversion cast"
+        " corresponding to a GMEM kernel argument."
+    )
+  return gmem_ref
+
+
 @dataclasses.dataclass()
 class LaunchContext:
   module: ir.Module
@@ -406,6 +429,7 @@ class LaunchContext:
         "add","min","max","inc","dec","and","or","xor"
       ] | None,
   ):
+    gmem_ref = _find_kernel_argument_for_gmem_ref(gmem_ref)
     # Using ir.Values in cache keys is a little sketchy, but I think it should
     # be fine. Having it in the key will keep it alive, and if comparison and
     # hashing is by identity then it should work out.
@@ -599,13 +623,10 @@ class LaunchContext:
         arrive = True  # Commit this copy to the async group by default
     else:
       raise ValueError("Only SMEM <-> GMEM copies supported")
-    # TODO(apaszke): This is a very approximate check. Improve it!
-    expected_name = "builtin.unrealized_conversion_cast"
-    if (
-        gmem_ref.owner is None
-        or gmem_ref.owner.opview.OPERATION_NAME != expected_name
-    ):
-      raise ValueError("GMEM reference in async_copy must be a kernel argument")
+
+    # The function below is called only to verify the GMEM ref. The output
+    # is meant to be ignored.
+    _find_kernel_argument_for_gmem_ref(gmem_ref)
     gmem_ref_ty = ir.MemRefType(gmem_ref.type)
     gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
     if gmem_strides != utils.get_contiguous_strides(gmem_ref_ty.shape):
