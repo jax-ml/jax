@@ -1774,17 +1774,19 @@ class PallasCallTest(PallasTest):
     x, y = (jnp.arange(128).astype(jnp.float32) for _ in range(2))
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
-  @parameterized.parameters(1, 2, 3)
-  def test_nd_loop(self, sm_steps):
+  @parameterized.product(sm_steps=[1, 2, 3], use_carry=[False, True])
+  def test_nd_loop(self, sm_steps, use_carry):
     @functools.partial(
         self.kernel,
-        out_shape=jax.ShapeDtypeStruct((sm_steps, 132, 128), jnp.int32),
+        out_shape=(
+            jax.ShapeDtypeStruct((sm_steps, 132, 128), jnp.int32),
+            jax.ShapeDtypeStruct((132,), jnp.int32)
+        ),
         grid=(132,),
         grid_names=("sm",),
     )
-    def kernel(o_ref):
-      @plgpu.nd_loop((sm_steps, 4, 33), collective_axes="sm")
-      def _(idx):
+    def kernel(o_ref, steps_ref):
+      def body(idx, carry=None):
         assert len(idx) == 3
         # We need to use `mode="clip"`, because the indices are not static.
         flat_idx = jnp.ravel_multi_index(idx, (sm_steps, 4, 33), mode="clip")
@@ -1794,12 +1796,27 @@ class PallasCallTest(PallasTest):
         o_ref[sm_step, lax.axis_index("sm")] = lax.broadcast(
             flat_idx, o_ref.shape[-1:]
         )
+        if use_carry:
+          return carry + 1
 
-    result = kernel()
+      if use_carry:
+        steps_ref[lax.axis_index("sm")] = plgpu.nd_loop(
+            (sm_steps, 4, 33), collective_axes="sm", init_carry=0
+        )(body)
+      else:
+        plgpu.nd_loop((sm_steps, 4, 33), collective_axes="sm")(body)
+
+    result, steps = kernel()  # pylint: disable=unpacking-non-sequence
     for sm_step in range(sm_steps):
+      if use_carry:
+        np.testing.assert_array_equal(steps, jnp.full((132,), sm_steps))
+
       np.testing.assert_array_equal(
           result[sm_step],
-          jnp.tile((132 * sm_step + jnp.arange(132))[:, None], 128),
+          jnp.tile(
+              (132 * sm_step + jnp.arange(132))[:, None],
+              128,
+          ),
       )
 
   def test_lowering_error_context(self):
