@@ -498,7 +498,7 @@ state_discharge.register_partial_discharge_rule(dma_start_p)(dma_start_partial_d
 dma_wait_p = jax_core.Primitive('dma_wait')
 dma_wait_p.multiple_results = True
 
-@dma_wait_p.def_abstract_eval
+@dma_wait_p.def_effectful_abstract_eval2
 def _dma_wait_abstract_eval(*args, tree, device_id_type):
   del args, tree, device_id_type
   return []
@@ -676,7 +676,7 @@ def async_remote_copy(
 
 get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 
-@get_barrier_semaphore_p.def_abstract_eval
+@get_barrier_semaphore_p.def_effectful_abstract_eval2
 def _get_barrier_semaphore_abstract_eval():
   return state.AbstractRef(
       jax_core.ShapedArray((), pl_core.BarrierSemaphore()),
@@ -710,7 +710,7 @@ delay_p = jax_core.Primitive("delay")
 delay_p.multiple_results = True
 
 
-@delay_p.def_abstract_eval
+@delay_p.def_effectful_abstract_eval2
 def _delay_abstract_eval(nanos):
   del nanos
   return []
@@ -726,7 +726,7 @@ prng_seed_p = jax_core.Primitive("prng_seed")
 prng_seed_p.multiple_results = True
 
 
-@prng_seed_p.def_abstract_eval
+@prng_seed_p.def_effectful_abstract_eval2
 def _prng_seed_abstract_eval(*_):
   return []
 

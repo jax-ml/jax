@@ -1320,6 +1320,7 @@ class PallasCallTest(PallasTest):
 
       def body(acc):
         del acc  # Unused.
+        o_ref[...] = o_ref[...]  # side-effect to prevent DCE
 
         # We deliberately do a cast here to trigger a layout mismatch.
         return plgpu.layout_cast(

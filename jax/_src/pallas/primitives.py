@@ -1083,7 +1083,7 @@ def semaphore_read(sem_or_view):
   flat_args, args_tree = tree_util.tree_flatten(args)
   return semaphore_read_p.bind(*flat_args, args_tree=args_tree)
 
-@semaphore_read_p.def_abstract_eval
+@semaphore_read_p.def_effectful_abstract_eval2
 def _semaphore_read_abstract_eval(
     *avals,
     args_tree,
@@ -1155,7 +1155,7 @@ def _semaphore_signal_abstract_eval(
   check_sem_avals(sem_aval, sem_transforms_avals, "signal")
   if value_aval.dtype != jnp.dtype("int32"):
     raise ValueError("Must signal an int32 value.")
-  effs = set()
+  effs : set[effects.Effect] = {jax_core.generic_effect}
   if device_id_avals is not None:
     device_id_flat_avals = tree_util.tree_leaves(device_id_avals)
     for aval in device_id_flat_avals:
@@ -1230,7 +1230,7 @@ def semaphore_wait(sem_or_view, dec: int | jax.Array = 1):
   flat_args, args_tree = tree_util.tree_flatten(args)
   semaphore_wait_p.bind(*flat_args, args_tree=args_tree)
 
-@semaphore_wait_p.def_abstract_eval
+@semaphore_wait_p.def_effectful_abstract_eval2
 def _semaphore_wait_abstract_eval(*avals, args_tree):
   sem_aval, sem_transforms_avals, value_aval = tree_util.tree_unflatten(
       args_tree, avals

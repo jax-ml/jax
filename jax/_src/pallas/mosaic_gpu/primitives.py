@@ -1638,7 +1638,7 @@ jaxpr_call_p = jax_core.Primitive("jaxpr_call")
 jaxpr_call_p.multiple_results = True
 
 
-@jaxpr_call_p.def_abstract_eval
+@jaxpr_call_p.def_effectful_abstract_eval2
 def _jaxpr_call_abstract_eval(*args, jaxpr: jax_core.Jaxpr, **params):
   del args, params  # Unused.
   return [v.aval for v in jaxpr.outvars]
