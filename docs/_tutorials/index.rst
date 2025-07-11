@@ -18,7 +18,6 @@ Mostly finalized at :ref:`jax-tutorials`!
 .. toctree::
    :maxdepth: 1
 
-   ../quickstart
    ../key-concepts
    ../jit-compilation
    ../automatic-vectorization
