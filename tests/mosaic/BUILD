@@ -167,6 +167,7 @@ jax_multiplatform_test(
     srcs = ["flash_attention_test.py"],
     enable_backends = [],
     enable_configs = ["gpu_h100"],
+    shard_count = 8,
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:flash_attention",
