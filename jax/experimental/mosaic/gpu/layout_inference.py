@@ -677,23 +677,6 @@ class TraversalOrder(enum.Enum):
   BACKWARDS = 2
 
 
-def traverse_op(
-    op: ir.OpView,
-    callback: Callable[[ir.OpView], None],
-    traversal_order: TraversalOrder = TraversalOrder.FORWARD,
-):
-  """Traverses the operation and applies the callback in the given order."""
-  for region in op.operation.regions:
-    for block in region:
-      if traversal_order == TraversalOrder.FORWARD:
-        ops_to_traverse = block
-      else:
-        ops_to_traverse = reversed(list(block))
-      for block_op in ops_to_traverse:
-        traverse_op(block_op, callback, traversal_order)
-  callback(op)
-
-
 def infer_layout(module: ir.Module):
   def inference_step(op: ir.Operation):
     if not inference_utils.should_have_layout(op):
@@ -764,7 +747,7 @@ def infer_layout(module: ir.Module):
         update_default_vector_size_from_vector(v)
 
   for op in module.body:
-    traverse_op(op, update_default_vector_size_from_op)
+    inference_utils.traverse_op(op, update_default_vector_size_from_op)
 
   if default_vector_size == math.inf:  # Nothing to annotate.
     return
@@ -794,4 +777,4 @@ def infer_layout(module: ir.Module):
       _set_layout_attributes(op, in_layouts, out_layouts)
 
   for op in module.body:
-    traverse_op(op, set_default_layout)
+    inference_utils.traverse_op(op, set_default_layout)
