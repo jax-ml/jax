@@ -262,12 +262,12 @@ def _reduce_system_once(
   assignments: dict[Variable, Constant] = dict()
   equations: list[Equation] = []
   for equation in equation_system.equations:
-    match (result := reduce_equation(equation, equation_system.assignments)):
+    match reduce_equation(equation, equation_system.assignments):
       case Unsatisfiable():
         return Unsatisfiable()
       case Tautological():
         changed = True
-      case SatisfiedBy():
+      case SatisfiedBy() as result:
         variable, expression = result.assignment
         if variable in assignments and assignments[variable] != expression:
           return Unsatisfiable()
@@ -276,8 +276,8 @@ def _reduce_system_once(
       case Unknown(equation=reduced_equation):
         equations.append(reduced_equation)
         changed |= reduced_equation != equation
-      case _:
-        assert_never(result)
+      case _ as never:
+        assert_never(never)
 
   if changed:
     return EquationSystem(
@@ -295,14 +295,14 @@ def reduce(equation_system: EquationSystem) -> EquationSystem | Unsatisfiable:
     - The maximally reduced equation system otherwise.
   """
   while True:
-    match (new_system := _reduce_system_once(equation_system)):
+    match _reduce_system_once(equation_system):
       case None:
         break
       case Unsatisfiable():
         return Unsatisfiable()
-      case EquationSystem():
+      case EquationSystem() as new_system:
         equation_system = new_system
-      case _:
-        assert_never(new_system)
+      case _ as never:
+        assert_never(never)
 
   return equation_system
