@@ -1458,6 +1458,11 @@ def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...
 def _get_lowering_rule(
     ctx: LoweringRuleContext, x_ref, *leaves, tree, optimized=True
 ):
+  if isinstance(x_ref, tcgen05.TMEMRef):
+    raise RuntimeError(
+        "Loads from TMEM are asynchronous operations and cannot be performed"
+        " using the usual syntax. Please use plgpu.async_load_tmem instead."
+    )
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
     raise TypeError(f"Can only load from references (got {x_ref}).")
   dtype = ctx.avals_out[0].dtype
@@ -1549,6 +1554,11 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
 def _swap_lowering_rule(
     ctx: LoweringRuleContext, x_ref, value, *leaves, tree
 ):
+  if isinstance(x_ref, tcgen05.TMEMRef):
+    raise RuntimeError(
+        "Stores to TMEM are asynchronous operations and cannot be performed"
+        " using the usual syntax. Please use plgpu.async_store_tmem instead."
+    )
   barrier = mgpu.warpgroup_barrier
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
     if ctx.avals_out[0].shape:
