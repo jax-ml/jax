@@ -58,13 +58,17 @@ class KernelType(enum.Enum):
 
 class GridDimensionSemantics(enum.Enum):
   PARALLEL = "parallel"
+  CORE_PARALLEL = "core_parallel"
   ARBITRARY = "arbitrary"
 
 PARALLEL = GridDimensionSemantics.PARALLEL
+CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
 ARBITRARY = GridDimensionSemantics.ARBITRARY
 
 
-DimensionSemantics = Literal["parallel", "arbitrary"] | GridDimensionSemantics
+DimensionSemantics = (
+    Literal["parallel", "core_parallel", "arbitrary"] | GridDimensionSemantics
+)
 
 
 @dataclasses.dataclass(frozen=True)
