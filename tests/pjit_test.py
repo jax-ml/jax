@@ -8431,6 +8431,27 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     else:
       self.assertEqual(lowered_text.count('unspecified_dims=[0,1]'), 3)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+  def test_vmap_spmd_axis_name_explicit_axes_inside(self, mesh):
+    np_inp = np.arange(16).reshape(2, 8)
+    arr1 = jax.device_put(np_inp, P())
+    arr2 = jax.device_put(np_inp, P())
+
+    @jax.jit
+    def f(x, y):
+      @partial(explicit_axes, in_sharding=(P('y'), P('y')))
+      def g(a, b):
+        self.assertEqual(a.aval.sharding.spec, P('y'))
+        self.assertEqual(b.aval.sharding.spec, P('y'))
+        a = reshard(a, P())
+        self.assertEqual(a.aval.sharding.spec, P(None))
+        out = a * b
+        self.assertEqual(out.aval.sharding.spec, P('y'))
+        return out
+      return g(x, y)
+
+    out = jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr1, arr2)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

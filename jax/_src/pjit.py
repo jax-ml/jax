@@ -2945,7 +2945,6 @@ def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
 mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
 
 def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding):
-  assert axis_data.spmd_name is None
   x, = vals_in
   d, = dims_in
   vmapped_dst_sharding = batching.get_sharding_for_vmap(
