@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
@@ -1164,6 +1165,9 @@ def tcgen05_mma(acc: _Ref,
                 a: _Ref,
                 b: _Ref,
                 barrier: _Ref | None = None,
+                *,
+                a_scale: _Ref | None = None,
+                b_scale: _Ref | None = None,
                 accumulate: bool | jax.Array = True,
                 collective_axis: str | None = None):
   """Asynchronous matrix-multiply accumulate for TensorCore gen 5 (Blackwell).
@@ -1178,6 +1182,9 @@ def tcgen05_mma(acc: _Ref,
    |  ACC2   |    |  LHS2   |   |    |    |
    -----------    -----------   -----------
 
+  To use the block-scaled matrix-multiply, provide `a_scale` and `b_scale`
+  operands (they must be both present or both unspecified).
+
   Args:
     acc: The accumulator. Must be a TMEM Ref.
     a: The left-hand side. Must be a TMEM/SMEM Ref.
@@ -1186,6 +1193,8 @@ def tcgen05_mma(acc: _Ref,
       Must have orders_tensor_core set to True. If not specified, the MMA
       completion should be explicitly observed by calling
       `tcgen05_commit_arrive`
+    a_scale: An optional scale for the ``a`` operand. Must be a TMEM Ref if present.
+    b_scale: An optional scale for the ``b`` operand. Must be a TMEM Ref if present.
     accumulate: Whether to accumulate into acc or overwrite it.
     collective_axis: The name of the cluster axis along which to perform
       a collective MMA. The cluster axis should have a size of exactly 2,
@@ -1225,6 +1234,28 @@ def tcgen05_mma(acc: _Ref,
   else:
     b_transforms_leaves, b_transforms_tree = [], None
 
+  if (is_scaled := a_scale is not None) != (b_scale is not None):
+    raise ValueError("a_scale and b_scale must both be present or absent.")
+  scales = []
+  if isinstance(a_scale, pallas_core.TransformedRef):
+    a_scale_transforms_leaves, a_scale_transforms_tree = jax.tree.flatten(
+        a_scale.transforms
+    )
+    scales.append(a_scale.ref)
+  else:
+    a_scale_transforms_leaves, a_scale_transforms_tree = [], None
+    scales.append(a_scale)
+  if isinstance(b_scale, pallas_core.TransformedRef):
+    b_scale_transforms_leaves, b_scale_transforms_tree = jax.tree.flatten(
+        b_scale.transforms
+    )
+    scales.append(b_scale.ref)
+  else:
+    b_scale_transforms_leaves, b_scale_transforms_tree = [], None
+    scales.append(b_scale)
+  if not is_scaled:
+    scales = []
+
   if isinstance(barrier, pallas_core.TransformedRef):
     barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
         barrier.transforms
@@ -1240,26 +1271,33 @@ def tcgen05_mma(acc: _Ref,
     barrier_ref = []
     arrive = False
 
-  tcgen05_mma_p.bind(acc, a, b, accumulate, *barrier_ref,
+  tcgen05_mma_p.bind(acc, a, b, accumulate, *barrier_ref, *scales,
                      *acc_transforms_leaves, *a_transforms_leaves,
                      *b_transforms_leaves,
                      *barrier_transforms_leaves,
+                     *a_scale_transforms_leaves, *b_scale_transforms_leaves,
                      acc_transforms_tree=acc_transforms_tree,
                      a_transforms_tree=a_transforms_tree,
                      b_transforms_tree=b_transforms_tree,
                      barrier_transforms_tree=barrier_transforms_tree,
+                     a_scale_transforms_tree=a_scale_transforms_tree,
+                     b_scale_transforms_tree=b_scale_transforms_tree,
                      collective_axis=collective_axis,
-                     arrive=arrive)
+                     arrive=arrive,
+                     scaled=bool(scales))
 
 
 @tcgen05_mma_p.def_abstract_eval
 def _tcgen05_mma_abstract_eval(acc, a, b, accumulate,
-                               *barrier_and_transforms_leaves,
+                               *barrier_scales_and_transforms_leaves,
                                acc_transforms_tree, a_transforms_tree,
                                b_transforms_tree,
                                barrier_transforms_tree,
+                               a_scale_transforms_tree,
+                               b_scale_transforms_tree,
                                collective_axis,
-                               arrive):
+                               arrive,
+                               scaled):
   del (accumulate, acc_transforms_tree,
        a_transforms_tree, b_transforms_tree, barrier_transforms_tree)
 
@@ -1281,12 +1319,19 @@ def _tcgen05_mma_abstract_eval(acc, a, b, accumulate,
       raise ValueError(
           "LHS Ref must be collective if collective_axis is set.")
 
+  scales_and_transforms_leaves = barrier_scales_and_transforms_leaves
   if arrive:
-    barrier = barrier_and_transforms_leaves[0]
+    barrier, *scales_and_transforms_leaves = barrier_scales_and_transforms_leaves
     orders_tensor_core = getattr(
         barrier.inner_aval.dtype, "orders_tensor_core", False)
     if not orders_tensor_core:
       raise ValueError("MMA barrier must have orders_tensor_core set to True.")
+  if scaled:
+    a_scale, b_scale = scales_and_transforms_leaves[:2]
+    if a_scale.memory_space != gpu_core.TMEM:
+      raise ValueError("a_scale must be a TMEM Ref")
+    if b_scale.memory_space != gpu_core.TMEM:
+      raise ValueError("b_scale must be a TMEM Ref")
 
   return []
 
@@ -1299,35 +1344,52 @@ def _tcgen05_mma_lowering(
     a_ref,
     b_ref,
     accumulate: bool | ir.Value,
-    *barrier_and_transforms_leaves,
+    *barrier_scales_and_transforms_leaves,
     acc_transforms_tree,
     a_transforms_tree,
     b_transforms_tree,
     barrier_transforms_tree,
+    a_scale_transforms_tree,
+    b_scale_transforms_tree,
     collective_axis,
     arrive,
+    scaled: bool,
 ):
   _, a_aval, b_aval, *_ = ctx.avals_in
   lhs_swizzle: int | None = None
   lhs_transpose: bool = False
   if arrive:
-    barrier_ref, *transforms_leaves = barrier_and_transforms_leaves
+    barrier_ref, *scales_and_transforms_leaves = barrier_scales_and_transforms_leaves
   else:
     barrier_ref = None
-    transforms_leaves = barrier_and_transforms_leaves  # type: ignore[assignment]
+    scales_and_transforms_leaves = barrier_scales_and_transforms_leaves  # type: ignore[assignment]
+  if scaled:
+    a_scale_ref, b_scale_ref, *transforms_leaves = scales_and_transforms_leaves
+  else:
+    a_scale_ref = b_scale_ref = None
+    transforms_leaves = scales_and_transforms_leaves  # type: ignore[assignment]
 
   transforms_trees = (
       acc_transforms_tree,
       a_transforms_tree,
       b_transforms_tree,
       barrier_transforms_tree,
+      a_scale_transforms_tree,
+      b_scale_transforms_tree,
   )
-  (acc_transforms_leaves, a_transforms_leaves, b_transforms_leaves, barrier_transforms_leaves, _) = (
-      util.split_list(
-          transforms_leaves,
-          [getattr(tree, "num_leaves", 0) for tree in transforms_trees],
-      )
+  (
+      acc_transforms_leaves,
+      a_transforms_leaves,
+      b_transforms_leaves,
+      barrier_transforms_leaves,
+      a_scale_transforms_leaves,
+      b_scale_transforms_leaves,
+      leftovers,
+  ) = util.split_list(
+      transforms_leaves,
+      [getattr(tree, "num_leaves", 0) for tree in transforms_trees],
   )
+  assert not leftovers
 
   if acc_transforms_tree is not None:
     acc_transforms = acc_transforms_tree.unflatten(acc_transforms_leaves)
@@ -1359,7 +1421,7 @@ def _tcgen05_mma_lowering(
             f"Unsupported transforms: {a_transforms}."
         )
     if not isinstance(a_ref, tcgen05.TMEMRef):
-      swizzle_elems = lhs_swizzle // a_dtype.itemsize  # type: ignore
+      swizzle_elems = 8 * lhs_swizzle // dtypes.bit_width(a_dtype)  # type: ignore
       if lhs_tiling != (8, swizzle_elems):
         raise ValueError("MMA lhs tiling does not fit swizzle. "
                         f"{lhs_tiling=} expected={(8, swizzle_elems)}")
@@ -1383,7 +1445,7 @@ def _tcgen05_mma_lowering(
       raise NotImplementedError(
           f"Unsupported transforms: {b_transforms}."
       )
-  swizzle_elems = rhs_swizzle // b_dtype.itemsize
+  swizzle_elems = 8 * rhs_swizzle // dtypes.bit_width(b_dtype)
   if rhs_tiling != (8, swizzle_elems):
     raise ValueError(
         "MMA rhs tiling does not fit swizzle"
@@ -1417,6 +1479,25 @@ def _tcgen05_mma_lowering(
     accumulate = accumulate.registers.item()
     assert isinstance(accumulate, ir.Value)
 
+  if a_scale_transforms_tree is not None:
+    a_scale_transforms = a_scale_transforms_tree.unflatten(
+        a_scale_transforms_leaves
+    )
+    a_scale_ref, a_scale_transforms = lowering._handle_transforms(
+        ctx, a_scale_ref, a_scale_transforms
+    )
+    if a_scale_transforms:
+      raise NotImplementedError(f"Unsupported transforms: {a_scale_transforms}")
+  if b_scale_transforms_tree is not None:
+    b_scale_transforms = b_scale_transforms_tree.unflatten(
+        b_scale_transforms_leaves
+    )
+    b_scale_ref, b_scale_transforms = lowering._handle_transforms(
+        ctx, b_scale_ref, b_scale_transforms
+    )
+    if b_scale_transforms:
+      raise NotImplementedError(f"Unsupported transforms: {b_scale_transforms}")
+
   predicate = ctx.module_ctx.single_lane_predicate
   if collective_axis is not None:
     is_leader_block = _collective_mma_predicate(ctx, collective_axis)
@@ -1432,6 +1513,8 @@ def _tcgen05_mma_lowering(
               b_ref,
               a_swizzle=int(lhs_swizzle),
               b_swizzle=int(rhs_swizzle),
+              a_scale=a_scale_ref,
+              b_scale=b_scale_ref,
               accumulate=accumulate,
               collective=collective,
           )
@@ -2224,4 +2307,61 @@ def _async_store_tmem_lowering_rule(
         f"Unimplemented transforms for TMEM refs. {transforms=}"
     )
   x_tmem.store(value)
+  return ()
+
+
+async_copy_scales_to_tmem_p = jax_core.Primitive("async_copy_scales_to_tmem")
+async_copy_scales_to_tmem_p.multiple_results = True
+
+def async_copy_scales_to_tmem(smem_ref: _Ref, tmem_ref: _Ref):
+  """Copies the MMA scales from SMEM to TMEM.
+
+  The copy is performed asynchronously and can be awaited by calling
+  ``tcgen05_commit_arrive`` and waiting on the specified barrier. However, if
+  the copy is consumed by an MMA operation issued in the same thread, no
+  synchronization is necessary (except for eventually awaiting the MMA operation
+  itself).
+  """
+  smem_ref, smem_transforms = state_primitives.get_ref_and_transforms(
+      smem_ref, None, "async_copy_scales_to_tmem", force_trailing_indexer=True,
+  )
+  flat_smem_transforms, smem_transforms_treedef = tree_util.tree_flatten(
+      smem_transforms
+  )
+  tmem_ref, tmem_transforms = state_primitives.get_ref_and_transforms(
+      tmem_ref, None, "async_copy_scales_to_tmem", force_trailing_indexer=True,
+  )
+  flat_tmem_transforms, tmem_transforms_treedef = tree_util.tree_flatten(
+      tmem_transforms
+  )
+  async_copy_scales_to_tmem_p.bind(
+      smem_ref, tmem_ref, *flat_smem_transforms, *flat_tmem_transforms,
+      smem_tree=smem_transforms_treedef, tmem_tree=tmem_transforms_treedef,
+  )
+
+
+@async_copy_scales_to_tmem_p.def_effectful_abstract_eval
+def _async_copy_scales_to_tmem_abstract_eval(smem_ref, tmem_ref, *avals_flat, smem_tree, tmem_tree):
+  if smem_ref.memory_space != gpu_core.MemorySpace.SMEM:
+    raise ValueError("async_copy_scales_to_tmem source must be an SMEM ref")
+  if tmem_ref.memory_space != gpu_core.MemorySpace.TMEM:
+    raise ValueError("async_copy_scales_to_tmem target must be a TMEM ref")
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(async_copy_scales_to_tmem_p, mgpu.LoweringSemantics.Lane)
+def _async_copy_scales_to_tmem_lowering_rule(
+    ctx: lowering.LoweringRuleContext, smem_ref, tmem_ref, *leaves, smem_tree, tmem_tree
+):
+  assert isinstance(tmem_ref, tcgen05.TMEMRef)
+  smem_leaves, tmem_leaves = util.split_list(leaves, [smem_tree.num_leaves])
+  smem_transforms = jax.tree.unflatten(smem_tree, smem_leaves)
+  tmem_transforms = jax.tree.unflatten(tmem_tree, tmem_leaves)
+  smem_ref, smem_transforms = lowering._handle_transforms(ctx, smem_ref, smem_transforms)
+  tmem_ref, tmem_transforms = lowering._handle_transforms(ctx, tmem_ref, tmem_transforms)
+  if smem_transforms:
+    raise NotImplementedError(f"Unimplemented transforms for SMEM refs: {smem_transforms}")
+  if tmem_transforms:
+    raise NotImplementedError(f"Unimplemented transforms for TMEM refs: {tmem_transforms}")
+  tcgen05.async_copy_scales_smem_to_tmem(smem_ref, tmem_ref)
   return ()

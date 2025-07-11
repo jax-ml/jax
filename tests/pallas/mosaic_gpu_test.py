@@ -2216,6 +2216,7 @@ class PallasCallWGTest(
         mgpu_primitives.inline_mgpu_p,
         mgpu_primitives.tcgen05_mma_p,
         mgpu_primitives.tcgen05_commit_arrive_p,
+        mgpu_primitives.async_copy_scales_to_tmem_p,
         mgpu_primitives.async_load_tmem_p,
         mgpu_primitives.async_store_tmem_p,
         mgpu_primitives.wait_load_tmem_p,
@@ -2960,6 +2961,83 @@ class PallasCallSm100ATest(PallasSm100ATest):
     y = jax.random.uniform(jax.random.key(1), shape=rhs_shape, dtype=dtype)
     result = f(x, y)
     expected = x @ y
+    np.testing.assert_allclose(result, expected, rtol=1e-3)
+
+  @parameterized.product(
+      m=[128],
+      n=[128, 256],
+      dtype=[jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float4_e2m1fn],
+  )
+  def test_simple_scaled_matmul(self, m, n, dtype):
+    self.skip_if_wg_semantics()
+    k = 128
+    swizzle = 128 // (8 // jnp.finfo(dtype).bits)
+    swizzle_elems = 8 * swizzle // jnp.finfo(dtype).bits
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+    out_transforms = (
+        plgpu.TilingTransform((8, 32)),
+        plgpu.SwizzleTransform(128),
+    )
+
+    def kernel(a_smem, b_smem, a_scale_smem, b_scale_smem, out_ref,
+               barrier_ref, acc_tmem, a_scale_tmem, b_scale_tmem):
+      plgpu.async_copy_scales_to_tmem(a_scale_smem, a_scale_tmem)
+      plgpu.async_copy_scales_to_tmem(b_scale_smem, b_scale_tmem)
+      # We don't have to await the copy because it's only used by the MMA.
+      plgpu.tcgen05_mma(acc_tmem,
+                        a_smem,
+                        plgpu.transpose_ref(b_smem, (1, 0)),
+                        a_scale=a_scale_tmem,
+                        b_scale=b_scale_tmem,
+                        accumulate=False)
+      plgpu.tcgen05_commit_arrive(barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      # We don't await the load because acc_tmem is never modified again.
+      out_ref[...] = plgpu.async_load_tmem(acc_tmem)
+
+    scratch_shapes = [
+        plgpu.Barrier(orders_tensor_core=True),
+        plgpu.TMEM((m, n), jnp.float32),
+        plgpu.TMEM((m, 4), jnp.float8_e8m0fnu, layout=plgpu.TMEMLayout.SCALES_LAYOUT),
+        plgpu.TMEM((n, 4), jnp.float8_e8m0fnu, layout=plgpu.TMEMLayout.SCALES_LAYOUT),
+    ]
+
+    f = self.pallas_call(
+        kernel,
+        in_specs=(
+            plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=transforms),
+            plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=transforms),
+            plgpu.BlockSpec(memory_space=plgpu.SMEM),
+            plgpu.BlockSpec(memory_space=plgpu.SMEM),
+        ),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+        out_specs=plgpu.BlockSpec(transforms=out_transforms),
+        scratch_shapes=scratch_shapes,
+    )
+    x = jax.random.uniform(jax.random.key(1), shape=(m, k), dtype=jnp.float32).astype(dtype)
+    y = jax.random.uniform(jax.random.key(2), shape=(n, k), dtype=jnp.float32).astype(dtype)
+    ksx, ksy = jax.random.split(jax.random.key(1234), 2)
+    x_scale = jax.lax.bitcast_convert_type(
+        jax.random.randint(ksx, (m, 4), 122, 132, dtype=jnp.uint8),
+        jnp.float8_e8m0fnu
+    )
+    y_scale = jax.lax.bitcast_convert_type(
+        jax.random.randint(ksy, (n, 4), 122, 132, dtype=jnp.uint8),
+        jnp.float8_e8m0fnu
+    )
+    def format_scales(scales):
+      assert scales.shape[0] % 128 == 0 and scales.shape[1] == 4
+      return scales.reshape(-1, 4, 32, 4).swapaxes(1, 2).reshape(-1, 32, 16)
+    result = f(x, y, format_scales(x_scale), format_scales(y_scale))
+    x_logical_scale = jnp.repeat(x_scale, 32, axis=1).astype(jnp.float32)
+    y_logical_scale = jnp.repeat(y_scale, 32, axis=1).astype(jnp.float32)
+    expected = jnp.dot(
+        x.astype(jnp.float32) * x_logical_scale,
+        (y.astype(jnp.float32) * y_logical_scale).T,
+    )
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   @parameterized.parameters(
