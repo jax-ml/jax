@@ -305,9 +305,6 @@ def _run_scoped_resource_estimator(
     if aval.memory_space == gpu_core.TMEM:
       if len(aval.shape) != 2:
         raise ValueError(f"TMEM allocations must be 2D. Got {aval.shape}")
-      if aval.shape[0] not in (64, 128):
-        raise ValueError(
-            f"TMEM shape[0] must be 64 or 128. Got {aval.shape[0]}.")
       # Estimate columns used.
       if isinstance(aval, gpu_core.AbstractRefUnion):
         assert aval.shape[0] == 128
@@ -316,8 +313,6 @@ def _run_scoped_resource_estimator(
         cols_used = aval.layout.cols_in_shape(
             aval.shape, dtypes.bit_width(aval.dtype)
         )
-      # TODO(apaszke): Remove this. We only need to align the outermost allocation.
-      cols_used = tcgen05._alloc_ncols(cols_used, exact=False)
       if aval.collective:
         rs += Resources(tmem_collective_scratch_cols=cols_used)
       else:
@@ -463,6 +458,7 @@ class ModuleContext:
     cols_used = layout.cols_in_shape(
         struct.shape, dtypes.bit_width(struct.dtype)
     )
+    cols_used = gpu_core.align_to(cols_used, gpu_core.TMEM_COL_ALIGNMENT)
     if collective:
       self.tmem_collective_used_cols += cols_used
       yield tmem_ref

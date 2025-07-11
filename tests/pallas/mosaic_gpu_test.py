@@ -2929,6 +2929,39 @@ class PallasCallSm100ATest(PallasSm100ATest):
     expected = x @ y
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
+  def test_matmul_alignment(self):
+    self.skip_if_wg_semantics()
+    m = k = n = 128
+    dtype = jnp.float16
+    transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
+
+    def kernel(a_smem, b_smem, out_ref, _, acc_tmem, barrier_ref):
+      plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, barrier_ref, accumulate=False)
+      plgpu.barrier_wait(barrier_ref)
+      # We don't await the load because acc_tmem is never modified again.
+      out_ref[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
+
+    spec = plgpu.BlockSpec(transforms=transforms, memory_space=plgpu.SMEM)
+    f = self.pallas_call(
+        kernel,
+        in_specs=(spec, spec),
+        out_specs=spec,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+        # Add a one column space to test if we align the accumulator.
+        scratch_shapes=(
+            plgpu.TMEM((128, 1), jnp.float32),
+            plgpu.TMEM((m, n), jnp.float32),
+            plgpu.Barrier(orders_tensor_core=True),
+        ),
+    )
+    lhs_shape = (m, k)
+    rhs_shape = (k, n)
+    x = jax.random.uniform(jax.random.key(0), shape=lhs_shape, dtype=dtype)
+    y = jax.random.uniform(jax.random.key(1), shape=rhs_shape, dtype=dtype)
+    result = f(x, y)
+    expected = x @ y
+    np.testing.assert_allclose(result, expected, rtol=1e-3)
+
   @parameterized.parameters(
       (128, jnp.float16)
   )

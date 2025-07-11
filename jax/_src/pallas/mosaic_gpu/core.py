@@ -57,6 +57,7 @@ DimensionSemantics = Literal["parallel", "sequential"]
 # sensitive to alignment and while this is quite conservative, it gets the job
 # done. We should make this more refined in the future.
 SMEM_ALIGNMENT = 1024
+TMEM_COL_ALIGNMENT = 4
 
 
 def is_trivial_index(idx, shape) -> bool:
@@ -307,7 +308,8 @@ def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
   """
   ncols = 0
   for ref in jax.tree.leaves(refs):
-    ncols += ref.layout.cols_in_shape(ref.shape, dtypes.bit_width(ref.dtype))
+    ref_ncols = ref.layout.cols_in_shape(ref.shape, dtypes.bit_width(ref.dtype))
+    ncols += align_to(ref_ncols, TMEM_COL_ALIGNMENT)
   return ncols
 
 
@@ -365,6 +367,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
     for ref_group in ref_union.refs:
       col_offset = 0
       for ref in jax.tree.leaves(ref_group):
+        col_offset = align_to(col_offset, TMEM_COL_ALIGNMENT)
         if not isinstance(ref, pallas_core.TransformedRef):
           ref = pallas_core.TransformedRef(ref, transforms=())
         ncols = ref.layout.cols_in_shape(ref.shape, dtypes.bit_width(ref.dtype))
