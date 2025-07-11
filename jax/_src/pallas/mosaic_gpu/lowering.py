@@ -1458,17 +1458,6 @@ def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...
 def _get_lowering_rule(
     ctx: LoweringRuleContext, x_ref, *leaves, tree, optimized=True
 ):
-  if isinstance(x_ref, tcgen05.TMEMRef):
-    transforms = jax.tree.unflatten(tree, leaves)
-    x_tmem, transforms = _handle_transforms(
-        ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
-    )
-    if transforms:
-      raise NotImplementedError(
-          f"Unimplemented transforms for TMEM refs. {transforms=}"
-      )
-    return x_tmem.load(layout=ctx.out_layout_hint)
-
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
     raise TypeError(f"Can only load from references (got {x_ref}).")
   dtype = ctx.avals_out[0].dtype
