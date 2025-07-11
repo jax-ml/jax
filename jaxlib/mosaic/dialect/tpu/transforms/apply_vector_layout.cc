@@ -105,6 +105,10 @@ static constexpr int kMinBoundToRotateWithScratch = 27;
 using RewriteContext = ApplyVectorLayoutContext;
 
 LogicalResult applyLayoutBlock(RewriteContext &ctx, Block &block);
+FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
+    RewriteContext &ctx, OpBuilder &builder, Location loc, VectorType vty,
+    VectorLayout src, xla::Array<Value> vregs,
+    std::array<int64_t, 2> dst_tiling, LayoutOffsets dst_offsets_hint);
 namespace {
 
 void moveAllRegions(Operation &src, Operation &dst) {
@@ -6697,53 +6701,105 @@ FailureOr<xla::Array<Value>> doColumnShiftRelayout(
   return dst_vregs;
 }
 
+// Converts from a layout with replicated offsets to a layout with concrete
+// offsets, which may increase the vreg array size.
+std::pair<VectorLayout, xla::Array<Value>> materializeOffsets(
+    RewriteContext &ctx, const ArrayRef<int64_t> shape,
+    const VectorLayout &layout, const xla::Array<Value> &vregs,
+    const LayoutOffsets new_offsets) {
+  CHECK(
+      !layout.offsets()[0].has_value() ||
+      (new_offsets[0].has_value() && *new_offsets[0] == *layout.offsets()[0]));
+  CHECK(
+      !layout.offsets()[1].has_value() ||
+      (new_offsets[1].has_value() && *new_offsets[1] == *layout.offsets()[1]));
+  const VectorLayout new_layout(layout.bitwidth(), new_offsets, layout.tiling(),
+                                layout.implicit_dim());
+  xla::Array<Value> new_vregs(
+      new_layout.tileArrayImplicitShape(shape, ctx.target_shape));
+  const int64_t irank = new_vregs.num_dimensions();
+  SmallVector<int64_t> idxs(irank);
+  SmallVector<int64_t> replicated_dims;
+  SmallVector<int64_t> limits(toArrayRef(vregs.dimensions()));
+  if (!layout.offsets()[0].has_value()) {
+    limits[irank - 2] = 1;
+    replicated_dims.push_back(irank - 2);
+  }
+  if (!layout.offsets()[1].has_value()) {
+    limits[irank - 1] = 1;
+    replicated_dims.push_back(irank - 1);
+  }
+  do {
+    Value vreg = vregs(idxs);
+    do {
+      new_vregs(idxs) = vreg;
+    } while (incrementIndexSubsequence(idxs, ArrayRef(replicated_dims),
+                                       toArrayRef(new_vregs.dimensions())));
+  } while (incrementIndex(idxs, limits));
+  return {new_layout, new_vregs};
+}
+
 FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeOffsets(
     RewriteContext &ctx, OpBuilder &builder, const Location loc,
-    const VectorType vty, const VectorLayout src, xla::Array<Value> vregs,
+    const VectorType vty, VectorLayout src, xla::Array<Value> vregs,
     const LayoutOffsets dst_offsets) {
   const auto &target_shape = ctx.target_shape;
 
-  int row_diff;
   if (!src.offsets()[0].has_value()) {
-    row_diff = 0;
+    if (dst_offsets[0].has_value()) {
+      std::tie(src, vregs) = materializeOffsets(
+          ctx, vty.getShape(), src, vregs, {dst_offsets[0], src.offsets()[1]});
+    }
   } else if (!dst_offsets[0].has_value()) {
     return emitError(loc, "Not implemented: Sublane broadcast");
-  } else {
-    row_diff = *dst_offsets[0] - *src.offsets()[0];
-  }
-
-  int64_t col_diff;
-  if (!src.offsets()[1].has_value()) {
-    col_diff = 0;
-  } else if (!dst_offsets[1].has_value()) {
-    return emitError(loc, "Not implemented: Lane broadcast");
-  } else {
-    col_diff = *dst_offsets[1] - *src.offsets()[1];
-  }
-
-  VectorLayout src_after_row_shift(src.bitwidth(),
-                                   {dst_offsets[0], src.offsets()[1]},
-                                   src.tiling(), src.implicit_dim());
-  if (row_diff != 0) {
+  } else if (*src.offsets()[0] != *dst_offsets[0]) {
     FAILUREOR_ASSIGN_OR_RETURN(
         vregs, doRowShiftRelayout(builder, loc, vty.getShape(), vregs, src,
                                   *dst_offsets[0], ctx.target_shape));
-    // Make sure the shape is as expected.
-    SmallVector<int64_t> current_tiles_shape =
-        src_after_row_shift.tileArrayImplicitShape(vty.getShape(),
-                                                   target_shape);
-    CHECK_EQ(*(current_tiles_shape.end() - 2), *(vregs.dimensions().end() - 2));
+    src = VectorLayout(src.bitwidth(), {dst_offsets[0], src.offsets()[1]},
+                       src.tiling(), src.implicit_dim());
   }
 
-  if (col_diff != 0) {
+  if (!src.offsets()[1].has_value()) {
+    if (dst_offsets[1].has_value()) {
+      std::tie(src, vregs) = materializeOffsets(
+          ctx, vty.getShape(), src, vregs, {src.offsets()[0], dst_offsets[1]});
+    }
+  } else if (!dst_offsets[1].has_value()) {
+    return emitError(loc, "Not implemented: Lane broadcast");
+  } else {
+    // Currently, doColumnShiftRelayout does not support packed (1, x) tiling,
+    // so we convert to (packing, 128)
+    // TODO(tlongeri): This is just for completeness until we have a proper
+    //                 better implementation.
+    const std::array<int64_t, 2> orig_tiling = src.tiling();
+    if (src.bitwidth() != 32 && orig_tiling[0] == 1) {
+      FAILUREOR_ASSIGN_OR_RETURN(
+          std::tie(src, vregs),
+          changeTiling(
+              ctx, builder, loc, vty, src, vregs,
+              std::array<int64_t, 2>{src.packing(), ctx.target_shape[1]},
+              dst_offsets));
+    }
+    const int64_t shift_offset =
+        *dst_offsets[1] % src.vregSlice(ctx.target_shape)[1];
     FAILUREOR_ASSIGN_OR_RETURN(
         vregs, doColumnShiftRelayout(builder, vty.getShape(), std::move(vregs),
-                                     src_after_row_shift, *dst_offsets[1],
-                                     target_shape));
+                                     src, shift_offset, target_shape));
+    src = VectorLayout(src.bitwidth(), {src.offsets()[0], shift_offset},
+                       src.tiling(), src.implicit_dim());
+    if (src.bitwidth() != 32 && orig_tiling[0] == 1) {
+      FAILUREOR_ASSIGN_OR_RETURN(
+          std::tie(src, vregs), changeTiling(ctx, builder, loc, vty, src, vregs,
+                                             orig_tiling, dst_offsets));
+      // changeTiling may mark 2nd minor offset as replicated, so materialize
+      // again
+      std::tie(src, vregs) =
+          materializeOffsets(ctx, vty.getShape(), src, vregs, dst_offsets);
+    }
   }
-  VectorLayout dst(src.bitwidth(), dst_offsets, src.tiling(),
-                   src.implicit_dim());
-  return std::make_pair(dst, std::move(vregs));
+  CHECK(src.offsets() == dst_offsets);
+  return std::make_pair(src, std::move(vregs));
 }
 
 LogicalResult retileToLargeTileWithScratch(
@@ -7782,48 +7838,16 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
         xla::Product(src.tileArrayShape(vty.getShape(), target_shape));
     auto dst_product =
         xla::Product(dst.tileArrayShape(vty.getShape(), target_shape));
-    if (src_product != dst_product) {
-      TPU_ASSERT_LOC(v.getLoc(), dst_product > src_product);
-      auto src_offsets = src.offsets();
-
-      TPU_ASSERT_LOC(v.getLoc(), src_offsets != dst.offsets());
-      TPU_ASSERT_LOC(v.getLoc(), src.bitwidth() == dst.bitwidth());
-
-      if (src.implicit_dim() != dst.implicit_dim()) {
-        return emitError(v.getLoc(),
-                         "Not implemented: Source layout is more general, but "
-                         "vreg count changes and implicit dims are mismatched");
-      }
-
-      if (src.tiling() != dst.tiling()) {
-        return emitError(v.getLoc(),
-                         "Not implemented: Source layout is more general, but "
-                         "vreg count changes and tiling are mismatched");
-      }
-
-      // This case is moving from a replicated to a non replicated layout.
-      // As such, we need to make a new destination shape that is the
-      // materialization of the src shape with replication.
-      FAILUREOR_ASSIGN_OR_RETURN(auto src_vregs,
-                                 disassemble(builder, src, v, target_shape,
-                                             /*use_implicit_shape=*/true));
-      auto dst_vregs_shape = dst.tileArrayShape(vty.getShape(), target_shape);
-      xla::Array<Value> dst_vregs(dst_vregs_shape);
-      dst_vregs.Each([&](const absl::Span<const int64_t> idx, Value *vreg) {
-        SmallVector<int64_t> local_idx(idx.begin(), idx.end());
-        if (!src_offsets[0].has_value()) {
-          local_idx[local_idx.size() - 2] = 0;
-        }
-        if (!src_offsets[1].has_value()) {
-          local_idx[local_idx.size() - 1] = 0;
-        }
-        *vreg = src_vregs(local_idx);
-      });
-      return assemble_with_mask_check(dst_vregs, /*use_implicit_shape=*/true);
+    // If the product is not the same, fall through - it should still be no-op
+    // TODO(tlongeri): Remove this check and handle everything through
+    // changeTiling/changeOffsets. Currently changeTiling is not smart when
+    // tilings are equivalent due to a small shape.
+    if (src_product == dst_product) {
+      src_tiles.Reshape(
+          dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+      return assemble_with_mask_check(src_tiles,
+                                      /*use_implicit_shape=*/true);
     }
-    src_tiles.Reshape(dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-    return assemble_with_mask_check(src_tiles,
-                                    /*use_implicit_shape=*/true);
   }
 
   if (const LayoutOffsets src_offsets =
