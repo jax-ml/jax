@@ -605,6 +605,10 @@ class Primitive:
     self.abstract_eval = effectful_abstract_eval
     return effectful_abstract_eval
 
+  def def_effectful_abstract_eval2(self, abstract_eval):
+    self.abstract_eval = _generic_effectful_abstract_eval(abstract_eval, self)
+    return abstract_eval
+
   def def_bind_with_trace(self, bind_with_trace):
     self.bind_with_trace = bind_with_trace
     return bind_with_trace
@@ -627,6 +631,18 @@ class Primitive:
 def _effect_free_abstract_eval(abstract_eval):
   def abstract_eval_(*args, **kwargs):
     return abstract_eval(*args, **kwargs), no_effects
+  return abstract_eval_
+
+@dataclass(frozen=True)
+class GenericEffect(Effect):
+  prim: Primitive
+effects.lowerable_effects.add_type(GenericEffect)
+effects.control_flow_allowed_effects.add_type(GenericEffect)
+effects.custom_derivatives_allowed_effects.add_type(GenericEffect)
+
+def _generic_effectful_abstract_eval(abstract_eval, prim):
+  def abstract_eval_(*args, **kwargs):
+    return abstract_eval(*args, **kwargs), {GenericEffect(prim)}
   return abstract_eval_
 
 # -------------------- lifting --------------------

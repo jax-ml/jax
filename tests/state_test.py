@@ -606,8 +606,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       ref_set(a_ref, (0, 1), jnp.ones(2, dtype=jnp.dtype('float32')))
       return []
     in_avals = [shaped_array_ref((4, 3, 2), jnp.dtype('float32'))]
-    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrap_init(f, 1),
-                                                              in_avals)
+    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrap_init(f, 1), in_avals)
     # Discharging should just turn this into a jaxpr that just adds 1.
     discharged_jaxpr, () = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)

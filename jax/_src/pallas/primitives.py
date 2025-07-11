@@ -1155,7 +1155,7 @@ def _semaphore_signal_abstract_eval(
   check_sem_avals(sem_aval, sem_transforms_avals, "signal")
   if value_aval.dtype != jnp.dtype("int32"):
     raise ValueError("Must signal an int32 value.")
-  effs = set()
+  effs : set[effects.Effect] = set()
   if device_id_avals is not None:
     device_id_flat_avals = tree_util.tree_leaves(device_id_avals)
     for aval in device_id_flat_avals:

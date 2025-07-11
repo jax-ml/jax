@@ -1576,6 +1576,7 @@ def _add(x: TfVal, y: TfVal) -> TfVal:
 tf_impl[ad_util.add_jaxvals_p] = _add
 tf_impl[dispatch.device_put_p] = lambda *xs, devices=None, srcs=None, copy_semantics=None: xs
 tf_impl[lax_internal.copy_p] = lambda x: x
+tf_impl[lax_internal.dce_sink_p] = lambda x: []
 
 def _shard_alike(*args: TfVal, **_):
   return tuple(args)

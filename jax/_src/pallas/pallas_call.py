@@ -44,7 +44,6 @@ from jax._src.pallas import primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.util import (
-    foreach,
     safe_map,
     safe_zip,
     split_list,
@@ -100,6 +99,8 @@ def _pallas_call_abstract_eval(
     # Report effects that will be introduced when running/lowering
     # mosaic_tpu_interpret.mosaic_tpu_interpret.interpret_pallas_call .
     effs = mosaic_tpu_interpret.get_interpret_effects()
+  elif getattr(params.get('compiler_params', None), 'has_side_effects', False):
+    effs = jax_core.GenericEffect(pallas_call_p)
   else:
     effs = jax_core.no_effects
 
@@ -1002,7 +1003,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
     i, *_ = carry
     return i < num_iterations
   def body(carry):
-    i, loop_idx = carry
+    i, loop_idx, blocks = carry
     if grid_mapping.local_grid_env is not None:
       local_grid_env = grid_mapping.local_grid_env(loop_idx, grid)
     else:
@@ -1017,12 +1018,12 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
           for bm in grid_mapping.block_mappings]
     # We perform a dynamic slice on the i/o blocks, which will be checked by
     # checkify for OOB accesses.
-    foreach(hlo_interpreter._dynamic_slice, start_indices, block_shapes,
+    blocks = map(hlo_interpreter._dynamic_slice, start_indices, block_shapes,
         [*input_args, *output_args], is_indexing_dim)
-    return (i + 1, hlo_interpreter._get_next_indices(grid, loop_idx))
+    return (i + 1, hlo_interpreter._get_next_indices(grid, loop_idx), blocks)
   def f(_):
-    lax.while_loop(
-        cond, body, (jnp.int32(0), grid_start_indices)
+    return lax.while_loop(
+        cond, body, (jnp.int32(0), grid_start_indices, [jnp.zeros(shape) for shape in block_shapes])
     )
   flat_args, jaxpr_in_tree = jax.tree_util.tree_flatten((jnp.int32(0),))
   wrapped_loop, _ = api_util.flatten_fun_nokwargs(

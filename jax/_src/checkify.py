@@ -472,6 +472,7 @@ def _reduce_any_error(error: Error):
 ## check_p primitive
 
 check_p = core.Primitive('check')
+check_p.is_effectful = lambda _: True  # type: ignore
 check_p.multiple_results = True  # zero results
 
 
@@ -841,12 +842,12 @@ def checkify_while_body_jaxpr(
     c_consts, vals = split_list(c_consts_and_vals, [c_consts_num])
     out = body_f(*vals)
     # This checks if the next cond application will error
-    _ = cond_f(*c_consts, *out)
+    lax.dce_sink(cond_f(*c_consts, *out))
     return out
   new_body_f_ = lu.wrap_init(new_body_f, debug_info=body_jaxpr.jaxpr.debug_info)
   c_consts_avals = cond_jaxpr.in_avals[:c_consts_num]
-  jaxpr, _, () = pe.trace_to_jaxpr_dynamic(new_body_f_, [*c_consts_avals,
-                                                             *body_jaxpr.in_avals])
+  jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
+      new_body_f_, [*c_consts_avals, *body_jaxpr.in_avals])
   closed_jaxpr = pe.close_jaxpr(jaxpr)
   err_vals, err_tree = jtu.tree_flatten(error)
   err_vals = map(core.get_aval, err_vals)
@@ -1232,9 +1233,8 @@ def checkify(f: Callable[..., Out],
     closed_f = lambda: f(*args, **kwargs)
     # stage:
     debug = api_util.debug_info("checkify", f, args, kwargs)
-    fun_, out_tree = api_util.flatten_fun(lu.wrap_init(closed_f,
-                                                       debug_info=debug),
-                                          in_tree)
+    fun_, out_tree = api_util.flatten_fun(
+        lu.wrap_init(closed_f, debug_info=debug), in_tree)
     jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(fun_, ())
     jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr_))
     # checkify:
