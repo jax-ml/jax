@@ -884,7 +884,24 @@ class RooflineTest(jtu.JaxTestCase):
         custom_result.unfused_hbm_bytes, base_result.unfused_hbm_bytes
     )
 
-  def test_gather_roofline(self):
+  @jtu.parameterized.named_parameters(
+      dict(
+          testcase_name="promise_in_bounds",
+          mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+          expected_flops=0,
+      ),
+      dict(
+          testcase_name="clip",
+          mode=lax.GatherScatterMode.CLIP,
+          expected_flops=0,
+      ),
+      dict(
+          testcase_name="fill_or_drop",
+          mode=lax.GatherScatterMode.FILL_OR_DROP,
+          expected_flops=4 * 2 * 1 + 2 * 3,
+      ),
+  )
+  def test_gather_roofline(self, mode, expected_flops):
     operand = jnp.zeros((3, 3), dtype=jnp.int32)
     indices = jnp.zeros((2, 1), dtype=jnp.int32)
 
@@ -899,11 +916,12 @@ class RooflineTest(jtu.JaxTestCase):
         y,
         dimension_numbers=dimension_numbers,
         slice_sizes=(1, 3),
+        mode=mode,
     )
 
     _, result = roofline.roofline(f)(operand, indices)
 
-    self.assertEqual(result.unfused_flops, 0)
+    self.assertEqual(result.unfused_flops, expected_flops)
     # Expected bytes:
     # operand: 2 * 3 * sizeof(int32) = 24
     # indices: 2 * 1 * sizeof(int32) = 8
