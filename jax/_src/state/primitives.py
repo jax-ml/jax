@@ -405,7 +405,11 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   if isinstance(ref_tangent, ad_util.Zero) and isinstance(x_tangent, ad_util.Zero):
     out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
   else:
-    assert not isinstance(ref_tangent, ad_util.Zero)
+    if isinstance(ref_tangent, ad_util.Zero):
+      raise Exception("performing a set/swap operation with a differentiated "
+                      "value on a non-differentiated array reference of type "
+                      f"{core.typeof(ref_primal)}. Move the array reference "
+                      "to be an argument of the differentiated function?")
     x_tangent = ad_util.instantiate(x_tangent)
     out_tangent = swap_p.bind(ref_tangent, x_tangent, *idx, **params)
   return out_primal, out_tangent
@@ -629,9 +633,9 @@ def _swap_vmap(batched_args, batched_dims, *, tree):
 
   if not ref_is_batched:
     raise Exception("performing a set/swap operation with vmapped value on "
-                    "an unbatched mutable array reference "
-                    f"of type {core.typeof(ref)}. Move the mutable array to be "
-                    "an argument to the vmapped function?")
+                    f"an unbatched array reference of type {core.typeof(ref)}. "
+                    "Move the array reference to be an argument to the vmapped "
+                    "function?")
 
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")

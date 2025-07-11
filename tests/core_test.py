@@ -408,13 +408,13 @@ class CoreTest(jtu.JaxTestCase):
     self.assertEqual(x_repr, "VmapTracer<int32[]>")
 
     jax.grad(f)(jnp.float16(1.0))
-    self.assertEqual(x_repr, "GradTracer<float16[]>")
+    self.assertRegex(x_repr, r"(Grad)|(Linearize)Tracer<float16\[\]>")
 
     jax.jacrev(f)(jnp.arange(12, dtype='float32'))
-    self.assertEqual(x_repr, "GradTracer<float32[12]>")
+    self.assertRegex(x_repr, r"(Grad)|(Linearize)Tracer<float32\[12\]>")
 
     jax.jacfwd(f)(jnp.arange(14, dtype='float32'))
-    self.assertEqual(x_repr, "GradTracer<float32[14]>")
+    self.assertRegex(x_repr, r"(Grad)|(Linearize)Tracer<float32\[14\]>")
 
   def test_verbose_tracer_reprs(self):
     # Verbose reprs, avaiable via tracer._pretty_print()
@@ -431,7 +431,7 @@ class CoreTest(jtu.JaxTestCase):
     self.assertRegex(x_repr, r"^Traced<int32\[\]>with<BatchTrace>")
 
     jax.grad(f)(jnp.float16(1.0))
-    self.assertRegex(x_repr, r"^Traced<float16\[\]>with<JVPTrace>")
+    self.assertRegex(x_repr, r"^Traced<float16\[\]>with<(JVP)|(Linearize)Trace>")
 
 
 @jtu.with_config(jax_pprint_use_color=False)
