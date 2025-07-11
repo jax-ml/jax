@@ -2635,6 +2635,66 @@ class OpsTest(PallasBaseTest):
     expected = jnp.swapaxes(x, 0, 1)
     np.testing.assert_array_equal(out, expected)
 
+  @hp.given(batch_size=hps.integers(1, 16))
+  def test_8bit_gather(self, batch_size):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not supported on this hardware")
+    if jtu.get_tpu_version() < 6:
+      self.skipTest("Requires TPUv6 or newer")
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 22):
+      self.skipTest("Requires libtpu built after 2025-9-22")
+
+    dtype = jnp.int8
+    xspec = pl.BlockSpec((32, 128), lambda i: (i, 0))
+    lspec = pl.BlockSpec((32, 128), lambda i: (0, 0))
+
+    data = jax.random.randint(
+        key=jax.random.key(1234),
+        shape=(32 * batch_size, 128),
+        minval=0,
+        maxval=32,
+        dtype=jnp.int8,
+    )
+    lut = jax.random.randint(
+        key=jax.random.key(1234),
+        shape=(32, 128),
+        minval=-128,
+        maxval=127,
+        dtype=jnp.int8,
+    )
+
+    def kernel(data_ref, lut_ref, output_ref):
+      data_chunk = data_ref[...]
+      lut_chunk = lut_ref[...]
+      data_chunk = data_chunk.reshape((32, 128, 1))
+      output = lax.gather(
+          lut_chunk,
+          data_chunk,
+          dimension_numbers=lax.GatherDimensionNumbers(
+              offset_dims=(),
+              start_index_map=(0,),
+              operand_batching_dims=(1,),
+              start_indices_batching_dims=(1,),
+              collapsed_slice_dims=(0,)
+          ),
+          slice_sizes=(1, 1),
+          mode="promise_in_bounds",
+      )
+      output_ref[...] = output
+
+    deq_call = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(data.shape, dtype),
+        grid=(batch_size,),
+        out_specs=xspec,
+        in_specs=[xspec, lspec],
+    )
+    result = deq_call(data, lut)
+    expected = jnp.take_along_axis(
+        lut, data, axis=0, mode="promise_in_bounds"
+    )
+    np.testing.assert_array_equal(result, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

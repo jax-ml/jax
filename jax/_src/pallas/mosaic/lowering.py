@@ -2459,8 +2459,6 @@ def _gather_lowering_rule(
 
   if len(in_aval.shape) != 2:
     raise NotImplementedError("Only 2D gather is supported")
-  if pallas_utils.dtype_bitwidth(in_aval.dtype) != 32:
-    raise NotImplementedError("Only 32-bit gather is supported")
   if in_aval.shape != indices_aval.shape[:-1] != out_aval.shape:
     raise ValueError("Shape mismatch in input, indices and output")
 
@@ -2472,7 +2470,7 @@ def _gather_lowering_rule(
   # shape before lowering to Mosaic and rely on MLIR CSE to remove the reshapes.
   assert indices_aval.shape == in_aval.shape + (1,)
   recovered_indices = vector.shape_cast(
-      ir.VectorType.get(in_aval.shape, ir.IntegerType.get_signless(32)),
+      ir.VectorType.get(in_aval.shape, indices.type.element_type),
       indices,
   )
   # Note: current support for lax.gather is still very limited.
