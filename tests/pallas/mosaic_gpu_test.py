@@ -3423,7 +3423,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
           accumulate=False,
       )
       plgpu.barrier_wait(barrier_ref.at[barrier_index])
-      scratch_smem[...] = acc_tmem[...].astype(dtype)
+      scratch_smem[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(scratch_smem, out_ref)
       plgpu.wait_smem_to_gmem(0)
