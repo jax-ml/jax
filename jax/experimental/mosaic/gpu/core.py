@@ -292,7 +292,9 @@ class TMEM:
 
   def __post_init__(self):
     if self.layout is not None:
-      self.layout.check_type(self.shape, utils.dtype_to_ir_type(self.dtype))
+      self.layout.check_type(
+          self.shape, utils.bitwidth(utils.dtype_to_ir_type(self.dtype))
+      )
       if self.packing is not None:
         raise ValueError("Cannot specify both layout and packing")
 
