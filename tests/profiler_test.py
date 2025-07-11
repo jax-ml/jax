@@ -38,19 +38,9 @@ except ImportError:
   portpicker = None
 
 try:
-  from tensorflow.python.profiler import profiler_client
-  from tensorflow.python.profiler import profiler_v2 as tf_profiler
+  from xprof.convert import _pywrap_profiler_plugin
 except ImportError:
-  profiler_client = None
-  tf_profiler = None
-
-XPROF_ENABLED = False
-try:
-  import xprof
-  del xprof
-  XPROF_ENABLED = True
-except ImportError:
-  pass
+  _pywrap_profiler_plugin = None
 
 jax.config.parse_flags_with_absl()
 
@@ -300,8 +290,8 @@ class ProfilerTest(unittest.TestCase):
                      'Expected one path match: ' + path)
 
   @unittest.skip("Test causes OOMs")
-  @unittest.skipIf(not (portpicker and profiler_client and tf_profiler),
-    "Test requires tensorflow.profiler and portpicker")
+  @unittest.skipIf(not (portpicker and _pywrap_profiler_plugin),
+    "Test requires xprof and portpicker")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
     def on_worker(port, worker_start):
       jax.profiler.start_server(port)
@@ -316,17 +306,24 @@ class ProfilerTest(unittest.TestCase):
 
     def on_profile(port, logdir, worker_start):
       worker_start.wait()
-      options = tf_profiler.ProfilerOptions(
-          host_tracer_level=2,
-          python_tracer_level=2,
-          device_tracer_level=1,
-          delay_ms=delay_ms,
-      )
+      options = {
+          "host_tracer_level": 2,
+          "python_tracer_level": 2,
+          "device_tracer_level": 1,
+          "delay_ms": delay_ms,
+      }
 
       # Request for 1000 milliseconds of profile.
       duration_ms = 1000
-      profiler_client.trace(f'localhost:{port}', logdir, duration_ms,
-                            '', 1000, options)
+      _pywrap_profiler_plugin.trace(
+          f'localhost:{port}',
+          logdir,
+          '',
+          True,
+          duration_ms,
+          3,
+          options
+      )
       self.profile_done = True
 
     logdir = absltest.get_default_test_tmpdir()
@@ -344,9 +341,8 @@ class ProfilerTest(unittest.TestCase):
     self._check_xspace_pb_exist(logdir)
 
   @unittest.skipIf(
-      not (portpicker and profiler_client and tf_profiler and XPROF_ENABLED),
-    "Test requires tensorflow.profiler, portpicker and "
-    "tensorboard_profile_plugin")
+      not (portpicker and _pywrap_profiler_plugin),
+    "Test requires xprof and portpicker")
   def test_remote_profiler(self):
     port = portpicker.pick_unused_port()
     jax.profiler.start_server(port)

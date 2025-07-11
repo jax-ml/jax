@@ -40,6 +40,8 @@ for a provided duration. The trace file will be dumped into a directory
 (determined by `--log_dir`) and by default, a Perfetto UI link will be generated
 to view the resulting trace.
 """
+_GRPC_PREFIX = 'grpc://'
+DEFAULT_NUM_TRACING_ATTEMPTS = 3
 parser = argparse.ArgumentParser(description=_DESCRIPTION)
 parser.add_argument("--log_dir", default=None,
                     help=("Directory to store log files. "
@@ -72,10 +74,14 @@ def collect_profile(port: int, duration_in_ms: int, host: str,
   }
   log_dir_ = pathlib.Path(log_dir if log_dir is not None else tempfile.mkdtemp())
   _pywrap_profiler_plugin.trace(
-      f"{host}:{port}",
+      _strip_addresses(f"{host}:{port}", _GRPC_PREFIX),
       str(log_dir_),
+      '',
+      True,
       duration_in_ms,
-      options=options)
+      DEFAULT_NUM_TRACING_ATTEMPTS,
+      options,
+  )
   print(f"Dumped profiling information in: {log_dir_}")
   # The profiler dumps `xplane.pb` to the logging directory. To upload it to
   # the Perfetto trace viewer, we need to convert it to a `trace.json` file.
@@ -95,6 +101,12 @@ def collect_profile(port: int, duration_in_ms: int, host: str,
   if not no_perfetto_link:
     path = jax_profiler._write_perfetto_trace_file(log_dir_)
     jax_profiler._host_perfetto_trace_file(path)
+
+def _strip_prefix(s, prefix):
+  return s[len(prefix):] if s.startswith(prefix) else s
+
+def _strip_addresses(addresses, prefix):
+  return ','.join([_strip_prefix(s, prefix) for s in addresses.split(',')])
 
 def main(args):
   collect_profile(args.port, args.duration_in_ms, args.host, args.log_dir,
