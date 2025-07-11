@@ -5,14 +5,14 @@
 Getting Started with JAX
 ========================
 Welcome to JAX! The JAX documentation contains a number of useful resources for getting started.
-:doc:`notebooks/thinking_in_jax` is the easiest place to jump in and get an overview of the JAX project and its execution model.
+:doc:`notebooks/thinking_in_jax` is the easiest place to jump in and get an overview of the JAX project, its execution
+model, and differences with NumPy.
 
-If you're accustomed to writing NumPy code and are starting to explore JAX, you might find the following resources helpful:
+If you're starting to explore JAX, you might also find the following resources helpful:
 
-- :doc:`notebooks/thinking-in-jax` provides a high-level overview of how to think in JAX, including the differences between JAX and NumPy.
 - :doc:`key-concepts` introduces the key concepts of JAX, such as transformations, tracing, jaxprs and pytrees.
 - :doc:`notebooks/Common_Gotchas_in_JAX` lists some of JAX's sharp corners.
-- :doc:`faq` answers some frequent jax questions.
+- :doc:`faq` answers some frequent JAX questions.
 
 Tutorials
 ---------

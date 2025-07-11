@@ -1,14 +1,13 @@
 ---
 jupytext:
-  default_lexer: ipython3
   formats: ipynb,md:myst
   text_representation:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.4
+    jupytext_version: 1.17.2
 kernelspec:
-  display_name: Python 3
+  display_name: jax-docs
   language: python
   name: python3
 ---
@@ -55,7 +54,7 @@ For more detailed platform-specific installation information, check out [Install
 **Key concepts:**
 
 - JAX provides a NumPy-inspired interface for convenience.
-- Through duck-typing, JAX arrays can often be used as drop-in replacements of NumPy arrays.
+- Through [duck-typing](https://en.wikipedia.org/wiki/Duck_typing), JAX arrays can often be used as drop-in replacements of NumPy arrays.
 - Unlike NumPy arrays, JAX arrays are always immutable.
 
 +++
@@ -70,14 +69,6 @@ With this import, you can immediately use JAX in a similar manner to typical Num
 
 ```{code-cell} ipython3
 import matplotlib.pyplot as plt
-import numpy as np
-
-x_np = np.linspace(0, 10, 1000)
-y_np = 2 * np.sin(x_np) * np.cos(x_np)
-plt.plot(x_np, y_np);
-```
-
-```{code-cell} ipython3
 import jax.numpy as jnp
 
 x_jnp = jnp.linspace(0, 10, 1000)
@@ -85,7 +76,7 @@ y_jnp = 2 * jnp.sin(x_jnp) * jnp.cos(x_jnp)
 plt.plot(x_jnp, y_jnp);
 ```
 
-The code blocks are identical aside from replacing `np` with `jnp`, and the results are the same. As we can see, JAX arrays can often be used directly in place of NumPy arrays for things like plotting.
+The code blocks are identical to what you would expect with NumPy, aside from replacing `np` with `jnp`, and the results are the same. As we can see, JAX arrays can often be used directly in place of NumPy arrays for things like plotting.
 
 +++
 
@@ -118,7 +109,7 @@ type(x_jnp)
 
 +++ {"id": "Mx94Ri7euEZm"}
 
-Python's [duck-typing](https://en.wikipedia.org/wiki/Duck_typing) allows JAX arrays and NumPy arrays to be used interchangeably in many places. However, there is one important difference between JAX and NumPy arrays: JAX arrays are immutable, meaning that once created their contents cannot be changed.
+Python's duck-typing allows JAX arrays and NumPy arrays to be used interchangeably in many places. However, there is one important difference between JAX and NumPy arrays: JAX arrays are immutable, meaning that once created their contents cannot be changed.
 
 Here is an example of mutating an array in NumPy:
 
@@ -166,7 +157,7 @@ print(x)
 print(y)
 ```
 
-You'll find a few differences between JAX arrays and NumPy arrays once you begin digging-in. See also:
+You'll find a few differences between JAX arrays and NumPy arrays once you begin digging in. See also:
 
 - [Key concepts](https://docs.jax.dev/en/latest/key-concepts.html#jax-arrays-jax-array) for an introduction to the key concepts of JAX, such as transformations, tracing, jaxprs and pytrees.
 - [🔪 JAX - The Sharp Bits 🔪](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html) for common gotchas when using JAX.
