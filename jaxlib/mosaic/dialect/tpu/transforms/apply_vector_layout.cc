@@ -707,13 +707,12 @@ LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
         "Not implemented: Null layout / non-vector operand in elementwise "
         "operation");
   }
-  const auto out_ty = cast<VectorType>(op.getResult(0).getType());
-  const VectorLayout &layout_out = *layouts_out.front();
-  if (!llvm::all_of(layouts_in, [&](const Layout &l) {
-        return l->generalizes(layout_out, out_ty.getShape(), ctx.target_shape);
-      })) {
+  const auto vty = cast<VectorType>(op.getResult(0).getType());
+  const VectorLayout &layout = *layouts_out.front();
+  if (!llvm::all_of(layouts_in,
+                    [&](const Layout &l) { return layout == *l; })) {
     return op.emitOpError(
-        "Not implemented: Incompatible layouts in elementwise operation");
+        "Not implemented: Different layouts in elementwise operation");
   }
   const unsigned num_operands = op.getNumOperands();
   SmallVector<xla::Array<Value>> in_vreg_arrays;
@@ -728,39 +727,20 @@ LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
   }
 
   const VectorType out_vreg_ty = getNativeVregOrVmaskType(
-      out_ty.getElementType(), layout_out.bitwidth(), ctx.target_shape);
+      vty.getElementType(), layout.bitwidth(), ctx.target_shape);
 
   NamedAttrList attributes(op.getAttrDictionary());
   attributes.erase("in_layout");
   attributes.erase("out_layout");
 
-  // Note that we have to broadcast to handle replicate dimensions.
-  SmallVector<int64_t> broadcasted_shape(
-      toArrayRef(in_vreg_arrays[0].dimensions()));
-  for (size_t i = 1; i < num_operands; ++i) {
-    SmallVector<int64_t> new_broadcasted_shape;
-    TPU_ASSERT_OP(OpTrait::util::getBroadcastedShape(
-        broadcasted_shape, toArrayRef(in_vreg_arrays[i].dimensions()),
-        new_broadcasted_shape));
-    broadcasted_shape = std::move(new_broadcasted_shape);
-  }
-  TPU_ASSERT_OP(broadcasted_shape ==
-                layout_out.tileArrayShape(out_ty.getShape(), ctx.target_shape));
-
   // TODO(tlongeri): Can we avoid initializing the array before filling values?
-  xla::Array<Value> out_vreg_array(broadcasted_shape);
+  xla::Array<Value> out_vreg_array(
+      layout.tileArrayShape(vty.getShape(), ctx.target_shape));
   out_vreg_array.Each([&](absl::Span<const int64_t> idx, Value *out_vreg) {
     SmallVector<Value> operands(num_operands);
 
     for (unsigned i = 0; i < num_operands; ++i) {
-      // Handle indices for broadcasted dimensions
-      SmallVector<int64_t> operand_idx(toArrayRef(idx));
-      for (unsigned j = 0; j < idx.size(); ++j) {
-        if (in_vreg_arrays[i].dim(j) == 1) {
-          operand_idx[j] = 0;
-        }
-      }
-      operands[i] = in_vreg_arrays[i](operand_idx);
+      operands[i] = in_vreg_arrays[i](idx);
     }
     Operation *vreg_op =
         builder.create(op.getLoc(), op.getName().getIdentifier(), operands,
@@ -769,7 +749,7 @@ LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
     CHECK_EQ(vreg_op->getNumResults(), 1);
     *out_vreg = vreg_op->getResult(0);
   });
-  op.replaceAllUsesWith(assemble(builder, out_ty, layout_out,
+  op.replaceAllUsesWith(assemble(builder, vty, layout,
                                  std::move(out_vreg_array), ctx.target_shape));
   op.erase();
   return success();
