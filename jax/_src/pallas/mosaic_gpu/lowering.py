@@ -2900,10 +2900,13 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
   def _yielded_values(outs, avals):
     ret = []
     for out, aval in zip(outs, avals):
-      if isinstance(out, (mgpu.WGMMAAccumulator, mgpu.FragmentedArray)):
-        ret.append(out)
-      else:
-        ret.append(_ensure_ir_value(out, aval.dtype))
+      match out:
+        case mgpu.FragmentedArray(layout=mgpu.WGSplatFragLayout()):
+          ret.append(out.registers.item())
+        case mgpu.WGMMAAccumulator() | mgpu.FragmentedArray():
+          ret.append(out)
+        case _:
+          ret.append(_ensure_ir_value(out, aval.dtype))
     return ret
 
   # We need to know the result types ahead of time to construct the switch
