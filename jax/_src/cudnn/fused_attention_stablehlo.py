@@ -525,17 +525,13 @@ def _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key):
     B, T, N, H = query.shape
     _, S, _, _ = key.shape
 
-    q_seqlen = _shift_to_left(q_seqlen, -1)
-    kv_seqlen = _shift_to_left(kv_seqlen, -1)
+    q_seqlen = _shift_to_left(q_seqlen, 0)
+    kv_seqlen = _shift_to_left(kv_seqlen, 0)
 
     q_offsets = _cu_offset(q_offsets, T)
     kv_offsets = _cu_offset(kv_offsets, S)
-    q_offsets = _shift_to_left(q_offsets, -1)
-    kv_offsets = _shift_to_left(kv_offsets, -1)
-
-    # mark any invalid entries as maximum offset
-    q_offsets = jnp.where(q_offsets < 0, B * T, q_offsets)
-    kv_offsets = jnp.where(kv_offsets < 0, B * S, kv_offsets)
+    q_offsets = _shift_to_left(q_offsets, B * T)
+    kv_offsets = _shift_to_left(kv_offsets, B * S)
 
     # multiply by stride_per_token to get correct offsets
     # do it here because real stride changes after sharding
