@@ -2606,7 +2606,9 @@ def _fold_and_get_constant_value(x):
     return None
 
 
-@register_lowering_rule(lax.max_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.max_p, ensure_mlir_values=False, kernel_types=[*tpu_core.KernelType]
+)
 def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
@@ -2619,7 +2621,9 @@ def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
   raise NotImplementedError(aval_out.dtype)
 
 
-@register_lowering_rule(lax.min_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.min_p, ensure_mlir_values=False, kernel_types=[*tpu_core.KernelType]
+)
 def _min_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
@@ -3222,7 +3226,7 @@ def _lower_while_via_fori(
   return [ub, ub, *for_out]
 
 
-@register_lowering_rule(lax.while_p)
+@register_lowering_rule(lax.while_p, kernel_types=[*tpu_core.KernelType])
 def _while_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -3809,7 +3813,9 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   return arith.remsi(arith.divsi(device_id, minor_divisor), axis_size)
 
 
-@register_lowering_rule(tpu_primitives.get_barrier_semaphore_p)
+@register_lowering_rule(
+    tpu_primitives.get_barrier_semaphore_p, kernel_types=[*tpu_core.KernelType]
+)
 def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
   memref_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
