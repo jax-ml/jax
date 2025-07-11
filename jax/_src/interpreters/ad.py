@@ -179,8 +179,8 @@ def _linearize_jaxpr(
 
   source_info = source_info_util.current()
   debug_info = jaxpr.jaxpr.debug_info
-  tracers = [new_arg(lin_trace, v.aval, nz, source_info)
-             for (v, nz) in zip(jaxpr.jaxpr.invars, nonzeros)]
+  tracers = [new_arg(lin_trace, a, nz, source_info)
+             for (a, nz) in zip(jaxpr.in_aval_qdds, nonzeros)]
   in_primals = [t.primal for t in tracers]
 
   with core.set_current_trace(lin_trace, check_leaks=True):
@@ -734,6 +734,11 @@ class LinearizeTrace(Trace):
     else:
       return maybe_linearize_tracer(self, primal_out, tangent_nzs_out, tangent_out)
 
+  def cur_qdd(self, x):
+    p, _ = self.to_primal_tangent_pair(x)
+    with core.set_current_trace(self.parent_trace):
+      return core.cur_qdd(p)
+
   def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,
                               f_jvp: lu.WrappedFun, tracers, *,
                               symbolic_zeros: bool):
@@ -980,6 +985,9 @@ class LinearizeTracer(Tracer):
 
   def get_referent(self):
     return core.get_referent(self.primal)
+
+  def cur_qdd(self):
+    return core.cur_qdd(self.primal)
 
 
 # -------------------- Primitives --------------------

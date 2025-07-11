@@ -4218,13 +4218,8 @@ def _sin_lowering(ctx, x, accuracy):
 
 def _sin_lin(nzs, x, accuracy):
   nz, = nzs
-  cos_x = cos(x) # TODO: allow this to happen in the linearized computation (need to fix backward_pass)
-  return (
-      sin_p.bind(x, accuracy=accuracy),
-      nz,
-      cos_x,
-      lambda cos_x_, t: mul(t, cos_x_),
-  )
+  return (sin_p.bind(x, accuracy=accuracy), nz, cos(x),
+          lambda cos_x, t: mul(t, cos_x))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x, accuracy: mul(g, cos(x, accuracy=accuracy)))
@@ -6451,6 +6446,8 @@ def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
                                      shape, broadcast_dimensions, sharding):
   if type(ct) is ad_util.Zero:
     return [ad_util.Zero(operand.aval)]
+  if not isinstance(operand, ad.UndefinedPrimal):
+    return [None] * (1 + len(dyn_shape))  # transpose wrt literal
   unit_dims = [i for i, s in enumerate(operand.aval.shape)
                if core.definitely_equal(s, 1)]
   bdims = tuple(np.delete(broadcast_dimensions, unit_dims))
