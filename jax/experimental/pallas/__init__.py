@@ -40,6 +40,7 @@ from jax._src.pallas.helpers import debug_check as debug_check
 from jax._src.pallas.helpers import debug_checks_enabled as debug_checks_enabled
 from jax._src.pallas.helpers import empty as empty
 from jax._src.pallas.helpers import empty_like as empty_like
+from jax._src.pallas.helpers import empty_ref_like as empty_ref_like
 from jax._src.pallas.helpers import enable_debug_checks as enable_debug_checks
 from jax._src.pallas.helpers import loop as loop
 from jax._src.pallas.helpers import when as when
