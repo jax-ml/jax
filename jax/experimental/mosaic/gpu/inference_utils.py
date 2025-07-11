@@ -22,6 +22,8 @@ from typing import cast, Union
 
 from jax._src.lib.mlir import ir
 
+from . import utils
+
 MlirOperation = Union[ir.Operation, ir.OpView]
 
 def in_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
@@ -147,13 +149,11 @@ def should_have_transforms(op: ir.OpView) -> bool:
 def is_transformable_smem_memref(v: ir.Value) -> bool:
   """Whether the value is a memref in SMEM on which transforms should be applied."""
   barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
-  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   return (
       ir.MemRefType.isinstance(v.type)
       # barriers have no business being transformed
       and v.type.element_type != barrier_ty  # pylint: disable=attribute-error
-      and v.type.memory_space is not None  # pylint: disable=attribute-error
-      and v.type.memory_space == smem  # pylint: disable=attribute-error
+      and utils.is_smem_ref(v)
   )
 
 

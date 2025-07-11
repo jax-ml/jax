@@ -352,7 +352,6 @@ def _construct_smem_reftree(
   index = ir.IndexType.get()
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
-  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   flat_ref_tys, smem_buffer_tree = jax.tree.flatten(
       smem_buffers, is_leaf=lambda x: isinstance(x, Union)
   )
@@ -366,7 +365,7 @@ def _construct_smem_reftree(
           ir.Type.parse("!mosaic_gpu.barrier")
           if lowering_semantics == LoweringSemantics.Warpgroup
           else i64,
-          memory_space=smem,
+          memory_space=utils.smem(),
       )
       barrier_memref = _slice_smem(
             barrier_ty,
@@ -413,7 +412,7 @@ def _construct_smem_reftree(
         )
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = _slice_smem(
-            ir.MemRefType.get([], i32, memory_space=smem),
+            ir.MemRefType.get([], i32, memory_space=utils.smem()),
             dynamic_smem,
             c(dynamic_smem_offset, index),
             lowering_semantics,
@@ -435,7 +434,7 @@ def _construct_smem_reftree(
       case _:
         mlir_dtype = utils.dtype_to_ir_type(ref_ty.dtype)
         tile_smem = _slice_smem(
-            ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=smem),
+            ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=utils.smem()),
             dynamic_smem,
             c(dynamic_smem_offset, index),
             lowering_semantics,
@@ -533,10 +532,9 @@ def _launch(
       token.type, [token], *grid_vals, *block_vals,
       dynamicSharedMemorySize=c(smem_bytes, i32), **cluster_kwargs)
   launch_op.body.blocks.append(*([index] * (12 + 2 * len(cluster_kwargs))))  # Append an empty block
-  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   with ir.InsertionPoint(launch_op.body.blocks[0]):
     dynamic_smem = gpu.dynamic_shared_memory(
-        ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
+        ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=utils.smem())
     )
 
     if profiler_spec:
@@ -544,7 +542,7 @@ def _launch(
           ir.MemRefType.get(
               (profiler_spec.smem_i32_elements(block=block),),
               i32,
-              memory_space=smem,
+              memory_space=utils.smem(),
           ),
           dynamic_smem,
           c(profiler_start, index),

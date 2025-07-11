@@ -490,12 +490,13 @@ class ModuleContext:
       runtime scratch buffer.
     """
     smem_base = None
-    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
     i8 = ir.IntegerType.get_signless(8)
     i32 = ir.IntegerType.get_signless(32)
     if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
       smem_base = gpu_dialect.dynamic_shared_memory(
-          ir.MemRefType.get((mgpu_utils.DYNAMIC,), i8, memory_space=smem)
+          ir.MemRefType.get(
+              (mgpu_utils.DYNAMIC,), i8, memory_space=mgpu_utils.smem()
+          )
       )
     views = []
     off = initial_used_bytes = self.smem_used_bytes
@@ -504,7 +505,7 @@ class ModuleContext:
       scratch_ty = ir.MemRefType.get(
           s.shape,
           mgpu_utils.dtype_to_ir_type(s.dtype),
-          memory_space=smem,
+          memory_space=mgpu_utils.smem(),
       )
       # The below code emission relies on the assumption that the first scratch
       # operand provided by Mosaic GPU always begins at the beginning of
@@ -1267,7 +1268,7 @@ def _handle_dtype_bitcast(
         "Data type bitcast is only supported from i8 to other types."
     )
   ref_ty = ir.MemRefType(ref.type)
-  if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
+  if not mgpu_utils.is_smem_ref(ref_ty):
     raise ValueError(f"Only workgroup memory is supported but got {ref}.")
   if len(ref_ty.shape) != 1:
     raise NotImplementedError(

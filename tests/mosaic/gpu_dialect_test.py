@@ -967,8 +967,7 @@ class DialectLoweringTest(MosaicGpuTest):
     def body():
       nonlocal offset
       i32 = ir.IntegerType.get_signless(32)
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-      memref_ty = ir.MemRefType.get((4, 32), i32, memory_space=smem)
+      memref_ty = ir.MemRefType.get((4, 32), i32, memory_space=mgpu_utils.smem())
       offset = arith.constant(i32, shift)
       op = mgpu.dialect.SliceSMEMOp(memref_ty, offset)
       op.attributes["out_transforms"] = ir.ArrayAttr.get([ir.ArrayAttr.get([])])
@@ -1051,8 +1050,7 @@ class DialectLoweringTest(MosaicGpuTest):
       )
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-      ref_ty = ir.MemRefType.get((4, 32), ir.BF16Type.get(), memory_space=smem)
+      ref_ty = ir.MemRefType.get((4, 32), ir.BF16Type.get(), memory_space=mgpu_utils.smem())
       func.FuncOp.from_py_func(vec_ty, vec_ty, ref_ty)(body)
 
     if omit_in_layouts:
@@ -1071,7 +1069,7 @@ class DialectLoweringTest(MosaicGpuTest):
       ty_in = ir.MemRefType.get(
           (64, 128),
           ir.BF16Type.get(),
-          memory_space=ir.Attribute.parse("#gpu.address_space<workgroup>"),
+          memory_space=mgpu_utils.smem(),
       )
       ref = memref.alloc(ty_in, [], [])
 

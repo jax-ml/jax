@@ -594,7 +594,6 @@ class LaunchContext:
     index = ir.IndexType.get()
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
-    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
     src_ref_ty = ir.MemRefType(src_ref.type)
     dst_ref_ty = ir.MemRefType(dst_ref.type)
     element_type = src_ref_ty.element_type
@@ -609,13 +608,13 @@ class LaunchContext:
     if not isinstance(gmem_transform, tuple):
       gmem_transform = (gmem_transform,)
 
-    if src_ref_ty.memory_space is None and dst_ref_ty.memory_space == smem:
+    if src_ref_ty.memory_space is None and utils.is_smem_ref(dst_ref_ty):
       gmem_ref, smem_ref = src_ref, dst_ref
       if barrier is None:
         raise ValueError("Barriers are required for GMEM -> SMEM copies")
       if arrive is None:
         arrive = True  # Arrive by default
-    elif src_ref_ty.memory_space == smem and dst_ref_ty.memory_space is None:
+    elif utils.is_smem_ref(src_ref_ty) and dst_ref_ty.memory_space is None:
       gmem_ref, smem_ref = dst_ref, src_ref
       if barrier is not None:
         raise ValueError("Barriers are unsupported for SMEM -> GMEM copies")

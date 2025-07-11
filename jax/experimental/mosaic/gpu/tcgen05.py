@@ -613,7 +613,7 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
     ref_ty = ir.MemRefType(tmem_addr.type)
     if ref_ty.element_type != ir.IntegerType.get_signless(32):
       raise ValueError(f"tmem_addr must be an i32 memref, got: {ref_ty}")
-    if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
+    if not utils.is_smem_ref(ref_ty):
       raise ValueError(f"tmem_addr must be in shared memory, got: {ref_ty}")
     if math.prod(ref_ty.shape) != 1:
       raise ValueError(f"tmem_addr must contain a single element, got: {ref_ty}")
@@ -870,9 +870,8 @@ class TMEMRef:
     if not ir.MemRefType.isinstance(tmem_addr_ref.type):
       raise ValueError(f"tmem_addr_ref must be a memref or a pointer, got: {tmem_addr_ref.type}")
     addr_ref_ty = ir.MemRefType(tmem_addr_ref.type)
-    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-    if addr_ref_ty.memory_space != smem:
-      raise ValueError(f"tmem_addr_ref must be in workgroup memory, got: {addr_ref_ty}")
+    if not utils.is_smem_ref(addr_ref_ty):
+      raise ValueError(f"tmem_addr_ref must be in shared memory, got: {addr_ref_ty}")
     if addr_ref_ty.element_type != i32:
       raise ValueError(f"tmem_addr_ref must be an i32 memref, got: {addr_ref_ty}")
     if math.prod(addr_ref_ty.shape) != 1:

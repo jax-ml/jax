@@ -1548,3 +1548,20 @@ def is_known_divisible(value, divisor, max_depth=10) -> bool:
       )
 
   return False
+
+
+def smem() -> ir.Attribute:
+  """Returns the attribute for the SMEM memory space."""
+  return ir.Attribute.parse("#gpu.address_space<workgroup>")
+
+
+def is_smem_ref(ref: ir.Value | ir.Type) -> bool:
+  """Returns true if the input mem ref or memref type points to SMEM.
+  If the input is not at all of a memref type, raises a ValueError.
+  """
+  if isinstance(ref, ir.Value):
+    ref = ref.type
+  if not ir.MemRefType.isinstance(ref):
+    raise ValueError(f"Expected a memref type but got {ref}")
+  ref = ir.MemRefType(ref)
+  return ref.memory_space is not None and ref.memory_space == smem()

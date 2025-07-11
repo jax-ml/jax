@@ -39,6 +39,7 @@ from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax.experimental.mosaic.gpu import tcgen05
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 import numpy as np
 try:
@@ -130,7 +131,6 @@ def copy(src: ir.Value, dst: ir.Value, swizzle: int | None = None):
     packing = 8 // bw
     if shape[-1] % packing:
       raise NotImplementedError
-    workgroup_mem = ir.Attribute.parse("#gpu.address_space<workgroup>")
     shape = (*shape[:-1], shape[-1] // packing)
     contig_strides = get_contiguous_strides(shape)
     def bitcast(ref):
@@ -145,12 +145,7 @@ def copy(src: ir.Value, dst: ir.Value, swizzle: int | None = None):
           ir.StridedLayoutAttr.get(0, new_strides),
           ref_ty.memory_space,
       )
-      ptr_space = (
-          3
-          if ref_ty.memory_space is not None
-          and ref_ty.memory_space == workgroup_mem
-          else None
-      )
+      ptr_space = 3 if mgpu_utils.is_smem_ref(ref_ty) else None
       return ptr_as_memref(
           # NOTE: memref_ptr applies the offset in case there was any.
           memref_ptr(ref, memory_space=ptr_space),

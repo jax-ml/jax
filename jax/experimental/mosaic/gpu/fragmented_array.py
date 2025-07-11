@@ -2665,7 +2665,7 @@ class FragmentedArray:
 
     if ref_ty.memory_space is None:
       llvm_memory_space = None
-    elif ref_ty.memory_space == ir.Attribute.parse("#gpu.address_space<workgroup>"):
+    elif utils.is_smem_ref(ref_ty):
       llvm_memory_space = 3
     else:
       raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")

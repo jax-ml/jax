@@ -514,9 +514,8 @@ def _vector_reduction_op_lowering_rule(
   a = _fragmented_array_from_ir(op.vector, layout, is_signed)
   match str(op.kind):
     case "#vector.kind<add>":
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
       scratch = _slice_smem(
-          ir.MemRefType.get([4], element_type, memory_space=smem),
+          ir.MemRefType.get([4], element_type, memory_space=utils.smem()),
           arith.constant(None, op.attributes["offset"]),
       )
       result = a.reduce("add", range(len(a.shape)), scratch)
@@ -675,7 +674,7 @@ def _transformed_smem_ref_type(
   if not transforms and not transposed:
     return ref_ty
 
-  if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
+  if not utils.is_smem_ref(ref_ty):
     raise ValueError(f"Only workgroup memory is supported but got {ref_ty}.")
 
   shape = ref_ty.shape
@@ -1130,9 +1129,8 @@ def _mgpu_slice_smem_op_lowering_rule(
 
 def _slice_smem(result: ir.Type, offset: ir.Value):
   i8 = ir.IntegerType.get_signless(8)
-  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   smem_base = gpu.dynamic_shared_memory(
-      ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
+      ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=utils.smem())
   )
   offset = arith.index_cast(ir.IndexType.get(), offset)
   lowered_result_type = result
@@ -1140,7 +1138,7 @@ def _slice_smem(result: ir.Type, offset: ir.Value):
     memref_ty = ir.MemRefType(result)
     if memref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
       lowered_result_type = ir.MemRefType.get(
-          memref_ty.shape, _lowered_barrier_type(), memory_space=smem
+          memref_ty.shape, _lowered_barrier_type(), memory_space=utils.smem()
       )
   view = memref.view(lowered_result_type, smem_base, offset, [])
   if result == lowered_result_type:
