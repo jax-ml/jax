@@ -533,7 +533,7 @@ class Literal:
       return f'{self.val}'
 
   def __repr__(self):
-    return f'{self.val}'
+    return f'Literal({self.val})'
 
 # The types of constants that can be used with core.Literal. Other constants
 # end up as `constvars`.
