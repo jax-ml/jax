@@ -3896,6 +3896,17 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jnp.arange(4.)
     f(x)  # asserts in f
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_linalg_inv(self, mesh):
+    key = jax.random.key(123)
+    arr = jax.random.uniform(key, shape=(4,5,5), out_sharding=P('x'))
+
+    @shard_map(out_specs=P('x'))
+    def f(x):
+      return jax.lax.map(jnp.linalg.inv, x)
+
+    f(arr)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str

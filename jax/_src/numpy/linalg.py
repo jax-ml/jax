@@ -24,6 +24,7 @@ from typing import Literal, NamedTuple, overload
 import numpy as np
 
 from jax._src import api
+from jax._src import core
 from jax._src import config
 from jax._src import deprecations
 from jax._src.custom_derivatives import custom_jvp
@@ -1367,6 +1368,7 @@ def solve(a: ArrayLike, b: ArrayLike) -> Array:
       " To recover this behavior, use solve(a, b[..., None]).squeeze(-1).")
 
   signature = "(m,m),(m)->(m)" if b.ndim == 1 else "(m,m),(m,n)->(m,n)"
+  a, b = core.standard_insert_pvary(a, b)
   return jnp.vectorize(lax_linalg._solve, signature=signature)(a, b)
 
 

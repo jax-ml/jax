@@ -2253,8 +2253,8 @@ def standard_insert_pvary(*args):
     return args
   if not args:
     return args
-  in_vma = [frozenset() if (aval := get_aval(a)) is abstract_token
-            else aval.vma for a in args]  # pytype: disable=attribute-error
+  in_vma = [aval.vma if isinstance(aval := get_aval(a), ShapedArray)
+            else frozenset() for a in args]
   out_vma = frozenset.union(*in_vma)
   return [
       pvary(arg, tuple(n for n in out_vma if n not in src))
