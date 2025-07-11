@@ -22,7 +22,7 @@ import math
 from typing import NamedTuple
 
 import jax
-from jax import util as jax_util
+from jax._src import util as jax_util
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 import jax.numpy as jnp
 import numpy as np

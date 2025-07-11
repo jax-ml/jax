@@ -1398,6 +1398,7 @@ pytype_strict_library(
         ":pallas_tpu",
         ":random",
         ":shard_map",
+        ":util",
     ] + py_deps("numpy"),
 )
 
