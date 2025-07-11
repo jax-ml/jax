@@ -257,9 +257,8 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
   def test_jit_can_consume_input(self):
     def f(key):
       assert_unconsumed(key)
-      ans = jax.jit(jax.random.bits)(key)
+      jax.jit(jax.random.bits)(key)
       assert_consumed(key)
-      return ans
     self.check_key_reuse(f, jax.random.key(0))
 
   def test_jit_can_return_consumed_output(self):
@@ -307,31 +306,28 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
       assert_unconsumed(key)
       assert_unconsumed(key1)
       assert_unconsumed(key2)
-      other = jax.random.bits(key1)
+      _ = jax.random.bits(key1)
       assert_consumed(key)
       assert_consumed(key1)
       assert_consumed(key2)
-      return (key1, key2, other)
     self.check_key_reuse(f, jax.random.key(0))
 
   def test_cond_both_consumed(self):
     @jax.jit
     def f(flag, key):
       assert_unconsumed(key)
-      ans = jax.lax.cond(
+      _ = jax.lax.cond(
         flag, jax.random.uniform, jax.random.normal, key)
       assert_consumed(key)
-      return ans
     self.check_key_reuse(f, True, jax.random.key(0))
 
   def test_cond_one_consumed(self):
     @jax.jit
     def f(flag, key):
       assert_unconsumed(key)
-      ans = jax.lax.cond(
+      _ = jax.lax.cond(
         flag, jax.random.uniform, lambda k: 1.0, key)
       assert_consumed(key)
-      return ans
     self.check_key_reuse(f, True, jax.random.key(0))
 
   def test_cond_neither_consumed(self):
@@ -395,17 +391,17 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
 
     def f_bad():
       key = jax.random.key(0)
-      other = jax.random.split(key)
-      return (jax.random.uniform(key), other)
+      _ = jax.random.split(key)
+      return jax.random.uniform(key)
 
     with self.assertRaisesRegex(KeyReuseError, self.pjit_error):
       self.check_key_reuse(f_bad)
 
     def f_bad_2():
       key = jax.random.key(0)
-      other1 = jax.random.split(key)
-      key1, other2 = jax.random.split(key)
-      return (jax.random.uniform(key1), other1, other2)
+      _ = jax.random.split(key)
+      key1, _ = jax.random.split(key)
+      return jax.random.uniform(key1)
 
     with self.assertRaisesRegex(KeyReuseError, self.random_split_error):
       self.check_key_reuse(f_bad_2)
@@ -616,7 +612,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
       self.check_key_reuse(f_bad, x, key)
 
     with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
-      self.check_key_reuse(jax.value_and_grad(f_bad), x, key)
+      self.check_key_reuse(jax.grad(f_bad), x, key)
 
     self.check_key_reuse(f_good, x, key)
     self.check_key_reuse(jax.grad(f_good), x, key)

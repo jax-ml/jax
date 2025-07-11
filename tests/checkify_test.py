@@ -426,7 +426,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
   def test_while_loop_cond_error(self):
     def while_cond(val):
       _ = jnp.sin(1./val)
-      return 0. * _ + val < 2.
+      return val < 2.
 
     def while_body(val):
       return val+1.
@@ -777,9 +777,8 @@ class CheckifyTransformTests(jtu.JaxTestCase):
 
   def test_multiple_payloads(self):
     def f(x):
-      a = x[5]
-      b = x[6]
-      return a + b
+      _ = x[5]
+      _ = x[6]
 
     err, _ = checkify.checkify(f, errors=checkify.index_checks)(jnp.ones((2,)))
     self.assertIsNotNone(err.get())

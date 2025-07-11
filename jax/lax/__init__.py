@@ -82,8 +82,6 @@ from jax._src.lax.lax import (
   convert_element_type_p as convert_element_type_p,
   copy_p as copy_p,
   cos as cos,
-  dce_sink_p as dce_sink_p,
-  dce_sink as dce_sink,
   cos_p as cos_p,
   cosh as cosh,
   cosh_p as cosh_p,

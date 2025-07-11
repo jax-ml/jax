@@ -448,14 +448,11 @@ def saved_residuals(f: Callable,
     return f(*args, **kwargs)
 
   debug_info = api_util.debug_info("saved_residuals", f, args, kwargs)
-  out = api.make_jaxpr(lambda *args: api.linearize(f_, *args),
+  out = api.make_jaxpr(lambda *args: api.linearize(f_, *args)[1],
                        return_shape=True)(*in_leaves)
   assert isinstance(out, tuple)
-  jaxpr_, out_shape_ = out
+  jaxpr_, out_shape = out
   jaxpr = jaxpr_.jaxpr
-  out_shape = out_shape_[1]
-  num_res = tree_structure(out_shape).num_leaves
-  jaxpr = jaxpr.replace(outvars=jaxpr.outvars[len(jaxpr.outvars) - num_res:])
   out_tree = lambda: tree_structure(out_shape)
   assert len(jaxpr.invars) == len(in_leaves)
   return _saved_residuals(jaxpr, debug_info.arg_names)

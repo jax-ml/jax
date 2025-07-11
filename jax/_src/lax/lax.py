@@ -36,7 +36,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import pretty_printer as pp
@@ -4842,7 +4841,7 @@ def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
     return convert_element_type_p.bind(tangent, new_dtype=new_tangent_dtype,
                                        weak_type=weak_type, sharding=sharding)
 
-def _convert_elt_type_folding_rule(consts, params, out_avals):
+def _convert_elt_type_folding_rule(consts, eqn):
   # We constant-fold convert_element_types applied to constants if those
   # constants are Python builtin numeric types or numpy.ndarrays (so as not
   # to perform any device operations when constant-folding) and if the output
@@ -4852,30 +4851,29 @@ def _convert_elt_type_folding_rule(consts, params, out_avals):
   # we output a Python builtin numeric type.
   # TODO(mattjj): allow constant-folding CPU-backed JAX arrays
   c, = consts
-  out_aval, = out_avals
-  new_dtype = params['new_dtype']
+  o, = eqn.outvars
+  new_dtype = eqn.params['new_dtype']
   if (type(c) in {np.ndarray, *dtypes.python_scalar_dtypes} and
-      isinstance(out_aval, core.UnshapedArray) and not np.shape(c) and
+      isinstance(o.aval, core.UnshapedArray) and not np.shape(c) and
       not dtypes.issubdtype(new_dtype, dtypes.extended)):
     out = np.array(c)
     if (dtypes.issubdtype(out.dtype, np.complexfloating) and
         not dtypes.issubdtype(new_dtype, np.complexfloating)):
       out = out.real
     out = out.astype(new_dtype)
-    if not out_aval.weak_type:
-      return [out]
+    if not o.aval.weak_type:
+      return [out], None
     out = out.item()
-    if core.get_aval(out).dtype is out_aval.dtype:
-      return [out]
-  return None
+    if core.get_aval(out).dtype is o.aval.dtype:
+      return [out], None
+  return [None], eqn
 
 def _convert_elt_type_fwd_rule(eqn):
-  t, = eqn.invars
-  aval = t.aval
-  if (aval.dtype == eqn.params['new_dtype'] and
-      aval.weak_type == eqn.params['weak_type'] and
-      not dtypes.issubdtype(aval.dtype, dtypes.extended) and
-      (eqn.params['sharding'] is None or eqn.params['sharding'] == aval.sharding)):
+  v, = eqn.invars
+  if (v.aval.dtype == eqn.params['new_dtype'] and
+      v.aval.weak_type == eqn.params['weak_type'] and
+      not dtypes.issubdtype(v.aval.dtype, dtypes.extended) and
+      (eqn.params['sharding'] is None or eqn.params['sharding'] == v.aval.sharding)):
     return [0], None
   else:
     return [None], eqn
@@ -8457,26 +8455,6 @@ batching.defvectorized(copy_p)
 def _propagate_mem_kind_copy(in_mem_kind):
   return in_mem_kind
 pxla.memory_kind_propagate_rule[copy_p] = _propagate_mem_kind_copy
-
-# The dce_sink_p primitive marks a value as "used" from the perspective of DCE
-# so the computation producing it won't be eliminated.
-def dce_sink(val):
-  tree_util.tree_map(dce_sink_p.bind, val)
-
-class NoDCEEffect(effects.Effect):
-  pass
-no_dce_effect = NoDCEEffect()
-effects.control_flow_allowed_effects.add_type(NoDCEEffect)
-effects.lowerable_effects.add_type(NoDCEEffect)
-
-dce_sink_p = core.Primitive('dce_sink')
-dce_sink_p.def_impl(lambda _: [])
-dce_sink_p.multiple_results = True
-dce_sink_p.def_effectful_abstract_eval(lambda _: ([], {no_dce_effect}))
-mlir.register_lowering(dce_sink_p, lambda ctx, _: [])
-ad.deflinear(dce_sink_p, lambda _: [])
-pe.def_trivial_padding(dce_sink_p)
-batching.defvectorized(dce_sink_p)
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
                       algorithm=RandomAlgorithm.RNG_DEFAULT,

@@ -35,7 +35,6 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src.ad_checkpoint import remat_p
 from jax._src.debugging import debug_callback_p
-from jax._src.effects import Effect
 from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import partial_eval as pe
 from jax._src.util import weakref_lru_cache
@@ -236,10 +235,9 @@ def key_reuse_signature_from_primitive(prim, *args, **params):
       f"Unrecognized key reuse signature of type {type(sig)}: {sig}")
 
 
-consume_effect = Effect()
 consume_p = core.Primitive("consume")
 consume_p.def_impl(lambda x: x)
-consume_p.def_effectful_abstract_eval(lambda x: (x, {consume_effect}))
+consume_p.def_abstract_eval(lambda x: x)
 batching.defvectorized(consume_p)
 mlir.register_lowering(
     consume_p,
@@ -249,11 +247,10 @@ def consume(key):
   """Consume the key and return a consumed copy."""
   return consume_p.bind(key)
 
-assert_effect = Effect()
 
 assert_consumed_value_p = core.Primitive("assert_consumed_value")
 assert_consumed_value_p.def_impl(lambda x, *, value: x)
-assert_consumed_value_p.def_effectful_abstract_eval(lambda x, *, value: (x, {assert_effect}))
+assert_consumed_value_p.def_abstract_eval(lambda x, *, value: x)
 batching.defvectorized(assert_consumed_value_p)
 mlir.register_lowering(
     assert_consumed_value_p,
