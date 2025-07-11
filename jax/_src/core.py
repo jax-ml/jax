@@ -535,10 +535,15 @@ class Literal:
   def __repr__(self):
     return f'{self.val}'
 
+# The types of constants that can be used with core.Literal. Other constants
+# end up as `constvars`.
 literalable_types: set[type] = set()
 
 def is_literalable(x: Any) -> bool:
-  return type(x) in dtypes.python_scalar_dtypes or (type(x) in literalable_types and not np.shape(x))
+  for t in type(x).__mro__:
+    if t in literalable_types:
+      return (not np.shape(x) or config.use_simplified_jaxpr_constants.value)
+  return False
 
 Atom = Union[Var, Literal]
 
@@ -3153,7 +3158,7 @@ def _check_jaxpr(
       for eff in eqn.effects:
         if isinstance(eff, effects.JaxprInputEffect):
           eqn_invar = eqn.invars[eff.input_index]
-          if eqn_invar in mut_arrays:
+          if type(eqn_invar) is Literal or eqn_invar in mut_arrays:
             continue
           if (jaxpr_index := in_idx.get(eqn_invar, sentinel)) is sentinel:
             raise JaxprTypeError(

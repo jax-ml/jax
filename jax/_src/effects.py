@@ -62,9 +62,13 @@ class Effect:
 Effects = Set[Effect]
 
 class JaxprInputEffect(Effect):
-  """A side-effect associated with the input of a jaxpr.
+  """A side-effect associated with the input of a `JaxprEqn` or a `Jaxpr`.
 
-  Note that the `input_index` includes constvars.
+  This is used as a base class for effects associated with inputs, e.g.,
+  reading/writing from mutable inputs.
+
+  When used in a `JaxprEqn`, `input_index` refers to `eqn.invars`.
+  When used in a `Jaxpr`, `input_index` refers to `jaxpr.constvars + jaxpr.invars`.
   """
 
   def __init__(self, input_index: Any):
