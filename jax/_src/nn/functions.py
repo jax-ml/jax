@@ -679,6 +679,36 @@ def standardize(x: ArrayLike,
         jnp.square(x), axis, keepdims=True, where=where) - jnp.square(mean)
   return jnp.subtract(x, jnp.asarray(mean)) * lax.rsqrt(jnp.asarray(variance) + epsilon)
 
+@partial(jax.jit, static_argnames=("axis",))
+def min_max_normalize(
+  x: ArrayLike,
+  axis: int | tuple[int, ...] | None = -1,
+  where: ArrayLike | None = None,
+) -> Array:
+  r"""Applies min-max normalization, which shifts and scales values to the unit interval.
+
+  This yields
+
+  .. math::
+    x' = \frac{x - \min(x)}{\max(x) - \min(x)}
+
+  Args:
+    x: input array.
+    axis: integer or tuple of integers representing the axes along which
+      to normalize. Defaults to the last axis (``-1``).
+    where: optional boolean mask specifying which elements to include in the normalization.
+
+  Returns:
+    An array of the same shape as ``x``.
+  """
+  numpy_util.check_arraylike("min_max_normalize", x)
+  numpy_util.check_arraylike_or_none("min_max_normalize", where)
+  x = jnp.asarray(x)
+  x -= jnp.min(x, axis=axis, where=where, keepdims=True, initial=jnp.inf)
+  m = jnp.max(x, axis=axis, where=where, keepdims=True, initial=-jnp.inf)
+  x /= jnp.where(m == 0, 1, m)
+  return x
+
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 @partial(api.jit, static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,
