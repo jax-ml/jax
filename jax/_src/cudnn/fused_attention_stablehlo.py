@@ -35,6 +35,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import NamedSharding, PartitionSpec
 from jax._src.typing import Array
+from jax._src.api import make_jaxpr, vjp
 
 import numpy as np
 
@@ -552,8 +553,8 @@ def _dot_product_attention_fwd_impl(
     else:
       B, T, N, _ = query.shape
       _, S, _, _ = key.shape
-    attn_score = jax.core.ShapedArray((B, N, T, S), jnp.float32)
-    fwd_jaxpr = jax.make_jaxpr(score_mod)(attn_score, *score_mod_args)
+    attn_score = core.ShapedArray((B, N, T, S), np.float32)
+    fwd_jaxpr = make_jaxpr(score_mod)(attn_score, *score_mod_args)
     jaxpr = (score_mod.__name__, fwd_jaxpr)
   q_seqlen, kv_seqlen, q_offsets, kv_offsets = \
       _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key)
@@ -579,14 +580,14 @@ def _dot_product_attention_bwd_impl(
       B, T, N, _ = query.shape
       _, S, _, _ = key.shape
 
-    attn_score = jax.core.ShapedArray((B, N, T, S), jnp.float32)
-    grad = jax.core.ShapedArray((B, N, T, S), jnp.float32)
+    attn_score = core.ShapedArray((B, N, T, S), np.float32)
+    grad = core.ShapedArray((B, N, T, S), np.float32)
 
     def wrapped_func(grad, *args):
-      _, grad_score_mod = jax.vjp(score_mod, *args)
+      _, grad_score_mod = vjp(score_mod, *args)
       return grad_score_mod(grad)[0]
 
-    bwd_jaxpr = jax.make_jaxpr(wrapped_func)(grad, attn_score, *score_mod_args)
+    bwd_jaxpr = make_jaxpr(wrapped_func)(grad, attn_score, *score_mod_args)
     jaxpr = (score_mod.__name__, bwd_jaxpr)
   q_seqlen, kv_seqlen, q_offsets, kv_offsets = \
       _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key)
@@ -1154,9 +1155,9 @@ _dot_product_attention_bwd_lower = custom_partitioning(
 
 def _dot_product_attention_bwd_lower_wrapper(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-    activation, fwd_output, grad_output, *score_mod_args, scale, seed,
-    dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
-    score_mod):
+    page_table_k, page_table_v, activation, fwd_output, grad_output,
+    *score_mod_args, scale, seed, dropout_rate, variadic_args, mask_type,
+    layout, sliding_window_length, score_mod):
   return _dot_product_attention_bwd_lower(query, key, value, bias, q_seqlen,
     kv_seqlen, q_offsets, kv_offsets, page_table_k, page_table_v, activation,
     fwd_output, grad_output, score_mod_args, scale, seed, dropout_rate,

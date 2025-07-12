@@ -17,7 +17,7 @@ from absl.testing import absltest
 import os
 
 os.environ["XLA_FLAGS"] = \
-  "--xla_dump_to=./hlo --xla_dump_hlo_as_text --xla_dump_hlo_pass_re=.* --xla_disable_hlo_passes=float-normalization-bf16"
+  "--xla_dump_to=./hlo --xla_dump_hlo_as_text"
 
 import numpy as np
 import jax
@@ -780,8 +780,11 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     soft_cap_scalar = jax.random.normal(
         k4, (4, 4, 1024, 1024), dtype=jnp.float32)
 
+    # def soft_cap(attn_score):
+    #   return 3.0 * jax.lax.tanh(attn_score / 3.0)
+
     def soft_cap(attn_score):
-      return 3.0 * jax.lax.tanh(attn_score / 3.0)
+      return soft_cap_scalar * jax.lax.tanh(attn_score / soft_cap_scalar)
 
     jitted_sdpa = jax.jit(
       partial(
@@ -813,11 +816,11 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     soft_cap_scalar = jax.random.normal(
         k5, (4, 4, 1024, 1024), dtype=jnp.float32)
 
-    # def soft_cap(attn_score, soft_cap_scalar):
-    #   return soft_cap_scalar * jax.lax.tanh(attn_score / soft_cap_scalar)
+    def soft_cap(attn_score, soft_cap_scalar):
+      return soft_cap_scalar * jax.lax.tanh(attn_score / soft_cap_scalar)
 
-    def soft_cap(attn_score):
-      return attn_score * 3.0
+    # def soft_cap(attn_score):
+    #   return attn_score * 3.0
 
     jitted_sdpa = jax.jit(
       partial(
@@ -832,9 +835,9 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     )
 
     out, (query_grad, key_grad, value_grad) = \
-      jitted_sdpa(query, key, value, grad, score_mod_args=())
+      jitted_sdpa(query, key, value, grad, score_mod_args=(soft_cap_scalar,))
     out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
-      jitted_sdpa_ref(query, key, value, grad, score_mod_args=())
+      jitted_sdpa_ref(query, key, value, grad, score_mod_args=(soft_cap_scalar,))
     self.assertArraysAllClose(out_ref, out, rtol=1e-2, atol=1e-2)
     self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
     self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=1e-2)
