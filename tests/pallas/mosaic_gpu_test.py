@@ -31,6 +31,7 @@ import jax
 from jax import export
 from jax import lax
 from jax._src import checkify
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
@@ -383,22 +384,28 @@ class PallasCallTest(PallasTest):
     )
 
   def test_inline_mgpu(self):
+    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
+    if jaxlib.version < (0, 7, 0):
+      self.skip_if_wg_semantics()
+
     dtype = jnp.dtype(jnp.bfloat16)
-    self.skip_if_wg_semantics()
     shape = (128, 128)
     tile = (64, 128 // dtype.itemsize)
-    tiled_shape = mgpu.tile_shape(shape, tile)
-    tiled_shape_t = list(tiled_shape)
-    tiled_shape_t[0], tiled_shape_t[1] = tiled_shape_t[1], tiled_shape_t[0]
+    tiled_shape = list(mgpu.tile_shape(shape, tile))
 
     key = jax.random.key(0)
     x = (jax.random.uniform(key, (2, *shape)) * 42).astype(dtype)
 
     transforms = (
         plgpu.TilingTransform(tile),
-        plgpu.TransposeTransform((0, 2, 1, 3, 4)),
         plgpu.SwizzleTransform(128),
     )
+
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+      pallas_call_transforms = ()
+    else:
+      pallas_call_transforms = transforms
+
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
@@ -407,7 +414,7 @@ class PallasCallTest(PallasTest):
             plgpu.SMEM(
                 x.shape,
                 dtype,
-                transforms=transforms,
+                transforms=pallas_call_transforms,
             ),
             plgpu.Barrier(),
         ],
@@ -421,7 +428,6 @@ class PallasCallTest(PallasTest):
       @plgpu.inline_mgpu(
           arg_types=(plgpu.RefType((
               plgpu.TilingTransform(tile),
-              plgpu.TransposeTransform((1, 0, 2, 3)),
               plgpu.SwizzleTransform(128),
           )),),
           return_type=plgpu.ShapeDtypeStruct(
@@ -430,7 +436,7 @@ class PallasCallTest(PallasTest):
       )
       def foo(ctx, smem_ref):
         del ctx
-        assert smem_ref.type.shape == tiled_shape_t, (smem_ref.type, tiled_shape_t)
+        assert smem_ref.type.shape == tiled_shape, (smem_ref.type, tiled_shape)
         x = mgpu.FragmentedArray.load_tiled(smem_ref, swizzle=128)
         y = mgpu.FragmentedArray.splat(
             mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
@@ -447,10 +453,7 @@ class PallasCallTest(PallasTest):
             src_ref=sliced_smem_ref,
             dst_ref=o_ref,
             swizzle=128,
-            gmem_transform=(
-                mgpu.TileTransform(tile),
-                mgpu.TransposeTransform((1, 0, 2, 3)),
-            ),
+            gmem_transform=(mgpu.TileTransform(tile)),
         )
         ctx.await_async_copy(0)
 
@@ -2213,7 +2216,6 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
-        mgpu_primitives.inline_mgpu_p,
         mgpu_primitives.tcgen05_mma_p,
         mgpu_primitives.tcgen05_commit_arrive_p,
         mgpu_primitives.async_copy_scales_to_tmem_p,

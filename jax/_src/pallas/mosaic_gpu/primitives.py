@@ -32,6 +32,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
+from jax._src.lib.mlir.dialects import builtin as builtin_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
@@ -44,8 +45,10 @@ from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
+from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
 from jax.experimental.mosaic.gpu import tcgen05
 import jax.numpy as jnp
+import numpy as np
 
 
 WARP_SIZE = 32
@@ -2034,7 +2037,15 @@ def _inline_mgpu_discharge(*args, **kwargs):
   raise NotImplementedError("inline_mgpu_p does not support discharge.")
 
 
-def _type_check_mgpu(v, ty):
+def _mgpu_layout_from_value(
+    v: ir.Value,
+) -> mgpu.WGSplatFragLayout | mgpu.WGStridedFragLayout | mgpu.TiledLayout:
+  assert len(v.owner.attributes["out_layouts"]) == 1
+  layout_attr = v.owner.attributes["out_layouts"][0]
+  return mgpu_layouts.from_layout_attr(layout_attr)
+
+
+def _type_check_mgpu(v, ty, lowering_semantics: mgpu.LoweringSemantics):
   match (ty, v):
     case (RefType(), ir.Value()) if ir.MemRefType.isinstance(v.type):
       pass
@@ -2055,9 +2066,114 @@ def _type_check_mgpu(v, ty):
     case (Layout() , mgpu.FragmentedArray()) | (ParameterizedLayout(), mgpu.FragmentedArray()):
       if ty.to_mgpu() != v.layout:
         raise ValueError(f"Unexpected layout for {v} (expected: {ty})")
+    case (ShapeDtypeStruct(), ir.Value()) if ir.VectorType.isinstance(v.type):
+      assert lowering_semantics == mgpu.LoweringSemantics.Warpgroup
+      vector_type = ir.VectorType(v.type)
+      el_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
+      if vector_type.element_type != el_dtype:
+        raise ValueError(
+            f"Array dtype mismatch: expected {vector_type.element_type} got"
+            f" {el_dtype}."
+        )
+      if list(ty.shape) != vector_type.shape:
+        raise ValueError(
+            f"Array shape mismatch: expected {ty.shape} got"
+            f" {vector_type.shape}."
+        )
+
+      value_layout = _mgpu_layout_from_value(v)
+      if ty.layout.to_mgpu() != value_layout:
+        raise ValueError(
+            f"Vector layout mismatch: {ty.layout.to_mgpu()} != {value_layout}"
+        )
+    case (Layout(), ir.Value()) if ir.VectorType.isinstance(v.type):
+      assert lowering_semantics == mgpu.LoweringSemantics.Warpgroup
+      value_layout = _mgpu_layout_from_value(v)
+      if ty.to_mgpu() != value_layout:
+        raise ValueError(
+            f"Vector layout mismatch: {ty.to_mgpu()} != {value_layout}"
+        )
+    case (ParameterizedLayout(), ir.Value()) if ir.VectorType.isinstance(v.type):
+      assert lowering_semantics == mgpu.LoweringSemantics.Warpgroup
+      value_layout = _mgpu_layout_from_value(v)
+      if ty.to_mgpu() != value_layout:
+        raise ValueError(
+            f"Vector layout mismatch: {ty.to_mgpu()} != {value_layout}"
+        )
     case _:
       raise ValueError(f"Unexpected type {ty} for value {v}")
 
+
+def _flat_transformed_args_inline_mgpu(
+    ctx: lowering.LoweringRuleContext,
+    flat_args_and_transforms,
+    flat_arg_types,
+    pytree_args,
+    pytree_ref_transforms,
+  ) -> Sequence[ir.Value]:
+  flat_args = flat_args_and_transforms[:pytree_args.num_leaves]
+  flat_arg_avals = ctx.avals_in[:pytree_args.num_leaves]
+  ref_transforms = pytree_ref_transforms.unflatten(flat_args_and_transforms[pytree_args.num_leaves:])
+  for a, t in zip(flat_args, flat_arg_types):
+    _type_check_mgpu(a, t, ctx.module_ctx.lowering_semantics)
+
+  flat_transformed : list[ir.Value] = []
+  for a, aval, t, transforms in zip(
+      flat_args, flat_arg_avals, flat_arg_types, ref_transforms, strict=True
+  ):
+    if not isinstance(t, RefType):
+      flat_transformed.append(a)
+      assert transforms is None
+      continue
+    assert isinstance(aval, state.AbstractRef)
+    a, user_transforms = lowering._handle_transforms(
+        ctx,
+        a,
+        transforms,
+        handle_transposes=(
+            ctx.module_ctx.lowering_semantics
+            == mgpu.LoweringSemantics.Warpgroup
+        ),
+    )
+
+    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+      if user_transforms:
+        raise NotImplementedError(
+            "User transforms are not supported for warpgroup semantics, but"
+            f" got: {user_transforms}."
+        )
+    else:
+      # Transforms that do not originate from a MemoryRefTransform are
+      # applied implicitly (eg by emit-pipeline) and therefore we do not
+      # expect the user to pass them to the type. The transforms not
+      # passed by the user here will be discharged.
+      ty_transforms = _undo_transforms(aval, t.transforms)
+      if ty_transforms != tuple(user_transforms):
+        raise ValueError(f"Transform mismatch: got {user_transforms}, expected {ty_transforms}")
+    flat_transformed.append(a)
+
+  return flat_transformed
+
+
+def _inline_mgpu_return_leaves(
+    ctx: lowering.LoweringRuleContext,
+    ret,
+    pytree_ret_ty,
+    flat_ret_ty,
+    is_leaf: Callable[[Any], bool],
+):
+  ret_leaves, ret_tree = jax.tree.flatten(ret, is_leaf)
+
+  if ret_tree != pytree_ret_ty:
+    return_type = jax.tree.unflatten(pytree_ret_ty, flat_ret_ty)
+    raise ValueError(
+        f"inline_mgpu_p return type tree mismatch: {ret} != {return_type}"
+    )
+
+  for ty, r in zip(flat_ret_ty, ret_leaves):
+    _type_check_mgpu(r, ty, ctx.module_ctx.lowering_semantics)
+
+  return ret_leaves
 
 @lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Lane)
 def _inline_mgpu_lowering_rule(
@@ -2070,49 +2186,342 @@ def _inline_mgpu_lowering_rule(
     pytree_ref_transforms,
     pytree_ret_ty,
 ):
-  flat_args = flat_args_and_transforms[:pytree_args.num_leaves]
-  flat_arg_avals = ctx.avals_in[:pytree_args.num_leaves]
-  ref_transforms = pytree_ref_transforms.unflatten(flat_args_and_transforms[pytree_args.num_leaves:])
-  for a, t in zip(flat_args, flat_arg_types):
-    _type_check_mgpu(a, t)
-
-  flat_transformed = []
-  for a, aval, t, transforms in zip(
-      flat_args, flat_arg_avals, flat_arg_types, ref_transforms, strict=True
-  ):
-    if not isinstance(t, RefType):
-      flat_transformed.append(a)
-      assert transforms is None
-      continue
-    assert isinstance(aval, state.AbstractRef)
-    a, user_transforms = lowering._handle_transforms(
-        ctx, a, transforms, handle_transposes=False
-    )
-    # Transforms that do not originate from a MemoryRefTransform are
-    # applied implicitly (eg by emit-pipeline) and therefore we do not
-    # expect the user to pass them to the type. The transforms not
-    # passed by the user here will be discharged.
-    ty_transforms = _undo_transforms(aval, t.transforms)
-    if ty_transforms != tuple(user_transforms):
-      raise ValueError(f"Transform mismatch: got {user_transforms}, expected {ty_transforms}")
-    flat_transformed.append(a)
-
+  flat_transformed = _flat_transformed_args_inline_mgpu(
+      ctx,
+      flat_args_and_transforms,
+      flat_arg_types,
+      pytree_args,
+      pytree_ref_transforms,
+  )
   args = jax.tree.unflatten(pytree_args, flat_transformed)
   ret = mgpu_fn(ctx.launch_ctx, *args)
-  ret_leaves, ret_tree = jax.tree.flatten(
-      ret, is_leaf=lambda x: isinstance(x, mgpu.FragmentedArray)
+  return _inline_mgpu_return_leaves(
+      ctx,
+      ret,
+      pytree_ret_ty,
+      flat_ret_ty,
+      is_leaf=lambda x: isinstance(x, mgpu.FragmentedArray),
   )
 
-  if ret_tree != pytree_ret_ty:
-    return_type = jax.tree.unflatten(pytree_ret_ty, flat_ret_ty)
-    raise ValueError(
-        f"inline_mgpu_p return type tree mismatch: {ret} != {return_type}"
+
+def _transform_to_mgpu(
+    transform: gpu_core.MemoryRefTransform,
+) -> tuple[ir.Attribute, mgpu.MemRefTransform | None]:
+  """Returns the mosaic GPU equivalent of the given transform.
+
+  The result always includes the transform as a dialect attribute, but it may
+  not inlcude a MemRefTransform if it doesn't exist (e.g. for SwizzleTransform).
+  """
+  match transform:
+    case gpu_core.TilingTransform(tiling):
+      return (
+          mgpu.dialect.TileTransformAttr.get(tiling),
+          transform.to_gpu_transform(),
+      )
+    case gpu_core.TransposeTransform(permutation):
+      return mgpu.dialect.TransposeTransformAttr.get(permutation), transform.to_gpu_transform()
+    case gpu_core.SwizzleTransform(swizzle):
+      return mgpu.dialect.SwizzleTransformAttr.get(swizzle), None
+    case _:
+      raise NotImplementedError(f"Unsupported transform: {transform}")
+
+
+def _ref_type_to_transforms(ref_type: RefType
+) -> tuple[ir.ArrayAttribute, Sequence[mgpu.MemRefTransform]]:
+  """Returns the mosaic GPU transforms for the given ref type."""
+  transform_attrs = []
+  mgpu_transforms = []
+  for t in ref_type.transforms:
+    attr, mgpu_transform = _transform_to_mgpu(t)
+    transform_attrs.append(attr)
+    if mgpu_transform is not None:
+      mgpu_transforms.append(mgpu_transform)
+  return ir.ArrayAttr.get(transform_attrs), mgpu_transforms
+
+
+def _shape_dtype_struct_to_vector_type_and_layout(
+    shape_dtype_struct: ShapeDtypeStruct,
+) -> tuple[ir.VectorType, ir.ArrayAttr]:
+  """Returns the vector type and mgpu layout for the given ShapeDtypeStruct."""
+  vector_type = ir.VectorType.get(
+      shape_dtype_struct.shape,
+      mgpu_utils.dtype_to_ir_type(shape_dtype_struct.dtype),
+  )
+  layout = mgpu_layouts.to_layout_attr(shape_dtype_struct.layout.to_mgpu())
+  return vector_type, layout
+
+
+def _clone_custom_op_with_extra_args(
+    custom_op: mgpu.dialect.CustomPrimitiveOp, extra_args: Sequence[ir.Value]
+) -> mgpu.dialect.CustomPrimitiveOp:
+  """Clones a CustomPrimitiveOp and its block adding the given extra_args.
+
+  The new args are not allowed to contain SMEM refs or vector types.
+  """
+  for arg in extra_args:
+    if ir.MemRefType.isinstance(arg.type) and mgpu_utils.is_smem_ref(arg.type):
+      raise ValueError(f"Extra arg {arg} must not be an SMEM ref.")
+    if ir.VectorType.isinstance(arg.type):
+      raise ValueError(f"Extra arg {arg} must not have a vector type.")
+
+  new_operands = list(custom_op.operands) + list(extra_args)
+  old_block = custom_op.body.blocks[0]
+  new_in_types = [arg.type for arg in old_block.arguments] + [
+      arg.type for arg in extra_args
+  ]
+  # Below, we can reuse all layouts and transforms, because the extra args
+  # are not smem refs or vectors.
+  new_op = mgpu.dialect.CustomPrimitiveOp(
+      result=custom_op.results,
+      operands_=new_operands,
+      in_layouts=custom_op.in_layouts,
+      in_transforms=custom_op.in_transforms,
+      out_layouts=custom_op.out_layouts,
+  )
+  new_block = new_op.body.blocks.append(*new_in_types)
+
+  # Clone the old block, by inlining it into the new one.
+  num_old_args = len(old_block.arguments)
+  with ir.InsertionPoint.at_block_begin(new_block):
+    mgpu.dialect_lowering.inline_block(
+        old_block,
+        list(new_block.arguments)[:num_old_args],
+        mapper={
+            v: a
+            for v, a in zip(
+                extra_args,
+                list(new_block.arguments)[num_old_args:],
+                strict=True,
+            )
+        },
+        clone_terminator=True,
+        terminator_type=mgpu.dialect.ReturnOp,
     )
 
-  for ty, r in zip(flat_ret_ty, ret_leaves):
-    _type_check_mgpu(r, ty)
+  return new_op
 
-  return ret_leaves
+
+def _custom_primitive_op_inputs(
+    ctx: lowering.LoweringRuleContext,
+    flat_arg_types,
+    flat_transformed_args,
+    pytree_args,
+) -> tuple[
+    Sequence[ir.Type],
+    Sequence[ir.ArrayAttr],
+    Sequence[ir.ArrayAttr],
+    Sequence[Sequence[mgpu.MemRefTransform]],
+]:
+  """Returns everything needed for the inputs of a custom primitive op."""
+  in_types = []
+  in_layouts = []
+  in_transforms = []
+  in_mgpu_transforms = []
+  flat_arg_avals = ctx.avals_in[:pytree_args.num_leaves]
+  for aval, transformed, t in zip(
+      flat_arg_avals, flat_transformed_args, flat_arg_types
+  ):
+    match aval:
+      case state.AbstractRef():
+        initial_ty = ir.MemRefType(transformed.type)
+        if not mgpu_utils.is_smem_ref(initial_ty):
+          in_types.append(initial_ty)
+          continue
+        transforms_attrs, mgpu_transforms = _ref_type_to_transforms(t)
+        in_types.append(initial_ty)
+        in_transforms.append(transforms_attrs)
+        in_mgpu_transforms.append(mgpu_transforms)
+      case ShapeDtypeStruct():
+        ty, layout = _shape_dtype_struct_to_vector_type_and_layout(t)
+        in_types.append(ty)
+        in_layouts.append(layout)
+      case jax_core.ShapedArray() if isinstance(t, Layout):
+        vector_type = ir.VectorType.get(
+            aval.shape,
+            mgpu_utils.dtype_to_ir_type(aval.dtype),
+        )
+        in_types.append(vector_type)
+        in_layouts.append(mgpu_layouts.to_layout_attr(t.to_mgpu()))
+      case _:
+        raise NotImplementedError(
+            f"Unsupported aval type: {aval}, {type(aval)}, {t}"
+        )
+  return in_types, in_layouts, in_transforms, in_mgpu_transforms
+
+
+def _custom_primitive_op_results(flat_ret_ty) -> tuple[
+    Sequence[ir.Type],
+    Sequence[ir.ArrayAttr],
+]:
+  """Returns everything needed for the results of a custom primitive op."""
+  results_ty = []
+  out_layouts = []
+  for r in flat_ret_ty:
+    ty, layout = _shape_dtype_struct_to_vector_type_and_layout(r)
+    results_ty.append(ty)
+    out_layouts.append(layout)
+  return results_ty, out_layouts
+
+
+def _populate_custom_primitive_op_block(
+    ctx: lowering.LoweringRuleContext,
+    block: ir.Block,
+    mgpu_fn: Callable[..., Any],
+    pytree_args,
+    in_layouts : Sequence[ir.ArrayAttr],
+    in_mgpu_transforms: Sequence[Sequence[mgpu.MemRefTransform]],
+    results_ty: Sequence[ir.Type],
+):
+  """Calls the given mgpu_fn to populate the block, handling inputs and outputs.
+
+  Block arguments that are references to SMEM or vectors are unwrapped to
+  transformed references and fragmented arrays before they are passed to the
+  python function mgpu_fn.
+
+  The resulting fragmented array, if any, needs is wrapped as a vector before it
+  is returned.
+  """
+  with ir.InsertionPoint(block):
+    fn_inputs = []
+    in_layout_index = 0
+    in_transforms_index = 0
+    for arg in block.arguments:
+      if ir.MemRefType.isinstance(arg.type):
+        memref_ty = ir.MemRefType(arg.type)
+        if not mgpu_utils.is_smem_ref(memref_ty):
+          fn_inputs.append(arg)
+          continue
+
+        transformed_type = mgpu.dialect_lowering.transformed_smem_ref_type(
+            memref_ty,
+            tuple(in_mgpu_transforms[in_transforms_index]),
+        )
+        conversion_cast = builtin_dialect.UnrealizedConversionCastOp(
+            [transformed_type], [arg]
+        )
+        in_transforms_index += 1
+        fn_inputs.append(conversion_cast.result)
+      elif ir.VectorType.isinstance(arg.type):
+        layout_attr = in_layouts[in_layout_index]
+        layout = mgpu.layouts.from_layout_attr(layout_attr)
+        in_layout_index += 1
+
+        vector_ty = ir.VectorType(arg.type)
+        reg_shape = layout.registers_shape(vector_ty.shape)
+        reg_ty = layout.registers_element_type(vector_ty.element_type)
+
+        conversion_cast = builtin_dialect.UnrealizedConversionCastOp(
+            [reg_ty] * math.prod(reg_shape), [arg]
+        )
+        conversion_cast.attributes["registers_shape"] = ir.ArrayAttr.get([
+            ir.IntegerAttr.get(ir.IntegerType.get_signless(64), s)
+            for s in reg_shape
+        ])
+        conversion_cast.attributes["layout"] = layout_attr
+
+        registers = np.array(list(conversion_cast.results)).reshape(reg_shape)
+
+        fa = mgpu.FragmentedArray(_registers=registers, _layout=layout, _is_signed=None)
+        fn_inputs.append(fa)
+      else:
+        fn_inputs.append(arg)
+
+    args = jax.tree.unflatten(pytree_args, fn_inputs)
+    inner_ret = mgpu_fn(ctx.launch_ctx, *args)
+    if inner_ret is None:
+      inner_ret = []
+    elif not isinstance(inner_ret, tuple) and not isinstance(inner_ret, list):
+      inner_ret = [inner_ret]
+    ir_ret = []
+    for fa, result_ty in zip(inner_ret, results_ty, strict=True):
+      ir_ret.append(mgpu.dialect_lowering.fragmented_array_to_ir(fa, result_ty))
+    mgpu.dialect.ReturnOp(operands_=ir_ret)
+
+
+def _values_captured_from_block_context(block: ir.Block) -> list[ir.Value]:
+  """Returns the values captured from the context by the given block."""
+  ops_in_block : set[ir.Value] = set()
+  captured = []
+  for arg in block.arguments:
+    ops_in_block.add(arg)
+  for op in block.operations:
+    for o in op.operands:
+      if o not in ops_in_block:
+        captured.append(o)
+    for r in op.results:
+      ops_in_block.add(r)
+  return captured
+
+@lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Warpgroup)
+def _inline_mgpu_lowering_rule(
+    ctx: lowering.LoweringRuleContext,
+    *flat_args_and_transforms,
+    mgpu_fn: Callable[..., Any],
+    flat_arg_types,
+    flat_ret_ty,
+    pytree_args,
+    pytree_ref_transforms,
+    pytree_ret_ty,
+):
+  flat_transformed_args = _flat_transformed_args_inline_mgpu(
+      ctx,
+      flat_args_and_transforms,
+      flat_arg_types,
+      pytree_args,
+      pytree_ref_transforms,
+  )
+
+  in_types, in_layouts, in_transforms, in_mgpu_transforms = (
+      _custom_primitive_op_inputs(
+          ctx, flat_arg_types, flat_transformed_args, pytree_args
+      )
+  )
+  results_ty, out_layouts = _custom_primitive_op_results(flat_ret_ty)
+
+  custom_op = mgpu.dialect.CustomPrimitiveOp(
+      result = results_ty,
+      operands_ = flat_transformed_args,
+      in_layouts=in_layouts,
+      in_transforms=in_transforms,
+      out_layouts=out_layouts,
+  )
+  block : ir.Block = custom_op.body.blocks.append(*in_types)
+  _populate_custom_primitive_op_block(
+      ctx,
+      block,
+      mgpu_fn,
+      pytree_args,
+      in_layouts,
+      in_mgpu_transforms,
+      results_ty,
+  )
+
+  # We need to ensure that the block doesn't capture any values from the context
+  # and uses args for everything instead. At least one thing the block is likely
+  # to capture is the SMEM scratch buffer which could have been created outside
+  # of the block during the execution of the provided mgpu_fn, if it calls
+  # `async_copy`.
+  captured = _values_captured_from_block_context(block)
+  if captured:
+    old_custom_op = custom_op
+    custom_op = _clone_custom_op_with_extra_args(custom_op, captured)
+    old_custom_op.erase()
+
+  if len(custom_op.results) == 0:
+    ret = None
+  elif len(custom_op.results) == 1:
+    ret = custom_op.result
+  else:
+    raise ValueError(f"Expected at most 1 result, got {len(custom_op.results)}")
+
+  return _inline_mgpu_return_leaves(
+      ctx,
+      ret,
+      pytree_ret_ty,
+      flat_ret_ty,
+      is_leaf=lambda x: x is not None and ir.VectorType.isinstance(x.type),
+  )
+
 
 load_p = jax_core.Primitive("load")
 

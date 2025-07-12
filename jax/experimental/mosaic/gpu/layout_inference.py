@@ -584,6 +584,15 @@ def _infer_layout_cast_op_layout(
   return [layout_cast_op.new_layout], [layout_cast_op.new_layout]
 
 
+@partial(_add_layout_inference_rule, mgpu.CustomPrimitiveOp)
+def _infer_custom_primitive_op_layout(
+    custom_primitive_op: mgpu.CustomPrimitiveOp,
+) -> OptionalLayouts:
+  in_layouts = list(custom_primitive_op.in_layouts)
+  out_layouts = list(custom_primitive_op.out_layouts)
+  return in_layouts, out_layouts
+
+
 # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
 if hasattr(mgpu, "BroadcastInDimOp"):
   @partial(_add_layout_inference_rule, mgpu.BroadcastInDimOp)

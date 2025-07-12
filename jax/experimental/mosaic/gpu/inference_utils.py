@@ -229,12 +229,15 @@ def traverse_op(
     traversal_order: TraversalOrder = TraversalOrder.FORWARD,
 ):
   """Traverses the operation and applies the callback in the given order."""
-  for region in op.operation.regions:
-    for block in region:
-      if traversal_order == TraversalOrder.FORWARD:
-        ops_to_traverse = list(block)
-      else:
-        ops_to_traverse = reversed(list(block))  # type: ignore
-      for block_op in ops_to_traverse:
-        traverse_op(block_op, callback, traversal_order)
+  if op.name != "mosaic_gpu.custom_primitive":
+    # The block of a mosaic_gpu.custom_primitive op is already lowered so it
+    # should not be traversed.
+    for region in op.operation.regions:
+      for block in region:
+        if traversal_order == TraversalOrder.FORWARD:
+          ops_to_traverse = list(block)
+        else:
+          ops_to_traverse = reversed(list(block))  # type: ignore
+        for block_op in ops_to_traverse:
+          traverse_op(block_op, callback, traversal_order)
   callback(op)

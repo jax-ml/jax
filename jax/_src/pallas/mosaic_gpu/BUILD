@@ -117,6 +117,7 @@ pytype_strict_library(
         "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//third_party/py/numpy",
     ],
 )
 
