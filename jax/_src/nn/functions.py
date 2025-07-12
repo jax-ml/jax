@@ -103,6 +103,7 @@ def relu(x: ArrayLike) -> Array:
     :func:`relu6`
 
   """
+  numpy_util.check_arraylike("relu", x)
   return jnp.maximum(x, 0)
 # For behavior at 0, see https://dl.acm.org/doi/10.5555/3540261.3540297
 relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
@@ -122,8 +123,7 @@ def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
     x : input array
     b : smoothness parameter
   """
-  numpy_util.check_arraylike("squareplus", x)
-  numpy_util.check_arraylike("squareplus", b)
+  numpy_util.check_arraylike("squareplus", x, b)
   x = jnp.asarray(x)
   b = jnp.asarray(b)
   y = x + jnp.sqrt(jnp.square(x) + b)
@@ -141,6 +141,7 @@ def softplus(x: ArrayLike) -> Array:
   Args:
     x : input array
   """
+  numpy_util.check_arraylike("softplus", x)
   return jnp.logaddexp(x, 0)
 
 @api.jit
@@ -204,6 +205,7 @@ def sigmoid(x: ArrayLike) -> Array:
     :func:`log_sigmoid`
 
   """
+  numpy_util.check_arraylike("sigmoid", x)
   return lax.logistic(x)
 
 @api.jit
@@ -236,6 +238,7 @@ def sparse_sigmoid(x: ArrayLike) -> Array:
   See also:
     :func:`sigmoid`
   """
+  numpy_util.check_arraylike("sparse_sigmoid", x)
   return 0.5 * jnp.clip(x + 1.0, 0.0, 2.0)
 
 @api.jit
@@ -332,6 +335,7 @@ def elu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
     :func:`selu`
   """
   numpy_util.check_arraylike("elu", x)
+  numpy_util.check_arraylike("elu", x, alpha, emit_warning=True)
   x_arr = jnp.asarray(x)
   return jnp.where(x_arr > 0,
                    x_arr,
@@ -362,6 +366,7 @@ def leaky_relu(x: ArrayLike, negative_slope: ArrayLike = 1e-2) -> Array:
     :func:`relu`
   """
   numpy_util.check_arraylike("leaky_relu", x)
+  numpy_util.check_arraylike("leaky_relu", x, negative_slope, emit_warning=True)
   x_arr = jnp.asarray(x)
   return jnp.where(x_arr >= 0, x_arr, negative_slope * x_arr)
 
@@ -411,6 +416,7 @@ def celu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
   Returns:
     An array.
   """
+  numpy_util.check_arraylike("celu", x, alpha)
   return jnp.maximum(x, 0.0) + alpha * jnp.expm1(jnp.minimum(x, 0.0) / alpha)
 
 @api.jit
@@ -441,6 +447,7 @@ def selu(x: ArrayLike) -> Array:
   See also:
     :func:`elu`
   """
+  numpy_util.check_arraylike("selu", x)
   alpha = 1.6732632423543772848170429916717
   scale = 1.0507009873554804934193349852946
   return scale * elu(x, alpha)
@@ -589,6 +596,7 @@ def softmax(x: ArrayLike,
   See also:
     :func:`log_softmax`
   """
+  numpy_util.check_arraylike("softmax", x)
   if config.softmax_custom_jvp.value:
     # mypy is confused by the `functools.partial` application in the definition
     # of `_softmax` and incorrectly concludes that `_softmax` returns
@@ -774,6 +782,7 @@ def relu6(x: ArrayLike) -> Array:
   See also:
     :func:`relu`
   """
+  numpy_util.check_arraylike("relu6", x)
   return jnp.minimum(jnp.maximum(x, 0), 6.)
 relu6.defjvps(lambda g, ans, x:
               lax.select((x > 0) & (x < 6), g, lax.full_like(g, 0)))
@@ -796,6 +805,7 @@ def hard_sigmoid(x: ArrayLike) -> Array:
   See also:
     :func:`relu6`
   """
+  numpy_util.check_arraylike("hard_sigmoid", x)
   return relu6(x + 3.) / 6.
 
 @api.jit
