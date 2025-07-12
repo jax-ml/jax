@@ -1,0 +1,46 @@
+name: Connect to runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner-type:
+        default: "linux-x86-n2-16"
+        type: choice
+        required: true
+        options:
+        - "linux-x86-n2-16"
+        - "linux-x86-n2-32"
+        - "linux-x86-n2-64"
+        - "linux-x86-g2-16-l4-1gpu"
+        - "linux-x86-g2-48-l4-4gpu"
+        - "linux-x86-ct5lp-224-8tpu"
+        - "linux-arm64-c4a-16"
+        - "linux-arm64-c4a-64"
+      container:
+        default: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+        type: choice
+        required: true
+        options:
+        - "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+        - "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest"
+        - "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest"
+        - "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.1-cudnn9.8:latest"
+  # DO_NOT_SUBMIT - only used to verify prior to submit
+  pull_request:
+    branches:
+      - main
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main/release branches.
+  cancel-in-progress: true
+jobs:
+  connect_runner:
+    if: github.event.repository.fork == false
+    runs-on: "linux-x86-g2-48-l4-4gpu" # ${{ inputs.runner-type }}
+    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest" # ${{ inputs.container }}
+    steps:
+        - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        - name: Wait For Connection
+          uses: google-ml-infra/actions/ci_connection@main
+          with:
+            halt-dispatch-input: true
