@@ -6927,6 +6927,15 @@ class JaxprTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
+  @config.use_simplified_jaxpr_constants(True)
+  def test_non_scalar_const(self):
+    def fun(x):
+      return (x, np.zeros(3, dtype=jnp.float32))
+
+    expected = "{ lambda ; a:f32[]. let  in (a, [...]:f32[3]) }"
+    jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
+    self.assertMultiLineStrippedEqual(expected, str(jaxpr))
+
   def test_cond(self):
     def f(x):
       return lax.cond(x >= 0.,
