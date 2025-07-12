@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/WalkResult.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "jaxlib/mosaic/pass_boilerplate.h"
 

@@ -38,7 +38,6 @@ limitations under the License.
 #include "jaxlib/py_values.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/pytree.h"
-#include "jaxlib/sharding.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/tsl/platform/logging.h"

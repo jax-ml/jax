@@ -87,7 +87,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pprof_profile_builder.h"
 #include "xla/python/types.h"
-#include "xla/python/version.h"
 #include "xla/service/platform_util.h"  // IWYU pragma: keep
 #include "xla/shape.h"
 #include "xla/status_macros.h"

@@ -532,7 +532,6 @@ cc_library(
         "@com_google_absl//absl/base:dynamic_annotations",
         "@xla//xla/tsl/cuda:cublas",
         "@xla//xla/tsl/cuda:cudart",
-        "@xla//xla/tsl/cuda:cudnn",
         "@xla//xla/tsl/cuda:cufft",
         "@xla//xla/tsl/cuda:cupti",
         "@xla//xla/tsl/cuda:cusolver",

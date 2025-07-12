@@ -148,7 +148,6 @@ cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     deps = [
-        ":library_paths",
         ":nvshmem",
         ":passes",
         ":target",
@@ -205,10 +204,12 @@ cc_library(
         "@llvm-project//mlir:VectorDialect",
         "@llvm-project//mlir:VectorToLLVM",
         "@tsl//tsl/profiler/lib:traceme",
+        "@xla//xla:executable_run_options",
         "@xla//xla/ffi",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/service:custom_call_target_registry",
+        "@xla//xla/tsl/platform:statusor",
     ],
     alwayslink = True,
 )

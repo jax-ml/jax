@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
@@ -46,8 +45,6 @@ limitations under the License.
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
-#include "xla/tsl/concurrency/ref_count.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
