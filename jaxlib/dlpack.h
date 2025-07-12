@@ -46,7 +46,8 @@ absl::StatusOr<nanobind::object> DLPackManagedTensorToBuffer(
 
 absl::StatusOr<nanobind::object> DLPackManagedTensorToBuffer(
     const nanobind::capsule& tensor, ifrt::Device* device,
-    nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream);
+    nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream,
+    std::optional<bool> copy);
 
 // Converts a PrimitiveType to the nanobind specific implementation of
 // DLDataType.
