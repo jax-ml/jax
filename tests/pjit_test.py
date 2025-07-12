@@ -6442,7 +6442,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
-    @partial(auto_axes, axes='x', out_sharding=P('x', None))
+    @auto_axes(axes='x', out_sharding=P('x', None))
     def h(y):
       self.assertEqual(y.aval.sharding.spec, P(None, 'y'))
       z = jnp.sin(y)
@@ -8439,7 +8439,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x, y):
-      @partial(explicit_axes, in_sharding=(P('y'), P('y')))
+      @explicit_axes(in_sharding=(P('y'), P('y')))
       def g(a, b):
         self.assertEqual(a.aval.sharding.spec, P('y'))
         self.assertEqual(b.aval.sharding.spec, P('y'))

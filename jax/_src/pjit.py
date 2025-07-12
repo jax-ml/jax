@@ -3002,8 +3002,14 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
           ' with your use case')
   return mesh_to_use.update_axis_types({a: axis_type for a in axes})
 
-def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
+def auto_axes(f=None, /, *, axes: str | tuple[str, ...] | None = None,
               out_sharding=None):
+  kwargs = dict(axes=axes, out_sharding=out_sharding)
+  if f is None:
+    return lambda g: _auto_axes(g, **kwargs)
+  return _auto_axes(f, **kwargs)
+
+def _auto_axes(fun, *, axes, out_sharding):
   def decorator(*args, **kwargs):
     if out_sharding is None:
       if "out_sharding" in kwargs:
@@ -3023,6 +3029,7 @@ def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
     return mesh_cast(out, _out_sharding)
   return decorator
 
+
 @contextlib.contextmanager
 def use_auto_axes(*axes):
   new_mesh = _get_new_mesh(axes, mesh_lib.AxisType.Auto, 'use_auto_axes')
@@ -3030,8 +3037,14 @@ def use_auto_axes(*axes):
     yield
 
 
-def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
+def explicit_axes(f=None, /, *, axes: str | tuple[str, ...] | None = None,
                   in_sharding=None):
+  kwargs = dict(axes=axes, in_sharding=in_sharding)
+  if f is None:
+    return lambda g: _explicit_axes(g, **kwargs)
+  return _explicit_axes(f, **kwargs)
+
+def _explicit_axes(fun, *, axes, in_sharding):
   def decorator(*args, **kwargs):
     if in_sharding is None:
       if "in_sharding" in kwargs:
@@ -3049,6 +3062,7 @@ def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
         core.get_aval(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)
     return mesh_cast(out, out_specs)
   return decorator
+
 
 @contextlib.contextmanager
 def use_explicit_axes(*axes):
