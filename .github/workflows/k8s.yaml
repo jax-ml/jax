@@ -72,11 +72,11 @@ jobs:
         run: |
           while true; do
 
-            completion_time=$(
+            completion_time="$(
               kubectl get jobs -o yaml | \
               yq '.items[] | select(.metadata.name | test("^jaxjob")) | .status.completionTime'
-            )
-            timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+            )"
+            timestamp="$(date +"%Y-%m-%d %H:%M:%S")"
             echo "[$timestamp] Checking job status..."
 
             if [ "$completion_time" == "null" ]; then
@@ -85,14 +85,14 @@ jobs:
               echo "[$timestamp] Waiting for 3 seconds before checking again..."
               sleep 3
             else
-              succeeded=$(
+              succeeded="$(
                 kubectl get jobs -o yaml | \
                 yq '.items[] | select(.metadata.name | test("^jaxjob")) | .status.succeeded'
-              )
-              parallelism=$(
+              )"
+              parallelism="$(
                 kubectl get jobs -o yaml | \
                 yq '.items[] | select(.metadata.name | test("^jaxjob")) | .spec.parallelism'
-              )
+              )"
               if [ "$succeeded" == "$parallelism" ]; then
                 echo "[$timestamp] Job has completed successfully!"
                 exit 0
@@ -111,6 +111,6 @@ jobs:
             echo "========================================"
             echo "Pod $pod output:"
             echo "----------------------------------------"
-            kubectl logs $pod
+            kubectl logs "$pod"
             echo "========================================"
           done

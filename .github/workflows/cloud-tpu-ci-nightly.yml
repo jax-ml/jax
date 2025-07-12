@@ -73,34 +73,34 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install JAX test requirements
         run: |
-          $PYTHON -m uv pip install -U -r build/test-requirements.txt -r build/collect-profile-requirements.txt
+          "$PYTHON" -m uv pip install -U -r build/test-requirements.txt -r build/collect-profile-requirements.txt
       - name: Install JAX
         run: |
-          $PYTHON -m uv pip uninstall jax jaxlib libtpu
+          "$PYTHON" -m uv pip uninstall jax jaxlib libtpu
           if [ "${{ matrix.jaxlib-version }}" == "head" ]; then
             # Build and install jaxlib at head
-            $PYTHON build/build.py build --wheels=jaxlib \
+            "$PYTHON" build/build.py build --wheels=jaxlib \
                     --bazel_options=--config=rbe_linux_x86_64 \
-                    --local_xla_path="$(pwd)/xla" \
+                    --local_xla_path="xla" \
                     --verbose
 
             # Install jaxlib, "jax" at head, and libtpu
-            $PYTHON -m uv pip install dist/*.whl \
+            "$PYTHON" -m uv pip install dist/*.whl \
                -U -e . \
                --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
           elif [ "${{ matrix.jaxlib-version }}" == "pypi_latest" ]; then
-            $PYTHON -m uv pip install .[tpu] \
+            "$PYTHON" -m uv pip install .[tpu] \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly" ]; then
-            $PYTHON -m uv pip install \
+            "$PYTHON" -m uv pip install \
               --pre . -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/ \
               libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
               requests
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
             # TODO(phawkins): switch to libtpu, when the oldest release we support is a libtpu release.
-            $PYTHON -m uv pip install \
+            "$PYTHON" -m uv pip install \
               --pre . -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/ \
               libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
@@ -110,11 +110,11 @@ jobs:
             exit 1
           fi
 
-          $PYTHON -c 'import sys; print("python version:", sys.version)'
-          $PYTHON -c 'import jax; print("jax version:", jax.__version__)'
-          $PYTHON -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
-          strings /usr/local/lib/"$PYTHON"/dist-packages/libtpu/libtpu.so | grep 'Built on'
-          $PYTHON -c 'import jax; print("libtpu version:",
+          "$PYTHON" -c 'import sys; print("python version:", sys.version)'
+          "$PYTHON" -c 'import jax; print("jax version:", jax.__version__)'
+          "$PYTHON" -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
+          strings "/usr/local/lib/$PYTHON/dist-packages/libtpu/libtpu.so" | grep 'Built on'
+          "$PYTHON" -c 'import jax; print("libtpu version:",
             jax.lib.xla_bridge.get_backend().platform_version)'
       - name: Run tests
         env:
@@ -124,25 +124,25 @@ jobs:
           # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic TPU does not
           # guarantee anything about forward compatibility (unless jax.export is used) and the 12
           # week compatibility window accumulates way too many failures.
-          IGNORE_FLAGS=
+          IGNORE_FLAGS=""
           if [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
             IGNORE_FLAGS="--ignore=tests/pallas"
           fi
           # Run single-accelerator tests in parallel
-          JAX_ENABLE_TPU_XDIST=true $PYTHON -m pytest -n=${{ matrix.tpu.cores }} --tb=short \
+          JAX_ENABLE_TPU_XDIST=true "$PYTHON" -m pytest -n="${{ matrix.tpu.cores }}" --tb=short \
             --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
-            --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
+            --maxfail=20 -m "not multiaccelerator" "$IGNORE_FLAGS" tests examples
           # Run Pallas printing tests, which need to run with I/O capturing disabled.
-          TPU_STDERR_LOG_LEVEL=0 $PYTHON -m pytest -s \
+          TPU_STDERR_LOG_LEVEL=0 "$PYTHON" -m pytest -s \
             tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
           # Run multi-accelerator across all chips
-          $PYTHON -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
+          "$PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ (failure() || cancelled()) && github.ref_name == 'main' && matrix.jaxlib-version != 'nightly+oldest_supported_libtpu' }}
         run: |
-            curl --location --request POST '${{ secrets.BUILD_CHAT_WEBHOOK }}' \
+            curl --location --request POST "${{ secrets.BUILD_CHAT_WEBHOOK }}" \
             --header 'Content-Type: application/json' \
             --data-raw "{
-            'text': '\"$GITHUB_WORKFLOW\", jaxlib/libtpu version \"${{ matrix.jaxlib-version }}\", TPU type ${{ matrix.tpu.type }} job failed, timed out, or was cancelled: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'
+            'text': "$GITHUB_WORKFLOW, jaxlib/libtpu version ${{ matrix.jaxlib-version }}, TPU type ${{ matrix.tpu.type }} job failed, timed out, or was cancelled: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             }"

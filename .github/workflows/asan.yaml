@@ -53,16 +53,16 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0
         run: |
           cd cpython
-          mkdir ${GITHUB_WORKSPACE}/cpythonasan
-          CC=clang-18 CXX=clang++-18 ./configure --prefix ${GITHUB_WORKSPACE}/cpythonasan --with-address-sanitizer --without-pymalloc
+          mkdir -p "${GITHUB_WORKSPACE}/cpythonasan"
+          CC=clang-18 CXX=clang++-18 ./configure --prefix "${GITHUB_WORKSPACE}/cpythonasan" --with-address-sanitizer --without-pymalloc
           make -j64
           make install
-          ${GITHUB_WORKSPACE}/cpythonasan/bin/python3 -m venv ${GITHUB_WORKSPACE}/venv
+          "${GITHUB_WORKSPACE}/cpythonasan/bin/python3" -m venv "${GITHUB_WORKSPACE}/venv"
       - name: Install JAX test requirements
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          source ${GITHUB_WORKSPACE}/venv/bin/activate
+          source "${GITHUB_WORKSPACE}/venv/bin/activate"
           cd jax
           pip install uv~=0.5.30
           uv pip install -r build/test-requirements.txt
@@ -70,7 +70,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          source ${GITHUB_WORKSPACE}/venv/bin/activate
+          source "${GITHUB_WORKSPACE}/venv/bin/activate"
           cd jax
           python build/build.py build --wheels=jaxlib --verbose \
             --bazel_options=--color=yes \
@@ -86,10 +86,10 @@ jobs:
           JAX_SKIP_SLOW_TESTS: true
           PY_COLORS: 1
         run: |
-          source ${GITHUB_WORKSPACE}/venv/bin/activate
+          source "${GITHUB_WORKSPACE}/venv/bin/activate"
           cd jax
-          echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
-          echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
-          echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
+          echo "JAX_NUM_GENERATED_CASES=${JAX_NUM_GENERATED_CASES}"
+          echo "JAX_ENABLE_X64=${JAX_ENABLE_X64}"
+          echo "JAX_SKIP_SLOW_TESTS=${JAX_SKIP_SLOW_TESTS}"
           # The LD_PRELOAD works around https://github.com/google/sanitizers/issues/934#issuecomment-649516500
           LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6 python -m pytest -n 32 --tb=short --maxfail=20 tests
