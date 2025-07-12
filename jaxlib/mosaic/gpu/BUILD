@@ -147,6 +147,10 @@ cc_library(
 cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
+    data = [
+        "@local_config_cuda//cuda:runtime_nvdisasm",
+        "@local_config_cuda//cuda:runtime_ptxas",
+    ],
     deps = [
         ":library_paths",
         ":nvshmem",
@@ -204,11 +208,16 @@ cc_library(
         "@llvm-project//mlir:UBToLLVM",
         "@llvm-project//mlir:VectorDialect",
         "@llvm-project//mlir:VectorToLLVM",
+        "@tsl//tsl/platform:cuda_root_path",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:path",
         "@tsl//tsl/profiler/lib:traceme",
         "@xla//xla/ffi",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/service:custom_call_target_registry",
+        "@xla//xla/stream_executor/cuda:compilation_provider_options",
+        "@xla//xla/stream_executor/cuda:subprocess_compilation",
     ],
     alwayslink = True,
 )

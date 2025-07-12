@@ -38,12 +38,17 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
   def setUp(self):
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
+      print("!!!!!!!!!!!!!!!!!!!!!!Only works on GPU with capability >= sm90")
       self.skipTest("Only works on GPU with capability >= sm90")
     if not mgpu.supports_cross_device_collectives():
+      print("!!!!!!!!!!!!!!!!!!!!!!NVSHMEM library unavailable.")
       self.skipTest("NVSHMEM library unavailable.")
+    print("!!!!!!!!!!!!!!!!!!!!!!%s" % jax.process_count())
     if jax.process_count() == 1:
+      print("!!!!!!!!!!!!!!!!!!!!!!Test requires multiple processes.")
       self.skipTest("Test requires multiple processes.")
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
+      print("!!!!!!!!!!!!!!!!!!!!!!NVSHMEM doesn't work with the platform allocator.")
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
     super().setUp()
 
