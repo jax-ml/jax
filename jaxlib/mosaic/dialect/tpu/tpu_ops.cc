@@ -1354,7 +1354,7 @@ bool hasHbmOrVmemSharedMemorySpace(MemRefType ty) {
          HasMemorySpace(ty, MemorySpace::kVmemShared);
 }
 
-FailureOr<bool> isGather(Operation& op, Value source, Value target) {
+FailureOr<bool> isGather(Operation &op, Value source, Value target) {
   const MemRefType source_ty = getMemRefType(source);
   const MemRefType target_ty = getMemRefType(target);
   if (hasHbmOrVmemSharedMemorySpace(source_ty) &&
