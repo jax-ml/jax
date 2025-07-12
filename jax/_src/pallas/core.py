@@ -228,6 +228,7 @@ class MemorySpace(enum.Enum):
   ERROR = "error"  # Memory space for checkify errors.
   INDEX = "index"  # Memory space for scalar prefetch arguments.
   KEY = "key"  # Memory space for PRNG keys.
+  HOST = "host"  # Host memory space.
 
   def __str__(self) -> str:
     return self.value

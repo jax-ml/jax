@@ -143,7 +143,6 @@ class CompilerParams(pallas_core.CompilerParams):
   # Replace is a method, not a field.
   replace = dataclasses.replace
 
-
 class MemorySpace(enum.Enum):
   ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
   VMEM = "vmem"
@@ -151,6 +150,7 @@ class MemorySpace(enum.Enum):
   CMEM = "cmem"
   SEMAPHORE = "semaphore_mem"
   HBM = "hbm"
+  HOST = "host"
 
   def __str__(self) -> str:
     return self.value

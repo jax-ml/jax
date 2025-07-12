@@ -163,7 +163,8 @@ def TPU_MemorySpace : I32EnumAttr<"MemorySpace", "Memory space", [
   I32EnumAttrCase<"kHbm", 2, "hbm">,
   I32EnumAttrCase<"kCmem", 3, "cmem">,
   I32EnumAttrCase<"kSemaphoreMem", 4, "semaphore_mem">,
-  I32EnumAttrCase<"kVmemShared", 5, "vmem_shared">
+  I32EnumAttrCase<"kVmemShared", 5, "vmem_shared">,
+  I32EnumAttrCase<"kHost", 6, "host">
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";

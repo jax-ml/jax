@@ -79,3 +79,4 @@ from jax._src.state.primitives import broadcast_to as broadcast_to
 
 
 ANY = MemorySpace.ANY
+HOST = MemorySpace.HOST

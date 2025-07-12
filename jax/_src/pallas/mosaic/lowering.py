@@ -241,6 +241,8 @@ def _memory_space_to_tpu_memory_space(memory_space: AnyMemorySpace | None
     case pallas_core.MemorySpace.ANY:
       # Map the general ANY memory space to TPU ANY memory space
       return TPUMemorySpace.ANY
+    case pallas_core.MemorySpace.HOST:
+      return TPUMemorySpace.HOST
     case (
         pallas_core.MemorySpace.ERROR
         | pallas_core.MemorySpace.INDEX
