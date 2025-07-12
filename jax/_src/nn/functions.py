@@ -534,7 +534,8 @@ def log_softmax(x: ArrayLike,
     x : input array
     axis: the axis or axes along which the :code:`log_softmax` should be
       computed. Either an integer or a tuple of integers.
-    where: Elements to include in the :code:`log_softmax`.
+    where: Elements to include in the :code:`log_softmax`. The output for any
+      masked-out element is minus infinity.
 
   Returns:
     An array.
@@ -577,7 +578,8 @@ def softmax(x: ArrayLike,
     axis: the axis or axes along which the softmax should be computed. The
       softmax output summed across these dimensions should sum to :math:`1`.
       Either an integer or a tuple of integers.
-    where: Elements to include in the :code:`softmax`.
+    where: Elements to include in the :code:`softmax`. The output for any
+      masked-out element is zero.
 
   Returns:
     An array.
