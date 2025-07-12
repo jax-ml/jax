@@ -2316,11 +2316,10 @@ def _convert_element_type_lowering_rule(
       return arith.truncf(out_type, x)
   elif _from(integer) and _to(integer):
     if old_bitwidth < new_bitwidth and new_bitwidth == 32:
-      if (_from(unsigned) and _to(unsigned)):
+      if _from(unsigned):
         return arith.extui(out_type, x)
-      if (_from(signed) and _to(signed)):
+      if _from(signed):
         return arith.extsi(out_type, x)
-      raise NotImplementedError(f"Unsupported cast: {old_dtype} -> {new_dtype}")
     elif old_bitwidth > new_bitwidth and old_bitwidth == 32:
       return arith.trunci(out_type, x)
     elif jnp.iinfo(old_dtype).bits == jnp.iinfo(new_dtype).bits:
