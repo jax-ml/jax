@@ -100,6 +100,7 @@ from .utils import (
     memref_unsqueeze as memref_unsqueeze,
     single_thread as single_thread,
     single_thread_predicate as single_thread_predicate,
+    system_memory_barrier as system_memory_barrier,
     thread_idx as thread_idx,
     tile_shape as tile_shape,
     warp_idx as warp_idx,
