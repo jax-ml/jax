@@ -15,6 +15,7 @@
 
 import collections
 import contextlib
+import gc
 from functools import partial
 import itertools
 import math
@@ -3166,18 +3167,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # live_arrays count isn't thread-safe
   def test_cond_memory_leak(self):
     # https://github.com/jax-ml/jax/issues/12719
-
     def leak():
       data = jax.device_put(np.zeros((1024), dtype=np.float32) + 1)
       def g():
         return jax.lax.cond(
               True,
-              lambda: data[0],  # noqa: F821
+              jax.jit(lambda: data[0]),  # noqa: F821
               lambda: data[1],  # noqa: F821
           )
+      # _ = g()  # TODO(necula): enable this, requires fixing leaks in the
+      # caching of dispatch.xla_primitive_callable.
       jg = jax.jit(g)
       _ = jg().block_until_ready()
+      jg.clear_cache()
       del g, jg, data, _
+      gc.collect()
 
     nbufs = lambda: len(jax.live_arrays())
     base = nbufs()
