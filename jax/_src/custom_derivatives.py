@@ -437,11 +437,13 @@ def _custom_jvp_call_typecheck(_, *in_avals, call_jaxpr, jvp_jaxpr_fun,
   return call_jaxpr.out_avals, call_jaxpr.effects
 core.custom_typechecks[custom_jvp_call_p] = _custom_jvp_call_typecheck
 
-def _custom_jvp_vjp_call_lowering(ctx, *args, call_jaxpr, **_):
+def _custom_jvp_vjp_call_lowering(ctx: mlir.LoweringRuleContext, *args,
+                                  call_jaxpr: core.ClosedJaxpr, **_):
   consts = mlir._ir_consts(call_jaxpr.consts)
   out, tokens = mlir.jaxpr_subcomp(ctx.module_context, call_jaxpr.jaxpr,
                                    ctx.name_stack, ctx.tokens_in, consts,
-                                   *args, dim_var_values=ctx.dim_var_values)
+                                   *args, dim_var_values=ctx.dim_var_values,
+                                   const_lowering=ctx.const_lowering)
   ctx.set_tokens_out(tokens)
   return out
 mlir.register_lowering(custom_jvp_call_p, _custom_jvp_vjp_call_lowering)

@@ -1431,6 +1431,22 @@ class JaxTestCase(parameterized.TestCase):
                         atol=atol or tol, rtol=rtol or tol,
                         canonicalize_dtypes=canonicalize_dtypes)
 
+  def assertCacheMisses(self,
+                        func: Callable[[], Any], *,
+                        cpp: int | None = None,
+                        tracing: int | None = None,
+                        lowering: int | None = None):
+    with (count_pjit_cpp_cache_miss() as cpp_count,
+          count_jit_tracing_cache_miss() as tracing_count,
+          count_jit_and_pmap_lowerings() as lowering_count):
+      func()
+    if cpp is not None:
+      self.assertEqual(cpp, cpp_count())
+    if tracing is not None:
+      self.assertEqual(tracing, tracing_count())
+    if lowering is not None:
+      self.assertEqual(lowering, lowering_count())
+
 _PJIT_IMPLEMENTATION = api.jit
 _PJIT_IMPLEMENTATION._name = "jit"
 _NOOP_JIT_IMPLEMENTATION = lambda x, *args, **kwargs: x

@@ -1918,13 +1918,21 @@ def _composite_lowering(
   Returns:
     The results of the composite.
   """
+  hoisted_consts = core.jaxpr_hoisted_consts(jaxpr.jaxpr)
+  hoisted_values = tuple(mlir._lower_constant(c, ctx.const_lowering)
+                         for c in hoisted_consts)
+  in_avals = (*(core.shaped_abstractify(c) for c in hoisted_consts),
+              *ctx.avals_in)
   func_op, _, _ = mlir.lower_called_computation(
       name,
       jaxpr,
       ctx.module_context,
+      len(hoisted_consts),
+      in_avals,
       ctx.avals_out,
       ctx.tokens_in,
   )
+
   composite_attrs = {}
   for k, leaves, treedef in attributes:
     v = treedef.unflatten(leaves)
@@ -1933,7 +1941,7 @@ def _composite_lowering(
   symbol_name = func_op.name.value
   composite = hlo.CompositeOp(
       func_op.type.results,
-      mlir.flatten_ir_values(args),
+      mlir.flatten_ir_values(hoisted_values + args),
       name=ir.StringAttr.get(name),
       decomposition=ir.FlatSymbolRefAttr.get(symbol_name),
       composite_attributes=ir.DictAttr.get(composite_attrs),
@@ -7654,7 +7662,8 @@ reduce_p.def_abstract_eval(
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
-def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
+def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
+                  computation, jaxpr: core.ClosedJaxpr, dimensions):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
@@ -7670,7 +7679,8 @@ def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
                                       name_stack, mlir.TokenSet(),
                                       jaxpr.consts,
                                       *reducer.arguments,
-                                      dim_var_values=ctx.dim_var_values)
+                                      dim_var_values=ctx.dim_var_values,
+                                      const_lowering=ctx.const_lowering)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
           for r, aval in safe_zip(op.results, ctx.avals_out)]
