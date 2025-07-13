@@ -437,11 +437,13 @@ def _custom_jvp_call_typecheck(_, *in_avals, call_jaxpr, jvp_jaxpr_fun,
   return call_jaxpr.out_avals, call_jaxpr.effects
 core.custom_typechecks[custom_jvp_call_p] = _custom_jvp_call_typecheck
 
-def _custom_jvp_vjp_call_lowering(ctx, *args, call_jaxpr, **_):
+def _custom_jvp_vjp_call_lowering(ctx: mlir.LoweringRuleContext, *args,
+                                  call_jaxpr: core.ClosedJaxpr, **_):
   consts = mlir._ir_consts(call_jaxpr.consts)
   out, tokens = mlir.jaxpr_subcomp(ctx.module_context, call_jaxpr.jaxpr,
                                    ctx.name_stack, ctx.tokens_in, consts,
-                                   *args, dim_var_values=ctx.dim_var_values)
+                                   *args, dim_var_values=ctx.dim_var_values,
+                                   const_lowering=ctx.const_lowering)
   ctx.set_tokens_out(tokens)
   return out
 mlir.register_lowering(custom_jvp_call_p, _custom_jvp_vjp_call_lowering)
@@ -1317,13 +1319,13 @@ def _closure_convert_for_avals(fun, in_tree, in_avals,
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
   out_tree = out_tree()
 
-  (closure_consts, hoisted_consts), merge = partition_list(_maybe_perturbed, consts)
-  num_consts = len(hoisted_consts)
+  (closure_consts, const_args), merge = partition_list(_maybe_perturbed, consts)
+  num_consts = len(const_args)
 
   def converted_fun(*args_hconsts):
     num_args = len(args_hconsts) - num_consts
-    args, hoisted_consts = split_list(args_hconsts, [num_args])
-    consts = merge(closure_consts, hoisted_consts)
+    args, const_args = split_list(args_hconsts, [num_args])
+    consts = merge(closure_consts, const_args)
     all_args, in_tree2 = tree_flatten(tuple(args))
     if in_tree != in_tree2:
       msg = ("The inputs to the closure produced by closure_convert must have "
@@ -1334,7 +1336,7 @@ def _closure_convert_for_avals(fun, in_tree, in_avals,
     out_flat = core.eval_jaxpr(jaxpr, consts, *all_args)
     return tree_unflatten(out_tree, out_flat)
 
-  return converted_fun, hoisted_consts
+  return converted_fun, const_args
 
 def partition_list(choice, lst):
   out = [], []

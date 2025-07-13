@@ -617,6 +617,7 @@ def _export_internal(
         _private_parameters=mlir.LoweringParameters(
             override_lowering_rules=override_lowering_rules,
             for_export=True,
+            hoist_constants_as_args=False,
             export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(
         lowered, traced.jaxpr, traced.fun_name,
@@ -954,7 +955,7 @@ def _wrap_main_func(
           host_callbacks=[], module=wrapped_module, context=context,
           lowering_parameters=mlir.LoweringParameters(
               global_constant_computation=True,
-              for_export=True,
+              for_export=True, hoist_constants_as_args=False,
               export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value,
           ))
       ctx = mlir.LoweringRuleContext(
@@ -962,7 +963,8 @@ def _wrap_main_func(
         name_stack=source_info_util.new_name_stack(), traceback=None,
         primitive=None,
         avals_in=args_avals_flat, avals_out=None,
-        tokens_in=mlir.TokenSet(), tokens_out=None)
+        tokens_in=mlir.TokenSet(), tokens_out=None,
+        const_lowering={})
       # We compute dim_values from the array arguments.
       new_main_op_array_args = new_main_op.arguments[-nr_array_args:]
       if shape_poly.all_dim_vars(args_avals_flat):

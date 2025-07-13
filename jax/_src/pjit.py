@@ -75,6 +75,7 @@ from jax._src.tree_util import (
     tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
     treedef_children, broadcast_prefix, all_leaves, prefix_errors, keystr,
     PyTreeDef, none_leaf_registry as none_lr, tree_map)
+from jax._src.typing import ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
     split_list, weakref_lru_cache, merge_lists, subs_list, fun_name,
@@ -143,11 +144,13 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
         and not p.params['jaxpr'].jaxpr.is_high):
       args_flat = map(core.full_lower, args_flat)
       core.check_eval_args(args_flat)
-      out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
+      out_flat, compiled, profiler, num_const_args = _pjit_call_impl_python(
+          *args_flat, **p.params)
     else:
       out_flat = jit_p.bind(*args_flat, **p.params)
       compiled = None
       profiler = None
+      num_const_args = 0
   except stages.DeviceAssignmentMismatchError as e:
     fails, = e.args
     fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
@@ -175,7 +178,7 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
     api_util.maybe_recursive_nan_check(e, fun, args, kwargs)
 
   outs = tree_unflatten(p.out_tree, out_flat)
-  return outs, out_flat, p.out_tree, args_flat, p.params['jaxpr'], compiled, profiler
+  return outs, out_flat, p.out_tree, args_flat, p.params['jaxpr'], compiled, profiler, num_const_args
 
 
 def _need_to_rebuild_with_fdo(pgle_profiler):
@@ -183,14 +186,16 @@ def _need_to_rebuild_with_fdo(pgle_profiler):
           and not pgle_profiler.is_fdo_consumed())
 
 def _get_fastpath_data(
-    executable, out_tree, args_flat, out_flat, effects, consts, abstracted_axes,
-    pgle_profiler) -> pxla.MeshExecutableFastpathData | None:
+    executable, out_tree, args_flat, out_flat, effects, consts_for_constvars,
+    abstracted_axes, pgle_profiler, num_const_args: int) -> pxla.MeshExecutableFastpathData | None:
+  # TODO(necula): remove num_const_args when fixing C++ path
   out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
 
   use_fastpath = (
       executable is not None
       and isinstance(executable, pxla.MeshExecutable)
       and isinstance(executable.unsafe_call, pxla.ExecuteReplicated)
+      and num_const_args == 0  # TODO(necula): fix this
       # No effects in computation
       and not executable.unsafe_call.ordered_effects
       and not executable.unsafe_call.has_unordered_effects
@@ -202,7 +207,7 @@ def _get_fastpath_data(
       # no prng reuse checking
       and not (config.debug_key_reuse.value and any(
         hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
-        for arg in (*args_flat, *out_flat, *consts)))
+        for arg in (*args_flat, *out_flat, *consts_for_constvars)))
       and not _need_to_rebuild_with_fdo(pgle_profiler)
       )
 
@@ -255,12 +260,14 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
 
-    outs, out_flat, out_tree, args_flat, jaxpr, executable, pgle_profiler = \
+    (outs, out_flat, out_tree, args_flat, jaxpr,
+     executable, pgle_profiler, num_const_args) = \
         _python_pjit_helper(fun, jit_info, *args, **kwargs)
 
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, jaxpr.effects, jaxpr.consts,
-        jit_info.abstracted_axes, pgle_profiler)
+        jit_info.abstracted_axes, pgle_profiler,
+        num_const_args)
 
     return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
@@ -459,7 +466,6 @@ def make_jit(fun: Callable,
 
 
 class PjitParams(NamedTuple):
-  jaxpr_for_top_jit: core.ClosedJaxpr  # See comments in _params_for_top_jit
   # Only jaxpr constants, we can't keep other arguments alive. These go as
   # first arguments for `params['jaxpr']`.
   consts: list[Any]
@@ -548,7 +554,7 @@ def _infer_params_impl(
       ji.in_layouts_treedef, ji.in_layouts_leaves,
       in_avals, in_tree, flat_fun.debug_info, device_or_backend_set, have_kwargs)
 
-  jaxpr, consts, jaxpr_for_top_jit, out_avals = _create_pjit_jaxpr(
+  jaxpr, consts, out_avals = _create_pjit_jaxpr(
       flat_fun, in_type, IgnoreKey(ji.inline))
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
@@ -587,7 +593,7 @@ def _infer_params_impl(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  return (PjitParams(jaxpr_for_top_jit, consts, params, in_avals,
+  return (PjitParams(consts, params, in_avals,
                      in_tree, out_tree(), dbg.arg_names),
           args_flat)
 
@@ -1332,8 +1338,7 @@ def _create_pjit_jaxpr(
     fun: lu.WrappedFun,
     in_type: core.InputType | Sequence[core.AbstractValue],
     ignored_inline: IgnoreKey
-) -> tuple[core.ClosedJaxpr, list[core.Value], core.ClosedJaxpr,
-           list[core.AbstractValue]]:
+) -> tuple[core.ClosedJaxpr, list[core.Value], list[core.AbstractValue]]:
   util.test_event("create_pjit_jaxpr")
   del ignored_inline  # just for explain_cache_miss
   if config.no_tracing.value:
@@ -1361,7 +1366,7 @@ def _create_pjit_jaxpr(
   else:
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     final_consts = []
-  return closed_jaxpr, final_consts, closed_jaxpr, global_out_avals
+  return closed_jaxpr, final_consts, global_out_avals
 
 
 @util.cache(max_size=4096, trace_context_in_key=False)
@@ -1537,8 +1542,8 @@ def _lojax_expand_params(
                     out_shardings=out_shardings, out_layouts=out_layouts)
   return new_params
 
-
-def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
+def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
+                        in_avals) -> Sequence[Layout | None]:
   # If device or backend is set, return the default layout. This is because you
   # can pass arrays on cpu (with untiled layouts) to jit with backend='tpu'
   # which causes error checks to fail. Returning the default layout allows
@@ -1546,7 +1551,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   if pxla.check_device_backend_on_shardings(resolved_in_shardings):
     return (None,) * len(jit_in_layouts)
 
-  resolved_in_layouts = []
+  resolved_in_layouts: list[Layout | None] = []
   for arg, jit_in_l, rs, aval in safe_zip(
       args, jit_in_layouts, resolved_in_shardings, in_avals):
     committed = getattr(arg, '_committed', True)
@@ -1701,10 +1706,10 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
 
 
 def _resolve_and_lower(
-    args, jaxpr, in_shardings, out_shardings, in_layouts,
+    args, jaxpr: core.ClosedJaxpr, in_shardings, out_shardings, in_layouts,
     out_layouts, donated_invars, ctx_mesh, name, keep_unused, inline,
     lowering_platforms, lowering_parameters, pgle_profiler,
-    compiler_options_kvs):
+    compiler_options_kvs) -> pxla.MeshComputation:
   in_shardings = _resolve_in_shardings(args, in_shardings)
   in_layouts = _resolve_in_layouts(args, in_layouts, in_shardings,
                                    jaxpr.in_avals)
@@ -1719,7 +1724,9 @@ def _resolve_and_lower(
 _pgle_profiler_dict = weakref.WeakKeyDictionary()  # type: ignore
 
 def _pjit_call_impl_python(
-    *args, jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
+    *args,
+    jaxpr: core.ClosedJaxpr,
+    in_shardings, out_shardings, in_layouts, out_layouts,
     donated_invars, ctx_mesh, name, keep_unused, inline,
     compiler_options_kvs):
   util.test_event("jit_cpp_cache_miss")
@@ -1743,7 +1750,7 @@ def _pjit_call_impl_python(
   compiler_options_kvs = compiler_options_kvs + tuple(pgle_compile_options.items())
   # Passing mutable PGLE profile here since it should be extracted by JAXPR to
   # initialize the fdo_profile compile option.
-  compiled = _resolve_and_lower(
+  computation = _resolve_and_lower(
       args, jaxpr=jaxpr, in_shardings=in_shardings,
       out_shardings=out_shardings, in_layouts=in_layouts,
       out_layouts=out_layouts, donated_invars=donated_invars,
@@ -1752,12 +1759,13 @@ def _pjit_call_impl_python(
       lowering_parameters=mlir.LoweringParameters(),
       pgle_profiler=pgle_profiler,
       compiler_options_kvs=compiler_options_kvs,
-  ).compile()
+  )
+  compiled = computation.compile()
 
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.enable_checks.value:
     pxla.check_array_xla_sharding_layout_match(
-        args, compiled._in_shardings, compiled._in_layouts,
+        args, compiled._in_shardings, compiled._in_layouts,  # type: ignore
         jaxpr.jaxpr._debug_info, compiled._kept_var_idx)
   if config.distributed_debug.value:
     # Defensively only perform fingerprint logic if debug logging is enabled
@@ -1774,7 +1782,8 @@ def _pjit_call_impl_python(
                           ("out_layouts", out_layouts),
                           ("abstract args", map(core.abstractify, args)),
                           ("fingerprint", fingerprint))
-  return compiled.unsafe_call(*args), compiled, pgle_profiler
+  return (compiled.unsafe_call(*computation._const_args, *args),
+          compiled, pgle_profiler, len(computation._const_args))
 
 @weakref_lru_cache
 def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
@@ -1790,12 +1799,13 @@ def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
   return lambda *args: core.jaxpr_as_fun(jaxpr())(*args)  # pylint: disable=unnecessary-lambda
 
 
-def _pjit_call_impl(*args, jaxpr,
+def _pjit_call_impl(*args, jaxpr: core.ClosedJaxpr,
                     in_shardings, out_shardings, in_layouts, out_layouts,
                     donated_invars, ctx_mesh, name, keep_unused, inline,
                     compiler_options_kvs):
   def call_impl_cache_miss(*args_, **kwargs_):
-    out_flat, compiled, pgle_profiler = _pjit_call_impl_python(
+    # TODO(necula): remove num_const_args when fixing the C++ path
+    out_flat, compiled, pgle_profiler, num_const_args = _pjit_call_impl_python(
         *args, jaxpr=jaxpr, in_shardings=in_shardings,
         out_shardings=out_shardings, in_layouts=in_layouts,
         out_layouts=out_layouts, donated_invars=donated_invars,
@@ -1803,7 +1813,8 @@ def _pjit_call_impl(*args, jaxpr,
         inline=inline, compiler_options_kvs=compiler_options_kvs)
     fastpath_data = _get_fastpath_data(
         compiled, tree_structure(out_flat), args, out_flat,
-        jaxpr.effects, jaxpr.consts, None, pgle_profiler)
+        jaxpr.effects, jaxpr.consts, None, pgle_profiler,
+        num_const_args)
     return out_flat, fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
   f = _get_jaxpr_as_fun(
@@ -1825,7 +1836,6 @@ def _pjit_call_impl(*args, jaxpr,
 
 jit_p.def_impl(_pjit_call_impl)
 
-
 # This cache is important for python dispatch performance.
 @weakref_lru_cache
 def _pjit_lower(
@@ -1843,7 +1853,7 @@ def _pjit_lower(
     *,
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
-    pgle_profiler: profiler.PGLEProfiler | None):
+    pgle_profiler: profiler.PGLEProfiler | None) -> pxla.MeshComputation:
   return pxla.lower_sharding_computation(
       jaxpr, 'jit', name, in_shardings, out_shardings,
       in_layouts, out_layouts, tuple(donated_invars),
@@ -1970,6 +1980,8 @@ jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
                                     name: str, jaxpr: core.ClosedJaxpr,
+                                    num_const_args: int,
+                                    in_avals,
                                     effects, in_shardings,
                                     out_shardings, in_layouts, out_layouts,
                                     api_name):
@@ -1981,7 +1993,7 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
   elif isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     num_devices = axis_ctx.mesh.size
   key = (jit_p, name, jaxpr, effects, num_devices,
-         pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),  # pytype: disable=wrong-arg-types
+         pxla.SemanticallyEqualShardings(in_shardings, in_avals),  # pytype: disable=wrong-arg-types
          pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),  # pytype: disable=wrong-arg-types
          in_layouts, out_layouts, api_name)
 
@@ -1996,6 +2008,7 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
     num_callbacks = len(mod_ctx.host_callbacks)
     func = mlir.lower_jaxpr_to_fun(
         mod_ctx, name, jaxpr, effects,
+        num_const_args=num_const_args, in_avals=in_avals,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         use_sharding_annotations=False,
         arg_layouts=in_layouts, result_layouts=out_layouts)
@@ -2018,13 +2031,26 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types = mlir.flatten_ir_types(output_types)
 
+  const_args = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_arg_avals = [core.shaped_abstractify(c) for c in const_args]
+  in_avals = const_arg_avals + jaxpr.in_avals
+  ca_shardings = const_args_shardings(const_args)
+  in_shardings = ca_shardings + in_shardings  # type: ignore
+  ca_layouts = const_args_layouts(const_args, const_arg_avals, ca_shardings)
+  in_layouts = ca_layouts + in_layouts  # type: ignore
+
   func = _pjit_cached_lower_jaxpr_to_fun(
-      ctx, name, jaxpr, tuple(effects), in_shardings,
+      ctx, name, jaxpr, len(const_args), in_avals,
+      tuple(effects), in_shardings,
       out_shardings, in_layouts, out_layouts,
       api_name='jit')
 
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
-  args = (*ctx.dim_var_values, *tokens_in, *args)
+  hoisted_const_values = [
+      mlir.ir_constant(c, ctx.const_lowering,
+                       canonicalize_dtype=True)
+      for c in const_args]
+  args = (*ctx.dim_var_values, *tokens_in, *hoisted_const_values, *args)
   with mlir.source_info_to_location(
       ctx.module_context, None,
       ctx.name_stack.extend(util.wrap_name('jit', name)),
@@ -2045,6 +2071,17 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # the metadata problem and consolidate the caches.
 mlir.register_lowering(jit_p, _pjit_lowering, cacheable=False)
 
+def const_args_shardings(const_args: Sequence[ArrayLike]) -> Sequence[PjitSharding]:
+  return _resolve_in_shardings(
+      const_args, (sharding_impls.UNSPECIFIED,) * len(const_args))
+
+def const_args_layouts(
+    const_args: Sequence[ArrayLike],
+    avals: Sequence[core.AbstractValue],
+    shardings: Sequence[PjitSharding]
+    ) -> Sequence[Layout | None]:
+  return _resolve_in_layouts(
+      const_args, (None,) * len(const_args), shardings, avals)
 
 def _pjit_batcher(axis_data, vals_in,
                   dims_in: tuple[int, ...],

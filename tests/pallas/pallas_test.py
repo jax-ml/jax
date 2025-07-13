@@ -492,7 +492,7 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(o_ref_shape, (4,))
     self.assertAllClose(pids[0:4], np.array([0] * 4, dtype=np.int32))
 
-  def test_hoisted_consts(self):
+  def test_const_args(self):
     if config.use_simplified_jaxpr_constants.value:
       self.skipTest("TODO: decide if we want to keep these errors")
     # See https://github.com/jax-ml/jax/issues/21557.

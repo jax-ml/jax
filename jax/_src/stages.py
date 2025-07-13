@@ -731,11 +731,13 @@ class Traced(Stage):
       lowering = self._lower_callable(
           lowering_platforms=lowering_platforms,
           lowering_parameters=_private_parameters)
+      assert not lowering._const_args
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
       msg = _device_assignment_mismatch_error(
           self.fun_name, fails, self._args_flat, 'jit', self._arg_names)
       raise ValueError(msg) from None
+    # TODO(necula): add the hoisted consts to the Lowered
     return Lowered(lowering, self.args_info, self._out_tree)
 
 

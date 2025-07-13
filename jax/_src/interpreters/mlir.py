@@ -65,6 +65,7 @@ from jax._src.sharding_impls import ( AUTO, NamedSharding,
                                      SdyArray, SdyArrayList,
                                      modify_sdy_sharding_wrt_axis_types)
 from jax._src.state.types import AbstractRef
+from jax._src.typing import ArrayLike
 from jax._src.util import foreach
 import numpy as np
 
@@ -247,15 +248,26 @@ def register_constant_handler(type_: type, handler_fun: ConstantHandler):
 def get_constant_handler(type_: type) -> ConstantHandler:
   return _constant_handlers[type_]
 
-def ir_constant(val: Any) -> IrValues:
+def ir_constant(val: Any,
+                const_lowering: dict[int, IrValues] = {},
+                *,
+                canonicalize_dtype: bool = False) -> IrValues:
   """Translate a Python `val` to an IR constant, canonicalizing its dtype.
 
   Args:
     val: a Python value to be translated to a constant.
+    const_lowering: an optional dictionary with known lowering for some
+      constants, indexed by `id`. This is used, e.g., when we pass constants
+      as MLIR function arguments.
+    canonicalize_dtype: whether to canonicalize the dtype
 
   Returns:
     A representation of the constant as an IR value or sequence of IR values.
   """
+  if np.shape(val) and (c_val := const_lowering.get(id(val))) is not None:
+    return c_val
+  if canonicalize_dtype:
+    val = xla.canonicalize_dtype(val)
   for t in type(val).__mro__:
     handler = _constant_handlers.get(t)
     if handler:
@@ -657,11 +669,13 @@ class LoweringParameters:
   global_constant_computation: bool = False
 
   # Signals that we are lowering for exporting.
-
   for_export: bool = False
   # See usage in https://docs.jax.dev/en/latest/export/export.html#ensuring-forward-and-backward-compatibility
   # We have this here to ensure it is reflected in the cache keys
   export_ignore_forward_compatibility: bool = False
+  # During lowering hoist the core.Literal constants as args for the main MLIR
+  # function and all the intermediate functions that need them.
+  hoist_constants_as_args: bool = config.use_simplified_jaxpr_constants.value
 
 
 @dataclasses.dataclass
@@ -691,6 +705,7 @@ class LoweringCacheKey:
 class LoweringCacheValue:
   func: func_dialect.FuncOp
   output_types: Sequence[IrTypes]
+  const_args: list[ArrayLike]  # The hoisted constants expected by `func`
   inline: bool  # Inline calls to this lowered function?
 
 @dataclasses.dataclass
@@ -823,6 +838,10 @@ class LoweringRuleContext:
   avals_out: Any  # Usually Sequence[core.AbstractValue], but sometimes None.
   tokens_in: TokenSet
   tokens_out: TokenSet | None  # Mutable store for output containers
+  # The values tobe used for the Literal constants, by id of the const.
+  # This is used to implement passing along the constants that have been
+  # hoisted as main function arguments down to where they are used.
+  const_lowering: dict[int, IrValues]
   axis_size_env: dict[core.Var, ir.Value] | None = None  # Dynamic axis sizes
   # The values for the dimension variables in same order as
   # module_context.shape_poly_state.dim_vars
@@ -1192,6 +1211,8 @@ def lower_jaxpr_to_module(
     module_name: str,
     jaxpr: core.ClosedJaxpr,
     *,
+    num_const_args: int,
+    in_avals: Sequence[core.AbstractValue],
     ordered_effects: list[core.Effect],
     # See ModuleContext.get_backend() for backend and platforms usage.
     platforms: Sequence[str],
@@ -1216,14 +1237,15 @@ def lower_jaxpr_to_module(
 
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
+  The inputs already account for the constant arguments.
   """
   util.test_event("lower_jaxpr_to_module")
   platforms = tuple(map(xb.canonicalize_platform, platforms))
 
-  in_avals = (jaxpr.in_avals if arg_shardings is None else
-              map(sharded_aval, jaxpr.in_avals, arg_shardings))
-  out_avals = (jaxpr.out_avals if result_shardings is None else
-               map(sharded_aval, jaxpr.out_avals, result_shardings))
+  sharded_in_avals = (in_avals if arg_shardings is None else
+                      map(sharded_aval, in_avals, arg_shardings))
+  sharded_out_avals = (jaxpr.out_avals if result_shardings is None else
+                       map(sharded_aval, jaxpr.out_avals, result_shardings))
   if all_default_mem_kind:
     arg_memory_kinds = None
     result_memory_kinds = None
@@ -1245,7 +1267,7 @@ def lower_jaxpr_to_module(
         f"should support donation. Lowering for {platforms} of which "
         f"only {platforms_with_donation} support donation")
     input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
-        input_output_aliases, in_avals, out_avals, donated_args,
+        input_output_aliases, sharded_in_avals, sharded_out_avals, donated_args,
         arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts,
         result_shardings if num_partitions > 1 else None)
     if (num_partitions > 1 and
@@ -1259,7 +1281,7 @@ def lower_jaxpr_to_module(
           xla_donated_args[input_id] = True
           donated_args[input_id] = False
   if any(donated_args):
-    unused_donations = [str(a) for a, d in zip(in_avals, donated_args) if d]
+    unused_donations = [str(a) for a, d in zip(sharded_in_avals, donated_args) if d]
     msg = "See an explanation at https://docs.jax.dev/en/latest/faq.html#buffer-donation."
     if not platforms_with_donation:
       msg = f"Donation is not implemented for {platforms}.\n{msg}"
@@ -1282,7 +1304,7 @@ def lower_jaxpr_to_module(
   dim_vars: Sequence[str]
   if not config.dynamic_shapes.value:
     # Find the dimension variables
-    all_dim_poly = [d for aval in jaxpr.in_avals if hasattr(aval, "shape")
+    all_dim_poly = [d for aval in sharded_in_avals if hasattr(aval, "shape")
                     for d in aval.shape if not core.is_constant_dim(d)]
     dim_vars = tuple(sorted(functools.reduce(lambda acc, new: acc.union(new._get_vars()),
                                              all_dim_poly, set())))
@@ -1307,8 +1329,10 @@ def lower_jaxpr_to_module(
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
     lower_jaxpr_to_fun(
         ctx, module_name, jaxpr, ordered_effects,
+        num_const_args=num_const_args,
         main_function=True,
         replicated_args=replicated_args,
+        in_avals=in_avals,
         arg_shardings=arg_shardings,
         result_shardings=result_shardings,
         input_output_aliases=input_output_aliases,
@@ -1352,7 +1376,6 @@ def lower_jaxpr_to_module(
   util.test_event("mlir.collect_lowered_jaxprs", jaxpr, ctx.module)
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
                         ctx.shape_poly_state)
-
 
 def _set_up_aliases(input_output_aliases, avals_in, avals_out,
                     donated_args, arg_memory_kinds, result_memory_kinds,
@@ -1482,8 +1505,10 @@ def lower_jaxpr_to_fun(
     jaxpr: core.ClosedJaxpr,
     effects: Sequence[core.Effect],
     *,
+    num_const_args: int,
     main_function: bool = False,
     replicated_args: Sequence[bool] | None = None,
+    in_avals: Sequence[core.AbstractValue],
     arg_shardings: Sequence[JSharding | AUTO | None] | None = None,
     result_shardings: Sequence[JSharding | AUTO | None] | None = None,
     use_sharding_annotations: bool = True,
@@ -1511,6 +1536,7 @@ def lower_jaxpr_to_fun(
     jaxpr: the jaxpr to lower.
     effects: a sequence of `core.Effect`s corresponding to an ordering of tokens
       that will be created in or used by the lowered function.
+    num_const_args: how many constant arguments is this function going to have.
     main_function: if true, this is the main function in the module. This has
       several effects:
       * the function's visibility is set to "public".
@@ -1538,50 +1564,64 @@ def lower_jaxpr_to_fun(
   dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars
   dim_var_types = map(aval_to_ir_type, dim_var_avals)
 
-  # Function inputs: *dim_var_values, *tokens, *actual_inputs
-  input_types = map(aval_to_ir_type, jaxpr.in_avals)
+  nr_args = num_const_args + len(jaxpr.in_avals)
+
+  assert nr_args == len(in_avals), (nr_args, in_avals)
+  assert replicated_args is None or nr_args == len(replicated_args), \
+    (nr_args, replicated_args)
+  assert arg_shardings is None or nr_args == len(arg_shardings), \
+    (nr_args, arg_shardings)
+  assert arg_layouts is None or nr_args == len(arg_layouts), \
+    (nr_args, arg_layouts)
+  assert arg_memory_kinds is None or nr_args == len(arg_memory_kinds), \
+    (nr_args, arg_memory_kinds)
+  assert arg_names is None or nr_args == len(arg_names), (nr_args, arg_names)
+
+  # Function inputs: *dim_var_values, *tokens, *const_args, *actual_inputs
+  input_types = map(aval_to_ir_type, in_avals)
   output_types = map(aval_to_ir_type, jaxpr.out_avals)
   num_tokens = len(effects)
 
   token_types = [token_type() for _ in effects]
   token_avals = [core.abstract_token] * num_tokens
-  # Order of arguments: dim vars, tokens, array inputs
-  input_avals = dim_var_avals + token_avals + jaxpr.in_avals
+  # Order of arguments: dim vars, tokens, const_args, array inputs
+  input_avals = dim_var_avals + token_avals + list(in_avals)  # type: ignore
   input_types = [*dim_var_types, *token_types, *input_types]
   output_avals = [core.abstract_token] * num_tokens + jaxpr.out_avals
   output_types = [*token_types, *output_types]
 
   if input_output_aliases is not None:
-    token_input_output_aliases = [None] * (num_dim_vars + num_tokens)
-    input_output_aliases = [*token_input_output_aliases, *input_output_aliases]
+    prefix_input_output_aliases = [None] * (num_dim_vars + num_tokens)
+    input_output_aliases = [*prefix_input_output_aliases, *input_output_aliases]
     # Update the existing aliases to account for the new output values
     input_output_aliases = [None if a is None
                             else a + num_tokens
                             for a in input_output_aliases]
 
   if arg_shardings is not None:
-    token_shardings = [None] * (num_dim_vars + num_tokens)
-    arg_shardings = [*token_shardings, *arg_shardings]
+    prefix_shardings = [None] * (num_dim_vars + num_tokens)
+    arg_shardings = [*prefix_shardings, *arg_shardings]
   if result_shardings is not None:
     token_shardings = [None] * num_tokens
     result_shardings = [*token_shardings, *result_shardings]
   if replicated_args is not None:
-    token_replicated_args = [False] * (num_dim_vars + num_tokens)
-    replicated_args = [*token_replicated_args, *replicated_args]
+    prefix_replicated_args = [False] * (num_dim_vars + num_tokens)
+    replicated_args = [*prefix_replicated_args, *replicated_args]
   if arg_memory_kinds is not None:
-    token_memory_kinds = [None] * (num_dim_vars + num_tokens)
-    arg_memory_kinds = [*token_memory_kinds, *arg_memory_kinds]
+    prefix_memory_kinds = [None] * (num_dim_vars + num_tokens)
+    arg_memory_kinds = [*prefix_memory_kinds, *arg_memory_kinds]
   if result_memory_kinds is not None:
     token_memory_kinds = [None] * num_tokens
     result_memory_kinds = [*token_memory_kinds, *result_memory_kinds]
   if arg_layouts is not None:
-    token_layouts = [None] * (num_dim_vars + num_tokens)
-    arg_layouts = [*token_layouts, *arg_layouts]
+    prefix_layouts = [None] * (num_dim_vars + num_tokens)
+    arg_layouts = [*prefix_layouts, *arg_layouts]
   if result_layouts is not None:
     token_layouts = [None] * num_tokens
     result_layouts = [*token_layouts, *result_layouts]
   if xla_donated_args is not None:
-    xla_donated_args = [*([False] * (num_dim_vars + num_tokens)), *xla_donated_args]
+    xla_donated_args = [*([False] * (num_dim_vars + num_tokens)),
+                        *xla_donated_args]
 
   flat_input_types = flatten_ir_types(input_types)
   flat_output_types = flatten_ir_types(output_types)
@@ -1651,6 +1691,7 @@ def lower_jaxpr_to_fun(
         [[_to_xla_layout(l, a)] * len_ir_types(types)
          for l, a, types in zip(result_layouts, output_avals, output_types)])
 
+  # Populate arg_attrs
   if (
       replicated_args is not None
       or ir_arg_shardings is not None
@@ -1661,6 +1702,7 @@ def lower_jaxpr_to_fun(
       or arg_names is not None
       or num_tokens > 0
       or num_dim_vars > 0
+      or num_const_args > 0
   ):
     arg_attrs: list[dict[str, ir.Attribute]] = [
         {} for _ in range(len(flat_input_types))]
@@ -1721,8 +1763,15 @@ def lower_jaxpr_to_fun(
       for attrs in token_arg_attrs:
         attrs["jax.token"] = ir.BoolAttr.get(True)
 
+    if num_const_args > 0:
+      const_arg_attrs = arg_attrs[num_dim_vars + num_tokens :
+                                  num_dim_vars + num_tokens + num_const_args]
+      for attrs in const_arg_attrs:
+        attrs["jax.const"] = ir.BoolAttr.get(True)
+
     func_op.arg_attrs = ir.ArrayAttr.get(
         [ir.DictAttr.get(attrs) for attrs in arg_attrs])
+    # End populate arg_attrs
 
   result_attrs: list[dict[str, ir.Attribute]] = [
       {} for _ in range(len(flat_output_types))]
@@ -1781,16 +1830,23 @@ def lower_jaxpr_to_fun(
 
   with ir.InsertionPoint(entry_block):
     flat_args = entry_block.arguments
-    # We separate out the dimension variable inputs, the token inputs and
-    # the regular inputs. The dimension variables and token inputs
-    # will be passed to `jaxpr_subcomp` separately from the `args`.
-    dim_var_values, _, _ = util.split_list(flat_args, [num_dim_vars, num_tokens])
+    dim_var_values, _, const_arg_values, _ = util.split_list(
+        flat_args, [num_dim_vars, num_tokens, num_const_args])
+    const_args = core.jaxpr_const_args(jaxpr.jaxpr)
+    if num_const_args == 0:
+      # If we did not hoist the constants out of this function, lower them now
+      const_arg_values = [ir_constant(c, canonicalize_dtype=True)
+                          for c in  const_args]
+    const_lowering = {id(c): c_arg
+                      for c, c_arg in zip(const_args, const_arg_values)}
+
     # A lowering context just for function body entry/exit code.
     entry_lowering_ctx = LoweringRuleContext(
         module_context=ctx, name_stack=name_stack, traceback=None, primitive=None,
         avals_in=[], avals_out=None,
         tokens_in=TokenSet.create([]), tokens_out=None,
-        axis_size_env=None, dim_var_values=dim_var_values)
+        axis_size_env=None, dim_var_values=dim_var_values,
+        const_lowering=const_lowering)
     if not use_sharding_annotations and ir_arg_shardings is not None:
       flat_args = [
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
@@ -1806,17 +1862,19 @@ def lower_jaxpr_to_fun(
                                  arg_shardings)  # type: ignore
       ]
 
-    _, token_args, unflattened_args = util.split_list(
+    _, token_args, _, unflattened_args = util.split_list(
         unflatten_ir_values_like_types(flat_args, input_types),
-        [num_dim_vars, num_tokens])
+        [num_dim_vars, num_tokens, num_const_args])
     tokens_in = TokenSet(zip(effects, token_args))
     args: list[IrValues] = unflattened_args
     unique_consts = {id(c): ir_constant(xla.canonicalize_dtype(c))
                      for c in jaxpr.consts}
-    consts = [unique_consts[id(c)] for c in jaxpr.consts]
+    consts_for_constvars = [unique_consts[id(c)] for c in jaxpr.consts]
+
     out_vals, tokens_out = jaxpr_subcomp(
         ctx, jaxpr.jaxpr, name_stack, tokens_in,
-        consts, *args, dim_var_values=dim_var_values)
+        consts_for_constvars, *args, dim_var_values=dim_var_values,
+        const_lowering=const_lowering)
     outs: list[IrValues] = []
     for eff in effects:
       outs.append(tokens_out.get(eff))
@@ -1952,16 +2010,19 @@ _uncacheable_primitives: set[core.Primitive] = set()
 def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                   name_stack: source_info_util.NameStack,
                   tokens: TokenSet,
-                  consts: Sequence[IrValues],
+                  consts_for_constvars: Sequence[IrValues],
                   *args: IrValues,
-                  dim_var_values: Sequence[ir.Value]
+                  dim_var_values: Sequence[ir.Value],
+                  const_lowering: dict[int, IrValues],
                   ) -> tuple[Sequence[IrValues], TokenSet]:
   """Lowers a jaxpr into MLIR, inlined into an existing function.
 
   Assumes that an MLIR context, location, and insertion point are set.
 
+  consts_for_constvars: the constants corresponding to jaxpr.constvars.
   dim_var_values: the list of dimension variables values in the current
     IR function, in the order of ctx.shape_poly_state.dim_vars.
+  const_lowering: the lowering for constants, by constant id.
   """
   assert "gpu" not in ctx.platforms
   cached_ir_consts: dict[HashableLiteral, IrValues] = {}
@@ -1971,7 +2032,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       h = HashableLiteral(v)
       c = cached_ir_consts.get(h)
       if c is None:
-        c = ir_constant(xla.canonicalize_dtype(v.val))
+        c = ir_constant(v.val, const_lowering, canonicalize_dtype=True)
+        # TODO(necula): do we really need the cache, now that we hoist?
         cached_ir_consts[h] = c
       return c
     else:
@@ -2004,12 +2066,15 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   env: dict[core.Var, IrValues] = {}
 
   assert all(_is_ir_values(v) for v in args), args
-  assert all(_is_ir_values(v) for v in consts), consts
+  assert all(_is_ir_values(v) for v in consts_for_constvars), \
+    consts_for_constvars
   assert isinstance(name_stack, source_info_util.NameStack), type(name_stack)
   assert len(args) == len(jaxpr.invars), (jaxpr, args)
-  assert len(consts) == len(jaxpr.constvars), (jaxpr, consts)
-  assert len(ctx.shape_poly_state.dim_vars) == len(dim_var_values), (ctx.shape_poly_state.dim_vars, dim_var_values)
-  foreach(write, jaxpr.constvars, consts)
+  assert len(consts_for_constvars) == len(jaxpr.constvars), \
+    (jaxpr, consts_for_constvars)
+  assert len(ctx.shape_poly_state.dim_vars) == len(dim_var_values), \
+    (ctx.shape_poly_state.dim_vars, dim_var_values)
+  foreach(write, jaxpr.constvars, consts_for_constvars)
   foreach(write, jaxpr.invars, args)
   last_used = core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
@@ -2034,8 +2099,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                                       eqn.source_info.traceback)
         with loc:
           out_nodes, tokens_out = _cached_lowering(
-              ctx, eqn, tokens_in, tuple(dim_var_values), *in_nodes,
-              **eqn.params)
+              ctx, eqn, tokens_in, tuple(dim_var_values), const_lowering,
+              *in_nodes, **eqn.params)
       else:
         # If we cannot cache the lowering, lower inline.
         axis_size_env = None
@@ -2051,7 +2116,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
             avals_out=map(aval, eqn.outvars), tokens_in=tokens_in,
             tokens_out=None, jaxpr_eqn_ctx=eqn.ctx,
             dim_var_values=dim_var_values,
-            axis_size_env=axis_size_env)
+            axis_size_env=axis_size_env,
+            const_lowering=const_lowering)
         out_nodes, _inline = _uncached_lowering(
             eqn.primitive, eqn.ctx, eqn.effects, rule_ctx, *in_nodes,
             **eqn.params)
@@ -2065,10 +2131,10 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     core.clean_up_dead_vars(eqn, env, last_used)
   return tuple(read(v) for v in jaxpr.outvars), tokens
 
-
 def _cached_lowering(ctx: ModuleContext, eqn: core.JaxprEqn,
                      tokens_in: TokenSet,
                      dim_var_values: tuple[ir.Value, ...],
+                     const_lowering: dict[int, IrValues],
                      *args, **params) -> tuple[Sequence[IrValues], TokenSet]:
   """Lowers a jaxpr equation, using a cache.
 
@@ -2107,7 +2173,11 @@ def _cached_lowering(ctx: ModuleContext, eqn: core.JaxprEqn,
     ctx.lowering_cache[cache_key] = cache_entry
 
   tokens_in_args = tuple(tokens_in.get(eff) for eff in ordered_effects)
-  args = flatten_ir_values(dim_var_values + tokens_in_args + args)
+  const_arg_values = tuple(ir_constant(c, const_lowering,
+                                       canonicalize_dtype=True)
+                           for c in cache_entry.const_args)
+  args = flatten_ir_values(
+      dim_var_values + tokens_in_args + const_arg_values + args)
   if cache_entry.inline:
     outs = _jax_mlir_ext.inlined_func_call(
         cache_entry.func, args, ir.InsertionPoint.current.block)
@@ -2139,7 +2209,10 @@ def _emit_lowering_rule_as_fun(
     aval_to_ir_type(core.ShapedArray((), dtypes.canonicalize_dtype(np.int64)))
   ] * num_dim_vars
 
-  input_types = map(aval_to_ir_type, avals_in)
+  const_args =  core.eqn_params_const_args(params)
+  const_arg_avals = tuple(core.shaped_abstractify(c) for c in const_args)
+
+  input_types = map(aval_to_ir_type, const_arg_avals + avals_in)  # type: ignore
   output_types = map(aval_to_ir_type, avals_out)
   token_types = [token_type() for _ in ordered_effects]
   input_types = [*dim_var_types, *token_types, *input_types]
@@ -2156,22 +2229,26 @@ def _emit_lowering_rule_as_fun(
   with ir.InsertionPoint(entry_block):
     unflattened_args = unflatten_ir_values_like_types(
       entry_block.arguments, input_types)
-    dim_var_values, token_args, unflattened_args = util.split_list(
-        unflattened_args, [num_dim_vars, len(ordered_effects)])
+    dim_var_values, token_args, const_arg_values, unflattened_args = \
+      util.split_list(unflattened_args,
+                      [num_dim_vars, len(ordered_effects), len(const_args)])
+    const_lowering = {id(c): c_arg
+                      for c, c_arg in zip(const_args, const_arg_values)}
     sub_ctx = LoweringRuleContext(
         module_context=ctx, primitive=primitive,
         name_stack=source_info_util.new_name_stack(),
         traceback=None,
         avals_in=avals_in, avals_out=avals_out,
         tokens_in=TokenSet(zip(ordered_effects, token_args)),
-        tokens_out=None, jaxpr_eqn_ctx=eqn_ctx, dim_var_values=dim_var_values)
+        tokens_out=None, jaxpr_eqn_ctx=eqn_ctx, dim_var_values=dim_var_values,
+        const_lowering=const_lowering)
     with ir.Location.name(str(primitive.name)):
       outs, inline = lowering_rule(sub_ctx, *unflattened_args, **params)
     if sub_ctx.tokens_out:
       outs = [*[sub_ctx.tokens_out.get(eff) for eff in ordered_effects], *outs]
     outs = flatten_ir_values(outs)
     func_dialect.return_(outs)
-  return LoweringCacheValue(func_op, output_types, inline)
+  return LoweringCacheValue(func_op, output_types, const_args, inline)
 
 
 def _get_override_lowering_rule(
@@ -2402,9 +2479,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
   return results
 
 def _ir_consts(consts) -> list[IrValues]:
-  uniq_consts = {id(c): ir_constant(xla.canonicalize_dtype(c)) for c in consts}
+  uniq_consts = {id(c): ir_constant(c, canonicalize_dtype=True) for c in consts}
   return [uniq_consts[id(c)] for c in consts]
-
 
 def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   """Converts a traceable JAX function `fun` into a lowering rule.
@@ -2434,9 +2510,10 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
                           if type(a) is core.DShapedArray else a, True)
                         for a in ctx.avals_in]
         wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
+        jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
       else:
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+        jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(wrapped_fun,
+                                                                   ctx.avals_in)
         # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
       if ctx.platforms is not None:
@@ -2445,15 +2522,20 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
         sub_context = ctx.module_context
       out, tokens = jaxpr_subcomp(
           sub_context, jaxpr, ctx.name_stack, ctx.tokens_in,
-          _ir_consts(consts), *args,
-          dim_var_values=ctx.dim_var_values)
+          _ir_consts(consts_for_constvars), *args,
+          dim_var_values=ctx.dim_var_values,
+          const_lowering=ctx.const_lowering)
       ctx.set_tokens_out(tokens)
       return out
 
   return f_lowered
 
 
-def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
+def _lower_jaxpr_to_fun_cached(ctx: ModuleContext,
+                               fn_name, call_jaxpr: core.ClosedJaxpr,
+                               num_const_args: int,
+                               effects,
+                               in_avals,
                                arg_names=None, result_names=None):
   if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
@@ -2463,7 +2545,10 @@ def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
     except KeyError:
       num_callbacks = len(ctx.host_callbacks)
       func_op = lower_jaxpr_to_fun(
-          ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
+          ctx, fn_name, call_jaxpr, effects,
+          num_const_args=num_const_args,
+          in_avals=in_avals,
+          arg_names=arg_names,
           result_names=result_names)
 
       # If this Jaxpr includes callbacks, we can't cache the lowering because
@@ -2474,8 +2559,9 @@ def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
         ctx.cached_primitive_lowerings[key] = func_op, func_op.name.value, func_op.type.results
   else:
     func_op = lower_jaxpr_to_fun(
-        ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
-        result_names=result_names)
+        ctx, fn_name, call_jaxpr, effects,
+        num_const_args=num_const_args, in_avals=in_avals,
+        arg_names=arg_names, result_names=result_names)
   return func_op
 
 
@@ -2498,9 +2584,11 @@ def check_backend_matches(inner_backend: str | None,
 
 def lower_called_computation(
     fn_name,
-    call_jaxpr,
+    call_jaxpr: core.ClosedJaxpr | core.Jaxpr,
     ctx: ModuleContext,
-    avals_out,
+    num_const_args: int,
+    in_avals,
+    out_avals,
     tokens_in,
     backend=None,
     arg_names=None,
@@ -2510,27 +2598,42 @@ def lower_called_computation(
     call_jaxpr = pe.close_jaxpr(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
-  output_types = map(aval_to_ir_type, avals_out)
+  output_types = map(aval_to_ir_type, out_avals)
   output_types = [token_type()] * len(effects) + output_types
   func_op = _lower_jaxpr_to_fun_cached(
       ctx,
       fn_name,
       call_jaxpr,
+      num_const_args,
       effects,
+      in_avals=in_avals,
       arg_names=arg_names,
       result_names=result_names,
   )
   return func_op, output_types, effects
 
 
-def call_lowering(fn_name, call_jaxpr, backend,
-                  ctx: ModuleContext, avals_in,
-                  avals_out, tokens_in, *args,
+def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr | core.Jaxpr, backend,
+                  ctx: ModuleContext, in_avals,
+                  out_avals, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
+                  const_lowering: dict[int, IrValues],
                   arg_names=None, result_names=None):
-  del avals_in
+  # TODO(necula): clean up the types
+  if isinstance(call_jaxpr, core.ClosedJaxpr):
+    const_args = core.jaxpr_const_args(call_jaxpr.jaxpr)
+  else:
+    const_args = core.jaxpr_const_args(call_jaxpr)
+  const_arg_values = [ir_constant(c, const_lowering, canonicalize_dtype=True)
+                      for c in const_args]
+  args = tuple(const_arg_values) + args
+  if arg_names is not None:
+    arg_names = [""] * len(const_args) + arg_names
+  in_avals = (*(core.shaped_abstractify(c) for c in const_args), *in_avals)
+
   func_op, output_types, effects = lower_called_computation(
-      fn_name, call_jaxpr, ctx, avals_out, tokens_in,
+      fn_name, call_jaxpr, ctx, len(const_args), in_avals, out_avals,
+      tokens_in,
       backend=backend, arg_names=arg_names, result_names=result_names)
   symbol_name = func_op.name.value
   flat_output_types = flatten_ir_types(output_types)
@@ -2545,11 +2648,13 @@ def call_lowering(fn_name, call_jaxpr, backend,
   return out_nodes, tokens_out
 
 def core_call_lowering(ctx: LoweringRuleContext,
-                       *args, name, backend=None, call_jaxpr):
+                       *args, name, backend=None,
+                       call_jaxpr: core.ClosedJaxpr):
   out_nodes, tokens = call_lowering(
       name, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args,
-      dim_var_values=ctx.dim_var_values)
+      dim_var_values=ctx.dim_var_values,
+      const_lowering=ctx.const_lowering)
   ctx.set_tokens_out(tokens)
   return out_nodes
 
@@ -3031,10 +3136,12 @@ def build_mlir_module_helper(
   if unlowerable_effects:
     raise ValueError(f'Cannot lower jaxpr with effects: {closed_jaxpr.effects}')
   lowering_result = lower_jaxpr_to_module(name, closed_jaxpr,
+      num_const_args=0,
+      in_avals=closed_jaxpr.in_avals,
       backend=backend, ordered_effects=[],
       donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
       axis_context=axis_context, platforms=platforms,
-      lowering_parameters=LoweringParameters())
+      lowering_parameters=LoweringParameters(hoist_constants_as_args=False))
   return lowering_result.module
 
 def custom_call(

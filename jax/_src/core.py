@@ -59,7 +59,7 @@ from jax._src.layout import Format, AutoLayout
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src import traceback_util
-from jax._src.typing import Array, DimSize, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, Shape
 from jax._src import typing
 from jax._src import xla_metadata_lib
 
@@ -547,6 +547,33 @@ def is_literalable(x: Any) -> bool:
     if t in literalable_types:
       return (not np.shape(x) or config.use_simplified_jaxpr_constants.value)
   return False
+
+@partial(weakref_lru_cache, trace_context_in_key=False)
+def jaxpr_const_args(jaxpr: Jaxpr) -> list[ArrayLike]:
+  # The non-scalar constants in core.Literal, in the entire Jaxpr,
+  # uniquified by id. These will be hoisted as const arguments to the functions
+  # in which they appear.
+  if not config.use_simplified_jaxpr_constants.value:
+    return []
+  consts_by_id: dict[int, Any] = {}
+  for v in jaxpr.outvars:
+    if type(v) is Literal and np.shape(v.val):  # type: ignore
+      consts_by_id[id(v)] = v.val  # type: ignore
+
+  for eqn in jaxpr.eqns:
+    for v in eqn.invars:
+      if type(v) is Literal and np.shape(v.val):  # type: ignore
+        consts_by_id[id(v)] = v.val  # type: ignore
+    consts_by_id.update({id(v): v
+                         for v in eqn_params_const_args(eqn.params)})
+  return list(consts_by_id.values())
+
+def eqn_params_const_args(params) -> list[ArrayLike]:
+  consts_by_id: dict[int, Any] = {}
+  for j in jaxprs_in_params(params):
+    consts_by_id.update({id(v): v for v in jaxpr_const_args(j)})
+
+  return list(consts_by_id.values())
 
 Atom = Union[Var, Literal]
 

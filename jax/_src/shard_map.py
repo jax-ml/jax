@@ -805,7 +805,8 @@ def _get_spmdaxis_ctx_mesh(mesh):
 
 
 def _shard_map_lowering_shardy(
-    ctx, in_nodes, jaxpr, mesh, in_specs, out_specs, manual_axes, check_vma):
+    ctx: mlir.LoweringRuleContext, in_nodes,
+    jaxpr: core.Jaxpr, mesh, in_specs, out_specs, manual_axes, check_vma):
   axis_ctx = ctx.module_context.axis_context
   in_avals_ = [v.aval for v in jaxpr.invars]
   if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
@@ -828,16 +829,30 @@ def _shard_map_lowering_shardy(
           sub_ctx, jaxpr, ctx.name_stack,
           mlir.TokenSet(zip(ctx.tokens_in.effects(), tokens)),
           (), *in_nodes,
-          dim_var_values=ctx.dim_var_values)
+          dim_var_values=ctx.dim_var_values,
+          const_lowering=ctx.const_lowering)
       ctx.set_tokens_out(tokens_out)
     return out_nodes
 
   in_shardings = list(
       map(partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
           in_specs, ctx.avals_in))
+  const_args = core.jaxpr_const_args(jaxpr)
+  num_const_args = len(const_args)
+  const_arg_values = tuple(mlir.ir_constant(c, ctx.const_lowering,
+                                            canonicalize_dtype=True)
+                           for c in const_args)
+  in_avals_ = [core.shaped_abstractify(c) for c in const_args] + in_avals_
+  # TODO(necula,yashkatariya): how to construct consts shardy shardings from
+  #  consts that can be ndarray or jax.Array?
+  const_args_shardings = [
+      _shardy_shard_map_sharding(ctx, mesh, manual_axes, P(), core.typeof(c))
+      for c in const_args]
+
   num_dim_vars = len(ctx.dim_var_values)
   in_shardings = ([_shardy_shard_map_token_sharding(ctx, mesh)]
-                  * (num_tokens + num_dim_vars) + in_shardings)
+                  * (num_tokens + num_dim_vars) + const_args_shardings +
+                  in_shardings)
   in_shardings = sharding_impls.SdyArrayList(in_shardings).build()
 
   out_shardings = list(
@@ -850,7 +865,7 @@ def _shard_map_lowering_shardy(
   output_types = ([hlo.TokenType.get()] * num_tokens +
                   list(map(mlir.aval_to_ir_type, ctx.avals_out)))
 
-  args = (*ctx.dim_var_values, *tokens, *in_nodes)
+  args = (*ctx.dim_var_values, *tokens, *const_arg_values, *in_nodes)
   manual_computation_op = sdy.ManualComputationOp(
       output_types,
       mlir.flatten_ir_values(args),
@@ -868,8 +883,9 @@ def _shard_map_lowering_shardy(
         sub_ctx, jaxpr, ctx.name_stack,
         mlir.TokenSet(zip(
             ctx.tokens_in.effects(), block.arguments[:num_tokens])),
-        (), *block.arguments[num_tokens+num_dim_vars:],
-        dim_var_values=ctx.dim_var_values)
+        (), *block.arguments[num_tokens+num_dim_vars+num_const_args:],
+        dim_var_values=ctx.dim_var_values,
+        const_lowering=ctx.const_lowering)
     sdy.ReturnOp([ir.Value(x) for x in (*[v for _, v in tokens_out.items()],
                                         *out_nodes_)])
     num_tokens = len(tokens_out.effects())
@@ -880,7 +896,8 @@ def _shard_map_lowering_shardy(
   return manual_computation_op.results[num_tokens:]
 
 
-def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_specs, out_specs,
+def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,
+                        jaxpr: core.Jaxpr, mesh, in_specs, out_specs,
                         check_vma, manual_axes):
   if config.use_shardy_partitioner.value:
     return _shard_map_lowering_shardy(
@@ -898,6 +915,7 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_specs, out_specs,
         "shmap_body", jaxpr, None, sub_ctx, in_avals_,
         out_avals_, ctx.tokens_in, *in_nodes_,
         dim_var_values=ctx.dim_var_values,
+        const_lowering=ctx.const_lowering,
         arg_names=map(_pspec_mhlo_attrs, in_specs, in_avals_),
         result_names=map(_pspec_mhlo_attrs, out_specs, out_avals_))
   ctx.set_tokens_out(tokens_out)
