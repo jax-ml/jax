@@ -1689,8 +1689,8 @@ def _cpp_pmap(
     with core.take_current_trace() as trace:
       try:
         if isinstance(trace, core.EvalTrace):
-          execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
-          out = execute(*p.flat_args)
+          execute, hoisted_consts = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
+          out = execute(*hoisted_consts, *p.flat_args)
         else:
           out = pxla.xla_pmap_p.bind_with_trace(trace, (p.flat_fun, *p.flat_args), params)
       except api_util.InternalFloatingPointError as e:

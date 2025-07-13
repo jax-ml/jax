@@ -76,6 +76,7 @@ from jax._src.util import (safe_map, safe_zip, partition_list, wrap_name,
                            unzip2, HashableFunction, weakref_lru_cache,
                            tuple_insert)
 from jax._src.state.types import AbstractRef, RefEffect
+from jax._src.typing import ArrayLike
 
 
 # Built in Python lists don't support weak refs but subclasses of lists do.
@@ -339,7 +340,7 @@ def xla_pmap_impl_lazy(
     out_axes_thunk: Callable[[], Sequence[int | None]],
     donated_invars: Sequence[bool],
     is_explicit_global_axis_size: bool,
-) -> Callable:
+) -> tuple[Callable, list[ArrayLike]]:
   if (config.disable_jit.value and
       not is_explicit_global_axis_size and not any(donated_invars)):
     def _emap_apply_fn(*args):
@@ -349,9 +350,9 @@ def xla_pmap_impl_lazy(
                         out_axes_thunk=out_axes_thunk,
                         donated_invars=donated_invars,
                         is_explicit_global_axis_size=is_explicit_global_axis_size)
-    return _emap_apply_fn
+    return _emap_apply_fn, []
   abstract_args = unsafe_map(core.abstractify, args)
-  compiled_fun, fingerprint = parallel_callable(
+  compiled_fun, fingerprint, hoisted_consts = parallel_callable(
       fun, backend, axis_name, axis_size, global_axis_size, devices, name,
       in_axes, out_axes_thunk, donated_invars,
       is_explicit_global_axis_size, *abstract_args)
@@ -363,11 +364,11 @@ def xla_pmap_impl_lazy(
                           ("devices", devices),
                           ("abstract args", map(core.abstractify, args)),
                           ("fingerprint", fingerprint))
-  return compiled_fun
+  return compiled_fun, hoisted_consts
 
 def xla_pmap_impl(fun: lu.WrappedFun, *args, **params):
-  compiled_fun = xla_pmap_impl_lazy(fun, *args, **params)
-  return compiled_fun(*args)
+  compiled_fun, hoisted_consts = xla_pmap_impl_lazy(fun, *args, **params)
+  return compiled_fun(*hoisted_consts, *args)
 
 class EmapInfo(NamedTuple):
   backend: str | None
@@ -641,7 +642,8 @@ def parallel_callable(fun: lu.WrappedFun,
       closed_jaxpr=closed_jaxpr, backend=xc_backend, replicas=replicas,
       shards=shards, pci=pci)
   pmap_executable = pmap_computation.compile()
-  return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint])
+  return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint,
+                      pmap_computation._hoisted_consts])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -799,6 +801,25 @@ def lower_parallel_callable(
 
   jaxpr = closed_jaxpr.jaxpr
 
+  if mlir._hoist_const_args(lowering_parameters, True):
+    hoisted_consts = core.jaxpr_hoisted_consts(jaxpr)
+    num_hoisted_consts = len(hoisted_consts)
+    in_axes = (None,) * num_hoisted_consts + in_axes  # type: ignore
+    donated_invars = (False,) * num_hoisted_consts + donated_invars  # type: ignore
+    hoisted_const_avals = tuple(core.abstractify(c) for c in hoisted_consts)
+    jaxpr_avals = list(hoisted_const_avals) + closed_jaxpr.in_avals  # type: ignore
+    shards = ShardInfo(
+        hoisted_const_avals + shards.sharded_avals,  # type: ignore
+        shards.out_sharded_avals,
+        tuple(hoisted_const_avals) + shards.global_sharded_avals,  # type: ignore
+        shards.num_local_shards, shards.num_global_shards)
+    pci = dataclasses.replace(pci, in_axes=in_axes,
+                              avals=tuple(hoisted_const_avals) + pci.avals)  # type: ignore
+  else:
+    jaxpr_avals = closed_jaxpr.in_avals
+    hoisted_consts = []
+    num_hoisted_consts = 0
+
   no_nested_sharding = False
   must_run_on_all_devices = False
   if not is_explicit_global_axis_size:
@@ -872,6 +893,8 @@ def lower_parallel_callable(
       lowering_result = mlir.lower_jaxpr_to_module(
           module_name,
           closed_jaxpr,
+          num_hoisted_consts=num_hoisted_consts,
+          in_avals=jaxpr_avals,
           ordered_effects=ordered_effects,
           backend=backend,
           platforms=platforms,
@@ -880,11 +903,12 @@ def lower_parallel_callable(
           replicated_args=replicated_args,
           arg_shardings=None,
           result_shardings=None,
-          arg_names=jaxpr._debug_info.safe_arg_names(len(jaxpr.invars)),
+          arg_names=jaxpr._debug_info.safe_arg_names(len(jaxpr_avals)),
           result_names=jaxpr._debug_info.safe_result_paths(len(jaxpr.outvars)),
           num_replicas=replicas.num_global_replicas,
           lowering_parameters=lowering_parameters)
   return PmapComputation(lowering_result.module,
+                         hoisted_consts,
                          platforms=platforms,
                          pci=pci, replicas=replicas,
                          shards=shards, tuple_args=tuple_args,
@@ -924,11 +948,14 @@ def _pmap_unmapped_aval(size: core.AxisSize, axis: int | None,
 
 class PmapComputation(stages.Lowering):
   _hlo: ir.Module
+  _hoisted_consts: list[ArrayLike]
   _executable: PmapExecutable | None
 
-  def __init__(self, hlo: ir.Module, **compile_args):
+  def __init__(self, hlo: ir.Module, hoisted_consts: list[ArrayLike],
+               **compile_args):
     self._executable = None
     self._hlo = hlo
+    self._hoisted_consts = hoisted_consts
     self.compile_args = compile_args
 
   # -- stages.Lowering overrides
@@ -1518,9 +1545,9 @@ def _extend_axis_env(env: sharding_impls.AxisEnv, name, size: int):
                                 env.sizes + (size,))
 
 
-def _pmap_lowering(ctx, *in_nodes, axis_name,
+def _pmap_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, axis_name,
                    axis_size, global_axis_size, devices, name,
-                   call_jaxpr, backend=None, in_axes, out_axes,
+                   call_jaxpr: core.Jaxpr, backend=None, in_axes, out_axes,
                    donated_invars, is_explicit_global_axis_size):
   del donated_invars  # Unused.
   mlir.check_backend_matches(backend, ctx.module_context.platforms)
@@ -1544,7 +1571,7 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
         sub_ctx, call_jaxpr,
         ctx.name_stack.extend(util.wrap_name('pmap', name)),
         mlir.TokenSet(), (), *in_nodes_sharded,
-        dim_var_values=ctx.dim_var_values)
+        dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering)
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_hlo_unshard(ctx, aval, new_env, out_axis, shard)
           for aval, out_axis, shard in zip(out_avals, out_axes, sharded_outs)]
@@ -1745,6 +1772,8 @@ def _dce_jaxpr(closed_jaxpr, keep_unused, donated_invars, auto_spmd_lowering):
 
 class MutationData(NamedTuple):
   in_mut: list[core.MutableArray]
+  # out_mut[o_idx] = i_idx, when the output[o_idx] corresponds to the
+  # mutable array args[i_idx]. None when it does not correspond to a mutable array.
   out_mut: list[int | None]
 
 @weakref_lru_cache
@@ -1841,7 +1870,9 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
 
 
 @weakref_lru_cache
-def _cached_lowering_to_hlo(closed_jaxpr, module_name, backend,
+def _cached_lowering_to_hlo(closed_jaxpr: core.ClosedJaxpr, module_name, backend,
+                            num_hoisted_consts: int,
+                            in_avals,
                             semantic_in_shardings, semantic_out_shardings,
                             in_layouts, out_layouts, num_devices, device_assignment,
                             donated_invars, all_default_mem_kind,
@@ -1850,18 +1881,18 @@ def _cached_lowering_to_hlo(closed_jaxpr, module_name, backend,
                             platforms: tuple[str, ...],
                             lowering_parameters: mlir.LoweringParameters,
                             abstract_mesh: AbstractMesh | None):
+  # in_avals, in_shardings, in_layouts include the jaxpr_hoisted_consts(jaxpr)
+  out_avals = closed_jaxpr.out_avals
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings.shardings
   out_shardings = semantic_out_shardings.shardings
-  global_in_avals = closed_jaxpr.in_avals
-  global_out_avals = closed_jaxpr.out_avals
 
   log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
   if logger.isEnabledFor(log_priority):
     logger.log(log_priority,
                "Compiling %s with global shapes and types %s. "
                "Argument mapping: %s.",
-               module_name, global_in_avals, in_shardings)
+               module_name, in_avals, in_shardings)
 
   # Look at the number of replcas present in the jaxpr. In
   # lower_sharding_computation, nreps > 1 during `jit(pmap)` cases. This is
@@ -1876,9 +1907,9 @@ def _cached_lowering_to_hlo(closed_jaxpr, module_name, backend,
   axis_ctx: mlir.AxisContext
 
   if nreps == 1:
-    in_mlir_shardings = map(_to_logical_sharding, global_in_avals, in_shardings)
-    out_mlir_shardings = map(_to_logical_sharding, global_out_avals, out_shardings)
-    replicated_args = [False] * len(global_in_avals)
+    in_mlir_shardings = map(_to_logical_sharding, in_avals, in_shardings)
+    out_mlir_shardings = map(_to_logical_sharding, out_avals, out_shardings)
+    replicated_args = [False] * len(in_avals)
     axis_ctx = sharding_impls.ShardingContext(num_devices, device_assignment,
                                               abstract_mesh)
     num_partitions = num_devices
@@ -1907,25 +1938,27 @@ def _cached_lowering_to_hlo(closed_jaxpr, module_name, backend,
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
+        num_hoisted_consts=num_hoisted_consts,
         ordered_effects=ordered_effects,
         backend=backend,
         platforms=platforms,
         axis_context=axis_ctx,
+        in_avals=in_avals,
         donated_args=donated_invars,
         replicated_args=replicated_args,
         arg_shardings=in_mlir_shardings,
         result_shardings=out_mlir_shardings,
         in_layouts=in_layouts,
         out_layouts=out_layouts,
-        arg_names=jaxpr._debug_info.safe_arg_names(len(jaxpr.invars)),
-        result_names=jaxpr._debug_info.safe_result_paths(len(jaxpr.outvars)),
+        arg_names=jaxpr._debug_info.safe_arg_names(len(in_avals)),
+        result_names=jaxpr._debug_info.safe_result_paths(len(out_avals)),
         num_replicas=nreps,
         num_partitions=num_partitions,
         all_default_mem_kind=all_default_mem_kind,
         input_output_aliases=inout_aliases,
         propagated_out_mem_kinds=propagated_out_mem_kinds,
         lowering_parameters=lowering_parameters)
-  tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
+  tuple_args = dispatch.should_tuple_args(len(in_avals), backend.platform)
   unordered_effects = list(
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
   return (lowering_result.module, lowering_result.keepalive,
@@ -2313,6 +2346,30 @@ def lower_sharding_computation(
               f" {sharding.mesh.abstract_mesh} for another")
         abstract_mesh = sharding.mesh.abstract_mesh
 
+  if mlir._hoist_const_args(lowering_parameters, True):
+    # Account for hoisted consts, do it early because the adjusted values
+    # are used for more than just lowering.
+    hoisted_consts = core.jaxpr_hoisted_consts(closed_jaxpr.jaxpr)
+    num_hoisted_consts = len(hoisted_consts)
+    if num_hoisted_consts:
+      global_in_avals, in_shardings, in_layouts = \
+        pjit._expand_for_hoisted_consts(hoisted_consts,
+                                        global_in_avals, in_shardings,
+                                        in_layouts)
+
+      donated_invars = (False,) * num_hoisted_consts + donated_invars
+      kept_var_idx = {kv + num_hoisted_consts for kv in kept_var_idx}.union(
+          set(range(num_hoisted_consts)))
+      assert inout_aliases is None
+      if mut is not None:
+        mut = MutationData(
+            in_mut=mut.in_mut,
+            out_mut=[None if i_idx is None else i_idx + num_hoisted_consts
+                     for i_idx in mut.out_mut])
+  else:
+    hoisted_consts = []
+    num_hoisted_consts = 0
+
   semantic_in_shardings = SemanticallyEqualShardings(
       in_shardings, global_in_avals)
   semantic_out_shardings = SemanticallyEqualShardings(
@@ -2323,8 +2380,10 @@ def lower_sharding_computation(
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
-       closed_jaxpr, module_name, backend, semantic_in_shardings,
-       semantic_out_shardings, in_layouts, out_layouts, num_devices,
+       closed_jaxpr, module_name, backend,
+       num_hoisted_consts, tuple(global_in_avals),
+       semantic_in_shardings, semantic_out_shardings,
+       in_layouts, out_layouts, num_devices,
        tuple(device_list) if prim_requires_devices else None,  # type: ignore[arg-type]
        donated_invars, all_default_mem_kind, inout_aliases,
        propagated_out_mem_kinds, platforms,
@@ -2339,6 +2398,7 @@ def lower_sharding_computation(
   return MeshComputation(
       module_name,
       module,
+      hoisted_consts,
       donated_invars,
       platforms,
       compiler_options_kvs,
@@ -2388,14 +2448,19 @@ def _to_logical_sharding(
 class MeshComputation(stages.Lowering):
   _hlo: ir.Module
   _executable: MeshExecutable | None
+  # the constants that have been hoisted out and must be passed as first args,
+  # after the tokens.
+  _hoisted_consts: list[ArrayLike]
 
   def __init__(self, name: str, hlo: ir.Module,
+               hoisted_consts: list[ArrayLike],
                donated_invars: Sequence[bool], platforms: Sequence[str],
                compiler_options_kvs: tuple[tuple[str, Any], ...],
                device_assignment: xc.DeviceList | tuple[xc.Device, ...] | None,
                **compile_args):
     self._name = name
     self._hlo = hlo
+    self._hoisted_consts = hoisted_consts
     self._donated_invars = donated_invars
     self._platforms = platforms
     self._compiler_options_kvs = compiler_options_kvs

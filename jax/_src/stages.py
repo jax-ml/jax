@@ -714,10 +714,14 @@ class Traced(Stage):
     """Lower to compiler input, returning a ``Lowered`` instance."""
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
+    # We don't hoist consts in AOT mode, for now, for backwards compatibility.
+    _private_parameters = dataclasses.replace(_private_parameters,
+                                              hoist_constants_as_args=False)
     try:
       lowering = self._lower_callable(
           lowering_platforms=lowering_platforms,
           lowering_parameters=_private_parameters)
+      assert not lowering._hoisted_consts
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
       msg = _device_assignment_mismatch_error(
