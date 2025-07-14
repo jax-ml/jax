@@ -383,6 +383,7 @@ jax_multiplatform_test(
         "cpu",
         "gpu_h100x2",
         "tpu_v3_x4",
+        "tpu_pjrt_c_api",
         "tpu_v4_x4",
         "tpu_v5p_x4",
         "tpu_v5e_x8",

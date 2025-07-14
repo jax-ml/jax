@@ -1389,8 +1389,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
   def test_no_donation_across_memory_kinds(self):
-    if xb.using_pjrt_c_api():
-      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
     mesh = jtu.create_mesh((2, 1), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s_hbm = NamedSharding(mesh, P("x"))
