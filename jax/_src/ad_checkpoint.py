@@ -58,11 +58,15 @@ logger = logging.getLogger(__name__)
 ### Policies
 
 def everything_saveable(*_, **__) -> bool:
-  # This is the effective policy without any use of jax.remat.
+  """The default strategy, as if ``jax.checkpoint`` were not being used at all.
+
+  This is the effective policy without any use of jax.remat."""
   return True
 
 def nothing_saveable(*_, **__) -> bool:
-  # This is the effective policy when using jax.remat without explicit policy.
+  """Rematerialize everything, as if a custom policy were not being used at all.
+
+  This is the effective policy when using jax.remat without explicit policy."""
   return False
 
 def dots_saveable(prim, *_, **__) -> bool:
@@ -75,7 +79,7 @@ def dots_saveable(prim, *_, **__) -> bool:
 checkpoint_dots = dots_saveable
 
 def dots_with_no_batch_dims_saveable(prim, *args, **params) -> bool:
-  # This is a useful heuristic for transformers.
+  """This is a useful heuristic for transformers."""
   if prim is lax_internal.dot_general_p:
     (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
     if not lhs_b and not rhs_b:
@@ -91,8 +95,11 @@ def dots_with_no_batch_dims_saveable(prim, *args, **params) -> bool:
   return False
 
 def offload_dot_with_no_batch_dims(offload_src, offload_dst):
+  """Same as ``dots_with_no_batch_dims_saveable``, but offload to CPU memory
+  instead of recomputing.
+
+  This is a useful heuristic for transformers."""
   def policy(prim, *_, **params):
-    # This is a useful heuristic for transformers.
     if prim is lax_internal.dot_general_p:
       (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
       if not lhs_b and not rhs_b:
@@ -113,7 +120,8 @@ def save_anything_except_these_names(*names_not_to_save):
   return policy
 
 def save_any_names_but_these(*names_not_to_save):
-  """Save only named values, excluding the names given."""
+  """Save only named values, i.e. any outputs of `checkpoint_name`, excluding
+  the names given."""
   names_not_to_save = frozenset(names_not_to_save)
   def policy(prim, *_, **params):
     if prim is name_p:
@@ -133,6 +141,8 @@ def save_only_these_names(*names_which_can_be_saved):
 def save_and_offload_only_these_names(
     *, names_which_can_be_saved, names_which_can_be_offloaded,
     offload_src, offload_dst):
+  """Same as ``save_only_these_names``, but offload to CPU memory instead of
+  recomputing."""
   names_which_can_be_saved = set(names_which_can_be_saved)
   names_which_can_be_offloaded = set(names_which_can_be_offloaded)
   intersection = names_which_can_be_saved.intersection(names_which_can_be_offloaded)
@@ -153,7 +163,9 @@ def save_and_offload_only_these_names(
 
 
 def save_from_both_policies(policy_1, policy_2):
+  """Logical OR of the given policies.
 
+  A residual is saveable iff it is saveable according to either policy."""
   def policy(prim, *args, **params):
     out1 = policy_1(prim, *args, **params)
     out2 = policy_2(prim, *args, **params)
