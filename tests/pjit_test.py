@@ -6905,6 +6905,37 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, embed.sharding)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_gather_sharding_rule(self, mesh):
+    embed = jax.device_put(jnp.arange(128 * 8.).reshape(64, 16),
+                           jax.NamedSharding(mesh, P('x', None)))
+    tok = jax.device_put(jnp.arange(8 * 4).reshape(8, 4),
+                         jax.NamedSharding(mesh, P()))
+    vmap_tok = jax.device_put(jnp.arange(64 * 4).reshape(64, 4),
+                         jax.NamedSharding(mesh, P('x', None)))
+
+    @jax.jit
+    def f(embed_vd, token_bt, token_vmap):
+      # Operand sharded in full slice dim and indices replicated.
+      out = embed_vd.at[:, token_bt].get()
+      self.assertEqual(out.shape, (64, 8, 4))
+      self.assertEqual(out.aval.sharding.spec, P('x', None, None))
+
+      # Operand and indices sharded in batching dims.
+      out2 = jax.vmap(lambda x, y: x[y])(embed_vd, token_vmap)
+      self.assertEqual(out2.shape, (64, 4))
+      self.assertEqual(out2.aval.sharding.spec, P('x', None))
+
+      # Operand sharded in full slice dim and indices sharded.
+      embed_y_sharded = reshard(embed_vd, P('y', None))
+      out3 = embed_y_sharded.at[:, token_vmap].get()
+      self.assertEqual(out3.shape, (64, 64, 4))
+      self.assertEqual(out3.aval.sharding.spec, P('y', 'x', None))
+      return out, out2, out3
+
+    outs = f(embed, tok, vmap_tok)
+    self.assertEqual(outs[0].sharding, NamedSharding(mesh, P('x', None, None)))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshard_error(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
