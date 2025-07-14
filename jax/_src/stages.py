@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import functools
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
@@ -715,11 +714,10 @@ class Traced(Stage):
     """Lower to compiler input, returning a ``Lowered`` instance."""
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
-    new_callable = functools.partial(
-        self._lower_callable, lowering_platforms=lowering_platforms,
-        lowering_parameters=_private_parameters)
     try:
-      lowering = new_callable()
+      lowering = self._lower_callable(
+          lowering_platforms=lowering_platforms,
+          lowering_parameters=_private_parameters)
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
       msg = _device_assignment_mismatch_error(
