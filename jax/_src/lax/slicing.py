@@ -2023,11 +2023,16 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
   collapsed_slice_dims = dimension_numbers.collapsed_slice_dims
   operand_batching_dims = dimension_numbers.operand_batching_dims
   start_indices_batching_dims = dimension_numbers.start_indices_batching_dims
-  output_shape_rank = len(offset_dims) + _rank(indices) - 1
+  output_shape_rank = len(offset_dims) + indices.ndim - 1
+  index_vector_dim = indices.ndim - 1
 
-  index_vector_dim = _rank(indices) - 1
   operand_spec = operand.sharding.spec
   indices_spec = list(indices.sharding.spec)
+
+  if (all(s is None for s in operand_spec) and
+      all(s is None for s in indices_spec)):
+    return P()
+
   assert all(i in start_index_map for i in collapsed_slice_dims)
 
   all_operand_indexed_dims_are_replicated = all(
@@ -2040,6 +2045,7 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
           operand_batching_dims, start_indices_batching_dims)
   )
   index_vector_dim_is_replicated = indices.sharding.spec[index_vector_dim] is None
+
   if (all_operand_indexed_dims_are_replicated
       and all_batching_dims_resolve_unambiguously
       and index_vector_dim_is_replicated):
@@ -2052,13 +2058,11 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
       # Resolution and propagation of batching_dims is handled in indices,
       # operand_batching_dims spec is resolved into indices spec (to match how
       # the gather shape rule resolves output dimensions).
-      indices_spec[indices_dim] = (
-          indices_spec[indices_dim] or operand_spec[operand_dim])
+      indices_spec[indices_dim] = indices_spec[indices_dim] or operand_spec[operand_dim]
 
     slice_sizes_gen = (
         (i, s) for i, s in enumerate(slice_sizes)
-        if i not in collapsed_slice_dims and i not in operand_batching_dims
-    )
+        if i not in collapsed_slice_dims and i not in operand_batching_dims)
     indices_spec_gen = iter(indices_spec)
 
     out_spec = []
@@ -2067,13 +2071,14 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
         # The offset dims are the set of dimensions in the `gather` output that
         # derive solely from the operand.
         operand_dim, slice_size = next(slice_sizes_gen)
-        assert slice_size == operand.shape[operand_dim]
+        if slice_size != operand.shape[operand_dim]:
+          return None
         out_spec.append(operand_spec[operand_dim])
       else:
         # The other dimensions are either batching dims (which derive from both
         # indices and operand, and we resolved above) or solely from indices.
         out_spec.append(next(indices_spec_gen))
-    return tuple(out_spec)
+    return P(*out_spec)
   return None
 
 
@@ -2100,7 +2105,7 @@ def _gather_sharding_rule(operand, indices, *, dimension_numbers,
         "Use `.at[...].get(out_sharding=)` to provide output PartitionSpec for"
         " the gather indexing as out sharding could not be resolved"
         " unambiguously (or would require collectives on inputs).")
-  return NamedSharding(out_mesh, P(*out_spec))
+  return NamedSharding(out_mesh, out_spec)
 
 def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
                  unique_indices, indices_are_sorted, fill_value,
