@@ -1,3 +1,10 @@
+> ⚠️ **Note:** This repository is maintained **only for internal ROCm testing purposes**  
+> (e.g., selectively skipping or modifying JAX frontend tests).  
+> **Do not use this repository for development, issue tracking, or contributions.**  
+> Active development has moved to 👉 https://github.com/ROCm/rocm-jax
+
+-------
+
 <div align="center">
 <img src="https://raw.githubusercontent.com/jax-ml/jax/main/images/jax_logo_250px.png" alt="logo"></img>
 </div>
