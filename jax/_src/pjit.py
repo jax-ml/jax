@@ -1874,6 +1874,12 @@ def _pjit_lower_cached(
 
 
 def pjit_staging_rule(trace, source_info, *args, **params):
+  if params["compiler_options_kvs"]:
+    raise ValueError(
+        '`compiler_options` can only be passed to top-level `jax.jit`. Got'
+        f' compiler_options={dict(params["compiler_options_kvs"])} specified on'
+        f' a nested jit with name: {params["name"]} and source info:'
+        f' {source_info_util.summarize(source_info)}')
   # If we're inlining, no need to compute forwarding information; the inlined
   # computation will in effect forward things.
   if (params["inline"] and
@@ -1924,7 +1930,6 @@ def pjit_staging_rule(trace, source_info, *args, **params):
   else:
     out_tracers = trace.default_process_primitive(
         jit_p, args, params, source_info=source_info)
-
   return out_tracers
 pe.custom_staging_rules[jit_p] = pjit_staging_rule
 

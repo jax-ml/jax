@@ -5030,6 +5030,21 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cpp_count(), 2)
     self.assertEqual(lowering_count(), 1)
 
+  def test_compiler_options_nested_jit_error(self):
+    @partial(jax.jit, compiler_options={"invalid_key": "invalid_value"})
+    def g(x):
+      return x * 2
+
+    @jax.jit
+    def f(x):
+      x = x + 2
+      return g(x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        '`compiler_options` can only be passed to top-level `jax.jit`'):
+      f(jnp.arange(4))
+
 
 class ShardingInTypesTest(jtu.JaxTestCase):
 
