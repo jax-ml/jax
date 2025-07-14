@@ -179,8 +179,8 @@ def _linearize_jaxpr(
 
   source_info = source_info_util.current()
   debug_info = jaxpr.jaxpr.debug_info
-  tracers = [new_arg(lin_trace, v.aval, nz, source_info)
-             for (v, nz) in zip(jaxpr.jaxpr.invars, nonzeros)]
+  tracers = [new_arg(lin_trace, a, nz, source_info)
+             for (a, nz) in zip(jaxpr.in_aval_qdds, nonzeros)]
   in_primals = [t.primal for t in tracers]
 
   with core.set_current_trace(lin_trace, check_leaks=True):
@@ -734,6 +734,11 @@ class LinearizeTrace(Trace):
     else:
       return maybe_linearize_tracer(self, primal_out, tangent_nzs_out, tangent_out)
 
+  def cur_qdd(self, x):
+    p, _ = self.to_primal_tangent_pair(x)
+    with core.set_current_trace(self.parent_trace):
+      return core.cur_qdd(p)
+
   def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,
                               f_jvp: lu.WrappedFun, tracers, *,
                               symbolic_zeros: bool):
@@ -894,6 +899,10 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
     trace = pe.JaxprTrace(parent_trace, current_name_stack, core.TraceTag())
     tangent_avals = [get_aval(p).to_tangent_aval() for p in primals]
 
+    # map tangents with float0 dtype to symbolic zeros
+    nonzeros = [nz and not (isinstance(a, core.ShapedArray) and a.dtype == float0)
+                for a, nz in zip(tangent_avals, nonzeros)]
+
     def make_zero(aval):
       if instantiate_input_zeros:
         return zeros_like_aval(aval)
@@ -907,10 +916,11 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
     else:
       zero_type = Zero  # type: ignore[assignment]
 
-    tangent_args = tuple(trace.new_arg(pe.PartialVal.unknown(aval)) if nz else make_zero(aval)
-                         for aval, nz in zip(tangent_avals, nonzeros))
+    tangent_args = [trace.new_arg(pe.PartialVal.unknown(a)) if nz else make_zero(a)
+                    for a, nz in zip(tangent_avals, nonzeros)]
     with core.set_current_trace(trace):
-      out_primals, out_tangents = jvp.call_wrapped(primals, tangent_args, **params)
+      out_primals, out_tangents = jvp.call_wrapped(
+          tuple(primals), tuple(tangent_args), **params)
 
     if not multiple_results:
       out_primals = [out_primals]
@@ -980,6 +990,9 @@ class LinearizeTracer(Tracer):
 
   def get_referent(self):
     return core.get_referent(self.primal)
+
+  def cur_qdd(self):
+    return core.cur_qdd(self.primal)
 
 
 # -------------------- Primitives --------------------
