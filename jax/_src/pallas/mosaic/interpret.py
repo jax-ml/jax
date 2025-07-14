@@ -1897,6 +1897,7 @@ def _remove_memory_space_abstract_eval(x):
     raise NotImplementedError(f'Unsupported memory space: {x.memory_space}')
   return x
 
+@remove_memory_space_p.def_impl
 def _remove_memory_space_impl(x):
   return x
 

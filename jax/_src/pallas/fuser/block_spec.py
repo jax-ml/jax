@@ -83,23 +83,6 @@ def make_scalar_prefetch_handler(*args):
   return scalar_prefetch_getter
 
 
-def _default_eval_fn(eqn, eval_ctx, *args):
-  del eval_ctx
-  out = eqn.primitive.bind(*args, **eqn.params)
-  if eqn.primitive.multiple_results:
-    return out
-  return [out]
-
-
-def _wrap_eval_fn(primitive, eval_fn):
-  def wrapped(*args):
-    if primitive.multiple_results:
-      return eval_fn(*args)
-    return [eval_fn(*args)]
-
-  return wrapped
-
-
 def _block_size(dim: pallas_core.Element | int | None) -> int | None:
   match dim:
     case (
@@ -1573,24 +1556,6 @@ def _iota_pull_rule(
         f'Cannot pull iota along dimension {dimension} with None block size.'
     )
   return []
-
-
-def _pattern_match_sublanes_to_lanes_reshape(
-    aval_in: core.ShapedArray,
-    aval_out: core.ShapedArray,
-) -> bool:
-  # Pattern matches a reshape of the form (..., n/l, l) -> (..., n * l)
-  # where l is a multiple of 128.
-
-  *leading_in, second_to_last_dim, last_dim = aval_in.shape
-  *leading_out, last_dim_out = aval_out.shape
-  if leading_in != leading_out:
-    return False
-  if second_to_last_dim * last_dim != last_dim_out:
-    return False
-  if last_dim % 128 != 0:
-    return False
-  return True
 
 
 def _pattern_match_lanes_to_sublanes_reshape(
