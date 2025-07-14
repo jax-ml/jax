@@ -25,6 +25,7 @@ from jax._src import prng
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir
+from jax._src.lib import xla_client
 
 jax.config.parse_flags_with_absl()
 
@@ -103,6 +104,26 @@ class MlirRegisterLoweringTest(jtu.JaxTestCase):
         "Registering an MLIR lowering rule for primitive .+ for an unknown "
         "platform foo. Known platforms are: .+."):
       mlir.register_lowering(prim=None, rule=None, platform="foo")
+
+
+class ShardingTest(jtu.JaxTestCase):
+  # NOTE(dsuo): We hit go/forge-accel-or-fail because no accelerator utilization
+  # detected.
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_hlo_sharding_roundtrip(self):
+    proto = xla_client.OpSharding()
+    hlo_sharding = xla_client.HloSharding.from_proto(proto)
+    serialized_proto = jex.sharding.get_serialized_proto_from_hlo_sharding(
+        hlo_sharding
+    )
+    self.assertIsInstance(serialized_proto, bytes)
+    deserialized_hlo_sharding = jex.sharding.get_hlo_sharding_from_serialized_proto(
+        serialized_proto
+    )
+    self.assertIsInstance(deserialized_hlo_sharding, xla_client.HloSharding)
+    self.assertEqual(hlo_sharding, deserialized_hlo_sharding)
+
+  # NOTE(dsuo): No test_op_sharding_roundtrip because of go/debugproto.
 
 
 if __name__ == "__main__":

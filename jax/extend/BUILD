@@ -32,6 +32,7 @@ pytype_strict_library(
         ":ffi",
         ":linear_util",
         ":random",
+        ":sharding",
         ":source_info_util",
     ],
 )
@@ -83,7 +84,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "sharding",
     srcs = ["sharding.py"],
-    deps = ["//jax:sharding_impls"],
+    deps = [
+        "//jax:sharding_impls",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(
