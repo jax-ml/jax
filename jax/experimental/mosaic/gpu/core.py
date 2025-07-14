@@ -511,9 +511,11 @@ def _launch(
     profiler_start = (smem_bytes + align - 1) & ~(align - 1)
     smem_bytes = profiler_start + profiler_spec.smem_bytes(block=block)
 
-  # TODO(cperivol): Query the shared memory size programmatically.
-  if smem_bytes > 228 * 1024:
-    raise ValueError(f"Mosaic GPU kernel exceeds available shared memory {smem_bytes=} > 228000")
+  # assumes all available devices have the same amount of shared memory
+  max_smem_bytes = jax.local_devices()[0].shared_memory_per_block_optin
+  if smem_bytes > max_smem_bytes:
+    raise ValueError("Mosaic GPU kernel exceeds available shared memory: "
+                     f"{smem_bytes=} > {max_smem_bytes=}")
   if math.prod(cluster) != 1:
     if len(cluster) != 3:
       raise ValueError("Clusters must be 3D")
