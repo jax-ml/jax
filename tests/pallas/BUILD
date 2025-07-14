@@ -452,6 +452,7 @@ jax_multiplatform_test(
         "cpu",
         "tpu",
     ],
+    shard_count = 8,
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
