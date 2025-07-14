@@ -722,13 +722,14 @@ def scatter_oob(operand, indices, updates, dnums):
 
 def scatter_error_check(prim, error, enabled_errors, operand, indices, updates,
                         *, update_jaxpr, update_consts, dimension_numbers,
-                        indices_are_sorted, unique_indices, mode):
+                        indices_are_sorted, unique_indices, mode,
+                        **kwargs):
   """Checks if indices are within bounds and update does not generate NaN."""
   out = prim.bind(
       operand, indices, updates, update_jaxpr=update_jaxpr,
       update_consts=update_consts, dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode)
+      mode=mode, **kwargs)
 
   if OOBError not in enabled_errors:
     return error, out

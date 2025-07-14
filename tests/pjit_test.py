@@ -6935,6 +6935,16 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     outs = f(embed, tok, vmap_tok)
     self.assertEqual(outs[0].sharding, NamedSharding(mesh, P('x', None, None)))
 
+    def g(x, y, z):
+      outs = f(x, y, z)
+      return sum((x.sum() for x in jax.tree.leaves(outs)))
+
+    out = jax.jit(jax.grad(g))(embed, tok, vmap_tok)
+    self.assertEqual(out.sharding, embed.sharding)
+
+    out = jax.grad(g)(embed, tok, vmap_tok)
+    self.assertEqual(out.sharding, embed.sharding)
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshard_error(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
