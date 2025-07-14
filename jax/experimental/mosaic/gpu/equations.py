@@ -128,6 +128,79 @@ def reduce_expression(
       assert_never(expr)
 
 
+_SUPPORTED_TILED_RELAYOUTS = frozenset([
+    # Transposed layouts.
+    (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT),
+    (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT),
+    # "Conversion-optimized" layouts.
+    (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT),
+    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X),
+    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT),
+])
+
+
+@dataclasses.dataclass(frozen=True)
+class Relayout:
+  """States that `source` must be relayout-able to `target`.
+
+  Relayout-ability here is not defined as a fundamental property of layouts, but
+  rather a reflection of our implementation. For instance, when evaluating this
+  constraint, we will return `False` systematically if a relayout exists but we
+  do not ever plan to support it.
+
+  Modeling this constraint this way is helpful, in order to allow pruning
+  inefficient solutions when attempting to solve an equation system.
+  """
+
+  source: Expression
+  target: Expression
+
+  def holds(self) -> bool | None:
+    """Returns whether the relayout constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    source = self.source
+    target = self.target
+
+    # Fast path for syntactically identical expressions.
+    if source == target:
+      return True
+
+    if not isinstance(source, Constant) or not isinstance(target, Constant):
+      return None
+
+    source_layout, target_layout = source.value, target.value
+    match source_layout, target_layout:
+      case fa.WGSplatFragLayout(), fa.WGStridedFragLayout():
+        return source_layout.shape == target_layout.shape
+      case fa.WGSplatFragLayout(), fa.TiledLayout():
+        return layouts_lib.splat_is_compatible_with_tiled(
+            source_layout, target_layout
+        )
+      case fa.TiledLayout(), fa.TiledLayout():
+        return (source_layout, target_layout) in _SUPPORTED_TILED_RELAYOUTS
+      case _:
+        return False
+
+
+def reduce_constraint(
+    constraint: Relayout, assignments: dict[Variable, Constant]
+) -> Relayout | Tautological | Unsatisfiable:
+  """Reduces a relayout constraint."""
+  source = reduce_expression(constraint.source, assignments)
+  target = reduce_expression(constraint.target, assignments)
+
+  if isinstance(source, Unsatisfiable) or isinstance(target, Unsatisfiable):
+    return Unsatisfiable()
+
+  new_constraint = Relayout(source, target)
+  constraint_holds = constraint.holds()
+  if constraint_holds is None:
+    return new_constraint
+  return Tautological() if constraint_holds else Unsatisfiable()
+
+
 @dataclasses.dataclass(frozen=True)
 class Equation:
   lhs: Expression
@@ -139,7 +212,7 @@ class Equation:
 
 def reduce_equation(
     eq: Equation, assignments: dict[Variable, Constant]
-) -> Solution | Unsatisfiable:
+) -> Solution:
   """Reduces an equation.
 
   Args:
@@ -180,11 +253,15 @@ class EquationSystem:
   Assignments assign constant values to variables in the system (bound
   variables). Equations describe relationships between variables, and can be
   used to determine assignments for unknown (free) variables.
+
+  Constraints are used to check predicates that must hold for the assignments to
+  be valid.
   """
   assignments: dict[Variable, Constant] = dataclasses.field(
       default_factory=dict
   )
   equations: list[Equation] = dataclasses.field(default_factory=list)
+  constraints: list[Relayout] = dataclasses.field(default_factory=list)
 
   def unknowns(self) -> list[Variable]:
     """Returns the list of free variables in the system."""
@@ -209,6 +286,9 @@ class EquationSystem:
     for equation in self.equations:
       extract_variables(equation.lhs)
       extract_variables(equation.rhs)
+    for constraint in self.constraints:
+      extract_variables(constraint.source)
+      extract_variables(constraint.target)
     return free_variables
 
   def __and__(self, other: EquationSystem) -> EquationSystem | Unsatisfiable:
@@ -218,6 +298,7 @@ class EquationSystem:
     return EquationSystem(
         assignments=self.assignments | other.assignments,
         equations=self.equations + other.equations,
+        constraints=self.constraints + other.constraints,
     )
 
 
@@ -279,10 +360,23 @@ def _reduce_system_once(
       case _ as never:
         assert_never(never)
 
+  assignments |= equation_system.assignments
+  constraints: list[Relayout] = []
+  for constraint in equation_system.constraints:
+    match reduce_constraint(constraint, assignments):
+      case Unsatisfiable():
+        return Unsatisfiable()
+      case Tautological():
+        changed = True
+      case Relayout() as new_constraint:
+        changed |= new_constraint != constraint
+        constraints.append(new_constraint)
+
   if changed:
     return EquationSystem(
         assignments=assignments | equation_system.assignments,
         equations=equations,
+        constraints=constraints,
     )
   return None
 

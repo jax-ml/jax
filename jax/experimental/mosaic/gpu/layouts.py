@@ -223,14 +223,15 @@ def from_layout_attr(
     )
 
 
-def _splat_is_compatible_with_tiled(
-      l1: fa.WGSplatFragLayout, l2: fa.TiledLayout
-  ) -> bool:
+def splat_is_compatible_with_tiled(
+    l1: fa.WGSplatFragLayout, l2: fa.TiledLayout
+) -> bool:
   # A splat layout is compatible with a tiled layout up to replication if each
   # dimension in the shape of the splat layout is divisible by the corresponding
   # dimension in the base tile shape.
   s1, s2 = l1.shape, l2.base_tile_shape
   return all(d1 % d2 == 0 for d1, d2 in zip(s1, s2))
+
 
 def meet_layouts(
     layout1: fa.FragmentedLayout, layout2: fa.FragmentedLayout
@@ -255,13 +256,13 @@ def meet_layouts(
   match (layout1, layout2):
     case (fa.WGSplatFragLayout(), _):
       if isinstance(layout2, fa.TiledLayout):
-        if _splat_is_compatible_with_tiled(layout1, layout2):
+        if splat_is_compatible_with_tiled(layout1, layout2):
           return layout2
       elif layout1.shape == layout2.shape:
         return layout2
     case (_, fa.WGSplatFragLayout()):
       if isinstance(layout1, fa.TiledLayout):
-        if _splat_is_compatible_with_tiled(layout2, layout1):
+        if splat_is_compatible_with_tiled(layout2, layout1):
           return layout1
       elif layout1.shape == layout2.shape:
         return layout1
@@ -312,13 +313,13 @@ def join_layouts(
   match (layout1, layout2):
     case (fa.WGSplatFragLayout(), _):
       if isinstance(layout2, fa.TiledLayout):
-        if _splat_is_compatible_with_tiled(layout1, layout2):
+        if splat_is_compatible_with_tiled(layout1, layout2):
           return layout1
       elif layout1.shape == layout2.shape:
         return layout1
     case (_, fa.WGSplatFragLayout()):
       if isinstance(layout1, fa.TiledLayout):
-        if _splat_is_compatible_with_tiled(layout2, layout1):
+        if splat_is_compatible_with_tiled(layout2, layout1):
           return layout2
       elif layout1.shape == layout2.shape:
         return layout2
