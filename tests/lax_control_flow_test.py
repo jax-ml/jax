@@ -3491,6 +3491,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(outs, outs_ref, check_dtypes=False)
     self.assertAllClose(xs_bar, xs_bar_ref, check_dtypes=False)
 
+  def test_scan_fixpoint_instantiate(self):
+    def f(x):
+      c, () = jax.lax.scan(lambda c, _: ((0., 0.), ()), (x, 0.), (), length=5)
+      return sum(c)
+    jax.grad(f)(1.)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -632,6 +632,7 @@ def _scan_linearize(nzs, *primals_in, reverse: bool, length: int, num_consts:
                     int, num_carry: int, jaxpr: ClosedJaxpr, linear:
                     Sequence[bool], unroll: int, _split_transpose: bool):
   const_nz, init_nz, xs_nz = split_list(nzs, [num_consts, num_carry])
+  num_ys = len(jaxpr.out_avals) - num_carry
   carry_nz = init_nz
   allow_fwds = ([True] * len(jaxpr.consts) +
                 [(i < num_consts or i >= num_consts + num_carry) and
@@ -639,7 +640,8 @@ def _scan_linearize(nzs, *primals_in, reverse: bool, length: int, num_consts:
   for _ in range(1 + num_carry):
     nzs = const_nz + carry_nz + xs_nz
     primal_jaxpr, num_res_out, nzs_out, in_fwd_res, tangent_jaxpr = \
-        ad.linearize_jaxpr(jaxpr, nzs, allow_fwds=allow_fwds)
+        ad.linearize_jaxpr(jaxpr, nzs, allow_fwds=allow_fwds,
+                           instantiate=carry_nz + [False] * num_ys)
     carry_nz_out = nzs_out[:num_carry]
     if carry_nz_out == carry_nz:
       break
