@@ -1715,14 +1715,16 @@ batching.primitive_batchers[
 
 _dot_product_attention_fp8_fwd_lower.def_partition(
   infer_sharding_from_operands=_dot_product_attention_fp8_fwd_infer_sharding_from_operands,
-  partition=_dot_product_attention_fp8_fwd_partition)
+  partition=_dot_product_attention_fp8_fwd_partition,
+  sharding_rule=not_implemented_sharding_rule)
 
 mlir.register_lowering(_dot_product_attention_fp8_fwd_p_wrapper,
                         mlir.lower_fun(_dot_product_attention_fp8_fwd_lower, multiple_results=True))
 
 _dot_product_attention_fp8_bwd_lower.def_partition(
   infer_sharding_from_operands=_dot_product_attention_fp8_bwd_infer_sharding_from_operands,
-  partition=_dot_product_attention_fp8_bwd_partition)
+  partition=_dot_product_attention_fp8_bwd_partition,
+  sharding_rule=not_implemented_sharding_rule)
 
 mlir.register_lowering(_dot_product_attention_fp8_bwd_p_wrapper,
                         mlir.lower_fun(_dot_product_attention_fp8_bwd_lower, multiple_results=True))
