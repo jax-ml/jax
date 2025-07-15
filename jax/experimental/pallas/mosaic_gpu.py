@@ -57,6 +57,7 @@ from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu
 from jax._src.pallas.mosaic_gpu.primitives import load as load
+from jax._src.pallas.mosaic_gpu.primitives import print_layout as print_layout
 from jax._src.pallas.mosaic_gpu.primitives import RefType as RefType
 from jax._src.pallas.mosaic_gpu.primitives import set_max_registers as set_max_registers
 from jax._src.pallas.mosaic_gpu.primitives import wait_load_tmem as wait_load_tmem

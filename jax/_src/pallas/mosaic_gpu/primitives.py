@@ -70,6 +70,58 @@ def _check_ref(
     )
 
 
+def _pprint_layout(layout: mgpu.FragmentedLayout) -> str:
+  match layout:
+    case mgpu.WGMMA_LAYOUT:
+      return "WGMMA"
+    case mgpu.WGMMA_ROW_LAYOUT:
+      return "WGMMA_ROW"
+    case mgpu.WGMMA_TRANSPOSED_LAYOUT:
+      return "WGMMA_TRANSPOSED"
+    case mgpu.TCGEN05_LAYOUT:
+      return "TCGEN05"
+    case mgpu.TCGEN05_TRANSPOSED_LAYOUT:
+      return "TCGEN05_TRANSPOSED"
+    case mgpu.tcgen05.TMEM_NATIVE_LAYOUT:
+      return "TCGEN05_TMEM_NATIVE"
+    case _:
+      return str(layout)
+
+
+print_layout_p = jax_core.Primitive("print_layout")
+print_layout_p.multiple_results = True
+
+
+@print_layout_p.def_effectful_abstract_eval
+def _print_layout_abstract_eval(aval_in, fmt):
+  del aval_in, fmt  # Unused.
+  return (), {pallas_primitives.debug_print_effect}
+
+
+@lowering.register_lowering_rule(print_layout_p, mgpu.LoweringSemantics.Lane)
+def _print_layout_lowering(
+    ctx: lowering.LoweringRuleContext,
+    arr: mgpu.FragmentedArray,
+    fmt: str,
+):
+  del ctx  # Unused.
+  print(fmt.format(_pprint_layout(arr.layout)))
+  return ()
+
+
+def print_layout(fmt: str, array: jax.typing.ArrayLike) -> None:
+  """Prints the layout chosen by Mosaic GPU for a given array.
+
+  This is evaluated at compile-time and has no incidence on the runtime behavior
+  of the program.
+
+  Args:
+    fmt: The format string to use for printing the layout.
+    array: The array to print the layout of.
+  """
+  print_layout_p.bind(array, fmt=fmt)
+
+
 copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
 copy_smem_to_gmem_p.multiple_results = True
 

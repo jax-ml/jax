@@ -1000,6 +1000,25 @@ class PallasCallTest(PallasTest):
 
     self.assertIn("x: [1, 0, 43, 23]: 6871\n", output())
 
+  def test_print_layout(self):
+    self.skip_if_wg_semantics()
+    shape = [128]
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.bfloat16),
+    )
+    def kernel(x_ref, o_ref):
+      del o_ref
+      x = plgpu.layout_cast(x_ref[...], plgpu.Layout.WGMMA_ROW)
+      plgpu.print_layout("x: {}", x)
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
+    with self.capture_stdout() as output:
+      jax.block_until_ready(kernel(x))
+
+    self.assertIn("x: WGMMA_ROW\n", output())
+
   @parameterized.parameters(
           (plgpu.TilingTransform((1, 32)), plgpu.SwizzleTransform(128)),
           (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),
@@ -2215,6 +2234,7 @@ class PallasCallWGTest(
     expected_missing_primitives = {
         mgpu_primitives.inline_mgpu_p,
         mgpu_primitives.tcgen05_mma_p,
+        mgpu_primitives.print_layout_p,
         mgpu_primitives.tcgen05_commit_arrive_p,
         mgpu_primitives.async_copy_scales_to_tmem_p,
         mgpu_primitives.async_load_tmem_p,
