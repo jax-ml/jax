@@ -22,9 +22,9 @@ In the next section we provide more details on the ops for which we provide
 partial support.
 
 For a detailed description of these XLA ops, please see the
-[XLA Operation Semantics documentation](https://www.tensorflow.org/xla/operation_semantics).
+[XLA Operation Semantics documentation](https://www.openxla.org/xla/operation_semantics).
 
-| XLA ops ([documentation](https://www.tensorflow.org/xla/operation_semantics)) | JAX primitive(s) ([documentation](https://docs.jax.dev/en/latest/jax.lax.html)) | Supported |
+| XLA ops ([documentation](https://www.openxla.org/xla/operation_semantics)) | JAX primitive(s) ([documentation](https://docs.jax.dev/en/latest/jax.lax.html)) | Supported |
 | ------- | ---------------- | ------- |
 | XlaDot  | `lax.dot_general` | Full |
 | XlaDynamicSlice | `lax.dynamic_slice` | Full |

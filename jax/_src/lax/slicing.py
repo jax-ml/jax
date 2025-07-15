@@ -61,7 +61,7 @@ def slice(operand: ArrayLike, start_indices: Sequence[int],
           limit_indices: Sequence[int],
           strides: Sequence[int] | None = None) -> Array:
   """Wraps XLA's `Slice
-  <https://www.tensorflow.org/xla/operation_semantics#slice>`_
+  <https://www.openxla.org/xla/operation_semantics#slice>`_
   operator.
 
   Args:
@@ -121,7 +121,7 @@ def dynamic_slice(
     allow_negative_indices: bool | Sequence[bool] = True
 ) -> Array:
   """Wraps XLA's `DynamicSlice
-  <https://www.tensorflow.org/xla/operation_semantics#dynamicslice>`_
+  <https://www.openxla.org/xla/operation_semantics#dynamicslice>`_
   operator.
 
   Args:
@@ -189,7 +189,7 @@ def dynamic_update_slice(
     allow_negative_indices: bool | Sequence[bool] = True
 ) -> Array:
   """Wraps XLA's `DynamicUpdateSlice
-  <https://www.tensorflow.org/xla/operation_semantics#dynamicupdateslice>`_
+  <https://www.openxla.org/xla/operation_semantics#dynamicupdateslice>`_
   operator.
 
   Args:
@@ -247,7 +247,7 @@ def dynamic_update_slice(
 class GatherDimensionNumbers(NamedTuple):
   """
   Describes the dimension number arguments to an `XLA's Gather operator
-  <https://www.tensorflow.org/xla/operation_semantics#gather>`_. See the XLA
+  <https://www.openxla.org/xla/operation_semantics#gather>`_. See the XLA
   documentation for more details of what the dimension numbers mean.
 
   Args:
@@ -336,7 +336,7 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
   """Gather operator.
 
   Wraps `XLA's Gather operator
-  <https://www.tensorflow.org/xla/operation_semantics#gather>`_.
+  <https://www.openxla.org/xla/operation_semantics#gather>`_.
 
   :func:`gather` is a low-level operator with complicated semantics, and most JAX
   users will never need to call it directly. Instead, you should prefer using
@@ -436,7 +436,7 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
 class ScatterDimensionNumbers(NamedTuple):
   """
   Describes the dimension number arguments to an `XLA's Scatter operator
-  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_. See the XLA
+  <https://www.openxla.org/xla/operation_semantics#scatter>`_. See the XLA
   documentation for more details of what the dimension numbers mean.
 
   Args:
@@ -481,7 +481,7 @@ def scatter_add(
   """Scatter-add operator.
 
   Wraps `XLA's Scatter operator
-  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  <https://www.openxla.org/xla/operation_semantics#scatter>`_, where
   addition is used to combine updates and values from `operand`.
 
   The semantics of scatter are complicated, and its API might change in the
@@ -574,7 +574,7 @@ def scatter_sub(
   """Scatter-sub operator.
 
   Wraps `XLA's Scatter operator
-  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  <https://www.openxla.org/xla/operation_semantics#scatter>`_, where
   subtraction is used to combine updates and values from `operand`.
 
   The semantics of scatter are complicated, and its API might change in the
@@ -632,7 +632,7 @@ def scatter_mul(
   """Scatter-multiply operator.
 
   Wraps `XLA's Scatter operator
-  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  <https://www.openxla.org/xla/operation_semantics#scatter>`_, where
   multiplication is used to combine updates and values from `operand`.
 
   The semantics of scatter are complicated, and its API might change in the
@@ -681,7 +681,7 @@ def scatter_min(
   """Scatter-min operator.
 
   Wraps `XLA's Scatter operator
-  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  <https://www.openxla.org/xla/operation_semantics#scatter>`_, where
   the `min` function is used to combine updates and values from `operand`.
 
   The semantics of scatter are complicated, and its API might change in the
@@ -730,7 +730,7 @@ def scatter_max(
   """Scatter-max operator.
 
   Wraps `XLA's Scatter operator
-  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  <https://www.openxla.org/xla/operation_semantics#scatter>`_, where
   the `max` function is used to combine updates and values from `operand`.
 
   The semantics of scatter are complicated, and its API might change in the
@@ -784,7 +784,7 @@ def scatter_apply(
   """Scatter-apply operator.
 
   Wraps `XLA's Scatter operator
-  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where values
+  <https://www.openxla.org/xla/operation_semantics#scatter>`_, where values
   from ``operand`` are replaced with ``func(operand)``, with duplicate indices
   resulting in multiple applications of ``func``.
 
@@ -848,7 +848,7 @@ def scatter(
   """Scatter-update operator.
 
   Wraps `XLA's Scatter operator
-  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where updates
+  <https://www.openxla.org/xla/operation_semantics#scatter>`_, where updates
   replace values from `operand`.
 
   If multiple updates are performed to the same index of operand, they may be
@@ -1807,7 +1807,7 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
   """Validates the well-formedness of the arguments to Gather.
 
   The code implements the checks based on the detailed operation semantics of
-  XLA's `Gather <https://www.tensorflow.org/xla/operation_semantics#gather>`_
+  XLA's `Gather <https://www.openxla.org/xla/operation_semantics#gather>`_
   operator and following the outline of the implementation of
   ShapeInference::InferGatherShape in TensorFlow.
   """
@@ -2392,7 +2392,7 @@ def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
   Scatter.
 
   The code implements the checks based on the detailed operation semantics of
-  XLA's `Scatter <https://www.tensorflow.org/xla/operation_semantics#scatter>`_
+  XLA's `Scatter <https://www.openxla.org/xla/operation_semantics#scatter>`_
   operator and following the outline of the implementation of
   ShapeInference::InferScatterShape in TensorFlow.
   """

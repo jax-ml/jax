@@ -1982,7 +1982,7 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
   """Concatenates a sequence of arrays along `dimension`.
 
   Wraps XLA's `Concatenate
-  <https://www.tensorflow.org/xla/operation_semantics#concatenate>`_
+  <https://www.openxla.org/xla/operation_semantics#concatenate>`_
   operator.
 
   Args:
@@ -2417,7 +2417,7 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None) -> Array:
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
-  Wraps XLA's `Dot <https://www.tensorflow.org/xla/operation_semantics#dot>`_
+  Wraps XLA's `Dot <https://www.openxla.org/xla/operation_semantics#dot>`_
   operator.
 
   For more general contraction, see the :func:`jax.lax.dot_general` operator.
@@ -2468,7 +2468,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
   """General dot product/contraction operator.
 
   Wraps XLA's `DotGeneral
-  <https://www.tensorflow.org/xla/operation_semantics#dotgeneral>`_
+  <https://www.openxla.org/xla/operation_semantics#dotgeneral>`_
   operator.
 
   The semantics of ``dot_general`` are complicated, but most users should not have to
@@ -2476,7 +2476,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
   :func:`jax.numpy.matmul`, :func:`jax.numpy.tensordot`, :func:`jax.numpy.einsum`,
   and others which will construct appropriate calls to ``dot_general`` under the hood.
   If you really want to understand ``dot_general`` itself, we recommend reading XLA's
-  `DotGeneral  <https://www.tensorflow.org/xla/operation_semantics#dotgeneral>`_
+  `DotGeneral  <https://www.openxla.org/xla/operation_semantics#dotgeneral>`_
   operator documentation.
 
   Args:
@@ -2692,7 +2692,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
                      broadcast_dimensions: Sequence[int], *, out_sharding=None
                      ) -> Array:
   """Wraps XLA's `BroadcastInDim
-  <https://www.tensorflow.org/xla/operation_semantics#broadcastindim>`_
+  <https://www.openxla.org/xla/operation_semantics#broadcastindim>`_
   operator.
 
   Args:
@@ -2735,7 +2735,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
             dimensions: Sequence[int] | None = None,
             *, out_sharding: NamedSharding | P | None = None) -> Array:
   """Wraps XLA's `Reshape
-  <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
+  <https://www.openxla.org/xla/operation_semantics#reshape>`_
   operator.
 
   For inserting/removing dimensions of size 1, prefer using ``lax.squeeze`` /
@@ -2795,7 +2795,7 @@ def pad(operand: ArrayLike, padding_value: ArrayLike,
   """Applies low, high, and/or interior padding to an array.
 
   Wraps XLA's `Pad
-  <https://www.tensorflow.org/xla/operation_semantics#pad>`_
+  <https://www.openxla.org/xla/operation_semantics#pad>`_
   operator.
 
   Args:
@@ -2845,7 +2845,7 @@ def pad(operand: ArrayLike, padding_value: ArrayLike,
 
 def rev(operand: ArrayLike, dimensions: Sequence[int]) -> Array:
   """Wraps XLA's `Rev
-  <https://www.tensorflow.org/xla/operation_semantics#rev_reverse>`_
+  <https://www.openxla.org/xla/operation_semantics#rev_reverse>`_
   operator.
   """
   return rev_p.bind(operand, dimensions=tuple(dimensions))
@@ -2854,7 +2854,7 @@ def select(pred: ArrayLike, on_true: ArrayLike, on_false: ArrayLike) -> Array:
   """Selects between two branches based on a boolean predicate.
 
   Wraps XLA's `Select
-  <https://www.tensorflow.org/xla/operation_semantics#select>`_
+  <https://www.openxla.org/xla/operation_semantics#select>`_
   operator.
 
   In general :func:`~jax.lax.select` leads to evaluation of both branches, although
@@ -2881,7 +2881,7 @@ def select_n(which: ArrayLike, *cases: ArrayLike) -> Array:
   """Selects array values from multiple cases.
 
   Generalizes XLA's `Select
-  <https://www.tensorflow.org/xla/operation_semantics#select>`_
+  <https://www.openxla.org/xla/operation_semantics#select>`_
   operator. Unlike XLA's version, the operator is variadic and can select
   from many cases using an integer `pred`.
 
@@ -2907,7 +2907,7 @@ def select_n(which: ArrayLike, *cases: ArrayLike) -> Array:
 def transpose(operand: ArrayLike,
               permutation: Sequence[int] | np.ndarray) -> Array:
   """Wraps XLA's `Transpose
-  <https://www.tensorflow.org/xla/operation_semantics#transpose>`_
+  <https://www.openxla.org/xla/operation_semantics#transpose>`_
   operator.
   """
   permutation = tuple(operator.index(d) for d in permutation)
@@ -2934,7 +2934,7 @@ def reduce(operands: Any,
            computation: Callable[[Any, Any], Any],
            dimensions: Sequence[int]) -> Any:
   """Wraps XLA's `Reduce
-  <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
+  <https://www.openxla.org/xla/operation_semantics#reduce>`_
   operator.
 
   ``init_values`` and ``computation`` together must form a `monoid
@@ -3240,7 +3240,7 @@ def sort(operand: Sequence[Array], dimension: int = -1,
 def sort(operand: Array | Sequence[Array], dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Array | tuple[Array, ...]:
   """Wraps XLA's `Sort
-  <https://www.tensorflow.org/xla/operation_semantics#sort>`_ operator.
+  <https://www.openxla.org/xla/operation_semantics#sort>`_ operator.
 
   For floating point inputs, -0.0 and 0.0 are treated as equivalent, and NaN values
   are sorted to the end of the array. For complex inputs, the sort order is
@@ -3375,7 +3375,7 @@ ad_util.aval_zeros_likers[state.AbstractRef] = zeros_like_abstract_ref  # type: 
 
 def iota(dtype: DTypeLike, size: int) -> Array:
   """Wraps XLA's `Iota
-  <https://www.tensorflow.org/xla/operation_semantics#iota>`_
+  <https://www.openxla.org/xla/operation_semantics#iota>`_
   operator.
   """
   return broadcasted_iota(dtype, (size,), 0)
@@ -3490,7 +3490,7 @@ def reduce_precision(operand: float | ArrayLike,
                      exponent_bits: int,
                      mantissa_bits: int) -> Array:
   """Wraps XLA's `ReducePrecision
-  <https://www.tensorflow.org/xla/operation_semantics#reduceprecision>`_
+  <https://www.openxla.org/xla/operation_semantics#reduceprecision>`_
   operator.
   """
   exponent_bits = core.concrete_or_error(
@@ -8485,7 +8485,7 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
   default algorithm or the one specified.
 
   It provides direct access to the RngBitGenerator primitive exposed by XLA
-  (https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator) for low
+  (https://www.openxla.org/xla/operation_semantics#rngbitgenerator) for low
   level API access.
 
   Most users should use `jax.random` instead for a stable and more user

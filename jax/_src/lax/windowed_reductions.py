@@ -123,7 +123,7 @@ def reduce_window(
     window_dilation: Sequence[int] | None = None,
 ) -> Array:
   """Wraps XLA's `ReduceWindowWithGeneralPadding
-  <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
+  <https://www.openxla.org/xla/operation_semantics#reducewindow>`_
   operator.
   """
   return _reduce_window(
@@ -281,7 +281,7 @@ def _select_and_gather_add(tangents: Array, operand: Array,
   each window of the `operand` array.
 
   Wraps XLA's `ReduceWindow
-  <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
+  <https://www.openxla.org/xla/operation_semantics#reducewindow>`_
   operator, which applies a reduction function to all elements in each window of
   the input multi-dimensional array. In this case, the input multi-dimensional
   array is built by packing each element in the `operand` array with its

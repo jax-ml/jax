@@ -78,7 +78,7 @@ def switch(index, branches: Sequence[Callable], *operands,
       return branches[index](*operands)
 
   Internally this wraps XLA's `Conditional
-  <https://www.tensorflow.org/xla/operation_semantics#conditional>`_
+  <https://www.openxla.org/xla/operation_semantics#conditional>`_
   operator. However, when transformed with :func:`~jax.vmap` to operate over a
   batch of predicates, ``cond`` is converted to :func:`~jax.lax.select`.
 
@@ -188,7 +188,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Wraps XLA's `Conditional
-  <https://www.tensorflow.org/xla/operation_semantics#conditional>`_
+  <https://www.openxla.org/xla/operation_semantics#conditional>`_
   operator.
 
   Provided arguments are correctly typed, ``cond()`` has equivalent

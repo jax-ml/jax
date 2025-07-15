@@ -2422,7 +2422,7 @@ class LaxTest(jtu.JaxTestCase):
                                window_dimensions=window_dimensions)
     # With a stride of 1 in each direction and a padding of 'SAME', the
     # shape of the input should be equal to the shape of the result according
-    # to https://www.tensorflow.org/xla/operation_semantics#reducewindow.
+    # to https://www.openxla.org/xla/operation_semantics#reducewindow.
     self.assertEqual(shape, result.shape)
 
   def testReduceWindowWithEmptyOutput(self):
