@@ -352,6 +352,12 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
   )
 
 async def main():
+  raise RuntimeError(
+    "⚠️ This repository is maintained only for internal ROCm testing purposes "
+    "Do not use this repository for development, issue tracking, or contributions. "
+    "Active development has moved to: https://github.com/ROCm/rocm-jax"
+  )
+
   parser = argparse.ArgumentParser(
       description=r"""
         CLI for building JAX wheel packages from source and for updating the

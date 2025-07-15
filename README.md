@@ -1,5 +1,4 @@
 > ⚠️ **Note:** This repository is maintained **only for internal ROCm testing purposes**  
-> (e.g., selectively skipping or modifying JAX frontend tests).  
 > **Do not use this repository for development, issue tracking, or contributions.**  
 > Active development has moved to 👉 https://github.com/ROCm/rocm-jax
 
