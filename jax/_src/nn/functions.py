@@ -142,7 +142,15 @@ def softplus(x: ArrayLike) -> Array:
     x : input array
   """
   return jnp.logaddexp(x, 0)
-
+@api.jit
+def lisht(x: ArrayLike) -> Array:
+  """ Linearly Scaled Hyperbolic Tangent function.
+  Computes the function:
+  LiSHT(x)=x⋅tanh(x)
+as described in https://arxiv.org/abs/1901.05894"""
+  numpy_util.check_arraylike(x)
+  x = jnp.asarray(x)
+  return x * jnp.tanh(x)
 @api.jit
 def sparse_plus(x: ArrayLike) -> Array:
   r"""Sparse plus function.
@@ -1446,3 +1454,4 @@ def scaled_dot_general(
   )
 
   return out
+  
