@@ -50,6 +50,17 @@ _JAX_DTYPES = (
     jnp.bool_,
 )
 
+_JAX_INT_DTYPES = (
+    jnp.int32,
+    jnp.int16,
+    jnp.int8,
+    jnp.int4,
+    jnp.uint32,
+    jnp.uint16,
+    jnp.uint8,
+    jnp.uint4,
+)
+
 
 def rand(
     shape: tuple[int, ...], dtype: np.dtype | jnp.dtype, seed: int = 1234
@@ -176,21 +187,8 @@ class OpsTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(y, jnp.broadcast_to(x[3:4], y.shape))
 
-  def test_tpu_unsigned_int(self):
-    self.skipTest("TODO(apaszke): Unsigned upcasts were implemented incorrectly")
-    def body(x_ref, o_ref):
-      # Test cast from uint16 -> uint32
-      ux = lax.convert_element_type(x_ref[...], jnp.uint32)
-      res = ux + 1
-      # Test cast from uint32 -> float32
-      o_ref[...] = res.astype(jnp.float32)
-    out = jax.ShapeDtypeStruct((8, 128), jnp.float32)
-    x = jnp.arange(8 * 128, dtype=jnp.uint16).reshape((8, 128))
-    result = self.pallas_call(body, out_shape=out)(x)
-    np.testing.assert_array_equal(result, x.astype(jnp.float32) + 1.0)
-
   @parameterized.parameters([jnp.uint4, jnp.int4])
-  def test_tpu_int4_upcast(self, dtype):
+  def test_tpu_int4_upcast_and_matmul(self, dtype):
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("TPUv5+ needed for integer matmuls")
 
@@ -210,6 +208,32 @@ class OpsTest(PallasBaseTest):
             preferred_element_type=jnp.int32,
         ),
     )
+
+  @parameterized.product(from_dtype=_JAX_INT_DTYPES,
+                         to_dtype=_JAX_INT_DTYPES)
+  def test_integer_cast(self, from_dtype, to_dtype):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Expect TPUv4+")
+    # Generate both low and high values to better cover the entire range
+    # of the source dtype.
+    min_val = from_dtype(jnp.iinfo(from_dtype).min)
+    max_val = from_dtype(jnp.iinfo(from_dtype).max)
+    if jnp.iinfo(from_dtype).bits > 4:
+      x_random = jax.random.randint(jax.random.key(0), shape=(112, 256),
+                                    minval=min_val, maxval=max_val, dtype=from_dtype)
+    else:
+      # randint does not support sub-byte types.
+      x_random = jnp.arange(112 * 256, dtype=from_dtype).reshape((112, 256))
+    arange = jnp.arange(8 * 256, dtype=from_dtype).reshape((8, 256))
+    x = jnp.concatenate([min_val + arange, x_random, max_val - arange], axis=0)
+
+    def body(x_ref, o_ref):
+      o_ref[...] = lax.convert_element_type(x_ref[...], to_dtype)
+
+    out = jax.ShapeDtypeStruct(x.shape, to_dtype)
+    expected = x.astype(to_dtype)
+    result = self.pallas_call(body, out_shape=out)(x)
+    np.testing.assert_array_equal(result, expected)
 
   def test_select_with_scalar_condition(self):
     def kernel(cond, lhs, rhs, out):

@@ -738,7 +738,7 @@ class OpsTest(PallasBaseTest):
           2025, 5, 15
       ):
         self.skipTest("Test requires libtpu from 2025/5/15 or later")
-    if from_dtype == "int2" and to_dtype == "bool":
+    if from_dtype in ("uint2", "int2") and to_dtype == "bool":
       self.skipTest(
           "TODO(b/343490729): XLA compare(s2, s2) yields wrong results"
       )
