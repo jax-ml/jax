@@ -664,6 +664,7 @@ class WGMMALayoutTest(TestCase):
           fa.WGMMA_LAYOUT_UPCAST_4X,
       ),
   )
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_optimized_conversion(self, jax_dtype_from_to, layout):
     jax_dtype_from, jax_dtype_to = jax_dtype_from_to
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
@@ -2752,6 +2753,7 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_allclose(result, np.full((128, 32), 3.14, np.float32))
 
   @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_strided_load_store(self, in_shape):
     def kernel(ctx, *args):
       gmem_input, gmem_output, (smem_input, smem_output) = args
@@ -3070,6 +3072,7 @@ class LayoutTest(TestCase):
       row_tiling=[8, 64],
   )
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  @jtu.skip_if_device_kind_matches("RTX PRO 6000 Blackwell")
   def test_copy_tiled(self, dtype, swizzle, num_col_tiles, row_tiling):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
@@ -3154,6 +3157,7 @@ class LayoutTest(TestCase):
           (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT),
       ],
   )
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_transpose_tiled(self, dtype, swizzle, layouts):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
@@ -3198,6 +3202,7 @@ class LayoutTest(TestCase):
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 2),
   )
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  @jtu.skip_if_device_kind_matches("RTX PRO 6000 Blackwell")
   def test_upcast_to_wgmma(
       self, start_layout, end_layout, in_dtype, cast_dtype, shfl_per_reg
   ):

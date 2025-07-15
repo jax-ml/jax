@@ -560,6 +560,7 @@ class OpsTest(PallasBaseTest):
       for name, func, strategy in UNARY_FUNCTIONS
   )
   @hp.given(hps.data())
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_unary_primitives(self, name, func, shape_dtype_strategy, data):
     if name in ["abs", "log1p", "pow2", "reciprocal", "relu", "sin", "sqrt"]:
       self.skip_if_mosaic_gpu()
@@ -1897,6 +1898,8 @@ class OpsTest(PallasBaseTest):
       trans_x=[False, True],
       trans_y=[False, True],
   )
+  @jtu.skip_if_triton_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_dot(self, lhs_and_rhs_shape, dtype, trans_x, trans_y):
     self.skip_if_mosaic_gpu()
 
