@@ -151,18 +151,24 @@ def jvp_subtrace_aux(f, store, tag, primals, tangents):
 def linearize_jaxpr(
     jaxpr: core.ClosedJaxpr,
     nonzeros: Sequence[bool],
+    instantiate: bool | Sequence[bool] = False,
     allow_fwds: bool | Sequence[bool] = True,
 ) -> tuple[core.ClosedJaxpr, int, Sequence[bool], Sequence[int | None], core.ClosedJaxpr]:
   if type(allow_fwds) is bool:
     allow_fwds = (allow_fwds,) * (len(jaxpr.consts) + len(jaxpr.jaxpr.invars))
   assert len(allow_fwds) == (len(jaxpr.consts) + len(jaxpr.jaxpr.invars))
-  return _linearize_jaxpr(jaxpr, tuple(nonzeros), tuple(allow_fwds))
+  if type(instantiate) is bool:
+    instantiate = (instantiate,) * len(jaxpr.jaxpr.outvars)
+  assert len(instantiate) == len(jaxpr.jaxpr.outvars)
+  return _linearize_jaxpr(jaxpr, tuple(nonzeros), tuple(instantiate),
+                          tuple(allow_fwds))
 
 @weakref_lru_cache
 @source_info_util.reset_name_stack()
 def _linearize_jaxpr(
     jaxpr: core.ClosedJaxpr,
     nonzeros: tuple[bool, ...],
+    instantiate: tuple[bool, ...],
     allow_fwds: tuple[bool, ...],
 ) -> tuple[core.ClosedJaxpr, int, Sequence[bool], Sequence[int | None], core.ClosedJaxpr]:
   dbg = jaxpr.jaxpr.debug_info
@@ -178,7 +184,6 @@ def _linearize_jaxpr(
     return LinearizeTracer(trace, primal, tangent)
 
   source_info = source_info_util.current()
-  debug_info = jaxpr.jaxpr.debug_info
   tracers = [new_arg(lin_trace, a, nz, source_info)
              for (a, nz) in zip(jaxpr.in_aval_qdds, nonzeros)]
   in_primals = [t.primal for t in tracers]
@@ -186,13 +191,18 @@ def _linearize_jaxpr(
   with core.set_current_trace(lin_trace, check_leaks=True):
     ans = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *tracers)
     out_primals, out_tangents = unzip2(map(lin_trace.to_primal_tangent_pair, ans))
+    out_tangents = [instantiate_zeros(t) if inst else t
+                    for t, inst in zip(out_tangents, instantiate)]
     del lin_trace, ans, new_arg, tracers
+
+  debug_info = jaxpr.jaxpr.debug_info
 
   # pe._check_no_returned_refs(debug_info, out_tangents)
   nzs_out = [type(t) is not Zero for t in out_tangents]
-  out_tangents = tuple(tangent_trace.to_jaxpr_tracer(t, source_info)
-                       for (nz, t) in zip(nzs_out, out_tangents) if nz)
-  tangent_jaxpr, tangent_consts = tangent_trace.to_jaxpr(out_tangents, debug_info, source_info)
+  out_tangents = [tangent_trace.to_jaxpr_tracer(t, source_info)
+                  for (nz, t) in zip(nzs_out, out_tangents) if nz]
+  tangent_jaxpr, tangent_consts = tangent_trace.to_jaxpr(
+      out_tangents, debug_info, source_info)
   tangent_trace.invalidate()
   tangent_jaxpr, tangent_consts = _dce_consts(tangent_jaxpr, tangent_consts)
   tangent_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(tangent_jaxpr))
