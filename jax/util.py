@@ -16,7 +16,6 @@
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 import jax._src.deprecations
-import jax._src.util
 
 
 _deprecations = {

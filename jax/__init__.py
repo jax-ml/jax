@@ -169,7 +169,7 @@ from jax import scipy as scipy
 from jax import sharding as sharding
 from jax import stages as stages
 from jax import tree_util as tree_util
-from jax import util as util
+from jax import util as _deprecated_util
 
 # Also circular dependency.
 from jax._src.array import Shard as Shard
@@ -178,6 +178,11 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
+  # Deprecated for JAX v0.7.0; remove in JAX v0.8.0
+  "util": (
+    "jax.util and all its contents were deprecated in JAX v0.6.0, and removed in JAX v0.7.0",
+    _deprecated_util,
+  ),
   # Finalized 2025-03-25; remove after 2025-06-25
   "treedef_is_leaf": (
     "jax.treedef_is_leaf was removed in JAX v0.6.0: use jax.tree_util.treedef_is_leaf.",
