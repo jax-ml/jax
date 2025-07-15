@@ -1274,11 +1274,13 @@ def core_map(
         jax_core.extend_axis_env_nd(mesh.shape.items()),
     ):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
-    out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh,
-                          compiler_params=compiler_params,
-                          interpret=interpret,
-                          debug=debug,
-                          cost_estimate=cost_estimate, name=name_)
+    out = core_map_p.bind(
+        *consts, jaxpr=jaxpr, mesh=mesh,
+        compiler_params=compiler_params,
+        interpret=(config.pallas_tpu_interpret_mode_context_manager.value
+                   or interpret),
+        debug=debug,
+        cost_estimate=cost_estimate, name=name_)
     if out:
       raise ValueError("core_map-ped functions must not return any outputs.")
     return tree_util.tree_unflatten(out_tree_thunk(), out)

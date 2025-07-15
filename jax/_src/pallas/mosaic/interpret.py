@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import collections
+import contextlib
 import dataclasses
 import enum
 import functools
@@ -26,6 +27,7 @@ from collections.abc import Callable
 import jax
 from jax import lax
 from jax._src import callback
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import frozen_dict
 from jax._src.lax.control_flow import for_loop
@@ -70,7 +72,17 @@ CostEstimate = pallas_core.CostEstimate
 
 @dataclasses.dataclass(frozen=True)
 class InterpretParams:
-  """Parameters for Mosaic TPU interpret mode.
+  """Parameters for TPU interpret mode.
+
+  TPU interpret mode is a way run Pallas TPU kernels on CPU, while simulating
+  a TPU's shared memory (HBM, VMEM, etc.), communication (remote and local
+  DMAs), and synchronization operations (semaphores, barriers, etc.).  This mode
+  is intended for debugging and testing.
+
+  To run a kernel under TPU interpret mode, pass an instance of
+  ``InterpretParams`` as an argument for the ``interpret`` parameter of
+  :func:`jax.experimental.pallas.pallas_call` or
+  :func:`jax.experimental.pallas.core_map`.
 
   Attributes:
     dma_execution_mode:  If "eager", DMAs are executed as soon as they are
@@ -119,6 +131,28 @@ class InterpretParams:
   ) = None
   num_cores_per_device: int = 1
 
+@contextlib.contextmanager
+def force_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
+  """Context manager that forces TPU interpret mode under its dynamic context.
+
+  TPU interpret mode is a way run Pallas TPU kernels on CPU, while simulating
+  a TPU's shared memory (HBM, VMEM, etc.), communication (remote and local
+  DMAs), and synchronization operations (semaphores, barriers, etc.).  This mode
+  is intended for debugging and testing.  See :class:`InterpretParams` for
+  additional information.
+
+  Args:
+    params: an instance of :class:`InterpretParams`.  Any call to
+      :func:`jax.experimental.pallas.pallas_call` or
+      :func:`jax.experimental.pallas.core_map` that is traced under this context
+      manager will be run with ``interpret=params``.  When ``params`` is not
+      ``None``, this will cause those calls to run with TPU interpret mode.
+  """
+  prev = config.pallas_tpu_interpret_mode_context_manager.swap_local(params)
+  try:
+    yield
+  finally:
+    config.pallas_tpu_interpret_mode_context_manager.set_local(prev)
 
 VectorClock = np.ndarray
 

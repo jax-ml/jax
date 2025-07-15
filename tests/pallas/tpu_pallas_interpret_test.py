@@ -472,10 +472,13 @@ class InterpretTest(jtu.JaxTestCase):
     with self.assertRaises(jax.errors.ConcretizationTypeError):
       kernel_call_dynamic_parallel_dimension()
 
-  @parameterized.parameters(1, 2, 4)
-  def test_core_map(self, num_cores):
+  @parameterized.product(
+      num_cores=[1, 2, 4],
+      use_context_manager=[False, True]
+  )
+  def test_core_map(self, num_cores, use_context_manager):
     mesh = pltpu.create_tensorcore_mesh('x', num_cores=num_cores)
-    interpret = pltpu.InterpretParams()
+    interpret = False if use_context_manager else pltpu.InterpretParams()
 
     @jax.jit
     def f(x):
@@ -511,12 +514,18 @@ class InterpretTest(jtu.JaxTestCase):
           )
       _, y = pl.run_state(inner)((x, y))
       return y
+
     x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))
     expected_out = (
         x.reshape((num_cores, -1, 128)) + 1
         + jnp.arange(num_cores, dtype=jnp.int32)[..., None, None]
     ).reshape(x.shape)
-    y = f(x)
+
+    if use_context_manager:
+      with pltpu.force_tpu_interpret_mode():
+        y = f(x)
+    else:
+      y = f(x)
     np.testing.assert_array_equal(y, expected_out)
 
   def test_two_cores_along_parallel_dimension_with_race(self):
@@ -525,24 +534,49 @@ class InterpretTest(jtu.JaxTestCase):
       o_ref[...] = x_ref[...] + vmem_ref[...]
 
     x = jnp.ones((8, 128), jnp.float32)
-    y = pl.pallas_call(
-        kernel,
-        grid=(2,),
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
-        scratch_shapes=[
-            pltpu.VMEM(x.shape, x.dtype),
-        ],
-        interpret=pltpu.InterpretParams(
-            num_cores_per_device=2,
-            detect_races=True,
-        ),
-        compiler_params=pltpu.CompilerParams(
-            dimension_semantics=('parallel',),
-        ),
-    )(x).block_until_ready()
+    trace_count = [0]
+
+    @jax.jit
+    def f(x):
+      trace_count[0] += 1
+      return pl.pallas_call(
+          kernel,
+          grid=(2,),
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
+          scratch_shapes=[
+              pltpu.VMEM(x.shape, x.dtype),
+          ],
+          compiler_params=pltpu.CompilerParams(
+              dimension_semantics=('parallel',),
+          ),
+          interpret=pltpu.InterpretParams(
+              num_cores_per_device=2,
+              detect_races=False,
+          ),
+      )(x)
+
+    y = f(x).block_until_ready()
+    self.assertFalse(mosaic_interpret.races.races_found)
+    np.testing.assert_allclose(y, 2.0 * x)
+
+    with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams(
+        num_cores_per_device=1,
+        detect_races=True,
+    )):
+      y = f(x).block_until_ready()
+    self.assertFalse(mosaic_interpret.races.races_found)
+    np.testing.assert_allclose(y, 2.0 * x)
+    self.assertEqual(trace_count[0], 2)
+
+    with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams(
+        num_cores_per_device=2,
+        detect_races=True,
+    )):
+      y = f(x).block_until_ready()
     self.assertTrue(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, 2.0 * x)
+    self.assertEqual(trace_count[0], 3)
 
   def test_two_cores_along_parallel_dimension_no_race(self):
     def kernel(x_ref, o_ref, vmem_ref):

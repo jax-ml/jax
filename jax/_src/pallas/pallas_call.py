@@ -1666,6 +1666,8 @@ def _pallas_call(
     backend: Backend | None = None,
     metadata: dict[str, str] | None = None,
 ):
+  interpret = (
+      config.pallas_tpu_interpret_mode_context_manager.value or interpret)
   compiler_params = _normalize_compiler_params(compiler_params)
 
   if mesh is not None:
