@@ -3748,7 +3748,9 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
     return tuple(array_creation.zeros(calculated_size, int) for dim in arr.shape)
   flat_indices = reductions.cumsum(
       bincount(reductions.cumsum(mask), length=calculated_size))
-  strides: np.ndarray = (np.cumprod(arr.shape[::-1])[::-1] // arr.shape).astype(flat_indices.dtype)
+  strides: np.ndarray = np.cumprod(arr.shape[::-1])[::-1] // arr.shape
+  if all(core.is_constant_dim(d) for d in strides):
+    strides = strides.astype(flat_indices.dtype)
   out = tuple((flat_indices // stride) % size for stride, size in zip(strides, arr.shape))
   if fill_value is not None:
     fill_value_tup = fill_value if isinstance(fill_value, tuple) else arr.ndim * (fill_value,)
@@ -6835,12 +6837,12 @@ def _triu_size(n, m, k):
   elif k >= m:
     return 0
   else:
-    mk = min(n, m - k)
+    mk = core.min_dim(n, m - k)
     return mk * (mk + 1) // 2 + mk * (m - k - mk)
 
 
 @export
-def triu_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array]:
+def triu_indices(n: DimSize, k: DimSize = 0, m: DimSize | None = None) -> tuple[Array, Array]:
   """Return the indices of upper triangle of an array of size ``(n, m)``.
 
   JAX implementation of :func:`numpy.triu_indices`.
@@ -6891,15 +6893,15 @@ def triu_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array
     >>> jnp.triu_indices(3, k=-1)
     (Array([0, 0, 0, 1, 1, 1, 2, 2], dtype=int32), Array([0, 1, 2, 0, 1, 2, 1, 2], dtype=int32))
   """
-  n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
-  k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
-  m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
+  n = core.concrete_dim_or_error(n, "n argument of jnp.triu_indices")
+  k = core.concrete_dim_or_error(k, "k argument of jnp.triu_indices")
+  m = n if m is None else core.concrete_dim_or_error(m, "m argument of jnp.triu_indices")
   i, j = nonzero(triu(array_creation.ones((n, m)), k=k), size=_triu_size(n, m, k))
   return i, j
 
 
 @export
-def tril_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array]:
+def tril_indices(n: DimSize, k: DimSize = 0, m: DimSize | None = None) -> tuple[Array, Array]:
   """Return the indices of lower triangle of an array of size ``(n, m)``.
 
   JAX implementation of :func:`numpy.tril_indices`.
@@ -6950,9 +6952,9 @@ def tril_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array
     >>> jnp.tril_indices(3, k=-1)
     (Array([1, 2, 2], dtype=int32), Array([0, 0, 1], dtype=int32))
   """
-  n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
-  k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
-  m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
+  n = core.concrete_dim_or_error(n, "n argument of jnp.triu_indices")
+  k = core.concrete_dim_or_error(k, "k argument of jnp.triu_indices")
+  m = n if m is None else core.concrete_dim_or_error(m, "m argument of jnp.triu_indices")
   i, j = nonzero(tril(array_creation.ones((n, m)), k=k), size=_triu_size(m, n, -k))
   return i, j
 
