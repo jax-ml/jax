@@ -48,7 +48,7 @@ def _reduce_window(
     init_value,
     computation,
     window_dimensions: core.Shape,
-    window_strides: Sequence[int],
+    window_strides: Sequence[int] | None,
     padding: str | Sequence[tuple[int, int]],
     base_dilation: Sequence[int] | None = None,
     window_dilation: Sequence[int] | None = None,
@@ -78,6 +78,8 @@ def _reduce_window(
         flat_operands[0].shape, dilated_window_dims, window_strides, padding))
   else:
     padding = tuple((x, y) for x, y in padding)
+  if window_strides is None:
+    window_strides = (1,) * len(window_dimensions)
   if base_dilation is None:
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
@@ -115,8 +117,8 @@ def reduce_window(
     init_value,
     computation: Callable,
     window_dimensions: core.Shape,
-    window_strides: Sequence[int],
-    padding: str | Sequence[tuple[int, int]],
+    window_strides: Sequence[int] | None = None,
+    padding: str | Sequence[tuple[int, int]] = "VALID",
     base_dilation: Sequence[int] | None = None,
     window_dilation: Sequence[int] | None = None,
 ) -> Array:
