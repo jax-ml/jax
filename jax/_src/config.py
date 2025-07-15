@@ -909,8 +909,8 @@ jax_export_calling_convention_version = int_state(
     # Note: bump the default calling convention version at least one month after
     # we update XlaCallModule to support the new version, so that serialized
     # modules are forward compatible with deployed versions of XlaCallModule.
-    # Version 9 of XlaCallModule is supported since October 27th, 2023.
-    default=int_env('JAX_EXPORT_CALLING_CONVENTION_VERSION', 9),
+    # Version 10 of XlaCallModule is supported since May 20th, 2025.
+    default=int_env('JAX_EXPORT_CALLING_CONVENTION_VERSION', 10),
     help=(
         'The calling convention version number to use for exporting. This must be '
         'within the range of versions supported by the tf.XlaCallModule '

@@ -72,7 +72,7 @@ HloSharding = xla_client.HloSharding
 # The minimum and maximum supported calling convention version.
 # See https://docs.jax.dev/en/latest/export/export.html#export-calling-convention-version
 minimum_supported_calling_convention_version = 9
-maximum_supported_calling_convention_version = 9
+maximum_supported_calling_convention_version = 10
 
 
 class DisabledSafetyCheck:
