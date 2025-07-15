@@ -8553,6 +8553,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (32, 256))
     self.assertEqual(out.sharding, NamedSharding(mesh, P(spec, None)))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_linalg_slogdet_and_solve(self, mesh):
+    B, N = 8, 4
+    key = jax.random.key(0)
+    A = jax.random.normal(key, (B, N, N))
+    As = reshard(A, P('x'))
+
+    jnp.linalg.slogdet(As)  # doesn't crash
+    jax.vmap(jnp.linalg.slogdet)(As)  # doesn't crash
+
+    b = jax.random.normal(key, (B, N))
+    bs = reshard(b, P('x'))
+    jax.vmap(jnp.linalg.solve)(As, bs)  # doesn't crash
+
+    b2 = b.reshape((*b.shape, 1))
+    bs2 = reshard(b2, P('x'))
+    jnp.linalg.solve(As, bs2)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
