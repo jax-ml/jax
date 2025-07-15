@@ -234,6 +234,12 @@ def kernel(
             *scratch_shapes,
             collective_axes=thread_name,
         )
+      if mesh.kernel_name is not None:
+        cmap_body.__name__ = mesh.kernel_name
+      else:
+        # The body function name is used to set the name of the kernel as a
+        # fallback if the kernel name is not set explicitly.
+        cmap_body.__name__ = getattr(body, '__name__', 'anonymous')
       pallas_core.core_map(
           mesh, compiler_params=compiler_params
       )(cmap_body)
@@ -1077,6 +1083,7 @@ class Mesh:
   # Those are NOT CUDA threads. On Hopper they correspond to warpgroups.
   num_threads: int | None = None
   thread_name: str | None = None
+  kernel_name: str | None = None
 
   def __post_init__(self):
     if len(self.cluster) > 3:

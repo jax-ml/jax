@@ -636,7 +636,7 @@ def _lower_as_gpu_kernel(
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)
   if kernel_name is None:
-    kernel_name = getattr(body, "__name__", "anonymous")
+    kernel_name = module_name
 
   # These are needed as nonlocal below.
   launch_ctx = None
@@ -648,7 +648,7 @@ def _lower_as_gpu_kernel(
         ir.Attribute.parse("#llvm.linkage<external>"),
         addr_space=ir.IntegerAttr.get(i32, 4),  # GPU constant memory.
     )
-    @func.FuncOp.from_py_func(ptr_ty, ptr_ty, name=f"mosaic_gpu_{kernel_name}")
+    @func.FuncOp.from_py_func(ptr_ty, ptr_ty, name=f"{kernel_name}_mosaic_gpu")
     def main(token_ptr, buffers):
       nonlocal launch_ctx
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
