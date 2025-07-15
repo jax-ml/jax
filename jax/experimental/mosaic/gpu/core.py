@@ -316,10 +316,12 @@ class _TMEMAlloc:
   num_cols: int
   collective: bool
 
-  def alloc(self):
-    tcgen05.tmem_alloc(
+  def alloc(self) -> int:
+    """Allocates TMEM and returns the number of columns allocated."""
+    _, cols = tcgen05.tmem_alloc(
         self.addr_ref, self.num_cols, collective=self.collective, exact=False
     )
+    return cols
 
   def dealloc(self):
     addr = memref.load(self.addr_ref, [])
@@ -572,8 +574,15 @@ def _launch(
         eq = arith.CmpIPredicate.eq
         is_init_warp = arith.cmpi(eq, utils.warp_idx(sync=False), c(0, i32))
         with utils.when(is_init_warp):
+          cols_used = 0
           for alloc in tmem_allocs:
-            alloc.alloc()
+            cols_used += alloc.alloc()
+          if cols_used > tcgen05.TMEM_MAX_COLS:
+            raise ValueError(
+                "Total TMEM allocation exceeds memory limit. "
+                f"Requested {cols_used} columns which exceeds limit of "
+                f"{tcgen05.TMEM_MAX_COLS}."
+            )
           if any(alloc.collective for alloc in tmem_allocs):
             tcgen05.tmem_relinquish_alloc_permit(collective=True)
           if any(not alloc.collective for alloc in tmem_allocs):

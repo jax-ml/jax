@@ -35,6 +35,7 @@ from .launch_context import LaunchContext
 
 
 TMEM_ROWS = 128
+TMEM_MAX_COLS = 512
 TCGEN05_SMEM_DESCRIPTOR_BIT = 1 << 46
 LAYOUT = fa.TCGEN05_LAYOUT
 TRANSPOSED_LAYOUT = fa.TCGEN05_TRANSPOSED_LAYOUT
@@ -608,7 +609,7 @@ def _alloc_ncols(ncols: int, exact: bool):
   return ncols
 
 
-def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True):
+def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True) -> tuple[ir.Value, int]:
   if ir.MemRefType.isinstance(tmem_addr.type):
     ref_ty = ir.MemRefType(tmem_addr.type)
     if ref_ty.element_type != ir.IntegerType.get_signless(32):
@@ -628,7 +629,7 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
       f"tcgen05.alloc.cta_group::{num_cta}.sync.aligned.shared::cta.b32  [$0], {ncols};",
       "r",
       has_side_effects=True,
-  )
+  ), ncols
 
 
 def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True):

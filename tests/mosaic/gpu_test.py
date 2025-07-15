@@ -1834,6 +1834,22 @@ class TCGen05Test(TestCase):
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 5e-6
     np.testing.assert_allclose(z, ref, atol=atol)
 
+  def test_raises_error_if_tmem_oom(self):
+    def kernel(ctx, input, output, scratch):
+      del ctx, input, output, scratch
+
+    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+    scratch_shape = [
+        mgpu.TMEM((128, 384), jnp.float32), # Should round up to 512 columns.
+        mgpu.TMEM((128, 64), jnp.float32), # Will trigger OOM.
+    ]
+    with self.assertRaisesRegex(ValueError,
+        "Total TMEM allocation exceeds memory limit."):
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+      )(x).block_until_ready()
+
+
 
 class BarrierTest(TestCase):
 
