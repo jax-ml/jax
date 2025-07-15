@@ -468,6 +468,58 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return "v6 lite" in device_kind
   return expected_version in device_kind
 
+def pattern_search(patterns: str | Sequence[str], string: str):
+  if not isinstance(patterns, tuple):
+    patterns = (patterns,)  # type: ignore
+
+  for pattern in patterns:
+    if pattern in string:
+      return pattern
+  return None
+
+def device_kind_matches(device_patterns: str | Sequence[str]):
+  device_kind = xla_bridge.devices()[0].device_kind
+  matching_pattern = pattern_search(device_patterns, device_kind)
+  return matching_pattern is not None
+
+def skip_if_errors(
+    *,
+    error_patterns: str | Sequence[str],
+    device_patterns: str | Sequence[str],
+    reason: str | Callable[[str, str], str],
+):
+  """Skip if both error message and device kind match a corresponding pattern."""
+  def skip(test_method):
+    @functools.wraps(test_method)
+    def test_method_wrapper(self, *args, **kwargs):
+      device_kind = xla_bridge.devices()[0].device_kind
+      try:
+        return test_method(self, *args, **kwargs)
+      except Exception as e:
+        matching_error_pattern = pattern_search(error_patterns, str(e))
+        matching_device_pattern = pattern_search(device_patterns, device_kind)
+        if matching_error_pattern and matching_device_pattern:
+          if not isinstance(reason, str):
+            reason_str = reason(matching_error_pattern, matching_device_pattern)
+          else:
+            reason_str = reason
+          self.skipTest(reason_str)
+        raise
+    return test_method_wrapper
+  return skip
+
+skip_if_mosaic_gpu_exceeds_shared_memory = functools.partial(
+  skip_if_errors,
+  error_patterns="kernel exceeds available shared memory",
+  reason=lambda err, dev: f"Mosaic GPU kernel exceeds shared memory on {dev}",
+)
+
+skip_if_triton_exceeds_shared_memory = functools.partial(
+  skip_if_errors,
+  error_patterns="Shared memory size limit exceeded",
+  reason=lambda err, dev: f"Triton kernel exceeds shared memory on {dev}",
+)
+
 def is_cuda_compute_capability_at_least(capability: str) -> bool:
   if not is_device_cuda():
     return False

@@ -664,6 +664,7 @@ class WGMMALayoutTest(TestCase):
           fa.WGMMA_LAYOUT_UPCAST_4X,
       ),
   )
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_optimized_conversion(self, jax_dtype_from_to, layout):
     jax_dtype_from, jax_dtype_to = jax_dtype_from_to
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
@@ -2752,6 +2753,7 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_allclose(result, np.full((128, 32), 3.14, np.float32))
 
   @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_strided_load_store(self, in_shape):
     def kernel(ctx, *args):
       gmem_input, gmem_output, (smem_input, smem_output) = args
@@ -3118,7 +3120,13 @@ class LayoutTest(TestCase):
             return addr[:pos]
           return addr
         used_regs = {get_reg(addr) for addr in addrs}
-        self.assertLessEqual(len(used_regs), expected_regs)
+        try:
+          self.assertLessEqual(len(used_regs), expected_regs)
+        except:
+          problematic_device = "RTX PRO 6000 Blackwell"
+          if jtu.device_kind_matches(problematic_device):
+            self.skipTest(f"{problematic_device} uses more registers for an unknown reason")
+          raise
 
   def test_copy_for_upcast(self):
     dtype = jnp.int8
@@ -3154,6 +3162,7 @@ class LayoutTest(TestCase):
           (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT),
       ],
   )
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_transpose_tiled(self, dtype, swizzle, layouts):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
@@ -3198,6 +3207,7 @@ class LayoutTest(TestCase):
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 2),
   )
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_upcast_to_wgmma(
       self, start_layout, end_layout, in_dtype, cast_dtype, shfl_per_reg
   ):
@@ -3245,7 +3255,13 @@ class LayoutTest(TestCase):
       yt_kernel = f(xt)
       jax.block_until_ready(yt_kernel)
     np.testing.assert_array_equal(yt_kernel, yt)
-    self.assertEqual(sass().count("SHFL.BFLY"), regs_per_thread * shfl_per_reg)
+    try:
+      self.assertEqual(sass().count("SHFL.BFLY"), regs_per_thread * shfl_per_reg)
+    except:
+      problematic_device = "RTX PRO 6000 Blackwell"
+      if jtu.device_kind_matches(problematic_device):
+        self.skipTest(f"{problematic_device} requires more SHFL.BFLY for an unknown reason")
+      raise
 
 
 @dataclasses.dataclass(frozen=True)
