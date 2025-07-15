@@ -7564,6 +7564,34 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.grad(g)(arr)
     self.assertEqual(out.sharding, arr.sharding)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_gather_with_full_slice_in_index_start_map(self, mesh):
+    np_inp = np.arange(32, dtype=np.float32).reshape(2, 4, 4)
+    s = NamedSharding(mesh, P('x', 'y', None))
+    arr = jax.device_put(np_inp, s)
+
+    # vmap dynamic_slice -> gather
+    @jax.jit
+    @jax.vmap
+    def f(x):
+      zero = jnp.array(0, dtype=jnp.int32)
+      # Slice is full in dim 0, which is a sharded dim.
+      y = jax.lax.dynamic_slice(x, (zero, zero), (4, 1))
+      self.assertEqual(y.aval.sharding.spec, P('y', None))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.sharding, s)
+
+    def g(x):
+      return jnp.sum(f(x))
+
+    out = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out.sharding, arr.sharding)
+
+    out = jax.grad(g)(arr)
+    self.assertEqual(out.sharding, arr.sharding)
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_dynamic_update_slice(self, mesh):
     arr = jax.device_put(np.arange(16., dtype=np.float32), P('x'))

@@ -1996,12 +1996,13 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
   Operand dimensions can be split into:
     1. Batching dims which must resolve unambiguously with the corresponding
       indices batching dims. `operand_batching_dims` in GatherDimensionNumbers.
-    2. Sliced dims which must be replicated. A subset of these
-      (`collapsed_slice_dims`) are collapsed in the output. These are
-      `start_index_map` in GatherDimensionNumbers.
+    2. Sliced dims which must be replicated. These are the subset of dims in
+      `start_index_map` where the slice size is not equal to the operand size.
+      A further subset of these (`collapsed_slice_dims`) are collapsed in the
+      output.
     3. Unsliced dims, these correspond directly to dimensions in the
       output and so propagate their shardings. These are the dimensions not
-      present in `operand_batching_dims` or `start_index_map`.
+      batched or sliced.
 
   Indices dimensions can be split into:
     1. Batching dims which must resolve unambiguously with the corresponding
@@ -2035,9 +2036,12 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
 
   assert all(i in start_index_map for i in collapsed_slice_dims)
 
-  all_operand_indexed_dims_are_replicated = all(
-      operand_spec[i] is None for i in start_index_map)
-  all_batching_dims_resolve_unambiguously = all(
+  # start_index_map defined which operand dimensions are sliced in to. However,
+  # if that slice is a full slice then we can propagate the sharding.
+  operand_index_dims_full_slice_or_replicated = all(
+      slice_sizes[i] == operand.shape[i] or operand_spec[i] is None
+      for i in start_index_map)
+  batching_dims_resolve_unambiguously = all(
       indices_spec[indices_dim] == operand_spec[operand_dim]
       or operand_spec[operand_dim] is None
       or indices_spec[indices_dim] is None
@@ -2046,8 +2050,8 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
   )
   index_vector_dim_is_replicated = indices.sharding.spec[index_vector_dim] is None
 
-  if (all_operand_indexed_dims_are_replicated
-      and all_batching_dims_resolve_unambiguously
+  if (operand_index_dims_full_slice_or_replicated
+      and batching_dims_resolve_unambiguously
       and index_vector_dim_is_replicated):
     # Resolve any batched shardings into indices shardings.
     for operand_dim, indices_dim in zip(
@@ -2071,8 +2075,8 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
         # The offset dims are the set of dimensions in the `gather` output that
         # derive solely from the operand.
         operand_dim, slice_size = next(slice_sizes_gen)
-        # Due to the `all_operand_indexed_dims_are_replicated` check, if a
-        # slice does not take the whole dimension, it must be replicated.
+        # Due to the `operand_index_dims_full_slice_or_replicated` check, if a
+        # slice is not full, it must be replicated.
         assert (slice_size == operand.shape[operand_dim]
                 or operand_spec[operand_dim] is None)
         out_spec.append(operand_spec[operand_dim])
