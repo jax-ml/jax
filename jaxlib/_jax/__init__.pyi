@@ -580,6 +580,7 @@ def get_tfrt_cpu_client(
     num_devices: int | None = ...,
     get_local_topology_timeout_minutes: int | None = ...,
     get_global_topology_timeout_minutes: int | None = ...,
+    transfer_server_factory: TransferServerInterfaceFactory | None = ...,
 ) -> Client: ...
 def get_mock_gpu_client(
     asynchronous: bool = ...,
@@ -593,6 +594,7 @@ def get_c_api_client(
     platform_name: str,
     options: Mapping[str, str | int | list[int] | float | bool],
     distributed_client: DistributedRuntimeClient | None = ...,
+    transfer_server_factory: TransferServerInterfaceFactory | None = ...,
 ) -> Client: ...
 def get_default_c_api_topology(
     platform_name: str,
@@ -997,6 +999,17 @@ def start_transfer_server(
     max_num_parallel_copies: int = 0,
     transfer_size: int = 0,
 ) -> TransferServer: ...
+
+class TransferServerInterfaceFactory: ...
+
+def make_transfer_server_interface_factory(
+    transfer_size: int = 0,
+    cross_host_transfer_timeout_seconds: int = 0,
+    distributed_client: DistributedRuntimeClient | None = None,
+    socket_address: str = "",
+    transport_addresses: list[str] = [],
+) -> TransferServerInterfaceFactory: ...
+
 def approx_top_k_reduction_output_size(
     input_size: int,
     rank: int,
