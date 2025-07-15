@@ -367,9 +367,10 @@ def check_is_flash_attention(
         _, T, _, qH = query.shape
         _, S, _, vH = value.shape
 
-    if is_cuda_compute_capability_equal("10.3"):
-      # cudnn will fallback to ampere kernels on 10.3 which is not ideal
-      raise NotImplementedError("Unsupported compute capability 10.3.")
+    if is_cuda_compute_capability_equal("10.3") and cudnn_version < 91100:
+      # cudnn support compute_cap 10.3 on cudnn 9.11+
+      raise NotImplementedError(
+        "Compute capability 10.3 requires cuDNN version >= 9.11.")
 
     # Flash attention conditions
     if is_fp8:
