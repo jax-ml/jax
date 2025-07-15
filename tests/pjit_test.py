@@ -8508,9 +8508,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr1, arr2)  # doesn't crash
 
+  @parameterized.named_parameters(
+      ('replicated', None),
+      ('sharded', 'x'),
+  )
   @jtu.with_explicit_mesh((2,), ('x',))
-  def test_fully_replicated_gather(self, mesh):
-    tokens = jnp.arange(32 * 257).reshape(32, 257)
+  def test_gather(self, spec, mesh):
+    tokens = jnp.arange(32 * 257).reshape(32, 257, out_sharding=P(spec))
 
     @jax.jit
     def f(x):
@@ -8519,7 +8523,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(tokens)
     self.assertEqual(out.shape, (32, 256))
-    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None)))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(spec, None)))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

@@ -2071,8 +2071,10 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
         # The offset dims are the set of dimensions in the `gather` output that
         # derive solely from the operand.
         operand_dim, slice_size = next(slice_sizes_gen)
-        if slice_size != operand.shape[operand_dim]:
-          return None
+        # Due to the `all_operand_indexed_dims_are_replicated` check, if a
+        # slice does not take the whole dimension, it must be replicated.
+        assert (slice_size == operand.shape[operand_dim]
+                or operand_spec[operand_dim] is None)
         out_spec.append(operand_spec[operand_dim])
       else:
         # The other dimensions are either batching dims (which derive from both
