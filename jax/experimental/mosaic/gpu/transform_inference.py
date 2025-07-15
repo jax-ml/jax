@@ -418,6 +418,14 @@ if jaxlib.version >= (0, 6, 2):
     return [op.transforms], [op.transforms]
 
 
+@partial(_add_transform_inference_rule, mgpu.CustomPrimitiveOp)
+def _infer_mgpu_custom_primitive_transforms(
+    op: mgpu.CustomPrimitiveOp,
+) -> OptionalTransforms:
+  # Do not change the manually provided transforms.
+  return list(op.in_transforms), []
+
+
 def infer_transforms(module: ir.Module):
   """Infers transforms for the given module.
 

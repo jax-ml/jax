@@ -93,7 +93,7 @@ MlirLoweringRule = Callable[
 _lowerings: dict[str, MlirLoweringRule] = {}
 
 
-def _fragmented_array_to_ir(
+def fragmented_array_to_ir(
     fragmented_array: fa.FragmentedArray, ty: ir.Type
 ) -> ir.Value:
   """Converts a FragmentedArray to an IR value.
@@ -277,7 +277,7 @@ def _optimization_barrier_op_lowering_rule(
     lowered_fragmented_arrays = [lowered_fragmented_arrays]
 
   return [
-      _fragmented_array_to_ir(arr, result.type)
+      fragmented_array_to_ir(arr, result.type)
       for arr, result in safe_zip(lowered_fragmented_arrays, op.results)
   ]
 
@@ -297,7 +297,7 @@ def _arith_constant_op_lowering_rule(
   is_signed = False if ir.IntegerType.isinstance(ty.element_type) else None
 
   return [
-      _fragmented_array_to_ir(
+      fragmented_array_to_ir(
           fa.FragmentedArray.splat(
               arith.constant(ty.element_type, value.get_splat_value()),
               tuple(ty.shape),
@@ -416,7 +416,7 @@ def _vector_load_op_lowering_rule(
     raise ValueError(
         f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
     )
-  return [_fragmented_array_to_ir(fragmented_array, vector_load_op.result.type)]
+  return [fragmented_array_to_ir(fragmented_array, vector_load_op.result.type)]
 
 
 @_register_lowering(vector.StoreOp)
@@ -485,7 +485,7 @@ def _vector_splat_op_lowering_rule(
       layouts.from_layout_attr(vector_splat_op.attributes["out_layouts"][0]),
       is_signed=is_signed,
   )
-  return [_fragmented_array_to_ir(fragmented_array, out_vec_ty)]
+  return [fragmented_array_to_ir(fragmented_array, out_vec_ty)]
 
 
 @_register_lowering(vector.ShapeCastOp)
@@ -499,7 +499,7 @@ def _vector_shape_cast_op_lowering_rule(
       False if ir.IntegerType.isinstance(out_vec_ty.element_type) else None
   )
   a = _fragmented_array_from_ir(op.source, layout, is_signed)
-  return [_fragmented_array_to_ir(a.reshape(out_vec_ty.shape), out_vec_ty)]
+  return [fragmented_array_to_ir(a.reshape(out_vec_ty.shape), out_vec_ty)]
 
 
 @_register_lowering(vector.ReductionOp)
@@ -526,7 +526,7 @@ def _vector_reduction_op_lowering_rule(
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
-  return [_fragmented_array_to_ir(result, op.result.type)]
+  return [fragmented_array_to_ir(result, op.result.type)]
 
 @_register_lowering(vector.MultiDimReductionOp)
 def _vector_multi_dim_reduction_op_lowering_rule(
@@ -569,7 +569,7 @@ def _vector_multi_dim_reduction_op_lowering_rule(
       result = result.max(acc_fa)
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
-  return [_fragmented_array_to_ir(result, op.result.type)]
+  return [fragmented_array_to_ir(result, op.result.type)]
 
 
 @_register_lowering(mgpu.LayoutCastOp)
@@ -580,7 +580,7 @@ def _mgpu_layout_cast_op_lowering_rule(
   [out_layout] = inference_utils.out_layouts(op)
   in_array = _fragmented_array_from_ir(op.x, in_layout)
   out_array = in_array.to_layout(layouts.from_layout_attr(out_layout))
-  return [_fragmented_array_to_ir(out_array, op.result.type)]
+  return [fragmented_array_to_ir(out_array, op.result.type)]
 
 
 # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
@@ -610,7 +610,7 @@ if hasattr(mgpu, "BroadcastInDimOp"):
           "Broadcast in dim with non-trivial broadcast dimensions is not"
           f" supported: {op}"
       )
-    return [_fragmented_array_to_ir(out, out_ty)]
+    return [fragmented_array_to_ir(out, out_ty)]
 
 
 def swizzle_and_transforms_from_transforms_attr(
@@ -664,7 +664,7 @@ def _is_memref_transposed(mem_ref_type: ir.MemRefType) -> bool:
   return False
 
 
-def _transformed_smem_ref_type(
+def transformed_smem_ref_type(
     ref_ty: ir.MemRefType,
     transforms: tuple[launch_context.MemRefTransform, ...],
 ) -> ir.MemRefType:
@@ -734,7 +734,7 @@ def reinterpret_smem_ref(
   transformed and transposed as needed.
   """
   ref_ty = ir.MemRefType(ref.type)
-  new_ref_ty = _transformed_smem_ref_type(ref_ty, transforms)
+  new_ref_ty = transformed_smem_ref_type(ref_ty, transforms)
   if ref_ty == new_ref_ty:
     return ref
   ms = utils.WORKGROUP_NVPTX_ADDRESS_SPACE
@@ -835,7 +835,7 @@ def _conversion_op_lowering_rule(
   target_ty = op.result.type.element_type  # pytype: disable=attribute-error
   operand = _fragmented_array_from_ir(op.operands[0], layout, source_is_signed)
   converted = operand.astype(target_ty, is_signed=target_is_signed)
-  return [_fragmented_array_to_ir(converted, op.result.type)]
+  return [fragmented_array_to_ir(converted, op.result.type)]
 
 
 for op, source_is_signed, target_is_signed in [
@@ -873,7 +873,7 @@ def _unary_op_lowering_rule(
   else:
     result_fa = impl(a)
 
-  return [_fragmented_array_to_ir(result_fa, op.result.type)]
+  return [fragmented_array_to_ir(result_fa, op.result.type)]
 
 
 for op, unary_impl, is_signed in [
@@ -902,7 +902,7 @@ def _binary_op_lowering_rule(
     raise ValueError("Layout mismatch")
   lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
   rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
-  return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
+  return [fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
 for op, binary_impl, is_signed in [
@@ -958,7 +958,7 @@ def _cmpi_op_lowering_rule(
   impl, is_signed = CMPI_IMPLS[op.predicate.value]
   lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
   rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
-  return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
+  return [fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
 CMPF_IMPLS = {
@@ -982,7 +982,7 @@ def _cmpf_op_lowering_rule(
   impl = CMPF_IMPLS[op.predicate.value]
   lhs = _fragmented_array_from_ir(op.lhs, layout)
   rhs = _fragmented_array_from_ir(op.rhs, layout)
-  return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
+  return [fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
 @_register_lowering(arith.BitcastOp)
@@ -1001,7 +1001,7 @@ def _bitcast_op_lowering_rule(
       if ir.IntegerType.isinstance(out_element_type)
       else None,
   )
-  return [_fragmented_array_to_ir(out, op.result.type)]
+  return [fragmented_array_to_ir(out, op.result.type)]
 
 
 @_register_lowering(mgpu.WGMMAOp)
@@ -1064,7 +1064,7 @@ def _mgpu_wgmma_op_lowering_rule(
   new_acc = wgmma.wgmma(acc, a_operand, unwrapped_b_ref, swizzle=b_swizzle)
 
   return [
-      _fragmented_array_to_ir(
+      fragmented_array_to_ir(
           new_acc.value.to_layout(fa.WGMMA_LAYOUT),
           wgmma_op.accumulator.type,
       )
@@ -1274,7 +1274,7 @@ def _memref_subview_op_lowering_rule(
       )
 
       new_subview_op = memref.SubViewOp(
-          _transformed_smem_ref_type(op.result.type, transforms),
+          transformed_smem_ref_type(op.result.type, transforms),
           unwrapped_source_ref,
           new_dynamic_offsets,
           None,
@@ -1376,7 +1376,7 @@ def _memref_transpose_op_lowering_rule(
   out_transforms = inference_utils.out_transforms(op)[0]
   _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
   new_transpose_op = memref.TransposeOp(
-      _transformed_smem_ref_type(op.result.type, transforms),
+      transformed_smem_ref_type(op.result.type, transforms),
       unwrapped_in_ref,
       new_permutation,
   )
@@ -1430,6 +1430,74 @@ def _memref_store_op_lowering_rule(
       nontemporal=op.nontemporal,
   )
   return []
+
+
+def inline_block(
+    block: ir.Block, args: Sequence[ir.Value], mapper: dict[ir.Value, ir.Value],
+    clone_terminator: bool, terminator_type: type[ir.OpView],
+) -> list[ir.Value]:
+  """
+  Inlines the given block at the current insertion point.
+
+  The block args are replaced with the provided `args`. If the input mapper is
+  not empty, it could further be used to replace captured values with an
+  alternative.
+
+  If `clone_terminator` is False, the terminator of the block is not cloned. If
+  `clone_terminator` is True, the terminator is cloned. This is useful when
+  inlining the block into another block. In both cases the operands of the
+  terminator are returned as results.
+  """
+  if len(block.arguments) != len(args):
+    raise ValueError(
+        f"Mismatched argument count block:{len(block.arguments)}, provided "
+        f"{len(args)}."
+    )
+
+  for arg, val in zip(block.arguments, args):
+    mapper[arg] =  val
+  return_op = None
+  for op in block.operations:
+    if isinstance(op.opview, terminator_type):
+      assert return_op is None
+      return_op = op.opview
+      if not clone_terminator:
+        continue
+    # Operands not in the mapper are captured from the context.
+    new_operands = [mapper[o] if o in mapper else o for o in op.operands]
+    new_attributes = {
+        named_attr.name: named_attr.attr
+        for named_attr in op.attributes
+    }
+    new_op = ir.Operation.create(
+        name=op.name,
+        results=[res.type for res in op.results],
+        operands=new_operands,
+        attributes=new_attributes,
+    )
+    for old_result, new_result in zip(op.results, new_op.results):
+      mapper[old_result] = new_result
+
+  if return_op is None:
+    raise ValueError("A custom return op must terminate the block.")
+
+  inlined_return_values = [mapper[o] for o in return_op.operands]
+  return inlined_return_values
+
+
+@_register_lowering(mgpu.CustomPrimitiveOp)
+def _mgpu_custom_primitive_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.CustomPrimitiveOp
+) -> Sequence[ir.Value]:
+  """Lowering rule for mgpu.CustomPrimitiveOp."""
+  # The block already contains unwrapping and wrapping conversion casts.
+  return inline_block(
+      op.body.blocks[0],
+      op.operands,
+      mapper={},
+      clone_terminator=False,
+      terminator_type=mgpu.ReturnOp,
+  )
 
 
 # The metadata needed to recostruct a vector from its flattened representation.
@@ -1488,7 +1556,7 @@ def _unflatten_ir_values(
         if ir.IntegerType.isinstance(vec_type.element_type)
         else None,
     )
-    result.append(_fragmented_array_to_ir(value, vec_type))
+    result.append(fragmented_array_to_ir(value, vec_type))
   return result
 
 
