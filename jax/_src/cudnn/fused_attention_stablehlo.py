@@ -1120,7 +1120,7 @@ batching.primitive_batchers[
 ] = _dot_product_attention_bwd_batcher
 
 def not_implemented_sharding_rule(*args, **kwargs):
-  return NotImplementedError("Sharding rule not implemented.")
+  raise NotImplementedError("Sharding rule not implemented.")
 
 _dot_product_attention_fwd_lower.def_partition(
   infer_sharding_from_operands=_dot_product_attention_fwd_infer_sharding_from_operands,
