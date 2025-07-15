@@ -319,7 +319,7 @@ def reshape(operand, new_sizes, dimensions=None):
   return np.reshape(np.transpose(operand, dimensions), new_sizes)
 
 def pad(operand, padding_value, padding_config):
-  # https://www.tensorflow.org/xla/operation_semantics#pad
+  # https://www.openxla.org/xla/operation_semantics#pad
   lo, hi, interior = util.unzip3(padding_config)
   # Handle first the positive edge padding and interior
   lo_pos, hi_pos = np.clip(lo, 0, None), np.clip(hi, 0, None)

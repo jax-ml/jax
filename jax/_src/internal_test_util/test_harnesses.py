@@ -3131,7 +3131,7 @@ _make_conv_harness(
 # feature_group_count is supported for enable_xla=False only if we are doing a
 # depthwise convolution, i.e.: in_channels == feature_group_count.
 # See explanation of depthwise convolution at
-# https://www.tensorflow.org/xla/operation_semantics#conv_convolution.
+# https://www.openxla.org/xla/operation_semantics#conv_convolution.
 _make_conv_harness(
     "depthwise2d",
     lhs_shape=(2, 3, 9, 9),  # "NCHW": in_channels == 3

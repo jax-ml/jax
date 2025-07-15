@@ -1246,7 +1246,7 @@ register_prng(threefry_prng_impl)
 # -- RngBitGenerator PRNG implementation
 
 # This code is experimental!
-# https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator
+# https://www.openxla.org/xla/operation_semantics#rngbitgenerator
 # Notice that the RngBitGenerator operations are not guaranteed to be
 # stable/deterministic across backends or compiler versions. Correspondingly, we
 # reserve the right to change any of these implementations at any time!
