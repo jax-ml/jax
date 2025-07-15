@@ -17,6 +17,7 @@ import platform
 
 from absl import logging
 from absl.testing import absltest
+import jax
 from jax import version
 from jax._src import compiler
 from jax._src import config
@@ -159,7 +160,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
     if xb.get_backend().platform == 'tpu':
       options["ml_framework_name"] = "JAX"
       options["ml_framework_version"] = version.__version__
-    mock_make.assert_called_once_with("name1", options, None)
+    if jax._src.lib.jaxlib_extension_version < 357:
+      mock_make.assert_called_once_with("name1", options, None)
+    else:
+      mock_make.assert_called_once_with("name1", options, None, None, [])
 
   def test_register_plugin_with_config(self):
     test_json_file_path = os.path.join(
@@ -200,7 +204,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
       options["ml_framework_name"] = "JAX"
       options["ml_framework_version"] = version.__version__
 
-    mock_make.assert_called_once_with("name1", options, None)
+    if jax._src.lib.jaxlib_extension_version < 357:
+      mock_make.assert_called_once_with("name1", options, None)
+    else:
+      mock_make.assert_called_once_with("name1", options, None, None, [])
 
   def test_register_plugin_with_lazy_config(self):
     options = {"bar": "baz"}
