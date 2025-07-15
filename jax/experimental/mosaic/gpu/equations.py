@@ -57,7 +57,13 @@ class MostReplicated:
     assert len(self.expressions) >= 1
 
 
-Expression = Variable | Constant | LeastReplicated | MostReplicated
+@dataclasses.dataclass(frozen=True)
+class Reduce:
+  expression: Expression
+  axes: tuple[int, ...]
+
+
+Expression = Variable | Constant | LeastReplicated | MostReplicated | Reduce
 
 
 def reduce_replicated_expression(
@@ -124,6 +130,22 @@ def reduce_expression(
       return reduce_replicated_expression(
           expr, assignments, layouts_lib.meet_layouts
       )
+    case Reduce(expression=expr, axes=axes):
+      reduced_expr = reduce_expression(expr, assignments)
+      match reduced_expr:
+        case Unsatisfiable():
+          return Unsatisfiable()
+        case Constant(value=layout) if isinstance(layout, fa.TiledLayout):
+          return Constant(layout.reduce(axes))
+        case Constant():
+          # Explicitly raise an error here as opposed to simply failing to
+          # simplify, so that we get a clear signal if we ever need to implement
+          # this.
+          raise NotImplementedError(
+              "Reduction of non-tiled layouts is not implemented yet."
+          )
+        case _:
+          return Reduce(expression=reduced_expr, axes=axes)
     case _:
       assert_never(expr)
 
@@ -281,6 +303,8 @@ class EquationSystem:
         case LeastReplicated(expressions=expressions):
           for e in expressions:
             extract_variables(e)
+        case Reduce(expression=e):
+          extract_variables(e)
         case _:
           assert_never(expr)
     for equation in self.equations:

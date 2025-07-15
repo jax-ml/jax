@@ -244,6 +244,24 @@ class EquationSystemTest(parameterized.TestCase):
         equations.Unsatisfiable,
     )
 
+  @parameterized.named_parameters(
+      ("reduce_to_row_layout", (1,), mgpu.WGMMA_ROW_LAYOUT),
+      ("reduce_to_col_layout", (0,), mgpu.WGMMA_COL_LAYOUT),
+  )
+  def test_reduce_reduce_expression_reduces_layout(self, axes, expected_layout):
+    tiled_layout = C(mgpu.WGMMA_LAYOUT)
+    self.assertEqual(
+        equations.reduce_expression(
+            equations.Reduce(tiled_layout, axes=axes), {}
+        ),
+        C(expected_layout),
+    )
+
+  def test_reduce_reduce_expression_with_unsupported_layout_raises_error(self):
+    layout = C(mgpu.WGStridedFragLayout((128, 8), vec_size=8))
+    with self.assertRaises(NotImplementedError):
+      equations.reduce_expression(equations.Reduce(layout, axes=(0,)), {})
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
