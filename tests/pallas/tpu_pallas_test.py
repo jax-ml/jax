@@ -1758,6 +1758,24 @@ class PallasCallDMATest(PallasBaseTest):
     result = run(array, data, index, size)
     np.testing.assert_array_equal(result, expected)
 
+  def test_unused_dma_descriptor_error(self):
+    x = jnp.arange(8 * 128.0).reshape((8, 128))
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        scratch_shapes=[pltpu.SemaphoreType.DMA],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref, sem):
+      pltpu.make_async_copy(x_hbm_ref, o_hbm_ref, sem)
+
+    with self.assertLogs(level='ERROR') as log:
+      kernel(x)
+    [message] = log.output
+    self.assertIn('AsyncCopyDescriptor was not used', message)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True

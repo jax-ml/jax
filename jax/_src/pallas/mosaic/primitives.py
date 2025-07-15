@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from typing import Any
 
 import jax
@@ -180,11 +181,22 @@ class AsyncCopyDescriptor:
   src_sem_transforms: tuple[Transform, ...] | None
   device_id: MultiDimDeviceId | IntDeviceId | None
   device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH
+  _used: bool = dataclasses.field(
+      default=False, init=False, compare=False, hash=False
+  )
 
   def __post_init__(self):
     if (self.src_sem is None) ^ (self.device_id is None):
       raise ValueError("Either both or neither `src_sem` and `device_id` "
                        "can be set.")
+
+  def __del__(self):
+    if not self._used:
+      # Exceptions in ``__del__`` are ignored, so logging is our only option.
+      logging.error(
+          "AsyncCopyDescriptor was not used."
+          " Did you mean to call `start` or `wait` on it?"
+      )
 
   @property
   def is_remote(self):
@@ -217,6 +229,7 @@ class AsyncCopyDescriptor:
       ))
 
   def start(self, priority: int = 0):
+    self._used = True
     flat_args, tree = self._get_args_and_tree()
     dma_start_p.bind(
         *flat_args,
@@ -231,12 +244,14 @@ class AsyncCopyDescriptor:
     self.wait_recv()
 
   def wait_recv(self):
+    self._used = True
     flat_args, tree = self._get_args_and_tree()
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type
     )
 
   def wait_send(self):
+    self._used = True
     if not self.is_remote:
       raise ValueError("Cannot `wait_send` on a local copy.")
     # We swap src and dst since by default dma_wait_p waits on the dst_sem
