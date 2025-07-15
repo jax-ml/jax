@@ -329,14 +329,6 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
 def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
     "A type supported by the WGMMA operation">;
 
-def MosaicGPU_WGMMALayout :
-  I32EnumAttr<"WGMMALayout", "The layout of the tiles of a WGMMA operation", [
-    I32EnumAttrCase<"RowMajor", 0>,
-    I32EnumAttrCase<"ColumnMajor", 1>
-  ]> {
-  let cppNamespace = "::mosaic_gpu";
-}
-
 def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
     [InferTypeOpInterface]> {
   let summary = "Casts a vector to a new layout.";
