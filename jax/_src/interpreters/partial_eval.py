@@ -35,7 +35,7 @@ from jax._src import linear_util as lu
 from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import compute_on
-from jax._src import xla_metadata as xla_metadata_lib
+from jax._src import xla_metadata_lib
 from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            AbstractValue, ClosedJaxpr, new_jaxpr_eqn,
                            Var, DropVar, Atom,
