@@ -1847,7 +1847,7 @@ def emit_pipeline(
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
-    use_sreg_for_state: bool = False,
+    use_sreg_for_state: bool = True,
     use_lookahead: bool = False,
 ):
   """Creates a function to emit a manual pallas pipeline.
@@ -2120,7 +2120,7 @@ def emit_pipeline_with_allocations(
     in_specs=None,
     out_specs=None,
     should_accumulate_out=False,
-    use_sreg_for_state=False,
+    use_sreg_for_state=True,
     use_lookahead=False,
 ):
   """Creates pallas pipeline and top-level allocation preparation functions.
