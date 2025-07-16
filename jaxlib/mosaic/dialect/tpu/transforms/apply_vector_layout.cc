@@ -1508,7 +1508,6 @@ LogicalResult scf_while_rule(RewriteContext &ctx, Operation &op,
   scf::WhileOp while_op = cast<scf::WhileOp>(op);
   TPU_ASSERT_EQ_OP(layouts_in.size(), while_op->getNumOperands());
   TPU_ASSERT_EQ_OP(layouts_out.size(), while_op->getNumResults());
-  TPU_ASSERT_EQ_OP(layouts_in.size(), layouts_out.size());
 
   // The terminator for the before region is the condition op.
   // It takes multiple arguments -- the first being the decision to execute the
@@ -1517,41 +1516,44 @@ LogicalResult scf_while_rule(RewriteContext &ctx, Operation &op,
       const SmallVector<Layout> cond_in_layouts,
       getInLayouts(*while_op.getBeforeBody()->getTerminator(),
                    ctx.target_shape));
+  auto cond_arg_layouts = ArrayRef<Layout>(cond_in_layouts).drop_front(1);
 
   FAILUREOR_ASSIGN_OR_RETURN(
       const SmallVector<Layout> yield_in_layouts,
       getInLayouts(*while_op.getYieldOp(), ctx.target_shape));
-  int out_idx = 0;
-  for (auto [in_layout, cond_layout, yield_layout, out_layout, result] :
-       llvm::zip_equal(layouts_in,
-                       ArrayRef<Layout>(cond_in_layouts).drop_front(1),
-                       yield_in_layouts, layouts_out, op.getResults())) {
-    if (auto vty = dyn_cast<VectorType>(result.getType())) {
+  int in_idx = 0;
+  for (auto [in_layout, yield_layout, input] :
+       llvm::zip_equal(layouts_in, yield_in_layouts, op.getOperands())) {
+    if (auto vty = dyn_cast<VectorType>(input.getType())) {
       TPU_ASSERT_OP(in_layout.has_value());
       TPU_ASSERT_OP(yield_layout.has_value());
-      TPU_ASSERT_OP(out_layout.has_value());
-      if (in_layout.value() != cond_layout.value()) {
-        return op.emitOpError(
-                   "Not implemented: while loop input layout does not match "
-                   "with condition layout ")
-               << out_idx;
-      }
       if (in_layout.value() != yield_layout.value()) {
         return op.emitOpError(
                    "Not implemented: while loop input layout does not match "
                    "with yield layout ")
-               << out_idx;
-      }
-      if (in_layout.value() != out_layout.value()) {
-        return op.emitOpError(
-                   "Not implemented: while loop input layout does not match "
-                   "with output layout ")
-               << out_idx;
+               << in_idx;
       }
     } else {
       TPU_ASSERT_EQ_OP(in_layout, kNoLayout);
-      TPU_ASSERT_EQ_OP(cond_layout, kNoLayout);
       TPU_ASSERT_EQ_OP(yield_layout, kNoLayout);
+    }
+    ++in_idx;
+  }
+
+  int out_idx = 0;
+  for (auto [cond_layout, out_layout, output] :
+       llvm::zip_equal(cond_arg_layouts, layouts_out, op.getResults())) {
+    if (auto vty = dyn_cast<VectorType>(output.getType())) {
+      TPU_ASSERT_OP(cond_layout.has_value());
+      TPU_ASSERT_OP(out_layout.has_value());
+      if (cond_layout.value() != cond_layout.value()) {
+        return op.emitOpError(
+                   "Not implemented: while loop output layout does not match "
+                   "with condition layout ")
+               << out_idx;
+      }
+    } else {
+      TPU_ASSERT_EQ_OP(cond_layout, kNoLayout);
       TPU_ASSERT_EQ_OP(out_layout, kNoLayout);
     }
     ++out_idx;
