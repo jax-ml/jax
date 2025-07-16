@@ -68,7 +68,6 @@ limitations under the License.
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/topology.h"
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
-#include "xla/python/pjrt_ifrt/transfer_server_interface.h"
 #include "xla/python/version.h"
 #include "xla/tsl/python/lib/core/numpy.h"  // NOLINT
 
@@ -172,13 +171,6 @@ bool IsTsan() {
 bool IsSanitized() { return IsAsan() || IsMsan() || IsTsan(); }
 
 }  // namespace
-
-#if JAX_IFRT_VERSION_NUMBER < 15
-namespace ifrt {
-// Using a default implementation for short-term backwards compatibility.
-struct TransferServerInterfaceFactory {};
-}  // namespace ifrt
-#endif
 
 NB_MODULE(_jax, m) {
   // Initialize ABSL logging because code within XLA uses it.
@@ -344,9 +336,8 @@ NB_MODULE(_jax, m) {
          std::shared_ptr<xla::cpu::CpuCollectives> collectives,
          std::optional<int> num_devices,
          std::optional<int> get_local_topology_timeout_minutes,
-         std::optional<int> get_global_topology_timeout_minutes,
-         std::optional<ifrt::TransferServerInterfaceFactory>
-             transfer_server_factory) -> nb_class_ptr<PyClient> {
+         std::optional<int> get_global_topology_timeout_minutes)
+          -> nb_class_ptr<PyClient> {
         std::unique_ptr<ifrt::PjRtClient> ifrt_client;
         {
           nb::gil_scoped_release gil_release;
@@ -376,12 +367,6 @@ NB_MODULE(_jax, m) {
             ifrt_options.get_global_topology_timeout =
                 absl::Minutes(*get_global_topology_timeout_minutes);
           }
-#if JAX_IFRT_VERSION_NUMBER >= 15
-          if (transfer_server_factory.has_value()) {
-            ifrt_options.transfer_server_factory =
-                std::move(transfer_server_factory->factory_fn);
-          }
-#endif
           ifrt_client =
               ValueOrThrow(ifrt::PjRtClient::Create(std::move(ifrt_options)));
         }
@@ -393,8 +378,7 @@ NB_MODULE(_jax, m) {
           std::shared_ptr<xla::cpu::CpuCollectives>(),
       nb::arg("num_devices").none() = std::nullopt,
       nb::arg("get_local_topology_timeout_minutes").none() = std::nullopt,
-      nb::arg("get_global_topology_timeout_minutes").none() = std::nullopt,
-      nb::arg("transfer_server_factory").none() = std::nullopt);
+      nb::arg("get_global_topology_timeout_minutes").none() = std::nullopt);
   m.def("pjrt_plugin_loaded", [](std::string platform_name) -> bool {
     absl::StatusOr<const PJRT_Api*> pjrt_api = pjrt::PjrtApi(platform_name);
     return pjrt_api.ok();
@@ -430,10 +414,8 @@ NB_MODULE(_jax, m) {
       "get_c_api_client",
       [](std::string platform_name,
          const absl::flat_hash_map<std::string, PjRtValueType>& options,
-         std::shared_ptr<DistributedRuntimeClient> distributed_client,
-         std::optional<ifrt::TransferServerInterfaceFactory>
-             transfer_server_factory
-        ) -> nb_class_ptr<PyClient> {
+         std::shared_ptr<DistributedRuntimeClient> distributed_client)
+          -> nb_class_ptr<PyClient> {
         std::unique_ptr<ifrt::PjRtClient> ifrt_client;
         {
           nb::gil_scoped_release gil_release;
@@ -445,24 +427,13 @@ NB_MODULE(_jax, m) {
           }
           std::unique_ptr<PjRtClient> c_api_client = xla::ValueOrThrow(
               GetCApiClient(platform_name, options, kv_store));
-          ifrt::PjRtClient::CreateOptions ifrt_options;
-          ifrt_options.pjrt_client =
-              std::shared_ptr<PjRtClient>(std::move(c_api_client));
-#if JAX_IFRT_VERSION_NUMBER >= 15
-          if (transfer_server_factory.has_value()) {
-            ifrt_options.transfer_server_factory =
-                std::move(transfer_server_factory->factory_fn);
-          }
-#endif
-          ifrt_client = ValueOrThrow(
-              ifrt::PjRtClient::Create(std::move(ifrt_options)));
+          ifrt_client = ifrt::PjRtClient::Create(std::move(c_api_client));
         }
         return PyClient::Make(std::move(ifrt_client));
       },
       nb::arg("platform_name"),
       nb::arg("options") = absl::flat_hash_map<std::string, PjRtValueType>(),
-      nb::arg("distributed_client").none() = nullptr,
-      nb::arg("transfer_server_factory").none() = std::nullopt);
+      nb::arg("distributed_client").none() = nullptr);
   // TODO(b/322357665): Delete this method after TPU plugin changes to use the
   // standard registration.
   m.def("get_default_c_api_topology",
@@ -930,9 +901,6 @@ NB_MODULE(_jax, m) {
              throw nb::attribute_error(
                  absl::StrCat("Unknown attribute ", name).c_str());
            });
-
-  nb::class_<ifrt::TransferServerInterfaceFactory>(
-      m, "TransferServerInterfaceFactory");
 
   nb::class_<PyExecutable>(m, "Executable")
       .def("hlo_modules", ValueOrThrowWrapper(&PyExecutable::GetHloModules))
