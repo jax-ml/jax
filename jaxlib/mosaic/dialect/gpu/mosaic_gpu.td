@@ -637,4 +637,63 @@ def MosaicGPU_WithTransformsOp : Op<MosaicGPU_Dialect, "with_transforms",
   let results = (outs MemRefOf<[AnyType]>);
 }
 
+def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
+  let summary = "Allocates a chunk of TMEM.";
+  let description = [{
+    This op allocates a chunk of TMEM and stores the pointer to the memory
+    in the provided SMEM memref.
+
+    The `smem_ptr` is a pointer in SMEM where a pointer to the allocated
+    TMEM will be stored. The op returns a memref to the allocated TMEM. The
+    result must have a shape with dimensions [rows, logical_columns]. If
+    `packing` is 1, then the number of logical (unpacked) columns is equal to
+    the number of allocated columns in TMEM. Otherwise, these equations
+    must hold:
+
+        packing = 32 / bitwidth(element type of result)
+        unpacked_columns = allocated_columns * packing
+
+    The number of allocated columns in TMEM can be any power of two in the
+    range [32, 512]. If `exact` is `true`, then the calculated
+    number of allocated columns must match that restriction. If `exact` is
+    `false` and the calculated number of allocated columns is less than 32 or
+    not a power of two, then it will be rounded up to the nearest power of two
+    larger or equal to 32.
+
+    If `collective` is `true` 2 CTAs will perform the allocation collectively,
+    otherwise, only one CTA will perform the allocation.
+  }];
+
+  let arguments = (ins
+    MemRefRankOf<[I32], [0]>:$smem_ptr,
+
+    // Attributes
+    DefaultValuedAttr<BoolAttr, "false">:$collective,
+    DefaultValuedAttr<BoolAttr, "true">:$exact,
+    DefaultValuedAttr<ConfinedAttr<I32Attr, [IntPositive]>, "1">:$packing
+  );
+
+  let results = (outs MemRefRankOf<[AnyType], [2]>);
+
+  let assemblyFormat = [{
+    `smem_ptr` `(` $smem_ptr `:` type($smem_ptr) `)`
+    attr-dict `->` type(results)
+  }];
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_TmemDeallocOp : Op<MosaicGPU_Dialect, "tmem_dealloc", []> {
+  let summary = "Deallocates a chunk of TMEM.";
+
+  let arguments = (ins MemRefRankOf<[AnyType], [2]>:$tmem_ref);
+
+  let assemblyFormat = [{
+    `tmem_ref` `(` $tmem_ref `:` type($tmem_ref) `)`
+    attr-dict
+  }];
+
+  let hasVerifier = 1;
+}
+
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_

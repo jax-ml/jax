@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -551,6 +552,85 @@ llvm::LogicalResult ReturnOp::verify() {
                          << custom_primitive_op->getName();
 
   return llvm::success();
+}
+
+namespace {
+int kTmemMinColumns = 32;
+int kTmemMaxColumns = 512;
+int kTmemCellBitwidth = 32;
+
+llvm::LogicalResult VerifyTmemRefType(
+    mlir::MLIRContext* context, mlir::Operation* op,
+    mlir::MemRefType tmem_ref_type, bool exact = false,
+    std::optional<int> packing = std::nullopt) {
+  mlir::Attribute tmem = TmemAttr::get(context);
+  if (tmem_ref_type.getMemorySpace() != tmem) {
+    return op->emitError() << "The tmem memref must have a "
+                              "mosaic_gpu.tmem memory space but got: "
+                           << tmem_ref_type.getMemorySpace();
+  }
+
+  int num_unpacked_columns = tmem_ref_type.getShape()[1];
+  int num_allocated_columns = num_unpacked_columns;
+  if (packing.has_value() && packing.value() != 1) {
+    if (packing.value() * tmem_ref_type.getElementTypeBitWidth() !=
+        kTmemCellBitwidth) {
+      return op->emitError() << "Only unpacked, or fully packed allocations "
+                                "are supported. Expected packing to be either "
+                                "1 or 32 / element_bitwidth, but got: "
+                                "packing = "
+                             << packing.value() << ", element_bitwidth = "
+                             << tmem_ref_type.getElementTypeBitWidth();
+    }
+    if (num_unpacked_columns % packing.value() != 0) {
+      return op->emitError() << "The number of unpacked columns must be "
+                                "divisible by the packing factor, but got: "
+                             << num_unpacked_columns << " / "
+                             << packing.value();
+    }
+    num_allocated_columns /= packing.value();
+  }
+
+  if (num_allocated_columns > kTmemMaxColumns) {
+    return op->emitError()
+           << "The number of allocated columns must be less than or equal to "
+           << kTmemMaxColumns << " but got: " << num_allocated_columns;
+  }
+
+  int rounded_column_count = kTmemMinColumns;
+  while (num_allocated_columns > rounded_column_count &&
+         rounded_column_count < kTmemMaxColumns) {
+    rounded_column_count *= 2;
+  }
+  if (exact && num_allocated_columns != rounded_column_count) {
+    return op->emitError()
+           << "When `exact` is true the number of allocated columns must "
+              "be a power of two in the range [32, 512], but got : "
+           << num_allocated_columns;
+  }
+
+  return llvm::success();
+}
+}  // namespace
+
+llvm::LogicalResult TmemAllocOp::verify() {
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  mlir::MemRefType smem_ref_type = getSmemPtr().getType();
+  if (smem_ref_type.getMemorySpace() != smem) {
+    return emitError()
+           << "The `smem_ptr` memref must have the Workgroup address "
+              "space but got: "
+           << smem_ref_type.getMemorySpace();
+  }
+
+  return VerifyTmemRefType(getContext(), getOperation(), getResult().getType(),
+                           getExact(), getPacking());
+}
+
+llvm::LogicalResult TmemDeallocOp::verify() {
+  return VerifyTmemRefType(getContext(), getOperation(),
+                           getTmemRef().getType());
 }
 
 void MosaicGPUDialect::initialize() {
