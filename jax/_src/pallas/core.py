@@ -1262,7 +1262,6 @@ def core_map(
     cost_estimate: The cost estimate of the function.
   """
   def wrapped(f):
-    name_ = name or f.__name__
     flat_args, in_tree = tree_util.tree_flatten(((), {}))
     flat_fun, out_tree_thunk = api_util.flatten_fun(
         lu.wrap_init(f,
@@ -1275,15 +1274,21 @@ def core_map(
     ):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
     out = core_map_p.bind(
-        *consts, jaxpr=jaxpr, mesh=mesh,
+        *consts,
+        jaxpr=jaxpr,
+        mesh=mesh,
         compiler_params=compiler_params,
-        interpret=(config.pallas_tpu_interpret_mode_context_manager.value
-                   or interpret),
+        interpret=(
+            config.pallas_tpu_interpret_mode_context_manager.value or interpret
+        ),
         debug=debug,
-        cost_estimate=cost_estimate, name=name_)
+        cost_estimate=cost_estimate,
+        name=name or util.fun_name(f),
+    )
     if out:
       raise ValueError("core_map-ped functions must not return any outputs.")
     return tree_util.tree_unflatten(out_tree_thunk(), out)
+
   return wrapped
 
 
