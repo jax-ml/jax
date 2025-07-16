@@ -20,7 +20,7 @@ from collections.abc import Callable, Sequence, Set
 import dataclasses
 import enum
 import itertools
-from typing import cast
+from typing import assert_never, cast
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
@@ -412,13 +412,24 @@ def _constant_equation_system(
   return system, {variable: [result]}
 
 
+def _terminator(
+    block: ir.Block, expected_terminator: type[ir.OpView]
+) -> ir.OpView:
+  """Returns the terminator of the given block.
+
+  Checks that the terminator is of the expected type.
+  """
+  terminator = block.operations[len(block.operations) - 1]
+  assert isinstance(terminator, expected_terminator)
+  return terminator.opview
+
+
 @_add_equation_system_derivation_rule(scf.ForOp)
 def _for_equation_system(
     op: scf.ForOp
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
   [block] = op.region.blocks
-  yield_op = block.operations[len(block.operations) - 1].opview
-  assert isinstance(yield_op, scf.YieldOp)
+  yield_op = _terminator(block, scf.YieldOp)
   operand_or_results_for_variable: OperandOrResultsForVariable = {}
 
   # Account for the lower bound, upper bound, and step of the loop, which appear
@@ -436,6 +447,42 @@ def _for_equation_system(
     operand_or_results_for_variable[eqns.Variable(operand)] = [
         operand, result, yield_operand,
     ]
+
+  return eqns.EquationSystem(), operand_or_results_for_variable
+
+
+@_add_equation_system_derivation_rule(scf.WhileOp)
+def _while_equation_system(
+    op: scf.WhileOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  [before_block] = op.before.blocks
+  [after_block] = op.after.blocks
+  cond_op = _terminator(before_block, scf.ConditionOp)
+  yield_op = _terminator(after_block, scf.YieldOp)
+
+  operand_or_results_for_variable: OperandOrResultsForVariable = {}
+
+  for operand_or_result in operands_and_results(op):
+    match operand_or_result.type:
+      case VariableType.OPERAND:
+        yield_operand = OperandOrResult(
+            yield_op, VariableType.OPERAND, operand_or_result.index
+        )
+        operand_or_results_for_variable[eqns.Variable(operand_or_result)] = [
+            operand_or_result,
+            yield_operand,
+        ]
+      case VariableType.RESULT:
+        # Increment by 1 to account for the conditional.
+        cond_operand = OperandOrResult(
+            cond_op, VariableType.OPERAND, operand_or_result.index + 1
+        )
+        operand_or_results_for_variable[eqns.Variable(operand_or_result)] = [
+            operand_or_result,
+            cond_operand,
+        ]
+      case _ as never:
+        assert_never(never)
 
   return eqns.EquationSystem(), operand_or_results_for_variable
 
@@ -632,7 +679,7 @@ def derive_hints(
 
 
 def is_terminator(op: ir.OpView) -> bool:
-  return isinstance(op, scf.YieldOp)
+  return isinstance(op, (scf.YieldOp, scf.ConditionOp))
 
 
 def infer_layout(module: ir.Module):

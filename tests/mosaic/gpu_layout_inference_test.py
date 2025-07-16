@@ -389,7 +389,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
   def test_infer_while_op_layouts(
       self, init_shape, init_layout, result_shape, result_layout
   ):
-    self.skip_if_equations()
     f32 = ir.F32Type.get()
     in_type = ir.VectorType.get(init_shape, f32) if init_shape else f32
     out_type = ir.VectorType.get(result_shape, f32) if result_shape else f32
