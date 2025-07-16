@@ -23,6 +23,7 @@ from jax._src import ad_util
 from jax._src import core, util
 from jax._src import dispatch
 from jax._src import ops
+from jax._src import pjit
 from jax._src import prng
 from jax._src import random
 from jax._src import shard_map
@@ -54,6 +55,7 @@ for prim in it.chain(
   lax.__dict__.values(),
   linalg.__dict__.values(),
   ops.__dict__.values(),
+  [pjit.sharding_constraint_p],
   prng.__dict__.values(),
   random.__dict__.values(),
   shard_map.__dict__.values(),

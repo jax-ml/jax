@@ -209,6 +209,7 @@ def _roofline_interpreter(
           for attr in dir(eqn):
             if not attr.startswith("_"):
               msg += f"\n{attr}: {getattr(eqn, attr)}"
+          msg += f"\nThe entire JAXPR being rooflined:\n{jaxpr}"
           raise NotImplementedError(msg)
         rule = _rooflines[eqn.primitive]
         result += rule(
