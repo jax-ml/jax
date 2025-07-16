@@ -439,6 +439,7 @@ py_library_providing_imports_info(
         ":xla",
         ":xla_bridge",
         ":xla_metadata",
+        ":xla_metadata_lib",
         "//jax/_src/lib",
     ] + py_deps("numpy") + py_deps("scipy") + py_deps("opt_einsum") + py_deps("flatbuffers") + jax_extra_deps,
 )
@@ -778,7 +779,7 @@ pytype_strict_library(
         ":tree_util",
         ":typing",
         ":util",
-        ":xla_metadata",
+        ":xla_metadata_lib",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
@@ -1502,7 +1503,7 @@ pytype_strict_library(
         ":state_types",
         ":tree_util",
         ":util",
-        ":xla_metadata",
+        ":xla_metadata_lib",
     ] + py_deps("numpy"),
 )
 
@@ -1669,6 +1670,16 @@ pytype_strict_library(
 pytype_strict_library(
     name = "xla_metadata",
     srcs = ["_src/xla_metadata.py"],
+    deps = [
+        ":config",
+        ":xla_metadata_lib",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "xla_metadata_lib",
+    srcs = ["_src/xla_metadata_lib.py"],
     deps = [
         ":config",
         "//jax/_src/lib",
