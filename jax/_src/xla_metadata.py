@@ -12,49 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
 from contextlib import contextmanager
 
 from jax._src import config
 from jax._src.lib import xla_client
+from jax._src import xla_metadata_lib
 
 config_ext = xla_client._xla.config
-
-
-class XlaMetadata:
-  __slots__ = ['val', 'hash']
-
-  val: dict[str, Any]
-
-  def __init__(self, val):
-    self.val = val
-    self.hash = hash(tuple(sorted(self.val.items())))
-
-  def __hash__(self):
-    return self.hash
-
-  def __eq__(self, other):
-    return other is not None and self.val == other.val
-
-
-def filter_nones(d: dict) -> dict:
-  return {k: v for k, v in d.items() if v is not None}
-
-
-def update_metadata(a, b: dict[str, Any]):
-  if not b:
-    return a
-  if a is None or a is config_ext.unset:
-    val = {}
-  else:
-    val = a.val.copy()
-  val.update(b)
-  return XlaMetadata(filter_nones(val))
-
-
-def current_xla_metadata() -> dict[str, Any] | None:
-  metadata = config.xla_metadata_context_manager.value
-  return None if metadata is None else metadata.val
 
 
 class XlaMetadataContextManager:
@@ -69,7 +33,7 @@ class XlaMetadataContextManager:
 
     self.prev = config.xla_metadata_context_manager.get_local()
     config.xla_metadata_context_manager.set_local(
-        update_metadata(self.prev, self.updates)
+        xla_metadata_lib.update_metadata(self.prev, self.updates)
     )
 
   def __exit__(self, exc_type, exc_value, traceback):

@@ -59,7 +59,7 @@ from jax._src.lib import xla_client
 from jax._src import traceback_util
 from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
-from jax._src import xla_metadata as xla_metadata_lib
+from jax._src import xla_metadata_lib
 
 traceback_util.register_exclusion(__file__)
 
