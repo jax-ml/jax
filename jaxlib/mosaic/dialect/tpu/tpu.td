@@ -949,6 +949,9 @@ def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma">, IndirectDMAOp {
     AnyMemRef:$src,
     AnyMemRef:$dst
   );
+  let assemblyFormat = [{
+    $src `to` $dst `,` `semaphore` $semaphore attr-dict `:` type($src) `,` type($dst) `,` type($semaphore)
+    }];
   let hasVerifier = 1;
   let extraClassDeclaration = extraBaseClassDeclaration;
 }
