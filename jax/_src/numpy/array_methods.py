@@ -33,6 +33,7 @@ import numpy as np
 
 from jax._src import api
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
@@ -318,7 +319,7 @@ def _reshape(self: Array, *args: Any, order: str = "C", out_sharding=None
     return lax.reshape(self, newshape, None, out_sharding=out_sharding)
   elif order == "F":
     dims = list(range(self.ndim)[::-1])
-    return lax.reshape(self, newshape[::-1], dims, out_sharding=out_sharding).T
+    return lax.reshape(self, newshape[::-1], dims, out_sharding=out_sharding).transpose()
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
@@ -432,8 +433,15 @@ def _transpose(self: Array, *args: Any) -> Array:
 def _transpose_property(self: Array):
   """Compute the all-axis array transpose.
 
-  Refer to :func:`jax.numpy.transpose` for details.
+  ``arr.T`` is equivalent to ``arr.transpose()``, but requires the array to
+  be two-dimensional. Refer to :func:`jax.numpy.transpose` for more details.
   """
+  if self.ndim != 2:
+    deprecations.warn('jax-numpy-T-2dim',
+        ('Calling the arr.T property on an array with ndim != 2 is deprecated.'
+         ' arr.transpose() is a drop-in replacement. Consider the arr.mT property'
+         ' when the intent is a batched matrix transpose.'),
+        stacklevel=2)
   return lax_numpy.transpose(self)
 
 def _var(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = None,
