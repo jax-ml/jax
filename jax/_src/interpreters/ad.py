@@ -244,7 +244,7 @@ def direct_linearize(traceable: lu.WrappedFun,
     tangent_trace.tag = linearize_trace.tag
     tracers = [LinearizeTracer(linearize_trace, p, t) for p, t in zip(primals, tangents)]
     tracers = [t.full_lower() for t in tracers]
-    with (core.set_current_trace(linearize_trace, check_leaks=True),
+    with (core.set_current_trace(linearize_trace),
           source_info_util.transform_name_stack('jvp')):
       if has_aux:
         ans, aux = traceable.call_wrapped(*tracers)
