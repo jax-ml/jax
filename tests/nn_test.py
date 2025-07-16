@@ -436,6 +436,30 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSquareplusZero(self, dtype):
     self.assertEqual(dtype(1), nn.squareplus(dtype(0), dtype(4)))
 
+  @parameterized.product(
+      shape=[(5,), (3, 5), (2, 3, 5)],
+      use_where=[True, False],
+      keepdims=[True, False],
+  )
+  def testLogMeanExp(self, shape, use_where, keepdims):
+    key = random.key(0)
+
+    key, subkey = random.split(key)
+    x = random.uniform(subkey, shape) * 2 - 1
+
+    key, subkey = random.split(key)
+    axis = random.randint(subkey, (), 0, x.ndim).item()
+
+    if use_where:
+      key, subkey = random.split(key)
+      where = random.bernoulli(subkey, shape=shape)
+    else:
+      where = None
+
+    got = nn.logmeanexp(x, axis=axis, where=where, keepdims=keepdims)
+    expected = jnp.log(jnp.mean(jnp.exp(x), axis=axis, where=where, keepdims=keepdims))
+    self.assertAllClose(got, expected, atol=1e-3)
+
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testMishGrad(self):
     check_grads(nn.mish, (1e-8,), order=4,

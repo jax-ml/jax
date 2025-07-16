@@ -44,6 +44,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import util as numpy_util
+from jax._src.numpy.reductions import _count
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.ops.special import logsumexp as _logsumexp
@@ -515,6 +516,37 @@ def glu(x: ArrayLike, axis: int = -1) -> Array:
 # other functions
 
 logsumexp = _logsumexp
+
+
+@partial(api.jit, static_argnames=("axis", "keepdims"))
+def logmeanexp(
+    x: ArrayLike,
+    axis: int | tuple[int, ...] | None = None,
+    where: ArrayLike | None = None,
+    keepdims: bool = False,
+) -> Array:
+  r"""Log mean exp.
+
+  Computes the function:
+
+  .. math::
+    \text{logmeanexp}(x) = \log \frac{1}{n} \sum_{i=1}^n \exp x_i = \text{logsumexp}(x) - \log n
+
+  Args:
+    x: Input array.
+    axis: Axis or axes along which to reduce.
+    where: Elements to include in the reduction. Optional.
+    keepdims: Preserve the dimensions of the input.
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`jax.nn.logsumexp`
+  """
+  lse = _logsumexp(x, axis=axis, where=where, keepdims=keepdims)
+  count = _count(x, axis=axis, where=where, keepdims=keepdims, dtype=lse.dtype)
+  return lse - jnp.log(count)
 
 
 @partial(api.jit, static_argnames=("axis",))
