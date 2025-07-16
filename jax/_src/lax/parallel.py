@@ -1210,9 +1210,10 @@ def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
   if not isinstance(axis_ctx, SPMDAxisContext):
     raise NotImplementedError("psend currently only supports manual sharding")
 
-  sharding = xc.OpSharding()
-  sharding.type = xc.OpSharding.Type.MANUAL
-  mlir.set_sharding(send_op, sharding)
+  if not config.use_shardy_partitioner.value:
+    sharding = xc.OpSharding()
+    sharding.type = xc.OpSharding.Type.MANUAL
+    mlir.set_sharding(send_op, sharding)
   return send_op.results
 
 
@@ -1254,9 +1255,10 @@ def _precv_lowering_gpu(ctx, token, *, out_shape, axis_name, perm):
   if not isinstance(axis_ctx, SPMDAxisContext):
     raise NotImplementedError("precv currently only supports manual sharding")
 
-  sharding = xc.OpSharding()
-  sharding.type = xc.OpSharding.Type.MANUAL
-  mlir.set_sharding(recv_op, sharding)
+  if not config.use_shardy_partitioner.value:
+    sharding = xc.OpSharding()
+    sharding.type = xc.OpSharding.Type.MANUAL
+    mlir.set_sharding(recv_op, sharding)
 
   # recv_op should return an array of [RankedTensorType, StableHlo.token]; we
   # only need the tensor.
