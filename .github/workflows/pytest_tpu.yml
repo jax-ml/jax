@@ -84,20 +84,20 @@ jobs:
           persist-credentials: false
       - name: Set env vars for use in artifact download URL
         run: |
-          os=$(uname -s | awk '{print tolower($0)}')
-          arch=$(uname -m)
+          os="$(uname -s | awk '{print tolower($0)}')"
+          arch="$(uname -m)"
 
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.11, then python_major_minor=311
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
-          python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
+          python_major_minor="$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')"
 
-          echo "OS=${os}" >> $GITHUB_ENV
-          echo "ARCH=${arch}" >> $GITHUB_ENV
+          echo "OS=${os}" >> "$GITHUB_ENV"
+          echo "ARCH=${arch}" >> "$GITHUB_ENV"
           # Python wheels follow a naming convention: standard wheels use the pattern
           # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
           # `*-cp<py_version>-cp<py_version>t-*`.
-          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
+          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> "$GITHUB_ENV"
       - name: Download JAX wheels from GCS
         id: download-wheel-artifacts
         # Set continue-on-error to true to prevent actions from failing the workflow if this step
@@ -105,12 +105,12 @@ jobs:
         # informative error message.
         continue-on-error: true
         run: |
-          mkdir -p $(pwd)/dist
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+          mkdir -p dist
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
             echo "JAX only release. Only downloading the jax wheel from the release bucket."
           else
-            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" dist/
           fi
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts.outcome == 'failure'
@@ -121,23 +121,23 @@ jobs:
           exit 1
       - name: Install Python dependencies
         run: |
-          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt -r build/collect-profile-requirements.txt
+          "$JAXCI_PYTHON" -m uv pip install -r build/test-requirements.txt -r build/collect-profile-requirements.txt
       - name: Set up libtpu wheels
         run: |
           if [[ "${{ inputs.libtpu-version-type }}" == "nightly" ]]; then
             echo "Using nightly libtpu"
-            $JAXCI_PYTHON -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+            "$JAXCI_PYTHON" -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
           elif [[ "${{ inputs.libtpu-version-type }}" == "pypi_latest" ]]; then
             echo "Using latest libtpu from PyPI"
             # Set JAXCI_JAX_PYPI_EXTRAS to "tpu". The `run_pytest_tpu.sh` script will install the
             # latest libtpu wheel from PyPI.
-            echo "JAXCI_JAX_PYPI_EXTRAS=tpu" >> $GITHUB_ENV
+            echo "JAXCI_JAX_PYPI_EXTRAS=tpu" >> "$GITHUB_ENV"
           elif [[ "${{ inputs.libtpu-version-type }}" == "oldest_supported_libtpu" ]]; then
             echo "Using oldest supported libtpu"
-            $JAXCI_PYTHON -m uv pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
+            "$JAXCI_PYTHON" -m uv pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
-            echo "libtpu_version_type=oldest_supported_libtpu" >> $GITHUB_ENV
+            echo "libtpu_version_type=oldest_supported_libtpu" >> "$GITHUB_ENV"
           else
             echo "Unknown libtpu version type: ${{ inputs.libtpu-version-type }}"
             exit 1

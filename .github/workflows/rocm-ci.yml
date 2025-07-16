@@ -24,7 +24,7 @@ jobs:
         run: |
           ls
           # Make sure that we own all of the files so that we have permissions to delete them
-          docker run -v "./:/jax" ubuntu /bin/bash -c "chown -R $UID /jax/workdir_* || true"
+          docker run -v ".:/jax" ubuntu /bin/bash -c "chown -R \"$UID\" /jax/workdir_* || true"
           # Remove any old work directories from this machine
           rm -rf workdir_*
           ls
@@ -37,14 +37,14 @@ jobs:
           persist-credentials: false
       - name: Build JAX
         run: |
-          pushd $WORKSPACE_DIR
+          pushd "$WORKSPACE_DIR"
           python3 build/rocm/ci_build \
-            --rocm-version $ROCM_VERSION \
-            --base-docker $BASE_IMAGE \
-            --python-versions $PYTHON_VERSION \
+            --rocm-version "$ROCM_VERSION" \
+            --base-docker "$BASE_IMAGE" \
+            --python-versions "$PYTHON_VERSION" \
             --compiler=clang \
             dist_docker \
-            --image-tag $TEST_IMAGE
+            --image-tag "$TEST_IMAGE"
       - name: Archive jax wheels
         uses: actions/upload-artifact@v4
         with:
@@ -53,6 +53,6 @@ jobs:
           retention-days: 2
       - name: Run tests
         run: |
-          cd $WORKSPACE_DIR
-          python3 build/rocm/ci_build test $TEST_IMAGE --test-cmd "pytest tests/core_test.py"
+          cd "$WORKSPACE_DIR"
+          python3 build/rocm/ci_build test "$TEST_IMAGE" --test-cmd "pytest tests/core_test.py"
 

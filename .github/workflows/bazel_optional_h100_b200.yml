@@ -48,7 +48,7 @@ jobs:
             --repo_env=HERMETIC_CUDNN_VERSION="9.8.0" \
             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-            --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
+            --run_under "./build/parallel_accelerator_execute.sh" \
             --test_output=errors \
             --test_tag_filters=-multiaccelerator \
             --test_env=JAX_ACCELERATOR_COUNT=1 \

@@ -65,16 +65,16 @@ jobs:
           persist-credentials: false
       - name: Set env vars for use in artifact download URL
         run: |
-          os=$(uname -s | awk '{print tolower($0)}')
-          arch=$(uname -m)
+          os="$(uname -s | awk '{print tolower($0)}')"
+          arch="$(uname -m)"
 
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.11, then python_major_minor=311
-          python_major_minor=$(echo "$JAXCI_HERMETIC_PYTHON_VERSION" | tr -d '.')
+          python_major_minor="$(echo "$JAXCI_HERMETIC_PYTHON_VERSION" | tr -d '.')"
 
-          echo "OS=${os}" >> $GITHUB_ENV
-          echo "ARCH=${arch}" >> $GITHUB_ENV
-          echo "PYTHON_MAJOR_MINOR=${python_major_minor}" >> $GITHUB_ENV
+          echo "OS=${os}" >> "$GITHUB_ENV"
+          echo "ARCH=${arch}" >> "$GITHUB_ENV"
+          echo "PYTHON_MAJOR_MINOR=${python_major_minor}" >> "$GITHUB_ENV"
       - name: Download the wheel artifacts from GCS
         id: download-wheel-artifacts
         # Set continue-on-error to true to prevent actions from failing the workflow if this step
@@ -82,16 +82,16 @@ jobs:
         # informative error message.
         continue-on-error: true
         run: |
-          mkdir -p $(pwd)/dist
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+          mkdir -p dist
+          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
 
-          if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
-          elif [[ ${{ inputs.jaxlib-version }} == "pypi_latest" ]]; then
-            PYTHON=python${{ inputs.python }}
-            $PYTHON -m pip download jaxlib jax-cuda12-pjrt jax-cuda12-plugin --dest $(pwd)/dist/
+          if [[ "${{ inputs.jaxlib-version }}" == "head" ]]; then
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" dist/ &&
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" dist/ &&
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" dist/
+          elif [[ "${{ inputs.jaxlib-version }}" == "pypi_latest" ]]; then
+            PYTHON="python${{ inputs.python }}"
+            "$PYTHON" -m pip download jaxlib jax-cuda12-pjrt jax-cuda12-plugin --dest dist/
           else
             echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}"
             exit 1

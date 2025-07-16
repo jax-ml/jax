@@ -81,7 +81,8 @@ jobs:
       - name: Build jaxlib at HEAD
         run: ./ci/build_artifacts.sh jaxlib
       - name: Install test dependencies
-        run: $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+        run: |
+          "$JAXCI_PYTHON" -m uv pip install -r build/test-requirements.txt
       - name: Run Pytest CPU tests
         timeout-minutes: 30
         run: ./ci/run_pytest_cpu.sh
