@@ -3071,33 +3071,48 @@ class MiscellaneousTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(out, state_utils.bitcast(x, jnp.uint32))
 
-  def test_roll_partial_with_static_shift(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 5, 15):
-      self.skipTest('Needs a newer libtpu')
-    x = np.arange(8192, dtype=jnp.float32).reshape(128, 64)
+  @parameterized.product(
+      shape=((128, 64), (15, 256), (16, 256)),
+      shift=(2, 3),
+      axis=(0, 1),
+  )
+  def test_roll_partial_with_static_shift(
+      self, shape: tuple[int, int], shift: int, axis: int
+  ):
+    if (
+        not jtu.if_cloud_tpu_at_least(2025, 7, 19)
+        and shape[0] % 8
+        and axis == 0
+    ):
+      self.skipTest('Needs a newer libtpu for non-sublane-aligned shape')
+    x = np.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
 
     def kernel(x_ref, out_ref):
-      out_ref[...] = pltpu.roll(x_ref[...], 3, 1)
+      out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=axis)
 
     out = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32)
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
     )(x)
-    np.testing.assert_array_equal(out, np.roll(x, 3, 1))
+    np.testing.assert_array_equal(out, np.roll(x, shift, axis))
 
-  def test_roll_partial_with_dynamic_shift(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 5, 15):
-      self.skipTest('Needs a newer libtpu')
+  @parameterized.product(
+      shape_and_axis=(((128, 64), 1), ((63, 256), 0)),
+  )
+  def test_roll_partial_with_dynamic_shift(
+      self, shape_and_axis: tuple[tuple[int, int], int]
+  ):
     if self.INTERPRET:
       self.skipTest('Test only applies to non-interpret mode.')
-    x = np.arange(8192, dtype=jnp.float32).reshape(128, 64)
+    shape, axis = shape_and_axis
+    x = np.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
 
     def kernel(x_ref, out_ref):
       amount = x_ref[0, 0].astype(jnp.int32)
-      out_ref[...] = pltpu.roll(x_ref[...], amount, 1)
+      out_ref[...] = pltpu.roll(x_ref[...], amount, axis=axis)
 
     with self.assertRaisesRegex(Exception, 'unsupported unaligned shape'):
       _ = self.pallas_call(
-          kernel, out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32)
+          kernel, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
       )(x)
 
   def test_retiling1(self):

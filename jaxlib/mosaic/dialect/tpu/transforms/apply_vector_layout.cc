@@ -2482,12 +2482,9 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
   if (vty.getRank() < 2) {
     return op.emitOpError("Not implemented: unsupported 1D shape");
   }
-  // TODO(b/411170715): Allow sublane rotation once the bug is fixed.
   // TODO(b/337384645): Support non-zero stride.
   if (has_padding_along_rotation &&
-      (!shift.has_value() ||
-       (rotated_tiled_dim == 0 ||
-        (rotated_tiled_dim == 1 && op.getStride().value_or(0) != 0)))) {
+      (!shift.has_value() || op.getStride().value_or(0) != 0)) {
     return op.emitOpError("Not implemented: unsupported unaligned shape");
   }
 

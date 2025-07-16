@@ -230,6 +230,11 @@ def TPU_LoadOp : TPU_Op<"load", [DefaultMemRead]> {
   let assemblyFormat = [{
     $base `[` $indices `]` `sublanes` $sublane_mask (`sublane_stride` $sublane_stride^)? attr-dict `:` type($base) `,` type($result)
   }];
+  let description = [{
+    Similar to `vector::LoadOp` but with `sublane_mask` and `sublane_stride`.
+    When `indices` are negative, it means loading from negative offset
+    of `base` address.
+  }];
 }
 
 // TODO(jevinjiang): migrate tpu.strided_store to general vector store op.
