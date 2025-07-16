@@ -20,12 +20,14 @@ limitations under the License.
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -110,6 +112,160 @@ class CanonicalBuilder : public ImplicitLocOpBuilder {
 bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
                                        Operation &op);
 
+// Returns the collapsed lhs, rhs, acc and the new dimension numbers if the
+// non-contracting dims can be collapsed, otherwise returns std::nullopt.
+std::optional<std::tuple<TypedValue<VectorType>, TypedValue<VectorType>,
+                         TypedValue<VectorType>, tpu::DotDimensionNumbersAttr>>
+collapse_matmul_non_contracting_dims(
+    CanonicalBuilder &builder, TypedValue<VectorType> lhs,
+    TypedValue<VectorType> rhs, TypedValue<VectorType> acc,
+    const tpu::DotDimensionNumbersAttr &dimension_numbers) {
+  // Collapse
+  //
+  // 1. [batch_dims, non_contracting_dims, contracting_dims] into
+  //   [batch_dims, prod(non_contracting_dims), contracting_dims] or
+  // 2. [batch_dims, contracting_dims, non_contracting_dims] into
+  //   [batch_dims, contracting_dims, prod(non_contracting_dims)].
+  //
+  // Returns a tuple of [new_operand, new_non_contracting_dims,
+  // new_contracting_dims]. new_operand is nullptr if the operand does not need
+  // to be collapsed.
+  // TODO(b/413194126): Some shapes will trigger unsupported
+  // vector::ShapeCastOp.
+  auto maybe_collapse_non_contracting_dims =
+      [&](TypedValue<VectorType> operand,
+          ArrayRef<int64_t> non_contracting_dims,
+          ArrayRef<int64_t> contracting_dims, ArrayRef<int64_t> batch_dims)
+      -> std::tuple<TypedValue<VectorType>, SmallVector<int64_t, 2>,
+                    SmallVector<int64_t, 2>> {
+    VectorType vty = operand.getType();
+    auto shape = vty.getShape();
+    bool batch_dims_are_front =
+        batch_dims == ArrayRef<int64_t>(llvm::to_vector(
+                          llvm::seq<int64_t>(0, batch_dims.size())));
+    // Case 1.
+    bool trailing_contracting_dims =
+        contracting_dims ==
+            ArrayRef<int64_t>(llvm::to_vector(llvm::seq<int64_t>(
+                shape.size() - contracting_dims.size(), shape.size()))) &&
+        non_contracting_dims ==
+            ArrayRef<int64_t>(llvm::to_vector(llvm::seq<int64_t>(
+                batch_dims.size(),
+                batch_dims.size() + non_contracting_dims.size())));
+    // Case 2.
+    bool trailing_non_contracting_dims =
+        non_contracting_dims ==
+            ArrayRef<int64_t>(llvm::to_vector(llvm::seq<int64_t>(
+                shape.size() - non_contracting_dims.size(), shape.size()))) &&
+        contracting_dims ==
+            ArrayRef<int64_t>(llvm::to_vector(llvm::seq<int64_t>(
+                batch_dims.size(),
+                batch_dims.size() + contracting_dims.size())));
+    bool should_collapse_non_contracting_dims =
+        batch_dims_are_front &&
+        (trailing_contracting_dims || trailing_non_contracting_dims) &&
+        non_contracting_dims.size() > 1;
+    if (!should_collapse_non_contracting_dims) {
+      return {nullptr, llvm::to_vector(non_contracting_dims),
+              llvm::to_vector(contracting_dims)};
+    }
+    SmallVector<int64_t, 2> new_shape;
+    auto batch_shape = shape.take_front(batch_dims.size());
+    new_shape.append(batch_shape.begin(), batch_shape.end());
+    SmallVector<int64_t, 2> contracting_sizes;
+    for (int64_t contracting_dim : contracting_dims) {
+      contracting_sizes.push_back(shape[contracting_dim]);
+    }
+    int64_t collapsed_dim_size = 1;
+    for (int64_t non_contracting_dim : non_contracting_dims) {
+      collapsed_dim_size *= shape[non_contracting_dim];
+    }
+    if (trailing_contracting_dims) {
+      new_shape.push_back(collapsed_dim_size);
+      new_shape.append(contracting_sizes.begin(), contracting_sizes.end());
+    } else {
+      new_shape.append(contracting_sizes.begin(), contracting_sizes.end());
+      new_shape.push_back(collapsed_dim_size);
+    }
+    auto new_operand =
+        cast<TypedValue<VectorType>>(builder.create<vector::ShapeCastOp>(
+            VectorType::get(new_shape, vty.getElementType()), operand));
+    SmallVector<int64_t, 2> new_non_contracting_dims, new_contracting_dims;
+    if (trailing_non_contracting_dims) {
+      // Case 2 - contracting dims are not changed and non contracting dims are
+      // changed to the last dim.
+      new_contracting_dims = llvm::to_vector(contracting_dims);
+      new_non_contracting_dims.push_back(new_shape.size() - 1);
+    } else {
+      // Case 1 - non contracting dims are collapsed in the middle so all
+      // contracting dims are moved forward by (non_contracting_dims.size() -
+      // 1).
+      new_non_contracting_dims.push_back(batch_dims.size());
+      for (int64_t contracting_dim : contracting_dims) {
+        new_contracting_dims.push_back(contracting_dim -
+                                       (non_contracting_dims.size() - 1));
+      }
+    }
+    return {new_operand, new_non_contracting_dims, new_contracting_dims};
+  };
+
+  auto [new_lhs, new_lhs_non_contracting_dims, new_lhs_contracting_dims] =
+      maybe_collapse_non_contracting_dims(
+          lhs, dimension_numbers.getLhsNonContractingDims(),
+          dimension_numbers.getLhsContractingDims(),
+          dimension_numbers.getLhsBatchDims());
+
+  auto [new_rhs, new_rhs_non_contracting_dims, new_rhs_contracting_dims] =
+      maybe_collapse_non_contracting_dims(
+          rhs, dimension_numbers.getRhsNonContractingDims(),
+          dimension_numbers.getRhsContractingDims(),
+          dimension_numbers.getRhsBatchDims());
+
+  // Nothing to collapse.
+  if (!new_lhs && !new_rhs) {
+    return std::nullopt;
+  }
+
+  // Overwrite the operands if they were collapsed. We're going to access the
+  // new shapes below.
+  lhs = new_lhs ? new_lhs : lhs;
+  rhs = new_rhs ? new_rhs : rhs;
+
+  SmallVector<int64_t, 2> new_output_dim_order;
+  SmallVector<int64_t, 2> new_acc_shape;
+  for (int64_t batch_dim : dimension_numbers.getLhsBatchDims()) {
+    new_output_dim_order.push_back(0);
+    new_output_dim_order.push_back(batch_dim);
+    new_acc_shape.push_back(lhs.getType().getDimSize(batch_dim));
+  }
+  for (int64_t non_contracting_dim : new_lhs_non_contracting_dims) {
+    new_output_dim_order.push_back(0);
+    new_output_dim_order.push_back(non_contracting_dim);
+    new_acc_shape.push_back(lhs.getType().getDimSize(non_contracting_dim));
+  }
+  for (int64_t non_contracting_dim : new_rhs_non_contracting_dims) {
+    new_output_dim_order.push_back(1);
+    new_output_dim_order.push_back(non_contracting_dim);
+    new_acc_shape.push_back(rhs.getType().getDimSize(non_contracting_dim));
+  }
+
+  // Batch dims are always at the front of the lhs and rhs.
+  tpu::DotDimensionNumbersAttr new_dimension_numbers =
+      tpu::DotDimensionNumbersAttr::get(
+          builder.getContext(), new_lhs_contracting_dims,
+          new_rhs_contracting_dims, new_lhs_non_contracting_dims,
+          new_rhs_non_contracting_dims, new_output_dim_order,
+          dimension_numbers.getLhsBatchDims(),
+          dimension_numbers.getRhsBatchDims());
+
+  // Reshape acc too.
+  auto new_acc =
+      cast<TypedValue<VectorType>>(builder.create<vector::ShapeCastOp>(
+          VectorType::get(new_acc_shape, acc.getType().getElementType()), acc));
+
+  return std::make_tuple(lhs, rhs, new_acc, new_dimension_numbers);
+}
+
 FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
                                      Operation &raw_op) {
   auto op = cast<tpu::MatmulOp>(raw_op);
@@ -122,13 +278,13 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
   auto rhs = op.getRhs();
   auto acc = op.getAcc();
 
-  const VectorType lhs_ty = lhs.getType();
-  const VectorType rhs_ty = rhs.getType();
-  const VectorType acc_ty = acc.getType();
+  const VectorType old_lhs_ty = lhs.getType();
+  const VectorType old_rhs_ty = rhs.getType();
+  const VectorType old_acc_ty = acc.getType();
 
-  auto lhs_element_type = lhs_ty.getElementType();
-  auto rhs_element_type = rhs_ty.getElementType();
-  auto acc_element_type = acc_ty.getElementType();
+  auto lhs_element_type = old_lhs_ty.getElementType();
+  auto rhs_element_type = old_rhs_ty.getElementType();
+  auto acc_element_type = old_acc_ty.getElementType();
 
   // there are a few primary paths for dimension_numbers in matmul
   // 1) No dimension numbers provided -> set to default
@@ -146,6 +302,14 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
       // Dot dim API - dimensions are provided and are not default
       (op.getDimensionNumbers().value() !=
        defaultDimensionNumbers(builder, false, false))) {
+    if (auto collapsed_operands_and_ddn = collapse_matmul_non_contracting_dims(
+            builder, lhs, rhs, acc, *op.getDimensionNumbers())) {
+      tpu::DotDimensionNumbersAttr new_dimension_numbers;
+      std::tie(lhs, rhs, acc, new_dimension_numbers) =
+          *collapsed_operands_and_ddn;
+      op.setDimensionNumbersAttr(new_dimension_numbers);
+    }
+
     auto dimension_numbers = op.getDimensionNumbers();
     auto lhs_contracting_dims = dimension_numbers->getLhsContractingDims();
     auto rhs_contracting_dims = dimension_numbers->getRhsContractingDims();
@@ -156,11 +320,11 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     // Invariant in matmul verifier: <= 1 batch dim atm, and that lhs and rhs
     // are the same
     // Invariant in matmul verifier: Exactly one contracting and non contracting
-    // dim in each of lhs and rhs for now.
-    batch_size =
-        lhs_batch_dims.empty()
-            ? std::nullopt
-            : std::optional<int64_t>(lhs_ty.getShape()[lhs_batch_dims[0]]);
+    // dim in each of lhs and rhs at the moment.
+    batch_size = lhs_batch_dims.empty()
+                     ? std::nullopt
+                     : std::optional<int64_t>(
+                           lhs.getType().getShape()[lhs_batch_dims[0]]);
     // Lower each dim in contracting dims by size(batch_dims)
     auto batch_adjusted_lhs_contracting_dim =
         lhs_contracting_dims[0] - lhs_batch_dims.size();
@@ -173,6 +337,20 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     if (batch_adjusted_rhs_contracting_dim != 0) {
       transpose_rhs = true;
     }
+  }
+
+  // Make sure there is only one non-contracting dim in each of lhs and rhs
+  // after collapsing.
+  auto dimension_numbers = op.getDimensionNumbers();
+  if (dimension_numbers->getLhsNonContractingDims().size() != 1) {
+    return op->emitOpError(
+        "Not implemented: lhs non contracting dims must be an infix/suffix of "
+        "the shape.");
+  }
+  if (dimension_numbers->getRhsNonContractingDims().size() != 1) {
+    return op->emitOpError(
+        "Not implemented: rhs non contracting dims must be an infix/suffix of "
+        "the shape.");
   }
 
   auto extsi_sitofp = [&builder, &op](TypedValue<VectorType> element) {
@@ -247,7 +425,6 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
   // operation that fuses the transpose into the matmul.
   auto transpose_op =
       dyn_cast_if_present<tpu::TransposeOp>(rhs.getDefiningOp());
-  auto dimension_numbers = op.getDimensionNumbers();
   if (transpose_op && transpose_op->hasOneUse() &&
       dimension_numbers->getRhsContractingDims().size() == 1 &&
       dimension_numbers->getRhsNonContractingDims().size() == 1) {
@@ -259,7 +436,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
         permutation[rhs_non_contracting_dim] == rhs_contracting_dim &&
         std::all_of(dimension_numbers->getRhsBatchDims().begin(),
                     dimension_numbers->getRhsBatchDims().end(),
-                    [&](long batch_dim) {
+                    [&](int64_t batch_dim) {
                       return permutation[batch_dim] == batch_dim;
                     })) {
       if (auto transpose_op_vector_operand =
@@ -312,6 +489,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
   // If we have a batch_size, we want to slice rhs and lhs [:batch_size],
   // and then do O[i] = A[i] @ B[i]
   // Produce an output shape of [batch_size, m, n]
+  Value res;
   if (batch_size.has_value()) {
     std::vector<Value> outputs;
 
@@ -336,22 +514,22 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     // Technically almost identical to the case where batch_size is 1, but
     // we want to avoid the spurious concat here.
     if (batch_size == 1) {
-      op.replaceAllUsesWith(outputs[0]);
-      op.erase();
-      return outputs[0];
+      res = outputs[0];
+    } else {
+      res = builder.create<tpu::ConcatenateOp>(acc.getType(), outputs,
+                                               /*dimension=*/0);
     }
-    auto output =
-        builder.create<tpu::ConcatenateOp>(acc_ty, outputs, /*dimension=*/0);
-    op.replaceAllUsesWith(output);
-    op.erase();
-    return output;
   } else {
-    auto matmul_res = dot_dim_matmul(lhs, rhs, acc);
-    op.replaceAllUsesWith(matmul_res);
-    op.erase();
-    return matmul_res;
+    res = dot_dim_matmul(lhs, rhs, acc);
   }
-  return op.getResult();
+
+  // Reshape the result to the old one as dims might have been collapsed.
+  if (res.getType() != old_acc_ty) {
+    res = builder.create<vector::ShapeCastOp>(old_acc_ty, res);
+  }
+  op.replaceAllUsesWith(res);
+  op.erase();
+  return res;
 };
 
 FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,

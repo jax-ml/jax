@@ -2159,7 +2159,13 @@ def _dot_general_lowering_rule(
     raise NotImplementedError(ctx.avals_out[0].dtype)
   lhs_aval, rhs_aval = ctx.avals_in
   # This is really a matrix-vector product. It only looks like matrix-matrix.
-  if lhs_dims == (1,) and rhs_dims == (1,) and ctx.avals_in[1].shape[0] == 1:
+  if (
+      lhs_dims == (1,)
+      and rhs_dims == (1,)
+      and ctx.avals_in[1].shape[0] == 1
+      and len(ctx.avals_in[0].shape) == 2
+      and len(ctx.avals_in[1].shape) == 2
+  ):
     if ctx.avals_in[0].shape != ctx.avals_in[1].shape:
       bcast_shape = jnp.broadcast_shapes(
           ctx.avals_in[0].shape, ctx.avals_out[0].shape

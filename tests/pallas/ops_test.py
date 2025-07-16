@@ -1422,6 +1422,86 @@ class OpsTest(PallasBaseTest):
         jax.lax.dot_general(x, y, dimension_numbers=(([2], [1]), ([0], [0]))),
     )
 
+  @parameterized.product(
+      batch_size=(None, 1, 2),
+      # dims_numbers is without batch dims
+      shapes_and_dims_numbers=(
+          # leading lhs non contracting dims.
+          ((8, 8, 256), (256, 128), ([2], [0])),
+          ((3, 4, 128), (256, 128), ([2], [1])),
+          # trailing lhs non contracting dims.
+          ((256, 8, 128), (256, 128), ([0], [0])),
+          ((128, 8, 128), (256, 128), ([0], [1])),
+          # leading rhs non contracting dims.
+          ((8, 128), (8, 128, 128), ([1], [2])),
+          ((128, 8), (8, 128, 128), ([0], [2])),
+          # trailing rhs non contracting dims.
+          ((8, 128), (128, 8, 128), ([1], [0])),
+          ((128, 8), (128, 8, 128), ([0], [0])),
+          # leading lhs and rhs non contracting dims.
+          ((8, 8, 128), (8, 128, 128), ([2], [2])),
+          # leading lhs and trailing rhs non contracting dims.
+          ((8, 8, 128), (128, 8, 128), ([2], [0])),
+          # trailing lhs and leading rhs non contracting dims.
+          ((32, 8, 128), (8, 128, 32), ([0], [2])),
+          # trailing lhs and trailing rhs non contracting dims.
+          ((8, 8, 128), (8, 8, 128), ([0], [0])),
+      ),
+  )
+  def test_dot_general_multiple_non_contracting_dims(
+      self, batch_size, shapes_and_dims_numbers
+  ):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TPU only test")
+
+    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+        2025, 7, 19
+    ):
+      self.skipTest("Requires libtpu built after 2025-07-19")
+
+    x_shape, y_shape, dims_numbers = shapes_and_dims_numbers
+    if batch_size is not None:
+      x_shape = (batch_size,) + x_shape
+      y_shape = (batch_size,) + y_shape
+
+      # Batch size is always the first dimension so we need to offset
+      # dims_numbers by 1.
+      def offset_by_one(x):
+        return [a + 1 for a in x]
+
+      dims_numbers = (
+          (offset_by_one(dims_numbers[0]), offset_by_one(dims_numbers[1])),
+          ([0], [0]),
+      )
+    else:
+      dims_numbers = (
+          (dims_numbers[0], dims_numbers[1]),
+          ([], []),
+      )
+
+    k1, k2 = random.split(jax.random.key(0))
+    x = jax.random.normal(k1, x_shape, dtype=jnp.float32)
+    y = jax.random.normal(k2, y_shape, dtype=jnp.float32)
+
+    # Just infer shape from jax.
+    expected = jax.lax.dot_general(x, y, dimension_numbers=dims_numbers)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+    )
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = jax.lax.dot_general(
+          x_ref[...],
+          y_ref[...],
+          dimension_numbers=dims_numbers,
+      )
+
+    np.testing.assert_allclose(
+        kernel(x, y),
+        expected,
+    )
+
   @parameterized.parameters(
       ("int32", "float32"),
       ("float32", "float32"),
