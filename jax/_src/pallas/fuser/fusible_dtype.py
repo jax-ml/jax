@@ -165,6 +165,8 @@ def physicalize_closed_jaxpr(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
 
 def _physical_aval(aval):
   if isinstance(aval, core.ShapedArray):
+    if isinstance(aval.dtype, FusionDType):
+      return aval.dtype.abstract_unpack(aval)
     return core.ShapedArray(aval.shape, aval.dtype)
   if isinstance(aval, state.AbstractRef):
     if isinstance(aval.dtype, FusionDType):
