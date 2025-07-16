@@ -1507,15 +1507,19 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     )
 
   # Apply in_shardings
-  if shardy_enabled:
+  if mesh:
+    # A mesh only exists if Shardy is enabled.
     args = tuple(
         wrap_with_sharding(
             ctx, x, x_aval,
-            _hlo_sharding_to_named_sharding(x_sharding, mesh))  # type: ignore[arg-type]
+            _hlo_sharding_to_named_sharding(x_sharding, mesh), use_shardy=True)  # type: ignore[arg-type]
         for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings_hlo))
   else:
+    # Since there is no mesh - either due to shardy being disabled or the loaded
+    # function being lowered for GSPMD (so no shardy mesh) - need to create a
+    # GSPMD sharding from the HLO sharding (can't use shardy lowering).
     args = tuple(
-        wrap_with_sharding(ctx, x, x_aval, x_sharding)
+        wrap_with_sharding(ctx, x, x_aval, x_sharding, use_shardy=False)
         for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings_hlo))
 
   # The called function may have been exported with polymorphic shapes and called
@@ -1603,14 +1607,19 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
       for out, out_aval, refined_out_aval in zip(call.results[len(ordered_effects):],
                                                  exported.out_avals, ctx.avals_out))
   # Apply out_shardings
-  if shardy_enabled:
+  if mesh:
+    # A mesh only exists if Shardy is enabled.
     results = tuple(
         wrap_with_sharding(
-            ctx, x, x_aval, _hlo_sharding_to_named_sharding(x_sharding, mesh))  # type: ignore[arg-type]
+            ctx, x, x_aval, _hlo_sharding_to_named_sharding(x_sharding, mesh),
+            use_shardy=True)  # type: ignore[arg-type]
         for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings_hlo))
   else:
+    # Since there is no mesh - either due to shardy being disabled or the loaded
+    # function being lowered for GSPMD (so no shardy mesh) - need to create a
+    # GSPMD sharding from the HLO sharding (can't use shardy lowering).
     results = tuple(
-        wrap_with_sharding(ctx, x, x_aval, x_sharding)
+        wrap_with_sharding(ctx, x, x_aval, x_sharding, use_shardy=False)
         for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings_hlo))
   return results
 
@@ -1621,12 +1630,14 @@ def wrap_with_sharding(
     ctx: mlir.LoweringRuleContext,
     x: ir.Value,
     x_aval: core.AbstractValue,
-    x_sharding: sharding_impls.NamedSharding | HloSharding | None,
+    x_sharding: sharding_impls.NamedSharding | sharding_impls.GSPMDSharding | HloSharding | None,
+    use_shardy: bool,
 ) -> ir.Value:
   if x_sharding is None:
     return x
-  if config.use_shardy_partitioner.value:
+  if use_shardy:
     x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # type: ignore
   else:
     x_sharding = x_sharding.to_proto()  # type: ignore
-  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding)  # type: ignore[arg-type]
+  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,  # type: ignore[arg-type]
+                                    allow_shardy_lowering=use_shardy)
