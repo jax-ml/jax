@@ -470,6 +470,81 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let hasVerifier = 1;
 }
 
+def MosaicGPU_TmemAttr : MosaicGPU_Attr<"Tmem", "tmem"> {
+  let summary = "Tensor memory space.";
+}
+
+def MosaicGPU_TcGen05MMASupportedABType : AnyTypeOf<[F16, F32, BF16, TF32, F8E4M3FN, F8E5M2, F6E2M3FN, F6E3M2FN, F4E2M1FN, I8],
+    "A type supported by the `a` and `b` operands of the `tcgen05.mma` instruction">;
+
+def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpInterface, AttrSizedOperandSegments]> {
+  let summary = "Perform a matrix multiply-accumulate operation using the `tcgen05.mma` instruction.";
+  let description = [{
+    Schedules `tcgen05.mma` instructions that perform the following matrix
+    multiply and accumulate:
+
+      accumulator = a * b + accumulator
+
+    This operation supports larger inputs than the PTX-level MMA instruction
+    and will schedule as many PTX-level MMA instructions as needed to
+    accomplish the calculation.
+
+    The inputs should have the following shapes:
+      - a: [groups_m * m, groups_k * s]
+      - b: [groups_k * s, groups_n * s]
+      - accumulator: [groups_m * m, groups_n * s]
+    where `s == swizzle / element_bytewidth` and `m` is specified according to
+    https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-matrix-shape.
+
+    The output has an identical shape and type as the input accumulator.
+
+    The `accumulator`, `a` and `b` matrices need to be provided as 2-dimensional
+    memrefs. The `accumulator` is always in TMEM and `b` is always in SMEM.
+    `a` can be in TMEM or SMEM. `a` and `b` must have the same element
+    type and when `a` is in TMEM only F16 or BF16 are supported.
+
+    `a_scale` and `b_scale` are optional scaling matrices that reside in TMEM.
+    When set the operation is defined as:
+
+      accumulator = (a * a_scale) * (b * b_scale) + accumulator
+
+    `accumulate` is a boolean that indicates whether to perform the accumulate
+    step.
+  }];
+
+  let arguments = (ins
+    MemRefOf<[AnyTypeOf<[F16, F32, I32]>]>:$accumulator,
+    MemRefOf<[MosaicGPU_TcGen05MMASupportedABType]>:$a,
+    MemRefOf<[MosaicGPU_TcGen05MMASupportedABType]>:$b,
+    I1:$accumulate,
+    // TODO: allanrenucci - F8E4M3FNU (ue4m3) does not exist in MLIR. We use F8E4M3FN (e4m3) instead.
+    Optional<MemRefOf<[AnyTypeOf<[F8E8M0FNU, F8E4M3FN]>]>>:$a_scaled,
+    Optional<MemRefOf<[AnyTypeOf<[F8E8M0FNU, F8E4M3FN]>]>>:$b_scaled,
+    DefaultValuedAttr<BoolAttr, "false">:$collective
+  );
+  let results = (outs MemRefOf<[AnyTypeOf<[F16, F32, I32]>]>);
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      if (operands.empty()) {
+        return ::mlir::emitOptionalError(
+          location, "expected non-empty operands");
+      }
+      inferredReturnTypes.assign({operands[0].getType()});
+      return ::mlir::success();
+    }
+  }];
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_OptimizationBarrierOp : Op<MosaicGPU_Dialect, "optimization_barrier",
     [InferTypeOpInterface]> {
   let summary = "Prevents MLIR from moving operations across the barrier.";

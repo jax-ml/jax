@@ -48,6 +48,8 @@ limitations under the License.
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -310,45 +312,36 @@ llvm::LogicalResult AsyncStoreOp::verify() {
 }
 
 namespace {
-// This is the size of the M dimension in all wgmma instructions. It is fixed,
-// unlike the K and N dimensions.
-constexpr int kWgmmaSizeM = 64;
-}  // namespace
 
-llvm::LogicalResult WGMMAOp::verify() {
-  auto error = [this](auto... params) {
-    return emitOpError(llvm::formatv(params...));
+llvm::LogicalResult VerifyMMAShapeAndTypes(mlir::Operation* op,
+                                           mlir::ShapedType a_type,
+                                           mlir::ShapedType b_type,
+                                           mlir::ShapedType acc_type) {
+  auto error = [op](auto... params) {
+    return op->emitOpError(llvm::formatv(params...));
   };
 
-  auto a_shaped_type = mlir::cast<mlir::ShapedType>(getA().getType());
-  mlir::Type element_type = a_shaped_type.getElementType();
-  if (element_type != getB().getType().getElementType()) {
+  mlir::Type element_type = a_type.getElementType();
+  if (element_type != b_type.getElementType()) {
     return error("The `a` and `b` inputs must have the same element type.");
   }
 
-  auto a_shape = a_shaped_type.getShape();
+  auto a_shape = a_type.getShape();
   if (a_shape.size() != 2) {
     return error("The `a` input must have rank 2.");
   }
 
-  auto b_shape = getB().getType().getShape();
+  auto b_shape = b_type.getShape();
   if (b_shape.size() != 2) {
     return error("The `b` input must have rank 2.");
   }
 
-  auto accShape = getAccumulator().getType().getShape();
-  if (accShape.size() != 2) {
+  auto acc_shape = acc_type.getShape();
+  if (acc_shape.size() != 2) {
     return error("The accumulator must have rank 2.");
   }
 
-  if (accShape[0] % kWgmmaSizeM) {
-    return error(
-        "The accumulator's first dimension must be a multiple of {0}, but got "
-        "{1}.",
-        kWgmmaSizeM, accShape[0]);
-  }
-
-  int M = accShape[0];  // groups_m * 64
+  int M = acc_shape[0];
   if (M != a_shape[0] && M != a_shape[1]) {
     return error(
         "The accumulator's first dimension {0} must be equal to one "
@@ -363,11 +356,100 @@ llvm::LogicalResult WGMMAOp::verify() {
         K, b_shape[0], b_shape[1]);
   }
   int N = (b_shape[0] == K ? b_shape[1] : b_shape[0]);  // groups_n * k
-  if (N != accShape[1]) {
+  if (N != acc_shape[1]) {
     return error(
         "`b`'s non-contracting dimension {0} must be equal to the "
         "accumulator's second dimension {1}.",
-        N, accShape[1]);
+        N, acc_shape[1]);
+  }
+
+  return llvm::success();
+}
+
+}  // namespace
+
+llvm::LogicalResult WGMMAOp::verify() {
+  llvm::LogicalResult result = VerifyMMAShapeAndTypes(
+      getOperation(), mlir::cast<mlir::ShapedType>(getA().getType()),
+      getB().getType(), getAccumulator().getType());
+  if (result.failed()) {
+    return result;
+  }
+
+  int64_t M = getAccumulator().getType().getShape()[0];
+  // This is the size of the M dimension in all wgmma instructions. It is fixed,
+  // unlike the K and N dimensions.
+  constexpr int kWgmmaSizeM = 64;
+  if (M % kWgmmaSizeM != 0) {
+    return emitOpError(llvm::formatv(
+        "The accumulator's first dimension must be a multiple of {0}, but got "
+        "{1}.",
+        kWgmmaSizeM, M));
+  }
+
+  return llvm::success();
+}
+
+llvm::LogicalResult TcGen05MMAOp::verify() {
+  llvm::LogicalResult result =
+      VerifyMMAShapeAndTypes(getOperation(), getA().getType(), getB().getType(),
+                             getAccumulator().getType());
+
+  if (result.failed()) {
+    return result;
+  }
+
+  auto error = [this](auto... params) {
+    return emitOpError(llvm::formatv(params...));
+  };
+
+  int64_t M = getAccumulator().getType().getShape()[0];
+  // This is the size of the M dimension in all `tcgen05.mma` instructions. It
+  // is fixed, unlike the K and N dimensions.
+  constexpr int kTcGen05MmaMinSizeM = 32;
+  if (M % kTcGen05MmaMinSizeM != 0) {
+    return error(
+        "The accumulator's first dimension must be a multiple of {0} but got "
+        "{1}.",
+        kTcGen05MmaMinSizeM, M);
+  }
+
+  mlir::Attribute tmem = TmemAttr::get(getContext());
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+
+  mlir::Attribute acc_mem_space = getAccumulator().getType().getMemorySpace();
+  if (acc_mem_space != tmem) {
+    return error("The accumulator must be in TMEM, but got {0}.",
+                 acc_mem_space);
+  }
+  mlir::Attribute a_mem_space = getA().getType().getMemorySpace();
+  if (a_mem_space != tmem && a_mem_space != smem) {
+    return error("The `a` input must be in TMEM or SMEM, but got {0}.",
+                 a_mem_space);
+  }
+  mlir::Attribute b_mem_space = getB().getType().getMemorySpace();
+  if (b_mem_space != smem) {
+    return error("The `b` input must be in SMEM, but got {0}.", b_mem_space);
+  }
+
+  mlir::TypedValue<mlir::MemRefType> a_scaled = getAScaled();
+  mlir::TypedValue<mlir::MemRefType> b_scaled = getBScaled();
+  if (static_cast<bool>(a_scaled) != static_cast<bool>(b_scaled)) {
+    return error("Either none or both scales should be provided.");
+  }
+
+  if (a_scaled) {
+    mlir::Attribute a_scaled_mem_space = a_scaled.getType().getMemorySpace();
+    if (a_scaled_mem_space != tmem) {
+      return error("The `a_scaled` input must be in TMEM, but got {0}.",
+                   a_scaled_mem_space);
+    }
+    mlir::Attribute b_scaled_mem_space = b_scaled.getType().getMemorySpace();
+    if (b_scaled_mem_space != tmem) {
+      return error("The `b_scaled` input must be in TMEM, but got {0}.",
+                   b_scaled_mem_space);
+    }
   }
 
   return llvm::success();

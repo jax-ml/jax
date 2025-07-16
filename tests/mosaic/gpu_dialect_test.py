@@ -537,7 +537,7 @@ class DialectTest(MosaicGpuTest):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
           ir.VectorType.get([127, 160], ir.BF16Type.get()),
-          ir.MemRefType.get([128, 128], ir.BF16Type.get()),
+          ir.MemRefType.get([127, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
       )(mgpu.dialect.wgmma)
@@ -590,6 +590,242 @@ class DialectTest(MosaicGpuTest):
     with self.assertRaisesRegex(
         ir.MLIRError,
         r"`b`'s non-contracting dimension 192 must be equal to the",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_types_match(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.MemRefType.get([128, 128], ir.F16Type.get()),
+          ir.MemRefType.get([128, 160], ir.BF16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `a` and `b` inputs must have the same element type.",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_a_rank_is_2(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.MemRefType.get([3, 128, 128], ir.F16Type.get()),
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `a` input must have rank 2.",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_b_rank_is_2(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.MemRefType.get([128, 128], ir.F16Type.get()),
+          ir.MemRefType.get([2, 128, 160], ir.F16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `b` input must have rank 2.",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_acc_rank_is_2(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([2, 128, 160], ir.F16Type.get()),
+          ir.MemRefType.get([128, 128], ir.F16Type.get()),
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The accumulator must have rank 2.",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_acc_m_dim_not_multiple_of_128(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([127, 160], ir.F16Type.get()),
+          ir.MemRefType.get([127, 128], ir.F16Type.get()),
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"accumulator.*must be a multiple of 32",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_acc_m_not_equal_to_a_m_dim(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([256, 160], ir.F16Type.get()),
+          ir.MemRefType.get([512, 128], ir.F16Type.get()),
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"accumulator's first dimension 256 must be equal to.*`a`",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_a_k_dim_not_equal_to_b_k_dim(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.MemRefType.get([128, 128], ir.F16Type.get()),
+          ir.MemRefType.get([160, 160], ir.F16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"`a`'s contracting dimension 128 must be equal to one of.*`b`",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_b_n_dim_not_equal_to_acc_n_dim(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.MemRefType.get([128, 128], ir.F16Type.get()),
+          ir.MemRefType.get([128, 192], ir.F16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"`b`'s non-contracting dimension 192 must be equal to the",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_acc_mem_space_is_tmem(self):
+    smem = mgpu_utils.smem()
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
+          ir.MemRefType.get([128, 128], ir.F16Type.get()),
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The accumulator must be in TMEM",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_a_mem_space_is_smem_or_tmem(self):
+    tmem = mgpu_utils.tmem()
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.MemRefType.get([128, 128], ir.F16Type.get()),
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The `a` input must be in TMEM or SMEM",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_b_mem_space_is_smem(self):
+    smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.IntegerType.get_signless(1),
+      )(mgpu.dialect.tcgen05_mma)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The `b` input must be in SMEM",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_scaled_arg_missing(self):
+    smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
+    f8e0m0 = ir.Float8E8M0FNUType.get()
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
+          ir.IntegerType.get_signless(1),
+          ir.MemRefType.get([128, 4], f8e0m0, memory_space=tmem),
+      )(
+          lambda acc, a, b, accumulate, a_scaled: mgpu.dialect.tcgen05_mma(
+              acc, a, b, accumulate, a_scaled=a_scaled
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"Either none or both scales should be provided.",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_a_scaled_mem_space_is_tmem(self):
+    smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
+    f8e0m0 = ir.Float8E8M0FNUType.get()
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
+          ir.IntegerType.get_signless(1),
+          ir.MemRefType.get([128, 4], f8e0m0, memory_space=smem),
+          ir.MemRefType.get([160, 4], f8e0m0, memory_space=tmem),
+      )(
+          lambda acc, a, b, accumulate, a_scaled, b_scaled: mgpu.dialect.tcgen05_mma(
+              acc, a, b, accumulate, a_scaled=a_scaled, b_scaled=b_scaled
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The `a_scaled` input must be in TMEM",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_b_scaled_mem_space_is_tmem(self):
+    smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
+    f8e0m0 = ir.Float8E8M0FNUType.get()
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
+          ir.IntegerType.get_signless(1),
+          ir.MemRefType.get([128, 4], f8e0m0, memory_space=tmem),
+          ir.MemRefType.get([160, 4], f8e0m0, memory_space=smem),
+      )(
+          lambda acc, a, b, accumulate, a_scaled, b_scaled: mgpu.dialect.tcgen05_mma(
+              acc, a, b, accumulate, a_scaled=a_scaled, b_scaled=b_scaled
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The `b_scaled` input must be in TMEM",
     ):
       self.module.operation.verify()
 

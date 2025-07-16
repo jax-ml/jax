@@ -1565,6 +1565,11 @@ def smem() -> ir.Attribute:
   return ir.Attribute.parse("#gpu.address_space<workgroup>")
 
 
+def tmem() -> ir.Attribute:
+  """Returns the attribute for the TMEM memory space."""
+  return ir.Attribute.parse("#mosaic_gpu.tmem")
+
+
 def is_smem_ref(ref: ir.Value | ir.Type) -> bool:
   """Returns true if the input mem ref or memref type points to SMEM.
   If the input is not at all of a memref type, raises a ValueError.
