@@ -29,7 +29,6 @@ import weakref
 
 import itertools
 import jax
-from jax._src import lib
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
@@ -56,8 +55,6 @@ from . import transform_inference
 from . import utils
 
 # MLIR can't find libdevice unless we point it to the CUDA path
-cuda_root = lib.cuda_path or "/usr/local/cuda"
-os.environ["CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
@@ -124,10 +121,20 @@ def supports_cross_device_collectives():
     except OSError:
       return False
   xla_flags = os.environ.get("XLA_FLAGS", "")
-  return (
+  if not (
       os.path.exists(nvshmem_bc_path)
       and "--xla_gpu_experimental_enable_nvshmem" in xla_flags
-  )
+  ):
+    raise ValueError(
+        "NVSHMEM is not available on this system. %s %s %s %s"
+        % (
+            nvshmem_bc_path,
+            os.path.exists(nvshmem_bc_path),
+            xla_flags,
+            "--xla_gpu_experimental_enable_nvshmem" in xla_flags,
+        )
+    )
+  return True
 
 
 mosaic_gpu_p = jax._src.core.Primitive("mosaic_gpu_p")

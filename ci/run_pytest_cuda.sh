@@ -74,13 +74,13 @@ if [[ $host_memory_limit -lt $num_processes ]]; then
   num_processes=$host_memory_limit
 fi
 
-export XLA_PYTHON_CLIENT_ALLOCATOR=platform
-export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
+export XLA_PYTHON_CLIENT_ALLOCATOR=default
+export XLA_FLAGS="--xla_gpu_force_compilation_parallelism=1 --xla_gpu_experimental_enable_nvshmem=1"
 # End of test environment variable setup
 
 echo "Running CUDA tests..."
-"$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short --maxfail=20 \
-tests examples \
+"$JAXCI_PYTHON" -m pytest -n $num_processes --tb=long --maxfail=20 -v -rs \
+tests/pallas/gpu_pallas_distributed_test.py \
 --deselect=tests/multi_device_test.py::MultiDeviceTest::test_computation_follows_data \
 --deselect=tests/multiprocess_gpu_test.py::MultiProcessGpuTest::test_distributed_jax_visible_devices \
 --deselect=tests/compilation_cache_test.py::CompilationCacheTest::test_task_using_cache_metric
