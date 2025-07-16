@@ -863,6 +863,23 @@ def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   return _mean(a, _ensure_optional_axes(axis), dtype, out, keepdims,
                where=where, upcast_f16_for_computation=(dtype is None))
 
+def _count(
+    a: ArrayLike,
+    axis: Axis,
+    keepdims: bool=False,
+    where: ArrayLike | None = None,
+    dtype: DTypeLike | None = None,
+):
+  if where is None:
+    if axis is None:
+      count = core.dimension_as_value(np.size(a))
+    else:
+      count = core.dimension_as_value(_axis_size(a, axis))
+    count = lax.asarray(count).astype(dtype)
+  else:
+    count = sum(_broadcast_to(where, np.shape(a)), axis, dtype=dtype, keepdims=keepdims)
+  return count
+
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims', 'upcast_f16_for_computation'),
          inline=True)
 def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
@@ -885,18 +902,17 @@ def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   else:
     computation_dtype = result_dtype
 
-  if where is None:
-    if axis is None:
-      normalizer = core.dimension_as_value(np.size(a))
-    else:
-      normalizer = core.dimension_as_value(_axis_size(a, axis))
-  else:
-    normalizer = sum(_broadcast_to(where, np.shape(a)), axis,
-                     dtype=computation_dtype, keepdims=keepdims)
+  normalizer = _count(
+      a,
+      axis=axis,
+      keepdims=keepdims,
+      where=where,
+      dtype=computation_dtype,
+  )
 
   return lax.div(
       sum(a, axis, dtype=computation_dtype, keepdims=keepdims, where=where),
-      lax.convert_element_type(normalizer, computation_dtype)
+      normalizer
   ).astype(result_dtype)
 
 @overload

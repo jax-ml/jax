@@ -19,6 +19,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features:
   * Added `jax.P` which is an alias for `jax.sharding.PartitionSpec`.
   * Added {func}`jax.tree.reduce_associative`.
+  * Added {func}`jax.nn.logmeanexp`.
 
 * Breaking changes:
   * {func}`jax.jit` now requires `fun` to be passed by position, and additional
