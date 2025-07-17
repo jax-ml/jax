@@ -31,7 +31,6 @@ from jax._src.nn.functions import (
   leaky_relu as leaky_relu,
   log_sigmoid as log_sigmoid,
   log_softmax as log_softmax,
-  logmeanexp as logmeanexp,
   logsumexp as logsumexp,
   standardize as standardize,
   one_hot as one_hot,

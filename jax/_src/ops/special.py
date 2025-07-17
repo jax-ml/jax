@@ -70,9 +70,6 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
   Returns:
     Either an array ``result`` or a pair of arrays ``(result, sign)``, depending
     on the value of the ``return_sign`` argument.
-
-  See also:
-    :func:`jax.nn.logmeanexp`
   """
   if where is not None:
     a = jnp.where(where, a, 0)
