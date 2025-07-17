@@ -16,6 +16,7 @@
 from collections.abc import Callable
 
 import jax
+from jax._src import core as jax_core
 from jax._src import checkify
 from jax._src import config
 from jax._src.pallas import core as pl_core
@@ -47,6 +48,12 @@ def empty_like(
     interpret: bool = False,
     backend: pl_core.Backend | None = None,
 ):
+  if hasattr(x, 'memory_space'):
+    if memory_space is not None:
+      raise ValueError(
+          'memory_space cannot be specified for a MemoryRef object.'
+      )
+    memory_space = x.memory_space
   if memory_space is None:
     memory_space = pl_core.MemorySpace.ANY
   return pallas_call.pallas_call(
@@ -59,6 +66,21 @@ def empty_like(
       interpret=interpret,
       backend=backend,
   )()
+
+
+def empty_ref_like(
+    x: object, *, backend: pl_core.Backend | None = None
+) -> jax.Array:
+  """Returns an empty array Ref with same shape/dtype/memory space as x."""
+  match x:
+    case pl_core.MemoryRef():
+      memory_space = x.memory_space
+    case jax.ShapeDtypeStruct():
+      memory_space = pl_core.MemorySpace.ANY
+    case _:
+      raise ValueError(f'alloc_ref does not support {type(x)}')
+  out = empty_like(x, backend=backend)
+  return jax_core.mutable_array(out, memory_space=memory_space)
 
 
 def when(condition):
