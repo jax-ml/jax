@@ -206,18 +206,47 @@ class Relayout:
         return False
 
 
-def reduce_constraint(
-    constraint: Relayout, assignments: dict[Variable, Constant]
-) -> Relayout | Tautological | Unsatisfiable:
-  """Reduces a relayout constraint."""
-  source = reduce_expression(constraint.source, assignments)
-  target = reduce_expression(constraint.target, assignments)
+@dataclasses.dataclass(frozen=True)
+class Distinct:
+  """States that `lhs != rhs`."""
+  lhs: Expression
+  rhs: Expression
 
-  if isinstance(source, Unsatisfiable) or isinstance(target, Unsatisfiable):
+  def holds(self) -> bool | None:
+    """Whether the distinctiveness constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    if self.lhs == self.rhs:
+      return False
+    if isinstance(self.lhs, Constant) and isinstance(self.rhs, Constant):
+      return True
+    return None
+
+
+Constraint = Relayout | Distinct
+
+
+def reduce_constraint(
+    constraint: Constraint, assignments: dict[Variable, Constant]
+) -> Constraint | Tautological | Unsatisfiable:
+  """Reduces a constraint."""
+  match constraint:
+    case Relayout(source=lhs, target=rhs):
+      ...
+    case Distinct(lhs=lhs, rhs=rhs):
+      ...
+    case _ as never:
+      assert_never(never)
+
+  lhs_red = reduce_expression(lhs, assignments)
+  rhs_red = reduce_expression(rhs, assignments)
+
+  if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
     return Unsatisfiable()
 
-  new_constraint = Relayout(source, target)
-  constraint_holds = constraint.holds()
+  new_constraint = type(constraint)(lhs_red, rhs_red)
+  constraint_holds = new_constraint.holds()
   if constraint_holds is None:
     return new_constraint
   return Tautological() if constraint_holds else Unsatisfiable()
@@ -283,7 +312,7 @@ class EquationSystem:
       default_factory=dict
   )
   equations: list[Equation] = dataclasses.field(default_factory=list)
-  constraints: list[Relayout] = dataclasses.field(default_factory=list)
+  constraints: list[Constraint] = dataclasses.field(default_factory=list)
 
   def unknowns(self) -> list[Variable]:
     """Returns the list of free variables in the system."""
@@ -311,8 +340,15 @@ class EquationSystem:
       extract_variables(equation.lhs)
       extract_variables(equation.rhs)
     for constraint in self.constraints:
-      extract_variables(constraint.source)
-      extract_variables(constraint.target)
+      match constraint:
+        case Relayout(source=source, target=target):
+          extract_variables(source)
+          extract_variables(target)
+        case Distinct(lhs=lhs, rhs=rhs):
+          extract_variables(lhs)
+          extract_variables(rhs)
+        case _ as never:
+          assert_never(never)
     return free_variables
 
   def __and__(self, other: EquationSystem) -> EquationSystem | Unsatisfiable:
@@ -385,14 +421,14 @@ def _reduce_system_once(
         assert_never(never)
 
   assignments |= equation_system.assignments
-  constraints: list[Relayout] = []
+  constraints: list[Constraint] = []
   for constraint in equation_system.constraints:
     match reduce_constraint(constraint, assignments):
       case Unsatisfiable():
         return Unsatisfiable()
       case Tautological():
         changed = True
-      case Relayout() as new_constraint:
+      case _ as new_constraint:
         changed |= new_constraint != constraint
         constraints.append(new_constraint)
 

@@ -62,16 +62,29 @@ class EquationSystemTest(parameterized.TestCase):
         ).holds()
     )
 
+  def test_distinct_constraint_does_not_hold_for_identical_expressions(self):
+    self.assertFalse(equations.Distinct(V(1), V(1)).holds())
+
+  def test_distinct_constraint_holds_for_unequal_constants(self):
+    layout0, layout1 = mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT
+    self.assertTrue(equations.Distinct(C(layout0), C(layout1)).holds())
+
+  def test_distinct_constraint_is_unknown_for_unreduced_unequal_expressions(self):
+    self.assertIsNone(equations.Distinct(C(1), V(0)).holds())
+
   def test_reduce_equation_system_removes_tautological_equations_and_constraints(
       self,
   ):
     v0, v1 = V(0), V(1)
+    layout0, layout1 = mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT
     system = equations.EquationSystem(
         equations=[Eq(v0, v1), Eq(v0, v0)],
-        constraints=[equations.Relayout(v0, v0)],
+        constraints=[equations.Relayout(v0, v0),
+                     equations.Distinct(C(layout0), C(layout1)),
+                     equations.Distinct(v0, v1)],
     )
     self.assertLen(equations.reduce(system).equations, 1)
-    self.assertEmpty(equations.reduce(system).constraints)
+    self.assertLen(equations.reduce(system).constraints, 1)
 
   def test_reduce_equation_system_of_simplified_system_is_noop(self):
     v0, v1 = V(0), V(1)
