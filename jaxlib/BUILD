@@ -33,6 +33,7 @@ load(
     "pywrap_library",
 )
 load("//jaxlib:symlink_files.bzl", "symlink_files")
+load("//third_party/bazel_rules/rules_cc/cc:cc_library.bzl", "cc_library")
 
 licenses(["notice"])
 
