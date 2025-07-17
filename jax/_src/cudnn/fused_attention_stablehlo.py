@@ -337,7 +337,7 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
         f"Bias must have same seq length as QKV, got {bT} and {bS}")
 
   # check q_seqlen/kv_seqlen/q_offsets/kv_offsets
-  expected_rank = 2 if q_offsets is not None else 1
+  expected_rank = 1
   def check_seqlen_offsets(tensor, name):
     if tensor is not None:
       dtype = tensor.dtype
