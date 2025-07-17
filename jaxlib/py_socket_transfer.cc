@@ -27,9 +27,11 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/time/time.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/array.h"  // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
@@ -38,6 +40,8 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/to_ifrt_sharding.h"
 #include "jaxlib/traceback.h"
+#include "xla/pjrt/distributed/client.h"
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
@@ -51,7 +55,9 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/pjrt_ifrt/pjrt_memory.h"
+#include "xla/python/pjrt_ifrt/transfer_server_interface.h"
 #include "xla/python/transfer/event_loop.h"
+#include "xla/python/transfer/pjrt_transfer_server.h"
 #include "xla/python/transfer/socket-server.h"
 #include "xla/python/transfer/socket_bulk_transport.h"
 #include "xla/python/transfer/streaming.h"
@@ -427,6 +433,30 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       // Technically unsafe (because a future donation won't wait for the
       // transfer to complete).
       nb::arg("use_raw_buffers") = false);
+#if JAX_IFRT_VERSION_NUMBER >= 15
+  m.def(
+      "make_transfer_server_interface_factory",
+      [](size_t transfer_size, int cross_host_transfer_timeout_seconds,
+         std::shared_ptr<xla::DistributedRuntimeClient> distributed_client,
+         const std::string& socket_address,
+         const std::vector<std::string>& transport_addresses)
+          -> xla::ifrt::TransferServerInterfaceFactory {
+        std::shared_ptr<xla::KeyValueStoreInterface> kv_store =
+            xla::GetDistributedKeyValueStore(distributed_client,
+                                             "transfer_server:");
+        auto factory_fn = xla::ValueOrThrow(
+            xla::ifrt::PjRtTransferServer::MakePjRtTransferServerFactory(
+                transfer_size,
+                absl::Seconds(cross_host_transfer_timeout_seconds), kv_store,
+                socket_address, transport_addresses));
+        return xla::ifrt::TransferServerInterfaceFactory{std::move(factory_fn)};
+      },
+      nb::arg("transfer_size") = 256 * 1024 * 1024,
+      nb::arg("cross_host_transfer_timeout_seconds") = 60,
+      nb::arg("distributed_client").none() = nullptr,
+      nb::arg("socket_address") = SocketAddress().ToString(),
+      nb::arg("transport_addresses") = std::vector<std::string>());
+#endif
 }
 
 }  // namespace aux
