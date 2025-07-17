@@ -44,6 +44,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import util as numpy_util
+from jax._src.numpy.reductions import Axis
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.ops.special import logsumexp as _logsumexp
@@ -519,7 +520,7 @@ logsumexp = _logsumexp
 
 @partial(api.jit, static_argnames=("axis",))
 def log_softmax(x: ArrayLike,
-                axis: int | tuple[int, ...] | None = -1,
+                axis: Axis = -1,
                 where: ArrayLike | None = None) -> Array:
   r"""Log-Softmax function.
 
@@ -563,7 +564,7 @@ def log_softmax(x: ArrayLike,
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
 # @partial(api.jit, static_argnames=("axis",))
 def softmax(x: ArrayLike,
-            axis: int | tuple[int, ...] | None = -1,
+            axis: Axis = -1,
             where: ArrayLike | None = None) -> Array:
   r"""Softmax function.
 
@@ -603,7 +604,7 @@ def softmax(x: ArrayLike,
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
 def _softmax(
     x: ArrayLike,
-    axis: int | tuple[int, ...] | None = -1,
+    axis: Axis = -1,
     where: ArrayLike | None = None,
     initial: ArrayLike | None = -np.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
@@ -622,7 +623,7 @@ def _softmax_jvp(axis, primals, tangents):
 
 def _softmax_deprecated(
     x: ArrayLike,
-    axis: int | tuple[int, ...] | None = -1,
+    axis: Axis = -1,
     where: ArrayLike | None = None,
     initial: ArrayLike | None = -np.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
@@ -636,7 +637,7 @@ def _softmax_deprecated(
 
 @partial(api.jit, static_argnames=("axis",))
 def standardize(x: ArrayLike,
-                axis: int | tuple[int, ...] | None = -1,
+                axis: Axis = -1,
                 mean: ArrayLike | None = None,
                 variance: ArrayLike | None = None,
                 epsilon: ArrayLike = 1e-5,

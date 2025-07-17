@@ -352,6 +352,7 @@ py_library_providing_imports_info(
     lib_rule = pytype_library,
     pytype_srcs = glob(
         [
+            "nn/*.pyi",
             "numpy/*.pyi",
             "_src/**/*.pyi",
         ],
