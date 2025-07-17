@@ -78,14 +78,14 @@ from jax._src.core import (
   valid_jaxtype as valid_jaxtype,
 )
 
-
-from jax._src import core as _src_core
-
 _deprecations = {
     # Added 2024-12-11
     "axis_frame": (
-        "jax.core.axis_frame was deprecated in JAX v0.5.0.",
-        _src_core.axis_frame,
+        (
+            "jax.core.axis_frame was deprecated in JAX v0.5.0 and removed in"
+            " JAX v0.7.0."
+        ),
+        None,
     ),
     "AxisName": (
         (
@@ -123,27 +123,27 @@ _deprecations = {
         None,
     ),
     "trace_state_clean": (
-        "jax.core.trace_state_clean was deprecated in JAX v0.5.0.",
-        _src_core.trace_state_clean,
+        (
+            "jax.core.trace_state_clean was deprecated in JAX v0.5.0 and"
+            " removed in JAX v0.7.0."
+        ),
+        None,
     ),
     "typecheck": (
         "jax.core.typecheck was deprecated in JAX v0.5.0 and removed in JAX v0.7.0.",
         None,
     ),
     "typematch": (
-        "jax.core.typematch was deprecated in JAX v0.5.0.",
-        _src_core.typematch,
+        "jax.core.typematch was deprecated in JAX v0.5.0 and removed in JAX v0.7.0.",
+        None,
     ),
 }
 
 import typing
 if typing.TYPE_CHECKING:
-  axis_frame = _src_core.axis_frame
-  trace_state_clean = _src_core.trace_state_clean
-  typematch = _src_core.typematch
+  pass
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
-del _src_core
