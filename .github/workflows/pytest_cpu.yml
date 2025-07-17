@@ -93,13 +93,13 @@ jobs:
         continue-on-error: true
         if: ${{ !contains(inputs.runner, 'windows-x86') }}
         run: |
-          mkdir -p $(pwd)/dist
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+          mkdir -p "$(pwd)/dist"
+          gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*py3*none*any.whl" "$(pwd)/dist/"
 
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
             echo "JAX only release. Only downloading the jax wheel from the release bucket."
           else
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" "$(pwd)/dist/"
           fi
       - name: Download wheels from GCS (Windows runs)
         id: download-wheel-artifacts-w
