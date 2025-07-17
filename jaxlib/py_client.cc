@@ -483,6 +483,21 @@ PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, std::string mlir_module,
   mlir::MLIRContext context;
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       ParseMlirModuleString(mlir_module, context));
+#if JAX_IFRT_VERSION_NUMBER >= 16
+  // TODO(b/420837831): Remove this once we don't need to fall back to GSPMD.
+  if (options.executable_build_options.use_shardy_partitioner() &&
+      xla::sdy::hasGspmdAttrsOrOps(module.get())) {
+    LOG(WARNING)
+        << "Module has GSPMD attrs or ops, but Shardy is enabled. Disabling "
+           "Shardy and falling back to using GSPMD propagation.";
+    options.executable_build_options.set_use_shardy_partitioner(false);
+    if (xla::sdy::hasShardyMesh(module.get())) {
+      // Shardy is not enabled, but the module has shardy ops. Likely due to
+      // export loading a GSPMD checkpoint. Fall back to GSPMD.
+      TF_RETURN_IF_ERROR(ExportShardyForGSPMD(*module));
+    }
+  }
+#endif
   return CompileAndLoadIfrtProgram(
       client, std::make_unique<xla::ifrt::HloProgram>(module.get()),
       MakeIfrtCompileOptions(std::move(options), std::move(executable_devices),
