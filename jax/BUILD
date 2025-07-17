@@ -1672,7 +1672,13 @@ pytype_strict_library(
     name = "xla_metadata",
     srcs = ["_src/xla_metadata.py"],
     deps = [
+        ":ad",
+        ":api",
+        ":batching",
         ":config",
+        ":core",
+        ":mlir",
+        ":tree_util",
         ":xla_metadata_lib",
         "//jax/_src/lib",
     ],

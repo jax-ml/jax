@@ -2588,19 +2588,16 @@ def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> No
 
 
 def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> None:
-  ctx_attributes = {}
-  existing_attributes = {}
   if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.xla_metadata:
+    ctx_attributes, existing_attributes = {}, {}
     for k, v in ctx.jaxpr_eqn_ctx.xla_metadata.items():
       ctx_attributes[k] = ir.StringAttr.get(str(v).lower())
     if isinstance(op, ir.Operation):
       # combine with existing mhlo.frontend_attributes
-      op_attributes_dict = {attr.name: attr.attr for attr in op.attributes}
-      for k, attributes in op_attributes_dict.items():
-        if k == "mhlo.frontend_attributes":
-          v_dict = {attr.name: attr.attr for attr in attributes}
-          for fa_key, fa_val in v_dict.items():
-            existing_attributes[fa_key] = fa_val
+      for attr in op.attributes:
+        if attr.name == "mhlo.frontend_attributes":
+          for a in attr.attr:
+            existing_attributes[a.name] = a.attr
       op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
           ctx_attributes | existing_attributes
       )
