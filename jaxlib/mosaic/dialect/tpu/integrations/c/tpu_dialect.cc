@@ -313,7 +313,7 @@ bool mlirTpuVectorLayoutEquivalentTo(MlirTpuVectorLayout layout,
 void mlirTpuVectorLayoutPrint(
     MlirTpuVectorLayout layout, MlirStringCallback callback, void *userData) {
   mlir::detail::CallbackOstream stream(callback, userData);
-  unwrap(layout)->print<llvm::raw_ostream>(stream);
+  unwrap(layout)->print(stream);
 }
 
 bool mlirTpuVectorLayoutIsValid(MlirTpuVectorLayout layout,

@@ -493,8 +493,9 @@ class VectorLayout {
            other.generalizes(*this, shape, target_shape);
   }
 
-  template <typename Stream>
-  void print(Stream &os) const;
+  void print(llvm::raw_ostream& os) const;
+  void print(std::ostream& os) const;
+  void print(mlir::Diagnostic& diag) const;
 
   static std::optional<VectorLayout> join(const VectorLayout &l,
                                           const VectorLayout &r,

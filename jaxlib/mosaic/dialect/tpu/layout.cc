@@ -30,6 +30,7 @@ limitations under the License.
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -609,10 +610,13 @@ bool VectorLayout::generalizes(
 }
 
 template <typename Stream>
-void VectorLayout::print(Stream& os) const {
-  os << static_cast<int32_t>(bitwidth_) << ",{";
+static void PrintVectorLayout(Stream& os, const int32_t bitwidth,
+                              const VectorLayout::ImplicitDim implicit_dim,
+                              const LayoutOffsets offsets,
+                              const std::array<int64_t, 2>& tiling) {
+  os << static_cast<int32_t>(bitwidth) << ",{";
   bool first = true;
-  for (auto o : offsets_) {
+  for (auto o : offsets) {
     if (first) {
       first = false;
     } else {
@@ -624,12 +628,24 @@ void VectorLayout::print(Stream& os) const {
       os << *o;
     }
   }
-  os << "},(" << tiling_[0] << ',' << tiling_[1] << ")";
-  if (implicit_dim_ == ImplicitDim::kMinor) {
+  os << "},(" << tiling[0] << ',' << tiling[1] << ")";
+  if (implicit_dim == VectorLayout::ImplicitDim::kMinor) {
     os << ",-1";
-  } else if (implicit_dim_ == ImplicitDim::kSecondMinor) {
+  } else if (implicit_dim == VectorLayout::ImplicitDim::kSecondMinor) {
     os << ",-2";
   }
+}
+
+void VectorLayout::print(llvm::raw_ostream& os) const {
+  PrintVectorLayout(os, bitwidth_, implicit_dim_, offsets_, tiling_);
+}
+
+void VectorLayout::print(std::ostream& os) const {
+  PrintVectorLayout(os, bitwidth_, implicit_dim_, offsets_, tiling_);
+}
+
+void VectorLayout::print(mlir::Diagnostic& diag) const {
+  PrintVectorLayout(diag, bitwidth_, implicit_dim_, offsets_, tiling_);
 }
 
 std::optional<VectorLayout> VectorLayout::join(const VectorLayout& l,
