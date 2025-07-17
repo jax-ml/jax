@@ -107,9 +107,9 @@ def all_gather_lhs_matmul(
 
       # For some reason ptxas spills if we unroll the loop over k
       copy_block = 32
-      @pl.loop(0, k // copy_block)
+      @pl.loop(0, k, step=copy_block)
       def _k_copy_loop(ki):
-        k_slice = pl.ds(ki * copy_block, copy_block)
+        k_slice = pl.ds(ki, copy_block)
         scratch_ref[0, :, k_slice] = lhs_ref[m_tile_slice, k_slice]
 
       @pl.loop(0, num_devices)
