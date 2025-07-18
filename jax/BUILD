@@ -771,10 +771,12 @@ pytype_strict_library(
         ":deprecations",
         ":dtypes",
         ":effects",
+        ":layout",
         ":mesh",
         ":named_sharding",
         ":partition_spec",
         ":pretty_printer",
+        ":sharding",
         ":source_info_util",
         ":traceback_util",
         ":tree_util",
@@ -1698,8 +1700,8 @@ pytype_strict_library(
     srcs = ["_src/layout.py"],
     deps = [
         ":dtypes",
+        ":named_sharding",
         ":sharding",
-        ":sharding_impls",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )

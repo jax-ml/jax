@@ -420,11 +420,10 @@ class Compiled(Stage):
 
   @property
   def out_info(self):  # PyTree of jax.ShapeDtypeStruct
-    from jax._src import api  # type: ignore
     out_avals = self._executable.out_avals
     out_formats_flat = self._output_formats_flat
     return self.out_tree.unflatten(
-        [api.ShapeDtypeStruct(o.shape, o.dtype, sharding=f)
+        [core.ShapeDtypeStruct(o.shape, o.dtype, sharding=f)
          for o, f in zip(out_avals, out_formats_flat)])
 
   def runtime_executable(self) -> Any | None:
@@ -603,7 +602,6 @@ class Lowered(Stage):
 
   @property
   def out_info(self):  # PyTree of OutInfo
-    from jax._src import api  # type: ignore
     out_avals = self._lowering.compile_args["global_out_avals"]
     out_shardings = self._lowering.compile_args["out_shardings"]
     out_layouts = self._lowering.compile_args["out_layouts"]
@@ -612,7 +610,7 @@ class Lowered(Stage):
       s = None if isinstance(s, (UnspecifiedValue, AUTO)) else s
       l = None if isinstance(l, AutoLayout) else l
       format = Format(l, s)
-      outs.append(api.ShapeDtypeStruct(o.shape, o.dtype, sharding=format))
+      outs.append(core.ShapeDtypeStruct(o.shape, o.dtype, sharding=format))
     return self.out_tree.unflatten(outs)
 
   def compile(
@@ -730,7 +728,6 @@ class Traced(Stage):
     return Lowered(lowering, self.args_info, self._out_tree)
 
   def eval_shape(self):
-    from jax._src import api  # type: ignore
     out_shardings = [None if isinstance(s, UnspecifiedValue) else s
                      for s in self._params_out_shardings]
     out = []
@@ -739,7 +736,7 @@ class Traced(Stage):
            if out_s is None else out_s)
       # TODO(yashkatariya): Add `Layout` to SDS.
       out.append(
-          api.ShapeDtypeStruct(
+          core.ShapeDtypeStruct(
               a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
               vma=(a.vma if config._check_vma.value else None)))
     return tree_util.tree_unflatten(self._out_tree, out)

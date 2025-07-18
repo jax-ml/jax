@@ -19,7 +19,7 @@ from typing import Union
 import numpy as np
 from jax._src.dtypes import iinfo, issubdtype
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import AUTO as AutoSharding
+from jax._src.named_sharding import AUTO as AutoSharding
 from jax._src.lib import xla_client as xc
 
 Shape = tuple[int, ...]

@@ -124,7 +124,7 @@ from jax._src.xla_bridge import process_index as process_index
 from jax._src.xla_bridge import process_indices as process_indices
 from jax._src.callback import pure_callback as pure_callback
 from jax._src.ad_checkpoint import checkpoint_wrapper as remat  # noqa: F401
-from jax._src.api import ShapeDtypeStruct as ShapeDtypeStruct
+from jax._src.core import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.api import value_and_grad as value_and_grad
 from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap

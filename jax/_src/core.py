@@ -40,7 +40,7 @@ from jax._src import config
 from jax._src import effects
 from jax._src import compute_on
 from jax._src import mesh as mesh_lib
-from jax._src.mesh import AxisType
+from jax._src.mesh import AxisType, get_concrete_mesh
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
@@ -54,6 +54,8 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            partition_list, StrictABCMeta, foreach)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
+from jax._src.sharding import Sharding
+from jax._src.layout import Format, AutoLayout
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src import traceback_util
@@ -3327,6 +3329,143 @@ def _check_map(ctx_factory, prim, in_avals, params):
                if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
   return out_avals, filter_named_axis_effects(call_jaxpr.effects, {axis_name})
+
+# ------------------- ShapeDtypeStruct -------------------
+
+class ShapeDtypeStruct:
+  """A container for the shape, dtype, and other static attributes of an array.
+
+  ``ShapeDtypeStruct`` is often used in conjunction with :func:`jax.eval_shape`.
+
+  Args:
+    shape: a sequence of integers representing an array shape
+    dtype: a dtype-like object
+    sharding: (optional) a :class:`jax.Sharding` object
+  """
+  __slots__ = ["shape", "dtype", "sharding", "_dll", "weak_type", "vma",
+               "is_ref"]
+
+  def __init__(self, shape, dtype, *, sharding=None, weak_type=False,
+               vma=None, is_ref=False):
+    self.shape = tuple(shape)
+    if dtype is None:
+      raise ValueError("ShapeDtypeStruct: dtype must be specified.")
+    self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
+    if sharding is not None and not isinstance(sharding, (Sharding, Format, P)):
+      raise ValueError(
+          "sharding should be an instance of `jax.sharding.Sharding`, "
+          "`jax.sharding.PartitionSpec` or"
+          f" `jax.experimental.layout.Format`. Got {sharding} of type"
+          f" {type(sharding)}.")
+    if (isinstance(sharding, Format) and
+        isinstance(sharding.layout, AutoLayout)):
+      raise TypeError(
+          "`Layout.AUTO` cannot be used in place of a device-local"
+          f" layout in a `ShapeDtypeStruct`. Got {sharding}")
+    if isinstance(sharding, Format):
+      self.sharding = sharding.sharding
+    elif isinstance(sharding, P):
+      # TODO(yashkatariya): Should this be abstract mesh?
+      cur_mesh = get_concrete_mesh()
+      if cur_mesh is None:
+        raise TypeError(
+            "When specifying PartitionSpec to `ShapeDtypeStruct`, the context"
+            " mesh cannot be empty. Please use `jax.sharding.use_mesh` to set"
+            " the mesh context.")
+      self.sharding = NamedSharding(cur_mesh, sharding)
+    else:
+      self.sharding = sharding
+    self._dll = (sharding.layout if isinstance(sharding, Format)
+                 else None)
+    self.weak_type = weak_type
+    if vma is not None and not isinstance(vma, (set, frozenset)):
+      raise TypeError(
+          "`vma` argument passed to ShapeDtypeStruct should be of type `set`"
+          f" or `frozenset`. Got type {type(vma)}")
+    self.vma = None if vma is None else frozenset(vma)
+    self.is_ref = is_ref
+
+  size = property(lambda self: math.prod(self.shape))
+  ndim = property(lambda self: len(self.shape))
+
+  @property
+  def format(self):
+    return Format(self._dll, self.sharding)
+
+  def __len__(self):
+    try:
+      return self.shape[0]
+    except IndexError as e:
+      raise TypeError("len() of unsized object") from e  # same as numpy error
+
+  def __repr__(self):
+    sh = f", sharding={self.sharding}" if self.sharding is not None else ""
+    l = f", format={self._dll}" if self._dll is not None else ""
+    wt = f", weak_type={self.weak_type}" if self.weak_type else ""
+    vma = f", vma={self.vma}" if self.vma else ""
+    is_ref = f", is_ref={self.is_ref}" if self.is_ref else ""
+    return (f"{type(self).__name__}(shape={self.shape}, "
+            f"dtype={self.dtype.name}{sh}{l}{wt}{vma}{is_ref})")
+
+  __str__ = __repr__
+
+  def __eq__(self, other):
+    if not isinstance(other, ShapeDtypeStruct):
+      return False
+    else:
+      return ((self.shape, self.dtype, self.sharding, self._dll,
+               self.weak_type, self.vma, self.is_ref) ==
+              (other.shape, other.dtype, other.sharding, other._dll,
+               other.weak_type, other.vma, other.is_ref))
+
+  def __hash__(self):
+    # TODO(frostig): avoid the conversion from dict by addressing
+    # https://github.com/jax-ml/jax/issues/8182
+    return hash((self.shape, self.dtype, self.sharding, self._dll,
+                 self.weak_type, self.vma, self.is_ref))
+
+  def __setattr__(self, name, value):
+    if hasattr(self, name):
+      if getattr(self, name) == value:
+        # This can happen if two threads race, for example if two threads
+        # are trying to hash the same SDS instance.
+        return
+      raise RuntimeError(
+          f"Cannot reassign attributes ({name}) of immutable ShapeDtypeStruct"
+          " objects")
+    super().__setattr__(name, value)
+
+  def update(self, **kwargs):
+    if 'sharding' in kwargs:
+      s = kwargs['sharding']
+      if self._dll is not None and isinstance(s, Sharding):
+        raise ValueError(
+            f"You are updating ShapeDtypeStruct with a {type(s)} when the"
+            f" original ShapeDtypeStruct had a concrete layout {self.format}."
+            " This might lead to bugs. If you want to do this, create a new"
+            " ShapeDtypeStruct via the constructor.")
+      sharding = s
+    else:
+      sharding = self.format
+    return ShapeDtypeStruct(
+        shape=kwargs.pop('shape', self.shape),
+        dtype=kwargs.pop('dtype', self.dtype),
+        sharding=sharding,
+        weak_type=kwargs.pop('weak_type', self.weak_type),
+        vma=kwargs.pop('vma', self.vma),
+        is_ref=kwargs.pop('is_ref', self.is_ref))
+
+
+def _sds_aval_mapping(x):
+  aval = ShapedArray(
+      x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
+      weak_type=x.weak_type, vma=(frozenset() if x.vma is None else x.vma))
+  aval = update_aval_with_sharding(aval, x.sharding)
+  if x.is_ref:
+    from jax._src.state.types import AbstractRef  # type: ignore
+    return AbstractRef(aval)
+  return aval
+pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
 
 
 # ------------------- Jaxpr printed representation -------------------
