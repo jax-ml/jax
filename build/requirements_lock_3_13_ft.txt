@@ -160,9 +160,9 @@ fsspec==2024.12.0 \
     --hash=sha256:670700c977ed2fb51e0d9f9253177ed20cbde4a3e5c0283cc5385b5870c8533f \
     --hash=sha256:b520aed47ad9804237ff878b504267a3b0b441e97508bd6d2d8774e3db85cee2
     # via etils
-hypothesis==6.123.9 \
-    --hash=sha256:0f924bd9513daa9ecddbfe8abe8b3f7598d4d09234fe1027b19b4cd717adba05 \
-    --hash=sha256:aca6a2f7aeef85e5201079ab93156fca137a8cabcf5cc39ea2a3b7147432fe89
+hypothesis==6.135.29 \
+    --hash=sha256:871acb38ff61346a420267f81f4ba05ad9a85d08965211edf9b29bc0c1ad9d7b \
+    --hash=sha256:db4e08bcc19235d2cf37801d6ccdaca757f86dc34a64e09c85fced15bb7e836a
     # via -r build/test-requirements.txt
 importlib-resources==6.5.2 \
     --hash=sha256:185f87adef5bcc288449d98fb4fba07cea78bc036455dd44c5fc4a2fe78fed2c \
