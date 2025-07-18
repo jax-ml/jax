@@ -404,14 +404,18 @@ def _constant_equation_system(
   value = constant_op.value
   result = OperandOrResult(constant_op, VariableType.RESULT, 0)
   variable = eqns.Variable(result)
+  shape = tuple(constant_op.result.type.shape)
   if (
       ir.DenseElementsAttr.isinstance(value)
       and ir.DenseElementsAttr(value).is_splat
   ):
-    layout = fa.WGSplatFragLayout(shape=tuple(constant_op.result.type.shape))
+    layout = fa.WGSplatFragLayout(shape=shape)
     system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
   else:
-    system = eqns.EquationSystem()
+    constant_is_not_splat = eqns.Distinct(
+        variable, eqns.Constant(fa.WGSplatFragLayout(shape=shape)),
+    )
+    system = eqns.EquationSystem(constraints=[constant_is_not_splat])
 
   return system, {variable: [result]}
 

@@ -708,6 +708,21 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     ):
       self.infer_layout(self.module)
 
+  def test_layout_cast_of_non_splat_constant_to_splat_raises(self):
+    shape = (128,)
+    splat_layout = mgpu.WGSplatFragLayout(shape=shape)
+    with ir.InsertionPoint(self.module.body):
+      bf16 = ir.BF16Type.get()
+      ty = ir.VectorType.get(shape, bf16)
+      values = [ir.FloatAttr.get(bf16, float(i)) for i in range(shape[0])]
+      constant = arith.constant(ty, ir.DenseElementsAttr.get(values, ty))
+      layout_cast(constant, splat_layout)
+
+    with self.assertRaisesRegex(
+        ValueError, "user-provided layout casts are unsatisfiable"
+    ):
+      self.infer_layout(self.module)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
