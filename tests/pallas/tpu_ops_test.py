@@ -572,6 +572,54 @@ class OpsTest(PallasBaseTest):
     )()[0]
     self.assertEqual(output, 0)
 
+  def test_produce_predicate_phi(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 7, 18):
+      self.skipTest("Requires libtpu built after 2025-07-18")
+    def kernel(
+        out_ref,
+        a,
+    ):
+      def loop_cond(state):
+        x, y = state
+        return jnp.logical_or(y, (x == 1))
+
+      def loop_body(state):
+        x, y = state
+
+        def then_0():
+          def then_1():
+            return jnp.int32(0)
+
+          def else_1():
+            a[0] = a[0] + 1
+
+            return jnp.int32(1)
+
+          z = lax.cond(x == 0, then_1, else_1)
+          new_x = z
+          new_y = z != 0
+          return new_x, new_y
+
+        def else_0():
+          return x, jnp.bool_(False)
+
+        new_x, new_y = lax.cond(y, then_0, else_0)
+
+        return (new_x, new_y)
+
+      out_ref[0] = lax.while_loop(
+          loop_cond, loop_body, (jnp.int32(0), jnp.bool_(True))
+      )[0]
+
+    output = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+        in_specs=(),
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        scratch_shapes=(pltpu.SMEM((1,), jnp.int32),),
+    )()[0]
+    self.assertEqual(output, 0)
+
 
 if __name__ == "__main__":
   absltest.main()
