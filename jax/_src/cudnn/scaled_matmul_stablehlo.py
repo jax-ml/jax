@@ -161,7 +161,7 @@ def _check_shardings(shardings):
 
 
 def _enable_reduce_scatter(lhs, rhs):
-  batch_spec, m_spec, lhs_k_spec = lhs.spec
+  _, m_spec, lhs_k_spec = lhs.spec
   _, n_spec, rhs_k_spec = rhs.spec
   return (
       lhs_k_spec != None
@@ -172,12 +172,12 @@ def _enable_reduce_scatter(lhs, rhs):
 
 
 def _enable_all_reduce(lhs, rhs):
-  batch_spec, m_spec, lhs_k_spec = lhs.spec
+  _, _, lhs_k_spec = lhs.spec
   _, n_spec, rhs_k_spec = rhs.spec
   return lhs_k_spec != None and lhs_k_spec == rhs_k_spec and n_spec == None
 
 
-def _get_output_sharding(mesh, shardings):
+def _get_output_sharding(shardings):
   lhs, rhs = shardings[0], shardings[1]
   batch_spec, m_spec, _ = lhs.spec
   _, n_spec, _ = rhs.spec
@@ -196,14 +196,30 @@ def _scaled_matmul_infer_sharding_from_operands(
   shardings = tree_util.tree_map(lambda x: x.sharding, shapes)
   _check_shardings(shardings)
 
-  return _get_output_sharding(mesh, shardings)
+  return _get_output_sharding(shardings)
 
 
-def supported_in_sharding(mesh, shardings):
+# If one of the non contracting dimensions of the output (M or N) is sharded
+# alone the same axes as the contracting dimension (K), returns that output
+# dimension along which to perform reduce-scatter. Otherwise, returns None.
+def _get_reduce_scatter_dim(lhs, rhs, output):
+  _, _, lhs_k_spec = lhs.spec
+  _, _, rhs_k_spec = rhs.spec
+  _, out_m_spec, out_n_spec = output.spec
+
+  if lhs_k_spec == None or lhs_k_spec != rhs_k_spec:
+    return None
+
+  if out_m_spec == lhs_k_spec:
+    return 1
+  if out_n_spec == lhs_k_spec:
+    return 2
+  return None
+
+
+def supported_in_sharding(shardings, reduce_scatter_dim):
   lhs_sharding, rhs_sharding = shardings[0], shardings[1]
-  use_reduce_scatter = _enable_reduce_scatter(lhs_sharding, rhs_sharding)
   use_all_reduce = _enable_all_reduce(lhs_sharding, rhs_sharding)
-  assert not (use_all_reduce and use_reduce_scatter)
 
   lhs_specs, rhs_specs = list(lhs_sharding.spec), list(rhs_sharding.spec)
 
@@ -212,11 +228,15 @@ def supported_in_sharding(mesh, shardings):
     rhs_sharding = NamedSharding(rhs.mesh, P(*rhs_specs))
     return (lhs_sharding, rhs_sharding, lhs_sharding, rhs_sharding)
 
-  if use_all_reduce:
+  if reduce_scatter_dim == 1:
+    lhs_specs[1] = None
     return named_sharding(lhs_sharding, rhs_sharding, lhs_specs, rhs_specs)
 
-  if use_reduce_scatter:
+  if reduce_scatter_dim == 2:
     rhs_specs[1] = None
+    return named_sharding(lhs_sharding, rhs_sharding, lhs_specs, rhs_specs)
+
+  if use_all_reduce:
     return named_sharding(lhs_sharding, rhs_sharding, lhs_specs, rhs_specs)
 
   lhs_specs[2] = None
@@ -228,6 +248,23 @@ def supported_in_sharding(mesh, shardings):
   return named_sharding(lhs_sharding, rhs_sharding, lhs_specs, rhs_specs)
 
 
+def _supported_out_sharding(lhs, rhs, reduce_scatter_dim):
+  batch_spec, m_spec, k_spec = lhs.spec
+  _, n_spec, _ = rhs.spec
+
+  if reduce_scatter_dim == 1:
+    out_m_spec = k_spec
+    out_n_spec = n_spec
+  elif reduce_scatter_dim == 2:
+    out_m_spec = m_spec
+    out_n_spec = k_spec
+  else:
+    out_m_spec = m_spec
+    out_n_spec = n_spec if m_spec != n_spec else None
+
+  return [NamedSharding(lhs.mesh, P(batch_spec, out_m_spec, out_n_spec))]
+
+
 def _scaled_matmul_partition(
     preferred_element_type, mesh, shapes, output_shape
   ):
@@ -235,22 +272,23 @@ def _scaled_matmul_partition(
   _check_shardings(shardings)
 
   lhs, rhs = shardings[0], shardings[1]
+  out = output_shape[0].sharding
   use_all_reduce = _enable_all_reduce(lhs, rhs)
-  use_reduce_scatter = _enable_reduce_scatter(lhs, rhs)
+  reduce_scatter_dim = _get_reduce_scatter_dim(lhs, rhs, out)
   lhs_k_spec = lhs.spec[2]
 
   def _scaled_matmul_impl_partition(a, b, a_scale, b_scale):
     z = _scaled_matmul_impl(a, b, a_scale, b_scale, preferred_element_type)
-    if use_reduce_scatter:
-        z = lax_parallel.psum_scatter(
-            z, lhs_k_spec, scatter_dimension=2, tiled=True
-        )
-    if use_all_reduce:
-        z = lax_parallel.psum(z, lhs_k_spec)
+    if reduce_scatter_dim is not None:
+      z = lax_parallel.psum_scatter(
+          z, lhs_k_spec, scatter_dimension=reduce_scatter_dim, tiled=True
+      )
+    elif use_all_reduce:
+      z = lax_parallel.psum(z, lhs_k_spec)
     return z
 
-  out_shardings = _get_output_sharding(mesh, shardings)
-  arg_shardings = supported_in_sharding(mesh, shardings)
+  out_shardings = _supported_out_sharding(lhs, rhs, reduce_scatter_dim)
+  arg_shardings = supported_in_sharding(shardings, reduce_scatter_dim)
   return mesh, _scaled_matmul_impl_partition, out_shardings, arg_shardings
 
 
@@ -261,6 +299,7 @@ _scaled_matmul_lower = custom_partitioning(
 _scaled_matmul_lower.def_partition(
     infer_sharding_from_operands=_scaled_matmul_infer_sharding_from_operands,
     partition=_scaled_matmul_partition,
+    sharding_rule='b m k, b n k, b m x, b n y -> b m n',
 )
 
 
