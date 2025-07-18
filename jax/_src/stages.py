@@ -42,10 +42,9 @@ from jax._src import sharding as sharding_lib
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
-from jax._src import typing
 from jax._src import util
 from jax._src.sharding_impls import UnspecifiedValue, AUTO
-from jax._src.layout import Format, Layout
+from jax._src.layout import Format, Layout, AutoLayout
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
@@ -309,13 +308,6 @@ class ArgInfo:
     return self._aval.dtype  # pytype: disable=attribute-error
 
 
-@dataclass(frozen=True)
-class OutInfo:
-  shape: tuple[int, ...]
-  dtype: typing.DTypeLike
-  sharding: sharding_lib.Sharding | None = None
-
-
 class Stage:
   args_info: Any  # PyTree of ArgInfo
 
@@ -427,11 +419,13 @@ class Compiled(Stage):
       return None
 
   @property
-  def out_info(self):  # PyTree of OutInfo
+  def out_info(self):  # PyTree of jax.ShapeDtypeStruct
+    from jax._src import api  # type: ignore
     out_avals = self._executable.out_avals
-    out_shardings = self._executable._out_shardings
+    out_formats_flat = self._output_formats_flat
     return self.out_tree.unflatten(
-        [OutInfo(o.shape, o.dtype, s) for o, s in zip(out_avals, out_shardings)])
+        [api.ShapeDtypeStruct(o.shape, o.dtype, sharding=f)
+         for o, f in zip(out_avals, out_formats_flat)])
 
   def runtime_executable(self) -> Any | None:
     """An arbitrary object representation of this executable.
@@ -481,11 +475,15 @@ class Compiled(Stage):
     return tree_util.tree_unflatten(self.in_tree, formats_flat)  # pytype: disable=attribute-error
 
   @property
-  def output_formats(self):
+  def _output_formats_flat(self):
     layouts_flat = self._executable._xla_out_layouts
     shardings_flat = self._executable._out_shardings
     assert all(isinstance(l, Layout) for l in layouts_flat)
-    formats_flat = [Format(l, s) for l, s in zip(layouts_flat, shardings_flat)]
+    return [Format(l, s) for l, s in zip(layouts_flat, shardings_flat)]
+
+  @property
+  def output_formats(self):
+    formats_flat = self._output_formats_flat
     return tree_util.tree_unflatten(self.out_tree, formats_flat)  # pytype: disable=attribute-error
 
   @staticmethod
@@ -605,11 +603,17 @@ class Lowered(Stage):
 
   @property
   def out_info(self):  # PyTree of OutInfo
+    from jax._src import api  # type: ignore
     out_avals = self._lowering.compile_args["global_out_avals"]
     out_shardings = self._lowering.compile_args["out_shardings"]
-    return self.out_tree.unflatten(
-        [OutInfo(o.shape, o.dtype, None if isinstance(s, (UnspecifiedValue, AUTO)) else s)
-         for o, s in zip(out_avals, out_shardings)])
+    out_layouts = self._lowering.compile_args["out_layouts"]
+    outs = []
+    for o, l, s in zip(out_avals, out_layouts, out_shardings):
+      s = None if isinstance(s, (UnspecifiedValue, AUTO)) else s
+      l = None if isinstance(l, AutoLayout) else l
+      format = Format(l, s)
+      outs.append(api.ShapeDtypeStruct(o.shape, o.dtype, sharding=format))
+    return self.out_tree.unflatten(outs)
 
   def compile(
       self, compiler_options: CompilerOptions | None = None, *,
@@ -707,8 +711,7 @@ class Traced(Stage):
 
   @property
   def out_info(self):
-    return self._out_tree.unflatten(
-        [OutInfo(o.shape, o.dtype) for o in self.jaxpr.out_avals])
+    return self.eval_shape()
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):

@@ -21,6 +21,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.tree.reduce_associative`.
 
 * Breaking changes:
+  * `jax.stages.OutInfo` has been replaced with `jax.ShapeDtypeStruct`.
   * {func}`jax.jit` now requires `fun` to be passed by position, and additional
     arguments to be passed by keyword. Doing otherwise will result in an error
     starting in v0.7.x. This raised a DeprecationWarning in v0.6.x.
