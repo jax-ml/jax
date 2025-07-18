@@ -43,6 +43,7 @@ from jax._src.lib import ifrt_version
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect, sdy
@@ -603,6 +604,11 @@ def _export_internal(
   if not isinstance(fun_jit, stages.Wrapped):
     raise ValueError(
         f"Function to be exported must be the result of `jit` but is: {fun_jit}")
+
+  # If the jaxlib version is before 0.7.0, we need to disable shardy since
+  # some required mlir passes aren't registered before that version.
+  if jaxlib_version < (0, 7, 0):
+    config.update("jax_use_shardy_partitioner", False)
 
   def do_export(*args_specs, **kwargs_specs) -> Exported:
     if platforms is not None:
