@@ -184,6 +184,25 @@ jobs:
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
+  run-bazel-test-cuda-py-import:
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/bazel_cuda_non_rbe_py_import.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Python values need to match the matrix stategy in the build artifacts job above
+          runner: ["linux-x86-g2-48-l4-4gpu",]
+          python: ["3.10",]
+          enable-x64: [1]
+    name: "Bazel CUDA Non-RBE (jax version = ${{ format('{0}', 'head') }})"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+
   run-pytest-tpu:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
