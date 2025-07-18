@@ -694,7 +694,7 @@ class Traced(Stage):
 
   def __init__(self, jaxpr: core.ClosedJaxpr, args_info, fun_name, out_tree,
                lower_callable, args_flat=None, arg_names=None,
-               num_consts: int = 0, params_out_shardings=None):
+               num_consts: int = 0):
     self.jaxpr = jaxpr
     self.args_info = args_info
     self.fun_name = fun_name
@@ -703,7 +703,6 @@ class Traced(Stage):
     self._args_flat = args_flat
     self._arg_names = arg_names
     self._num_consts = num_consts
-    self._params_out_shardings = params_out_shardings
 
   @property
   def out_info(self):
@@ -725,21 +724,6 @@ class Traced(Stage):
           self.fun_name, fails, self._args_flat, 'jit', self._arg_names)
       raise ValueError(msg) from None
     return Lowered(lowering, self.args_info, self._out_tree)
-
-  def eval_shape(self):
-    from jax._src import api  # type: ignore
-    out_shardings = [None if isinstance(s, UnspecifiedValue) else s
-                     for s in self._params_out_shardings]
-    out = []
-    for a, out_s in zip(self.jaxpr.out_avals, out_shardings):
-      s = (a.sharding if a.sharding.mesh._are_all_axes_explicit else out_s
-           if out_s is None else out_s)
-      # TODO(yashkatariya): Add `Layout` to SDS.
-      out.append(
-          api.ShapeDtypeStruct(
-              a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
-              vma=(a.vma if config._check_vma.value else None)))
-    return tree_util.tree_unflatten(self._out_tree, out)
 
 
 @runtime_checkable
