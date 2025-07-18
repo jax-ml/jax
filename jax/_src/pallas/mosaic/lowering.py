@@ -3600,42 +3600,50 @@ def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr, collecti
 def _device_id_dict_to_mesh(ctx: LoweringRuleContext, device_id_dict):
   mesh_context = ctx.lowering_context.mesh_context
   assert mesh_context is not None
-  zipped_metadata = zip(mesh_context.axis_names, mesh_context.mesh_shape)
+  axis_map = dict(zip(mesh_context.axis_names, mesh_context.mesh_shape))
+  grid_names = ctx.lowering_context.grid_names
+  if grid_names:
+    assert (
+        len(grid_names) == len(ctx.lowering_context.grid_sizes) == 1
+    ), "Unable to determine core axis name if grid_names is more than 1"
+    axis_map.update(dict(zip(grid_names, ctx.lowering_context.grid_sizes)))
   physical_axis_dict = {}
+  core_index = None
   # Handle joint axes (i.e., one logical axis over >1 physical axes)
   for axis, idx in device_id_dict.items():
     if isinstance(axis, tuple):
-      axis_names, mesh_shape = unzip2(
-          (name, shape) for name, shape in zipped_metadata if name in axis
-      )
-      for axis_index, axis_name in enumerate(axis_names):
-        axis_size = ir_constant(mesh_shape[axis_index])
+      axes_dimensions = [axis_map[name] for name in axis]
+      for axis_index, axis_name in enumerate(axis):
+        axis_size = ir_constant(axis_map[axis_name])
         minor_divisor = ir_constant(
-            np.prod(mesh_shape[axis_index + 1 :], dtype=np.int32)
+            np.prod(axes_dimensions[axis_index + 1 :], dtype=np.int32)
         )
         device_idx = arith.remsi(arith.divsi(idx, minor_divisor), axis_size)
         physical_axis_dict[axis_name] = device_idx
     else:
       physical_axis_dict[axis] = idx
+  if grid_names and grid_names[0] in physical_axis_dict:
+    core_index = physical_axis_dict.pop(grid_names[0])
   device_id = []
   for axis in mesh_context.axis_names:
     if axis in physical_axis_dict:
       device_id.append(physical_axis_dict[axis])
     else:
       device_id.append(_axis_index_rule(ctx, axis_name=axis))
-  return tuple(device_id)
+  return tuple(device_id), core_index
 
 
 def _device_id_to_logical(
     ctx: LoweringRuleContext, device_id,
     device_id_type: primitives.DeviceIdType):
+  core_index = None
   if isinstance(device_id, dict):
     if device_id_type is not primitives.DeviceIdType.MESH:
       raise ValueError(
           "`device_id_type` must be MESH if `device_id` is a dict,"
           f" got: {device_id_type = }."
       )
-    device_id = _device_id_dict_to_mesh(ctx, device_id)
+    device_id, core_index = _device_id_dict_to_mesh(ctx, device_id)
   if device_id_type is primitives.DeviceIdType.MESH:
     assert (mesh_context := ctx.lowering_context.mesh_context)
     # Mesh means we are passed the mesh coordinates for the device
@@ -3644,16 +3652,16 @@ def _device_id_to_logical(
 
     i32 = ir.IntegerType.get_signless(32)
     if len(device_ids) == 0:
-      return arith.constant(i32, 0)
+      return arith.constant(i32, 0), core_index
     return functools.reduce(
         arith.addi,
         (
             arith.muli(a, arith.constant(i32, b))
             for a, b in zip(device_ids, mesh_strides)
         ),
-    )
+    ), core_index
   elif device_id_type is primitives.DeviceIdType.LOGICAL:
-    return device_id
+    return device_id, core_index
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
 
 
@@ -3697,7 +3705,13 @@ def _semaphore_signal_lowering_rule(
   )
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   if device_id is not None:
-    device_id = _device_id_to_logical(ctx, device_id, device_id_type)
+    device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type)
+    if core_id is not None:
+      if core_index is not None:
+        raise ValueError(
+            "Cannot specify both `core_index` and the core axis in `device_id`."
+        )
+      core_index = core_id
   tpu.sem_signal(sem, value, device_id=device_id, core_id=core_index)
   return []
 
@@ -3750,8 +3764,9 @@ def _dma_start_lowering_rule(
       dst_ref, dst_ref_aval.dtype, dst_ref_block_shape, dst_transforms
   )
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
+  core_id = None
   if device_id is not None:
-    device_id = _device_id_to_logical(ctx, device_id, device_id_type)
+    device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type)
   priority_kwarg = {"priority": priority}
   if jaxlib_version < (0, 5, 4):
     priority_kwarg = {}
@@ -3761,6 +3776,7 @@ def _dma_start_lowering_rule(
       sem,
       source_semaphore=src_sem,
       device_id=device_id,
+      core_id=core_id,
       **priority_kwarg,
   )
   return []
@@ -3789,13 +3805,14 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   dst, _ = _transform_ref(dst, dst_aval.dtype, ref_block_shape, transforms)
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
 
+  core_id = None
   if device_id is not None:
-    device_id = _device_id_to_logical(ctx, device_id, device_id_type)
+    device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type)
 
   if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 7, 27):
-    tpu.wait_dma2(sem, src, dst)
+    tpu.wait_dma2(sem, src, dst, core_id=core_id)
   else:
-    tpu.wait_dma2(sem, src, dst, device_id=device_id)
+    tpu.wait_dma2(sem, src, dst, device_id=device_id, core_id=core_id)
   return []
 
 
