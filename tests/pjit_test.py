@@ -7650,6 +7650,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     f(carry, arr)  # doesn't crash
 
+  def test_eval_shape_jitted_fun_cache_hit(self):
+    inp = jnp.zeros([1,1])
+
+    @partial(jax.jit, inline=True)
+    def g(x):
+      return x * 2
+
+    with jtu.count_jit_tracing_cache_miss() as count:
+      jax.eval_shape(g, inp)
+      g.trace(inp)
+    self.assertEqual(count(), 2)  # one for `g`, one for `*`
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reshard_with_np_array(self, mesh):
     out = reshard(np.arange(8), P('x'))

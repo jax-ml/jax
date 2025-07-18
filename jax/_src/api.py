@@ -2978,6 +2978,8 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> print(out.dtype)
   float32
   """
+  if type(fun) is xc._xla.PjitFunction:
+    return fun.eval_shape(*args, **kwargs)  # type: ignore
   try: hash(fun)
   except TypeError: fun = partial(fun)
   return jit(fun).eval_shape(*args, **kwargs)
