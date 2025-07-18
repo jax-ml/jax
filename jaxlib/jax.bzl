@@ -58,7 +58,7 @@ jax_test_util_visibility = []
 loops_visibility = []
 
 PLATFORM_TAGS_DICT = {
-    ("Linux", "x86_64"): ("manylinux2014", "x86_64"),
+    ("Linux", "x86_64"): ("manylinux_2_27", "x86_64"),
     ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
     ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
     ("Darwin", "x86_64"): ("macosx_11_0", "x86_64"),

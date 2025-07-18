@@ -54,17 +54,6 @@ load("@pypi//:requirements.bzl", "install_deps")
 
 install_deps()
 
-# Optional, to facilitate testing against newest versions of Python
-load("@xla//third_party/py:python_repo.bzl", "custom_python_interpreter")
-
-custom_python_interpreter(
-    name = "python_dev",
-    strip_prefix = "Python-{version_variant}",
-    urls = ["https://www.python.org/ftp/python/{version}/Python-{version_variant}.tgz"],
-    version = "3.13.0",
-    version_variant = "3.13.0rc2",
-)
-
 load("@xla//:workspace2.bzl", "xla_workspace2")
 
 xla_workspace2()
@@ -99,7 +88,18 @@ python_wheel_version_suffix_repository(
 )
 
 load(
-    "@xla//third_party/gpus/cuda/hermetic:cuda_json_init_repository.bzl",
+    "@rules_ml_toolchain//cc_toolchain/deps:cc_toolchain_deps.bzl",
+    "cc_toolchain_deps",
+)
+
+cc_toolchain_deps()
+
+register_toolchains("@rules_ml_toolchain//cc_toolchain:lx64_lx64")
+
+register_toolchains("@rules_ml_toolchain//cc_toolchain:lx64_lx64_cuda")
+
+load(
+    "@rules_ml_toolchain//third_party/gpus/cuda/hermetic:cuda_json_init_repository.bzl",
     "cuda_json_init_repository",
 )
 
@@ -111,7 +111,7 @@ load(
     "CUDNN_REDISTRIBUTIONS",
 )
 load(
-    "@xla//third_party/gpus/cuda/hermetic:cuda_redist_init_repositories.bzl",
+    "@rules_ml_toolchain//third_party/gpus/cuda/hermetic:cuda_redist_init_repositories.bzl",
     "cuda_redist_init_repositories",
     "cudnn_redist_init_repository",
 )
@@ -125,28 +125,28 @@ cudnn_redist_init_repository(
 )
 
 load(
-    "@xla//third_party/gpus/cuda/hermetic:cuda_configure.bzl",
+    "@rules_ml_toolchain//third_party/gpus/cuda/hermetic:cuda_configure.bzl",
     "cuda_configure",
 )
 
 cuda_configure(name = "local_config_cuda")
 
 load(
-    "@xla//third_party/nccl/hermetic:nccl_redist_init_repository.bzl",
+    "@rules_ml_toolchain//third_party/nccl/hermetic:nccl_redist_init_repository.bzl",
     "nccl_redist_init_repository",
 )
 
 nccl_redist_init_repository()
 
 load(
-    "@xla//third_party/nccl/hermetic:nccl_configure.bzl",
+    "@rules_ml_toolchain//third_party/nccl/hermetic:nccl_configure.bzl",
     "nccl_configure",
 )
 
 nccl_configure(name = "local_config_nccl")
 
 load(
-    "@xla//third_party/nvshmem/hermetic:nvshmem_json_init_repository.bzl",
+    "@rules_ml_toolchain//third_party/nvshmem/hermetic:nvshmem_json_init_repository.bzl",
     "nvshmem_json_init_repository",
 )
 
@@ -157,7 +157,7 @@ load(
     "NVSHMEM_REDISTRIBUTIONS",
 )
 load(
-    "@xla//third_party/nvshmem/hermetic:nvshmem_redist_init_repository.bzl",
+    "@rules_ml_toolchain//third_party/nvshmem/hermetic:nvshmem_redist_init_repository.bzl",
     "nvshmem_redist_init_repository",
 )
 
@@ -166,7 +166,7 @@ nvshmem_redist_init_repository(
 )
 
 load(
-    "@xla//third_party/nvshmem/hermetic:nvshmem_configure.bzl",
+    "@rules_ml_toolchain//third_party/nvshmem/hermetic:nvshmem_configure.bzl",
     "nvshmem_configure",
 )
 
