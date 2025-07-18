@@ -29,6 +29,10 @@ Here is an example:
 >>> import numpy as np
 >>> import jax
 >>> from jax import export
+>>> from jax._src import test_util as jtu
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
 
 >>> def f(x): return 2 * x * x
 
@@ -84,7 +88,11 @@ function cannot be differentiated):
 ```python
 >>> import jax
 >>> from jax import export
+>>> from jax._src import test_util as jtu
 >>> from typing import Callable
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
 
 >>> def f(x): return 7 * x * x * x
 
@@ -199,7 +207,12 @@ as in the following example:
 >>> from jax import export
 >>> from jax import lax
 >>> from jax._src import core
+>>> from jax._src import test_util as jtu
 >>> from jax._src.interpreters import mlir
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
+
 >>> # Define a new primitive backed by a custom call
 >>> new_prim = core.Primitive("new_prim")
 >>> _ = new_prim.def_abstract_eval(lambda x: x)
@@ -256,6 +269,10 @@ on multiple platforms.
 >>> import jax
 >>> from jax import export
 >>> from jax import lax
+>>> from jax._src import test_util as jtu
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
 
 >>> # You can specify the export platform, e.g., `tpu`, `cpu`, `cuda`, `rocm`
 >>> # even if the current machine does not have that accelerator.
@@ -299,6 +316,11 @@ the same StableHLO as for the single-platform export.
 >>> import jax
 >>> from jax import export
 >>> from jax import lax
+>>> from jax._src import test_util as jtu
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
+
 >>> # A largish function
 >>> def f(x):
 ...   for i in range(1000):
@@ -345,9 +367,13 @@ devices in the mesh are ignored for tracing and lowering:
 ```python
 >>> import jax
 >>> from jax import export
+>>> from jax._src import test_util as jtu
 >>> from jax.sharding import AbstractMesh, Mesh, NamedSharding
 >>> from jax.sharding import PartitionSpec as P
->>>
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
+
 >>> # Use an AbstractMesh for exporting
 >>> export_mesh = AbstractMesh((4,), ("a",))
 
@@ -409,8 +435,12 @@ of devices than it was exported for:
 ```python
 >>> import jax
 >>> from jax import export
+>>> from jax._src import test_util as jtu
 >>> from jax.sharding import Mesh, NamedSharding
 >>> from jax.sharding import PartitionSpec as P
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
 
 >>> export_devices = jax.local_devices()
 >>> export_mesh = Mesh(np.array(export_devices), ("a",))
@@ -434,8 +464,12 @@ artifacts using a new mesh constructed at the call site:
 ```python
 >>> import jax
 >>> from jax import export
+>>> from jax._src import test_util as jtu
 >>> from jax.sharding import Mesh, NamedSharding
 >>> from jax.sharding import PartitionSpec as P
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
 
 >>> export_devices = jax.local_devices()
 >>> export_mesh = Mesh(np.array(export_devices), ("a",))
@@ -465,8 +499,12 @@ on multiple devices, and the compiler will shard the function appropriately:
 ```python
 >>> import jax
 >>> from jax import export
+>>> from jax._src import test_util as jtu
 >>> from jax.sharding import Mesh, NamedSharding
 >>> from jax.sharding import PartitionSpec as P
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
 
 >>> def f(x):
 ...   return jnp.cos(x)
@@ -499,6 +537,11 @@ As of June 2024, all function exported with version 9
 
 ```python
 >>> from jax import export
+>>> from jax._src import test_util as jtu
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
+
 >>> exp: export.Exported = export.export(jnp.cos)(1.)
 >>> exp.calling_convention_version
 10
@@ -512,8 +555,12 @@ or the `JAX_EXPORT_CALLING_CONVENTION_VERSION` environment variable:
 
 ```python
 >>> from jax import export
+>>> from jax._src import test_util as jtu
 >>> (export.minimum_supported_calling_convention_version, export.maximum_supported_calling_convention_version)
 (9, 10)
+
+>>> if jtu.jaxlib_version() < (0, 7, 0):
+...  jax.config.update("jax_use_shardy_partitioner", False)
 
 >>> from jax._src import config
 >>> with config.jax_export_calling_convention_version(10):

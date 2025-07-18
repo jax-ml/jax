@@ -2108,4 +2108,9 @@ class JaxExportTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
+  # If the jaxlib version is before 0.7.0, we need to disable shardy since
+  # some required mlir passes aren't registered before that version.
+  if jtu.jaxlib_version() < (0, 7, 0):
+    jax.config.update("jax_use_shardy_partitioner", False)
+
   absltest.main(testLoader=jtu.JaxTestLoader())
