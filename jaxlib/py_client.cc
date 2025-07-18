@@ -89,6 +89,7 @@ limitations under the License.
 #include "xla/python/types.h"
 #include "xla/python/version.h"
 #include "xla/service/platform_util.h"  // IWYU pragma: keep
+#include "xla/service/spmd/shardy/utils.h"  // IWYU pragma: keep
 #include "xla/shape.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"

@@ -949,6 +949,7 @@ cc_library(
         "@xla//xla/python/pjrt_ifrt:pjrt_dtype",
         "@xla//xla/python/pjrt_ifrt:xla_ifrt",
         "@xla//xla/service:platform_util",
+        "@xla//xla/service/spmd/shardy:utils",
         "@xla//xla/tsl/concurrency:ref_count",
         "@xla//xla/tsl/framework:allocator",
         "@xla//xla/tsl/platform:env",
