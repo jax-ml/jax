@@ -304,8 +304,7 @@ def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
                            pgle_profiler=None)
   return stages.Traced(
       p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
-      lower_callable, args_flat, p.arg_names, len(p.consts),
-      p.params['out_shardings'])
+      lower_callable, args_flat, p.arg_names, len(p.consts))
 
 
 @api_boundary
@@ -314,7 +313,23 @@ def jit_lower(jit_func, *args, **kwargs):
 
 @api_boundary
 def jit_eval_shape(jit_func, *args, **kwargs):
-  return jit_trace(jit_func, *args, **kwargs).eval_shape()
+  p, _ = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
+  out_shardings = [None if isinstance(s, UnspecifiedValue) else s
+                   for s in p.params['out_shardings']]
+  out = []
+  for a, out_s in zip(p.params['jaxpr'].out_avals, out_shardings):
+    if out_s is None:
+      s = a.sharding if a.sharding.mesh._are_all_axes_explicit else out_s
+    else:
+      s = out_s
+    # TODO(yashkatariya): Add `Layout` to SDS.
+    # TODO(yashkatariya): Change `vma` assignment to `a.vma` after ShapedArray
+    # can take `frozenset | None`
+    out.append(
+        api.ShapeDtypeStruct(
+            a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
+            vma=(a.vma if config._check_vma.value else None)))
+  return tree_unflatten(p.out_tree, out)
 
 def jit_evict_fn(self):
   self._clear_cache()

@@ -2899,6 +2899,8 @@ class ShapeDtypeStruct:
 
 
 def _sds_aval_mapping(x):
+  # TODO(yashkatariya): Change `vma` assignment to `x.vma` after ShapedArray
+  # can take `frozenset | None`
   aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type, vma=(frozenset() if x.vma is None else x.vma))
@@ -2977,10 +2979,10 @@ def eval_shape(fun: Callable, *args, **kwargs):
   float32
   """
   if type(fun) is xc._xla.PjitFunction:
-    return fun.trace(*args, **kwargs).eval_shape()  # type: ignore
+    return fun.eval_shape(*args, **kwargs)  # type: ignore
   try: hash(fun)
   except TypeError: fun = partial(fun)
-  return jit(fun).trace(*args, **kwargs).eval_shape()
+  return jit(fun).eval_shape(*args, **kwargs)
 
 
 def named_call(
