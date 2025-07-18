@@ -43,7 +43,7 @@ from jax._src import effects
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
-
+from jax._src import lib
 from jax._src.lib.mlir.dialects import hlo
 
 import numpy as np
@@ -1775,6 +1775,10 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(res2, _testing_multi_platform_fun_expected(x).reshape((-1,)))
 
   def test_multi_platform_and_sharding(self):
+    if jax.config.jax_use_shardy_partitioner and lib.ifrt_version < 12:
+      raise unittest.SkipTest(
+          "Shardy Export problem for single device with ifrt_version < 12"
+      )
     export_devices = jax.devices()[0:2]
     export_mesh = Mesh(export_devices, axis_names=("x",))
     a = np.arange(16 * 4, dtype=np.float32).reshape((16, 4))
