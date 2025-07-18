@@ -418,6 +418,14 @@ if jaxlib.version >= (0, 6, 2):
     return [op.transforms], [op.transforms]
 
 
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
+if jaxlib.version >= (0, 7, 0):
+  @partial(_add_transform_inference_rule, mgpu.TmemAllocOp)
+  def _infer_tmem_alloc_transforms(op: mgpu.TmemAllocOp) -> OptionalTransforms:
+    del op
+    return [], []
+
+
 def infer_transforms(module: ir.Module):
   """Infers transforms for the given module.
 

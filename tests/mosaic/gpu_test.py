@@ -4116,6 +4116,81 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     )
 
 
+class MosaicGpuDialectTCGen05Test(TestCase):
+
+  def setUp(self):
+    super().setUp()
+    capabilities = ("10.0", "10.1")
+    if not any(jtu.is_cuda_compute_capability_equal(sm) for sm in capabilities):
+      self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
+
+  @parameterized.named_parameters(
+      ("exact", (128, 64), jnp.bfloat16, 1, True, False, 64),
+      ("non-exact", (128, 77), jnp.bfloat16, 1, False, False, 128),
+      ("exact-packed", (128, 128), jnp.bfloat16, 2, True, False, 64),
+      ("non-exact-packed", (128, 120), jnp.bfloat16, 2, False, False, 64),
+      ("collective-exact", (128, 64), jnp.bfloat16, 1, True, True, 64),
+  )
+  def test_tmem_alloc_dealloc(
+      self, shape, dtype, packing, exact, collective, expected_allocated_columns
+  ):
+    tmem_type = ir.MemRefType.get(
+        shape,
+        utils.dtype_to_ir_type(dtype),
+        memory_space=mgpu_utils.tmem(),
+    )
+
+    def body(
+        ctx: launch_context.LaunchContext, x: ir.Value, smem: list[ir.Value]
+    ):
+      # We need to have a result `x` otherwise the kernel will not be generated.
+      del ctx, x
+      [tmem] = smem
+
+      tmem_ref = mgpu_dialect.tmem_alloc(
+          result=tmem_type,
+          smem_ptr=tmem,
+          collective=collective,
+          exact=exact,
+          packing=packing,
+      )
+
+      mgpu_dialect.tmem_dealloc(tmem_ref)
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      mgpu.as_gpu_kernel(
+          body,
+          grid=(2 if collective else 1, 1, 1),
+          cluster=(2 if collective else 1, 1, 1),
+          # TODO(b/431684684): Increase to 128 once [de]alloc is predicated.
+          block=(32, 1, 1),
+          in_shape=(),
+          out_shape=(jax.ShapeDtypeStruct((), jnp.int32),),
+          smem_scratch_shape=[jax.ShapeDtypeStruct((), jnp.int32)],
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )()
+
+    [alloc] = re.findall(
+        r"tcgen05.alloc.cta_group::([12]).sync.aligned.shared::cta.b32\s+"
+        r"\[([%\w]+)\],\s+(\d+);",
+        ptx(),
+    )
+    self.assertEqual(alloc[2], str(expected_allocated_columns))
+    self.assertEqual(alloc[0], '2' if collective else '1')
+
+    [ld] = re.findall(
+        r"ld.shared.b32\s+([%\w]+),\s+\[__dynamic_shmem__0\];",
+        ptx(),
+    )
+    [dealloc] = re.findall(
+        r"tcgen05.dealloc.cta_group::([12]).sync.aligned.b32\s+"
+        r"([%\w]+),\s+(\d+);",
+        ptx(),
+    )
+    self.assertEqual(dealloc[0], '2' if collective else '1')
+    self.assertEqual(dealloc[1], ld)
+
+
 class UtilsTest(TestCase):
   @parameterized.parameters(
       (1,),

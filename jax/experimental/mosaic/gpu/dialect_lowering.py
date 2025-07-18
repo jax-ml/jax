@@ -23,6 +23,7 @@ import operator
 from typing import Any, cast
 from collections.abc import Sequence
 
+from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -45,6 +46,7 @@ from . import fragmented_array as fa
 from . import inference_utils
 from . import launch_context
 from . import layouts
+from . import tcgen05
 from . import utils
 from . import wgmma
 
@@ -93,6 +95,34 @@ MlirLoweringRule = Callable[
 _lowerings: dict[str, MlirLoweringRule] = {}
 
 
+def _undo_conversion_cast(
+    ir_value: ir.Value,
+) -> tuple[builtin.UnrealizedConversionCastOp, Sequence[ir.Value]]:
+  """Undoes the provided unrealized conversion cast.
+
+  The `ir_value` must be an unrealized conversion cast. This function will
+  create a new conversion cast that undoes the original one. The returned tuple
+  contains:
+  - The original unrealzied conversion cast (useful for extract attributes).
+  - The list of operands of the original conversion cast (which are the result
+    values of the undone conversion cast).
+  """
+  conversion_cast = cast(
+      builtin.UnrealizedConversionCastOp, ir_value.owner.opview  # pytype: disable=attribute-error
+  )
+
+  if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
+    raise ValueError(f"{conversion_cast} is not a conversion_cast")
+
+  converted_outputs = builtin.unrealized_conversion_cast(
+      [operand.type for operand in conversion_cast.operands],
+      conversion_cast.results,
+  )
+  if not isinstance(converted_outputs, list):
+    converted_outputs = [converted_outputs]
+  return conversion_cast, converted_outputs
+
+
 def _fragmented_array_to_ir(
     fragmented_array: fa.FragmentedArray, ty: ir.Type
 ) -> ir.Value:
@@ -122,19 +152,9 @@ def _fragmented_array_from_ir(
     is_signed: bool | None = None,
 ) -> fa.FragmentedArray:
 
-  conversion_cast = cast(
-      builtin.UnrealizedConversionCastOp, fragmented_array_as_ir.owner.opview  # pytype: disable=attribute-error
+  conversion_cast, converted_outputs = _undo_conversion_cast(
+      fragmented_array_as_ir
   )
-
-  if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
-    raise ValueError(f"{conversion_cast} is not a conversion_cast")
-
-  converted_outputs = builtin.unrealized_conversion_cast(
-      [operand.type for operand in conversion_cast.operands],
-      conversion_cast.results,
-  )
-  if not isinstance(converted_outputs, list):
-    converted_outputs = [converted_outputs]
 
   reverse_conversion_cast = converted_outputs[0].owner.opview
   for attribute in conversion_cast.attributes:
@@ -175,12 +195,7 @@ def unwrap_transformed_memref(
 ) -> ir.Value:
   """Uwraps a memref from an unrealized cast and verifies its transforms."""
 
-  conversion_cast = cast(
-      builtin.UnrealizedConversionCastOp, ref.owner.opview  # pytype: disable=attribute-error
-  )
-
-  if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
-    raise ValueError(f"{conversion_cast} is not a conversion_cast")
+  conversion_cast, [result] = _undo_conversion_cast(ref)
 
   # Check that the actual transforms match the expected ones.
   if expected_transforms != conversion_cast.attributes["transforms"]:
@@ -189,9 +204,6 @@ def unwrap_transformed_memref(
         f" transforms {conversion_cast.attributes['transforms']}"
     )
 
-  result = builtin.unrealized_conversion_cast(
-      [conversion_cast.operands[0].type], [conversion_cast]
-  )
   return result
 
 
@@ -1115,7 +1127,9 @@ def _mgpu_slice_smem_op_lowering_rule(
   sliced_ref = _slice_smem(op.result.type, op.offset)
 
   memref_ty = ir.MemRefType(sliced_ref.type)
-  if memref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
+  if (
+      memref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier")
+  ):
     # Barrier memrefs are not transformed and must not be wrapped.
     assert not inference_utils.has_out_transforms_set(op)
     return [sliced_ref]
@@ -1430,6 +1444,56 @@ def _memref_store_op_lowering_rule(
       nontemporal=op.nontemporal,
   )
   return []
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
+if jaxlib.version >= (0, 7, 0):
+  @_register_lowering(mgpu.TmemAllocOp)
+  def _tmem_alloc_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.TmemAllocOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.TmemAllocOp."""
+    del ctx
+
+    output_shape = ir.MemRefType(op.result.type).shape
+    ncols = output_shape[1] // op.packing.value
+
+    # TODO(b/431684684): Predicate this at the warp level.
+    tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, op.exact)
+
+    cast_op = builtin.UnrealizedConversionCastOp(
+        [op.result.type], [op.smem_ptr]
+    )
+    cast_op.attributes["collective"] = op.collective
+    cast_op.attributes["exact"] = op.exact
+    cast_op.attributes["packing"] = op.packing
+
+    return [cast_op.result]
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
+if jaxlib.version >= (0, 7, 0):
+  @_register_lowering(mgpu.TmemDeallocOp)
+  def _tmem_dealloc_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.TmemDeallocOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.TmemDeallocOp."""
+    del ctx
+
+    conversion_cast, cast_operands = _undo_conversion_cast(op.tmem_ref)
+    [smem_ref] = cast_operands
+    collective = ir.BoolAttr(conversion_cast.attributes["collective"]).value
+    exact = ir.BoolAttr(conversion_cast.attributes["exact"]).value
+    packing = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
+
+    output_shape = ir.MemRefType(op.tmem_ref.type).shape
+    ncols = output_shape[1] // packing
+    tmem_addr = memref.load(smem_ref, [])
+
+    # TODO(b/431684684): Predicate this at the warp level.
+    tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact)
+
+    return []
 
 
 # The metadata needed to recostruct a vector from its flattened representation.
