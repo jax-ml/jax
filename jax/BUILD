@@ -2137,6 +2137,7 @@ pytype_strict_library(
         ":core",
         ":custom_derivatives",
         ":custom_partitioning",
+        ":custom_partitioning_sharding_rule",
         ":dtypes",
         ":lax",
         ":mlir",

@@ -25,6 +25,7 @@ from jax._src import dtypes
 from jax._src import numpy as jnp
 from jax._src import xla_bridge
 from jax._src.custom_partitioning import custom_partitioning
+from jax._src.custom_partitioning_sharding_rule import BATCHING, ArrayMapping, CompoundFactor, SdyShardingRule
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lax import parallel as lax_parallel
@@ -955,7 +956,7 @@ def _check_qkv_bias_mask_spec(
 
 
 # fwd custom partition
-def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args,is_training, layout):
+def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training, layout):
   # only sharding on batch and num_head dim is allowed
   # (*batch, q_seq, num_head, head)
   query_spec = _get_padded_spec(arg_shapes[0])
@@ -977,6 +978,31 @@ def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args,is_training, layo
     return [out_sharding, activation_sharding]
   return [out_sharding]
 
+def _fwd_shardy_rule(value_types, result_types, is_training, is_fp8):
+  num_args = len(value_types)
+  # We only need the query and value sharding, so use placeholders for the remaining args.
+  input_sharding = [(f'{BATCHING}{n}',) for n in range(num_args)]
+  input_sharding[0] = ('batch', 'qseq', 'nhead', 'head',)
+  input_sharding[2] += ('v',)
+
+  # The major dimensions are sharded like the query, the minor like the value.
+  output_sharding = (input_sharding[0][:-1] + ('v',),)
+  if is_fp8:
+    # `amax` is a scalar.
+    amax = (f'{BATCHING}{num_args}',)
+    output_sharding += (amax, amax)
+  factor_sizes = {}
+  if is_training:
+    # Activation sharding.
+    if result_types[-1].shape[0] == value_types[0].shape[0]:
+      output_sharding += (('batch', 'nhead', 'qseq'),)
+    else:
+      factor_sizes['n'] = result_types[-1].shape[0] // value_types[0].shape[0]
+      output_sharding += ((CompoundFactor('batch', 'n'), 'nhead', 'qseq'),)
+  return SdyShardingRule(
+      ArrayMapping(input_sharding), ArrayMapping(output_sharding),
+      **factor_sizes)
+
 _dot_product_attention_fwd_lower = custom_partitioning(
     _dot_product_attention_fwd_impl, static_argnums=(10, 11, 12, 13, 14, 15, 16, 17))
 
@@ -984,6 +1010,11 @@ def _dot_product_attention_fwd_infer_sharding_from_operands(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
     is_training, mesh, arg_shapes, result_shape):
   return _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training, layout)
+
+def _dot_product_attention_fwd_shardy_rule(
+    scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
+    is_training, mesh, value_types, result_types):
+  return _fwd_shardy_rule(value_types, result_types, is_training, is_fp8=False)
 
 def _dot_product_attention_fwd_partition(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
@@ -1026,6 +1057,19 @@ def _infer_bwd_output_sharding(mesh, arg_shapes, layout, variadic_args):
     out_shardings = out_shardings + [grad_bias_sharding]
   return out_shardings
 
+def _bwd_shardy_rule(num_args, has_dbias, is_fp8):
+  input_sharding = tuple((f'…{n}',) for n in range(num_args))
+
+  if has_dbias:
+    output_sharding = input_sharding[0:4]
+  else:
+    output_sharding = input_sharding[0:3]
+  if is_fp8:
+    amax = (f'{BATCHING}{num_args}',)
+    output_sharding += (amax, amax, amax, amax)
+  return SdyShardingRule(
+      ArrayMapping(input_sharding), ArrayMapping(output_sharding))
+
 _dot_product_attention_bwd_lower = custom_partitioning(
     _dot_product_attention_bwd_impl, static_argnums=(13, 14, 15, 16, 17, 18, 19)
 )
@@ -1034,6 +1078,12 @@ def _dot_product_attention_bwd_infer_sharding_from_operands(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
     sliding_window_length, mesh, arg_shapes, result_shape):
   return _infer_bwd_output_sharding(mesh, arg_shapes, layout, variadic_args)
+
+def _dot_product_attention_bwd_shardy_rule(
+    scale, seed, dropout_rate, variadic_args,
+    mask_type, layout, sliding_window_length, mesh, value_types, result_types):
+  _, has_dbias = variadic_args
+  return _bwd_shardy_rule(len(value_types), has_dbias, is_fp8=False)
 
 def _dot_product_attention_bwd_partition(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
@@ -1120,13 +1170,10 @@ batching.primitive_batchers[
     _dot_product_attention_bwd_p_wrapper
 ] = _dot_product_attention_bwd_batcher
 
-def not_implemented_sharding_rule(*args, **kwargs):
-  raise NotImplementedError("Sharding rule not implemented.")
-
 _dot_product_attention_fwd_lower.def_partition(
   infer_sharding_from_operands=_dot_product_attention_fwd_infer_sharding_from_operands,
   partition=_dot_product_attention_fwd_partition,
-  sharding_rule=not_implemented_sharding_rule)
+  sharding_rule=_dot_product_attention_fwd_shardy_rule)
 
 mlir.register_lowering(_dot_product_attention_fwd_p_wrapper,
                         mlir.lower_fun(_dot_product_attention_fwd_lower, multiple_results=True))
@@ -1134,7 +1181,7 @@ mlir.register_lowering(_dot_product_attention_fwd_p_wrapper,
 _dot_product_attention_bwd_lower.def_partition(
   infer_sharding_from_operands=_dot_product_attention_bwd_infer_sharding_from_operands,
   partition=_dot_product_attention_bwd_partition,
-  sharding_rule=not_implemented_sharding_rule)
+  sharding_rule=_dot_product_attention_bwd_shardy_rule)
 
 mlir.register_lowering(_dot_product_attention_bwd_p_wrapper,
                         mlir.lower_fun(_dot_product_attention_bwd_lower, multiple_results=True))
@@ -1619,6 +1666,11 @@ def _dot_product_attention_fp8_fwd_partition(
       layout=layout, is_training=is_training)
   return mesh, impl, out_shardings, arg_shardings
 
+def _dot_product_attention_fp8_fwd_shardy_rule(
+    scale, use_causal_mask, layout, is_training,
+    mesh, value_types, result_types):
+  return _fwd_shardy_rule(value_types, result_types, is_training, is_fp8=True)
+
 def _infer_fp8_bwd_output_sharding(mesh, arg_shapes, layout):
   # Prepare variadic_args for the original function
   has_bias = False  # Adjust as needed
@@ -1644,6 +1696,10 @@ def _dot_product_attention_fp8_bwd_infer_sharding_from_operands(
     scale, use_causal_mask, layout, mesh,
     arg_shapes, result_shape):
   return _infer_fp8_bwd_output_sharding(mesh, arg_shapes, layout)
+
+def _dot_product_attention_fp8_bwd_shardy_rule(
+    scale, use_causal_mask, layout, mesh, value_types, result_types):
+  return _bwd_shardy_rule(len(value_types), has_dbias=False, is_fp8=True)
 
 def _dot_product_attention_fp8_bwd_partition(
     scale, use_causal_mask, layout, mesh,
@@ -1717,7 +1773,7 @@ batching.primitive_batchers[
 _dot_product_attention_fp8_fwd_lower.def_partition(
   infer_sharding_from_operands=_dot_product_attention_fp8_fwd_infer_sharding_from_operands,
   partition=_dot_product_attention_fp8_fwd_partition,
-  sharding_rule=not_implemented_sharding_rule)
+  sharding_rule=_dot_product_attention_fp8_fwd_shardy_rule)
 
 mlir.register_lowering(_dot_product_attention_fp8_fwd_p_wrapper,
                         mlir.lower_fun(_dot_product_attention_fp8_fwd_lower, multiple_results=True))
@@ -1725,7 +1781,7 @@ mlir.register_lowering(_dot_product_attention_fp8_fwd_p_wrapper,
 _dot_product_attention_fp8_bwd_lower.def_partition(
   infer_sharding_from_operands=_dot_product_attention_fp8_bwd_infer_sharding_from_operands,
   partition=_dot_product_attention_fp8_bwd_partition,
-  sharding_rule=not_implemented_sharding_rule)
+  sharding_rule=_dot_product_attention_fp8_bwd_shardy_rule)
 
 mlir.register_lowering(_dot_product_attention_fp8_bwd_p_wrapper,
                         mlir.lower_fun(_dot_product_attention_fp8_bwd_lower, multiple_results=True))
