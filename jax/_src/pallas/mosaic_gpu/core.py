@@ -1314,6 +1314,7 @@ Layout.WGMMA_COL = Layout.WGMMA.reduce(0)
 Layout.TCGEN05_ROW = Layout.TCGEN05.reduce(1)
 Layout.TCGEN05_COL = Layout.TCGEN05.reduce(0)
 Layout.TCGEN05_TMEM_NATIVE_ROW = Layout.TCGEN05_TMEM_NATIVE.reduce(1)
+Layout.TCGEN05_TMEM_NATIVE_COL = Layout.TCGEN05_TMEM_NATIVE.reduce(0)
 
 
 class TMEMLayout(enum.Enum):

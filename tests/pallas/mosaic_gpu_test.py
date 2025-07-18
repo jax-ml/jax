@@ -1992,7 +1992,11 @@ class PallasCallTest(PallasTest):
     expected = jnp.broadcast_to(expected, (128, 128))
     np.testing.assert_array_equal(x_result, expected)
 
-  def test_broadcast_in_dim_tcgen05_native_layout(self):
+  @parameterized.parameters(
+      (plgpu.Layout.TCGEN05_TMEM_NATIVE_ROW, 0),
+      (plgpu.Layout.TCGEN05_TMEM_NATIVE_COL, 1),
+  )
+  def test_broadcast_in_dim_tcgen05_native_layout(self, layout, bc_dim):
     self.skip_if_wg_semantics()
 
     @functools.partial(
@@ -2009,8 +2013,8 @@ class PallasCallTest(PallasTest):
     def kernel(x_ref, y_ref, smem_ref, smem_out_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
-      reduced = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05_TMEM_NATIVE_ROW)
-      broadcasted = lax.broadcast_in_dim(reduced, (128, 128), [0])
+      reduced = plgpu.load(smem_ref, (), layout=layout)
+      broadcasted = lax.broadcast_in_dim(reduced, (128, 128), [bc_dim])
       broadcasted = plgpu.layout_cast(broadcasted, plgpu.Layout.TCGEN05_TMEM_NATIVE)
       smem_out_ref[...] = broadcasted
       plgpu.commit_smem()
@@ -2018,7 +2022,12 @@ class PallasCallTest(PallasTest):
       plgpu.wait_smem_to_gmem(0)
 
     x = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
-    np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(x[:, None], (128, 128)))
+    actual = kernel(x)
+    if bc_dim == 0:
+      x = x[:, None]
+    else:
+      x = x[None, :]
+    np.testing.assert_array_equal(actual, jnp.broadcast_to(x, (128, 128)))
 
   @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
   def test_copy_layout(self, layout):
