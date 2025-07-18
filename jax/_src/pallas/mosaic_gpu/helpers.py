@@ -22,13 +22,17 @@ import jax
 from jax import lax
 
 _T = TypeVar("_T")
-
+NDLoopBody = (
+    Callable[[Sequence[jax.Array], _T], _T]
+    | Callable[[Sequence[jax.Array]], _T]
+)
 
 def nd_loop(
     grid: Sequence[int],
     *,
     collective_axes: Sequence[Hashable] | Hashable,
-) -> Callable[[Callable[[Sequence[jax.Array]], None]], None]:
+    init_carry: _T = None,
+) -> Callable[[NDLoopBody[_T]], _T]:
   """A loop over a multi-dimensional grid partitioned along the given axes.
 
   For example, if ``collective_axes`` is ``"x"`` with :func:`lax.axis_size`
@@ -58,16 +62,26 @@ def nd_loop(
           2         (0, 2)
           3         (1, 0)
 
+  If `init_carry` is passed then `nd_loop()` will expect the body to
+  take and return the carry. If it's `None` then no carry argument is
+  expected.
+
   See also:
     - :func:`jax.experimental.pallas.loop`: A loop over a single dimension.
+
   """
+
   axis_index = lax.axis_index(collective_axes)
   axis_size = lax.axis_size(collective_axes)
   grid_size = math.prod(grid)
 
   def decorator(body):
-    def wrapper(step, _):
-      step = step * axis_size + axis_index
+    upper = lax.div(grid_size, axis_size) + lax.convert_element_type(
+        axis_index < grid_size % axis_size, axis_index.dtype
+    )
+
+    def wrapper(thread_step, carry):
+      step = thread_step * axis_size + axis_index
       # The loop below is conceptually ``jnp.unravel_index``, but it uses
       # ``lax`` APIs instead of ``jax.numpy`` to minimize the number of
       # primitives used.
@@ -77,11 +91,11 @@ def nd_loop(
         index.append(lax.rem(step, grid_dim))
         step = lax.div(step, grid_dim)
       index.reverse()
-      return body(tuple(index))
+      if init_carry is None:
+        body(tuple(index))
+      else:
+        return body(tuple(index), carry=carry)
 
-    upper = lax.div(grid_size, axis_size) + lax.convert_element_type(
-        axis_index < grid_size % axis_size, axis_index.dtype
-    )
-    return lax.fori_loop(0, upper, wrapper, None)
+    return lax.fori_loop(0, upper, wrapper, init_carry)
 
   return decorator
