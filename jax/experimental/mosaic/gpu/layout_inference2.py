@@ -83,18 +83,6 @@ def extract_constant_from_least_replicated_expression_for_hint(
   if not choices:
     return None
 
-  # Special case: if there is only one choice and there was only one
-  # subexpression, we can return it directly.
-  if len(choices) == 1 and len(expressions) == 1:
-    return choices[0]
-
-  # If all the choices are replicated, then we should return `None`. Propagating
-  # replicated layouts upwards in general is not safe.
-  # TODO(bchetioui): replace this hint workaround by constraints in equations,
-  # and remove this filter.
-  if all(layouts_lib.has_any_replication(c.value) for c in choices):
-    return None
-
   # We reduce the expression here in order to recover an unambiguous least
   # replicated layout if it exists.
   maybe_choice = eqns.reduce_expression(
@@ -103,7 +91,7 @@ def extract_constant_from_least_replicated_expression_for_hint(
 
   if isinstance(maybe_choice, eqns.Unsatisfiable):
     # TODO(bchetioui): consider other choices.
-    return next(c for c in choices if not layouts_lib.has_any_replication(c.value))
+    return choices[0]
 
   assert isinstance(maybe_choice, eqns.Constant)
   return maybe_choice
@@ -641,11 +629,12 @@ def consumer_operands(result: OperandOrResult) -> Sequence[OperandOrResult]:
   return consumer_operands
 
 
-def derive_hints(
+def derive_hints_and_constraints(
     operands_and_results_for_variable: OperandOrResultsForVariable
-) -> list[Hint]:
+) -> tuple[list[Hint], list[eqns.Relayout]]:
   """Derives propagation hints from the given variable mapping."""
   hints: list[Hint] = []
+  constraints: list[eqns.Relayout] = []
   variable_for_operand_or_result: dict[OperandOrResult, eqns.Variable] = {}
   for variable, operand_and_results in operands_and_results_for_variable.items():
     for operand_or_result in operand_and_results:
@@ -656,16 +645,30 @@ def derive_hints(
         )
     variable_for_operand_or_result |= {k: variable for k in operand_and_results}
 
+  visited: set[eqns.Variable] = set()
   for variable, operand_and_results in operands_and_results_for_variable.items():
     producers: list[eqns.Variable] = []
     consumers: list[eqns.Variable] = []
     for operand_or_result in operand_and_results:
       if operand_or_result.type == VariableType.OPERAND:
         pr = producer_result(operand_or_result)
-        producers.append(variable_for_operand_or_result[pr])
+        producer_variable = variable_for_operand_or_result[pr]
+        producers.append(producer_variable)
+        # Only add the constraint if we haven't already created that constraint
+        # when processing this variable as one of the producer's consumers.
+        if producer_variable not in visited:
+          # The producer of a variable must be relayout-able to the variable.
+          constraints.append(eqns.Relayout(producer_variable, variable))
       elif operand_or_result.type == VariableType.RESULT:
         for co in consumer_operands(operand_or_result):
-          consumers.append(variable_for_operand_or_result[co])
+          consumer_variable = variable_for_operand_or_result[co]
+          consumers.append(consumer_variable)
+          # Only add the constraint if we haven't already created that
+          # constraint when processing this variable as the consumer's producer.
+          if consumer_variable not in visited:
+            # A variable must be relayout-able to its consumers.
+            constraints.append(eqns.Relayout(variable, consumer_variable))
+    visited.add(variable)
 
     if producers:
       least_replicated_producer = eqns.LeastReplicated(tuple(producers))
@@ -675,7 +678,7 @@ def derive_hints(
       hint_expr = eqns.MostReplicated(tuple(consumers))
       hints.append(Hint(variable, hint_expr))
 
-  return hints
+  return hints, constraints
 
 
 def is_terminator(op: ir.OpView) -> bool:
@@ -707,7 +710,10 @@ def infer_layout(module: ir.Module):
     inference_utils.traverse_op(op, gather_equations)
 
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
-  hints = reduce_hints(derive_hints(operand_and_results_for_variable), global_equation_system.assignments)  # pytype: disable=attribute-error
+  hints, constraints = derive_hints_and_constraints(operand_and_results_for_variable)
+  hints = reduce_hints(hints, global_equation_system.assignments)  # pytype: disable=attribute-error
+  global_equation_system &= eqns.EquationSystem(constraints=constraints)
+  assert not isinstance(global_equation_system, eqns.Unsatisfiable)
 
   # Attempt to find assignments that satisfy the equation system.
   solution = find_assignments_for(
@@ -716,7 +722,8 @@ def infer_layout(module: ir.Module):
 
   if isinstance(solution, eqns.Unsatisfiable):
     raise ValueError(
-        "Failed to infer a possible set of layouts. This should never happen."
+        "Failed to infer a possible set of layouts. This should only happen if "
+        "user-provided layout casts are unsatisfiable."
     )
 
   layout_for_operand_or_result = {
