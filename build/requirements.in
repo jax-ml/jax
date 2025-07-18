@@ -20,7 +20,9 @@ jaxlib==0.6.2
 
 # The with-cuda extra also includes NVIDIA's pip packages.
 jax-cuda12-plugin[with-cuda]==0.6.2 ; sys_platform == "linux"
+jax-cuda13-plugin
 jax-cuda12-pjrt==0.6.2 ; sys_platform == "linux"
+jax-cuda13-pjrt
 
 # TPU dependencies
 libtpu ; sys_platform == "linux" and platform_machine == "x86_64"
@@ -28,6 +30,7 @@ libtpu ; sys_platform == "linux" and platform_machine == "x86_64"
 # For Mosaic GPU collectives
 nvidia-cuda-nvrtc-cu12>=12.1.55 ; sys_platform == "linux"
 nvidia-nvshmem-cu12>=3.2.5 ; sys_platform == "linux"
+nvidia-nvshmem-cu13
 
 # Platform-specific dependencies that are being ignored by pip-compile
 colorama>=0.4.4

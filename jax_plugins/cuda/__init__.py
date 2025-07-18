@@ -34,7 +34,7 @@ def _import_extensions():
 
   # cuda_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
   # preinstalled jax cuda plugin packages.
-  for pkg_name in ['jax_cuda12_plugin', 'jaxlib.cuda']:
+  for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
     try:
       cuda_plugin_extension = importlib.import_module(
           f'{pkg_name}.cuda_plugin_extension'
@@ -124,16 +124,23 @@ def _load_nvidia_libraries():
   them from LD_LIBRARY_PATH. By loading the libraries here, later lookups will
   find these copies."""
   _load("cuda_runtime", ["libcudart.so.12"])
+  _load("cu13", ["libcudart.so.13"])
   # cuda_nvrtc isn't directly a dependency of JAX, but CUDNN appears to need it
   # and at least in CUDA 12.9 has RUNPATHs misconfigured to refer to
   # nvidia/nvrtc instead of nvidia/cuda_nvrtc.
   _load("cuda_nvrtc", ["libnvrtc.so.12"])
+  _load("cu13", ["libnvrtc.so.13"])
   _load("cublas", ["libcublas.so.12", "libcublasLt.so.12"])
+  _load("cu13", ["libcublas.so.13", "libcublasLt.so.13"])
   _load("nccl", ["libnccl.so.2"])
   _load("cuda_cupti", ["libcupti.so.12"])
+  _load("cu13", ["libcupti.so.13"])
   _load("cusparse", ["libcusparse.so.12"])
+  _load("cu13", ["libcusparse.so.12"])
   _load("cusolver", ["libcusolver.so.11"])
+  _load("cu13", ["libcusolver.so.12"])
   _load("cufft", ["libcufft.so.11"])
+  _load("cu13", ["libcufft.so.12"])
   _load("nvshmem", ["libnvshmem_host.so.3"])
   _load("cudnn", ["libcudnn.so.9"])
 

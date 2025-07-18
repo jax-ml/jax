@@ -172,6 +172,12 @@ jax-cuda12-plugin[with-cuda]==0.6.2 ; sys_platform == "linux" \
     --hash=sha256:ed5316ca1818db7ef53230ee0a41398d3a60942e361dfb857a952eb4d92fc8d7 \
     --hash=sha256:febd099f970d350eb8fa5a2c9a2fb4b0ea7b3d6a89df1496663edfa7afe590e5
     # via -r build/requirements.in
+jax-cuda13-pjrt==0.0.1rc0 \
+    --hash=sha256:60835b87c9e1e5e1109ef2e9f27db6c9404af3ce3c3315316fb3b113cb13a158
+    # via -r build/requirements.in
+jax-cuda13-plugin==0.0.1rc0 \
+    --hash=sha256:5fa66ef5de34cffc838199d193bffc11701807e66831f914bdc1d786ed4dc26f
+    # via -r build/requirements.in
 jaxlib==0.6.2 \
     --hash=sha256:11eae7e05bc5a79875da36324afb9eddd4baeaef2a0386caf6d4f3720b9aef28 \
     --hash=sha256:153eaa51f778b60851720729d4f461a91edd9ba3932f6f3bc598d4413870038b \
@@ -499,6 +505,10 @@ nvidia-nvshmem-cu12==3.2.5 ; sys_platform == "linux" \
     # via
     #   -r build/requirements.in
     #   jax-cuda12-plugin
+nvidia-nvshmem-cu13==0.0.0a0 \
+    --hash=sha256:84d265d7b97dae6ee74139f8f7e37fc65a63e4ebb7287b987a4dca0c0625673d \
+    --hash=sha256:b6900e44e6be1e0e7be6059c5b7a397fb3cb84914784571ab7e20a35bb2b140d
+    # via -r build/requirements.in
 opt-einsum==3.3.0 \
     --hash=sha256:2455e59e3947d3c275477df7f5205b30635e266fe6dc300e3d9f9646bfcea147 \
     --hash=sha256:59f6475f77bbc37dcf7cd748519c0ec60722e91e63ca114e68821c0c54a46549

@@ -17,10 +17,12 @@
 
 from __future__ import annotations
 
+import importlib
 import gc
 import os
 import pathlib
 import re
+from types import ModuleType
 
 try:
   import jaxlib as jaxlib
@@ -119,13 +121,16 @@ def _xla_gc_callback(*args):
   xla_client._xla.collect_garbage()
 gc.callbacks.append(_xla_gc_callback)
 
-try:
-  import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error  # noqa: F401
-except ImportError:
+cuda_versions: ModuleType | None
+for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
   try:
-    import jax_cuda12_plugin._versions as cuda_versions  # pytype: disable=import-error  # noqa: F401
+    cuda_versions = importlib.import_module(
+        f'{pkg_name}._versions'
+    )
   except ImportError:
     cuda_versions = None
+  else:
+    break
 
 import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error  # noqa: F401

@@ -21,6 +21,7 @@ __version__ = None
 cuda_version = 0  # placeholder
 project_name = f"jax-cuda{cuda_version}-plugin"
 package_name = f"jax_cuda{cuda_version}_plugin"
+cuda_whl_sfx = "-cu12" if cuda_version == 12 else ""
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -53,15 +54,15 @@ setup(
     install_requires=[f"jax-cuda{cuda_version}-pjrt=={__version__}"],
     extras_require={
       'with-cuda': [
-          "nvidia-cublas-cu12>=12.1.3.1",
-          "nvidia-cuda-cupti-cu12>=12.1.105",
-          "nvidia-cuda-nvcc-cu12>=12.6.85",
-          "nvidia-cuda-runtime-cu12>=12.1.105",
-          "nvidia-cudnn-cu12>=9.8,<10.0",
-          "nvidia-cufft-cu12>=11.0.2.54",
-          "nvidia-cusolver-cu12>=11.4.5.107",
-          "nvidia-cusparse-cu12>=12.1.0.106",
-          "nvidia-nccl-cu12>=2.18.1",
+          f"nvidia-cublas{cuda_whl_sfx}>=12.1.3.1",
+          f"nvidia-cuda-cupti{cuda_whl_sfx}>=12.1.105",
+          f"nvidia-cuda-nvcc{cuda_whl_sfx}>=12.6.85",
+          f"nvidia-cuda-runtime{cuda_whl_sfx}>=12.1.105",
+          f"nvidia-cudnn-cu{cuda_version}>=9.8,<10.0",
+          f"nvidia-cufft{cuda_whl_sfx}>=11.0.2.54",
+          f"nvidia-cusolver{cuda_whl_sfx}>=11.4.5.107",
+          f"nvidia-cusparse{cuda_whl_sfx}>=12.1.0.106",
+          f"nvidia-nccl-cu{cuda_version}>=2.18.1",
           # nvjitlink is not a direct dependency of JAX, but it is a transitive
           # dependency via, for example, cuSOLVER. NVIDIA's cuSOLVER packages
           # do not have a version constraint on their dependencies, so the
@@ -69,13 +70,13 @@ setup(
           # problems (https://github.com/jax-ml/jax/issues/18027#issuecomment-1756305196)
           # Until NVIDIA add version constraints, add a version constraint
           # here.
-          "nvidia-nvjitlink-cu12>=12.1.105",
+          f"nvidia-nvjitlink{cuda_whl_sfx}>=12.1.105",
           # nvrtc is a transitive and undeclared dep of cudnn.
-          "nvidia-cuda-nvrtc-cu12>=12.1.55",
+          f"nvidia-cuda-nvrtc{cuda_whl_sfx}>=12.1.55",
           # NVSHMEM is used by Mosaic GPU collectives and can be used by XLA to
           # speed up collectives too.
-          "nvidia-nvshmem-cu12>=3.2.5",
-      ],
+          f"nvidia-nvshmem-cu{cuda_version}>=3.2.5",
+      ] + (["nvidia-nvvm"] if cuda_version == 13 else []),
     },
     url="https://github.com/jax-ml/jax",
     license="Apache-2.0",

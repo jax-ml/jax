@@ -26,6 +26,7 @@ load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load("@xla//xla/tsl:tsl.bzl", "transitive_hdrs", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
+load("@cuda_cudart//:version.bzl", cuda_major_version = "VERSION")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
 # lint tools.
@@ -188,7 +189,7 @@ def _gpu_test_deps():
             "//jaxlib/rocm:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
             # TODO(ybaturina): Remove this once we can add NVSHMEM libraries in the dependencies.
-            "@pypi//nvidia_nvshmem_cu12",
+            "@pypi//nvidia_nvshmem_cu{cuda_major_version}".format(cuda_major_version=cuda_major_version),
         ],
         "//jax:config_build_jaxlib_false": [
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",

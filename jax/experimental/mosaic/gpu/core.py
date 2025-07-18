@@ -884,7 +884,10 @@ def as_torch_gpu_kernel(
 
   # Get our hands on the compilation and unload functions
   try:
-    import jax_plugins.xla_cuda12 as cuda_plugin  # pytype: disable=import-error
+    try:
+      import jax_plugins.xla_cuda13 as cuda_plugin  # pytype: disable=import-error
+    except ImportError:
+      import jax_plugins.xla_cuda12 as cuda_plugin  # pytype: disable=import-error
   except ImportError:
     raise RuntimeError("as_torch_gpu_kernel only works with recent jaxlib builds "
                        "that use backend plugins")
