@@ -283,6 +283,7 @@ jax_py_test(
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",  # build_cleaner: keep
         "//jax:test_util",
     ] + jax_gpu_support_deps + py_deps([
@@ -307,6 +308,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",  # build_cleaner: keep
     ] + py_deps([
         "absl/testing",
