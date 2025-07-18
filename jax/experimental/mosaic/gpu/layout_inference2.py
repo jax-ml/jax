@@ -346,10 +346,26 @@ for op in [
     mlir_math.LogOp,
     mlir_math.RsqrtOp,
     mlir_math.TanhOp,
-    vector.LoadOp,
     vector.StoreOp,
 ]:
   _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
+
+
+@_add_equation_system_derivation_rule(vector.LoadOp)
+def _vector_load_equation_system(
+    op: vector.LoadOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  equation_system, operand_or_results_for_variable = (
+      _pointwise_op_equation_system(op)
+  )
+  [result_variable] = operand_or_results_for_variable.keys()
+  result_is_not_splat = eqns.Distinct(
+      result_variable,
+      eqns.Constant(fa.WGSplatFragLayout(shape=tuple(op.result.type.shape))),
+  )
+  equation_system &= eqns.EquationSystem(constraints=[result_is_not_splat])
+  assert not isinstance(equation_system, eqns.Unsatisfiable)
+  return equation_system, operand_or_results_for_variable
 
 
 @_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)

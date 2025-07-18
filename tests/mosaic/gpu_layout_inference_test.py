@@ -217,6 +217,29 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkInLayouts(add, [layout_attr, layout_attr])
     self.checkOutLayouts(add, [layout_attr])
 
+  def test_vector_load_does_not_allow_splat_result(self):
+    shape = (32, 4)
+    splat_layout_attr = layouts.to_layout_attr(
+        mgpu.WGSplatFragLayout(shape=shape)
+    )
+    strided_layout_attr = layouts.to_layout_attr(
+        mgpu.WGStridedFragLayout(shape=shape, vec_size=1)
+    )
+
+    with ir.InsertionPoint(self.module.body):
+      vec_ty = ir.VectorType.get(shape, ir.BF16Type.get())
+      ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get())
+      vec, ref = undefs(vec_ty, ref_ty)
+      zero = mgpu.utils.c(0, ir.IntegerType.get_signless(32))
+      load_op = vector.LoadOp(vec_ty, ref, [zero])
+      lhs = layout_cast(vec, splat_layout_attr)
+      arith.AddFOp(lhs, load_op.result)
+
+    self.infer_layout(self.module)
+
+    self.checkInLayouts(load_op, [])
+    self.checkOutLayouts(load_op, [strided_layout_attr])
+
   def test_infer_layout_cast_layout(self):
     shape = (128, 64)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
@@ -668,6 +691,22 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
 
     self.checkInLayouts(wgmma_op, in_layouts)
     self.checkOutLayouts(wgmma_op, out_layouts)
+
+  def test_layout_cast_of_vector_load_to_splat_raises(self):
+    shape = (32, 4)
+    splat_layout = mgpu.WGSplatFragLayout(shape=shape)
+    with ir.InsertionPoint(self.module.body):
+      vec_ty = ir.VectorType.get(shape, ir.BF16Type.get())
+      ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get())
+      [ref] = undefs(ref_ty)
+      zero = mgpu.utils.c(0, ir.IntegerType.get_signless(32))
+      loaded = vector.load(vec_ty, ref, [zero])
+      layout_cast(loaded, splat_layout)
+
+    with self.assertRaisesRegex(
+        ValueError, "user-provided layout casts are unsatisfiable"
+    ):
+      self.infer_layout(self.module)
 
 
 if __name__ == "__main__":
