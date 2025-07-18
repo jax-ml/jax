@@ -797,6 +797,8 @@ class BarrierRef:
   def __getitem__(self, offset: ir.Value | int) -> "BarrierRef":
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(offset, int):
+      if offset >= self.num_barriers:
+        raise IndexError(f"Barrier offset {offset} is out of bounds")
       offset = c(offset, i32)
     elif ir.IndexType.isinstance(offset.type):
       offset = arith.index_castui(i32, offset)
