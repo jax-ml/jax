@@ -1477,10 +1477,15 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     # TODO(b/422690222): remove this pass once we don't need to support 6m
     # old exported modules.
     if has_sdy_meshes_in_frontend_attributes(submodule):
-      with submodule.context:
-        pipeline = passmanager.PassManager.parse(
-            'builtin.module(xla-sdy-round-trip-import-shardy-attrs)')
-        pipeline.run(submodule.operation)
+      if jaxlib_extension_version < 356:
+        submodule = ir.Module.parse(
+            _jax.sdy.sdy_round_trip_import_shardings(
+                mlir.module_to_bytecode(submodule)))  # type: ignore[module-attr]
+      else:
+        with submodule.context:
+          pipeline = passmanager.PassManager.parse(
+              'builtin.module(xla-sdy-round-trip-import-shardy-attrs)')
+          pipeline.run(submodule.operation)
 
   with submodule.context:
     pipeline = passmanager.PassManager.parse(
