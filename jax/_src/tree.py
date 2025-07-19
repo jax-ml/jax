@@ -191,6 +191,11 @@ def reduce(function: Callable[[T, Any], T],
     >>> jax.tree.reduce(operator.add, [1, (2, 3), [4, 5, 6]])
     21
 
+  Notes:
+    **Tip**: You can exclude leaves from the reduction by first mapping them to
+    ``None`` using :func:`jax.tree.map`. This causes them to not be counted as
+    leaves after that.
+
   See Also:
     - :func:`jax.tree.reduce_associative`
     - :func:`jax.tree.leaves`
@@ -229,6 +234,11 @@ def reduce_associative(
     >>> import operator
     >>> jax.tree.reduce_associative(operator.add, [1, (2, 3), [4, 5, 6]])
     21
+
+  Notes:
+    **Tip**: You can exclude leaves from the reduction by first mapping them to
+    ``None`` using :func:`jax.tree.map`. This causes them to not be counted as
+    leaves after that.
 
   See Also:
     - :func:`jax.tree.reduce`
