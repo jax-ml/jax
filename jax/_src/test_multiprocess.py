@@ -33,6 +33,7 @@ except ImportError:
 
 from absl.testing import absltest
 from jax._src import test_util as jtu
+from jax._src.lib import cuda_versions
 
 
 _NUM_PROCESSES = absl.flags.DEFINE_integer(
@@ -99,6 +100,18 @@ def _main(argv):
   if num_processes is None:
     raise ValueError("num_processes must be set")
   gpus_per_process = _GPUS_PER_PROCESS.value
+  # Get the number of GPUs visible to this process without initializing the runtime
+  if cuda_versions is not None:
+    local_device_count = cuda_versions.cuda_device_count()
+    if num_processes * gpus_per_process > local_device_count:
+      print(
+        f"Cannot run {num_processes} processes with {gpus_per_process} GPU(s) "
+        f"each on a system with only {local_device_count} local GPU(s), "
+        f"starting {local_device_count // gpus_per_process} instead - test "
+        "cases will likely be skipped!"
+      )
+      num_processes = local_device_count // gpus_per_process
+
   if portpicker is None:
     jax_port = 9876
   else:
