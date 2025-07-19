@@ -1016,8 +1016,13 @@ def get(
 
     if (ret is None) or (full_read_shape != ret.shape):
       if shared_memory.interpret_params.out_of_bounds_reads == "raise":
-        with source_info_util.user_context(traceback=source_info.traceback,
-                                           name_stack=source_info.name_stack):
+        if source_info is None:
+          ctx = contextlib.nullcontext()
+        else:
+          ctx = source_info_util.user_context(
+              traceback=source_info.traceback, name_stack=source_info.name_stack
+          )
+        with ctx:
           raise IndexError(
               'Out-of-bounds read of'
               f' ({device_id} {local_core_id} {memory_space} {buffer_id}):'
