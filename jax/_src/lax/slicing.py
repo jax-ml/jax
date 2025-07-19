@@ -2606,8 +2606,6 @@ def _scatter_addsub_transpose_rule(
     prim, t, operand, indices, updates, *, update_jaxpr, update_consts,
     dimension_numbers, indices_are_sorted, unique_indices, mode, **kwargs):
   assert not ad.is_undefined_primal(indices)
-  if kwargs.get('out_sharding', None) is not None:
-    raise NotImplementedError
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
   else:

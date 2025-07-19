@@ -28,7 +28,6 @@ from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
 from functools import partial, lru_cache
 import inspect
-import math
 import typing
 from typing import (Any, Literal, NamedTuple, TypeVar, overload,
                     cast)
@@ -72,7 +71,7 @@ from jax._src.sharding import Sharding
 from jax._src.mesh import get_concrete_mesh
 from jax._src.sharding_impls import (
     PmapSharding, TransferToMemoryKind, PartitionSpec as P, NamedSharding)
-from jax._src.layout import Format, AutoLayout
+from jax._src.layout import Format
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src.util import unzip2, safe_map, safe_zip, wraps, split_list

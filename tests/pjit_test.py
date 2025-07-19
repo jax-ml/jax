@@ -8583,6 +8583,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     bs2 = reshard(b2, P('x'))
     jnp.linalg.solve(As, bs2)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_sparse_linalg_cg_indexing(self, mesh):
+    key = jax.random.key(123)
+    samples = jax.random.randint(key, (2, 2), 0, 2, dtype=jnp.int32)
+    params = jax.random.normal(key, (2, 2), jnp.complex64)
+
+    def apply_fn(params, x):
+      def single_apply(qn):
+        qn_idx = qn[0]
+        result = params[qn_idx, :]
+        return jnp.sum(result)
+      return jax.vmap(single_apply)(x)
+
+    def mat_vec(v):
+      _, jvp_fn = jax.linearize(lambda W: apply_fn(W, samples), params)
+      vjp_fn = jax.linear_transpose(jvp_fn, v)
+      w = jvp_fn(v)
+      (res,) = vjp_fn(w)
+      return res
+
+    jax.scipy.sparse.linalg.cg(mat_vec, params)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
