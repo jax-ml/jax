@@ -75,8 +75,6 @@ bazel test --config=rbe_linux_x86_64_cuda \
       --config=resultstore \
       --config=rbe_cache \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-      --//jax:build_jaxlib=false \
-      --//jax:build_jax=false \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
       --test_output=errors \
@@ -92,8 +90,8 @@ bazel test --config=rbe_linux_x86_64_cuda \
       --color=yes \
       --strategy=TestRunner=local \
       --config=cuda_libraries_from_stubs \
-      --//jax:build_jax=true \
-      --//jax:build_jaxlib=true \
+      --//jax:build_jax=wheel \
+      --//jax:build_jaxlib=wheel \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests
 
@@ -106,8 +104,6 @@ bazel test --config=rbe_linux_x86_64_cuda \
       --config=resultstore \
       --config=rbe_cache \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-      --//jax:build_jaxlib=false \
-      --//jax:build_jax=false \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
       --local_test_jobs=8 \
@@ -119,8 +115,8 @@ bazel test --config=rbe_linux_x86_64_cuda \
       --color=yes \
       --strategy=TestRunner=local \
       --local_test_jobs=32 \
-      --//jax:build_jax=true \
-      --//jax:build_jaxlib=true \
+      --//jax:build_jax=wheel \
+      --//jax:build_jaxlib=wheel \
       --config=cuda_libraries_from_stubs \
       //tests:gpu_tests //tests/pallas:gpu_tests
 
