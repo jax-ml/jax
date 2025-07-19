@@ -226,6 +226,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x, y), x + y[0])
 
   @parameterized.product(shape=[(128,), (128, 128)])
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_reduce_sum(self, shape):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
@@ -719,6 +720,7 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x)
 
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_scoped_copy_with_transforms(self):
     self.skip_if_wg_semantics()
 
@@ -742,6 +744,7 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x * 2)
 
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_scoped_copy_with_user_transforms(self):
     def kernel(x_ref, o_ref, barrier_ref):
       def body(tmp_ref):
@@ -762,6 +765,7 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x * 2)
 
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_copy_with_transforms_and_indexing(self):
     self.skip_if_wg_semantics()
 
@@ -811,6 +815,7 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(2 * 128, dtype=jnp.float32).reshape(2, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_indexing_before_transpose(self):
     self.skip_if_wg_semantics()
 
@@ -2021,6 +2026,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(x[:, None], (128, 128)))
 
   @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_copy_layout(self, layout):
     self.skip_if_wg_semantics()
     if layout in {
