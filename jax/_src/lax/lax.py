@@ -7869,11 +7869,18 @@ def _reduce_logical_shape_rule(operand, *, axes):
 def _reduce_logical_sharding_rule(operand, *, axes):
   return operand.sharding.update(spec=tuple_delete(operand.sharding.spec, axes))
 
+def _reduce_or_lin(nzs, x, *, axes):
+  nz, = nzs
+  y = reduce_or_p.bind(x, axes=axes)
+  aval = core.typeof(y).to_tangent_aval()
+  return y, False, (), lambda _, t: ad_util.Zero(aval)
+
 reduce_or_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_or',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_or'))
 batching.defreducer(reduce_or_p, _get_bitwise_or_identity)
+ad.primitive_linearizations[reduce_or_p] = _reduce_or_lin
 
 
 reduce_and_p = standard_primitive(
