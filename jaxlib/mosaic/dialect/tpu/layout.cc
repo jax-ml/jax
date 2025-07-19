@@ -635,6 +635,11 @@ static void PrintVectorLayout(Stream& os, const int32_t bitwidth,
     os << ",-2";
   }
 }
+template void VectorLayout::print<std::ostream>(std::ostream& param) const;
+template void VectorLayout::print<llvm::raw_ostream>(
+    llvm::raw_ostream& os) const;
+template void VectorLayout::print<mlir::Diagnostic>(
+    mlir::Diagnostic& diag) const;
 
 void VectorLayout::print(llvm::raw_ostream& os) const {
   PrintVectorLayout(os, bitwidth_, implicit_dim_, offsets_, tiling_);
