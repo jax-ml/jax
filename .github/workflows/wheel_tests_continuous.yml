@@ -11,9 +11,11 @@
 #                           uploads them to a GCS bucket.
 # 4. run-bazel-test-cpu-py-import: Calls the `bazel_cpu_py_import_rbe.yml` workflow which
 #                           runs Bazel CPU tests with py_import on RBE.
-# 5. run-pytest-cuda:       Calls the `pytest_cuda.yml` workflow which downloads the jaxlib and CUDA
+# 5. run-bazel-test-cuda-py-import: Calls the `bazel_cuda_non_rbe_py_import.yml` workflow which
+#                           runs Bazel CUDA tests with py_import on non-RBE.
+# 6. run-pytest-cuda:       Calls the `pytest_cuda.yml` workflow which downloads the jaxlib and CUDA
 #                           artifacts that were built in the previous steps and runs the CUDA tests.
-# 6. run-bazel-test-cuda:   Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the jaxlib
+# 7. run-bazel-test-cuda:   Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the jaxlib
 #                           and CUDA artifacts that were built in the previous steps and runs the
 #                           CUDA tests using Bazel.
 
@@ -195,9 +197,9 @@ jobs:
         matrix:
           # Python values need to match the matrix stategy in the build artifacts job above
           runner: ["linux-x86-g2-48-l4-4gpu",]
-          python: ["3.10",]
+          python: ["3.11"]
           enable-x64: [1]
-    name: "Bazel CUDA Non-RBE (jax version = ${{ format('{0}', 'head') }})"
+    name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'py_import') }}"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
