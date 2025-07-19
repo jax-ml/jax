@@ -96,14 +96,7 @@ class CanonicalBuilder : public ImplicitLocOpBuilder {
       CHECK(succeeded(result));
       return *result;
     }
-    if constexpr (Op::template hasTrait<OpTrait::ZeroResults>()) {
-      // For ops with no results (like stores), the function must still
-      // return a Value. Return a null Value as a placeholder. The caller
-      // for a result-less op should not be using the return value.
-      return nullptr;
-    } else {
-      return new_op.getResult();
-    }
+    return new_op.getResult();
   }
 
   template <typename Op, typename... Args>
@@ -1004,32 +997,15 @@ FailureOr<Value> canonicalize_vector_transpose(const CanonicalizeContext &ctx,
   return new_op;
 }
 
-// Finds the split point for a reshape between a multi-dimensional shape and a
-// shape where a suffix has been collapsed into a single dimension.
-//
-// This function checks if `src_shape` and `tgt_shape` follow the pattern:
-//   src_shape: (P..., S_1, S_2, ..., S_N)
-//   tgt_shape: (P..., T_collapsed)
-// where `P` is a common prefix and `product(S_1..S_N) == T_collapsed`.
-//
-// It handles a differing number of leading 1s in the prefix by stripping them
-// from both shapes before comparison.
-//
-// This utility is used for two inverse patterns:
-// 1. Collapse (e.g., `load` -> `reshape`): The function is called directly,
-//    where `src_shape` is the multi-dimensional pre-reshape vector shape.
-// 2. Expand (e.g., `reshape` -> `store`): The function is called with swapped
-//    arguments, where `src_shape` is the multi-dimensional *post-reshape*
-//    vector shape.
-//
-// Returns:
-//   - A pair containing:
-//     1. The index in `src_shape` where the collapsing suffix begins.
-//     2. The product of the collapsed dimensions excluding the innermost one
-//        (i.e., product(S_1..S_{N-1})), used as the "sublane product".
-//   - `std::nullopt` if the shapes do not match the pattern.
-std::optional<std::pair<int, int>> findSplitPoint(ArrayRef<int64_t> src_shape,
-                                                  ArrayRef<int64_t> tgt_shape) {
+// Finds the split point for a reshape that collapses a suffix of dimensions.
+// For a reshape from src_shape to tgt_shape, identifies if the pattern is
+// (P..., S_1, S_2, ...) -> (P..., T_collapsed) where P is a common prefix and
+// product(S_i) == T_collapsed. Handles leading dimensions of size 1 of
+// different number of leading 1s.
+// Returns the index in src_shape where the collapsing suffix begins
+// and the sublane product of the src shape.
+std::optional<std::pair<int, int>> findCollapseSplitPoint(
+    ArrayRef<int64_t> src_shape, ArrayRef<int64_t> tgt_shape) {
   int s = 0, t = 0;
   // drop leading 1s
   while (s < src_shape.size() && src_shape[s] == 1) {
@@ -1121,7 +1097,7 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
     return raw_op.getResult(0);
   }
 
-  auto split_opt = findSplitPoint(src_ty.getShape(), tgt_ty.getShape());
+  auto split_opt = findCollapseSplitPoint(src_ty.getShape(), tgt_ty.getShape());
   if (!split_opt) {
     return raw_op.getResult(0);
   }
@@ -1273,213 +1249,6 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
   op.replaceAllUsesWith(final_vec);
   op.erase();
   return final_vec;
-}
-
-Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
-  // Fuses a vector.shape_cast (that expands dimensions) into a subsequent
-  // vector.store or dense tpu.vector_store. This is the inverse of the
-  // canonicalize_reshape func.
-  //
-  // def fused_reshape_store(source_vector, target_memref, indices):
-  //   # `source_vector` is large and flat, e.g., shape (P..., T_collapsed)
-  //   # `target_memref` has an expanded shape, e.g., (P..., S1, S2, ..., Lane)
-  //
-  //   # 1. Create a memref view for packed i32 storing.
-  //   # Original target shape: <Prefix_mem..., S1, S2, ..., Lane, ElemTy>
-  //   # Let S_prod = S1 * S2 * ...
-  //   # New i32 view shape:   <Prefix_mem..., S_prod/packing, Lane, i32>
-  //   i32_view = target_memref.reshape_and_bitcast(...)
-  //
-  //   # 2. Loop over the rows of the i32 view, packing and storing data for
-  //   each.
-  //   for i in range(S_prod / packing):
-  //     # a. Gather `packing` number of slices from the large source_vector.
-  //     #    Each slice corresponds to one row of the original target memref.
-  //     slices_to_pack = extract_slices(source_vector, base_offset=i*packing)
-  //
-  //     # b. Pack these smaller-typed slices into a single i32 vector chunk.
-  //     #    This is the inverse of unpacking with right shifts. It involves
-  //     #    extending, left-shifting, and OR-ing.
-  //     i32_chunk = (slices_to_pack[0] << 0) | \
-  //                 (slices_to_pack[1] << bitwidth) | \
-  //                 ...
-  //
-  //     # c. Store the resulting packed i32_chunk into the i-th row of the
-  //     #    `i32_view`. This corresponds to a `StridedStoreOp`.
-  //     store_i32_row(i32_chunk, i32_view, indices_prefix, i)
-  Value value_to_store;
-  TypedValue<MemRefType> base;
-  ValueRange indices;
-
-  Operation *store_op;
-
-  // Note(mvoz): We have code that handles both, and am not sure why
-  // we don't just use the tpu::VectorStoreOp? Either way, they are
-  // similar enough that we can handle them both here.
-  if (auto store = dyn_cast<vector::StoreOp>(raw_op)) {
-    store_op = store.getOperation();
-    value_to_store = store.getValueToStore();
-    base = store.getBase();
-    indices = store.getIndices();
-  } else if (auto store = dyn_cast<tpu::VectorStoreOp>(raw_op)) {
-    store_op = store.getOperation();
-    value_to_store = store.getValueToStore();
-    base = store.getBase();
-    indices = store.getIndices();
-    if (!store.getStrides().empty() || store.getMask()) {
-      // We don't support these cases.
-      return value_to_store;
-    }
-  } else {
-    return value_to_store;
-  }
-
-  auto shape_cast_op =
-      dyn_cast_if_present<vector::ShapeCastOp>(value_to_store.getDefiningOp());
-  if (!shape_cast_op || !shape_cast_op.getResult().hasOneUse()) {
-    // Not a shape cast... (or has more than one use)
-    // Note(mvoz): We could potentially support the case of > 1 users,
-    // by just not eliding the reshape at the end, and only rewriting the
-    // store.
-    return value_to_store;
-  }
-
-  auto src_ty = shape_cast_op.getSource().getType();
-  auto tgt_ty = shape_cast_op.getResult().getType();
-  auto memref_ty = base.getType();
-  // Consider src_shape=(1, 384) -> tgt_shape=(1, 1, 3, 128)
-  // Upstream padding actually makes this:
-  // Store shapes base: (1,1,4,128)
-  // Store shapes src: (1,384)
-  // Store shapes tgt: (1,1,3,128)
-  // Store shapes memref: (1,1,4,128)
-  if (tgt_ty.getShape() != memref_ty.getShape()) {
-    return value_to_store;
-  }
-  if (!isContiguousMemref(base)) {
-    return value_to_store;
-  }
-  if (src_ty.getRank() > tgt_ty.getRank()) {
-    // Src is not a collapse of target!
-    // TODO(mvoz): We can handle an arbitrary number of major
-    // dimensions by adding a "free" major dimension reshape between
-    // here and the strided loads!
-    return value_to_store;
-  }
-  std::optional<std::pair<int, int>> split_opt =
-      findSplitPoint(tgt_ty.getShape(), src_ty.getShape());
-  if (!split_opt) {
-    // Not a collapse...
-    return value_to_store;
-  }
-  auto [split_point, sublane_prod] = *split_opt;
-
-  int bitwidth = src_ty.getElementTypeBitWidth();
-  int packing = 32 / bitwidth;
-  if (ctx.hardware_generation < 4 && packing > 1) {
-    // Old hardware doesn't support strided store with packing > 1.
-    return value_to_store;
-  }
-  if (sublane_prod % packing != 0) {
-    // We don't support cases where we have offsets in the sublane dimension.
-    return value_to_store;
-  }
-
-  // Note(mvoz): This is an inverse of the packing logic in
-  // canonicalize_reshape.
-  CanonicalBuilder b(ctx, store_op->getLoc(), store_op);
-  auto loc = store_op->getLoc();
-  auto i32_type = b.getI32Type();
-  int64_t num_i32_rows = sublane_prod / packing;
-
-  SmallVector<int64_t> mem_shape(memref_ty.getShape().begin(),
-                                 memref_ty.getShape().begin() + split_point);
-  mem_shape.push_back(sublane_prod);
-  auto lane_dim = memref_ty.getShape().back();
-  if (lane_dim != ctx.target_shape[1]) {
-    // Note(mvoz): The math below *is* sound, but we don't support this case
-    // because apply has a restriction on strided_store where
-    // it expects that "The last dim size is not 128 in original base memref"
-    return value_to_store;
-  }
-  mem_shape.push_back(lane_dim);
-  Value reshaped_ref = b.create<tpu::MemRefReshapeOp>(
-      MemRefType::get(mem_shape, memref_ty.getElementType()), base);
-
-  *(mem_shape.end() - 2) = num_i32_rows;
-  Value i32_view = b.create<tpu::MemRefBitcastOp>(
-      MemRefType::get(mem_shape, i32_type), reshaped_ref);
-
-  Value src_vec = shape_cast_op.getSource();
-  SmallVector<int64_t> slice_sizes(src_ty.getShape());
-  slice_sizes.back() = lane_dim;
-  SmallVector<int64_t> unit_strides(src_ty.getRank(), 1);
-
-  SmallVector<Value> store_indices(indices.begin(),
-                                   indices.begin() + split_point);
-  store_indices.push_back(nullptr);
-  store_indices.push_back(IdxConst(0, b, loc));
-  int stride_dim = split_point;
-
-  for (int i = 0; i < num_i32_rows; ++i) {
-    SmallVector<int64_t> offsets(src_ty.getRank(), 0);
-    offsets.back() = i * packing * lane_dim;
-    Value slice = b.create<vector::ExtractStridedSliceOp>(
-        src_vec, offsets, slice_sizes, unit_strides);
-
-    auto i_chunk_ty =
-        VectorType::get(cast<VectorType>(slice.getType()).getShape(),
-                        b.getIntegerType(bitwidth));
-    auto i32_chunk_ty =
-        VectorType::get(cast<VectorType>(slice.getType()).getShape(), i32_type);
-    Value packed_chunk;
-    if (packing > 1) {
-      Value acc = b.create<arith::ExtUIOp>(
-          i32_chunk_ty, b.create<arith::BitcastOp>(i_chunk_ty, slice));
-      for (int p = 1; p < packing; ++p) {
-        offsets.back() = (i * packing + p) * lane_dim;
-        // Akin to updating offsets on the slice
-        // Note(mvoz): Maybe find a better way to do this?
-        slice = b.create<vector::ExtractStridedSliceOp>(
-            src_vec, offsets, slice_sizes, unit_strides);
-        Value sj_i32 = b.create<arith::ExtUIOp>(
-            i32_chunk_ty, b.create<arith::BitcastOp>(i_chunk_ty, slice));
-        Value sh = I32Const(p * bitwidth, i32_chunk_ty.getShape(), b, loc);
-        acc = b.create<arith::OrIOp>(acc, b.create<arith::ShLIOp>(sj_i32, sh));
-      }
-      packed_chunk = acc;
-    } else {
-      packed_chunk = b.create<arith::BitcastOp>(i32_chunk_ty, slice);
-    }
-
-    auto i32_view_shape = cast<MemRefType>(i32_view.getType()).getShape();
-    SmallVector<int64_t> target_vector_shape(i32_view_shape);
-    target_vector_shape[stride_dim] = 1;
-    auto target_vector_type = VectorType::get(target_vector_shape, i32_type);
-
-    Value chunk_to_store =
-        b.create<vector::ShapeCastOp>(target_vector_type, packed_chunk);
-
-    store_indices[stride_dim] = IdxConst(i, b, loc);
-    b.create<tpu::StridedStoreOp>(
-        chunk_to_store, i32_view, store_indices,
-        SmallVector<int32_t>(i32_view_shape.size(), 1));
-  }
-
-  store_op->erase();
-  shape_cast_op->erase();
-
-  return base;
-}
-
-FailureOr<Value> canonicalize_store(const CanonicalizeContext &ctx,
-                                    Operation &raw_op) {
-  return _canonicalize_store(ctx, raw_op);
-}
-
-FailureOr<Value> canonicalize_vector_store(const CanonicalizeContext &ctx,
-                                           Operation &raw_op) {
-  return _canonicalize_store(ctx, raw_op);
 }
 
 // TODO(apaszke): Implement canonicalization for extf and truncf and use them
@@ -1651,9 +1420,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {tpu::TruncFOp::getOperationName(), canonicalize_tpu_truncf},
       {tpu::ExtFOp::getOperationName(), canonicalize_tpu_extf},
       {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
-      {tpu::RepeatOp::getOperationName(), canonicalize_repeat},
-      {vector::StoreOp::getOperationName(), canonicalize_store},
-      {tpu::VectorStoreOp::getOperationName(), canonicalize_vector_store}};
+      {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
   return *rules;
 }
 
