@@ -670,7 +670,7 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
 def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
             unique_indices, mode, fill_value, normalize_indices):
   idx = merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = index_to_gather(np.shape(arr), idx, normalize_indices=normalize_indices)  # shared with _scatter_update
+  indexer = index_to_gather(np.shape(arr), idx)  # shared with _scatter_update
   jnp_error._check_precondition_oob_gather(arr.shape, indexer.gather_indices)
   y = arr
 
@@ -696,7 +696,7 @@ def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
         y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape,
         unique_indices=unique_indices or indexer.unique_indices,
         indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted,
-        mode=mode, fill_value=fill_value)
+        mode=mode, fill_value=fill_value, wrap_negative_indices=normalize_indices)
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:
@@ -782,8 +782,7 @@ def _aval_or_none(x):
   except:
     return None
 
-def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
-                    normalize_indices: bool = True) -> _Indexer:
+def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any]) -> _Indexer:
   # Convert sequences to arrays
   idx = tuple(lax_numpy.asarray(i, dtype=None if i else int)
               if isinstance(i, Sequence) else i for i in idx)
@@ -836,9 +835,6 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     advanced_pairs = (
       (lax_numpy.asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
       if lax_numpy.isscalar(e) or isinstance(e, (Sequence, Array, np.ndarray)))
-    if normalize_indices:
-      advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
-                        for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
 
   x_axis = 0  # Current axis in x.
@@ -913,7 +909,6 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       if core.definitely_equal(x_shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
-      i = _normalize_index(i, x_shape[x_axis]) if normalize_indices else i
       i_converted = lax.convert_element_type(i, index_dtype)
       gather_indices.append((i_converted, len(gather_indices_shape)))
       collapsed_slice_dims.append(x_axis)

@@ -678,14 +678,11 @@ class IndexingTest(jtu.JaxTestCase):
     x = jnp.arange(10)
     jaxpr = jax.make_jaxpr(x.__getitem__)(jnp.arange(3, dtype=dtype))
     primitives = [eqn.primitive for eqn in jaxpr.eqns]
-    if np.issubdtype(dtype, np.unsignedinteger):
-      # Unsigned integers should not require lt, add, and select.
-      self.assertEqual(primitives, [lax.convert_element_type_p, lax.broadcast_in_dim_p, lax.gather_p])
+    if dtype == dtypes.canonicalize_dtype(int):
+      expected = [lax.broadcast_in_dim_p, lax.gather_p]
     else:
-      # May or may not contain convert_element_type.
-      self.assertIn(len(primitives), [5, 6])
-      self.assertEqual(primitives[:3], [lax.lt_p, lax.add_p, lax.select_n_p])
-      self.assertEqual(primitives[-2:], [lax.broadcast_in_dim_p, lax.gather_p])
+      expected = [lax.convert_element_type_p, lax.broadcast_in_dim_p, lax.gather_p]
+    self.assertEqual(primitives, expected)
 
   @jtu.sample_product(
     [dict(name=name, shape=shape, indexer=indexer)

@@ -653,11 +653,12 @@ error_checks[lax.dynamic_update_slice_p] = dynamic_update_slice_error_check
 
 def gather_error_check(error, enabled_errors, operand, start_indices, *,
                        dimension_numbers, slice_sizes, unique_indices,
-                       indices_are_sorted, mode, fill_value):
+                       indices_are_sorted, mode, fill_value, wrap_negative_indices):
   out = lax.gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
       slice_sizes=slice_sizes, unique_indices=unique_indices,
-      indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+      indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value,
+      wrap_negative_indices=wrap_negative_indices)
 
   if OOBError not in enabled_errors:
     return error, out
