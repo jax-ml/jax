@@ -4145,6 +4145,35 @@ class ShardMapTest(jtu.JaxTestCase):
 
     f(arr)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_arg_basic(self, mesh):
+    x_ref = core.mutable_array(jnp.zeros(4, 'float32', out_sharding=P('x')))
+
+    @jax.jit
+    @shard_map(out_specs=None)
+    def f(x_ref):
+      x_ref[...] += jax.lax.axis_index('x').astype('float32')
+
+    f(x_ref)
+
+    self.assertAllClose(x_ref[...], jnp.array([0., 0., 1., 1.]),
+                        check_dtypes=False)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_internal_basic(self, mesh):
+    x = jnp.arange(4, dtype='float32', out_sharding=P('x'))
+
+    @jax.jit
+    @shard_map(out_specs=P('x'))
+    def f(x):
+      x_ref = core.mutable_array(jnp.zeros_like(x))
+      x_ref[...] = x
+      return x_ref[...]
+
+    y = f(x)
+
+    self.assertAllClose(y, x, check_dtypes=False)
+
 
 class FunSpec(NamedTuple):
   name: str
