@@ -31,6 +31,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
+from jax._src import mesh
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -72,7 +73,7 @@ AxisName = Hashable
 
 def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
               in_specs: Specs | None = None,
-              mesh: Mesh | AbstractMesh | None = None, check_vma: bool = True):
+              mesh: mesh.Mesh | mesh.AbstractMesh | None = None, check_vma: bool = True):
   """Map a function over shards of data using a mesh of devices.
 
   See the docs at https://docs.jax.dev/en/latest/notebooks/shard_map.html.
