@@ -2190,19 +2190,22 @@ def _get_shape_sharding_str(shape, spec):
       out.append(f"{s1}@{s2}")
   return ','.join(out)
 
-def _create_str(x, prefix):
+def _create_str(x, prefix=None):
   x_str = f"{','.join(i for i in x)}"
+  if prefix is None:
+    return x_str
   x_str = x_str if len(x) == 1 else f"({x_str})"
   return f"{prefix}:{x_str}, "
 
 def _vma_ur_str(vma, unreduced, reduced):
   if not vma and not unreduced and not reduced:
     return ''
-  vma_str = _create_str(vma, 'V') if vma else ''
+  vma_str = f"{{{_create_str(vma, None)}}}" if vma else ''
   ur_str = _create_str(unreduced, 'U') if unreduced else ''
   red_str = _create_str(reduced, 'R') if reduced else ''
-  m_str = f"{vma_str}{ur_str}{red_str}".rstrip(', ')
-  return f"{{{m_str}}}"
+  m_str = f"{ur_str}{red_str}".rstrip(', ')
+  m_str = f"{{{m_str}}}" if m_str else ''
+  return f"{m_str}{vma_str}"
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
