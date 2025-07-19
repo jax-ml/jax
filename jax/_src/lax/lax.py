@@ -4825,8 +4825,10 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
   elif core.primal_dtype_to_tangent_dtype(old_dtype) == dtypes.float0:
     return [ad_util.Zero(operand.aval.update(dtype=dtypes.float0, weak_type=False))]
   else:
-    return [convert_element_type_p.bind(
-        ct, new_dtype=old_dtype, weak_type=old_weak_type, sharding=sharding)]
+    out = convert_element_type_p.bind(
+        ct, new_dtype=old_dtype, weak_type=old_weak_type,
+        sharding=operand.aval.sharding)
+    return [out]
 
 def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
                                    new_dtype, weak_type, sharding):
