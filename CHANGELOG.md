@@ -19,6 +19,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features:
   * Added `jax.P` which is an alias for `jax.sharding.PartitionSpec`.
   * Added {func}`jax.tree.reduce_associative`.
+  * Added {func}`jax.nn.min_max_normalize`, which implements min-max normalization.
 
 * Breaking changes:
   * `jax.stages.OutInfo` has been replaced with `jax.ShapeDtypeStruct`.
