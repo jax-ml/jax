@@ -46,7 +46,80 @@ jobs:
         clone_main_xla: 1
         upload_artifacts_to_gcs: true
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+  run-bazel-tpu:
+    name: "TPU bazel tests"
+    defaults:
+      run:
+        shell: bash
+    runs-on: "linux-x86-ct6e-180-8tpu"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: "3.13-ft"
+      JAXCI_PYTHON: "python3.13t"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+         persist-credentials: false
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Install nightly libtpu
+        run: |
+          $JAXCI_PYTHON -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+      - name: Run Bazel Tests
+        run: |
+          git clone --depth=1 https://github.com/openxla/xla.git $(pwd)/xla
 
+          SRCDIR=$(pwd)
+          # Run bazel test, room for improvement by either using prebuilt jaxlib, using a cache, or using an RBE instance
+          # Test envs must be passed in due to not having access to the TPU metadata information
+
+          echo "TPU_SKIP_MDS_QUERY: true"
+          echo "CHIPS_PER_HOST_BOUNDS: $CHIPS_PER_HOST_BOUNDS"
+          echo "HOST_BOUNDS: $HOST_BOUNDS"
+          echo "ALT: false"
+          echo "WRAP: $WRAP"
+          echo "TPU_WORKER_ID: $TPU_WORKER_ID"
+          echo "TPU_ACCELERATOR_TYPE: $TPU_ACCELERATOR_TYPE"
+          echo "TPU_WORKER_HOSTNAMES: $TPU_WORKER_HOSTNAMES"
+          echo "TPU_RUNTIME_METRICS_PORTS: $TPU_RUNTIME_METRICS_PORTS"
+          echo "TPU_HOST_BOUNDS: $TPU_HOST_BOUNDS"
+          echo "TPU_TOPOLOGY_ALT: $TPU_TOPOLOGY_ALT"
+          echo "TPU_TOPOLOGY_WRAP: $TPU_TOPOLOGY_WRAP"
+          echo "VBAR_CONTROL_SERVICE_URL: $VBAR_CONTROL_SERVICE_URL"
+
+          bazel test \
+            --config=ci_linux_x86_64 \
+            --config=ci_rbe_cache \
+            --override_repository=xla="./xla" \
+            --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft \
+            --@rules_python//python/config_settings:py_freethreaded='yes' \
+            --run_under ${SRCDIR}/build/parallel_accelerator_execute.sh \
+            --test_env=JAX_ACCELERATOR_COUNT=8 \
+            --test_env=JAX_TESTS_PER_ACCELERATOR=1 \
+            --local_test_jobs=8 \
+            --test_tag_filters=-multiaccelerator  \
+            --test_sharding_strategy=disabled \
+            --generate_json_trace_profile  \
+            --test_timeout=600 \
+            --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=1 \
+            --test_env=JAX_TEST_NUM_THREADS=16 \
+            --test_env=JAX_SKIP_SLOW_TESTS=1 \
+            --test_env=TPU_SKIP_MDS_QUERY=true \
+            --test_env=CHIPS_PER_HOST_BOUNDS="$CHIPS_PER_HOST_BOUNDS" \
+            --test_env=HOST_BOUNDS="$HOST_BOUNDS" \
+            --test_env=ALT=false \
+            --test_env=WRAP="$WRAP" \
+            --test_env=TPU_WORKER_ID="$TPU_WORKER_ID" \
+            --test_env=TPU_ACCELERATOR_TYPE="$TPU_ACCELERATOR_TYPE" \
+            --test_env=TPU_WORKER_HOSTNAMES="$TPU_WORKER_HOSTNAMES" \
+            --test_env=TPU_RUNTIME_METRICS_PORTS="$TPU_RUNTIME_METRICS_PORTS" \
+            --test_env=TPU_HOST_BOUNDS="$TPU_HOST_BOUNDS" \
+            --test_env=TPU_TOPOLOGY_ALT="$TPU_TOPOLOGY_ALT" \
+            --test_env=TPU_TOPOLOGY_WRAP="$TPU_TOPOLOGY_WRAP" \
+            --test_env=VBAR_CONTROL_SERVICE_URL="$VBAR_CONTROL_SERVICE_URL" \
+            -- //tests:tpu_tests
   run-pytest-tpu:
     if: github.event.repository.fork == false
     needs: [build-jax-artifacts]
