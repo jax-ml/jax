@@ -3195,6 +3195,13 @@ def _check_jaxpr(
                          f"from source: {src}"])
       raise JaxprTypeError(msg, eqn_idx) from None
 
+  # Check there are no output refs
+  # TODO(mattjj): improve this error message
+  if config.mutable_array_checks.value:
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    for v in jaxpr.outvars:
+      if isinstance(v.aval, AbstractRef): raise TypeError("returned ref")
+
   # TODO(mattjj): include output type annotation on jaxpr and check it here
   foreach(read, jaxpr.outvars)
 
