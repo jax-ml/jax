@@ -3800,6 +3800,21 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
 shard_aval_handlers = {}  # type: ignore
 unshard_aval_handlers = {}  # type: ignore
 
+def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
+               ) -> AbstractValue:
+  if type(aval) in shard_aval_handlers:
+    return shard_aval_handlers[type(aval)](mesh, manual_axes, check_vma,
+                                                spec, aval)
+  raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
+
+def unshard_aval(mesh, check_vma, spec, aval: AbstractValue
+                 ) -> AbstractValue:
+  if type(aval) in unshard_aval_handlers:
+    return unshard_aval_handlers[type(aval)](mesh, check_vma, spec, aval)
+  else:
+    raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
+
+
 # ----------------- external APIs for querying tracing context -----------------
 
 # TODO(dougalm, jakevdp): expose these via jax.extend

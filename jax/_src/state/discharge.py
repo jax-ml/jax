@@ -152,9 +152,7 @@ def _eval_jaxpr_discharge_state(
                        if d and isinstance(v.aval, AbstractRef)}
 
   for eqn in jaxpr.eqns:
-    name_stack = (
-        source_info_util.current_name_stack() + eqn.source_info.name_stack
-    )
+    name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback
     with source_info_util.user_context(
         traceback, name_stack=name_stack), eqn.ctx.manager:
@@ -167,16 +165,14 @@ def _eval_jaxpr_discharge_state(
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
         refs_to_discharge.remove(id(invar.aval))
-      elif (any(should_discharge)
-            or core.internal_mutable_array_effect in eqn.effects
-        ):
+      elif any(should_discharge) or core.internal_mutable_array_effect in eqn.effects:
         if eqn.primitive in _partial_discharge_rules:
           rule: DischargeRule = partial(_partial_discharge_rules[eqn.primitive], should_discharge)
         elif eqn.primitive in _discharge_rules:
           rule = _discharge_rules[eqn.primitive]
         else:
-          raise NotImplementedError("No state discharge rule implemented for "
-              f"primitive: {eqn.primitive}")
+          raise NotImplementedError(
+              f"No state discharge rule implemented for primitive: {eqn.primitive}")
         invals = map(env.read, eqn.invars)
         in_avals = [v.aval for v in eqn.invars]
         out_avals = [v.aval for v in eqn.outvars]
@@ -1160,7 +1156,6 @@ def _pjit_state_discharge_rule(
     raise NotImplementedError
 
   jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
-  num_outs = len(jaxpr.outvars)
   discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
   discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
   new_in_shardings = (sharding_impls.UNSPECIFIED,) * len(discharged_jaxpr.invars)
@@ -1171,7 +1166,7 @@ def _pjit_state_discharge_rule(
       *args, jaxpr=discharged_closed_jaxpr, in_shardings=new_in_shardings,
       out_shardings=new_out_shardings, in_layouts=new_in_layouts,
       out_layouts=new_out_layouts, **params)
-  out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
+  out_vals, ref_vals = split_list(out_and_ref_vals, [len(jaxpr.outvars)])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
                      else None for aval in in_avals)
