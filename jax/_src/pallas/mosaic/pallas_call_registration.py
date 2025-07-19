@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import dataclasses
 import os
 import tempfile
 from typing import cast
@@ -234,10 +235,8 @@ def pallas_call_tpu_lowering_rule(
       )
     input_memory_spaces = _get_memory_spaces_from_avals(ctx.avals_in)
   if cost_estimate is not None:
-    mosaic_cost_estimate = tpu_custom_call.CostEstimate(
-        flops=cost_estimate.flops,
-        bytes_accessed=cost_estimate.bytes_accessed,
-        transcendentals=cost_estimate.transcendentals,
+    mosaic_cost_estimate = cast(
+        tpu_custom_call.CostEstimate, dataclasses.asdict(cost_estimate)
     )
   else:
     mosaic_cost_estimate = None

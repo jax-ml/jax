@@ -25,13 +25,14 @@ import enum
 import functools
 import io
 import json
-from typing import Any
+from typing import Any, TypedDict
 
 import jax
 from jax._src import config
 from jax._src import core
 from jax._src import sharding_impls
 from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
+from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import mlir
 from jax._src.lib import tpu
 from jax.interpreters import xla
@@ -101,17 +102,10 @@ class MemorySpace(enum.Enum):
       raise ValueError("invalid memory space: " + str(self))
 
 
-@dataclasses.dataclass(frozen=True)
-class CostEstimate:
+class CostEstimate(TypedDict):
   flops: int
   transcendentals: int
   bytes_accessed: int
-
-  def to_json(self) -> bytes:
-    return (
-        f'{{"flops": {self.flops}, "transcendentals": {self.transcendentals},'
-        f' "bytes_accessed": {self.bytes_accessed}}}'
-    ).encode('ascii')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -138,6 +132,9 @@ class CustomCallBackendConfig:
     if self.allow_input_fusion is not None:
       object.__setattr__(self, "allow_input_fusion",
                          tuple(self.allow_input_fusion))
+    if self.cost_estimate is not None:
+      object.__setattr__(self, "cost_estimate",
+                         FrozenDict(self.cost_estimate))
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -159,7 +156,9 @@ class CustomCallBackendConfig:
       config.write(str(self.collective_id).encode("ascii"))
     if self.cost_estimate is not None:
       config.write(b', "cost_estimate": ')
-      config.write(self.cost_estimate.to_json())
+      config.write(
+          json.dumps(dict(self.cost_estimate), sort_keys=True).encode("ascii")
+      )
     if self.needs_hlo_passes:
       config.write(b', "needs_hlo_passes": ')
       config.write(str(self.needs_hlo_passes).lower().encode("ascii"))

@@ -1910,6 +1910,7 @@ pytype_strict_library(
         ":cloud_tpu_init",
         ":config",
         ":core",
+        ":frozen_dict",
         ":jax",
         ":mlir",
         ":sharding_impls",
