@@ -1121,18 +1121,6 @@ class VectorLayoutInferer {
       }
       auto src_tiled_ishape = layout.getImplicitTiledDims(src_ty.getShape(), 1);
       auto dst_tiled_ishape = layout.getImplicitTiledDims(res_ty.getShape(), 1);
-      if (src_tiled_ishape[0] != dst_tiled_ishape[0] &&
-          layout.offsets()[0] != std::nullopt) {
-        // TODO(tlongeri): Remove this. We support non-native tiling now, but
-        // things may still break downstream due to missing relayouts.
-        LayoutOffsets offsets = layout.offsets();
-        if (layout.tiling()[0] == 1 && layout.bitwidth() == kNativeBitwidth) {
-          offsets[0] = std::nullopt;
-        }
-        layout = VectorLayout(layout.bitwidth(), offsets,
-                              nativeTiling(layout.bitwidth()),
-                              layout.implicit_dim());
-      }
       LayoutOffsets offsets = layout.offsets();
       for (int i = 0; i < 2; ++i) {
         if (src_tiled_ishape[i] != dst_tiled_ishape[i]) {
