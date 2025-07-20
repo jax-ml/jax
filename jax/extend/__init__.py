@@ -42,6 +42,7 @@ from jax.extend import (
     ffi as _ffi,
     linear_util as linear_util,
     random as random,
+    sharding as sharding,
     source_info_util as source_info_util,
 )
 
