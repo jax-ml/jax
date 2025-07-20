@@ -214,17 +214,10 @@ class Config:
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
-
-def trace_context():
-  """Returns a tuple of configuration values that affect tracing.
-
-  These values are included in the cache key for linear_util.cache.
-
-  Values included in this set should also most likely be included in
-  the C++ JIT state, which is handled separately.
+def jit_trace_cache_context():
+  """Returns a tuple of configuration values that affect tracing only.
   """
   return (axis_env_state.value, mesh_context_manager.value,
-          xla_metadata_context_manager.value,
           abstract_mesh_context_manager.value,
           compute_on_context_manager.value, enable_x64.value,
           numpy_rank_promotion.value, default_matmul_precision.value,
@@ -251,6 +244,12 @@ def trace_context():
           error_checking_behavior_oob.value,
           use_simplified_jaxpr_constants.value,
           pallas_tpu_interpret_mode_context_manager.value)
+
+def trace_lower_compile_context():
+  """Returns a tuple of configuration values that affect tracing,
+  lowering and compilation.
+  """
+  return (*jit_trace_cache_context(), xla_metadata_context_manager.value)
 
 config = Config()
 
