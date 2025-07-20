@@ -981,27 +981,25 @@ def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training, lay
 def _fwd_shardy_rule(value_types, result_types, is_training, is_fp8):
   num_args = len(value_types)
   # We only need the query and value sharding, so use placeholders for the remaining args.
-  input_sharding = [(f'{BATCHING}{n}',) for n in range(num_args)]
-  input_sharding[0] = ('batch', 'qseq', 'nhead', 'head',)
+  input_sharding = [ArrayMapping(f'{BATCHING}{n}') for n in range(num_args)]
+  input_sharding[0] = ArrayMapping('batch', 'qseq', 'nhead', 'head')
   input_sharding[2] += ('v',)
 
   # The major dimensions are sharded like the query, the minor like the value.
-  output_sharding = (input_sharding[0][:-1] + ('v',),)
+  output_sharding = (ArrayMapping(*input_sharding[0][:-1], 'v'),)
   if is_fp8:
     # `amax` is a scalar.
-    amax = (f'{BATCHING}{num_args}',)
+    amax = ArrayMapping(f'{BATCHING}{num_args}')
     output_sharding += (amax, amax)
   factor_sizes = {}
   if is_training:
     # Activation sharding.
     if result_types[-1].shape[0] == value_types[0].shape[0]:
-      output_sharding += (('batch', 'nhead', 'qseq'),)
+      output_sharding += (ArrayMapping('batch', 'nhead', 'qseq'),)
     else:
       factor_sizes['n'] = result_types[-1].shape[0] // value_types[0].shape[0]
-      output_sharding += ((CompoundFactor('batch', 'n'), 'nhead', 'qseq'),)
-  return SdyShardingRule(
-      ArrayMapping(input_sharding), ArrayMapping(output_sharding),
-      **factor_sizes)
+      output_sharding += (ArrayMapping(CompoundFactor('batch', 'n'), 'nhead', 'qseq'),)
+  return SdyShardingRule(tuple(input_sharding), output_sharding, **factor_sizes)
 
 _dot_product_attention_fwd_lower = custom_partitioning(
     _dot_product_attention_fwd_impl, static_argnums=(10, 11, 12, 13, 14, 15, 16, 17))
@@ -1058,17 +1056,16 @@ def _infer_bwd_output_sharding(mesh, arg_shapes, layout, variadic_args):
   return out_shardings
 
 def _bwd_shardy_rule(num_args, has_dbias, is_fp8):
-  input_sharding = tuple((f'…{n}',) for n in range(num_args))
+  input_sharding = tuple(ArrayMapping(f'{BATCHING}{n}') for n in range(num_args))
 
   if has_dbias:
     output_sharding = input_sharding[0:4]
   else:
     output_sharding = input_sharding[0:3]
   if is_fp8:
-    amax = (f'{BATCHING}{num_args}',)
+    amax = ArrayMapping(f'{BATCHING}{num_args}')
     output_sharding += (amax, amax, amax, amax)
-  return SdyShardingRule(
-      ArrayMapping(input_sharding), ArrayMapping(output_sharding))
+  return SdyShardingRule(input_sharding, output_sharding)
 
 _dot_product_attention_bwd_lower = custom_partitioning(
     _dot_product_attention_bwd_impl, static_argnums=(13, 14, 15, 16, 17, 18, 19)
