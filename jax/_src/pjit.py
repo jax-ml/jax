@@ -2733,9 +2733,16 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
-sharding_constraint_p.def_abstract_eval(lambda x, **_: x)
 ad.deflinear2(sharding_constraint_p,
               lambda ct, _, **params: (sharding_constraint_p.bind(ct, **params),))
+
+def _sharding_constraint_abstract_eval(
+    x_aval, *, sharding, layout, context_mesh, unconstrained_dims):
+  if x_aval.sharding.mesh.empty and isinstance(sharding, NamedSharding):
+    return x_aval.update(
+        sharding=x_aval.sharding.update(mesh=sharding.mesh.abstract_mesh))
+  return x_aval
+sharding_constraint_p.def_abstract_eval(_sharding_constraint_abstract_eval)
 
 def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
                                       context_mesh, unconstrained_dims):

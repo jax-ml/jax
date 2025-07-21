@@ -5046,6 +5046,31 @@ class ArrayPjitTest(jtu.JaxTestCase):
         '`compiler_options` can only be passed to top-level `jax.jit`'):
       f(jnp.arange(4))
 
+  def test_wsc_aval_cache_hit(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    sharding = NamedSharding(mesh, P('x'))
+    zeros = jnp.zeros((2,2))
+    x = jax.device_put(zeros, sharding)
+
+    @jax.jit
+    def inner(x):
+      return x
+
+    @jax.jit
+    def init():
+      x = with_sharding_constraint(zeros, sharding)
+      self.assertEqual(x.aval.sharding.mesh, sharding.mesh.abstract_mesh)
+      return inner(x)
+
+    @jax.jit
+    def apply(x):
+      return inner(x)
+
+    with jtu.count_jit_tracing_cache_miss() as count:
+      init()
+      apply(x)
+    self.assertEqual(count(), 3)  # misses for init, apply and inner (only once)
+
 
 class ShardingInTypesTest(jtu.JaxTestCase):
 
