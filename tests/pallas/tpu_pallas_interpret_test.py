@@ -102,6 +102,10 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+
+    if not jtu.test_device_matches(['cpu']):
+      self.skipTest('CPU-only test')
+
     self.num_devices = jax.device_count()
     if self.num_devices > 1:
       # Workaround for https://github.com/jax-ml/jax/issues/25671
