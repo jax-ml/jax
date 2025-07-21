@@ -44,7 +44,7 @@ echo "Installed packages:"
 # Free-threaded builds use "-nogil" as the suffix for the binary and "t" for its
 # dist-packages path
 strings /usr/local/lib/"${JAXCI_PYTHON//-nogil/t}"/dist-packages/libtpu/libtpu.so | grep 'Built on'
-"$JAXCI_PYTHON" -c 'import jax; print("libtpu version:",jax.lib.xla_bridge.get_backend().platform_version)'
+"$JAXCI_PYTHON" -c 'import jax.extend; print("libtpu version:",jax.extend.backend.get_backend().platform_version)'
 
 # Set up all common test environment variables
 export PY_COLORS=1

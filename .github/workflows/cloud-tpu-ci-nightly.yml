@@ -114,8 +114,8 @@ jobs:
           $PYTHON -c 'import jax; print("jax version:", jax.__version__)'
           $PYTHON -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
           strings /usr/local/lib/"$PYTHON"/dist-packages/libtpu/libtpu.so | grep 'Built on'
-          $PYTHON -c 'import jax; print("libtpu version:",
-            jax.lib.xla_bridge.get_backend().platform_version)'
+          $PYTHON -c 'import jax.extend; print("libtpu version:",
+            jax.extend.backend.get_backend().platform_version)'
       - name: Run tests
         env:
           JAX_PLATFORMS: tpu,cpu
