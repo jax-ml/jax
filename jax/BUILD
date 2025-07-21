@@ -281,6 +281,7 @@ pytype_strict_library(
             ":jax",
             ":xla_bridge",
             ":test_util",
+            "//jax/_src/lib",
         ],
         if_not_building = [],
     ) + py_deps("absl-all"),
