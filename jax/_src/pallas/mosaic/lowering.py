@@ -2165,6 +2165,7 @@ def _dot_general_lowering_rule(
       and ctx.avals_in[1].shape[0] == 1
       and len(ctx.avals_in[0].shape) == 2
       and len(ctx.avals_in[1].shape) == 2
+      and (ctx.forward_compatible or is_cloud_tpu_older_than(2025, 7, 24))
   ):
     if ctx.avals_in[0].shape != ctx.avals_in[1].shape:
       bcast_shape = jnp.broadcast_shapes(
