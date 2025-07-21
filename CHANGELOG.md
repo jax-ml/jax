@@ -24,6 +24,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * JAX is migrating from GSPMD to Shardy by default. See the
     [migration guide](https://docs.jax.dev/en/latest/shardy_jax_migration.html)
     for more information.
+  * JAX autodiff is switching to using direct linearization by default (instead of
+    implementing linearization via JVP and partial eval).
+    See [migration guide](https://docs.jax.dev/en/latest/direct_linearize_migration.html)
+    for more information.
   * `jax.stages.OutInfo` has been replaced with `jax.ShapeDtypeStruct`.
   * {func}`jax.jit` now requires `fun` to be passed by position, and additional
     arguments to be passed by keyword. Doing otherwise will result in an error
