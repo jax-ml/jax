@@ -63,6 +63,7 @@ class TuningConfig:
     return self.block_q_dkv is not None
 
 def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = False):
+  assert cuda_versions is not None
   cuda_runtime_version = cuda_versions.cuda_runtime_get_version()
   # TODO(pobudzey): Undo when we upgrade to cuda 12.9.1.
   if config.causal and cuda_runtime_version >= 12080 and cuda_runtime_version < 12091:
@@ -842,6 +843,7 @@ def main(unused_argv):
   problem_it = itertools.product(
       (1,), (4096, 32768,), (64, 128, 256,), schedule_barrier_opts, (False, True))
   for batch_size, seq_len, head_dim, use_schedule_barrier, causal in problem_it:
+    assert cuda_versions is not None
     cuda_runtime_version = cuda_versions.cuda_runtime_get_version()
     # TODO(pobudzey): Undo when we upgrade to cuda 12.9.1.
     if causal and cuda_runtime_version >= 12080 and cuda_runtime_version < 12091:
