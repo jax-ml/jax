@@ -37,6 +37,12 @@ source "ci/utilities/setup_build_environment.sh"
 os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
+# Adjust os and arch for Windows
+if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
+  os="windows"
+  arch="amd64"
+fi
+
 echo "Running CPU tests..."
 # When running on Mac or Linux Aarch64, we build the test targets on RBE
 # and run the tests locally. These platforms do not have native RBE support so
@@ -45,7 +51,6 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
       bazel test --config=rbe_cross_compile_${os}_${arch} \
             --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
-            --test_env=JAX_NUM_GENERATED_CASES=25 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
@@ -58,7 +63,6 @@ else
       bazel test --config=rbe_${os}_${arch} \
             --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
-            --test_env=JAX_NUM_GENERATED_CASES=25 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
