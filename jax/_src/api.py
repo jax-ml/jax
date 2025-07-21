@@ -26,7 +26,7 @@ import atexit
 import collections
 from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
-from functools import partial, lru_cache
+from functools import partial
 import inspect
 import typing
 from typing import (Any, Literal, NamedTuple, TypeVar, overload,
@@ -2449,7 +2449,7 @@ def _infer_src_sharding(src, x) -> Sharding | None:
   return None
 
 
-@lru_cache(maxsize=2048)
+@util.cache(max_size=2048, trace_context_in_key=False)
 def _check_string_compatible_sharding(s):
   """Checks if target devices are compatible with string arrays."""
   if isinstance(s, xc.Device) and s.device_kind == "cpu":
@@ -2463,7 +2463,7 @@ def _check_string_compatible_sharding(s):
 
 # TODO(yashkatariya): Generalize check_compatible_aval (maybe renamed) and use
 # that to check if shardings are compatible with the input.
-@lru_cache(maxsize=2048)
+@util.cache(max_size=2048, trace_context_in_key=False)
 def _check_sharding(aval, s):
   if (s is not None and
       not isinstance(s, (xc.Device, Sharding, Format, TransferToMemoryKind))):
@@ -3004,8 +3004,6 @@ def clear_backends():
   Clear all backend clients so that new backend clients can be created later.
   """
   xb._clear_backends()
-  xb.local_devices.cache_clear()
-  xb.process_count.cache_clear()
   util.clear_all_caches()
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()

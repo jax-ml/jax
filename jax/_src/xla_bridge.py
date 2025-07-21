@@ -23,7 +23,7 @@ from __future__ import annotations
 import atexit
 from collections.abc import Callable, Mapping
 import dataclasses
-from functools import lru_cache, partial
+from functools import partial
 import importlib
 import json
 import logging
@@ -889,8 +889,6 @@ def _clear_backends() -> None:
     _backend_errors = {}
     _default_backend = None
 
-  get_backend.cache_clear()
-
 
 def _init_backend(platform: str) -> xla_client.Client:
   registration = _backend_factories.get(platform, None)
@@ -947,7 +945,7 @@ def _get_backend_uncached(
     return _default_backend
 
 
-@lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
+@util.cache(max_size=None, trace_context_in_key=False)  # don't use util.memoize because there is no X64 dependence.
 def get_backend(
     platform: None | str | xla_client.Client = None
 ) -> xla_client.Client:
@@ -1060,7 +1058,7 @@ def backend_stablehlo_version(platform=None) -> Sequence[int] | None:
   backend = get_backend(platform)
   return getattr(backend, "stablehlo_current_version", None)
 
-@lru_cache
+@util.cache(max_size=None, trace_context_in_key=False)
 def local_devices(process_index: int | None = None,
                   backend: str | xla_client.Client | None = None,
                   host_id: int | None = None) -> list[xla_client.Device]:
@@ -1118,7 +1116,7 @@ def host_id(backend: str | xla_client.Client | None = None) -> int:
   return process_index(backend)
 
 
-@lru_cache
+@util.cache(max_size=None, trace_context_in_key=False)
 def process_count(
     backend: str | xla_client.Client | None = None
 ) -> int:

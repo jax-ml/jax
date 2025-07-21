@@ -19,7 +19,7 @@ import collections
 from collections import namedtuple
 from collections.abc import Callable, Sequence, Iterable
 import dataclasses
-from functools import partial, lru_cache, cached_property
+from functools import partial, cached_property
 import functools
 import itertools as it
 import logging
@@ -171,7 +171,7 @@ shard_arg_handlers: dict[
 ] = {}
 
 
-@lru_cache(maxsize=2048)
+@util.cache(max_size=2048, trace_context_in_key=False)
 def is_default_layout(curr_layout, sharding, aval):
   if curr_layout is None or sharding is None or isinstance(sharding, UnspecifiedValue):
     return True
@@ -439,7 +439,7 @@ def _map_schedule(idx: tuple[int | None, ...]) -> tuple[int | None, ...]:
 # still ends up not working, because it has a separate cache per
 # _function object_. Adding this annotation here lets us reuse the same pmap
 # callable for all equivalent primitive pmaps.
-@lru_cache
+@util.cache(max_size=None, trace_context_in_key=False)
 def _multi_pmap(f: Callable, info: EmapInfo, names: list[core.AxisName],
                 all_axes: list[tuple[int | None, ...]]
                 ) -> tuple[Callable, dict[core.AxisName, int]]:
@@ -1933,7 +1933,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, module_name, backend,
           nreps, tuple_args, lowering_result.shape_poly_state)
 
 
-@lru_cache(maxsize=2048)
+@util.cache(max_size=2048, trace_context_in_key=False)
 def _create_device_list_cached(device_assignment: tuple[xc.Device, ...]
                              ) -> xc.DeviceList:
   return xc.DeviceList(device_assignment)
@@ -2082,7 +2082,7 @@ class AllArgsInfo(NamedTuple):
   debug_info: core.DebugInfo
 
 
-@lru_cache(maxsize=2048)
+@util.cache(max_size=2048, trace_context_in_key=False)
 def to_gspmd_sharding(s: JSharding, ndim: int) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
@@ -2117,7 +2117,7 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
   return (closed_jaxpr, inout_aliases, mut, in_shardings, in_layouts,
           donated_invars, out_shardings, out_layouts)
 
-@lru_cache(maxsize=1024)
+@util.cache(max_size=1024, trace_context_in_key=False)
 def _abstract_to_concrete_mesh(abstract_mesh, device_assignment):
   np_dev = np.vectorize(lambda i: device_assignment[i],
                         otypes=[object])(np.arange(len(device_assignment)))
