@@ -250,9 +250,8 @@ class LayoutTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r'Compiled object called with input layout\(s\) does'
-        r' not match the layout\(s\) the computation was'
-        ' compiled with'):
+        r'Computation was compiled for input layouts that disagree with the '
+        r'layouts of arguments passed to it.'):
       compiled(arr)
 
   @jtu.ignore_warning(category=DeprecationWarning,

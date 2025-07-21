@@ -2030,9 +2030,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
       with self.assertRaisesRegex(
           ValueError,
-          r"Compiled object called with input sharding.*does not match the "
-          r"sharding.*the computation was compiled with. "
-          "Here are.*mismatches.*"):
+          r"Computation was compiled for input shardings.* that "
+          r"disagree with the shardings.* of arguments passed to it. "
+          r"Here are.*mismatches.*"):
         compiled(a2, a2, a2, a2, a2, a2)
 
     with global_mesh:
@@ -2044,9 +2044,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
       inp2 = {'x': a2, 'y': {'y1': a2}}
       with self.assertRaisesRegex(
           ValueError,
-          r"Compiled object called with input sharding.*does not match the "
-          r"sharding.*the computation was compiled with. "
-          "Here are the.*mismatches"):
+          r"Computation was compiled for input shardings.* that "
+          r"disagree with the shardings.* of arguments passed to it. "
+          r"Here are.*mismatches.*"):
         compiled(inp2)
 
   def test_globally_sharded_key_array_result_8x4_single_device(self):
@@ -4659,7 +4659,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     cpu_arr = jax.device_put(np_inp, jax.devices('cpu')[0])
     with self.assertRaisesRegex(
         ValueError,
-        "Compiled object called with input sharding.*does not match"):
+        r'Computation was compiled for input shardings.* that '
+        r'disagree with the shardings.* of arguments passed to it'):
       compiled(cpu_arr)
 
   def test_different_devices_wsc_abstract_mesh_cache_hit(self):

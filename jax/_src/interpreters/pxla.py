@@ -3294,39 +3294,37 @@ def check_array_xla_sharding_layout_match(
 
     if (not db_xs and arg._committed and
         not arg.sharding.is_equivalent_to(xs, arg.ndim)):
-      errors.append(
-          ("Got input sharding(s) that compiled object was called with: "
-          f"{arg.sharding} and sharding(s) the computation was compiled "
-          f"with: {xs} for arg {name} with shape: {arg.aval.str_short()}",
-          'sharding'))
+      errors.append((
+          f"Argument {name} with shape {arg.aval.str_short()}:\n"
+          f"  Passed sharding: {arg.sharding}\n"
+          f"  Required sharding: {xs}",
+          "sharding"))
 
     if (not db_xs and arg._committed and
         arg.format.layout is not None and xl is not None and
         arg.format.layout != xl):
-      errors.append(
-          ("Got input layout(s) that compiled object was called with: "
-          f"{arg.format.layout} and layout(s) the computation was "
-          f"compiled with: {xl} for arg {name} with "
-          f"shape: {arg.aval.str_short()}",
-          'layout'))
+      errors.append((
+          f"Argument {name} with shape {arg.aval.str_short()}:\n"
+          f"  Passed layout: {arg.format.layout}\n"
+          f"  Required layout: {xl}",
+          "layout"))
 
   if errors:
     first_errors, error_kinds = unzip2(errors[:num_errors])
     str_errors = '\n'.join(first_errors)
     if all(k == 'sharding' for k in error_kinds):
-      kind_str = r'sharding(s)'
+      kind_str = r'shardings'
     elif all(k == 'layout' for k in error_kinds):
-      kind_str = 'layout(s)'
+      kind_str = 'layouts'
     else:
-      kind_str = 'sharding(s) and layout(s)'
+      kind_str = 'shardings and layouts'
     num_mismatch_str = (
-        f'the {len(errors)} mismatches' if len(errors) < num_errors else
+        f"the {len(errors)} mismatches" if len(errors) < num_errors else
         f"{num_errors} mismatches out of {len(errors)}")
     raise ValueError(
-          f"Compiled object called with input {kind_str} does "
-          f"not match the {kind_str} the computation was "
-          "compiled with. "
-          f"Here are {num_mismatch_str}:\n{str_errors}")
+        f"Computation was compiled for input {kind_str} that disagree with the "
+        f"{kind_str} of arguments passed to it. "
+        f"Here are {num_mismatch_str}:\n{str_errors}")
 
 def batch_spec(spec, dim, val):
   too_short = dim - len(spec)
