@@ -1783,9 +1783,8 @@ use_shardy_partitioner = bool_state(
     default=True,
     upgrade=True,
     help=(
-        'Whether to lower to Shardy. Shardy is a new open sourced propagation '
-        'framework for MLIR. Currently Shardy is experimental in JAX. See '
-        'www.github.com/openxla/shardy'
+        'Whether to lower to Shardy. See the migration guide for more '
+        'information: https://docs.jax.dev/en/latest/shardy_jax_migration.html.'
     ),
     include_in_jit_key=True,
 )
