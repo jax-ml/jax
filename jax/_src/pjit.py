@@ -2892,11 +2892,13 @@ def _mesh_cast_transpose_rule(ct, x, dst_sharding):
 ad.deflinear2(mesh_cast_p, _mesh_cast_transpose_rule)
 
 def _mesh_cast_hlo_lowering(ctx, x_node, *, dst_sharding):
-  aval, = ctx.avals_in
+  aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
-  proto = (dst_sharding._to_sdy_sharding(aval.ndim)
+  if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
+    aval_in = core.physical_aval(aval_in)
+  proto = (dst_sharding._to_sdy_sharding(aval_in.ndim)
            if config.use_shardy_partitioner.value else
-           dst_sharding._to_xla_hlo_sharding(aval.ndim).to_proto())
+           dst_sharding._to_xla_hlo_sharding(aval_in.ndim).to_proto())
   return [mlir.lower_with_sharding_in_types(ctx, x_node, aval_out, proto)]
 mlir.register_lowering(mesh_cast_p, _mesh_cast_hlo_lowering)
 
@@ -2953,11 +2955,13 @@ def _reshard_transpose_rule(ct, x, dst_sharding):
 ad.deflinear2(reshard_p, _reshard_transpose_rule)
 
 def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
-  aval, = ctx.avals_in
+  aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
-  proto = (dst_sharding._to_sdy_sharding(aval.ndim)
+  if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
+    aval_in = core.physical_aval(aval_in)
+  proto = (dst_sharding._to_sdy_sharding(aval_in.ndim)
            if config.use_shardy_partitioner.value else
-           dst_sharding._to_xla_hlo_sharding(aval.ndim).to_proto())
+           dst_sharding._to_xla_hlo_sharding(aval_in.ndim).to_proto())
   return [mlir.lower_with_sharding_in_types(ctx, x_node, aval_out, proto)]
 mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
 

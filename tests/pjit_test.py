@@ -8643,6 +8643,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'))))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reshard_rng_keys(self, mesh):
+    key = jax.random.key(12)
+
+    @jax.jit
+    def f():
+      return reshard(key, P())
+
+    out = f()
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
+  @jtu.with_explicit_mesh((2,), 'x', axis_types=(AxisType.Auto,))
+  def test_mesh_cast_rng_keys(self, mesh):
+    key = jax.random.key(12)
+    explicit_mesh = jax.sharding.AbstractMesh((2,), ('x',), (AxisType.Explicit,))
+
+    @jax.jit
+    def f():
+      return mesh_cast(key, NamedSharding(explicit_mesh, P()))
+
+    f()  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
