@@ -98,9 +98,9 @@ exclude = [
     "build",
     "__pycache__",
 ]
-line-length = 88
+line-length = 80
 indent-width = 2
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 ignore = [
