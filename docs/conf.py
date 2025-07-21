@@ -229,6 +229,8 @@ nb_execution_excludepatterns = [
     # TODO(jakevdp): enable execution on the following if possible:
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
     'notebooks/autodiff_remat.*',
+    # Example only gives the specific output demonstrated on some platforms
+    'notebooks/layout.*',
     # Fails on readthedocs with Kernel Died
     'notebooks/convolutions.ipynb',
     # Requires accelerators
