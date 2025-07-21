@@ -3976,22 +3976,21 @@ class WarpSpecializedPipelineTest(PallasTest):
     blk_m = blk_n = 64
 
     def copy_kernel(_, x_smem, o_smem, o_last_block_smem, *consumed_barriers):
-      # TODO(justinfu): Have each wg compute a separate slice
-      # after multiple-indexers are supported.
-      # This is currently a race, but the values written are the same.
-      o_smem[...] = x_smem[...]
-      o_last_block_smem[...] = x_smem[...]
+      wg_idx = lax.axis_index("wg")
+      m_slice = pl.ds(wg_idx * blk_m, blk_m)
+      o_smem[m_slice] = x_smem[m_slice]
+      o_last_block_smem[m_slice] = x_smem[m_slice]
       if manual_consumed_barriers:
         [x_barrier] = consumed_barriers
         plgpu.barrier_arrive(x_barrier)
 
     spec = pl.BlockSpec(
-        block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
+        block_shape=(2 * blk_m, blk_n), index_map=lambda i, j: (i, j)
     )
     def body(*gmem_refs):
       pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
           copy_kernel,
-          grid=(m // blk_m, n // blk_n),
+          grid=(m // (2 * blk_m), n // blk_n),
           memory_registers=40,
           max_concurrent_steps=2,
           num_compute_wgs=2,
@@ -4002,7 +4001,7 @@ class WarpSpecializedPipelineTest(PallasTest):
               spec,
               # Create an index-invariant output.
               pl.BlockSpec(
-                  block_shape=(blk_m, blk_n), index_map=lambda i, j: (0, 0)
+                  block_shape=(2 * blk_m, blk_n), index_map=lambda i, j: (0, 0)
               ),
           ],
       )
@@ -4012,7 +4011,7 @@ class WarpSpecializedPipelineTest(PallasTest):
         body,
         out_shape=(
             jax.ShapeDtypeStruct((m, n), jnp.float16),
-            jax.ShapeDtypeStruct((blk_m, blk_n), jnp.float16),
+            jax.ShapeDtypeStruct((2 * blk_m, blk_n), jnp.float16),
         ),
         compiler_params=plgpu.CompilerParams(approx_math=True),
         grid=(1,),
@@ -4022,7 +4021,7 @@ class WarpSpecializedPipelineTest(PallasTest):
     )
     out, out_last_block = kernel(x)
     np.testing.assert_array_equal(out, x)
-    np.testing.assert_array_equal(out_last_block, x[-blk_m:, -blk_n:])
+    np.testing.assert_array_equal(out_last_block, x[-(2 * blk_m):, -blk_n:])
 
   @parameterized.product(
       m=[256, 64], n=[256, 64], num_compute_wgs=[1, 2], static=[False, True]
@@ -4031,18 +4030,20 @@ class WarpSpecializedPipelineTest(PallasTest):
     self.skip_if_wg_semantics()  # Crashes!
 
     blk_m = blk_n = 64
+    if m % (num_compute_wgs * blk_m):
+      self.skipTest(f"{m=} must be divisible by {num_compute_wgs=} * {blk_m=}")
     spec = pl.BlockSpec(
-        block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
+        block_shape=(num_compute_wgs * blk_m, blk_n),
+        index_map=lambda i, j: (i, j),
     )
 
     def tiled_add_kernel(_, x_smem, y_smem, o_smem):
-      # TODO(justinfu): Have each wg compute a separate slice
-      # after multiple-indexers are supported.
-      # This is currently a race, but the values written are the same.
-      o_smem[...] = x_smem[...] + y_smem[...]
+      wg_idx = lax.axis_index("wg")
+      m_slice = pl.ds(wg_idx * blk_m, blk_m)
+      o_smem[m_slice] = x_smem[m_slice] + y_smem[m_slice]
 
     def pipeline(*gmem_refs):
-      grid = (m // blk_m, n // blk_n)
+      grid = (m // (num_compute_wgs * blk_m), n // blk_n)
       if not static:
         grid = jax.tree.map(jnp.asarray, grid)
       return mgpu_pipeline.emit_pipeline_warp_specialized(
