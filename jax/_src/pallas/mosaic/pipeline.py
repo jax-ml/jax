@@ -39,6 +39,7 @@ import numpy as np
 
 SMEM = tpu_core.MemorySpace.SMEM
 VMEM = tpu_core.MemorySpace.VMEM
+ANY = tpu_core.MemorySpace.ANY
 REF = pallas_core.MemoryRef
 GridDimensionSemantics = tpu_core.GridDimensionSemantics
 PARALLEL = tpu_core.PARALLEL
@@ -451,7 +452,7 @@ class BufferedRef(BufferedRefBase):
       copy.
   """
   _spec: pl.BlockSpec       # static metadata
-  dtype: Any               # static metadata
+  dtype: Any                # static metadata
   _buffer_type: BufferType  # static metadata
   window_ref: ArrayRef | None
   accum_ref: ArrayRef | None
@@ -472,12 +473,12 @@ class BufferedRef(BufferedRefBase):
   swap: ArrayRef | None
 
   def __post_init__(self):
-    if self.memory_space != VMEM and self.buffer_count < 1:
+    if self.is_buffered and self.buffer_count < 1:
       raise ValueError(
           f"buffer_count must be at least 1, got {self.buffer_count}"
       )
     if self.is_output:
-      if self.memory_space != VMEM and self.buffer_count > 2:
+      if self.is_buffered and self.buffer_count > 2:
         raise NotImplementedError(
             "Buffer count >2 not supported for output buffered refs."
         )
@@ -492,7 +493,10 @@ class BufferedRef(BufferedRefBase):
 
   @property
   def is_buffered(self) -> bool:
-    return self.memory_space != VMEM
+    """Whether this buffer is multiple-buffered."""
+    slots = [self.copy_in_slot, self.wait_in_slot,
+             self.copy_out_slot, self.wait_out_slot]
+    return any(x is not None for x in slots)
 
   @property
   def use_lookahead(self) -> bool:
@@ -502,7 +506,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def buffer_count(self) -> int:
     """Returns the number of buffers used for multiple buffering."""
-    if self.memory_space == VMEM:
+    if not self.is_buffered:
       raise ValueError("buffer count is undefined")
     return self.window_ref.shape[0]  # type: ignore[union-attr]
 
@@ -540,7 +544,8 @@ class BufferedRef(BufferedRefBase):
   def create(cls, spec: pl.BlockSpec, dtype, buffer_type, buffer_count,
              needs_swap_ref=True,
              grid_rank=None,
-             use_lookahead=False) -> BufferedRef:
+             use_lookahead=False,
+             source_memory_space: tpu_core.MemorySpace = ANY) -> BufferedRef:
     """Create a BufferedRef.
 
     Args:
@@ -551,6 +556,7 @@ class BufferedRef(BufferedRefBase):
       needs_swap_ref: whether a swap slots tracker needs to be allocated.
       grid_rank: rank of the pipeline grid.
       use_lookahead: whether to enable pipeline lookahead.
+      source_memory_space: The memory space of the backing source Ref.
 
     Returns:
       Initialized BufferedRef
@@ -560,10 +566,13 @@ class BufferedRef(BufferedRefBase):
       accum_ref = VMEM(block_shape, dtype)
     else:
       accum_ref = None
-    if spec.memory_space == VMEM:
+    if source_memory_space == VMEM:
       # We don't need to do any double-buffering in the case that our pipeline
       # reference is already in VMEM, we just need allocate the accumulation
       # buffer and we will refer to the original reference slices directly.
+      if spec.memory_space not in (VMEM, None):
+        raise ValueError(
+            f"Cannot hold a non-buffered ref in {spec.memory_space=}")
       return cls(
           _spec=spec,
           dtype=dtype,
@@ -585,7 +594,12 @@ class BufferedRef(BufferedRefBase):
           swap=None,
       )
     else:
-      memory_space = SMEM if spec.memory_space == SMEM else VMEM
+      buffer_memory_space = (
+          VMEM if spec.memory_space is None else spec.memory_space)
+      if buffer_memory_space not in (SMEM, VMEM):
+        raise ValueError(
+            f"Unsupported buffer memory space: {buffer_memory_space}"
+        )
       if use_lookahead and grid_rank is None:
         raise ValueError(
             "grid_rank must be specified when use_lookahead is True."
@@ -594,7 +608,7 @@ class BufferedRef(BufferedRefBase):
           _spec=spec,
           dtype=dtype,
           _buffer_type=buffer_type,
-          window_ref=memory_space((buffer_count,) + block_shape, dtype),
+          window_ref=buffer_memory_space((buffer_count,) + block_shape, dtype),
           accum_ref=accum_ref,
           copy_in_slot=SMEM((1,), jnp.uint32) if buffer_type.is_input else None,
           wait_in_slot=SMEM((1,), jnp.uint32) if buffer_type.is_input else None,
@@ -621,26 +635,22 @@ class BufferedRef(BufferedRefBase):
       )
 
   @classmethod
-  def input(cls, spec, dtype, buffer_count=2, needs_swap_ref=True,
-            grid_rank=None, use_lookahead=False):
-    return cls.create(spec, dtype, BufferType.INPUT, buffer_count,
-                      needs_swap_ref, grid_rank=grid_rank,
-                      use_lookahead=use_lookahead)
+  def input(cls, spec, dtype, buffer_count=2, **kwargs):
+    return cls.create(spec, dtype, BufferType.INPUT, buffer_count, **kwargs)
 
   @classmethod
-  def output(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
-    return cls.create(spec, dtype, BufferType.OUTPUT, buffer_count,
-                      needs_swap_ref)
+  def output(cls, spec, dtype, buffer_count=2, **kwargs):
+    return cls.create(spec, dtype, BufferType.OUTPUT, buffer_count, **kwargs)
 
   @classmethod
-  def accumulator(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+  def accumulator(cls, spec, dtype, buffer_count=2, **kwargs):
     return cls.create(spec, dtype, BufferType.ACCUMULATOR, buffer_count,
-                      needs_swap_ref)
+                      **kwargs)
 
   @classmethod
-  def input_output(cls, spec, dtype, buffer_count=2, needs_swap_ref=True):
+  def input_output(cls, spec, dtype, buffer_count=2, **kwargs):
     return cls.create(spec, dtype, BufferType.INPUT_OUTPUT, buffer_count,
-                      needs_swap_ref)
+                      **kwargs)
 
   @property
   def block_shape(self):
@@ -649,10 +659,6 @@ class BufferedRef(BufferedRefBase):
   @property
   def compute_index(self):
     return self.spec.index_map
-
-  @property
-  def memory_space(self):
-    return self.spec.memory_space
 
   def with_spec(self, spec: pl.BlockSpec) -> BufferedRef:
     """Returns a new BufferedRef with the given block spec."""
@@ -690,7 +696,7 @@ class BufferedRef(BufferedRefBase):
         if not (x is None or isinstance(x, pl.Squeezed))
     )
     assert not (self.window_ref is None or isinstance(self.window_ref, REF))
-    if self.memory_space == VMEM:
+    if not self.is_buffered:
       return self.window_ref.at[buffer_slice]
     else:
       if self.is_output:
@@ -766,14 +772,14 @@ class BufferedRef(BufferedRefBase):
 
   def bind_existing_ref(self, window_ref, indices):
     """For handling VMEM references, the pipeline aliases the existing ref."""
-    if self.memory_space == VMEM:
+    if not self.is_buffered:
       return dataclasses.replace(
           self, window_ref=window_ref.at[self.compute_slice(indices)]
       )
     return self
 
   def unbind_refs(self):
-    if self.memory_space == VMEM:
+    if not self.is_buffered:
       return dataclasses.replace(self, window_ref=None)
     return self
 
@@ -805,7 +811,7 @@ class BufferedRef(BufferedRefBase):
 
   def init_slots(self):
     """Initialize slot indices."""
-    if self.memory_space == VMEM: return
+    if not self.is_buffered: return
     if self.is_input:
       self.copy_in_slot[0] = 0
       self.wait_in_slot[0] = 0
@@ -820,7 +826,7 @@ class BufferedRef(BufferedRefBase):
 
   def advance_copy_in_slot(self, predicate: bool | jax.Array = True) -> "BufferedRef":
     """Switch to the next copy slot."""
-    if self.memory_space == VMEM: return self
+    if not self.is_buffered: return self
     if not self.is_input:
       return self
     current_slot = (self.copy_in_slot[0] if  # type: ignore[index]
@@ -834,7 +840,7 @@ class BufferedRef(BufferedRefBase):
 
   def advance_wait_in_slot(self, predicate: bool | jax.Array = True) -> "BufferedRef":
     """Switch to the next wait slot."""
-    if self.memory_space == VMEM: return self
+    if not self.is_buffered: return self
     if not self.is_input:
       return self
     current_slot = (self.wait_in_slot[0] if  # type: ignore[index]
@@ -848,7 +854,7 @@ class BufferedRef(BufferedRefBase):
 
   def advance_copy_out_slot(self, predicate: bool | jax.Array = True) -> "BufferedRef":
     """Switch to the next copy slot."""
-    if self.memory_space == VMEM: return self
+    if not self.is_buffered: return self
     if not self.is_output:
       return self
     current_slot = (self.copy_out_slot[0] if self._copy_out_slot_reg  # type: ignore[index]
@@ -862,7 +868,7 @@ class BufferedRef(BufferedRefBase):
 
   def advance_wait_out_slot(self, predicate: bool | jax.Array = True) -> "BufferedRef":
     """Switch to the next wait slot."""
-    if self.memory_space == VMEM: return self
+    if not self.is_buffered: return self
     if not self.is_output:
       return self
     current_slot = (self.wait_out_slot[0] if self._wait_out_slot_reg  # type: ignore[index]
@@ -876,7 +882,7 @@ class BufferedRef(BufferedRefBase):
 
   def load_slots(self, predicate: bool | jax.Array = True) -> BufferedRef:
     """Load slot information into registers."""
-    if self.memory_space == VMEM:
+    if not self.is_buffered:
       return self
     def _do_load():
       copy_in = self.copy_in_slot[0] if self.is_input else None
@@ -923,7 +929,7 @@ class BufferedRef(BufferedRefBase):
 
   def save_slots(self, predicate: bool | jax.Array = True):
     """Save slot information from registers."""
-    if self.memory_space == VMEM:
+    if not self.is_buffered:
       return
     @pl.when(predicate)
     def _():
@@ -945,7 +951,7 @@ class BufferedRef(BufferedRefBase):
   def copy_in(self, src_ref, grid_indices):
     """Starts copy of HBM dma slice into the current slot."""
     assert self.is_input
-    if self.memory_space == VMEM: return
+    if not self.is_buffered: return
     assert not (self.window_ref is None or isinstance(self.window_ref, REF))
     assert self.sem_recvs is not None
     if self.swap is not None:
@@ -966,7 +972,7 @@ class BufferedRef(BufferedRefBase):
   def copy_out(self, dst_ref, grid_indices):
     """Starts copy of HBM dma slice from the current slot."""
     assert self.is_output
-    if self.memory_space == VMEM: return
+    if not self.is_buffered: return
     assert not (self.window_ref is None or isinstance(self.window_ref, REF))
     assert self.sem_sends is not None
     if self.swap is not None:
@@ -987,7 +993,7 @@ class BufferedRef(BufferedRefBase):
   def wait_in(self, src_ref, grid_indices):
     """Waits for input copy to finish."""
     assert self.is_input
-    if self.memory_space == VMEM: return
+    if not self.is_buffered: return
     assert not (self.window_ref is None or isinstance(self.window_ref, REF))
     assert self.sem_recvs is not None
     src_slice = self.get_dma_slice(src_ref.shape, src_ref.dtype, grid_indices)
@@ -1008,7 +1014,7 @@ class BufferedRef(BufferedRefBase):
   def wait_out(self, dst_ref, grid_indices):
     """Waits for output copy to finish."""
     assert self.is_output
-    if self.memory_space == VMEM: return
+    if not self.is_buffered: return
     assert not (self.window_ref is None or isinstance(self.window_ref, REF))
     assert self.sem_sends is not None
     wait_slot = self.current_wait_out_slot
@@ -1693,8 +1699,10 @@ def make_pipeline_allocations(
     if in_spec.pipeline_mode is not None:
       buffer_count = in_spec.pipeline_mode.buffer_count
     return BufferedRef.input(in_spec, in_ref.dtype, buffer_count,
-                             needs_swap_ref, grid_rank=len(grid),
-                             use_lookahead=use_lookahead)
+                             needs_swap_ref=needs_swap_ref,
+                             grid_rank=len(grid),
+                             use_lookahead=use_lookahead,
+                             source_memory_space=in_ref.memory_space)
   in_brefs = jax.tree.map(make_input_bref, in_specs, in_refs)
   def make_output_bref(out_spec, out_ref, accumulate):
     buffer_count = 2
@@ -1702,10 +1710,12 @@ def make_pipeline_allocations(
       buffer_count = out_spec.pipeline_mode.buffer_count
 
     if accumulate:
-      return BufferedRef.accumulator(out_spec, out_ref.dtype,
-                                     buffer_count, needs_swap_ref)
-    return BufferedRef.output(out_spec, out_ref.dtype,
-                              buffer_count, needs_swap_ref)
+      return BufferedRef.accumulator(out_spec, out_ref.dtype, buffer_count,
+                                     needs_swap_ref=needs_swap_ref,
+                                     source_memory_space=out_ref.memory_space)
+    return BufferedRef.output(out_spec, out_ref.dtype, buffer_count,
+                              needs_swap_ref=needs_swap_ref,
+                              source_memory_space=out_ref.memory_space)
   out_brefs = jax.tree.map(
       make_output_bref, out_specs, out_refs, should_accumulate_out)
   return (*in_brefs, *out_brefs)
