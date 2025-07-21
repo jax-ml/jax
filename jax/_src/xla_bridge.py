@@ -138,6 +138,12 @@ CROSS_HOST_TRANSFER_TIMEOUT_SECONDS = config.int_flag(
     "Default is one minute.",
 )
 
+CROSS_HOST_TRANSFER_TRANSFER_SIZE = config.int_flag(
+    "jax_cross_host_transfer_transfer_size",
+    None,
+    "Chunk size for chunked transfer requests."
+)
+
 # Warn the user if they call fork(), because it's not going to go well for them.
 def _at_fork():
   warnings.warn(
@@ -177,6 +183,7 @@ def make_tpu_client(
         distributed_client=distributed.global_state.client,
         socket_address=CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value,
         transport_addresses=transport_addresses,
+        transfer_size=CROSS_HOST_TRANSFER_TRANSFER_SIZE.value,
     )
   return _jax.get_c_api_client(
       "tpu",
@@ -343,6 +350,7 @@ def make_cpu_client(
         socket_address=CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value,
         transport_addresses=transport_addresses,
         distributed_client=distributed.global_state.client,
+        transfer_size=CROSS_HOST_TRANSFER_TRANSFER_SIZE.value,
     )
   return xla_client.make_cpu_client(
       asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
@@ -589,6 +597,7 @@ def register_plugin(
               distributed_client=distributed.global_state.client,
               socket_address=CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value,
               transport_addresses=transport_addresses,
+              transfer_size=CROSS_HOST_TRANSFER_TRANSFER_SIZE.value,
           )
       )
     return xla_client.make_c_api_client(
