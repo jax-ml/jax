@@ -135,3 +135,21 @@ if the issue goes away.
 NOTE: Please ensure that Shardy is disabled consistently if needed, or remove
 any explicit modification of the flag, to have the default value apply
 throughout.
+
+### New way to use the JAX `jax.experimental.custom_partitioning` API
+
+If you use this API, you may see the error
+
+```
+Shardy is used, but sharding propagation callbacks instead of sharding_rule are
+provided. Need to provide sharding_rule to migrate to Shardy.
+```
+
+Instead of defining `infer_sharding_from_operands` and `propagate_user_sharding`
+callbacks, define a `jax.experimental.SdyShardingRule` that specifies an einsum-like relationship between dimensions during propagation. Refer to the [`custom_partitioning` doc](https://docs.jax.dev/en/latest/jax.experimental.custom_partitioning.html#module-jax.experimental.custom_partitioning)
+for more info on how to define a sharding rule.
+
+### `jax.export` requires all inputs and outputs to have the same mesh
+
+As part of the Shardy migration, `jax.export` now requires all input/output
+shardings to live on the same mesh - same axis names and sizes.
