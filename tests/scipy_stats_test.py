@@ -1435,6 +1435,248 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     result2 = jax.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
     self.assertArraysAllClose(result1, result2, check_dtypes=False)
 
+
+  @genNamedParametersNArgs(3)
+  def testGumbelRLogPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_r.logpdf
+    lax_fun = lsp_stats.gumbel_r.logpdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelRPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_r.pdf
+    lax_fun = lsp_stats.gumbel_r.pdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelRLogCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_r.logcdf
+    lax_fun = lsp_stats.gumbel_r.logcdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelRCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_r.cdf
+    lax_fun = lsp_stats.gumbel_r.cdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelRPpf(self, shapes, dtypes):
+    rng_p = jtu.rand_uniform(self.rng(), low=0.01, high=0.99)
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_r.ppf
+    lax_fun = lsp_stats.gumbel_r.ppf
+
+    def args_maker():
+      p = rng_p(shapes[0], dtypes[0])
+      loc = rng(shapes[1], dtypes[1])
+      scale = rng(shapes[2], dtypes[2])
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [p, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelRSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_r.sf
+    lax_fun = lsp_stats.gumbel_r.sf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelRLogSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_r.logsf
+    lax_fun = lsp_stats.gumbel_r.logsf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelLLogPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_l.logpdf
+    lax_fun = lsp_stats.gumbel_l.logpdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelLPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_l.pdf
+    lax_fun = lsp_stats.gumbel_l.pdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelLLogCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_l.logcdf
+    lax_fun = lsp_stats.gumbel_l.logcdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelLCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_l.cdf
+    lax_fun = lsp_stats.gumbel_l.cdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelLPpf(self, shapes, dtypes):
+    rng_p = jtu.rand_uniform(self.rng(), low=0.01, high=0.99)
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_l.ppf
+    lax_fun = lsp_stats.gumbel_l.ppf
+
+    def args_maker():
+      p = rng_p(shapes[0], dtypes[0])
+      loc = rng(shapes[1], dtypes[1])
+      scale = rng(shapes[2], dtypes[2])
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [p, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelLSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_l.sf
+    lax_fun = lsp_stats.gumbel_l.sf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGumbelLLogSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gumbel_l.logsf
+    lax_fun = lsp_stats.gumbel_l.logsf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.abs(scale) + np.array(0.1, dtype=scale.dtype)  # Ensure scale > 0
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  # Edge case tests
+  def testGumbelRPdfZero(self):
+    # Test at specific values
+    self.assertAllClose(
+      osp_stats.gumbel_r.pdf(0.0, 0.0, 1.0), lsp_stats.gumbel_r.pdf(0.0, 0.0, 1.0), atol=1E-6)
+
+  def testGumbelLPdfZero(self):
+    # Test at specific values
+    self.assertAllClose(
+      osp_stats.gumbel_l.pdf(0.0, 0.0, 1.0), lsp_stats.gumbel_l.pdf(0.0, 0.0, 1.0), atol=1E-6)
+
   @jtu.sample_product(
     inshape=[(50,), (3, 50), (2, 12)],
     dtype=jtu.dtypes.floating,

@@ -323,6 +323,34 @@ jax.scipy.stats.gamma
    sf
    logsf
 
+jax.scipy.stats.gumbel_l
+~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.gumbel_l
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+   cdf
+   logcdf
+   sf
+   logsf
+   ppf
+
+jax.scipy.stats.gumbel_r
+~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.gumbel_r
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+   cdf
+   logcdf
+   sf
+   logsf
+   ppf
+
 jax.scipy.stats.gennorm
 ~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.gennorm
