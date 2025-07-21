@@ -8606,6 +8606,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     jax.scipy.sparse.linalg.cg(mat_vec, params)  # doesn't crash
 
+  @jtu.with_explicit_mesh((4, 2), ('x', 'y'),
+                          axis_types=(AxisType.Explicit, AxisType.Auto))
+  def test_wsc_mix_axis_types(self, mesh):
+    arr = jax.device_put(np.arange(16).reshape(8, 2), P('x'))
+
+    @jax.jit
+    def f(x):
+      return jax.lax.with_sharding_constraint(x, P('y'))
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'))))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
