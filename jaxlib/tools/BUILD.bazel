@@ -541,13 +541,13 @@ py_import(
 
 py_import(
     name = "jax_cuda_plugin_py_import",
-    wheel = ":jax_cuda_plugin_wheel",
+    wheel = ":jax_cuda{cuda}_plugin_wheel".format(cuda=cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
 py_import(
     name = "jax_cuda_pjrt_py_import",
-    wheel = ":jax_cuda_pjrt_wheel",
+    wheel = ":jax_cuda{cuda}_pjrt_wheel".format(cuda=cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
