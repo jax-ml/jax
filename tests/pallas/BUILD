@@ -298,7 +298,6 @@ jax_multiplatform_test(
     # Cross-compilation on CPU is tested separately.
     disable_configs = [
         "cpu",
-        "cpu_shardy",
         "cpu_x32",
     ],
     enable_configs = [
@@ -592,7 +591,6 @@ jax_multiplatform_test(
     srcs = [
         "tpu_pallas_interpret_test.py",
     ],
-    disable_configs = ["cpu_shardy"],
     enable_backends = ["cpu"],
     deps = [
         "//jax:experimental",
@@ -609,7 +607,6 @@ jax_multiplatform_test(
     srcs = [
         "tpu_pallas_interpret_distributed_test.py",
     ],
-    disable_configs = ["cpu_shardy"],
     enable_backends = ["cpu"],
     deps = [
         "//jax:pallas",
@@ -965,7 +962,6 @@ jax_multiplatform_test(
     ],
     disable_configs = [
         "cpu",
-        "cpu_shardy",
     ],
     enable_backends = ["cpu"],
     tags = [
@@ -989,7 +985,6 @@ jax_multiplatform_test(
     ],
     disable_configs = [
         "cpu",
-        "cpu_shardy",
     ],
     enable_backends = ["cpu"],
     tags = [
@@ -1020,7 +1015,6 @@ jax_multiplatform_test(
         "gpu_h100",
         "cpu",
         "cpu_x32",
-        "cpu_shardy",
     ],
     enable_backends = ["tpu"],
     enable_configs = [

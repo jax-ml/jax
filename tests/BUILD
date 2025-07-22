@@ -387,8 +387,6 @@ jax_multiplatform_test(
         "tpu_v4_x4",
         "tpu_v5p_x4",
         "tpu_v5e_x8",
-        "gpu_p100x2_shardy",
-        "tpu_v5e_x8_shardy",
     ],
     deps = [
         "//jax:experimental",
@@ -406,8 +404,6 @@ jax_multiplatform_test(
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_configs = [
-        "gpu_p100x2_shardy",
-        "tpu_v3_x4_shardy",
         "tpu_v3_x4",
         "gpu_h100x2",
     ],
@@ -432,7 +428,6 @@ jax_multiplatform_test(
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
     enable_configs = [
-        "tpu_v3_x4_shardy",
         "tpu_v3_x4",
     ],
     tags = ["multiaccelerator"],
@@ -451,7 +446,6 @@ jax_multiplatform_test(
         "tpu_v3_x4",
         "tpu_v5e_x8",
         "tpu_v4_x4",
-        "tpu_v3_x4_shardy",
     ],
     deps = [
         "//jax:experimental",
@@ -487,9 +481,6 @@ jax_multiplatform_test(
     name = "mock_gpu_test",
     srcs = ["mock_gpu_test.py"],
     enable_backends = ["gpu"],
-    enable_configs = [
-        "gpu_p100x2_shardy",
-    ],
     tags = [
         "config-cuda-only",
     ],
@@ -507,7 +498,6 @@ jax_multiplatform_test(
     enable_backends = ["gpu"],
     enable_configs = [
         "gpu_h100",
-        "gpu_h100_shardy",
     ],
     tags = [
         "config-cuda-only",
@@ -946,7 +936,6 @@ jax_multiplatform_test(
     ],
     enable_configs = [
         "gpu_h100x2",
-        "gpu_p100x2_shardy",
         "gpu_p100x2_pjrt_c_api",
     ],
     shard_count = {
@@ -1396,9 +1385,6 @@ jax_multiplatform_test(
         "gpu": ["--jax_num_generated_cases=40"],
         "tpu": ["--jax_num_generated_cases=40"],
     },
-    disable_configs = [
-        "cpu_shardy",  # TODO(b/376475853): array values mismatch, need to fix and re-enable.
-    ],
     shard_count = {
         "cpu": 50,
         "gpu": 50,
@@ -1727,8 +1713,6 @@ jax_multiplatform_test(
         "tpu_v2",
         "tpu_v3_x4",
         "tpu_v4_x4",
-        "gpu_h100_shardy",
-        "tpu_v3_x4_shardy",
     ],
     deps = py_deps([
         "absl/testing",
@@ -1746,8 +1730,6 @@ jax_multiplatform_test(
         "tpu_v2",
         "tpu_v3_x4",
         "tpu_v4_x4",
-        "tpu_v3_x4_shardy",
-        "gpu_p100x2_shardy",
     ],
     tags = ["multiaccelerator"],
     deps = [
@@ -1761,9 +1743,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugger_test",
     srcs = ["debugger_test.py"],
-    disable_configs = [
-        "cpu_shardy",  # TODO(b/364547005): enable once pure callbacks are supported.
-    ],
     enable_configs = [
         "cpu",
         "gpu_h100",
@@ -1837,9 +1816,6 @@ jax_multiplatform_test(
         "gpu",
         "tpu",
     ],
-    enable_configs = [
-        "gpu_p100x2_shardy",
-    ],
     tags = [
         "multiaccelerator",
     ],
@@ -1853,10 +1829,6 @@ jax_multiplatform_test(
     srcs = ["shard_map_test.py"],
     disable_configs = [
         "gpu_h100x2_tfrt",  # TODO(b/419192167): Doesn't work
-    ],
-    enable_configs = [
-        "gpu_p100x2_shardy",
-        "tpu_v3_x4_shardy",
     ],
     shard_count = {
         "cpu": 50,
@@ -1961,9 +1933,6 @@ jax_multiplatform_test(
     name = "export_test",
     srcs = ["export_test.py"],
     enable_configs = [
-        "cpu_shardy",
-        "gpu_p100x2_shardy",
-        "tpu_v3_x4_shardy",
         "tpu_v3_x4",
     ],
     tags = [],
@@ -2007,7 +1976,6 @@ jax_multiplatform_test(
     disable_configs = [
         "gpu_a100",  # TODO(b/269593297): matmul precision issues
         "gpu_h100",  # Scarce resources.
-        "cpu_shardy",  # TODO(b/355263220): enable once export is supported.
     ],
     shard_count = {
         "cpu": 40,
@@ -2029,9 +1997,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_back_compat_test",
     srcs = ["export_back_compat_test.py"],
-    enable_configs = [
-        "tpu_v3_x4_shardy",
-    ],
     tags = [],
     deps = [
         "//jax:internal_export_back_compat_test_data",
