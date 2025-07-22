@@ -23,17 +23,20 @@ import time
 
 from absl import app
 import absl.flags
-import jax
-from jax import config
+from absl.testing import absltest
+
 from jax._src import distributed
+from jax._src import xla_bridge as xb
+from jax._src import test_util as jtu
+from jax._src.config import config
+from jax._src.lib import cuda_versions
+from jax._src.lib import xla_client as xc
+
 try:
   import portpicker  # pytype: disable=import-error
 except ImportError:
   portpicker = None
 
-from absl.testing import absltest
-from jax._src import test_util as jtu
-from jax._src.lib import cuda_versions
 
 
 _NUM_PROCESSES = absl.flags.DEFINE_integer(
@@ -85,7 +88,7 @@ class GracefulKiller:
 
 def _main(argv):
   if _MULTIPROCESS_TEST_WORKER_ID.value >= 0:
-    jax.distributed.initialize(
+    distributed.initialize(
         _MULTIPROCESS_TEST_CONTROLLER_ADDRESS.value,
         num_processes=_NUM_PROCESSES.value,
         process_id=_MULTIPROCESS_TEST_WORKER_ID.value,
@@ -230,15 +233,15 @@ class MultiProcessTest(absltest.TestCase):
   def setUp(self):
     """Start tests together."""
     super().setUp()
-    assert jax.process_count() == _NUM_PROCESSES.value, (
-        jax.process_count(),
+    assert xb.process_count() == _NUM_PROCESSES.value, (
+        xb.process_count(),
         _NUM_PROCESSES.value,
     )
     # Make sure all processes are at the same test case.
     client = distributed.global_state.client
     try:
       client.wait_at_barrier(self._testMethodName + "_start", 10000)
-    except jax.errors.JaxRuntimeError as e:
+    except xc.XlaRuntimeError as e:
       msg, *_ = e.args
       if msg.startswith("DEADLINE_EXCEEDED"):
         raise RuntimeError(
@@ -256,7 +259,7 @@ class MultiProcessTest(absltest.TestCase):
     # but the overall test should fail).
     try:
       client.wait_at_barrier(self._testMethodName + "_end", 10000)
-    except jax.errors.JaxRuntimeError as e:
+    except xc.XlaRuntimeError as e:
       msg, *_ = e.args
       if msg.startswith("DEADLINE_EXCEEDED"):
         raise RuntimeError(

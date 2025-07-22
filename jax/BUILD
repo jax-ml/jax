@@ -280,9 +280,9 @@ pytype_strict_library(
     visibility = [":internal"],
     deps = if_building_jaxlib(
         if_building = [
-            ":jax",
-            ":xla_bridge",
+            ":config",
             ":test_util",
+            ":xla_bridge",
             "//jax/_src/lib",
         ],
         if_not_building = [],
