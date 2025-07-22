@@ -109,14 +109,9 @@ absl::StatusOr<XlaComputation> PyMlirModuleToXlaComputation(
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       ParseMlirModuleString(mlir_module, context));
   XlaComputation computation;
-#if JAX_IFRT_VERSION_NUMBER >= 16
   TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
                                           return_tuple,
                                           /*exec_build_options=*/nullptr));
-#else
-  TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
-                                          return_tuple, /*use_shardy=*/false));
-#endif
   return computation;
 }
 

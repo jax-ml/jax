@@ -173,12 +173,6 @@ bool IsSanitized() { return IsAsan() || IsMsan() || IsTsan(); }
 
 }  // namespace
 
-#if JAX_IFRT_VERSION_NUMBER < 15
-namespace ifrt {
-// Using a default implementation for short-term backwards compatibility.
-struct TransferServerInterfaceFactory {};
-}  // namespace ifrt
-#endif
 
 NB_MODULE(_jax, m) {
   // Initialize ABSL logging because code within XLA uses it.
@@ -376,12 +370,10 @@ NB_MODULE(_jax, m) {
             ifrt_options.get_global_topology_timeout =
                 absl::Minutes(*get_global_topology_timeout_minutes);
           }
-#if JAX_IFRT_VERSION_NUMBER >= 15
           if (transfer_server_factory.has_value()) {
             ifrt_options.transfer_server_factory =
                 std::move(transfer_server_factory->factory_fn);
           }
-#endif
           ifrt_client =
               ValueOrThrow(ifrt::PjRtClient::Create(std::move(ifrt_options)));
         }
@@ -447,12 +439,10 @@ NB_MODULE(_jax, m) {
           ifrt::PjRtClient::CreateOptions ifrt_options;
           ifrt_options.pjrt_client =
               std::shared_ptr<PjRtClient>(std::move(c_api_client));
-#if JAX_IFRT_VERSION_NUMBER >= 15
           if (transfer_server_factory.has_value()) {
             ifrt_options.transfer_server_factory =
                 std::move(transfer_server_factory->factory_fn);
           }
-#endif
           ifrt_client =
               ValueOrThrow(ifrt::PjRtClient::Create(std::move(ifrt_options)));
         }

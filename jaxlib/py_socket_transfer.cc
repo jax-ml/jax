@@ -190,30 +190,17 @@ class PyTransferServer {
     } else {
       auto tmp = xla::ValueOrThrow(
           AllocateAlignedMemory(xfer_size * max_num_parallel_copies));
-#if JAX_IFRT_VERSION_NUMBER >= 11
       SlabAllocator uallocator(xla::ValueOrThrow(MapPjrtMemory(
                                    pjrt_client, tmp->data(), tmp->size(), tmp)),
                                xfer_size);
-#else
-      SlabAllocator uallocator(xla::ValueOrThrow(MapPjrtMemory(
-                                   client, tmp->data(), tmp->size(), tmp)),
-                               xfer_size);
-#endif
       std::optional<SlabAllocator> pinned_allocator;
       if (supports_pinned_allocator) {
         auto tmp = xla::ValueOrThrow(
             AllocateNetworkPinnedMemory(xfer_size * max_num_parallel_copies));
-#if JAX_IFRT_VERSION_NUMBER >= 11
         pinned_allocator.emplace(
             xla::ValueOrThrow(
                 MapPjrtMemory(pjrt_client, tmp->data(), tmp->size(), tmp)),
             xfer_size);
-#else
-        pinned_allocator.emplace(
-            xla::ValueOrThrow(
-                MapPjrtMemory(client, tmp->data(), tmp->size(), tmp)),
-            xfer_size);
-#endif
       }
       factory = xla::ValueOrThrow(CreateSocketBulkTransportFactory(
           transport_addresses, pinned_allocator, uallocator));
@@ -221,15 +208,9 @@ class PyTransferServer {
 
     server_ = std::make_shared<SocketServer>();
 
-#if JAX_IFRT_VERSION_NUMBER >= 11
     TF_ASSIGN_OR_RETURN(
         auto mem, AllocateAndMapPjrtMemory(
                       pjrt_client, max_num_parallel_copies * xfer_size * 2));
-#else
-    TF_ASSIGN_OR_RETURN(
-        auto mem, AllocateAndMapPjrtMemory(
-                      client, max_num_parallel_copies * xfer_size * 2));
-#endif
     premapped_copier_ = std::make_shared<PremappedCopierState>(
         mem, max_num_parallel_copies, xfer_size);
     xfer_size_ = xfer_size;
@@ -286,11 +267,9 @@ struct CopyDests {
 
 void RegisterTransferServerTypes(nanobind::module_& m) {
   nb::class_<PyTransferServerConnection>(m, "TransferConnection")
-#if JAX_IFRT_VERSION_NUMBER > 9
       .def(
           "_testonly_inject_failure",
           [](PyTransferServerConnection& self) { self.conn().InjectFailure(); })
-#endif
       .def("_pull_flat", [](PyTransferServerConnection& self, uint64_t uuid,
                             xla::nb_class_ptr<xla::PyClient> py_client,
                             std::vector<nb::object> py_avals) {
@@ -433,7 +412,6 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       // Technically unsafe (because a future donation won't wait for the
       // transfer to complete).
       nb::arg("use_raw_buffers") = false);
-#if JAX_IFRT_VERSION_NUMBER >= 15
   m.def(
       "make_transfer_server_interface_factory",
       [](size_t transfer_size, int cross_host_transfer_timeout_seconds,
@@ -456,7 +434,6 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       nb::arg("distributed_client").none() = nullptr,
       nb::arg("socket_address") = SocketAddress().ToString(),
       nb::arg("transport_addresses") = std::vector<std::string>());
-#endif
 }
 
 }  // namespace aux
