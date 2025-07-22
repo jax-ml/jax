@@ -2652,7 +2652,7 @@ def load(
 
 async_load_tmem_p = jax_core.Primitive("async_load")
 
-def async_load_tmem(src: _Ref, idx = (), *, layout: SomeLayout | None = None) -> jax.Array:
+def async_load_tmem(src: _Ref, *, layout: SomeLayout | None = None) -> jax.Array:
   """Performs an asynchronous load from the TMEM array.
 
   The load operation is only partly asynchronous. The returned array can be used
@@ -2675,12 +2675,10 @@ def async_load_tmem(src: _Ref, idx = (), *, layout: SomeLayout | None = None) ->
 
   Args:
     src: The TMEM reference to load from.
-    idx: An optional slice that specifies a subregion that will be loaded. All
-      data will be loaded if not specified.
     layout: The optional layout hint to use for the resulting array.
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, idx, "async_load_tmem", force_trailing_indexer=True,
+      src, None, "async_load_tmem", force_trailing_indexer=True,
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
