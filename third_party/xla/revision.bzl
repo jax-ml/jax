@@ -17,7 +17,7 @@
 # To update XLA to a new revision,
 # a) update XLA_COMMIT to the new git commit hash
 # b) get the sha256 hash of the commit by running:
-#    curl -L https://api.github.com/repos/openxla/xla/tarball/{git_hash} | sha256sum
+#    curl -L https://github.com/openxla/xla/archive/<git hash>.tar.gz | sha256sum
 #    and update XLA_SHA256 with the result.
 
 # buildifier: disable=module-docstring
