@@ -732,6 +732,7 @@ class NonUniformShardingError(ValueError):
   """Raised when sharding is not uniform across processes."""
 
 
+@util.cache(max_size=4096, trace_context_in_key=False)
 def get_process_index_and_count(
     tensor_sharding: jsharding.Sharding, dim: int, ndims: int) -> tuple[int, int]:
   """Get current process index and number of unique processes for given dimension.
