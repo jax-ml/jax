@@ -1554,6 +1554,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pretty_printer",
     srcs = ["_src/pretty_printer.py"],
+    visibility = [":internal"] + jax_visibility("pretty_printer"),
     deps = [
         ":config",
         ":util",
