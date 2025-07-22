@@ -122,6 +122,7 @@ Parallelization (:code:`pmap`)
   :toctree: _autosummary
 
     shard_map
+    smap
     pmap
     devices
     local_devices
