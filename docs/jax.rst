@@ -106,8 +106,8 @@ Automatic differentiation
     closure_convert
     checkpoint
 
-Vectorization (:code:`vmap`)
-----------------------------
+Vectorization
+-------------
 
 .. autosummary::
   :toctree: _autosummary
@@ -115,8 +115,8 @@ Vectorization (:code:`vmap`)
     vmap
     numpy.vectorize
 
-Parallelization (:code:`pmap`)
-------------------------------
+Parallelization
+---------------
 
 .. autosummary::
   :toctree: _autosummary
