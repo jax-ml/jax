@@ -2203,6 +2203,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertIsInstance(out, array.ArrayImpl)
     self.assertArraysEqual(out, a @ a.T)
 
+  def test_pjit_mixed_device_cache_miss(self):
+    if jaxlib_extension_version < 364:
+      self.skipTest('Requires jax_lib_extension_version >= 364.')
+    try:
+      tpu_device = jax.devices('tpu')[0]
+    except:
+      raise unittest.SkipTest('Only a bug on TPU.')
+    with jax.default_device('cpu'):
+      cpu_arr = jnp.array([1, 2, 3], dtype=np.float32)
+    tpu_arr = jax.device_put(cpu_arr, tpu_device)
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      for _ in range(2):
+        np.array(cpu_arr + tpu_arr)
+    self.assertEqual(count(), 1)
+
   def test_pjit_single_device_sharding_cache(self):
     a = jnp.arange(16).reshape((8, 2))
     f = pjit(lambda x: x)

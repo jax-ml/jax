@@ -27,6 +27,7 @@ limitations under the License.
 #include <stdexcept>
 #include <string>
 #include <thread>  // NOLINT
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -61,6 +62,7 @@ limitations under the License.
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/pytree.h"
 #include "jaxlib/sharding.h"
+#include "jaxlib/to_ifrt_sharding.h"
 #include "jaxlib/traceback.h"
 #include "xla/layout.h"
 #include "xla/pjrt/exceptions.h"
@@ -455,7 +457,8 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     std::vector<int> indices;
     std::vector<xla::ifrt::ArrayRef> arrays;
   };
-  absl::flat_hash_map<std::pair<xla::ifrt::Device*, xla::ifrt::MemoryKind>,
+  absl::flat_hash_map<std::tuple<xla::ifrt::Device*, xla::ifrt::MemoryKind,
+                                 xla::ifrt::MemoryKind>,
                       CopyGroup>
       copy_groups;
 
@@ -545,9 +548,10 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     const auto& ifrt_sharding = ifrt_array->sharding();
     if (sharding_num_devices == 1 &&
         ifrt_sharding.devices()->devices().front() != addressable_devices[0]) {
-      auto& copy_group =
-          copy_groups[std::make_pair(ifrt_sharding.devices()->devices().front(),
-                                     ifrt_sharding.memory_kind())];
+      auto& copy_group = copy_groups[std::make_tuple(
+          ifrt_sharding.devices()->devices().front(),
+          ifrt_sharding.memory_kind(),
+          xla::GetMemoryKind(in_shardings[dce_index]))];
       copy_group.indices.push_back(num_args_arrays.size());
       copy_group.arrays.push_back(tsl::FormRef(ifrt_array));
       num_args_arrays.push_back({});
@@ -567,7 +571,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       TF_ASSIGN_OR_RETURN(
           auto copied_ifrt_arrays,
           ifrt_client->CopyArrays(absl::MakeSpan(group.arrays), ifrt_devices,
-                                  /*memory_kind=*/std::nullopt,
+                                  std::get<2>(key),
                                   xla::ifrt::ArrayCopySemantics::kReuseInput));
       for (int i = 0; i < copied_ifrt_arrays.size(); ++i) {
         num_args_arrays[group.indices[i]] = std::move(copied_ifrt_arrays[i]);
