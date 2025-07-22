@@ -286,22 +286,27 @@ def _ignore(): return None
 
 
 def cache(max_size=4096, trace_context_in_key=True):
-  def wrap(f):
-    @functools.lru_cache(max_size)
-    def cached(_, *args, **kwargs):
-      return f(*args, **kwargs)
-
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-      if config.check_tracer_leaks.value:
+  if trace_context_in_key:
+    def wrap(f):
+      @functools.lru_cache(max_size)
+      def cached(_, *args, **kwargs):
         return f(*args, **kwargs)
-      return cached(config.trace_context() if trace_context_in_key else _ignore(),
-                    *args, **kwargs)
 
-    wrapper.cache_clear = cached.cache_clear
-    wrapper.cache_info = cached.cache_info
-    register_cache(wrapper, str(f))
-    return wrapper
+      @functools.wraps(f)
+      def wrapper(*args, **kwargs):
+        if config.check_tracer_leaks.value:
+          return f(*args, **kwargs)
+        return cached(config.trace_context(), *args, **kwargs)
+
+      wrapper.cache_clear = cached.cache_clear
+      wrapper.cache_info = cached.cache_info
+      register_cache(wrapper, str(f))
+      return wrapper
+  else:
+    def wrap(f):
+      wrapper = functools.lru_cache(max_size)(f)
+      register_cache(wrapper, str(f))
+      return wrapper
   return wrap
 
 # Maps caches to the name of the callable they apply to. All caches in
