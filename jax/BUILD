@@ -1911,11 +1911,11 @@ pytype_strict_library(
     srcs = ["_src/tpu_custom_call.py"],
     visibility = [":internal"],
     deps = [
+        ":api",
         ":cloud_tpu_init",
         ":config",
         ":core",
         ":frozen_dict",
-        ":jax",
         ":mlir",
         ":sharding_impls",
         "//jax/_src/lib",

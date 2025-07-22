@@ -22,20 +22,19 @@ import collections.abc
 from collections.abc import Callable, Sequence
 import dataclasses
 import enum
-import functools
 import io
 import json
 from typing import Any, TypedDict
 
-import jax
+from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import sharding_impls
 from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import mlir
 from jax._src.lib import tpu
-from jax.interpreters import xla
 from jaxlib.mlir import ir
 from jaxlib.mlir.passmanager import PassManager
 
@@ -77,9 +76,8 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
 
 
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
-tpu_custom_call_p.def_impl(
-    functools.partial(xla.apply_primitive, tpu_custom_call_p))
 tpu_custom_call_p.multiple_results = True
+dispatch.simple_impl(tpu_custom_call_p)
 
 
 class MemorySpace(enum.Enum):
@@ -754,4 +752,4 @@ def _as_jax_callable(
     )
     return result[0] if unpack else result
 
-  return jax.jit(apply_kernel)
+  return api.jit(apply_kernel)
