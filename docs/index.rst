@@ -133,15 +133,16 @@ maintains an up-to-date list.
    :caption: Getting started
 
    installation
-   notebooks/thinking_in_jax
+   quickstart
 
 .. toctree::
    :hidden:
    :maxdepth: 1
 
-   key-concepts
    tutorials
+
    notebooks/Common_Gotchas_in_JAX
+
    faq
 
 .. toctree::

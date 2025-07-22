@@ -6,6 +6,8 @@ Tutorials
 .. toctree::
    :maxdepth: 1
 
+   quickstart
+   key-concepts
    jit-compilation
    automatic-vectorization
    automatic-differentiation

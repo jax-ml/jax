@@ -77,7 +77,7 @@ Glossary of terms
     Tracer
       An object used as a standin for a JAX :term:`Array` in order to determine the
       sequence of operations performed by a Python function. Internally, JAX implements this
-      via the `jax.core.Tracer` class.
+      via the :class:`jax.core.Tracer` class.
 
     transformation
       A higher-order function: that is, a function that takes a function as input and outputs
