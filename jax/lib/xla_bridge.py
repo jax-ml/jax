@@ -33,7 +33,7 @@ _deprecations = {
       "jax.lib.xla_bridge.get_compile_options is deprecated in JAX v0.7.0 and"
       " will be removed in JAX v0.8.0. Use jax.extend.backend.get_compile_options."
     ),
-    _deprecated_get_compile_options
+    None
   )
 }
 
