@@ -80,7 +80,10 @@ from jax._src.callback import (
 _deprecations = {
     # Added Apr 7 2025
     "custom_call": (
-        "mlir.custom_call is deprecated; use the APIs provided by jax.ffi instead.",
+        (
+            "mlir.custom_call is deprecated and will be removed in JAX v0.8.0;"
+            " use the APIs provided by jax.ffi instead."
+        ),
         _custom_call,
     )
 }

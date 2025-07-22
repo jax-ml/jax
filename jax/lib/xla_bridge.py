@@ -22,19 +22,23 @@ from jax._src.compiler import (
 )
 
 _deprecations = {
-  # Added July 31, 2024
-  "get_backend": (
-    "jax.lib.xla_bridge.get_backend is deprecated; use jax.extend.backend.get_backend.",
-    _deprecated_get_backend
-  ),
-  # Added for JAX v0.7.0
-  "get_compile_options": (
-    (
-      "jax.lib.xla_bridge.get_compile_options is deprecated in JAX v0.7.0 and"
-      " will be removed in JAX v0.8.0. Use jax.extend.backend.get_compile_options."
+    # Added July 31, 2024
+    "get_backend": (
+        (
+            "jax.lib.xla_bridge.get_backend is deprecated and will be removed"
+            " in JAX v0.8.0; use jax.extend.backend.get_backend."
+        ),
+        _deprecated_get_backend,
     ),
-    _deprecated_get_compile_options
-  )
+    # Added for JAX v0.7.0
+    "get_compile_options": (
+        (
+            "jax.lib.xla_bridge.get_compile_options is deprecated in JAX v0.7.0"
+            " and will be removed in JAX v0.8.0. Use"
+            " jax.extend.backend.get_compile_options."
+        ),
+        _deprecated_get_compile_options,
+    ),
 }
 
 import typing as _typing
