@@ -51,10 +51,10 @@ class Sharding {
 
   virtual ~Sharding() = default;
 
-  static int SafeNumDevices(nanobind::handle sharding);
+  int num_devices() const { return num_devices_; }
 
  private:
-  std::optional<int> num_devices_;
+  int num_devices_;
 };
 
 // Gets `jax::PyDeviceList` from a JAX Sharding.

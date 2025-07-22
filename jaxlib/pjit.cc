@@ -501,7 +501,8 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
 
     xla::PyArray py_array = nb::borrow<xla::PyArray>(arg);
     const auto& sharding = py_array.sharding();
-    int sharding_num_devices = jax::Sharding::SafeNumDevices(sharding);
+    int sharding_num_devices =
+        nb::cast<const jax::Sharding*>(sharding)->num_devices();
 
     // Currently only committed PyArray inputs or uncommitted PyArray on a
     // single device inputs are allowed. This is checked previously in the entry
@@ -655,8 +656,9 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     //
     // TODO(chky): Consider support uncommitted PyArray in cpp when the python
     // side stabilizes.
-    if (!py_array.committed() &&
-        jax::Sharding::SafeNumDevices(py_array.sharding()) > 1) {
+    int sharding_num_devices =
+        nb::cast<const jax::Sharding*>(py_array.sharding())->num_devices();
+    if (!py_array.committed() && sharding_num_devices > 1) {
       VLOG(2) << "PyArray argument is not committed and number of global "
                  "devices is more than 1; fallback to python.";
       return fallback_to_cache_miss();

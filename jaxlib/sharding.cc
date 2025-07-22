@@ -121,17 +121,6 @@ nb::object CheckAndCanonicalizeMemoryKind(
   return *std::move(default_memory_kind);
 }
 
-int Sharding::SafeNumDevices(nb::handle sharding) {
-  const jax::Sharding* cpp_sharding;
-  if (nb::try_cast<const jax::Sharding*>(sharding, cpp_sharding)) {
-    if (cpp_sharding->num_devices_.has_value()) {
-      return (*cpp_sharding->num_devices_);
-    }
-  }
-  nb::set device_set = sharding.attr("device_set");
-  return device_set.size();
-}
-
 // This list is to check for valid memory kinds when an AbstractMesh is passed
 // to NamedSharding.
 static const std::array<absl::string_view, 3> valid_memory_kinds = {
