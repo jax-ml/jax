@@ -9376,7 +9376,6 @@ class UtilTest(jtu.JaxTestCase):
     self.assertLen(out, 16)
 
 
-@jtu.with_config(jax_use_shardy_partitioner=True)
 class ShardyTest(jtu.JaxTestCase):
 
   def test_lowering_input_output_sharding(self):

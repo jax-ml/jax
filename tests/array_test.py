@@ -1495,7 +1495,6 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertTrue(out_sdy_sharding, ns._to_sdy_sharding(ndim))
 
 
-@jtu.with_config(jax_use_shardy_partitioner=True)
 class ShardyShardingTest(jtu.JaxTestCase):
 
   def test_long_axis_names(self):
