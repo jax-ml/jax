@@ -37,6 +37,28 @@ source "ci/utilities/setup_build_environment.sh"
 os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
+WHEEL_SIZE_TESTS=""
+CUDA_LIBRARIES_FROM_STUBS_FLAG=""
+
+# Set --//jax:build_jaxlib and --//jax:build_jax flag values.
+if [[ "$JAXCI_BUILD_JAXLIB" == 'wheel' ]]; then
+    JAX_BUILD_FLAGS="--//jax:build_jaxlib=wheel --//jax:build_jax=wheel"
+    CUDA_LIBRARIES_FROM_STUBS_FLAG="--config=cuda_libraries_from_stubs"
+elif [[ "$JAXCI_BUILD_JAXLIB" == 'false' ]]; then
+    JAX_BUILD_FLAGS="--//jax:build_jaxlib=false --//jax:build_jax=false"
+    CUDA_LIBRARIES_FROM_STUBS_FLAG="--config=cuda_libraries_from_stubs"
+else
+    JAX_BUILD_FLAGS="--//jax:build_jaxlib=true --//jax:build_jax=true"
+    WHEEL_SIZE_TESTS="//jaxlib/tools:jaxlib_wheel_size_test //:jax_wheel_size_test"
+fi
+
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+  FREETHREADED_FLAG="--@rules_python//python/config_settings:py_freethreaded=yes"
+else
+  FREETHREADED_FLAG=""
+fi
+
 # When running on Mac or Linux Aarch64, we only build the test targets and
 # not run them. These platforms do not have native RBE support so we
 # RBE cross-compile them on remote Linux x86 machines. As the tests still
@@ -53,9 +75,11 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
             --color=yes \
-            //tests:cpu_tests //tests:backend_independent_tests \
-            //jaxlib/tools:jaxlib_wheel_size_test \
-            //:jax_wheel_size_test
+            $JAX_BUILD_FLAGS \
+            $CUDA_LIBRARIES_FROM_STUBS_FLAG \
+            $FREETHREADED_FLAG \
+            $WHEEL_SIZE_TESTS \
+            //tests:cpu_tests //tests:backend_independent_tests
 else
       echo "Running RBE CPU tests..."
       bazel test --config=rbe_${os}_${arch} \
@@ -66,7 +90,9 @@ else
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
             --color=yes \
-            //tests:cpu_tests //tests:backend_independent_tests \
-            //jaxlib/tools:jaxlib_wheel_size_test \
-            //:jax_wheel_size_test
+            $JAX_BUILD_FLAGS \
+            $CUDA_LIBRARIES_FROM_STUBS_FLAG \
+            $FREETHREADED_FLAG \
+            $WHEEL_SIZE_TESTS \
+            //tests:cpu_tests //tests:backend_independent_tests
 fi
