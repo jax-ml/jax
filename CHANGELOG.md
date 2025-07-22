@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.7.0 (July 22, 2025)
+
 * New features:
   * Added `jax.P` which is an alias for `jax.sharding.PartitionSpec`.
   * Added {func}`jax.tree.reduce_associative`.
