@@ -19,11 +19,10 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, cast
+from typing import cast
 import warnings
 
 import jax
-from jax import lax
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import frozen_dict
@@ -33,6 +32,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
 from jax.experimental.mosaic import gpu as mgpu
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -103,10 +103,7 @@ def pallas_call_lowering(
     # We guarantee zero-initialization of the GMEM scratch at the moment, which
     # is important for semaphores.
     def zero_init_gmem_scratch():
-      return [
-          lax.zeros_like_array(cast(Any, s))
-          for s in lowering_result.gmem_scratch_shapes
-      ]
+      return [jnp.zeros_like(s) for s in lowering_result.gmem_scratch_shapes]
     scratch_args = mlir.lower_fun(
         zero_init_gmem_scratch, multiple_results=True
     )(ctx.replace(avals_in=()))
