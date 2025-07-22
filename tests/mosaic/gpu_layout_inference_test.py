@@ -518,6 +518,22 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkInLayouts(optimization_barrier, [splat_layout])
     self.checkOutLayouts(optimization_barrier, [splat_layout])
 
+  def test_custom_primitive_op_retains_layouts(self):
+    with ir.InsertionPoint(self.module.body):
+      wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
+      wgmma_row_layout = layouts.to_layout_attr(mgpu.WGMMA_ROW_LAYOUT)
+      op = mgpu.dialect.custom_primitive(
+          result=[],
+          operands_=[],
+          in_layouts=[wgmma_layout],
+          in_transforms=[],
+          out_layouts=[wgmma_row_layout],
+      )
+
+    self.infer_layout(self.module)
+    self.checkInLayouts(op, [wgmma_layout])
+    self.checkOutLayouts(op, [wgmma_row_layout])
+
 
 V = eqns.Variable
 H = layout_inference2.Hint

@@ -493,6 +493,10 @@ class MemoryRefTransform(pallas_core.MemoryRefTransform, abc.ABC):
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     pass
 
+  @abc.abstractmethod
+  def to_gpu_transform_attr(self) -> ir.Attribute:
+    pass
+
   def batch(self, leading_rank: int):
     """Returns a transform that accepts a ref with the extra `leading_rank` dims.
 
@@ -528,6 +532,9 @@ class TilingTransform(MemoryRefTransform):
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TileTransform(self.tiling)
+
+  def to_gpu_transform_attr(self) -> ir.Attribute:
+    return mgpu.dialect.TileTransformAttr.get(self.tiling)
 
 
 @tree_util.register_dataclass
@@ -649,6 +656,9 @@ class TransposeTransform(MemoryRefTransform):
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TransposeTransform(self.permutation)
+
+  def to_gpu_transform_attr(self) -> ir.Attribute:
+    return mgpu.dialect.TransposeTransformAttr.get(self.permutation)
 
 
 @tree_util.register_dataclass
@@ -822,6 +832,9 @@ class SwizzleTransform(MemoryRefTransform):
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     raise RuntimeError("SwizzleTransform does not have a GPU transform.")
+
+  def to_gpu_transform_attr(self) -> ir.Attribute:
+    return mgpu.dialect.SwizzleTransformAttr.get(self.swizzle)
 
   def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
     # There's no swizzle transform in mgpu right now. It's a separate arg.

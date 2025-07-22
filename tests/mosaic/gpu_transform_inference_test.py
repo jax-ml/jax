@@ -645,6 +645,23 @@ class TransformInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(inference_utils.in_transforms(subview_op3), [want])
     self.assertSequenceEqual(inference_utils.out_transforms(subview_op3), [want])
 
+  def test_custom_primitive_op_retains_transforms(self):
+    with ir.InsertionPoint(self.module.body):
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((64, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(32),
+      ])
+      op = mgpu.dialect.custom_primitive(
+          result=[],
+          operands_=[],
+          in_layouts=[],
+          in_transforms=[transforms],
+          out_layouts=[],
+      )
+
+    mgpu.infer_transforms(self.module)
+    self.assertSequenceEqual(inference_utils.in_transforms(op), [transforms])
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
