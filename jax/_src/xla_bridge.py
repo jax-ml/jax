@@ -41,7 +41,6 @@ from jax._src import hardware_utils
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
@@ -171,8 +170,6 @@ def make_tpu_client(
     _jax.initialize_pjrt_plugin('tpu')
   if options is None:
     options = {}
-  if jaxlib_extension_version < 363:
-    return _jax.get_c_api_client("tpu", options)
   transfer_server_factory = None
   if (CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value and
       hasattr(_jax, "make_transfer_server_interface_factory")):
@@ -329,17 +326,6 @@ def make_cpu_client(
       assert collectives_impl is None
 
   num_devices = num_cpu_devices.value if num_cpu_devices.value >= 0 else None
-  if jaxlib_extension_version < 363:
-    return xla_client.make_cpu_client(
-        asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
-        distributed_client=distributed.global_state.client,
-        node_id=distributed.global_state.process_id,
-        num_nodes=distributed.global_state.num_processes,
-        collectives=collectives,
-        num_devices=num_devices,
-        get_local_topology_timeout_minutes=cpu_get_local_topology_timeout_minutes.value,
-        get_global_topology_timeout_minutes=cpu_get_global_topology_timeout_minutes.value,
-    )
   transfer_server_factory = None
   if (CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value and
       hasattr(_jax, "make_transfer_server_interface_factory")):
@@ -583,9 +569,6 @@ def register_plugin(
       distribute_options['slice_index'] = slice_index
     if options is not None:
       distribute_options.update(updated_options)
-    if jaxlib_extension_version < 363:
-      return xla_client.make_c_api_client(
-          plugin_name, distribute_options, distributed.global_state.client)
     cross_host_transfer_server_factory = None
     if (CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value and
         hasattr(_jax, "make_transfer_server_interface_factory")):

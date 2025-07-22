@@ -33,7 +33,6 @@ from jax._src import source_info_util
 from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
     SdyArray, SdyDim, UnspecifiedValue, AUTO,
@@ -981,12 +980,8 @@ def make_key_array_phys_sharding(aval, sharding):
     return sharding.update(spec=PartitionSpec(*sharding.spec, *trailing_spec))
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
-    if jaxlib_extension_version >= 360:
-      return GSPMDSharding(
-          sharding._internal_device_list, physical_hlo_sharding(aval, hlos))
-    else:
-      return GSPMDSharding(
-          sharding._device_assignment, physical_hlo_sharding(aval, hlos))
+    return GSPMDSharding(
+        sharding._internal_device_list, physical_hlo_sharding(aval, hlos))
 
 
 def physical_sharding(aval, sharding: jsharding.Sharding) -> jsharding.Sharding:
@@ -1003,12 +998,8 @@ def get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding):
   logical_op_sharding = phys_hlo_sharding.to_proto().clone()
   tad = partitions[:-elt_aval.ndim] + suffix
   logical_op_sharding.tile_assignment_dimensions = tad
-  if jaxlib_extension_version >= 360:
-    return GSPMDSharding(phys_sharding._internal_device_list,
-                         xc.HloSharding.from_proto(logical_op_sharding))
-  else:
-    return GSPMDSharding(phys_sharding._device_assignment,
-                         xc.HloSharding.from_proto(logical_op_sharding))
+  return GSPMDSharding(phys_sharding._internal_device_list,
+                       xc.HloSharding.from_proto(logical_op_sharding))
 
 def check_replicated_trailing_dims(sharding: jsharding.Sharding,
                                    logical_shape, dtype):

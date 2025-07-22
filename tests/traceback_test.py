@@ -19,7 +19,6 @@ from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 import numpy as np
 
@@ -56,10 +55,7 @@ class TracebackTest(absltest.TestCase):
 
   def testTracebacks(self):
     with tracebacks(enabled=True):
-      if jaxlib_extension_version >= 362:
-        fn = "TracebackTest.testTracebacks"
-      else:
-        fn = "testTracebacks"
+      fn = "TracebackTest.testTracebacks"
 
       tb = Traceback.get_traceback()
       self.assertIsTracebackContaining(tb, fn)
@@ -83,23 +79,15 @@ class TracebackTest(absltest.TestCase):
       tb = AFunction()
       self.assertIsInstance(tb, Traceback)
       frames = tb.frames
-      fn = (
-          "TracebackTest.testNestedFunction.<locals>.AFunction"
-          if jaxlib_extension_version >= 362
-          else "AFunction"
-      )
+      fn = "TracebackTest.testNestedFunction.<locals>.AFunction"
       i = next(i for (i, f) in enumerate(frames) if f.function_name == fn)
-      if jaxlib_extension_version >= 362:
-        self.assertEqual(
-            frames[i - 1].function_name,
-            "TracebackTest.testNestedFunction.<locals>.AFunction.<locals>.AnotherFunction",
-        )
-        self.assertEqual(
-            frames[i + 1].function_name, "TracebackTest.testNestedFunction"
-        )
-      else:
-        self.assertEqual(frames[i - 1].function_name, "AnotherFunction")
-        self.assertEqual(frames[i + 1].function_name, "testNestedFunction")
+      self.assertEqual(
+          frames[i - 1].function_name,
+          "TracebackTest.testNestedFunction.<locals>.AFunction.<locals>.AnotherFunction",
+      )
+      self.assertEqual(
+          frames[i + 1].function_name, "TracebackTest.testNestedFunction"
+      )
 
   def testPythonTracebackHasCorrectLineNumbers(self):
     def B():

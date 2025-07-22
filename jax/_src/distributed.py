@@ -23,7 +23,6 @@ from jax._src import clusters
 from jax._src import config
 from jax._src import xla_bridge
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -126,13 +125,7 @@ class State:
 
 
     heartbeat_kwargs = {}
-    if jaxlib_extension_version >= 361:
-      # In jaxlib version 361, the heartbeat_timeout argument replaced the old
-      # heartbeat_interval and max_missing_heartbeats arguments.
-      heartbeat_kwargs['heartbeat_timeout'] = heartbeat_timeout_seconds
-    else:
-      heartbeat_kwargs['heartbeat_interval'] = heartbeat_timeout_seconds
-      heartbeat_kwargs['max_missing_heartbeats'] = 1
+    heartbeat_kwargs['heartbeat_timeout'] = heartbeat_timeout_seconds
 
     if process_id == 0:
       if self.service is not None:

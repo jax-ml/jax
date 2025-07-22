@@ -38,7 +38,6 @@ from jax._src import core
 from jax._src import prng
 from jax._src.shard_map import shard_map
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
@@ -283,9 +282,6 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu")
   @config.use_shardy_partitioner(False)
   def test_psend_precv_basic_two_gpus(self):
-    if jaxlib_extension_version < 358:
-      self.skipTest("Test requires StableHLO v1.12.0 or higher.")
-
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
         jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
@@ -333,9 +329,6 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu")
   @config.use_shardy_partitioner(False)
   def test_psend_precv_basic_with_no_deadlock_cycle(self):
-    if jaxlib_extension_version < 358:
-      self.skipTest("Test requires StableHLO v1.12.0 or higher.")
-
     mesh = jtu.create_mesh((8,), 'x')
     a = jax.device_put(
         jnp.arange(8 * 8, dtype=jnp.float32).reshape((8, 8)),
@@ -399,9 +392,6 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu")
   @config.use_shardy_partitioner(False)
   def test_psend_precv_reverse(self):
-    if jaxlib_extension_version < 358:
-      self.skipTest("Test requires StableHLO v1.12.0 or higher.")
-
     mesh = jtu.create_mesh((8,), 'x')
     a = jax.device_put(
         jnp.arange(8 * 8, dtype=jnp.float32).reshape((8, 8)),

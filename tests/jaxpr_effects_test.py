@@ -32,7 +32,6 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lib import jaxlib_extension_version
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -339,9 +338,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
         'incorrect set of output token.'):
       f.lower(2.)
 
-  @unittest.skipIf(jaxlib_extension_version < 359, "Needs jaxlib changes")
   def test_nontrivial_lowering_with_ordered_effect_should_consume_token(self):
-
     mlir.register_lowering(effect_p, function_effect_lowering, inline=False)
 
     @jax.jit
@@ -360,9 +357,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     self.assertIn('hlo.token', str(func.type.inputs[0]))
     self.assertIn('hlo.token', str(func.type.results[0]))
 
-  @unittest.skipIf(jaxlib_extension_version < 359, "Needs jaxlib changes")
   def test_nontrivial_lowering_with_unordered_effect_should_consume_token(self):
-
     mlir.register_lowering(effect_p, function_effect_lowering, inline=False)
 
     @jax.jit

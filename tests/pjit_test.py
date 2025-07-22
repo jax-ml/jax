@@ -57,7 +57,6 @@ from jax._src.pjit import (pjit, mesh_cast, use_auto_axes, use_explicit_axes,
                            _pjit_lower_cached)
 from jax._src.layout import Format, Layout as DLL
 from jax._src.named_sharding import DuplicateSpecError
-from jax._src.lib import jaxlib_extension_version
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
@@ -2204,15 +2203,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, a @ a.T)
 
   def test_pjit_mixed_device_cache_miss(self):
-    if jaxlib_extension_version < 364:
-      self.skipTest('Requires jax_lib_extension_version >= 364.')
     try:
       tpu_device = jax.devices('tpu')[0]
     except:
       raise unittest.SkipTest('Only a bug on TPU.')
+
     with jax.default_device('cpu'):
       cpu_arr = jnp.array([1, 2, 3], dtype=np.float32)
-    tpu_arr = jax.device_put(cpu_arr, tpu_device)
+    tpu_arr = jax.device_put(cpu_arr, jax.devices('tpu')[0])
 
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(2):
@@ -3647,8 +3645,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_jit_mul_sum_sharding_preserved(self):
-    if jaxlib_extension_version < 356:
-      self.skipTest('Requires jax_lib_extension_version >= 356.')
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     ns = NamedSharding(mesh, P('x'))
     gs = GSPMDSharding(tuple(mesh.devices.flat), ns._to_xla_hlo_sharding(2))

@@ -39,7 +39,6 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, Layout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
@@ -1217,10 +1216,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         results.append(None)
         # Accumulate arguments to `batched_copy_array_to_devices_with_sharding`.
         batch_xs.append(x)
-        if jaxlib_extension_version >= 356:
-          batch_devs.append(devices)
-        else:
-          batch_devs.append(list(devices))
+        batch_devs.append(devices)
         batch_shardings.append(sharding)
         batch_indices.append(i)
         batch_cs.append(cs)

@@ -282,8 +282,6 @@ def split_merge(
 
   return lhs, rhs, merge
 
-def _ignore(): return None
-
 
 def cache(max_size=4096, trace_context_in_key=True):
   if trace_context_in_key:
@@ -329,6 +327,8 @@ def clear_all_caches():
     cache.cache_clear()
 
 memoize = cache(max_size=None)
+
+def _ignore(): return None
 
 def weakref_lru_cache(call: Callable, maxsize=2048,
                       trace_context_in_key: bool = True):

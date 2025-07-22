@@ -59,7 +59,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import Layout, AutoLayout, Format
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -2086,12 +2085,8 @@ class AllArgsInfo(NamedTuple):
 def to_gspmd_sharding(s: JSharding, ndim: int) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
-  if jaxlib_extension_version >= 360:
-    return GSPMDSharding(s._internal_device_list, s._to_xla_hlo_sharding(ndim),
-                         memory_kind=s.memory_kind)
-  else:
-    return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
-                         memory_kind=s.memory_kind)
+  return GSPMDSharding(s._internal_device_list, s._to_xla_hlo_sharding(ndim),
+                       memory_kind=s.memory_kind)
 
 
 def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
@@ -2501,13 +2496,8 @@ def get_out_shardings_from_executable(
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`.
   if len(device_list) == 1:
-    if jaxlib_extension_version >= 360:
-      return [sharding_impls.GSPMDSharding.get_replicated(device_list, memory_kind=mk)
-              for mk in omk]
-    else:
-      da = tuple(device_list)
-      return [sharding_impls.GSPMDSharding.get_replicated(da, memory_kind=mk)
-              for mk in omk]
+    return [sharding_impls.GSPMDSharding.get_replicated(device_list, memory_kind=mk)
+            for mk in omk]
 
   _, out_op_shardings = get_op_sharding_from_executable(xla_executable)
   if not out_op_shardings:
@@ -2531,13 +2521,8 @@ def get_out_shardings_from_executable(
   assert len(out_op_shardings) == num_out_avals == len(omk), (
       len(out_op_shardings), num_out_avals, len(omk))
 
-  if jaxlib_extension_version >= 360:
-    return [sharding_impls.GSPMDSharding(device_list, os, memory_kind=mk)
-            for os, mk in safe_zip(out_op_shardings, omk)]
-  else:
-    da = tuple(device_list)
-    return [sharding_impls.GSPMDSharding(da, os, memory_kind=mk)
-            for os, mk in safe_zip(out_op_shardings, omk)]
+  return [sharding_impls.GSPMDSharding(device_list, os, memory_kind=mk)
+          for os, mk in safe_zip(out_op_shardings, omk)]
 
 
 def _get_in_shardings_from_xla(
@@ -2549,10 +2534,7 @@ def _get_in_shardings_from_xla(
   # Hence the op shardings will not be set on the `hlo_module`.
   assert isinstance(device_list, xc.DeviceList)
   if len(device_list) == 1:
-    if jaxlib_extension_version >= 360:
-      return [GSPMDSharding.get_replicated(device_list)] * num_in_avals
-    else:
-      return [GSPMDSharding.get_replicated(tuple(device_list))] * num_in_avals
+    return [GSPMDSharding.get_replicated(device_list)] * num_in_avals
 
   in_op_shardings, _ = get_op_sharding_from_executable(xla_executable)
   if not in_op_shardings:
@@ -2564,11 +2546,7 @@ def _get_in_shardings_from_xla(
   assert len(in_op_shardings) == num_in_avals, (
       len(in_op_shardings), num_in_avals)
 
-  if jaxlib_extension_version >= 360:
-    return [GSPMDSharding(device_list, os) for os in in_op_shardings]
-  else:
-    da = tuple(device_list)
-    return [GSPMDSharding(da, os) for os in in_op_shardings]
+  return [GSPMDSharding(device_list, os) for os in in_op_shardings]
 
 
 # TODO(yashkatariya): Remove this function after `AUTO` can return shardings

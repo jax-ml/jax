@@ -40,7 +40,6 @@ from jax._src import effects as effects_lib
 from jax._src import frozen_dict
 from jax._src import hashable_array
 from jax._src import jaxpr_util
-from jax._src.lib import jaxlib_extension_version
 from jax._src import linear_util as lu
 from jax._src import path
 from jax._src import sharding_impls
@@ -2029,9 +2028,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       # TODO(mattjj, phawkins): support caching for dynamic shapes.
       can_cache_lowering = (
           eqn.primitive not in _uncacheable_primitives and
-          not config.dynamic_shapes.value and
-          jaxlib_extension_version >= 359
-      )
+          not config.dynamic_shapes.value)
       if can_cache_lowering:
         loc = source_info_to_location(ctx, None, eqn_name_stack,
                                       eqn.source_info.traceback)

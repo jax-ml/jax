@@ -109,11 +109,7 @@ import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
 has_cpu_sparse = True
 
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
-
-if jaxlib_extension_version >= 350:
-  import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
-else:
-  _pretty_printer = None
+import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
 
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
