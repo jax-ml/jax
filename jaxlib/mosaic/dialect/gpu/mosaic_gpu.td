@@ -433,13 +433,13 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   }];
 
   let arguments = (ins
-    VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>:$accumulator,
+    VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedType]>:$accumulator,
     AnyTypeOf<[
-      MemRefOf<[MosaicGPU_WGMMASupportedType]>,
-      VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
-    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b
+      MemRefRankOf<[MosaicGPU_WGMMASupportedType], [2]>,
+      VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedType]>]>:$a,
+    MemRefRankOf<[MosaicGPU_WGMMASupportedType], [2]>:$b
   );
-  let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
+  let results = (outs VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedType]>);
 
   let assemblyFormat = [{
     `accumulator` `(` $accumulator `:` type($accumulator) `)`
@@ -513,16 +513,16 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpIn
   }];
 
   let arguments = (ins
-    MemRefOf<[AnyTypeOf<[F16, F32, I32]>]>:$accumulator,
-    MemRefOf<[MosaicGPU_TcGen05MMASupportedABType]>:$a,
-    MemRefOf<[MosaicGPU_TcGen05MMASupportedABType]>:$b,
+    MemRefRankOf<[AnyTypeOf<[F16, F32, I32]>], [2]>:$accumulator,
+    MemRefRankOf<[MosaicGPU_TcGen05MMASupportedABType], [2]>:$a,
+    MemRefRankOf<[MosaicGPU_TcGen05MMASupportedABType], [2]>:$b,
     I1:$accumulate,
     // TODO: allanrenucci - F8E4M3FNU (ue4m3) does not exist in MLIR. We use F8E4M3FN (e4m3) instead.
-    Optional<MemRefOf<[AnyTypeOf<[F8E8M0FNU, F8E4M3FN]>]>>:$a_scaled,
-    Optional<MemRefOf<[AnyTypeOf<[F8E8M0FNU, F8E4M3FN]>]>>:$b_scaled,
+    Optional<MemRefRankOf<[AnyTypeOf<[F8E8M0FNU, F8E4M3FN]>], [2]>>:$a_scaled,
+    Optional<MemRefRankOf<[AnyTypeOf<[F8E8M0FNU, F8E4M3FN]>], [2]>>:$b_scaled,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
-  let results = (outs MemRefOf<[AnyTypeOf<[F16, F32, I32]>]>);
+  let results = (outs MemRefRankOf<[AnyTypeOf<[F16, F32, I32]>], [2]>);
 
   let extraClassDeclaration = [{
     static llvm::LogicalResult inferReturnTypes(

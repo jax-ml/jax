@@ -328,19 +328,8 @@ llvm::LogicalResult VerifyMMAShapeAndTypes(mlir::Operation* op,
   }
 
   auto a_shape = a_type.getShape();
-  if (a_shape.size() != 2) {
-    return error("The `a` input must have rank 2.");
-  }
-
   auto b_shape = b_type.getShape();
-  if (b_shape.size() != 2) {
-    return error("The `b` input must have rank 2.");
-  }
-
   auto acc_shape = acc_type.getShape();
-  if (acc_shape.size() != 2) {
-    return error("The accumulator must have rank 2.");
-  }
 
   int M = acc_shape[0];
   if (M != a_shape[0] && M != a_shape[1]) {

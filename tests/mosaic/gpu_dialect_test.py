@@ -488,51 +488,6 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
-  def test_wgmma_a_rank_is_2(self):
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.VectorType.get([128, 160], ir.BF16Type.get()),
-          ir.MemRefType.get([3, 128, 128], ir.BF16Type.get()),
-          ir.MemRefType.get([128, 160], ir.BF16Type.get()),
-          name="wgmma",
-      )(mgpu.dialect.wgmma)
-
-    with self.assertRaisesRegex(
-        ir.MLIRError,
-        "The `a` input must have rank 2.",
-    ):
-      self.module.operation.verify()
-
-  def test_wgmma_b_rank_is_2(self):
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.VectorType.get([128, 160], ir.BF16Type.get()),
-          ir.MemRefType.get([128, 128], ir.BF16Type.get()),
-          ir.MemRefType.get([2, 128, 160], ir.BF16Type.get()),
-          name="wgmma",
-      )(mgpu.dialect.wgmma)
-
-    with self.assertRaisesRegex(
-        ir.MLIRError,
-        "The `b` input must have rank 2.",
-    ):
-      self.module.operation.verify()
-
-  def test_wgmma_acc_rank_is_2(self):
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.VectorType.get([2, 128, 160], ir.BF16Type.get()),
-          ir.MemRefType.get([128, 128], ir.BF16Type.get()),
-          ir.MemRefType.get([128, 160], ir.BF16Type.get()),
-          name="wgmma",
-      )(mgpu.dialect.wgmma)
-
-    with self.assertRaisesRegex(
-        ir.MLIRError,
-        "The accumulator must have rank 2.",
-    ):
-      self.module.operation.verify()
-
   def test_wgmma_acc_m_dim_not_multiple_of_64(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
@@ -605,51 +560,6 @@ class DialectTest(MosaicGpuTest):
     with self.assertRaisesRegex(
         ir.MLIRError,
         "The `a` and `b` inputs must have the same element type.",
-    ):
-      self.module.operation.verify()
-
-  def test_tcgen05_mma_a_rank_is_2(self):
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.MemRefType.get([128, 160], ir.F16Type.get()),
-          ir.MemRefType.get([3, 128, 128], ir.F16Type.get()),
-          ir.MemRefType.get([128, 160], ir.F16Type.get()),
-          ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
-
-    with self.assertRaisesRegex(
-        ir.MLIRError,
-        "The `a` input must have rank 2.",
-    ):
-      self.module.operation.verify()
-
-  def test_tcgen05_mma_b_rank_is_2(self):
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.MemRefType.get([128, 160], ir.F16Type.get()),
-          ir.MemRefType.get([128, 128], ir.F16Type.get()),
-          ir.MemRefType.get([2, 128, 160], ir.F16Type.get()),
-          ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
-
-    with self.assertRaisesRegex(
-        ir.MLIRError,
-        "The `b` input must have rank 2.",
-    ):
-      self.module.operation.verify()
-
-  def test_tcgen05_mma_acc_rank_is_2(self):
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.MemRefType.get([2, 128, 160], ir.F16Type.get()),
-          ir.MemRefType.get([128, 128], ir.F16Type.get()),
-          ir.MemRefType.get([128, 160], ir.F16Type.get()),
-          ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
-
-    with self.assertRaisesRegex(
-        ir.MLIRError,
-        "The accumulator must have rank 2.",
     ):
       self.module.operation.verify()
 
