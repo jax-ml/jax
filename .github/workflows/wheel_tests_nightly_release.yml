@@ -74,7 +74,7 @@ jobs:
           ]
           enable-x64: [0]
           exclude:
-            # H100 runs only a CUDA 12.8 and min and max Python versions.
+            # H100 runs only CUDA 12.8 and min and max Python versions.
             - runner: "linux-x86-a3-8g-h100-8gpu"
               cuda:
                 cuda-version: "12.1"
@@ -84,7 +84,10 @@ jobs:
               python: "3.13"
             - runner: "linux-x86-a3-8g-h100-8gpu"
               python: "3.13-nogil"
-            # B200 runs only min and max Python versions.
+            # B200 runs only CUDA 12.8 and min and max Python versions.
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              cuda:
+                cuda-version: "12.1"
             - runner: "linux-x86-a4-224-b200-1gpu"
               python: "3.12"
             - runner: "linux-x86-a4-224-b200-1gpu"
