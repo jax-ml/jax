@@ -129,9 +129,8 @@ class PallasCallPipelineTest(parameterized.TestCase):
 
   @parameterized.product(
       no_pipelining=[False, True],
-      use_sreg_for_state=[False, True],
   )
-  def test_pipeline_matmul(self, no_pipelining, use_sreg_for_state):
+  def test_pipeline_matmul(self, no_pipelining):
     k1, k2 = jax.random.split(jax.random.key(0))
     x = jax.random.uniform(k1, (512, 512))
     y = jax.random.uniform(k2, (512, 512))
@@ -153,7 +152,6 @@ class PallasCallPipelineTest(parameterized.TestCase):
           ],
           out_specs=pl.BlockSpec((128, 128), lambda i, j, k: (i, j)),
           no_pipelining=no_pipelining,
-          use_sreg_for_state=use_sreg_for_state,
       )(x_ref, y_ref, z_ref)
 
     z = pl.pallas_call(
@@ -265,10 +263,8 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
       x_buffer_count=[2, 4],
       y_buffer_count=[2, 4],
       out_buffer_count=[2],
-      use_sreg_for_state=[False, True],
   )
-  def test_matmul(self, x_buffer_count, y_buffer_count, out_buffer_count,
-                  use_sreg_for_state):
+  def test_matmul(self, x_buffer_count, y_buffer_count, out_buffer_count):
     block_shape = (128, 128)
     x = jax.random.uniform(jax.random.key(0), (512, 512))
     y = jax.random.uniform(jax.random.key(1), (512, 512))
@@ -280,16 +276,28 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         o_ref[...] += x_ref[...] @ y_ref[...]
       pltpu.emit_pipeline(
           pipeline_step,
-          grid=(512 // block_shape[0], 512 // block_shape[0], 512 // block_shape[0]),
+          grid=(
+              512 // block_shape[0],
+              512 // block_shape[0],
+              512 // block_shape[0],
+          ),
           in_specs=[
-              pl.BlockSpec(block_shape, lambda i, j, k: (i, k),
-                pipeline_mode=pl.Buffered(buffer_count=x_buffer_count)),
-              pl.BlockSpec(block_shape, lambda i, j, k: (k, j),
-                pipeline_mode=pl.Buffered(buffer_count=y_buffer_count)),
+              pl.BlockSpec(
+                  block_shape,
+                  lambda i, j, k: (i, k),
+                  pipeline_mode=pl.Buffered(buffer_count=x_buffer_count),
+              ),
+              pl.BlockSpec(
+                  block_shape,
+                  lambda i, j, k: (k, j),
+                  pipeline_mode=pl.Buffered(buffer_count=y_buffer_count),
+              ),
           ],
-          out_specs=pl.BlockSpec(block_shape, lambda i, j, k: (i, j),
-            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
-          use_sreg_for_state=use_sreg_for_state,
+          out_specs=pl.BlockSpec(
+              block_shape,
+              lambda i, j, k: (i, j),
+              pipeline_mode=pl.Buffered(buffer_count=out_buffer_count),
+          ),
       )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
     fn = pl.pallas_call(
         matmul_kernel,
@@ -375,12 +383,17 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
           inner_kernel,
           grid=(len(in_block_indices),),
           in_specs=[
-              pl.BlockSpec((128, 128), index_map=x_index_map,
-                pipeline_mode=pl.Buffered(buffer_count=in_buffer_count)),
+              pl.BlockSpec(
+                  (128, 128),
+                  index_map=x_index_map,
+                  pipeline_mode=pl.Buffered(buffer_count=in_buffer_count),
+              ),
           ],
-          out_specs=pl.BlockSpec((128, 128), lambda i: (i, 0),
-            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
-          use_sreg_for_state=use_lookahead,
+          out_specs=pl.BlockSpec(
+              (128, 128),
+              lambda i: (i, 0),
+              pipeline_mode=pl.Buffered(buffer_count=out_buffer_count),
+          ),
           use_lookahead=use_lookahead,
       )(x_hbm_ref, o_hbm_ref)
     fn = pl.pallas_call(
@@ -512,20 +525,17 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
       in_buffer_count=[2, 4],
       out_buffer_count=[2],
       in_block_indices=[
-          [0, 1, 2, 3, 4, 5,],
-          [2, 2, 2, 2, 2, 2,],
-          [0, 0, 7, 7, 4, 4,],
+          [0, 1, 2, 3, 4, 5],
+          [2, 2, 2, 2, 2, 2],
+          [0, 0, 7, 7, 4, 4],
           [3, 3, 7, 7, 5, 3, 3],
           [5],
       ],
-      use_sreg_for_state=[True, False],
       use_lookahead=[True, False],
   )
   def test_block_gather_with_multiple_cycles(
-      self, in_block_indices, in_buffer_count, out_buffer_count,
-      use_sreg_for_state, use_lookahead):
-    if use_lookahead and not use_sreg_for_state:
-      self.skipTest('use_lookahead requires use_sreg_for_state=True')
+      self, in_block_indices, in_buffer_count, out_buffer_count, use_lookahead
+  ):
     # Exercises pipeline with repeated input block indices.
     block_size = 128
     x = jnp.reshape(jnp.arange(1024 * 128), (1024, 128))
@@ -541,13 +551,17 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
           inner_kernel,
           grid=(blk_len,),
           in_specs=[
-              pl.BlockSpec((128, 128), index_map=x_index_map,
-                pipeline_mode=pl.Buffered(buffer_count=in_buffer_count)),
+              pl.BlockSpec(
+                  (128, 128),
+                  index_map=x_index_map,
+                  pipeline_mode=pl.Buffered(buffer_count=in_buffer_count),
+              ),
           ],
-          out_specs=pl.BlockSpec((128, 128),
-                                 lambda i: (i + blk_idx_offset[0], 0),
-            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
-          use_sreg_for_state=use_sreg_for_state,
+          out_specs=pl.BlockSpec(
+              (128, 128),
+              lambda i: (i + blk_idx_offset[0], 0),
+              pipeline_mode=pl.Buffered(buffer_count=out_buffer_count),
+          ),
           use_lookahead=use_lookahead,
       )
       def prefetch(x_bref, o_bref, scheduler):
@@ -595,10 +609,8 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
 
   @parameterized.product(
       in_buffer_count=[2, 4],
-      use_sreg_for_state=[True, False],
   )
-  def test_pipeline_with_accumulator(self, in_buffer_count,
-                                     use_sreg_for_state):
+  def test_pipeline_with_accumulator(self, in_buffer_count):
     x = jnp.reshape(jnp.arange(1024 * 128), (1024, 128)) // (128*128)
     accum_schedule = pltpu.get_pipeline_schedule('fixed')
     def copy_kernel(x_hbm_ref, o_hbm_ref):
@@ -611,12 +623,14 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
           inner_kernel,
           grid=(4,),
           in_specs=[
-              pl.BlockSpec((128, 128), lambda i : (i, 0),
-                pipeline_mode=pl.Buffered(buffer_count=in_buffer_count)),
+              pl.BlockSpec(
+                  (128, 128),
+                  lambda i: (i, 0),
+                  pipeline_mode=pl.Buffered(buffer_count=in_buffer_count),
+              ),
           ],
-          out_specs=pl.BlockSpec((128, 128), lambda i : (0, 0)),
+          out_specs=pl.BlockSpec((128, 128), lambda i: (0, 0)),
           should_accumulate_out=True,
-          use_sreg_for_state=use_sreg_for_state,
       )
       def prefetch(x_bref, o_bref, scheduler):
         del o_bref

@@ -1072,7 +1072,6 @@ def fetch_until_full_slots(buffered_ref, src_ref,
                            grid,
                            grid_offsets,
                            predicate: jax.Array | bool = True,
-                           use_sreg_for_state: bool = False,
                            update_slots: bool = True):
   """Continually fetch values until all copy_in slots are full."""
   if not buffered_ref.use_lookahead:
@@ -1117,11 +1116,7 @@ def fetch_until_full_slots(buffered_ref, src_ref,
 
   buffered_ref = buffered_ref.with_next_fetch(final_indices)
   if update_slots:
-    if use_sreg_for_state:
-      buffered_ref = buffered_ref.with_slot_index(
-          copy_in_slot=final_copy_in_slot)
-    else:
-      buffered_ref.copy_in_slot[0] = final_copy_in_slot
+    buffered_ref = buffered_ref.with_slot_index(copy_in_slot=final_copy_in_slot)
   return buffered_ref, final_copy_in_slot
 
 
@@ -1216,7 +1211,6 @@ class Scheduler:
       last_cycle=None,
       init_accumulators=None,
       trace_scopes=True,
-      use_sreg_for_state: bool = False,
   ):
     """Initializes scheduler.
 
@@ -1231,8 +1225,6 @@ class Scheduler:
       init_accumulators: do we zero-initialize accumulator state for this
         invocation of the pipeline.
       trace_scopes: whether to use named_scope to trace blocks in the pipeline.
-      use_sreg_for_state: optional bool, indicates whether to use sregs for
-        current_slot state.
     """
     self.step = step
     self.grid = grid
@@ -1242,7 +1234,6 @@ class Scheduler:
     self.last_cycle = last_cycle
     self.init_accumulators = init_accumulators
     self.trace_scopes = trace_scopes
-    self.use_sreg_for_state = use_sreg_for_state
 
     # Total number of linear steps.
     self.num_steps = _grid_size(grid)
@@ -1350,8 +1341,7 @@ class Scheduler:
       def _init_slots():
         buffered_ref.init_slots()
 
-      if self.use_sreg_for_state:
-        buffered_ref = buffered_ref.load_slots()
+      buffered_ref = buffered_ref.load_slots()
 
       if not buffered_ref.is_input or not buffered_ref.is_buffered:
         return buffered_ref
@@ -1363,11 +1353,13 @@ class Scheduler:
             self.add_offset(buffered_ref.next_fetch_indices))  # pylint: disable=cell-var-from-loop
         buffered_ref = buffered_ref.advance_copy_in_slot(do_copy)
 
-        buffered_ref, _ = fetch_until_full_slots(buffered_ref,
-                                              src_ref, self.grid,
-                                              self.grid_offsets,
-                                              self.first_step_ever & do_copy,
-                                              self.use_sreg_for_state)
+        buffered_ref, _ = fetch_until_full_slots(
+            buffered_ref,
+            src_ref,
+            self.grid,
+            self.grid_offsets,
+            self.first_step_ever & do_copy,
+        )
       else:
         grid_indices = self.indices
         @pl.when(do_copy)
@@ -1420,9 +1412,9 @@ class Scheduler:
       return buffered_ref
 
     if buffered_ref.use_lookahead:
-      buffered_ref, _ = fetch_until_full_slots(buffered_ref,
-        src_ref, self.grid, self.grid_offsets, predicate=True,
-        use_sreg_for_state=self.use_sreg_for_state)
+      buffered_ref, _ = fetch_until_full_slots(
+          buffered_ref, src_ref, self.grid, self.grid_offsets, predicate=True
+      )
     else:
       @pl.when(pred)
       @self._named_scope("ep_copy_in")
@@ -1455,17 +1447,17 @@ class Scheduler:
       buffered_ref = buffered_ref.advance_copy_in_slot(pred)
 
       buffered_ref, final_copy_in_slot = fetch_until_full_slots(
-          buffered_ref, src_ref, self.grid, self.grid_offsets,
-          predicate=pred, use_sreg_for_state=self.use_sreg_for_state,
-          update_slots=False)
+          buffered_ref,
+          src_ref,
+          self.grid,
+          self.grid_offsets,
+          predicate=pred,
+          update_slots=False,
+      )
       @pl.when(pred)
       def _():
-        if self.use_sreg_for_state:
-          bref = buffered_ref.with_slot_index(copy_in_slot=final_copy_in_slot)
-          bref.save_slots()
-        else:
-          buffered_ref.copy_in_slot[0] = final_copy_in_slot
-          raise NotImplementedError()
+        bref = buffered_ref.with_slot_index(copy_in_slot=final_copy_in_slot)
+        bref.save_slots()
     else:
       pred = pred & self.last_step
       grid_indices = self.indices
@@ -1485,8 +1477,7 @@ class Scheduler:
           buffered_ref.copy_in(src_ref, next_grid_indices)  # pylint: disable=cell-var-from-loop
         buffered_ref = buffered_ref.advance_copy_in_slot(pred & should_prefetch)
         grid_indices = next_grid_indices
-      if self.use_sreg_for_state:
-        buffered_ref.save_slots()
+      buffered_ref.save_slots()
     return
 
   def wait_out(self, buffered_ref, dst_ref, schedule=None) -> "BufferedRef":
@@ -1547,8 +1538,7 @@ class Scheduler:
       if buffered_ref.is_output:
         buffered_ref.wait_out(dst_ref, self.indices)
 
-    if self.use_sreg_for_state:
-      buffered_ref.save_slots()
+    buffered_ref.save_slots()
 
   def advance_slots(self, buffered_ref, schedule=None):
     if schedule is None:
@@ -1857,7 +1847,6 @@ def emit_pipeline(
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
-    use_sreg_for_state: bool = True,
     use_lookahead: bool = False,
 ):
   """Creates a function to emit a manual pallas pipeline.
@@ -1885,15 +1874,12 @@ def emit_pipeline(
       or ARBITRARY).
     trace_scopes: optional bool, indicates whether to annotate each region in
       the pipeline using named_scope.
-    no_pipelining: If True, turns off pipelining and all copies will be
-      made synchronous. This is useful for debugging multiple-buffering
-      related bugs.
-    use_sreg_for_state: optional bool, indicates whether to use sregs for
-      current_slot state.
-    use_lookahead: optional bool, indicates whether to use lookahead on
-      input buffers. Enabling lookahead allows the pipeline to begin fetching
-      the next changed block as soon as a slot is available, no matter how
-      many iterations ahead that block is. Requires use_sreg_for_state=True.
+    no_pipelining: If True, turns off pipelining and all copies will be made
+      synchronous. This is useful for debugging multiple-buffering related bugs.
+    use_lookahead: optional bool, indicates whether to use lookahead on input
+      buffers. Enabling lookahead allows the pipeline to begin fetching the next
+      changed block as soon as a slot is available, no matter how many
+      iterations ahead that block is.
   """
   if any(not isinstance(d, (int, jax.Array)) for d in grid):
     grid_types = tuple(type(d) for d in grid)
@@ -2013,7 +1999,6 @@ def emit_pipeline(
           last_cycle=last_cycle,
           init_accumulators=init_accumulators,
           trace_scopes=trace_scopes,
-          use_sreg_for_state=use_sreg_for_state,
       )
 
     def loop_body(step, carry):
@@ -2031,13 +2016,11 @@ def emit_pipeline(
         with scheduler._named_scope("ep_prefetch"):
           if prefetch is not None:
             do_prefetch = step == num_steps - 1
-            if use_sreg_for_state:
-              map_brefs(lambda x: x.save_slots(do_prefetch), brefs)
+            map_brefs(lambda x: x.save_slots(do_prefetch), brefs)
             lax.cond(do_prefetch,
                     lambda: prefetch(*brefs, scheduler),
                     lambda: None)
-            if use_sreg_for_state:
-              brefs = map_brefs(lambda x: x.load_slots(do_prefetch), brefs)
+            brefs = map_brefs(lambda x: x.load_slots(do_prefetch), brefs)
 
         # run the kernel!
         if body_prologue is not None:
@@ -2053,13 +2036,11 @@ def emit_pipeline(
         with scheduler._named_scope("ep_postyeet"):
           if postyeet is not None:
             do_postyeet = step == 0
-            if use_sreg_for_state:
-              map_brefs(lambda x: x.save_slots(do_postyeet), brefs)
+            map_brefs(lambda x: x.save_slots(do_postyeet), brefs)
             lax.cond(do_postyeet,
                     lambda: postyeet(*brefs, scheduler),
                     lambda: None)
-            if use_sreg_for_state:
-              brefs = map_brefs(lambda x: x.load_slots(do_postyeet), brefs)
+            brefs = map_brefs(lambda x: x.load_slots(do_postyeet), brefs)
 
         brefs = map_brefs(scheduler.advance_slots, brefs, schedule)
         # Unbind window_refs for VMEM-backed buffers. Without this
@@ -2130,7 +2111,6 @@ def emit_pipeline_with_allocations(
     in_specs=None,
     out_specs=None,
     should_accumulate_out=False,
-    use_sreg_for_state=True,
     use_lookahead=False,
 ):
   """Creates pallas pipeline and top-level allocation preparation functions.
@@ -2142,12 +2122,10 @@ def emit_pipeline_with_allocations(
     out_specs: output pallas block specs
     should_accumulate_out: booleans to indicate which outputs should be treated
       as accumulators.
-    use_sreg_for_state: optional bool, indicates whether to use sregs for
-      current_slot state.
-    use_lookahead: optional bool, indicates whether to use lookahead on
-      input buffers. Enabling lookahead allows the pipeline to begin fetching
-      the next changed block as soon as a slot is available, no matter how
-      many iterations ahead that block is. Requires use_sreg_for_state=True.
+    use_lookahead: optional bool, indicates whether to use lookahead on input
+      buffers. Enabling lookahead allows the pipeline to begin fetching the next
+      changed block as soon as a slot is available, no matter how many
+      iterations ahead that block is.
 
   Returns:
     (emit_pipeline, make_allocations) function pair, where:
@@ -2155,7 +2133,6 @@ def emit_pipeline_with_allocations(
     make_allocations is a function to create buffered refs for the inner
       pipeline that can be created at the top-level of a pallas call to be
       reused across multiple invocations of the inner pipeline.
-
   """
   make_allocations = functools.partial(make_pipeline_allocations,
                     in_specs=in_specs,
@@ -2169,7 +2146,6 @@ def emit_pipeline_with_allocations(
       in_specs=in_specs,
       out_specs=out_specs,
       should_accumulate_out=should_accumulate_out,
-      use_sreg_for_state=use_sreg_for_state,
       use_lookahead=use_lookahead)
 
   return pipeline, make_allocations
