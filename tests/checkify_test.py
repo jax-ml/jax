@@ -166,7 +166,9 @@ class CheckifyTransformTests(jtu.JaxTestCase):
 
     single_idx = lambda x, i: update_op(x.at[i])
     raises_oob(single_idx, 5, "index 5", axis0_msg)
-    raises_oob(single_idx, -5, "index -3", axis0_msg)
+    # This either reports "index -3" or "index -5" depending on which
+    # operation it lowers to.
+    raises_oob(single_idx, -5, "index -", axis0_msg)
     raises_oob(single_idx, (0, 100), "index 100", axis1_msg)
     raises_oob(single_idx, (0, 5, 100), "index 5", axis1_msg)
     raises_oob(single_idx, (0, 0, 100), "index 100", axis2_msg)
@@ -177,8 +179,9 @@ class CheckifyTransformTests(jtu.JaxTestCase):
 
     multi_idx = lambda x, i: update_op(x.at[i[0], :, i[1]])
     raises_oob(multi_idx, (0, 9), "index 9", axis2_msg)
-    # TODO(lenamartens): numpy reports index -5 here, need to normalize?
-    raises_oob(multi_idx, (-5, 9), "index -3", axis0_msg)
+    # This either reports "index -3" or "index -5" depending on which
+    # operation it lowers to.
+    raises_oob(multi_idx, (-5, 9), "index -", axis0_msg)
     raises_oob(multi_idx, (5, -9), "index 5", axis0_msg)
     raises_oob(multi_idx, ((0, 9), 0), "index 9", axis0_msg)
 

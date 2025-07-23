@@ -115,8 +115,7 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
       FutureWarning)
 
   idx = indexing.merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = indexing.index_to_gather(np.shape(x), idx,
-                                     normalize_indices=normalize_indices)
+  indexer = indexing.index_to_gather(np.shape(x), idx)
 
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
   # to handle cases like zeros(0)[array([], int32)].
@@ -148,7 +147,7 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
     x, indexer.gather_indices, y, dnums,
     indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
     unique_indices=indexer.unique_indices or unique_indices,
-    mode=mode)
+    mode=mode, wrap_negative_indices=normalize_indices)
   if indexer.scalar_bool_dims:
     out = lax.squeeze(out, indexer.scalar_bool_dims)
   return lax._convert_element_type(out, dtype, weak_type)
