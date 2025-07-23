@@ -1839,7 +1839,6 @@ pytype_strict_library(
     visibility = [":internal"] + jax_visibility("source_info_util"),
     deps = [
         ":traceback_util",
-        ":version",
         "//jax/_src/lib",
     ],
 )
