@@ -1488,8 +1488,6 @@ FailureOr<Value> canonicalize_vector_store(const CanonicalizeContext &ctx,
   return _canonicalize_store(ctx, raw_op);
 }
 
-// TODO(apaszke): Implement canonicalization for extf and truncf and use them
-// directly instead of inlining float ext/trunc into the body.
 FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
                                         Operation &raw_op) {
   auto op = cast<tpu::TransposeOp>(raw_op);
@@ -1507,11 +1505,9 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
       val_bf16 =
           builder.create<arith::SIToFPOp>(input_vty_bf16, op.getOperand());
     } else {
-      auto val_f32 = builder.create<tpu::ExtFOp>(
-          VectorType::get(input_vty.getShape(), builder.getF32Type()),
+      val_bf16 = builder.create<tpu::ExtFOp>(
+          VectorType::get(input_vty.getShape(), builder.getBF16Type()),
           op.getOperand());
-      val_bf16 = builder.create<tpu::TruncFOp>(
-          input_vty_bf16, val_f32, tpu::RoundingMode::kToNearestEven);
     }
 
     Value transposed_bf16 = builder.create<tpu::TransposeOp>(
@@ -1523,11 +1519,8 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
       new_result =
           builder.create<arith::FPToSIOp>(op.getType(), transposed_bf16);
     } else {
-      auto transposed_f32 = builder.create<tpu::ExtFOp>(
-          VectorType::get(output_vty.getShape(), builder.getF32Type()),
-          transposed_bf16);
       new_result = builder.create<tpu::TruncFOp>(
-          output_vty, transposed_f32, tpu::RoundingMode::kToNearestEven);
+          output_vty, transposed_bf16, tpu::RoundingMode::kToNearestEven);
     }
     op.replaceAllUsesWith(new_result);
     op.erase();
