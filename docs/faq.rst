@@ -778,7 +778,7 @@ can replace uses of :func:`jax.nn.relu`, etc.
 How can I convert a JAX Tracer to a NumPy array?
 ------------------------------------------------
 When inspecting a transformed JAX function at runtime, you'll find that array
-values are replaced by :class:`~jax.core.Tracer` objects::
+values are replaced by `jax.core.Tracer` objects::
 
   @jax.jit
   def f(x):
