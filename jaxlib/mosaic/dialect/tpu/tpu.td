@@ -338,6 +338,41 @@ def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store", [DefaultMemWrite]> {
   let hasCanonicalizeMethod = 1;
 }
 
+// tpu.scatter_store stores values to arbitrary locations in memory.
+//
+// Each input vector element has a corresponding index variadic which can be
+// found in the corresponding position of each vector in indices. The index
+// argument is thus a variadic of vectors of the same size of the input vector
+// rank, and each vector is the same length as the input vector.
+// For example, for a vector of length n with rank 2, the indices will look like:
+//   indices = [[idx0, idx1, ...], [idxn, idxn+1, ...]]
+// where [idx0, idxn] is the offset of the first vector element.
+//
+// When multiple vector elements have the same index to store to,
+// the data from the highest lane will be the one stored.
+// If add is true, then the data will be added from the
+// lowest lane to the highest lane.
+//
+//  valueToStore: Vector to be stored.
+//  base        : Memref specifying the base address.
+//  indices     : Offset of each element relative to the base address to store to.
+//  mask        : Optional elementwise vector mask.
+//  add         : If true, add source values to target values. Otherwise, overwrite.
+def TPU_ScatterStoreOp :TPU_Op<"scatter_store", [DefaultMemWrite, AttrSizedOperandSegments]> {
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I32, F32]>:$valueToStore,
+    MemRefOf<[I32, F32]>:$base,
+    Variadic<VectorOfNonZeroRankOf<[I32]>>:$indices,
+    Optional<VectorOfNonZeroRankOf<[I1]>>:$mask,
+    DefaultValuedAttr<BoolAttr, "false">:$add
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? attr-dict `:` type($base) `[` type($indices) `]` `,` type($valueToStore) `,` type($mask)
+  }];
+  let hasVerifier = 1;
+}
+
 // TODO(jevinjiang): deprecate to use dynamic_rotate.
 def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
   let description = [{
