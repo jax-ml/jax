@@ -15,8 +15,8 @@
 # ==============================================================================
 # Run Bazel GPU tests without RBE. This runs two commands: single accelerator
 # tests with one GPU a piece, multiaccelerator tests with all GPUS.
-# Requires that jaxlib, jax-cuda-plugin, and jax-cuda-pjrt wheels are stored
-# inside the ../dist folder
+# If $JAXCI_BUILD_JAXLIB=false, the job requires that jaxlib, jax-cuda-plugin,
+# and jax-cuda-pjrt wheels are stored inside the ../dist folder
 #
 # -e: abort script if one command fails
 # -u: error if undefined variable used
@@ -63,6 +63,20 @@ if [[ $host_memory_limit -lt $num_test_jobs ]]; then
 fi
 # End of test environment variables setup.
 
+# Set --//jax:build_jaxlib and --//jax:build_jax flag values.
+if [[ "$JAXCI_BUILD_JAXLIB" == 'wheel' ]]; then
+    JAX_BUILD_FLAGS="--//jax:build_jaxlib=wheel --//jax:build_jax=wheel"
+else
+    JAX_BUILD_FLAGS="--//jax:build_jaxlib=false --//jax:build_jax=false"
+fi
+
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+  FREETHREADED_FLAG="--@rules_python//python/config_settings:py_freethreaded=yes"
+else
+  FREETHREADED_FLAG=""
+fi
+
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
 set +e
@@ -71,17 +85,16 @@ set +e
 # It appears --run_under needs an absolute path.
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
 # should match the VM's CPU core count (set in `--local_test_jobs`).
-bazel test --config=ci_linux_x86_64_cuda \
+bazel test --config=rbe_linux_x86_64_cuda \
       --config=resultstore \
       --config=rbe_cache \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-      --//jax:build_jaxlib=false \
-      --//jax:build_jax=false \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
       --test_output=errors \
       --test_env=JAX_ACCELERATOR_COUNT=$gpu_count \
       --test_env=JAX_TESTS_PER_ACCELERATOR=$max_tests_per_gpu \
+      --strategy=TestRunner=local \
       --local_test_jobs=$num_test_jobs \
       --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
       --test_tag_filters=-multiaccelerator \
@@ -90,6 +103,9 @@ bazel test --config=ci_linux_x86_64_cuda \
       --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
+      --config=cuda_libraries_from_stubs \
+      $JAX_BUILD_FLAGS \
+      $FREETHREADED_FLAG \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests
 
@@ -98,21 +114,23 @@ first_bazel_cmd_retval=$?
 
 echo "Running multi-accelerator tests (without RBE)..."
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
-bazel test --config=ci_linux_x86_64_cuda \
+bazel test --config=rbe_linux_x86_64_cuda \
       --config=resultstore \
       --config=rbe_cache \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-      --//jax:build_jaxlib=false \
-      --//jax:build_jax=false \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
-      --jobs=8 \
+      --strategy=TestRunner=local \
+      --local_test_jobs=8 \
       --test_tag_filters=multiaccelerator \
       --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
       --test_env=JAX_SKIP_SLOW_TESTS=true \
       --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
+      $JAX_BUILD_FLAGS \
+      $FREETHREADED_FLAG \
+      --config=cuda_libraries_from_stubs \
       //tests:gpu_tests //tests/pallas:gpu_tests
 
 # Store the return value of the second bazel command.
