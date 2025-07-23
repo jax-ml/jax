@@ -7,6 +7,7 @@ scipy>=1.15.2; python_version>="3.13"
 ml_dtypes>=0.4.0
 etils[epath]
 opt-einsum
+portpicker
 
 # Needed to build wheels
 build

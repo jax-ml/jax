@@ -25,3 +25,5 @@ setuptools==80.0.0
 wheel==0.45.1
 pyproject-hooks==1.2.0
 packaging==25.0
+portpicker==1.6.0
+psutil==7.0.0
