@@ -410,6 +410,7 @@ NB_MODULE(_jax, m) {
               std::shared_ptr<xla::PjRtClient>(std::move(c_api_client));
           ifrt_options.kv_store = kv_store;
           ifrt_options.use_kv_store_for_topology_exchange = false;
+          ifrt_options.distributed_client = distributed_client;
           if (transfer_server_factory.has_value()) {
             ifrt_options.transfer_server_factory =
                 std::move(transfer_server_factory->factory_fn);
@@ -817,7 +818,7 @@ NB_MODULE(_jax, m) {
          std::optional<std::function<void(absl::Status)>>
              missed_heartbeat_callback,
          std::optional<bool> shutdown_on_destruction,
-         std::optional<bool> use_compression)
+         std::optional<bool> use_compression, std::optional<bool> recoverable)
           -> std::shared_ptr<xla::DistributedRuntimeClient> {
         bool compression = use_compression.value_or(false);
         xla::DistributedRuntimeClient::Options options;
@@ -841,6 +842,9 @@ NB_MODULE(_jax, m) {
         if (shutdown_on_destruction.has_value()) {
           options.shutdown_on_destruction = *shutdown_on_destruction;
         }
+        if (recoverable.has_value()) {
+          options.recoverable = *recoverable;
+        }
         return GetDistributedRuntimeClient(address, options, compression);
       },
       nb::arg("address"), nb::arg("node_id"),
@@ -850,7 +854,8 @@ NB_MODULE(_jax, m) {
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("missed_heartbeat_callback").none() = std::nullopt,
       nb::arg("shutdown_on_destruction").none() = std::nullopt,
-      nb::arg("use_compression").none() = std::nullopt);
+      nb::arg("use_compression").none() = std::nullopt,
+      nb::arg("recoverable").none() = std::nullopt);
 
   m.def("collect_garbage",
         []() { xla::GlobalPyRefManager()->CollectGarbage(); });
