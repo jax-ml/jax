@@ -926,9 +926,9 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
     else:
       zero_type = Zero  # type: ignore[assignment]
 
-    tangent_args = [trace.new_arg(pe.PartialVal.unknown(a)) if nz else make_zero(a)
-                    for a, nz in zip(tangent_avals, nonzeros)]
     with core.set_current_trace(trace):
+      tangent_args = [trace.new_arg(pe.PartialVal.unknown(a)) if nz else make_zero(a)
+                      for a, nz in zip(tangent_avals, nonzeros)]
       out_primals, out_tangents = jvp.call_wrapped(
           tuple(primals), tuple(tangent_args), **params)
 
