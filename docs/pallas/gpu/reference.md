@@ -535,7 +535,7 @@ unrelated. This is why we need to explicitly wait before we reuse TMEM again.
 
 ##### Stores
 
-Conversely, stores are performed using {py:func}`plgpu.async_load_tmem <jax.experimental.pallas.mosaic_gpu.async_store_tmem>` and awaited using {py:func}`plgpu.commit_tmem <jax.experimental.pallas.mosaic_gpu.commit_tmem>`:
+Conversely, stores are performed using {py:func}`plgpu.async_store_tmem <jax.experimental.pallas.mosaic_gpu.async_store_tmem>` and awaited using {py:func}`plgpu.commit_tmem <jax.experimental.pallas.mosaic_gpu.commit_tmem>`:
 
 ```python
 plgpu.async_store_tmem(tmem_ref, smem_ref[...])
