@@ -3022,7 +3022,7 @@ _scatter_reduction_computation = lambda x, y: y
 def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
              dimension_numbers, indices_are_sorted, unique_indices, mode,
              _in_avals: Sequence[core.ShapedArray],
-             _out_aval: core.ShapedArray, **kwargs):
+             _out_aval: core.ShapedArray):
   del unique_indices
   if update_jaxpr is None:
     assert not update_consts

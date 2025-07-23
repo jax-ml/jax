@@ -45,7 +45,6 @@ from jax._src.lax.utils import (
 )
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.named_sharding import NamedSharding
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, Shape
@@ -476,8 +475,7 @@ def scatter_add(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
   indices_are_sorted: bool = False, unique_indices: bool = False,
-  mode: str | GatherScatterMode | None = None,
-  out_sharding: NamedSharding | P | None = None) -> Array:
+  mode: str | GatherScatterMode | None = None) -> Array:
   """Scatter-add operator.
 
   Wraps `XLA's Scatter operator
@@ -552,13 +550,11 @@ def scatter_add(
                                        core.get_aval(lax._const(operand, 0)))
   operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
-  out_sharding = canonicalize_sharding(out_sharding, 'scatter_add')
   return scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=GatherScatterMode.from_any(mode),
-      out_sharding=out_sharding)
+      mode=GatherScatterMode.from_any(mode))
 
 
 def scatter_sub(
@@ -2177,7 +2173,7 @@ def _gather_transpose_rule(t, operand, indices, *, dimension_numbers,
     out = scatter_add(zeros, indices, t, scatter_dnums,
                       unique_indices=unique_indices,
                       indices_are_sorted=indices_are_sorted,
-                      mode=mode, out_sharding=operand.aval.sharding)
+                      mode=mode)
   return [out, None]
 
 def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
@@ -2371,12 +2367,9 @@ def _gather_lower(ctx, operand, indices, *,
     return hlo.DynamicGatherOp.build_generic(
         results=results, operands=operands, attributes=attributes).results
   else:
-    return [hlo.gather(
-        operand,
-        indices,
-        dnums,
-        mlir.dense_int_array(slice_sizes),
-        indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))]
+    out = hlo.gather(operand, indices, dnums, mlir.dense_int_array(slice_sizes),
+                     indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))
+    return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(gather_p, _gather_lower)
 
@@ -2396,7 +2389,7 @@ def _get_updates_batching_dims(indices_batching_dims, update_window_dims,
 
 def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
                         update_consts, dimension_numbers, indices_are_sorted,
-                        unique_indices, mode, **kwargs):
+                        unique_indices, mode):
   """Validates the well-formedness of the ``dimension_numbers`` argument to
   Scatter.
 
@@ -2711,11 +2704,7 @@ def _scatter_spec_computation(
 
 def _scatter_sharding_rule(
     operand, indices, updates, *, update_jaxpr, update_consts,
-    dimension_numbers, indices_are_sorted, unique_indices, mode, **kwargs):
-  # TODO(yashkatariya): Remove out_sharding from scatter when sharding rule
-  # verified.
-  if (out_sharding := kwargs.get('out_sharding', None)) is not None:
-    return out_sharding
+    dimension_numbers, indices_are_sorted, unique_indices, mode):
   out_mesh = _resolve_mesh(
       *(x.sharding.mesh for x in (operand, indices, updates)))
   out_spec = _scatter_spec_computation(operand, indices, updates,
@@ -2755,7 +2744,7 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
 
 def _scatter_addsub_jvp(
     prim, primals, tangents, *, update_jaxpr, update_consts, dimension_numbers,
-    indices_are_sorted, unique_indices, mode, **kwargs):
+    indices_are_sorted, unique_indices, mode):
   operand, indices, updates = primals
   g_operand, g_indices, g_updates = tangents
   del g_indices  # ignored
@@ -2763,7 +2752,7 @@ def _scatter_addsub_jvp(
       operand, indices, updates, update_jaxpr=update_jaxpr,
       update_consts=update_consts, dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode, **kwargs)
+      mode=mode)
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_primal_value(val_out)
   else:
@@ -2773,13 +2762,13 @@ def _scatter_addsub_jvp(
         g_operand, indices, g_updates, update_jaxpr=update_jaxpr,
         update_consts=update_consts, dimension_numbers=dimension_numbers,
         indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-        mode=mode, **kwargs)
+        mode=mode)
   return val_out, tangent_out
 
 
 def _scatter_addsub_transpose_rule(
     prim, t, operand, indices, updates, *, update_jaxpr, update_consts,
-    dimension_numbers, indices_are_sorted, unique_indices, mode, **kwargs):
+    dimension_numbers, indices_are_sorted, unique_indices, mode):
   assert not ad.is_undefined_primal(indices)
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
@@ -2866,8 +2855,7 @@ def _scatter_mul_transpose_rule(t, operand, indices, updates, *,
 
 def _scatter_batching_rule(scatter_op, axis_data, batched_args, batch_dims, *,
                            update_jaxpr, update_consts, dimension_numbers,
-                           indices_are_sorted, unique_indices, mode,
-                           **kwargs):
+                           indices_are_sorted, unique_indices, mode):
   operand, indices, updates = batched_args
   operand_bdim, indices_bdim, updates_bdim = batch_dims
 
@@ -2875,14 +2863,10 @@ def _scatter_batching_rule(scatter_op, axis_data, batched_args, batch_dims, *,
   # it at the front (so that we can scatter into it)
   size = next(x.shape[ax] for x, ax in zip(batched_args, batch_dims)
               if ax is not None)
-  operand = batching.bdim_at_front(operand, operand_bdim, size)
-  updates = batching.bdim_at_front(updates, updates_bdim, size)
-  if 'out_sharding' in kwargs:
-    out_s = kwargs['out_sharding']
-    kw = {'out_sharding': (None if out_s is None else
-                           batching.get_sharding_for_vmap(axis_data, out_s, 0))}
-  else:
-    kw = {}
+  operand = batching.bdim_at_front(operand, operand_bdim, size,
+                                   axis_data.explicit_mesh_axis)
+  updates = batching.bdim_at_front(updates, updates_bdim, size,
+                                   axis_data.explicit_mesh_axis)
 
   if indices_bdim is None:
     inserted_window_dims = tuple(np.add(1, dimension_numbers.inserted_window_dims))
@@ -2901,11 +2885,11 @@ def _scatter_batching_rule(scatter_op, axis_data, batched_args, batch_dims, *,
     return scatter_op.bind(
       operand, indices, updates, dimension_numbers=dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode, update_jaxpr=update_jaxpr, update_consts=update_consts,
-      **kw), 0
+      mode=mode, update_jaxpr=update_jaxpr, update_consts=update_consts), 0
 
   # see the third case in _gather_batching_rule for comparison and comments
-  indices = batching.bdim_at_front(indices, indices_bdim, size)
+  indices = batching.bdim_at_front(indices, indices_bdim, size,
+                                   axis_data.explicit_mesh_axis)
 
   update_window_dims = tuple(np.add(1, dimension_numbers.update_window_dims))
   inserted_window_dims = tuple(np.add(1, dimension_numbers.inserted_window_dims))
@@ -2924,8 +2908,7 @@ def _scatter_batching_rule(scatter_op, axis_data, batched_args, batch_dims, *,
   return scatter_op.bind(
       operand, indices, updates, dimension_numbers=dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode, update_jaxpr=update_jaxpr, update_consts=update_consts,
-      **kw), 0
+      mode=mode, update_jaxpr=update_jaxpr, update_consts=update_consts), 0
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
@@ -3282,7 +3265,7 @@ def _scatter_lower_opaque(ctx, operand, indices, updates, *,
 
 def _scatter_lower(ctx, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
-                   indices_are_sorted, unique_indices, mode, **kwargs):
+                   indices_are_sorted, unique_indices, mode):
   if update_jaxpr is None:
     assert not update_consts
     operand_dtype = ctx.avals_in[0].dtype
@@ -3345,7 +3328,7 @@ def _real_dtype(dtype): return np.finfo(dtype).dtype
 def _scatter_addsub_lower_gpu(
     ctx, operand, indices, updates, *, update_jaxpr, update_consts,
     dimension_numbers, indices_are_sorted, unique_indices, mode,
-    reduce_op, **kwargs):
+    reduce_op):
   operand_aval_in, _, updates_aval_in = ctx.avals_in
   if operand_aval_in.dtype != np.complex128:
     return _scatter_lower(ctx, operand, indices, updates,
