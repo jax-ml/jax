@@ -990,6 +990,7 @@ def lower_jaxpr_to_module(
           smem_scratch_shape=scratch_buffers,
           lowering_semantics=lowering_semantics,
           module_name=mlir.sanitize_name(debug_info.func_name),
+          kernel_name=mlir.sanitize_name(debug_info.func_name),
           prof_spec=prof_spec,
       )
   )
