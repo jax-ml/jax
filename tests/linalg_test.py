@@ -2130,7 +2130,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cpu", "gpu")
   def test_solve_sylvester(self, shape, dtype, method):
     if jtu.test_device_matches(["gpu"]) and method == "schur":
-        self.skipTest("Schur not supported on GPU.")
+      self.skipTest("Schur not supported on GPU.")
 
     tol = {np.float32: 3e-2, np.complex64: 3e-2}
 
@@ -2165,7 +2165,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     eigenvalues of B as negative eigenvalues of A. We say that A and B are ill-conditioned.
     """
     if jtu.test_device_matches(["gpu"]) and method == "schur":
-        self.skipTest("Schur not supported on GPU.")
+      self.skipTest("Schur not supported on GPU.")
 
     rng = jtu.rand_default(self.rng())
 
