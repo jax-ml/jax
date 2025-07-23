@@ -173,7 +173,6 @@ bool IsSanitized() { return IsAsan() || IsMsan() || IsTsan(); }
 
 }  // namespace
 
-
 NB_MODULE(_jax, m) {
   // Initialize ABSL logging because code within XLA uses it.
 #ifndef PLATFORM_GOOGLE
@@ -439,6 +438,7 @@ NB_MODULE(_jax, m) {
           ifrt::PjRtClient::CreateOptions ifrt_options;
           ifrt_options.pjrt_client =
               std::shared_ptr<PjRtClient>(std::move(c_api_client));
+          ifrt_options.distributed_client = distributed_client;
           if (transfer_server_factory.has_value()) {
             ifrt_options.transfer_server_factory =
                 std::move(transfer_server_factory->factory_fn);
