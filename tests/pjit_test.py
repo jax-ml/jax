@@ -62,6 +62,7 @@ from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
+from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -2210,12 +2211,23 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with jax.default_device('cpu'):
       cpu_arr = jnp.array([1, 2, 3], dtype=np.float32)
-    tpu_arr = jax.device_put(cpu_arr, jax.devices('tpu')[0])
+    tpu_arr = jax.device_put(cpu_arr, tpu_device)
 
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(2):
         np.array(cpu_arr + tpu_arr)
     self.assertEqual(count(), 1)
+
+  def test_cpu_bfloat16_to_tpu(self):
+    if ifrt_version < 17:
+      self.skipTest('Requires ifrt_version >= 17')
+    mesh = jtu.create_mesh((1,), 'x')
+    np_inp = np.zeros((8, 2), dtype=jnp.bfloat16)
+
+    arr_cpu = jax.device_put(np_inp, jax.devices('cpu')[0])
+    arr_tpu = jax.device_put(arr_cpu, NamedSharding(mesh, P()))
+
+    jax.jit(lambda x: jnp.sum(x))(arr_tpu)  # doesn't crash
 
   def test_pjit_single_device_sharding_cache(self):
     a = jnp.arange(16).reshape((8, 2))
