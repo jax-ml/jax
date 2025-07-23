@@ -2174,6 +2174,7 @@ pytype_strict_library(
     deps = [
         ":jax",
         ":random",
+        ":typing",
     ],
 )
 
