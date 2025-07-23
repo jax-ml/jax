@@ -37,14 +37,16 @@ for wheel in $WHEELS; do
     wheel_name=$(basename $wheel)
     OUTPUT=${OUTPUT_FULL//${wheel_name}/}
 
-    # If a wheel is manylinux2014 compliant, `auditwheel show` will return the
-    # platform tag as manylinux_2_17. manylinux2014 is an alias for
-    # manylinux_2_17.
-    if echo "$OUTPUT" | grep -q "manylinux_2_17"; then
+    # If a wheel is manylinux_2_27 or manylinux2014 compliant, `auditwheel show`
+    # will return platform tag as manylinux_2_27 or manylinux_2_17 respectively.
+    # manylinux2014 is an alias for manylinux_2_17.
+    if echo "$OUTPUT" | grep -q "manylinux_2_27"; then
+        printf "\n$wheel_name is manylinux_2_27 compliant.\n"
+    elif echo "$OUTPUT" | grep -q "manylinux_2_17"; then
         printf "\n$wheel_name is manylinux2014 compliant.\n"
     else
         echo "$OUTPUT_FULL"
-        printf "\n$wheel_name is NOT manylinux2014 compliant.\n"
+        printf "\n$wheel_name is NOT manylinux_2_27 or manylinux2014 compliant.\n"
         exit 1
     fi
 done
