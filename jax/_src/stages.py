@@ -299,6 +299,9 @@ class ArgInfo:
   _aval: core.AbstractValue
   donated: bool
 
+  def __len__(self):
+    return self._aval.__len__()
+
   @property
   def shape(self):
     return self._aval.shape  # pytype: disable=attribute-error
