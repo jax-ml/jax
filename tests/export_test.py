@@ -29,6 +29,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import export
 from jax.experimental import pjit
+from jax._src.lib import ifrt_version
 from jax._src.shard_map import shard_map
 from jax.sharding import NamedSharding
 from jax.sharding import Mesh
@@ -2080,7 +2081,7 @@ class JaxExportTest(jtu.JaxTestCase):
     r = jax.jit(exp.call, out_shardings=NamedSharding(old_mesh_0, P("old_b")))(a, b)
     self.assertAllClose(a + b, r)
 
-  def test_lower_wth_different_meshes_axis_names(self):
+  def test_lower_with_different_meshes_axis_names(self):
     mesh1 = jtu.create_mesh((4, 2), ("a", "b"))
     mesh2 = jtu.create_mesh((4, 2), ("x", "y"))
     @jax.jit
@@ -2104,6 +2105,51 @@ class JaxExportTest(jtu.JaxTestCase):
         get_exported(f)(args)
     else:
        get_exported(f)(args)
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+        {"use_shardy_on_save": True, "error_msg": "Please enable Shardy",
+         "poly_shape": False},
+        {"use_shardy_on_save": False, "error_msg": "", "poly_shape": False},
+        {"use_shardy_on_save": False, "error_msg": "", "poly_shape": True},
+    ])
+  def test_lower_load_with_different_partitioners(self, use_shardy_on_save,
+                                                  error_msg, poly_shape):
+    if ifrt_version < 16:
+      self.skipTest("Falling back to GSPMD when Shardy is enabled for an old "
+                    "GSPMD checkpoint is only supported in IFRT version 16+")
+    with config.use_shardy_partitioner(use_shardy_on_save):
+      mesh = jtu.create_mesh((8,), ("a",))
+      @jax.jit
+      def f(x, y):
+        z = x + y
+        return jax.lax.with_sharding_constraint(
+            z, NamedSharding(mesh, P("a")))
+
+      args = (
+          jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh, P(None, "a"))),
+          jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh, P("a"))))
+
+      if poly_shape:
+        args = export.symbolic_args_specs(args, shapes_specs=["32, a", "32, a"])
+
+      exp = get_exported(f)(*args)
+
+      with config.use_shardy_partitioner(not use_shardy_on_save):
+        a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+        a = jax.device_put(a, NamedSharding(mesh, P(None, "a")))
+        b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+        b = jax.device_put(b, NamedSharding(mesh, P("a")))
+
+        if use_shardy_on_save:
+          with self.assertRaisesRegex(ValueError, error_msg):
+            jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
+        else:
+          jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
 
 
 
