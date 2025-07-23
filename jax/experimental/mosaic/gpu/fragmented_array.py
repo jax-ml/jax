@@ -2052,8 +2052,6 @@ class FragmentedArray:
         )
       # Reduce across warp lanes, if necessary (using warp shuffles).
       if any(reduced_dims[d] for d in layout.partitioned_lane_dims):
-        if utils.bitwidth(out_reg.type) > 32:
-          raise NotImplementedError  # Need to implement wide shfl_bfly.
         lane_stride = 1
         for d in layout.lane_dims[::-1]:  # Iterate minor-to-major
           if isinstance(d, Replicated):

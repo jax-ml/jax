@@ -1414,11 +1414,20 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
     distance = c(distance, i32)
   if (result_type := x.type) != i32:
     if (x_bitwidth := bitwidth(x.type)) < 32:  # Pad to 32-bits if necessary.
+      assert 32 % x_bitwidth == 0
       x = bitcast(x, ir.IntegerType.get_signless(x_bitwidth))
       empty32 = llvm.mlir_undef(ir.VectorType.get((32 // x_bitwidth,), x.type))
       x = vector.insertelement(x, empty32, position=c(0, index))
-    elif x_bitwidth != 32:
-      raise ValueError(f"Unsupported bitwidth {x_bitwidth}")
+    elif x_bitwidth > 32:
+      assert x_bitwidth % 32 == 0
+      num_words = x_bitwidth // 32
+      xs_vec = bitcast(x, ir.VectorType.get((num_words,), i32))
+      y = llvm.mlir_undef(xs_vec.type)
+      for i in range(num_words):
+        x_elem = vector.extractelement(xs_vec, position=c(i, index))
+        y_elem = shfl_bfly(x_elem, distance)
+        y = vector.insertelement(y_elem, y, position=c(i, index))
+      return bitcast(y, result_type)
     x = bitcast(x, i32)
   y = nvvm.shfl_sync(
       i32, c(0xFFFFFFFF, i32), x, distance, c(0x1F, i32), nvvm.ShflKind.bfly,
