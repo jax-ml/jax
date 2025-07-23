@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2025 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,25 +14,20 @@
 
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
+from typing import Any
 
-from jax._src.abstract_arrays import (
-  array_types as array_types
-)
+from jax._src.lib import _jax
 
-from jax._src.core import (
-  ClosedJaxpr as ClosedJaxpr,
-  Jaxpr as Jaxpr,
-  JaxprEqn as JaxprEqn,
-  jaxpr_as_fun as jaxpr_as_fun,
-  Literal as Literal,
-  Primitive as Primitive,
-  Token as Token,
-  Var as Var,
-)
 
-from . import primitives as primitives
+def is_pjit_function(fn: Any) -> bool:
+  return isinstance(fn, _jax.PjitFunction)
 
-from .transform import (
-  is_pjit_function as is_pjit_function,
-  is_pmap_function as is_pmap_function,
-)
+
+def is_pmap_function(fn: Any) -> bool:
+  return isinstance(fn, _jax.PmapFunction)
+
+
+__all__ = [
+    "is_pjit_function",
+    "is_pmap_function",
+]

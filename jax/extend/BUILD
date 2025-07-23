@@ -51,6 +51,7 @@ py_library_providing_imports_info(
         "//jax:custom_derivatives",
         "//jax:lax",
         "//jax:random",
+        "//jax/_src/lib",
     ],
 )
 
