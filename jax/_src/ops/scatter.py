@@ -28,7 +28,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import numpy as jnp
-from jax._src import sharding
 from jax._src import tree_util
 from jax._src import util
 from jax._src.lax import lax
@@ -37,7 +36,7 @@ from jax._src.numpy import indexing
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
 from jax._src.pjit import auto_axes
-from jax._src.sharding_impls import canonicalize_sharding
+from jax._src.sharding_impls import NamedSharding
 from jax._src.typing import Array, ArrayLike
 
 
@@ -49,7 +48,7 @@ Scalar = complex | float | int | np.number
 def _scatter_update(x: ArrayLike, idx: Index, y: ArrayLike, scatter_op: Callable[..., Array],
                     indices_are_sorted: bool, unique_indices: bool,
                     mode: slicing.GatherScatterMode | str | None = None, normalize_indices: bool = True,
-                    out_sharding: sharding.Sharding | None = None):
+                    out_sharding: NamedSharding | None = None):
   """Helper for indexed updates.
 
   Computes the value of x that would result from computing::
@@ -87,7 +86,6 @@ def _scatter_update(x: ArrayLike, idx: Index, y: ArrayLike, scatter_op: Callable
       unique_indices=unique_indices, mode=mode,
       normalize_indices=normalize_indices)
   if out_sharding is not None:
-    out_sharding = canonicalize_sharding(out_sharding, 'scatter')  # type: ignore
     return auto_axes(internal_scatter, out_sharding=out_sharding,
                      axes=out_sharding.mesh.explicit_axes  # type: ignore
                      )(x, y, dynamic_idx)

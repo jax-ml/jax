@@ -1068,6 +1068,8 @@ def flatten_spec(spec):
       out.append(s)
   return out
 
+
+@util.cache()
 def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
                           api_name: str, check_mesh_consistency: bool = True
                           ) -> NamedSharding | None:
