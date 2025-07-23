@@ -257,8 +257,8 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
   }];
 
   let arguments = (ins
-    MemRefOf<[AnyType]>:$source,
-    MemRefOf<[AnyType]>:$destination,
+    AnyMemRef:$source,
+    AnyMemRef:$destination,
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
     Variadic<I32>:$indices,
     PtxPredicate:$predicate,
@@ -305,8 +305,8 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
   }];
 
   let arguments = (ins
-    MemRefOf<[AnyType]>:$source,
-    MemRefOf<[AnyType]>:$destination,
+    AnyMemRef:$source,
+    AnyMemRef:$destination,
     Variadic<I32>:$indices,
     PtxPredicate:$predicate,
 
@@ -394,7 +394,7 @@ def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
   let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";
 
   let arguments = (ins I32:$offset);
-  let results = (outs MemRefOf<[AnyType]>);
+  let results = (outs AnyMemRef);
 }
 
 def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
@@ -513,16 +513,16 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpIn
   }];
 
   let arguments = (ins
-    MemRefRankOf<[AnyTypeOf<[F16, F32, I32]>], [2]>:$accumulator,
+    MemRefRankOf<[F16, F32, I32], [2]>:$accumulator,
     MemRefRankOf<[MosaicGPU_TcGen05MMASupportedABType], [2]>:$a,
     MemRefRankOf<[MosaicGPU_TcGen05MMASupportedABType], [2]>:$b,
     I1:$accumulate,
     // TODO: allanrenucci - F8E4M3FNU (ue4m3) does not exist in MLIR. We use F8E4M3FN (e4m3) instead.
-    Optional<MemRefRankOf<[AnyTypeOf<[F8E8M0FNU, F8E4M3FN]>], [2]>>:$a_scaled,
-    Optional<MemRefRankOf<[AnyTypeOf<[F8E8M0FNU, F8E4M3FN]>], [2]>>:$b_scaled,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$a_scaled,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$b_scaled,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
-  let results = (outs MemRefRankOf<[AnyTypeOf<[F16, F32, I32]>], [2]>);
+  let results = (outs MemRefRankOf<[F16, F32, I32], [2]>);
 
   let extraClassDeclaration = [{
     static llvm::LogicalResult inferReturnTypes(
@@ -588,7 +588,7 @@ def MosaicGPU_ReturnOp : Op<MosaicGPU_Dialect, "return",
   }];
 
   // The operand's type must match the parent CustomPrimitiveOp's result type.
-  let arguments = (ins Variadic<VectorOfAnyRankOf<[AnyType]>>:$operands);
+  let arguments = (ins Variadic<AnyVectorOfAnyRank>:$operands);
   let assemblyFormat = [{ attr-dict ($operands^ `:` type($operands))? }];
   let hasVerifier = 1;
 }
@@ -615,7 +615,7 @@ def MosaicGPU_CustomPrimitiveOp : Op<MosaicGPU_Dialect, "custom_primitive",
     ArrayAttr:$out_layouts
   );
 
-  let results = (outs Variadic<VectorOfAnyRankOf<[AnyType]>>);
+  let results = (outs Variadic<AnyVectorOfAnyRank>);
   let regions = (region AnyRegion:$body);
 
   let hasVerifier = 1;
@@ -629,12 +629,12 @@ def MosaicGPU_WithTransformsOp : Op<MosaicGPU_Dialect, "with_transforms",
   }];
 
   let arguments = (
-    ins MemRefOf<[AnyType]>:$ref,
+    ins AnyMemRef:$ref,
     // Attributes
     ArrayAttr:$transforms
   );
 
-  let results = (outs MemRefOf<[AnyType]>);
+  let results = (outs AnyMemRef);
 }
 
 def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
