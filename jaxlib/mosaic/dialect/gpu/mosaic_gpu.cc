@@ -522,7 +522,8 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
 }
 
 llvm::LogicalResult ReturnOp::verify() {
-  auto custom_primitive_op = cast<CustomPrimitiveOp>((*this)->getParentOp());
+  auto custom_primitive_op =
+      llvm::cast<CustomPrimitiveOp>((*this)->getParentOp());
 
   // The operand number and types must match the custom primitive signature.
   const auto& results = custom_primitive_op->getResultTypes();
