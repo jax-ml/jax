@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections import OrderedDict, namedtuple
+import itertools
 import re
 from functools import partial, wraps
 import json
@@ -6960,7 +6961,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                            jax.NamedSharding(mesh, P('x', None)))
     tok = jax.device_put(jnp.arange(8 * 4).reshape(8, 4),
                          jax.NamedSharding(mesh, P()))
-    vmap_tok = jax.device_put(jnp.arange(64 * 4).reshape(64, 4),
+    tok_vmap = jax.device_put(jnp.arange(64 * 4).reshape(64, 4),
                          jax.NamedSharding(mesh, P('x', None)))
 
     @jax.jit
@@ -6982,18 +6983,56 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(out3.aval.sharding.spec, P('y', 'x', None))
       return out, out2, out3
 
-    outs = f(embed, tok, vmap_tok)
+    outs = f(embed, tok, tok_vmap)
     self.assertEqual(outs[0].sharding, NamedSharding(mesh, P('x', None, None)))
 
+    # Grad on out3 not returned as it has sharded (unbatched with operand)
+    # indexing, so transpose would require collectives.
     def g(x, y, z):
       outs = f(x, y, z)
-      return sum((x.sum() for x in jax.tree.leaves(outs)))
+      return outs[0].sum() + outs[1].sum()
 
-    out = jax.jit(jax.grad(g))(embed, tok, vmap_tok)
+    out = jax.jit(jax.grad(g))(embed, tok, tok_vmap)
     self.assertEqual(out.sharding, embed.sharding)
 
-    out = jax.grad(g)(embed, tok, vmap_tok)
+    out = jax.grad(g)(embed, tok, tok_vmap)
     self.assertEqual(out.sharding, embed.sharding)
+
+  # TODO(yashkatariya): Add add and set once out_sharding=operand_sharding is
+  # removed from array methods x.at[y].set/add.
+  @parameterized.named_parameters(
+      (f'operand_{spec_name}_sharded_{op_name}', operand_spec, op)
+      for (spec_name, operand_spec), (op_name, op) in itertools.product(
+          (('xy', P('x', None, 'y')), ('x', P('x', None, None))),
+          (('mul', lambda x, ind, y: x.at[ind].mul(y)),
+           ('min', lambda x, ind, y: x.at[ind].min(y)),
+           ('max', lambda x, ind, y: x.at[ind].max(y)),
+           ('dynamic_update_slice_in_dim', lambda x, ind, y: (
+               jax.lax.dynamic_update_slice_in_dim(x, y[None], ind, axis=0)))),
+          #  ('set', lambda x, ind, y: x.at[ind].set(y)),
+          #  ('add', lambda x, ind, y: x.at[ind].add(y)),
+      )
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_scatter_sharding_rule(self, operand_spec, scatter_fn, mesh):
+    operand = jax.device_put(jnp.zeros((2, 10, 8)),
+                             jax.NamedSharding(mesh, operand_spec))
+    indices = jax.device_put(jnp.array([2, 3], dtype=jnp.int32),
+                             jax.NamedSharding(mesh, P('x')))
+    updates = jax.device_put(jnp.ones((2, 8)),
+                             jax.NamedSharding(mesh, P('x', 'y')))
+
+    f = jax.jit(jax.vmap(scatter_fn))
+
+    out = f(operand, indices, updates)
+    self.assertEqual(out.sharding.spec, P('x', None, 'y'))
+
+    def g(*args):
+      return f(*args).sum()
+
+    outs = jax.grad(g, argnums=(0, 2))(operand, indices, updates)
+    self.assertEqual(outs[0].sharding.spec, P('x', None, 'y'))
+    self.assertEqual(outs[1].sharding.spec, P('x', 'y'))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshard_error(self, mesh):
