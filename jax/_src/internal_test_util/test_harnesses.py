@@ -47,18 +47,21 @@ from typing import Any, NamedTuple, Union
 from absl.testing import parameterized as absl_parameterized
 import numpy as np
 
-import jax
-from jax import dtypes
-from jax import lax
-from jax import numpy as jnp
-
 from jax._src import ad_util
+from jax._src import api
 from jax._src import config
 from jax._src import dispatch
+from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src import prng
+from jax._src import random
 from jax._src import test_util as jtu
+from jax._src import typing
+from jax._src import xla_bridge as xb
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
+from jax._src.numpy import linalg as jnp_linalg
 from jax._src import random as jax_random
 
 # mypy generates a lot of false positive due to re-assigned variables.
@@ -649,7 +652,7 @@ def _make_device_put_harness(name,
                              shape=(3, 4),
                              dtype=np.float32,
                              device=None):
-  _device_fn = lambda: jax.devices(device)[0] if device is not None else None
+  _device_fn = lambda: xb.devices(device)[0] if device is not None else None
   define(
       "device_put",
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{device=}",
@@ -802,7 +805,7 @@ def _make_argminmax_harness(prim,
                             name,
                             *,
                             shape=(15,),
-                            dtype=jnp.float32,
+                            dtype=np.float32,
                             axes=(0,),
                             index_dtype=np.int32,
                             arr=None,
@@ -2046,7 +2049,7 @@ def _make_linear_solve_harnesses():
     return lax.custom_linear_solve(matvec, b, solve, transpose_solve, symmetric)
 
   def explicit_jacobian_solve(matvec, b):
-    return lax.stop_gradient(jnp.linalg.solve(jax.jacobian(matvec)(b), b))
+    return lax.stop_gradient(jnp_linalg.solve(api.jacobian(matvec)(b), b))
 
   def _make_harness(name,
                     *,
@@ -2345,7 +2348,7 @@ def _make_select_and_scatter_add_harness(name,
                                          padding=((0, 0), (0, 0), (0, 0)),
                                          nb_inactive_dims=0):
   ones = (1,) * len(shape)
-  cotangent_shape = jax.eval_shape(
+  cotangent_shape = api.eval_shape(
       lambda x: lax_windowed_reductions._select_and_gather_add(
           x, x, lax.ge_p, window_dimensions, window_strides, padding,
           ones, ones),
@@ -2719,20 +2722,20 @@ for dtype in (np.float32, np.float64):
     define(
         "random_gamma",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.jit(lambda x: jax_random.gamma(jax.random.key(42), x)),
+        api.jit(lambda x: jax_random.gamma(random.key(42), x)),
         [RandArg(shape, dtype)],
         dtype=dtype)
 
 
 def wrap_and_split():
-  key = jax.random.key(42)
-  result = jax.random.split(key, 2)
-  return jax.random.key_data(result)
+  key = random.key(42)
+  result = random.split(key, 2)
+  return random.key_data(result)
 
 define(
     "random_split",
     "",
-    jax.jit(wrap_and_split),
+    api.jit(wrap_and_split),
     [],
     dtype=np.uint32)
 
@@ -2743,9 +2746,9 @@ for dtype in jtu.dtypes.all_floating:
       define(
           "random_categorical",
           f"shape={jtu.format_shape_dtype_string(shape, dtype)}_{axis=}",
-          lambda x, axis: jax.random.categorical(
+          lambda x, axis: random.categorical(
             # TODO(b/416027995): Change this key back to 42.
-            jax.random.key(1337), x, axis),
+            random.key(1337), x, axis),
           [RandArg(shape, dtype),
            StaticArg(axis)],
           dtype=dtype,
@@ -2756,8 +2759,8 @@ for dtype in jtu.dtypes.all_floating:
     define(
         "random_uniform",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        lambda shape, dtype: jax.random.uniform(
-          jax.random.key(42), shape, dtype),
+        lambda shape, dtype: random.uniform(
+          random.key(42), shape, dtype),
         [StaticArg(shape), StaticArg(dtype)],
         dtype=dtype)
 
@@ -2769,8 +2772,8 @@ for dtype in jtu.dtypes.all_integer:
     define(
         "random_randint",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        lambda shape, minval, maxval, dtype: jax.random.randint(
-          jax.random.key(42), shape, minval, maxval, dtype),
+        lambda shape, minval, maxval, dtype: random.randint(
+          random.key(42), shape, minval, maxval, dtype),
         [StaticArg(shape),
          StaticArg(-5),  # minval
          StaticArg(maxval),
@@ -3362,7 +3365,7 @@ for padding, lhs_dilation, rhs_dilation in [
         lhs_dilation=lhs_dilation,
         rhs_dilation=rhs_dilation)
 
-key_types: list[tuple[tuple[int, ...], jax.typing.DTypeLike]]
+key_types: list[tuple[tuple[int, ...], typing.DTypeLike]]
 key_types = [((4,), np.uint32)]
 if config.enable_x64.value:
   key_types.append(((2,), np.uint64))
@@ -3392,7 +3395,7 @@ def _make_iota_2x32_shape_harness(shape):
       f"shape=({shapestr})",
       lambda shape: prng.iota_2x32_shape_p.bind(shape=shape),
       [StaticArg(shape)],
-      dtype=jnp.uint32,
+      dtype=np.uint32,
       shape=shape)
 
 for shape in [(3,), (5, 7, 4), (100, 100)]:
