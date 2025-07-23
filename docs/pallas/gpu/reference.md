@@ -689,7 +689,8 @@ helper. We recommend reviewing the [software pipelining guide](./pipelining.md).
 
 ```python
 @pl.run_state
-def run_kernel(x_ref, y_ref):
+def run_kernel(refs):
+  x_ref, y_ref = refs
   # Here, we're not in the kernel yet! pl.run_state simply changes the JAX
   # immutable arrays into mutable GMEM (not SMEM!) references.
 
@@ -700,11 +701,11 @@ def run_kernel(x_ref, y_ref):
   def kernel_body():
     # Once we enter the pl.core_map scope, we are in the body of the kernel.
     block_slice = pl.ds(lax.axis_index("x") * 128, 128)
-    o_ref[block_slice] = x_ref[block_slice] + 1
+    y_ref[block_slice] = x_ref[block_slice] + 1
 
-x = jnp.arange(128, jnp.float32)
+x = jnp.arange(256, jnp.float32)
 y_init = jnp.zeros_like(x)
-y = run_kernel(x, y_init)
+_, y = run_kernel(x, y_init)
 np.testing.assert_array_equal(y, x + 1)
 ```
 
@@ -721,12 +722,12 @@ mesh = plgpu.Mesh(grid=(2,), grid_names=("x",))
     out_shape=jax.ShapeDtypeStruct((256,), jnp.float32),
     mesh=mesh
 )
-def increment_kernel_core_map(x_ref, y_ref):
+def run_kernel(x_ref, y_ref):
   # x_ref and y_ref are in GMEM!
   block_slice = pl.ds(lax.axis_index("x") * 128, 128)
-  o_ref[block_slice] = x_ref[block_slice] + 1
+  y_ref[block_slice] = x_ref[block_slice] + 1
 
-x = jnp.arange(128, jnp.float32)
+x = jnp.arange(256, jnp.float32)
 y = run_kernel(x)  # No need to preallocate outputs as in pl.core_map.
 np.testing.assert_array_equal(y, x + 1)
 ```
@@ -752,23 +753,25 @@ synchronizing through a barrier and even exchanging data through SMEM.
 
 ```python
 mesh = plgpu.Mesh(num_threads=2, thread_name="pallas_thread")
+x = jnp.arange(128, jnp.float32)
+
 @functools.partial(
-  plgpu.kernel, out_shape=x, mesh=mesh, scratch_shapes=[plgpu.Barrier()]
+  plgpu.kernel, out_shape=x, mesh=mesh,
+  scratch_shapes=[plgpu.SMEM(x.shape, x.dtype), plgpu.Barrier()]
 )
-def run_kernel(x_ref, y_ref, barrier_ref):
+def run_kernel(x_ref, y_ref, smem_ref, barrier_ref):
   thread_id = jax.lax.axis_index("pallas_thread")
 
   @pl.when(thread_id == 0)
   def producer_thread():
-    smem_val = x_ref[...] + 1
+    smem_ref[...] = x_ref[...] + 1
     plgpu.barrier_arrive(barrier_ref)  # Signal the consumer thread
 
   @pl.when(thread_id == 1)
   def consumer_thread():
     plgpu.barrier_wait(barrier_ref)  # Wait for the producer thread
-    out_ref[...] = x_ref[...] + 1
+    out_ref[...] = smem_ref[...] + 1
 
-x = jnp.arange(128, jnp.float32)
 y = run_kernel(x)  # There's no need to preallocate the input anymore.
 np.testing.assert_array_equal(y, x + 2)
 ```
