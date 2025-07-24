@@ -223,6 +223,8 @@ Parallel operators
     pswapaxes
     axis_index
     axis_size
+    psend
+    precv
 
 Sharding-related operators
 --------------------------
