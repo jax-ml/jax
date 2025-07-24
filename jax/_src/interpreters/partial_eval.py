@@ -1809,7 +1809,7 @@ class JaxprStackFrame:
     ) -> tuple[Jaxpr, list[Any]]:
     eqns = self.get_eqns()
     outvars = [t.val for t in out_tracers]
-    constvars, constvals = unzip2(self.constvar_to_val.items())
+    constvars, constvals = unzip2(self.constvar_to_val.copy().items())
     constvars, constvals = _drop_unused_vars(constvars, constvals, eqns, outvars)
     effs = make_jaxpr_effects(constvars, self.invars, outvars, eqns)
 
@@ -1825,7 +1825,7 @@ class JaxprStackFrame:
                 debug_info: core.DebugInfo):
     eqns = self.get_eqns()
     outvars = [t.val for t in out_tracers]
-    constvars, constvals = unzip2(self.constvar_to_val.items())
+    constvars, constvals = unzip2(self.constvar_to_val.copy().items())
     constvars, constvals = _drop_unused_vars(constvars, constvals, eqns, outvars)
     effs = make_jaxpr_effects(constvars, self.invars, outvars, eqns)
     jaxpr = Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info)
@@ -1856,7 +1856,7 @@ class JaxprStackFrame:
         active_vars.difference_update(produced)
         active_vars.update({v for v in eqn.invars if type(v) is Var})
     invar_positions = [i for i, v in enumerate(self.invars) if v in active_vars]
-    constvars = active_vars & set(self.constvar_to_val)
+    constvars = active_vars & set(self.constvar_to_val.copy())
     const_eqns = [eqn for eqn in eqns if any(
         v in constvars if type(v) is Var else type(v) is Literal
         for v in eqn.invars)]
