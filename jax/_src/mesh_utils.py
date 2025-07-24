@@ -261,7 +261,7 @@ def _create_device_mesh_for_nd_torus(
       list(enumerate(mesh_shape))
   ):
     # Preferentially map to more physical axes first for higher bandwidth.
-    for num_axes in range(3, 0, -1):
+    for num_axes in range(len(physical_mesh.shape), 0, -1):
       # Try assign to any subset of size num_axes. Generate all candidates.
       indices_and_axes = itertools.combinations(
           enumerate(assignable_physical_mesh), num_axes
@@ -658,6 +658,16 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
       out[
           coords[0] - min_coords[0],
           coords[1] - min_coords[1],
+          d.core_on_chip - min_cores_per_chip,
+      ] = d
+  elif device_kind in (_TPU_7X,):
+    out = np.empty(dims + (cores_per_chip,), dtype=object)
+    for d in jax_devices:
+      coords = d.coords
+      out[
+          coords[0] - min_coords[0],
+          coords[1] - min_coords[1],
+          coords[2] - min_coords[2],
           d.core_on_chip - min_cores_per_chip,
       ] = d
   else:
