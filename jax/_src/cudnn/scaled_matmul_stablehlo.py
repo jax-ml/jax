@@ -299,7 +299,7 @@ _scaled_matmul_lower = custom_partitioning(
 _scaled_matmul_lower.def_partition(
     infer_sharding_from_operands=_scaled_matmul_infer_sharding_from_operands,
     partition=_scaled_matmul_partition,
-    sharding_rule='b m k, b n k, b m x, b n y -> b m n',
+    sharding_rule='b m k, b n k, b m k, b n k -> b m n',
 )
 
 

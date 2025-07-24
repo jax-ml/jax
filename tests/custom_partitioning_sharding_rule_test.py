@@ -290,21 +290,21 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
           [result.operands[0].type, result.operands[1].type],
           [result.result.type,])
 
-  def test_conversion_factor_has_two_sizes(self):
-    opnd0 = self.create_tensor_value((16, 32))
+  def test_conversion_factor_with_multiple_sizes_use_smallest_size(self):
+    opnd0 = self.create_tensor_value((16, 16))
     opnd1 = self.create_tensor_value((16, 32))
     result = ir.Operation.create(
         "stablehlo.custom_call",
-        results=[self.get_tensor_type((16, 64))],
+        results=[self.get_tensor_type((16, 8))],
         operands=[opnd0, opnd1,],
         attributes=dict(call_target_name=ir.StringAttr.get("foo")))
     rule = str_to_sdy_sharding_rule("i j, i j -> i j")
-    with self.assertRaisesRegex(
-        ValueError,
-        "Factor j corresponds to two sizes: 32 and 64"):
-      sdy_sharding_rule_to_mlir(rule,
+    mlir_rule = sdy_sharding_rule_to_mlir(rule,
           [result.operands[0].type, result.operands[1].type],
           [result.result.type,])
+    self.assertEqual(
+        str(mlir_rule),
+        "#sdy.op_sharding_rule<([i, j], [i, j])->([i, j]) {i=16, j=8}, custom>")
 
   def test_conversion_batching_dim_has_two_sizes(self):
     opnd0 = self.create_tensor_value((16, 32))
