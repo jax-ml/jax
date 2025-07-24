@@ -32,6 +32,7 @@ _TPU_V5_LITE = "TPU v5 lite"
 _TPU_V5E = "TPU v5e"
 _TPU_V5P = "TPU v5p"
 _TPU_V6_LITE = "TPU v6 lite"
+_TPU_7X = "TPU7x"
 
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
@@ -70,6 +71,8 @@ _TRAY_4x4_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 9, 10, 11, 15, 14, 13, 12, 8, 4)
 _V5E_TRAY_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 4)
 _V5E_TRAY_IOTA_ORDER = (0, 4, 2, 6, 1, 5, 3, 7)
 _V5P_2x2x2_ORDER = (0, 1, 3, 2, 6, 7, 5, 4)
+_7X_TRAY_2x4_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 4)
+
 
 def _tpu_v2_v3_create_device_mesh(
     mesh_shape: Sequence[int],
@@ -171,6 +174,17 @@ def _v5p_create_device_mesh(
     return device_mesh
   return None
 
+def _7x_create_device_mesh(
+    mesh_shape: Sequence[int], devices: Sequence[Any], **unused_kwargs
+) -> np.ndarray | None:
+  if len(devices) == 8:
+    device_mesh = np.asarray(devices)
+    device_mesh = device_mesh[np.array(_7X_TRAY_2x4_RING_ORDER)]
+    device_mesh = device_mesh.reshape(mesh_shape)
+    return device_mesh
+  return None
+
+
 # Registers functions to create device mesh for specific device kinds. Takes
 # precedence over the more general logic in create_device_mesh(). Handler may
 # return None; in that case, it will fall back to using the default logic.
@@ -183,6 +197,7 @@ device_kind_handler_dict: dict[
     _TPU_V5_LITE: _v5e_create_device_mesh,
     _TPU_V5P: _v5p_create_device_mesh,
     _TPU_V6_LITE: _v5e_create_device_mesh,
+    _TPU_7X: _7x_create_device_mesh,
 }
 
 
