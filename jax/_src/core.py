@@ -833,7 +833,7 @@ def _aval_property(name):
   return property(lambda self: getattr(self.aval, name))
 
 
-class Tracer(typing.Array, metaclass=StrictABCMeta):
+class Tracer:
   __array_priority__ = 1000
   __slots__ = ['_trace', '_line_info']
   __hash__ = None  # type: ignore
