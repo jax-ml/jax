@@ -16,6 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Deprecations:
+
+  * {func}`jax.lax.zeros_like_array` is deprecated. Please use
+    {func}`jax.numpy.zeros_like` instead.
+
 ## JAX 0.7.0 (July 22, 2025)
 
 * New features:
