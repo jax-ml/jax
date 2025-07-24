@@ -650,7 +650,6 @@ pytype_strict_library(
     deps = [
         ":config",
         ":hardware_utils",
-        ":version",
     ],
 )
 
@@ -1019,7 +1018,6 @@ pytype_strict_library(
     name = "environment_info",
     srcs = ["_src/environment_info.py"],
     deps = [
-        ":version",
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
