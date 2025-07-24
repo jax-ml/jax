@@ -1570,8 +1570,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     x = jnp.reshape(x, (16, 64))
     y = jnp.arange(0, 1024, dtype=jnp.float32)
     y = jnp.reshape(y, (16, 64))
-    custom_dll = DLL(major_to_minor=(0, 1), _tiling=((8, 128),))
-    custom_dll_linear = DLL(major_to_minor=(0, 1), _tiling=((1,),))
+    custom_dll = DLL(major_to_minor=(0, 1), tiling=((8, 128),))
+    custom_dll_linear = DLL(major_to_minor=(0, 1), tiling=((1,),))
     x = jax.device_put(x, Format(custom_dll, sharding))
     y = jax.device_put(y, Format(custom_dll_linear, p_sharding))
 
@@ -1609,8 +1609,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     x = jnp.reshape(x, (32, 64))
     y = jnp.arange(0, 2048, dtype=jnp.float32)
     y = jnp.reshape(y, (32, 64))
-    custom_dll = DLL(major_to_minor=(0, 1), _tiling=((8, 128),))
-    custom_dll_linear = DLL(major_to_minor=(0, 1), _tiling=((1,),))
+    custom_dll = DLL(major_to_minor=(0, 1), tiling=((8, 128),))
+    custom_dll_linear = DLL(major_to_minor=(0, 1), tiling=((1,),))
     x = jax.device_put(x, Format(custom_dll, sharding))
     y = jax.device_put(y, Format(custom_dll_linear, p_sharding))
 

@@ -2641,7 +2641,7 @@ def maybe_recover_user_shardings(
 
 def is_user_xla_layout_equal(ul: Layout | AutoLayout,
                              xl: Layout) -> bool:
-  if isinstance(ul, Layout) and not ul._tiling:
+  if isinstance(ul, Layout) and not ul.tiling:
     return ul.major_to_minor == xl.major_to_minor
   else:
     return ul == xl

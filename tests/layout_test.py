@@ -579,7 +579,7 @@ class LayoutTest(jtu.JaxTestCase):
     shape = (16*2, 32016*2)
     np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
 
-    custom_dll1 = Layout(major_to_minor=(1, 0), _tiling=((8,128), (2,1)))
+    custom_dll1 = Layout(major_to_minor=(1, 0), tiling=((8,128), (2,1)))
     l1 = Format(custom_dll1, s)
     arr = jax.device_put(np_inp, s)
 
@@ -615,7 +615,7 @@ class LayoutTest(jtu.JaxTestCase):
     shape = (128, 128)
     inp = jnp.arange(math.prod(shape)).reshape(shape)
 
-    dll = Layout(major_to_minor=(0, 1), _tiling=((8,),))
+    dll = Layout(major_to_minor=(0, 1), tiling=((8,),))
     s = SingleDeviceSharding(jax.devices()[0])
     sparse_format = Format(dll, s)
     sparecore_arr = jax.device_put(inp, sparse_format)
@@ -641,7 +641,7 @@ class LayoutTest(jtu.JaxTestCase):
     shape = (4096, 8)
     inp = jnp.arange(math.prod(shape)).reshape(shape)
 
-    dll = Layout(major_to_minor=(0, 1), _tiling=((8,),))
+    dll = Layout(major_to_minor=(0, 1), tiling=((8,),))
     s = SingleDeviceSharding(jax.devices()[0])
     sparse_format = Format(dll, s)
     sparecore_arr = jax.device_put(inp, sparse_format)
@@ -672,11 +672,11 @@ class LayoutTest(jtu.JaxTestCase):
     inp = jnp.arange(math.prod(shape)).reshape(shape)
     s = SingleDeviceSharding(jax.devices()[0])
 
-    sparse_dll = Layout(major_to_minor=(0, 1), _tiling=((8,),))
+    sparse_dll = Layout(major_to_minor=(0, 1), tiling=((8,),))
     sparse_format = Format(sparse_dll, s)
     sparecore_arr = jax.device_put(inp, sparse_format)
 
-    host_dll = Layout(major_to_minor=(0, 1), _tiling=((1,),))
+    host_dll = Layout(major_to_minor=(0, 1), tiling=((1,),))
     host_format = Format(host_dll, s)
     host_arr = jax.device_put(inp, host_format)
 

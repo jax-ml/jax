@@ -145,7 +145,7 @@ def _convert_layout_for_lowering(
   if layout is None:
     return tuple(reversed(range(len(_aval_shape(aval)))))
   elif isinstance(layout, Layout):
-    if layout._tiling is not None:
+    if layout.tiling is not None:
       raise ValueError("The FFI does not support layouts with tiling")
     return layout.major_to_minor[::-1]
   else:
