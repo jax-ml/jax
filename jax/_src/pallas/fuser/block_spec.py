@@ -958,7 +958,7 @@ def _slice_rule(
     strides: tuple[int, ...] | None,
 ):
   del ctx
-  if strides is not None:
+  if strides is not None and not all(stride == 1 for stride in strides):
     raise NotImplementedError('strides are not supported yet')
   slice_sizes = tuple(
       int(end - start) for start, end in zip(start_indices, limit_indices)
