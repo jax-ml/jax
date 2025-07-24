@@ -1446,6 +1446,12 @@ def _memref_store_op_lowering_rule(
   return []
 
 
+def _is_init_warp():
+  i32 = ir.IntegerType.get_signless(32)
+  eq = arith.CmpIPredicate.eq
+  return arith.cmpi(eq, utils.warp_idx(sync=False), utils.c(0, i32))
+
+
 # TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
 if jaxlib.version >= (0, 7, 0):
   @_register_lowering(mgpu.TmemAllocOp)
@@ -1458,8 +1464,8 @@ if jaxlib.version >= (0, 7, 0):
     output_shape = ir.MemRefType(op.result.type).shape
     ncols = output_shape[1] // op.packing.value
 
-    # TODO(b/431684684): Predicate this at the warp level.
-    tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, op.exact)
+    with utils.when(_is_init_warp()):
+      tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, op.exact)
 
     cast_op = builtin.UnrealizedConversionCastOp(
         [op.result.type], [op.smem_ptr]
@@ -1490,8 +1496,8 @@ if jaxlib.version >= (0, 7, 0):
     ncols = output_shape[1] // packing
     tmem_addr = memref.load(smem_ref, [])
 
-    # TODO(b/431684684): Predicate this at the warp level.
-    tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact)
+    with utils.when(_is_init_warp()):
+      tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact)
 
     return []
 

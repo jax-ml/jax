@@ -1851,7 +1851,6 @@ class TCGen05Test(TestCase):
       )(x).block_until_ready()
 
 
-
 class BarrierTest(TestCase):
 
   def test_wg_communication(self):
@@ -4132,13 +4131,56 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     )
 
 
-class MosaicGpuDialectTCGen05Test(TestCase):
+class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
     capabilities = ("10.0", "10.1")
     if not any(jtu.is_cuda_compute_capability_equal(sm) for sm in capabilities):
       self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
+
+  @parameterized.named_parameters(
+      ("unpacked", (128, 128), jnp.bfloat16, 1),
+      ("packed", (128, 128), jnp.bfloat16, 2),
+  )
+  def test_tmem_load_store(
+      self,
+      shape,
+      dtype,
+      packing,
+  ):
+    def body(
+        ctx: launch_context.LaunchContext,
+        input: ir.Value,
+        result: ir.Value,
+        smem: list[ir.Value],
+    ):
+      del ctx, input, result
+      in_smem_ref, out_smem_ref, tmem_ref = smem
+      del in_smem_ref, out_smem_ref
+      # TODO: b/431684684 - Use dialect load/store once implemented.
+
+    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        cluster=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=jax_shape,
+        out_shape=jax_shape,
+        smem_scratch_shape=[
+            jax_shape,
+            jax_shape,
+            mgpu.TMEM(shape, dtype, packing=packing),
+        ],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    key = jax.random.key(1234)
+    x = jax.random.randint(key, shape, -10, 10).astype(dtype)
+    result = jax.jit(kernel)(x)
+    # TODO: b/431684684 - Assert result == x once dialect load/store are implemented.
+    # self.assertArraysEqual(result, x)
 
   @parameterized.named_parameters(
       ("exact", (128, 64), jnp.bfloat16, 1, True, False, 64),
