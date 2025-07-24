@@ -31,6 +31,7 @@ import itertools
 import jax
 from jax._src import lib
 from jax._src import sharding_impls
+from jax._src import util as jax_util
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
 from jaxlib.mlir import ir
@@ -625,7 +626,7 @@ def _lower_as_gpu_kernel(
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     lowering_semantics: LoweringSemantics,
     module_name: str,
-    kernel_name: str | None = None,
+    kernel_name: str,
     prof_spec: profiler.ProfilerSpec | None = None,
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -653,8 +654,6 @@ def _lower_as_gpu_kernel(
   dialect.register_dialect(module.context)
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)
-  if kernel_name is None:
-    kernel_name = module_name
 
   # These are needed as nonlocal below.
   launch_ctx = None
@@ -751,6 +750,8 @@ def as_gpu_kernel(
     inout_shape = tuple(inout_shape)
   elif not isinstance(inout_shape, tuple):
     inout_shape = (inout_shape,)
+  if kernel_name is None:
+    kernel_name = jax_util.fun_name(body, "anonymous")
 
   inout_shape = jax.tree.map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype),
                              inout_shape)
@@ -858,6 +859,8 @@ def as_torch_gpu_kernel(
     in_shape = tuple(in_shape)
   elif not isinstance(in_shape, tuple):
     in_shape = (in_shape,)
+  if kernel_name is None:
+    kernel_name = jax_util.fun_name(body, "anonymous")
 
   # TODO(slebedev): Make this a parameter.
   inout_shape = ()
