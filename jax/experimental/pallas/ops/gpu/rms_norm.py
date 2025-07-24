@@ -35,8 +35,9 @@ def rms_norm_forward_kernel(
   def var_body(i, acc_ref):
     col_idx = i * block_size + jnp.arange(block_size)
     mask = col_idx < n_col
-    a = pl.load(x_ref, (col_idx,), mask=mask, other=0.,
-                eviction_policy="evict_last").astype(jnp.float32)
+    a = plgpu.load(
+        x_ref.at[col_idx], mask=mask, other=0.0, eviction_policy="evict_last"
+    ).astype(jnp.float32)
     a = jnp.where(mask, a, 0.)
     acc_ref[:] += a * a
   var = for_loop(pl.cdiv(n_col, block_size), var_body,
@@ -48,12 +49,13 @@ def rms_norm_forward_kernel(
   def body(i, _):
     col_idx = i * block_size + jnp.arange(block_size)
     mask = col_idx < n_col
-    weight = pl.load(weight_ref, (col_idx,), mask=mask)
-    bias = pl.load(bias_ref, (col_idx,), mask=mask)
-    x = pl.load(x_ref, (col_idx,), mask=mask, other=0.,
-                eviction_policy="evict_first").astype(jnp.float32)
+    weight = plgpu.load(weight_ref.at[col_idx], mask=mask)
+    bias = plgpu.load(bias_ref.at[col_idx], mask=mask)
+    x = plgpu.load(
+        x_ref.at[col_idx], mask=mask, other=0.0, eviction_policy="evict_first"
+    ).astype(jnp.float32)
     out = x * rstd * weight + bias
-    pl.store(o_ref, (col_idx,), out.astype(o_ref.dtype), mask=mask)
+    plgpu.store(o_ref.at[col_idx], out.astype(o_ref.dtype), mask=mask)
   for_loop(pl.cdiv(n_col, block_size), body, ())
 
 
@@ -107,12 +109,18 @@ def rms_norm_backward_kernel_dx(
   def mean_body(i, c1_acc_ref):
     col_idx = i * block_size + jnp.arange(block_size)
     mask = col_idx < n_col
-    a = pl.load(x_ref, (col_idx,), mask=mask, other=0.,
-                eviction_policy="evict_last").astype(jnp.float32)
-    dout = pl.load(do_ref, (col_idx,), mask=mask, other=0.,
-                   eviction_policy="evict_last").astype(jnp.float32)
-    weight = pl.load(weight_ref, (col_idx,), mask=mask, other=0.,
-                     eviction_policy="evict_last").astype(jnp.float32)
+    a = plgpu.load(
+        x_ref.at[col_idx], mask=mask, other=0.0, eviction_policy="evict_last"
+    ).astype(jnp.float32)
+    dout = plgpu.load(
+        do_ref.at[col_idx], mask=mask, other=0.0, eviction_policy="evict_last"
+    ).astype(jnp.float32)
+    weight = plgpu.load(
+        weight_ref.at[col_idx],
+        mask=mask,
+        other=0.0,
+        eviction_policy="evict_last",
+    ).astype(jnp.float32)
     a_hat = a * rstd_ref[...]
     wdout = weight * dout
     c1_acc_ref[:] += a_hat * wdout
@@ -122,16 +130,22 @@ def rms_norm_backward_kernel_dx(
   def dx_body(i, acc_ref):
     col_idx = i * block_size + jnp.arange(block_size)
     mask = col_idx < n_col
-    a = pl.load(x_ref, (col_idx,), mask=mask, other=0.,
-                eviction_policy="evict_last").astype(jnp.float32)
-    dout = pl.load(do_ref, (col_idx,), mask=mask, other=0.,
-                eviction_policy="evict_last").astype(jnp.float32)
-    weight = pl.load(weight_ref, (col_idx,), mask=mask, other=0.,
-                eviction_policy="evict_last").astype(jnp.float32)
+    a = plgpu.load(
+        x_ref.at[col_idx], mask=mask, other=0.0, eviction_policy="evict_last"
+    ).astype(jnp.float32)
+    dout = plgpu.load(
+        do_ref.at[col_idx], mask=mask, other=0.0, eviction_policy="evict_last"
+    ).astype(jnp.float32)
+    weight = plgpu.load(
+        weight_ref.at[col_idx],
+        mask=mask,
+        other=0.0,
+        eviction_policy="evict_last",
+    ).astype(jnp.float32)
     a_hat = a * rstd_ref[...]
     wdout = weight * dout
     da = (wdout - (a_hat * c1)) * rstd_ref[...]
-    pl.store(dx_ref, (col_idx,), da.astype(dx_ref.dtype), mask=mask)
+    plgpu.store(dx_ref.at[col_idx], da.astype(dx_ref.dtype), mask=mask)
   for_loop(pl.cdiv(n_col, block_size), dx_body, ())
 
 
@@ -151,20 +165,22 @@ def rms_norm_backward_kernel_dw_db(
     row_idx = i * block_m + jnp.arange(block_m)
     row_mask = row_idx < m
     mask = row_mask[:, None] & col_mask[None, :]
-    a = pl.load(
-        x_ref, (row_idx[:, None], col_idx[None]), mask=mask, other=0.0
+    a = plgpu.load(
+        x_ref.at[row_idx[:, None], col_idx[None]], mask=mask, other=0.0
     ).astype(jnp.float32)
-    dout = pl.load(
-        do_ref, (row_idx[:, None], col_idx[None]), mask=mask, other=0.0
+    dout = plgpu.load(
+        do_ref.at[row_idx[:, None], col_idx[None]], mask=mask, other=0.0
     ).astype(jnp.float32)
-    rstd = pl.load(rstd_ref, (row_idx,), mask=row_mask, other=0.).astype(jnp.float32)
+    rstd = plgpu.load(rstd_ref.at[row_idx], mask=row_mask, other=0.0).astype(
+        jnp.float32
+    )
     a_hat = a * rstd[:, None]
     dw_acc_ref, db_acc_ref = acc_ref
     dw_acc_ref[:] += (dout * a_hat).sum(axis=0)
     db_acc_ref[:] += dout.sum(axis=0)
   dw_acc, db_acc = for_loop(pl.cdiv(m, block_m), body, (jnp.zeros(block_n), jnp.zeros(block_n)))
-  pl.store(dw_ref, (col_idx,), dw_acc.astype(dw_ref.dtype), mask=col_mask)
-  pl.store(db_ref, (col_idx,), db_acc.astype(db_ref.dtype), mask=col_mask)
+  plgpu.store(dw_ref.at[col_idx], dw_acc.astype(dw_ref.dtype), mask=col_mask)
+  plgpu.store(db_ref.at[col_idx], db_acc.astype(db_ref.dtype), mask=col_mask)
 
 
 def rms_norm_backward(
