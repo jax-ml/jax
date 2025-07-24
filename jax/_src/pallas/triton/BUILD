@@ -45,6 +45,7 @@ pytype_strict_library(
         "//jax:ad_util",
         "//jax:api_util",
         "//jax:core",
+        "//jax:lax",
         "//jax:mlir",
         "//jax:partial_eval",
         "//jax:source_info_util",

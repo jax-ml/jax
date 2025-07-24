@@ -491,8 +491,7 @@ def ragged_paged_attention_kernel(
 
       def masked_store(ref, val, start, end, group=1):
         iota = lax.broadcasted_iota(jnp.int32, ref.shape, 0) // group
-        mask = jnp.logical_and(iota >= start, iota < end)
-        pl.store(ref, idx=tuple(slice(None) for _ in ref.shape), val=val, mask=mask)
+        pltpu.store(ref, val, mask=jnp.logical_and(iota >= start, iota < end))
 
       def load_with_init(ref, init_val):
         return jnp.where(

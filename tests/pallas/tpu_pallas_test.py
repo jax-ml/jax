@@ -2203,12 +2203,7 @@ class PallasCallTest(PallasBaseTest):
       iota1 = lax.broadcasted_iota(jnp.int32, shape, 1)
       mask0 = jnp.logical_and(b0 <= iota0, iota0 < e0)
       mask1 = jnp.logical_and(b1 <= iota1, iota1 < e1)
-      pl.store(
-          o_ref,
-          (slice(None), slice(None)),
-          x_ref[...],
-          mask=jnp.logical_and(mask0, mask1),
-      )
+      pltpu.store(o_ref, x_ref[...], mask=jnp.logical_and(mask0, mask1))
 
     s = jnp.array(mask_start, jnp.int32)
     x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
@@ -2460,7 +2455,7 @@ class PallasCallRefTransformTest(PallasBaseTest):
           else x_ref.bitcast(jnp.int16).at[:16, :128]
       )
       if use_primitive_io_op:
-        pl.store(y_ref, ..., pl.load(ref, ...))
+        pltpu.store(y_ref, pltpu.load(ref))
       else:
         y_ref[...] = ref[...]
 
@@ -2489,7 +2484,7 @@ class PallasCallRefTransformTest(PallasBaseTest):
           else y_ref.bitcast(jnp.bfloat16).at[:16, :128]
       )
       if use_primitive_io_op:
-        pl.store(ref, ..., pl.load(x_ref, ...))
+        pltpu.store(ref, pltpu.load(x_ref))
       else:
         ref[...] = x_ref[...]
 

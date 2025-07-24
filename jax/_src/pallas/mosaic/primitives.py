@@ -31,6 +31,7 @@ from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
+from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.state import discharge as state_discharge
@@ -47,6 +48,7 @@ zip, unsafe_zip = util.safe_zip, zip
 
 IntDeviceId = int | jax.Array
 MultiDimDeviceId = tuple[IntDeviceId, ...] | dict[str | tuple[str, ...], IntDeviceId]
+Ref = state.AbstractRef | state.TransformedRef
 
 repeat_p = jax_core.Primitive('repeat')
 
@@ -885,3 +887,33 @@ def with_memory_space_constraint(
     )
   return pl_core.with_memory_space_constraint_p.bind(
       x, memory_space=memory_space)
+
+
+def load(ref: Ref, *, mask: jax.Array | None = None) -> jax.Array:
+  """Loads an array from the given ref.
+
+  If ``mask`` is not specified, this function has the same semantics as
+  ``ref[idx]`` in JAX.
+
+  Args:
+    ref: The ref to load from.
+    mask: An optional boolean mask specifying which indices to load.
+
+  Returns:
+    The loaded array.
+  """
+  return pallas_primitives.load(ref, None, mask=mask)
+
+
+def store(ref: Ref, val: jax.Array, *, mask: jax.Array | None = None) -> None:
+  """Stores a value to the given ref.
+
+  If ``mask`` is not specified, this function has the same semantics as
+  ``ref[idx] = val`` in JAX.
+
+  Args:
+    ref: The ref to store to.
+    val: The value to store.
+    mask: An optional boolean mask specifying which indices to store.
+  """
+  return pallas_primitives.store(ref, None, val, mask=mask)

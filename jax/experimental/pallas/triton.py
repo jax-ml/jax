@@ -26,6 +26,9 @@ from jax._src.pallas.triton.core import CompilerParams as CompilerParams
 from jax._src.pallas.triton.primitives import approx_tanh as approx_tanh
 from jax._src.pallas.triton.primitives import debug_barrier as debug_barrier
 from jax._src.pallas.triton.primitives import elementwise_inline_asm as elementwise_inline_asm
+from jax._src.pallas.triton.primitives import load as load
+from jax._src.pallas.triton.primitives import store as store
+
 
 
 import typing as _typing  # pylint: disable=g-import-not-at-top

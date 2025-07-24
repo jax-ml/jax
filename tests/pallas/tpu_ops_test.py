@@ -112,12 +112,12 @@ class OpsTest(PallasBaseTest):
     def kernel(x_ref, y_ref):
       if is_ref_bitcast:
         if use_primitive_io_op:
-          pl.store(y_ref, ..., pl.load(x_ref.bitcast(to_dtype), ...))
+          pltpu.store(y_ref, pltpu.load(x_ref.bitcast(to_dtype)))
         else:
           y_ref[...] = x_ref.bitcast(to_dtype)[...]
       else:
         if use_primitive_io_op:
-          pl.store(y_ref, ..., pltpu.bitcast(pl.load(x_ref, ...), to_dtype))
+          pltpu.store(y_ref, pltpu.bitcast(pltpu.load(x_ref), to_dtype))
         else:
           y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
 

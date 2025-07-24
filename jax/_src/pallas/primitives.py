@@ -515,7 +515,7 @@ swap_p = jax_core.Primitive('masked_swap')
 
 @swap_p.def_effectful_abstract_eval
 def _swap_abstract_eval(*avals_flat, args_tree, **_):
-  ref, transforms, val, _ = args_tree.unflatten(avals_flat)
+  ref, transforms, val, mask = args_tree.unflatten(avals_flat)
   assert transforms is not None and isinstance(transforms[-1], NDIndexer)
   transformed_ref = pallas_core.TransformedRef(ref, transforms)
   expected_output_shape = transformed_ref.shape

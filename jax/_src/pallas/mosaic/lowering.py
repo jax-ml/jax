@@ -1866,6 +1866,11 @@ def _masked_swap_lowering_rule(
     val_vec_type = ir.VectorType.get(mem_aval.shape,
       _dtype_to_ir_type(mem_aval.dtype, is_kernel_boundary=True))
     val = vector.shape_cast(val_vec_type, val)
+    if mask is not None:
+      mask_vec_type = ir.VectorType.get(
+          mem_aval.shape, _dtype_to_ir_type(mask_aval.dtype)
+      )
+      mask = vector.shape_cast(mask_vec_type, mask)
   result = _maybe_cast_load_to_bool(ctx, val_aval, result)
 
   if need_stride:
