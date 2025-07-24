@@ -2296,3 +2296,16 @@ pytype_strict_library(
         ":buffer_callback",
     ],
 )
+
+pytype_library(
+    name = "experimental_mutable_rng",
+    srcs = [
+        "experimental/mutable_rng.py",
+    ],
+    deps = [
+        ":core",
+        ":jax",
+        ":tree_util",
+        ":typing",
+    ] + py_deps("numpy"),
+)
