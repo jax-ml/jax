@@ -37,8 +37,8 @@ py_library_providing_imports_info(
     lib_rule = pytype_strict_library,
     visibility = ["//jax:internal"] + jax_visibility("lib"),
     deps = [
-        "//jax:lazy_loader",
         "//jax:version",
+        "//jax/_src:lazy_loader",
     ] + if_building_jaxlib([
         "//jaxlib",
     ]),

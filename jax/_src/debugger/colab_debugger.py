@@ -66,7 +66,7 @@ class CodeViewer(colab_lib.DynamicDOMElement):
     hl_color = "#4e56b7" if is_dark_mode else "#fff7c1"
     if IS_PYGMENTS_ENABLED:
       lexer = pygments.lexers.get_lexer_by_name("python")
-      formatter = pygments.formatters.HtmlFormatter(
+      formatter = pygments.formatters.HtmlFormatter(  # pytype: disable=module-attr
           full=False,
           hl_lines=highlights,
           linenos=True,
