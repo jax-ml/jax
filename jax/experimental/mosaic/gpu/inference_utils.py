@@ -71,6 +71,28 @@ def out_transforms(op: MlirOperation) -> Sequence[ir.Attribute]:
   return op.attributes["out_transforms"]  # type: ignore
 
 
+def in_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
+  """Returns the in_tmem_layouts attribute of the given operation.
+
+  Raises:
+    ValueError: If the operation does not have an in_tmem_layouts attribute.
+  """
+  if "in_tmem_layouts" not in op.attributes:
+    raise ValueError(f"{op} does not have an in_tmem_layouts attribute.")
+  return op.attributes["in_tmem_layouts"]  # type: ignore
+
+
+def out_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
+  """Returns the out_tmem_layouts attribute of the given operation.
+
+  Raises:
+    ValueError: If the operation does not have an out_tmem_layouts attribute.
+  """
+  if "out_tmem_layouts" not in op.attributes:
+    raise ValueError(f"{op} does not have an out_tmem_layouts attribute.")
+  return op.attributes["out_tmem_layouts"]  # type: ignore
+
+
 def should_have_layout(op: MlirOperation) -> bool:
   """Returns 'true' if the operation should be assigned a layout."""
 

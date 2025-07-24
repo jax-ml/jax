@@ -56,6 +56,7 @@ class LoweringContext:
   launch_context: launch_context.LaunchContext | None
   single_thread_per_block_predicate: ir.Value | None
   single_thread_per_warpgroup_predicate: ir.Value | None
+  init_warp_predicate: ir.Value | None
   lowered_operations: set[ir.Operation | ir.OpView] = dataclasses.field(
       default_factory=set
   )
@@ -410,6 +411,13 @@ def _vector_load_op_lowering_rule(
         is_signed=is_signed,
         vec_size=strided_layout.vec_size,
     )
+  elif layouts.from_layout_attr(out_layout_attr) == tcgen05.TMEM_NATIVE_LAYOUT:
+    layout = layouts.from_layout_attr(out_layout_attr)
+    fragmented_array = fa.FragmentedArray.load_untiled(
+        vector_load_op.base,
+        layout=layout,
+        optimized=False,
+    )
   elif layouts.from_layout_attr(out_layout_attr) == fa.WGMMA_LAYOUT:
     transforms_attr = inference_utils.in_transforms(vector_load_op)[0]
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
@@ -469,6 +477,8 @@ def _vector_store_op_lowering_rule(
 
   if fragmented_array.layout == fa.WGMMA_LAYOUT:
     fragmented_array.store_tiled(unwrapped_ref, swizzle)
+  elif fragmented_array.layout == tcgen05.TMEM_NATIVE_LAYOUT:
+    fragmented_array.store_untiled(unwrapped_ref, optimized=False)
   elif (fragmented_array.layout == fa.WGMMA_ROW_LAYOUT or
         fragmented_array.layout == fa.WGMMA_COL_LAYOUT or
         isinstance(fragmented_array.layout, fa.WGStridedFragLayout) or
@@ -1453,16 +1463,15 @@ if jaxlib.version >= (0, 7, 0):
       ctx: LoweringContext, op: mgpu.TmemAllocOp
   ) -> Sequence[ir.Value]:
     """Lowering rule for mgpu.TmemAllocOp."""
-    del ctx
-
     output_shape = ir.MemRefType(op.result.type).shape
     ncols = output_shape[1] // op.packing.value
 
-    # TODO(b/431684684): Predicate this at the warp level.
-    tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, op.exact)
+    with mgpu_utils.when(ctx.init_warp_predicate):
+      tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, op.exact)
+    tmem_addr = memref.load(op.smem_ptr, [])
 
     cast_op = builtin.UnrealizedConversionCastOp(
-        [op.result.type], [op.smem_ptr]
+        [op.result.type], [tmem_addr]
     )
     cast_op.attributes["collective"] = op.collective
     cast_op.attributes["exact"] = op.exact
@@ -1478,23 +1487,76 @@ if jaxlib.version >= (0, 7, 0):
       ctx: LoweringContext, op: mgpu.TmemDeallocOp
   ) -> Sequence[ir.Value]:
     """Lowering rule for mgpu.TmemDeallocOp."""
-    del ctx
-
     conversion_cast, cast_operands = _undo_conversion_cast(op.tmem_ref)
-    [smem_ref] = cast_operands
+    [tmem_addr] = cast_operands
     collective = ir.BoolAttr(conversion_cast.attributes["collective"]).value
     exact = ir.BoolAttr(conversion_cast.attributes["exact"]).value
     packing = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
 
     output_shape = ir.MemRefType(op.tmem_ref.type).shape
     ncols = output_shape[1] // packing
-    tmem_addr = memref.load(smem_ref, [])
 
-    # TODO(b/431684684): Predicate this at the warp level.
-    tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact)
+    with mgpu_utils.when(ctx.init_warp_predicate):
+      tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact)
 
     return []
 
+def _tmem_ref_from_ir(x: ir.Value, layout: ir.Attribute) -> tcgen05.TMEMRef:
+  """Returns a TMEMRef from an IR value."""
+  if not ir.MemRefType.isinstance(x.type):
+    raise ValueError(f"{x} is not a memref.")
+  mem_ref_ty = ir.MemRefType(x.type)
+
+  if mem_ref_ty.memory_space != mgpu_utils.tmem():
+    raise ValueError(
+        f"{x} has a memory space {mem_ref_ty.memory_space} that is not TMEM."
+    )
+
+  _, cast_operands = _undo_conversion_cast(x)
+  [tmem_addr] = cast_operands
+
+  shape = tuple(mem_ref_ty.shape)
+  el_ty = mem_ref_ty.element_type
+  layout = layouts_lib.from_layout_attr(layout)
+  in_tmem_layout = tcgen05.TMEMLayout(
+      layout.tiling, layout.warp_dims, layout.lane_dims, layout.vector_dim
+  )
+  return tcgen05.TMEMRef(tmem_addr, shape, el_ty, in_tmem_layout)
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
+if jaxlib.version >= (0, 7, 0):
+  @_register_lowering(mgpu.AsyncLoadTmemOp)
+  def _async_load_tmem_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.AsyncLoadTmemOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.AsyncLoadTmemOp."""
+    del ctx
+
+    tmem = _tmem_ref_from_ir(op.source, inference_utils.in_tmem_layouts(op)[0])
+
+    out_layout_attr = inference_utils.out_layouts(op)[0]
+    out_layout = layouts_lib.from_layout_attr(out_layout_attr)
+    fa = tmem.load(out_layout)
+    return [fragmented_array_to_ir(fa, op.result.type)]
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
+if jaxlib.version >= (0, 7, 0):
+  @_register_lowering(mgpu.AsyncStoreTmemOp)
+  def _async_store_tmem_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.AsyncStoreTmemOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.AsyncStoreTmemOp."""
+    del ctx
+
+    tmem = _tmem_ref_from_ir(
+        op.destination, inference_utils.in_tmem_layouts(op)[0]
+    )
+
+    in_layout_attr = inference_utils.in_layouts(op)[0]
+    fa = _fragmented_array_from_ir(op.source, in_layout_attr)
+    tmem.store(fa)
 
 def inline_block(
     block: ir.Block, args: Sequence[ir.Value], mapper: dict[ir.Value, ir.Value],
@@ -1832,9 +1894,15 @@ def _traverse_op_lowering_rule(
   return RECURSED
 
 
-def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
-  """Returns a single thread predicate per block and one per warpgroup."""
-  block_predicate = warpgroup_predicate = None
+def _context_predicates(
+    module: ir.Module,
+) -> tuple[ir.Value, ir.Value, ir.Value]:
+  """Returns three predicates:
+    - a single thread predicate per block
+    - a single thread predicate per warpgroup.
+    - a single warp predicate per warpgroup.
+  """
+  block_predicate = warpgroup_predicate = warp_predicate = None
   for op in module.body.operations:
     for region in op.operation.regions:
       for block in region.blocks:
@@ -1850,6 +1918,11 @@ def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
               warpgroup_predicate = utils.single_thread_predicate(
                   scope=utils.ThreadSubset.WARPGROUP
               )
+              eq = arith.CmpIPredicate.eq
+              i32 = ir.IntegerType.get_signless(32)
+              warp_predicate = arith.cmpi(
+                  eq, utils.warp_idx(sync=False), utils.c(0, i32)
+              )
 
   if block_predicate is None:
     raise ValueError(
@@ -1857,7 +1930,7 @@ def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
         " predicates."
     )
 
-  return block_predicate, warpgroup_predicate
+  return block_predicate, warpgroup_predicate, warp_predicate
 
 
 def _should_lower(op: ir.OpView) -> bool:
@@ -1886,11 +1959,15 @@ def lower_mgpu_dialect(
 
   # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
   if launch_context is None:  # this case is used in some tests
-    block_predicate = warpgroup_predicate = None
+    block_predicate = warpgroup_predicate = init_warp_predicate = None
   else:
-    block_predicate, warpgroup_predicate = single_thread_predicates(module)
+    block_predicate, warpgroup_predicate, init_warp_predicate = (
+        _context_predicates(module)
+    )
 
-  ctx = LoweringContext(launch_context, block_predicate, warpgroup_predicate)
+  ctx = LoweringContext(
+      launch_context, block_predicate, warpgroup_predicate, init_warp_predicate
+  )
   with ir.InsertionPoint(module.body):
     for op in list(module.body):
       ctx.lower_op(op)
