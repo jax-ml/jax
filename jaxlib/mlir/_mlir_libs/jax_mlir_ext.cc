@@ -69,8 +69,9 @@ namespace {
 // Returns true if a location is a NameLoc with a FileLineColLoc child. We
 // assume the NameLoc names a function name in a frame in this case.
 bool IsFrameNameLocation(mlir::Location location) {
-  return isa<mlir::NameLoc>(location) &&
-         isa<mlir::FileLineColLoc>(cast<mlir::NameLoc>(location).getChildLoc());
+  return mlir::isa<mlir::NameLoc>(location) &&
+         mlir::isa<mlir::FileLineColLoc>(
+             mlir::cast<mlir::NameLoc>(location).getChildLoc());
 }
 
 // Split a location into an operation type and an operation name, and a tail
@@ -87,7 +88,7 @@ void ParseLocation(mlir::Location& location, llvm::StringRef& op_type,
     } else {
       op_name = name;
     }
-    location = cast<mlir::NameLoc>(location).getChildLoc();
+    location = mlir::cast<mlir::NameLoc>(location).getChildLoc();
   }
 }
 
