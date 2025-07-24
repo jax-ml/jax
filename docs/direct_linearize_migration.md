@@ -10,7 +10,7 @@ orphan: true
 
 We're changing the way JAX implements autodiff internally. Previously grad was
 done by a three-stage process: JVP, partial eval, transposition. With this
-change we've bundled together the first twp steps, JVP and partial eval, into a
+change we've bundled together the first two steps, JVP and partial eval, into a
 new transformation: linearization.
 
 This should mostly not change user-visible behavior. Some exceptions:
