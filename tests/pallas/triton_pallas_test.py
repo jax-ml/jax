@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-"""Test the Triton dialect lowering for a variety of atomic operations."""
+import functools
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -22,9 +21,15 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import triton as plgpu
+import jax.lax
 import jax.numpy as jnp
+import numpy as np
 
 config.parse_flags_with_absl()
+
+intx = dtypes.canonicalize_dtype(jnp.int64)
+floatx = dtypes.canonicalize_dtype(jnp.float64)
 
 
 @jtu.with_config(jax_traceback_filtering="off")
@@ -73,6 +78,133 @@ class TritonPallasTest(PallasBaseTest):
     )(x)
     self.assertEqual(y.dtype, dst_dtype)
     self.assertArraysEqual(y, x.astype(dst_dtype))
+
+  @parameterized.named_parameters(
+      ("add_i32", plgpu.atomic_add, np.array([1, 2, 3, 4], np.int32), np.sum),
+      ("max_i32", plgpu.atomic_max, np.array([1, 2, 3, 4], np.int32), np.max),
+      ("min_i32", plgpu.atomic_min, np.array([1, 2, 3, 4], np.int32), np.min),
+      ("add_f16", plgpu.atomic_add, np.array([1, 2, 3, 4], np.float16), np.sum),
+      ("add_f32", plgpu.atomic_add, np.array([1, 2, 3, 4], np.float32), np.sum),
+      ("max_f32", plgpu.atomic_max, np.array([1, 2, 3, 4], np.float32), np.max),
+      ("min_f32", plgpu.atomic_min, np.array([1, 2, 3, 4], np.float32), np.min),
+  )
+  def test_scalar_atomic(self, op, value, numpy_op):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((), value.dtype),
+        grid=value.shape[0],
+        input_output_aliases={1: 0},
+    )
+    def atomic_kernel(x_ref, _, o_ref):
+      pid = pl.program_id(axis=0)
+      op(o_ref, (), x_ref[pid])
+
+    if op == plgpu.atomic_add:
+      neutral = np.array(0, dtype=value.dtype)
+    elif op == plgpu.atomic_max:
+      if np.issubdtype(value.dtype, np.integer):
+        neutral = np.array(np.iinfo(value.dtype).min, value.dtype)
+      else:
+        neutral = np.array(-float("inf"), value.dtype)
+    elif op == plgpu.atomic_min:
+      if np.issubdtype(value.dtype, np.integer):
+        neutral = np.array(np.iinfo(value.dtype).max, value.dtype)
+      else:
+        neutral = np.array(float("inf"), value.dtype)
+    elif op == plgpu.atomic_or:
+      neutral = np.array(False, value.dtype)
+    else:
+      raise NotImplementedError()
+    out = atomic_kernel(value, neutral)
+    np.testing.assert_allclose(out, numpy_op(value))
+
+  @parameterized.parameters((0,), (1,))
+  def test_array_atomic_add(self, axis):
+    m, n = 32, 8
+    if axis == 0:
+      grid = m
+    else:
+      grid = n
+    out_shape = jax.ShapeDtypeStruct((n if axis == 0 else m,), floatx)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=out_shape,
+        grid=grid,
+        input_output_aliases={1: 0},
+    )
+    def reduce(x_ref, _, y_ref):
+      i = pl.program_id(axis=0)
+      if axis == 0:
+        idx = (i, jnp.arange(n))
+      else:
+        idx = (jnp.arange(m), i)
+      x = pl.load(x_ref, idx)
+      plgpu.atomic_add(y_ref, (jnp.arange(y.shape[0]),), x)
+
+    x = jax.random.normal(jax.random.key(0), (m, n))
+    y = jnp.zeros(out_shape.shape, out_shape.dtype)
+    y = reduce(x, y)
+    y_ref = np.sum(x, axis=axis)
+    np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2)
+
+  @parameterized.parameters(
+      (0, 0, 1),
+      (0, 1, 1),
+      (1, 0, 1),
+      (1, 1, 1),
+      (2, 1, 1),
+      (2, 1, 1),
+  )
+  def test_atomic_cas(self, init_value, cmp, new_value):
+    if jax.config.x64_enabled:
+      self.skipTest("Not supported in 64-bit mode")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(
+            jax.ShapeDtypeStruct((), intx),
+            jax.ShapeDtypeStruct((), intx),
+        ),
+        input_output_aliases={0: 0},
+    )
+    def swap(_, lock_ref, out_ref):
+      out_ref[()] = plgpu.atomic_cas(lock_ref, cmp, new_value)
+
+    lock, out = swap(init_value)
+    np.testing.assert_allclose(
+        lock, new_value if cmp == init_value else init_value
+    )
+    np.testing.assert_allclose(out, init_value)
+
+  @parameterized.parameters(1, 2, 3, 4, 8)
+  def test_atomic_counter(self, num_threads):
+    if self.INTERPRET:
+      self.skipTest("While loop not supported in interpret mode.")
+    if jax.config.x64_enabled:
+      self.skipTest("Not supported in 64-bit mode")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(
+            jax.ShapeDtypeStruct((), intx),
+            jax.ShapeDtypeStruct((), intx),
+        ),
+        input_output_aliases={0: 0, 1: 1},
+        grid=(num_threads,),
+    )
+    def increment(_, __, lock_ref, counter_ref):
+      def _cond(_):
+        return plgpu.atomic_cas(lock_ref, 0, 1) == 1
+
+      jax.lax.while_loop(_cond, lambda a: a, 0)
+      counter_ref[...] += 1
+      plgpu.atomic_xchg(lock_ref, (), 0)
+
+    lock, count = increment(0, 0)
+    np.testing.assert_allclose(lock, 0)
+    np.testing.assert_allclose(count, num_threads)
+
 
 if __name__ == "__main__":
   absltest.main()

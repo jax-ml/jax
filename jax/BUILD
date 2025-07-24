@@ -1442,6 +1442,7 @@ pytype_strict_library(
     ],
     deps = [
         ":deprecations",
+        "//jax/_src/pallas",
         "//jax/_src/pallas/triton:core",
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",

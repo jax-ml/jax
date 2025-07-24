@@ -46,14 +46,14 @@ from jax._src.pallas.helpers import loop as loop
 from jax._src.pallas.helpers import when as when
 from jax._src.pallas.pallas_call import pallas_call as pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p as pallas_call_p
-from jax._src.pallas.primitives import atomic_add as atomic_add
-from jax._src.pallas.primitives import atomic_and as atomic_and
-from jax._src.pallas.primitives import atomic_cas as atomic_cas
-from jax._src.pallas.primitives import atomic_max as atomic_max
-from jax._src.pallas.primitives import atomic_min as atomic_min
-from jax._src.pallas.primitives import atomic_or as atomic_or
-from jax._src.pallas.primitives import atomic_xchg as atomic_xchg
-from jax._src.pallas.primitives import atomic_xor as atomic_xor
+from jax._src.pallas.primitives import atomic_add as _deprecated_atomic_add
+from jax._src.pallas.primitives import atomic_and as _deprecated_atomic_and
+from jax._src.pallas.primitives import atomic_cas as _deprecated_atomic_cas
+from jax._src.pallas.primitives import atomic_max as _deprecated_atomic_max
+from jax._src.pallas.primitives import atomic_min as _deprecated_atomic_min
+from jax._src.pallas.primitives import atomic_or as _deprecated_atomic_or
+from jax._src.pallas.primitives import atomic_xchg as _deprecated_atomic_xchg
+from jax._src.pallas.primitives import atomic_xor as _deprecated_atomic_xor
 from jax._src.pallas.primitives import debug_print as debug_print
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import dot as dot
@@ -81,3 +81,55 @@ from jax._src.state.primitives import broadcast_to as broadcast_to
 
 ANY = MemorySpace.ANY
 HOST = MemorySpace.HOST
+
+
+import typing as _typing  # pylint: disable=g-import-not-at-top
+if _typing.TYPE_CHECKING:
+  atomic_add = _deprecated_atomic_add
+  atomic_and = _deprecated_atomic_and
+  atomic_cas = _deprecated_atomic_cas
+  atomic_max = _deprecated_atomic_max
+  atomic_min = _deprecated_atomic_min
+  atomic_or = _deprecated_atomic_or
+  atomic_xchg = _deprecated_atomic_xchg
+  atomic_xor = _deprecated_atomic_xor
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  _deprecations = {
+      # Deprecated on July 23rd 2025.
+      "atomic_add": (
+          "pl.atomic_add is deprecated, access it through jax.experimental.pallas.triton.",
+          _deprecated_atomic_add,
+      ),
+      "atomic_and": (
+          "pl.atomic_and is deprecated, access it through jax.experimental.pallas.triton.",
+          _deprecated_atomic_and,
+      ),
+      "atomic_cas": (
+          "pl.atomic_cas is deprecated, access it through jax.experimental.pallas.triton.",
+          _deprecated_atomic_cas,
+      ),
+      "atomic_max": (
+          "pl.atomic_max is deprecated, access it through jax.experimental.pallas.triton.",
+          _deprecated_atomic_max,
+      ),
+      "atomic_min": (
+          "pl.atomic_min is deprecated, access it through jax.experimental.pallas.triton.",
+          _deprecated_atomic_min,
+      ),
+      "atomic_or": (
+          "pl.atomic_or is deprecated, access it through jax.experimental.pallas.triton.",
+          _deprecated_atomic_or,
+      ),
+      "atomic_xchg": (
+          "pl.atomic_xchg is deprecated, access it through jax.experimental.pallas.triton.",
+          _deprecated_atomic_xchg,
+      ),
+      "atomic_xor": (
+          "pl.atomic_xor is deprecated, access it through jax.experimental.pallas.triton.",
+          _deprecated_atomic_xor,
+      ),
+  }
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing
