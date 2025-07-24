@@ -92,8 +92,8 @@ except ImportError:
     )
     if os.path.exists(libdevice_path):
       os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = libdevice_path
-    for root, _, files in os.walk(os.path.join(os.getcwd(), "_solib_local")):
-      if "libnvshmem_host.so.3" in files:
+    for root, _, files in os.walk(os.getcwd()):
+      if "/_solib" in root and "libnvshmem_host.so.3" in files:
         os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
             root, "libnvshmem_host.so.3"
         )
