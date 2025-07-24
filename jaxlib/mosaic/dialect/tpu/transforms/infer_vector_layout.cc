@@ -1150,9 +1150,6 @@ class VectorLayoutInferer {
 
   LogicalResult infer(vector::ExtractOp op) {
     TPU_CHECK_OP(!op.hasDynamicPosition(), "dynamic indices not supported");
-    TPU_CHECK_OP(
-        op.getSourceVectorType().getElementTypeBitWidth() == kNativeBitwidth,
-        "Only 32-bit types supported");
     auto layout = getLayout(op.getVector());
     TPU_CHECK_OP(layout.has_value(), "missing vector layout");
     if (VectorType res_vty = dyn_cast<VectorType>(op.getResult().getType());
@@ -1183,6 +1180,9 @@ class VectorLayoutInferer {
         setLayout(op, layout, layout);
       }
     } else {
+      TPU_CHECK_OP(
+          op.getSourceVectorType().getElementTypeBitWidth() == kNativeBitwidth,
+          "Only 32-bit scalar result vector::ExtractOp is supported");
       setLayout(op,
                 VectorLayout(kNativeBitwidth, {0, 0}, layout->tiling(),
                              layout->implicit_dim()),

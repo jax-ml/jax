@@ -1396,7 +1396,10 @@ class OpsTest(PallasBaseTest):
     )(x, y)
     np.testing.assert_array_equal(out, jnp.einsum('mk,mn->kn', x, y))
 
-  def test_dot_dims_batched_simple_dot_general(self):
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16],
+  )
+  def test_dot_dims_batched_simple_dot_general(self, dtype):
     """This test is only meant to exercise a simple batch lowering of dot_general.
 
     It is not meant to be a comprehensive test of dot_general lowering, for that
@@ -1405,22 +1408,37 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("TPU only test")
 
-    x = jnp.arange(11 * 16 * 256, dtype=jnp.float32).reshape((11, 16, 256))
-    y = jnp.arange(11 * 256 * 128, dtype=jnp.float32).reshape((11, 256, 128))
+    if jtu.test_device_matches(["tpu"]):
+      if dtype == jnp.bfloat16:
+        if not jtu.if_cloud_tpu_at_least(2025, 7, 25):
+          self.skipTest("Requires libtpu built after 2025-07-25")
+        if not jtu.is_device_tpu_at_least(version=4):
+          self.skipTest("Requires TPUv4+")
+
+    k1, k2 = random.split(jax.random.key(0))
+    x = random.normal(k1, (11, 16, 256), dtype=dtype)
+    y = random.normal(k2, (11, 256, 128), dtype=dtype)
 
     def kernel(x_ref, y_ref, out_ref):
       out_ref[...] = jax.lax.dot_general(
           x_ref[...],
           y_ref[...],
           dimension_numbers=(([2], [1]), ([0], [0])),
+          preferred_element_type=jnp.float32,
       )
 
     out = self.pallas_call(
         kernel, out_shape=jax.ShapeDtypeStruct((11, 16, 128), jnp.float32)
     )(x, y)
-    np.testing.assert_array_equal(
+    np.testing.assert_allclose(
         out,
-        jax.lax.dot_general(x, y, dimension_numbers=(([2], [1]), ([0], [0]))),
+        jax.lax.dot_general(
+            x,
+            y,
+            dimension_numbers=(([2], [1]), ([0], [0])),
+            preferred_element_type=jnp.float32,
+        ),
+        rtol=5e-3 if dtype == jnp.bfloat16 else 1e-7,
     )
 
   @parameterized.product(
