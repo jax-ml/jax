@@ -569,6 +569,9 @@ class OpsTest(PallasBaseTest):
       self.skipTest("This hypothesis test is slow, even more so in interpret mode.")
     # We want exact equality here to match how JAX lowers to XLA
     tol = 0.
+    if jtu.test_device_matches(["tpu"]):
+      if name == "exp2":
+        tol = 1e-6
     if jtu.test_device_matches(["gpu"]):
       if func == jnp.round or func == jnp.rint:
         self.skipTest("TODO: not implemented on GPU")

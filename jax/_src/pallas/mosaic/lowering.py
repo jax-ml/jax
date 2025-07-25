@@ -2789,14 +2789,16 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, *, y):
 
 @register_lowering_rule(lax.exp2_p, ensure_mlir_values=False)
 def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
-  # exp2 in JAX lowers to exp(ln2 * x), not to pow2. We match that behavior
-  # here.
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
-  return lower_fun(
-      lambda x: jnp.exp(jnp.astype(np.log(2), x.dtype) * x),
-      multiple_results=False,
-  )(ctx, x)
+  if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 7, 26):
+    # exp2 in JAX lowers to exp(ln2 * x), not to pow2. We match that behavior
+    # here.
+    return lower_fun(
+        lambda x: jnp.exp(jnp.astype(np.log(2), x.dtype) * x),
+        multiple_results=False,
+    )(ctx, x)
+  return math.exp2(x)
 
 
 @register_lowering_rule(lax.logistic_p)
