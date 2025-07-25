@@ -23,8 +23,6 @@ Classes
   GridSpec
   Slice
 
-  MemoryRef
-
 Functions
 ---------
 
