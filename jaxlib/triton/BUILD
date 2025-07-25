@@ -14,6 +14,7 @@
 
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
 load("//jaxlib:jax.bzl", "if_windows", "pytype_strict_library")
+load("//third_party/bazel_rules/rules_cc/cc:cc_library.bzl", "cc_library")
 
 licenses(["notice"])
 

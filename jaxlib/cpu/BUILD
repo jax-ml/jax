@@ -18,6 +18,7 @@ load(
     "//jaxlib:jax.bzl",
     "nanobind_extension",
 )
+load("//third_party/bazel_rules/rules_cc/cc:cc_library.bzl", "cc_library")
 
 licenses(["notice"])
 
