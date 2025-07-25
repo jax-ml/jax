@@ -204,6 +204,32 @@ def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure, SameOperandsAndResultType]> {
   }];
 }
 
+// tpu.scan performs a scan across a vector.
+//
+// For example, a "sum" reduction over a input vector [1, 2, 3, 4]
+// with mask [0, 1, 0, 1] will produce the output vector [1, 2, 2, 6].
+//
+//  output : Result vector. Must have the same element type and shape as source.
+//  input  : Vector to scan.
+//  kind   : Reduction operator. Must be one of "sum", "max", or "min". Must be
+//           'sum' if input is an I1 vector.
+//  mask   : Elementwise vector mask. If a mask is provided, all elements before
+//           the first unmasked element will be unchanged. Subsequent masked
+//           elements will hold the result of the last unmasked element.
+//           Required for all non-I1 input vectors. Not taken for I1 input vectors.
+def TPU_ScanOp : TPU_Op<"scan"> {
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I1, I32, BF16]>:$input,
+    TPU_ReductionKindAttr:$kind,
+    Optional<VectorOfNonZeroRankOf<[I1]>>:$mask
+  );
+  let results = (outs VectorOfNonZeroRankOf<[I1, I32, BF16]>:$output);
+  let assemblyFormat = [{
+    $kind `,` $input (`masked` $mask^)? attr-dict `:` type($input) `,` type($mask) `->` type($output)
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
   let arguments = (ins
     TPU_Vreg:$valueToStore,
