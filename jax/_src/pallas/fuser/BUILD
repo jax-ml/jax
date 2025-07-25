@@ -67,14 +67,17 @@ pytype_strict_library(
         "fusible.py",
     ],
     deps = [
+        ":block_spec",
         ":fusion",
         "//jax",
         "//jax:api_util",
+        "//jax:batching",
         "//jax:core",
         "//jax:mlir",
         "//jax:partial_eval",
         "//jax:tree_util",
         "//jax:util",
+        "//jax/_src/pallas",
     ],
 )
 
