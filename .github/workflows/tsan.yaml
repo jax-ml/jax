@@ -321,6 +321,5 @@ jobs:
               --test_output=errors \
               --local_test_jobs=32 \
               --test_timeout=1800 \
-              --config=resultstore \
-              --config=rbe_cache \
+              --config=ci_rbe_cache \
               //tests:cpu_tests

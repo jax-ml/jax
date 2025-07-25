@@ -41,9 +41,9 @@ jobs:
       - name: Run Bazel single B200 CUDA Tests
         run: |
             nvidia-smi
-            bazel test --config=rbe_linux_x86_64_cuda \
-            --config=resultstore \
-            --config=rbe_cache \
+            bazel test \
+            --config=ci_linux_x86_64_cuda \
+            --config=ci_rbe_cache \
             --repo_env=HERMETIC_CUDA_VERSION="12.8.0" \
             --repo_env=HERMETIC_CUDNN_VERSION="9.8.0" \
             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
@@ -53,7 +53,6 @@ jobs:
             --test_tag_filters=-multiaccelerator \
             --test_env=JAX_ACCELERATOR_COUNT=1 \
             --test_env=JAX_TESTS_PER_ACCELERATOR=8 \
-            --strategy=TestRunner=local \
             --local_test_jobs=8 \
             --test_env=JAX_EXCLUDE_TEST_TARGETS='PmapTest.testSizeOverflow|.*InterpretTest.*' \
             --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
@@ -85,15 +84,14 @@ jobs:
       - name: Run Bazel multiple H100 CUDA Tests
         run: |
             nvidia-smi
-            bazel test --config=rbe_linux_x86_64_cuda \
-            --config=resultstore \
-            --config=rbe_cache \
+            bazel test \
+            --config=ci_linux_x86_64_cuda \
+            --config=ci_rbe_cache \
             --repo_env=HERMETIC_CUDA_VERSION="12.8.0" \
             --repo_env=HERMETIC_CUDNN_VERSION="9.8.0" \
             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
             --test_output=errors \
-            --strategy=TestRunner=local \
             --local_test_jobs=8 \
             --test_env=JAX_EXCLUDE_TEST_TARGETS='PmapTest.testSizeOverflow|.*InterpretTest.*' \
             --test_tag_filters=multiaccelerator \
