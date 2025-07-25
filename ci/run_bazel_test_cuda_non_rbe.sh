@@ -73,13 +73,11 @@ fi
 if [[ "$JAXCI_BUILD_JAXLIB" == "wheel" ]]; then
     TEST_CONFIG="rbe_linux_x86_64_cuda"
     TEST_STRATEGY="--strategy=TestRunner=local"
-    JOBS_OPTION=""
-    LOCAL_TEST_JOBS_OPTION="--local_test_jobs=8"
+    CACHE_OPTION=""
 else
     TEST_CONFIG="ci_linux_x86_64_cuda"
+    CACHE_OPTION="--config=ci_rbe_cache"
     TEST_STRATEGY=""
-    JOBS_OPTION="--jobs=8"
-    LOCAL_TEST_JOBS_OPTION=""
 fi
 
 # Don't abort the script if one command fails to ensure we run both test
@@ -91,8 +89,7 @@ set +e
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
 # should match the VM's CPU core count (set in `--local_test_jobs`).
 bazel test --config=$TEST_CONFIG \
-      --config=resultstore \
-      --config=rbe_cache \
+      $CACHE_OPTION \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
@@ -121,8 +118,7 @@ first_bazel_cmd_retval=$?
 echo "Running multi-accelerator tests (without RBE)..."
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
 bazel test --config=$TEST_CONFIG \
-      --config=resultstore \
-      --config=rbe_cache \
+      $CACHE_OPTION \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
@@ -130,8 +126,7 @@ bazel test --config=$TEST_CONFIG \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
       $TEST_STRATEGY \
-      $JOBS_OPTION \
-      $LOCAL_TEST_JOBS_OPTION \
+      --local_test_jobs=8 \
       --test_tag_filters=multiaccelerator \
       --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
       --test_env=JAX_SKIP_SLOW_TESTS=true \
