@@ -105,6 +105,14 @@ class TpuOpsVerificationTest : public ::testing::Test {
         .getResult();
   }
 
+  Value ConstantI8Vector(ArrayRef<int64_t> shape, ArrayRef<int8_t> values) {
+    return Create<arith::ConstantOp>(
+               /*result=*/VectorType::get(shape, builder().getI8Type()),
+               /*value=*/dyn_cast<TypedAttr>(
+                   builder().getDenseI8ArrayAttr(values)))
+        .getResult();
+  }
+
   Value ConstantI32Vector(ArrayRef<int64_t> shape, ArrayRef<int32_t> values) {
     return Create<arith::ConstantOp>(
                /*result=*/VectorType::get(shape, i32()),
@@ -277,6 +285,29 @@ TEST_F(TpuOpsVerificationTest,
       StatusIs(
           _, HasSubstr(
                  "Expected mask shape to be broadcastable to result shape.")));
+}
+
+TEST_F(TpuOpsVerificationTest, UnpackSubelementsValidIndex) {
+  Value source = ConstantI8Vector(/*shape=*/{4, 8}, /*values=*/{1});
+  auto unpack = Create<UnpackSubelementsOp>(
+      /*output=*/VectorType::get({16}, builder().getI16Type()), source,
+      /*index=*/builder().getI32IntegerAttr(1),
+      /*pack_format=*/
+      PackFormatAttr::get(builder().getContext(), PackFormat::kInterleaved));
+  ASSERT_OK(VerifyOp(unpack));
+}
+
+TEST_F(TpuOpsVerificationTest, UnpackSubelementsInvalidIndex) {
+  Value source = ConstantI8Vector(/*shape=*/{4, 8}, /*values=*/{1});
+  auto unpack = Create<UnpackSubelementsOp>(
+      /*output=*/VectorType::get({16}, builder().getI16Type()), source,
+      /*index=*/builder().getI32IntegerAttr(4),
+      /*pack_format=*/
+      PackFormatAttr::get(builder().getContext(), PackFormat::kInterleaved));
+  ASSERT_THAT(
+      VerifyOp(unpack),
+      StatusIs(
+          _, HasSubstr("Index must be between 0 and the packing factor (2)")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaElementTypeMismatch) {

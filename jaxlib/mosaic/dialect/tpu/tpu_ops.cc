@@ -1651,6 +1651,16 @@ LogicalResult ReciprocalOp::verify() {
   return success();
 }
 
+LogicalResult UnpackSubelementsOp::verify() {
+  const int packing_factor = getType().getElementTypeBitWidth() /
+                             getSource().getType().getElementTypeBitWidth();
+  if (auto index = getIndex(); index < 0 || index >= packing_factor) {
+    return emitOpError("Index must be between 0 and the packing factor (")
+           << packing_factor << "), got " << index;
+  }
+  return success();
+}
+
 void PackSubelementsOp::build(OpBuilder &builder, OperationState &state,
                               const VectorType output_type,
                               const ArrayRef<Value> padded_sources,
@@ -1689,7 +1699,8 @@ LogicalResult PackSubelementsOp::verify() {
   SmallVector<bool> seen_positions(packing_factor, false);
   for (const int32_t position : getPositions()) {
     if (position < 0 || packing_factor <= position) {
-      return emitOpError("Positions must be between 0 and the packing factor");
+      return emitOpError("Positions must be between 0 and the packing factor (")
+             << packing_factor << "), got " << position;
     }
     if (seen_positions[position]) {
       return emitOpError("Positions must be unique");
