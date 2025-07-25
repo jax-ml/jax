@@ -280,14 +280,13 @@ build:ci_linux_aarch64 --config=ci_linux_aarch64_base
 build:ci_linux_aarch64 --host_crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
 build:ci_linux_aarch64 --crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
 
-# CUDA configs for Linux Aarch64 do not pass in the crosstool_top flag from
-# above because the Aarch64 toolchain rule does not support building with NVCC.
-# Instead, we use `@local_config_cuda//crosstool:toolchain` from --config=cuda
-# and set `CLANG_CUDA_COMPILER_PATH` to define the toolchain so that we can
-# use Clang for the C++ targets and NVCC to build CUDA targets.
+# Aarch64 builds use @local_config_cuda//crosstool:toolchain and
+# CLANG_CUDA_COMPILER_PATH, which allows Clang to compile C++ targets and NVCC
+# to compile CUDA targets.
 build:ci_linux_aarch64_cuda --config=ci_linux_aarch64_base
 build:ci_linux_aarch64_cuda --config=cuda --config=build_cuda_with_nvcc
 build:ci_linux_aarch64_cuda --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
+build:ci_linux_aarch64_cuda --crosstool_top="@local_config_cuda//crosstool:toolchain"
 
 # Mac Arm64 CI configs
 build:ci_darwin_arm64 --config=clang_local
