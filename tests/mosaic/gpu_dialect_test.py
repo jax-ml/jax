@@ -671,7 +671,7 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
-  def test_tcgen05_mma_scaled_arg_missing(self):
+  def test_tcgen05_mma_scale_arg_missing(self):
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     f8e0m0 = ir.Float8E8M0FNUType.get()
     with ir.InsertionPoint(self.module.body):
@@ -682,8 +682,8 @@ class DialectTest(MosaicGpuTest):
           ir.IntegerType.get_signless(1),
           ir.MemRefType.get([128, 4], f8e0m0, memory_space=tmem),
       )(
-          lambda acc, a, b, accumulate, a_scaled: mgpu.dialect.tcgen05_mma(
-              acc, a, b, accumulate, a_scaled=a_scaled
+          lambda acc, a, b, accumulate, a_scale: mgpu.dialect.tcgen05_mma(
+              acc, a, b, accumulate, a_scale=a_scale
           )
       )
 
@@ -693,7 +693,7 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
-  def test_tcgen05_mma_a_scaled_mem_space_is_tmem(self):
+  def test_tcgen05_mma_a_scale_mem_space_is_tmem(self):
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     f8e0m0 = ir.Float8E8M0FNUType.get()
     with ir.InsertionPoint(self.module.body):
@@ -705,18 +705,18 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 4], f8e0m0, memory_space=smem),
           ir.MemRefType.get([160, 4], f8e0m0, memory_space=tmem),
       )(
-          lambda acc, a, b, accumulate, a_scaled, b_scaled: mgpu.dialect.tcgen05_mma(
-              acc, a, b, accumulate, a_scaled=a_scaled, b_scaled=b_scaled
+          lambda acc, a, b, accumulate, a_scale, b_scale: mgpu.dialect.tcgen05_mma(
+              acc, a, b, accumulate, a_scale=a_scale, b_scale=b_scale
           )
       )
 
     with self.assertRaisesRegex(
-        ir.MLIRError,
-        r"The `a_scaled` input must be in TMEM",
+ir.MLIRError,
+        r"The `a_scale` input must be in TMEM",
     ):
       self.module.operation.verify()
 
-  def test_tcgen05_mma_b_scaled_mem_space_is_tmem(self):
+  def test_tcgen05_mma_b_scale_mem_space_is_tmem(self):
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     f8e0m0 = ir.Float8E8M0FNUType.get()
     with ir.InsertionPoint(self.module.body):
@@ -728,14 +728,14 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 4], f8e0m0, memory_space=tmem),
           ir.MemRefType.get([160, 4], f8e0m0, memory_space=smem),
       )(
-          lambda acc, a, b, accumulate, a_scaled, b_scaled: mgpu.dialect.tcgen05_mma(
-              acc, a, b, accumulate, a_scaled=a_scaled, b_scaled=b_scaled
+          lambda acc, a, b, accumulate, a_scale, b_scale: mgpu.dialect.tcgen05_mma(
+              acc, a, b, accumulate, a_scale=a_scale, b_scale=b_scale
           )
       )
 
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"The `b_scaled` input must be in TMEM",
+        r"The `b_scale` input must be in TMEM",
     ):
       self.module.operation.verify()
 

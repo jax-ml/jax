@@ -518,8 +518,8 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpIn
     MemRefRankOf<[MosaicGPU_TcGen05MMASupportedABType], [2]>:$b,
     I1:$accumulate,
     // TODO: allanrenucci - F8E4M3FNU (ue4m3) does not exist in MLIR. We use F8E4M3FN (e4m3) instead.
-    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$a_scaled,
-    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$b_scaled,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$a_scale,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$b_scale,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
   let results = (outs MemRefRankOf<[F16, F32, I32], [2]>);

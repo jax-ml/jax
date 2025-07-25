@@ -423,22 +423,22 @@ llvm::LogicalResult TcGen05MMAOp::verify() {
     return error("The `b` input must be in SMEM, but got {0}.", b_mem_space);
   }
 
-  mlir::TypedValue<mlir::MemRefType> a_scaled = getAScaled();
-  mlir::TypedValue<mlir::MemRefType> b_scaled = getBScaled();
-  if (static_cast<bool>(a_scaled) != static_cast<bool>(b_scaled)) {
+  mlir::TypedValue<mlir::MemRefType> a_scale = getAScale();
+  mlir::TypedValue<mlir::MemRefType> b_scale = getBScale();
+  if (static_cast<bool>(a_scale) != static_cast<bool>(b_scale)) {
     return error("Either none or both scales should be provided.");
   }
 
-  if (a_scaled) {
-    mlir::Attribute a_scaled_mem_space = a_scaled.getType().getMemorySpace();
-    if (a_scaled_mem_space != tmem) {
-      return error("The `a_scaled` input must be in TMEM, but got {0}.",
-                   a_scaled_mem_space);
+  if (a_scale) {
+    mlir::Attribute a_scale_mem_space = a_scale.getType().getMemorySpace();
+    if (a_scale_mem_space != tmem) {
+      return error("The `a_scale` input must be in TMEM, but got {0}.",
+                   a_scale_mem_space);
     }
-    mlir::Attribute b_scaled_mem_space = b_scaled.getType().getMemorySpace();
-    if (b_scaled_mem_space != tmem) {
-      return error("The `b_scaled` input must be in TMEM, but got {0}.",
-                   b_scaled_mem_space);
+    mlir::Attribute b_scale_mem_space = b_scale.getType().getMemorySpace();
+    if (b_scale_mem_space != tmem) {
+      return error("The `b_scale` input must be in TMEM, but got {0}.",
+                   b_scale_mem_space);
     }
   }
 
