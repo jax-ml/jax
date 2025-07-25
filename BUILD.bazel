@@ -36,6 +36,7 @@ wheel_sources(
         "//jax:experimental_buffer_callback",
         "//jax:lax_reference",
         "//jax:pallas_experimental_gpu_ops",
+        "//jax:pallas_fuser",
         "//jax:pallas_gpu_ops",
         "//jax:pallas_mosaic_gpu",
         "//jax:pallas_tpu_ops",
