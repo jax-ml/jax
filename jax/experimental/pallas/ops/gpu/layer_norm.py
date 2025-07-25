@@ -163,7 +163,7 @@ def layer_norm_backward_kernel_dx(
     a_hat = (a - mean_ref[...]) * rstd_ref[...]
     wdout = weight * dout
     da = (wdout - (a_hat * mean1 + mean2)) * rstd_ref[...]
-    pl.store(dx_ref, (col_idx,), da.astype(dx_ref.dtype), mask=mask)
+    plgpu.store(dx_ref.at[col_idx], da.astype(dx_ref.dtype), mask=mask)
   for_loop(pl.cdiv(n_col, block_size), dx_body, ())
 
 
