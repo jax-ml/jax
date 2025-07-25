@@ -493,82 +493,94 @@ lower per-operation dispatch overhead. If you're running your code on GPU or TPU
 or are benchmarking more complicated JIT-compiled sequences of operations on CPU, you
 can generally expect JAX to outperform NumPy.
 
-.. _faq-donation:
+.. _faq-different-kinds-of-jax-values:
 
-Buffer donation
----------------
+Different kinds of JAX values
+-----------------------------
 
-When JAX executes a computation it uses buffers on the device for all inputs and outputs.
-If you know that one of the inputs is not needed after the computation, and if it
-matches the shape and element type of one of the outputs, you can specify that you
-want the corresponding input buffer to be donated to hold an output. This will reduce
-the memory required for the execution by the size of the donated buffer.
+In the process of transforming functions, JAX replaces some function
+arguments with special tracer values.
 
-If you have something like the following pattern, you can use buffer donation::
+You could see this if you use a ``print`` statement::
 
-   params, state = jax.pmap(update_fn, donate_argnums=(0, 1))(params, state)
+  def func(x):
+    print(x)
+    return jnp.cos(x)
 
-You can think of this as a way to do a memory-efficient functional update
-on your immutable JAX arrays. Within the boundaries of a computation XLA can
-make this optimization for you, but at the jit/pmap boundary you need to
-guarantee to XLA that you will not use the donated input buffer after calling
-the donating function.
+  res = jax.jit(func)(0.)
 
-You achieve this by using the `donate_argnums` parameter to the functions :func:`jax.jit`,
-:func:`jax.pjit`, and :func:`jax.pmap`. This parameter is a sequence of indices (0 based) into
-the positional argument list::
+The above code does return the correct value ``1.`` but it also prints
+``Traced<ShapedArray(float32[])>`` for the value of ``x``. Normally, JAX
+handles these tracer values internally in a transparent way, e.g.,
+in the numeric JAX primitives that are used to implement the
+``jax.numpy`` functions. This is why ``jnp.cos`` works in the example above.
 
-   def add(x, y):
-     return x + y
+More precisely, a **tracer** value is introduced for the argument of
+a JAX-transformed function, except the arguments identified by special
+parameters such as ``static_argnums`` for :func:`jax.jit` or
+``static_broadcasted_argnums`` for :func:`jax.pmap`. Typically, computations
+that involve at least a tracer value will produce a tracer value. Besides tracer
+values, there are **regular** Python values: values that are computed outside JAX
+transformations, or arise from above-mentioned static arguments of certain JAX
+transformations, or computed solely from other regular Python values.
+These are the values that are used everywhere in absence of JAX transformations.
 
-   x = jax.device_put(np.ones((2, 3)))
-   y = jax.device_put(np.ones((2, 3)))
-   # Execute `add` with donation of the buffer for `y`. The result has
-   # the same shape and type as `y`, so it will share its buffer.
-   z = jax.jit(add, donate_argnums=(1,))(x, y)
+A tracer value carries an **abstract** value, e.g., ``ShapedArray`` with information
+about the shape and dtype of an array. We will refer here to such tracers as
+**abstract tracers**. Some tracers, e.g., those that are
+introduced for arguments of autodiff transformations, carry ``ConcreteArray``
+abstract values that actually include the regular array data, and are used,
+e.g., for resolving conditionals. We will refer here to such tracers
+as **concrete tracers**. Tracer values computed from these concrete tracers,
+perhaps in combination with regular values, result in concrete tracers.
+A **concrete value** is either a regular value or a concrete tracer.
 
-Note that this currently does not work when calling your function with key-word arguments!
-The following code will not donate any buffers::
+Most often values computed from tracer values are themselves tracer values.
+There are very few exceptions, when a computation can be entirely done
+using the abstract value carried by a tracer, in which case the result
+can be a regular value. For example, getting the shape of a tracer
+with ``ShapedArray`` abstract value. Another example is when explicitly
+casting a concrete tracer value to a regular type, e.g., ``int(x)`` or
+``x.astype(float)``.
+Another such situation is for ``bool(x)``, which produces a Python bool when
+concreteness makes it possible. That case is especially salient because
+of how often it arises in control flow.
 
-   params, state = jax.pmap(update_fn, donate_argnums=(0, 1))(params=params, state=state)
+Here is how the transformations introduce abstract or concrete tracers:
 
-If an argument whose buffer is donated is a pytree, then all the buffers
-for its components are donated::
+* :func:`jax.jit`: introduces **abstract tracers** for all positional arguments
+  except those denoted by ``static_argnums``, which remain regular
+  values.
+* :func:`jax.pmap`: introduces **abstract tracers** for all positional arguments
+  except those denoted by ``static_broadcasted_argnums``.
+* :func:`jax.vmap`, :func:`jax.make_jaxpr`, :func:`xla_computation`:
+  introduce **abstract tracers** for all positional arguments.
+* :func:`jax.jvp` and :func:`jax.grad` introduce **concrete tracers**
+  for all positional arguments. An exception is when these transformations
+  are within an outer transformation and the actual arguments are
+  themselves abstract tracers; in that case, the tracers introduced
+  by the autodiff transformations are also abstract tracers.
+* All higher-order control-flow primitives (:func:`lax.cond`, :func:`lax.while_loop`,
+  :func:`lax.fori_loop`, :func:`lax.scan`) when they process the functionals
+  introduce **abstract tracers**, whether or not there is a JAX transformation
+  in progress.
 
-   def add_ones(xs: List[Array]):
-     return [x + 1 for x in xs]
+All of this is relevant when you have code that can operate
+only on regular Python values, such as code that has conditional
+control-flow based on data::
 
-   xs = [jax.device_put(np.ones((2, 3))), jax.device_put(np.ones((3, 4)))]
-   # Execute `add_ones` with donation of all the buffers for `xs`.
-   # The outputs have the same shape and type as the elements of `xs`,
-   # so they will share those buffers.
-   z = jax.jit(add_ones, donate_argnums=0)(xs)
+    def divide(x, y):
+      return x / y if y >= 1. else 0.
 
-It is not allowed to donate a buffer that is used subsequently in the computation,
-and JAX will give an error because the buffer for `y` has become invalid
-after it was donated::
+If we want to apply :func:`jax.jit`, we must ensure to specify ``static_argnums=1``
+to ensure ``y`` stays a regular value. This is due to the boolean expression
+``y >= 1.``, which requires concrete values (regular or tracers). The
+same would happen if we write explicitly ``bool(y >= 1.)``, or ``int(y)``,
+or ``float(y)``.
 
-   # Donate the buffer for `y`
-   z = jax.jit(add, donate_argnums=(1,))(x, y)
-   w = y + 1  # Reuses `y` whose buffer was donated above
-   # >> RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer
-
-You will get a warning if the donated buffer is not used, e.g., because
-there are more donated buffers than can be used for the outputs::
-
-   # Execute `add` with donation of the buffers for both `x` and `y`.
-   # One of those buffers will be used for the result, but the other will
-   # not be used.
-   z = jax.jit(add, donate_argnums=(0, 1))(x, y)
-   # >> UserWarning: Some donated buffers were not usable: f32[2,3]{1,0}
-
-The donation may also be unused if there is no output whose shape matches
-the donation::
-
-   y = jax.device_put(np.ones((1, 3)))  # `y` has different shape than the output
-   # Execute `add` with donation of the buffer for `y`.
-   z = jax.jit(add, donate_argnums=(1,))(x, y)
-   # >> UserWarning: Some donated buffers were not usable: f32[1,3]{1,0}
+Interestingly, ``jax.grad(divide)(3., 2.)``, works because :func:`jax.grad`
+uses concrete tracers, and resolves the conditional using the concrete
+value of ``y``.
 
 Gradients contain `NaN` where using ``where``
 ------------------------------------------------
