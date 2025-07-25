@@ -13,6 +13,7 @@ design and implementation, see the :doc:`advanced guides <advanced_guides>`.
    jit-compilation
    automatic-vectorization
    automatic-differentiation
+   tracing
    random-numbers
    stateful-computations
    control-flow
