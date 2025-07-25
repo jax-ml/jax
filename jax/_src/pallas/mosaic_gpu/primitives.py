@@ -1848,7 +1848,9 @@ def _jaxpr_call_lowering_rule(
   for axis, pid in enumerate(program_ids):
     if pid is not None:
       continue
-    program_ids[axis] = lowering._program_id(axis, ctx.module_ctx.squashed_dims)
+    program_ids[axis] = lowering._program_id(
+        axis, ctx.module_ctx.squashed_dims, len(program_ids)
+    )
   new_module_ctx = dataclasses.replace(ctx.module_ctx, program_ids=program_ids)
   return lowering.lower_jaxpr_to_mosaic_gpu(
       new_module_ctx, ctx.launch_ctx, jaxpr, args

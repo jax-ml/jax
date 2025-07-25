@@ -41,6 +41,9 @@ from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
 from jax._src.state import types as state_types
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import gpu as gpu_dialect
+from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as plgpu
@@ -69,6 +72,38 @@ def _sum_same_dtype(x):
   # TODO(slebedev): Remove this once ``FragmentedArray`` supports
   # ``reduce_sum`` for non-32-bit types.
   return jnp.sum(x, dtype=x.dtype)
+
+
+def _get_linearized_cuda_grid_index():
+  shape = ()
+  layout = plgpu.Layout.WG_SPLAT
+
+  @plgpu.inline_mgpu(
+      arg_types=(),
+      return_type=plgpu.ShapeDtypeStruct(shape, jnp.int32, layout=layout),
+  )
+  def fn(_):
+    grid_x = gpu_dialect.grid_dim(gpu_dialect.Dimension.x)
+    grid_y = gpu_dialect.grid_dim(gpu_dialect.Dimension.y)
+    block_x = gpu_dialect.block_id(gpu_dialect.Dimension.x)
+    block_y = gpu_dialect.block_id(gpu_dialect.Dimension.y)
+    block_z = gpu_dialect.block_id(gpu_dialect.Dimension.z)
+
+    grid_idx = arith_dialect.addi(
+        block_x,
+        arith_dialect.addi(
+            arith_dialect.muli(block_y, grid_x),
+            arith_dialect.muli(block_z, arith_dialect.muli(grid_x, grid_y)),
+        ),
+    )
+
+    return mgpu.FragmentedArray.splat(
+        arith_dialect.index_cast(ir.IntegerType.get_signless(32), grid_idx),
+        shape=shape,
+        layout=layout.to_mgpu(),
+        is_signed=False
+    )
+  return fn()
 
 
 class PallasTestMetaclass(parameterized.TestGeneratorMetaclass):
@@ -1177,6 +1212,58 @@ class PallasCallTest(PallasTest):
         kernel()[:, :, :, :, 0],
         jnp.arange(math.prod(grid), dtype=jnp.int32).reshape(*grid)
     )
+
+  @parameterized.parameters(
+      ((2, 3), ("a", "b"), (), ()),
+      ((2, 3), ("a", "b"), (2,), ("x",)),
+      ((2, 3, 4), ("a", "b", "c"), (), ()),
+      ((2, 3, 4), ("a", "b", "c"), (2,), ("x",)),
+      ((2, 3, 4), ("a", "b", "c"), (2, 3), ("x", "y")),
+      ((2, 3, 4, 5), ("a", "b", "c", "d"), (), ()),
+      ((2, 3, 4, 5), ("a", "b", "c", "d"), (2,), ("x",)),
+  )
+  def test_axis_indices_in_grid(self, grid, grid_names, cluster, cluster_names):
+    # Skipping because `inline_mpgpu` isn't supported in WG semantics.
+    self.skip_if_wg_semantics()
+
+    @functools.partial(
+        self.kernel,
+        out_shape=[
+            jax.ShapeDtypeStruct([*cluster, *grid, 128], jnp.int32),
+            jax.ShapeDtypeStruct([*cluster, *grid, 128], jnp.int32)
+        ],
+        grid=grid,
+        grid_names=grid_names,
+        cluster=cluster,
+        cluster_names=cluster_names,
+    )
+    def kernel(out1_ref, out2_ref):
+      pallas_grid_idx = lax.axis_index(grid_names)
+      cuda_grid_idx = _get_linearized_cuda_grid_index()
+
+      out_indices = [lax.axis_index(ax) for ax in (*cluster_names, *grid_names)]
+      out1_ref[*out_indices] = jnp.full((128,), pallas_grid_idx)
+      out2_ref[*out_indices] = jnp.full((128,), cuda_grid_idx)
+    out1, out2 = kernel()
+
+    out_per_cta = jnp.arange(math.prod(grid), dtype=jnp.int32).reshape(grid)
+    out1_ref = jnp.broadcast_to(out_per_cta[..., None], (*cluster, *grid, 128))
+    np.testing.assert_array_equal(out1, out1_ref)
+
+    padded_cluster = (1,) * (len(grid) - len(cluster)) + cluster
+    scaled_grid = tuple(g * c for g, c in zip(grid, padded_cluster))
+    original = jnp.arange(math.prod(scaled_grid), dtype=jnp.int32).reshape(
+        scaled_grid
+    )
+
+    # Untile the scaled grid to get the per-cluster grid.
+    interleaved_shape = tuple(val for pair in zip(grid, padded_cluster) for val in pair)
+    perm = tuple(range(1, 2 * len(grid), 2)) + tuple(range(0, 2 * len(grid), 2))
+
+    out2_ref = original.reshape(interleaved_shape).transpose(perm).squeeze()
+    out2_ref = jnp.broadcast_to(out2_ref[..., None], out2_ref.shape + (128,))
+
+    np.testing.assert_array_equal(out2, out2_ref)
 
   def test_program_id_in_block_spec(self):
     @functools.partial(

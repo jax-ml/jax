@@ -311,8 +311,8 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
   out, lse = plgpu.kernel(
       entry,
       out_shape=out_shape,
-      grid=(batch_size, num_q_tiles, num_q_heads),
-      grid_names=("batch", "q_seq", "heads"),
+      grid=(num_q_heads, num_q_tiles, batch_size),
+      grid_names=("heads", "q_seq", "batch"),
       num_threads=3,
       thread_name="wg",
       compiler_params=plgpu.CompilerParams(approx_math=True),
@@ -599,8 +599,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
           (plgpu.Barrier(num_barriers=compute_wgs),) * 4  # type: ignore
       ],
       compiler_params=plgpu.CompilerParams(approx_math=True),
-      grid=(batch_size, num_q_tiles, num_q_heads),
-      grid_names=("batch", "q_seq", "heads"),
+      grid=(num_q_heads, num_q_tiles, batch_size),
+      grid_names=("heads", "q_seq", "batch"),
       num_threads=compute_wgs + 1,
       thread_name="wg",
   )(q, k, v, do, lse, delta)
@@ -620,8 +620,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
         (plgpu.Barrier(num_barriers=compute_wgs),) * 2  # type: ignore
   ],
     compiler_params=plgpu.CompilerParams(approx_math=True),
-    grid=(batch_size, num_kv_tiles, num_q_heads),
-    grid_names=("batch", "kv_seq", "heads"),
+    grid=(num_q_heads, num_kv_tiles, batch_size),
+    grid_names=("heads", "kv_seq", "batch"),
     num_threads=compute_wgs + 1,
     thread_name="wg"
   )(q, k, v, do, lse, delta)
@@ -778,8 +778,8 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
 
   out, lse = plgpu.kernel(
       fa3_kernel,
-      grid=(batch_size, num_q_tiles, num_q_heads),
-      grid_names=("batch", "q_seq", "heads"),
+      grid=(num_q_heads, num_q_tiles, batch_size),
+      grid_names=("heads", "q_seq", "batch"),
       num_threads=3,
       thread_name="wg",
             out_shape=out_shape,
