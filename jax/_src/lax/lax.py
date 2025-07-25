@@ -2780,11 +2780,15 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
   else:
     dims = api_util._ensure_index_tuple(dimensions)
     same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
-  if np.shape(operand) and same_shape and same_dims and isinstance(operand, Array):
+  out_sharding = canonicalize_sharding(out_sharding, 'reshape')
+  same_sharding = (out_sharding is None or
+                   core.typeof(operand).sharding == out_sharding)
+
+  if (np.shape(operand) and same_shape and same_dims and same_sharding and
+      isinstance(operand, Array)):
     return operand
   else:
     dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
-    out_sharding = canonicalize_sharding(out_sharding, 'reshape')
     return reshape_p.bind(
       operand, *dyn_shape, new_sizes=tuple(static_new_sizes),
       dimensions=None if dims is None or same_dims else dims,
@@ -4006,15 +4010,18 @@ def _unbroadcast(aval, x):
   if not isinstance(aval, (core.DShapedArray, ShapedArray)):
     raise TypeError("transpose with implicit broadcasting of unshaped values")
   x_shape = np.shape(x)
-  if core.definitely_equal_shape(aval.shape, x_shape):
+  if (core.definitely_equal_shape(aval.shape, x_shape) and
+      aval.sharding == core.typeof(x).sharding):
     return x
   assert not aval.shape or len(x_shape) == len(aval.shape)
   if not aval.shape:
     return reduce_sum(x, list(range(len(x_shape))))
   else:
-    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if not core.definitely_equal(a, b)]
+    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape))
+            if not core.definitely_equal(a, b)]
     if config.enable_checks.value: assert all(aval.shape[i] == 1 for i in dims)
-    return reshape(reduce_sum(x, dims), aval.shape)
+    return reshape(reduce_sum(x, dims), aval.shape,
+                   out_sharding=aval.to_cotangent_aval().sharding)
 
 def _maybe_broadcast(target_shape, x):
   x_shape = np.shape(x)

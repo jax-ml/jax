@@ -8190,9 +8190,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     f(arr)  # doesn't crash
     jax.jit(f)(arr)  # doesn't crash
 
-  @parameterized.parameters(True, False)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_unreduced_basic(self, use_shardy, mesh):
+  def test_unreduced_basic(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
     x = jax.device_put(np_inp, P('x', 'y'))
     y = jax.device_put(np_inp.T, P('y', None))
@@ -8214,31 +8213,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(out.aval.sharding.spec, P('x', None))
       return out
 
-    if use_shardy:
-      with config.use_shardy_partitioner(True):
-        out = f(x, y, a, b)
-        self.assertArraysEqual(out, (np_inp @ np_inp.T) + (np_inp @ np_inp.T))
+    out = f(x, y, a, b)
+    self.assertArraysEqual(out, (np_inp @ np_inp.T) + (np_inp @ np_inp.T))
 
-        traced = f.trace(x, y, a, b)
-        lowered_text = traced.lower().as_text()
-        self.assertIn('unreduced={"y"}', lowered_text)
-        self.assertEqual(lowered_text.count('unreduced={"y"}'), 3)
+    traced = f.trace(x, y, a, b)
+    lowered_text = traced.lower().as_text()
+    self.assertIn('unreduced={"y"}', lowered_text)
+    self.assertEqual(lowered_text.count('unreduced={"y"}'), 3)
 
-        f_bar = jax.jit(jax.grad(lambda x, y, a, b: f(x, y, a, b).sum(),
-                                argnums=(0, 1, 2, 3)))
-        f_bar(x, y, a, b)  # doesn't crash
+    f_bar = jax.jit(jax.grad(lambda x, y, a, b: f(x, y, a, b).sum(),
+                            argnums=(0, 1, 2, 3)))
+    f_bar(x, y, a, b)  # doesn't crash
 
-        grad_jaxpr = f_bar.trace(x, y, a, b).jaxpr
-        reshard_eqn = grad_jaxpr.eqns[4].params['jaxpr'].eqns[0]
-        self.assertEqual(reshard_eqn.params['dst_sharding'].spec.reduced,
-                        frozenset('y'))
-        self.assertEqual(reshard_eqn.params['dst_sharding'].spec.unreduced,
-                        frozenset())
-    else:
-      with config.use_shardy_partitioner(False), self.assertRaisesRegex(
-          ValueError,
-          "unreduced/reduced only works with the shardy partitioner"):
-        f(x, y, a, b)
+    grad_jaxpr = f_bar.trace(x, y, a, b).jaxpr
+    reshard_eqn = grad_jaxpr.eqns[4].params['jaxpr'].eqns[0]
+    self.assertEqual(reshard_eqn.params['dst_sharding'].spec.reduced,
+                    frozenset('y'))
+    self.assertEqual(reshard_eqn.params['dst_sharding'].spec.unreduced,
+                    frozenset())
 
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_dot_general_unreduced_error(self, mesh):
@@ -8727,6 +8719,68 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return mesh_cast(key, NamedSharding(explicit_mesh, P()))
 
     f()  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_add_transpose(self, mesh):
+    x = jax.device_put(jnp.arange(4.), P())
+    y = jax.device_put(jnp.arange(4.), P('x'))
+
+    @jax.jit
+    def f(x, y):
+      return x + y
+
+    out = f(x, y)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    out = jax.jit(jax.grad(lambda x, y: f(x, y).sum(), argnums=(0, 1)))(x, y)
+    self.assertEqual(out[0].sharding, NamedSharding(mesh, P(None)))
+    self.assertEqual(out[1].sharding, NamedSharding(mesh, P('x')))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_dynamic_update_slice_transpose(self, mesh):
+    x = jax.device_put(jnp.arange(8.), P())
+    y = jax.device_put(jnp.arange(4.), P())
+    z = jax.device_put(jnp.arange(8.), P('x'))
+
+    @jax.jit
+    def f(x, y, z):
+      x_updated = jax.lax.dynamic_update_slice(x, y, (1,))
+      w = x_updated + z
+      self.assertEqual(w.aval.sharding.spec, P('x'))
+      return w.sum()
+
+    out = jax.jit(jax.grad(f, argnums=(0, 1, 2)))(x, y, z)
+    self.assertEqual(out[0].sharding, NamedSharding(mesh, P(None)))
+    self.assertEqual(out[1].sharding, NamedSharding(mesh, P(None)))
+    self.assertEqual(out[2].sharding, NamedSharding(mesh, P('x')))
+
+  @parameterized.named_parameters(
+      ('fully_replicated', P(None, None)),
+      ('sharded', P(None, 'x'))
+  )
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_gather_transpose(self, z_spec, mesh):
+    x = jax.device_put(jnp.arange(16.).reshape(2, 8), P())
+    y = jax.device_put(jnp.arange(6.).reshape(2, 3), P())
+    z = jax.device_put(jnp.arange(16.).reshape(2, 8), z_spec)
+
+    @jax.jit
+    @jax.vmap
+    def f(x, y, z):
+      x_updated = jax.lax.dynamic_update_slice(x, y, (1,))
+      w = x_updated + z
+      self.assertEqual(w.aval.sharding.spec, P(z_spec[-1]))
+      return w.sum()
+
+    f(x, y, z)  # doesn't crash
+
+    def g(x, y, z):
+      return f(x, y, z).sum()
+
+    out = jax.jit(jax.grad(g, argnums=(0, 1, 2)))(x, y, z)
+    self.assertEqual(out[0].sharding, NamedSharding(mesh, P(None, None)))
+    self.assertEqual(out[1].sharding, NamedSharding(mesh, P(None, None)))
+    self.assertEqual(out[2].sharding, NamedSharding(mesh, z_spec))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

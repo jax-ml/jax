@@ -1641,14 +1641,6 @@ def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
 
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
-# def _getslice_lower(ctx, x, lo, hi):
-#   aval_out, = ctx.avals_out
-#   return hlo.RealDynamicSliceOp(
-#       mlir.aval_to_ir_type(aval_out), x,
-#       mlir.shape_tensor([lo]), mlir.shape_tensor([hi]), mlir.shape_tensor([1])
-#   ).results
-# mlir.register_lowering(getslice_p, _getslice_lower)
-
 
 def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
   if operand.ndim != update.ndim:
@@ -1671,10 +1663,10 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
 def _dynamic_update_slice_sharding_rule(operand, update, *start_indices):
   if operand.sharding != update.sharding:
     raise core.ShardingTypeError(
-        "dynamic_update_slice update sharding must be equal to operand"
-        " sharding, got update sharding"
-        f" {update.str_short(mesh_axis_types=True)} for operand sharding"
-        f" {operand.str_short(mesh_axis_types=True)}.")
+        "dynamic_update_slice operand sharding must be equal to update"
+        " sharding, got operand sharding"
+        f" {operand.str_short(mesh_axis_types=True)} and update sharding"
+        f" {update.str_short(mesh_axis_types=True)}.")
   return operand.sharding
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
