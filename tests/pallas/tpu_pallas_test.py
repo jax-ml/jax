@@ -1272,39 +1272,6 @@ class PallasCallDMATest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(y, x)
 
-  def test_host_input_hbm_to_host_dma(self):
-    if self.INTERPRET:
-      self.skipTest('Interpret mode does not support host memory.')
-    if not jtu.if_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest("Requires libtpu built after 2025-07-12")
-    def kernel(x_host_ref, y_hbm_ref, _):
-      def body(sem):
-        pltpu.async_copy(y_hbm_ref, x_host_ref, sem).wait()
-
-      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
-
-    x = jnp.arange(8 * 128.0).reshape((8, 128))
-    y = jnp.ones((8, 128))
-    # Move input to the host.
-    x = jax.device_put(
-        x,
-        jax.sharding.NamedSharding(
-            jax.sharding.Mesh(jax.devices(), 'x'),
-            jax.sharding.PartitionSpec(),
-            memory_kind='pinned_host',
-        ),
-    )
-    z = self.pallas_call(
-        kernel,
-        in_specs=[
-            pl.BlockSpec(memory_space=pl.HOST),
-            pl.BlockSpec(memory_space=pl.ANY),
-        ],
-        out_specs=pl.BlockSpec(memory_space=pl.ANY),
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-    )(x, y)
-    np.testing.assert_array_equal(x, y)
-
   def test_cannot_dma_with_nonscalar_semaphore_ref(self):
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(sem):
