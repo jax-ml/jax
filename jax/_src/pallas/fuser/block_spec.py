@@ -1707,6 +1707,32 @@ def _reshape_eval_rule(
   return x
 
 
+@register_pull_block_spec_rule(lax.reduce_sum_p)
+def _reduce_sum_pull_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    axes: tuple[int, ...],
+):
+  del ctx
+  if axes:
+   raise NotImplementedError('reduce_sum with no axes not supported yet')
+  return [block_spec]
+
+
+@register_eval_rule(lax.reduce_sum_p)
+def _reduce_sum_eval_rule(
+    ctx: KernelEvalContext,
+    x,
+    *,
+    axes: tuple[int, ...],
+):
+  del ctx
+  if axes:
+   raise NotImplementedError('reduce_sum with no axes not supported yet')
+  return x
+
+
 # Higher order primitives
 
 
@@ -2199,3 +2225,16 @@ def _reshape_push_rule(
 
     return pallas_core.BlockSpec(new_block_shape, new_index_map)
   raise NotImplementedError(f'reshape not supported yet: {aval_in}, {aval_out}')
+
+
+@register_push_block_spec_rule(lax.reduce_sum_p)
+def _reduce_sum_push_rule(
+    ctx: PushRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    axes: tuple[int, ...],
+):
+  del ctx
+  if axes:
+   raise NotImplementedError('reduce_sum with no axes not supported yet')
+  return block_spec
