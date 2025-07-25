@@ -3097,6 +3097,8 @@ def reduce_sum(operand: ArrayLike, axes: Sequence[int]) -> Array:
       :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`, :func:`jax.lax.reduce_min`,
       :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
   """
+  if not axes:
+    return operand  # type: ignore
   return reduce_sum_p.bind(operand, axes=tuple(axes))
 
 def reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> Array:
