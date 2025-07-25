@@ -264,13 +264,16 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
           grid_spec=pltpu.PrefetchScalarGridSpec(
               num_scalar_prefetch=1,  # 1 pytree
               grid=(grid_size,),
-              in_specs=[pl.BlockSpec((8, 128),
-                                     lambda i, s_ref: (pl.load(s_ref[0], (i,)), 0)),
-                        pl.BlockSpec((1, 128), lambda i, s_ref: (0, 0))],
-              out_specs=pl.BlockSpec((32, 128),
-                                     lambda i, s_ref: (pl.load(s_ref[0], i), 0)),
-              scratch_shapes=([pltpu.SemaphoreType.REGULAR((3,))] if scratch
-                              else []),
+              in_specs=[
+                  pl.BlockSpec((8, 128), lambda i, s_ref: (s_ref[0][i], 0)),
+                  pl.BlockSpec((1, 128), lambda i, s_ref: (0, 0)),
+              ],
+              out_specs=pl.BlockSpec(
+                  (32, 128), lambda i, s_ref: (s_ref[0][i], 0)
+              ),
+              scratch_shapes=(
+                  [pltpu.SemaphoreType.REGULAR((3,))] if scratch else []
+              ),
           ),
       )
       def kernel(s_refs, src, to_store, dst, *scratch_refs):

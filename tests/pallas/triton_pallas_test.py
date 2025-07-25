@@ -144,7 +144,7 @@ class TritonPallasTest(PallasBaseTest):
         idx = (i, jnp.arange(n))
       else:
         idx = (jnp.arange(m), i)
-      x = pl.load(x_ref, idx)
+      x = x_ref[idx]
       plgpu.atomic_add(y_ref, (jnp.arange(y.shape[0]),), x)
 
     x = jax.random.normal(jax.random.key(0), (m, n))
@@ -209,6 +209,114 @@ class TritonPallasTest(PallasBaseTest):
     lock, count = increment(0, 0)
     np.testing.assert_allclose(lock, 0)
     np.testing.assert_allclose(count, num_threads)
+
+  @parameterized.product(
+      size=[1, 2, 64, 129, 1021],
+      block_size=[1, 2, 32, 64, 128],
+  )
+  def test_masked_load_store(self, size, block_size):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((size,), floatx)),
+        grid=pl.cdiv(size, block_size),
+    )
+    def kernel(x_ref, o_ref):
+      idx = pl.program_id(0) * block_size + jnp.arange(
+          block_size, dtype=jnp.int32
+      )
+      mask = idx < x_ref.shape[0]
+      x = plgpu.load(x_ref.at[idx], mask=mask)
+      plgpu.store(o_ref.at[idx], x + 1.0, mask=mask)
+
+    key = jax.random.key(0)
+    x = jax.random.normal(key, (size,))
+    np.testing.assert_allclose(kernel(x), x + 1.0, atol=1e-5, rtol=1e-5)
+
+  def test_masked_oob_load_store_slice(self):
+    n = 16
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((n,), floatx)),
+    )
+    def masked_oob_load_store_slice(x_ref, mask_ref, start_idx_ref, o_ref):
+      x = plgpu.load(
+          x_ref.at[pl.ds(start_idx_ref[()], n)], mask=mask_ref[:], other=-1.0
+      )
+      o_ref[...] = x
+
+    x = jax.random.normal(jax.random.key(0), (n,))
+    slice_start = jax.random.randint(jax.random.key(2), (), 1, n)
+    indices = jnp.arange(n) + slice_start
+    mask = indices < n
+    out = masked_oob_load_store_slice(x, mask, slice_start)
+    o_new = jnp.where(mask, x[indices], jnp.full_like(x, -1.0))
+    np.testing.assert_array_equal(out, o_new)
+
+  @parameterized.parameters(
+      ((16, 32), (16,)),
+      ((16, 32), (32,)),
+      ((16, 32), (16, 16)),
+  )
+  def test_invalid_broadcasted_load(self, x_shape, mask_shape):
+    if self.INTERPRET:
+      self.skipTest("No broadcasting checks in pl.load in interpret mode")
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32)
+    )
+    def kernel(x_ref, mask_ref, o_ref):
+      del o_ref  # Unused.
+      plgpu.load(x_ref, mask=mask_ref[:])
+
+    x = jnp.ones(x_shape, dtype=jnp.float32)
+    mask = jnp.ones(mask_shape, dtype=jnp.bool_)
+    # assertRaises* methods do not support inspecting the __cause__, so
+    # we have to check it manually.
+    try:
+      kernel(x, mask)
+    except Exception as e:
+      self.assertIn("Cannot broadcast", str(e.__cause__))
+    else:
+      self.fail("Expected exception due to invalid broadcasting")
+
+  @parameterized.named_parameters(*(
+      dict(
+          testcase_name=f"{batch_size}_{size}_{block_size}_{dtype}",
+          batch_size=batch_size,
+          size=size,
+          block_size=block_size,
+          dtype=dtype,
+      )
+      for batch_size in [1, 2, 4, 23]
+      for size in [1, 2, 129, 255, 256]
+      for block_size in [1, 2, 32, 64, 128, 256]
+      for dtype in ["float32"]
+      if size < block_size
+  ))
+  def test_softmax(self, batch_size, size, block_size, dtype):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((batch_size, size), dtype),
+        grid=batch_size,
+    )
+    def softmax(x_ref, o_ref):
+      row_idx = pl.program_id(0)
+      x_idx = jnp.arange(block_size)
+      row_idxs = (row_idx, x_idx)
+      mask = x_idx < x_ref.shape[1]
+      row = plgpu.load(x_ref.at[row_idxs], mask=mask, other=-float("inf"))
+      row_minus_max = row - jnp.max(row, axis=0)
+      numerator = jnp.exp(row_minus_max)
+      denominator = jnp.sum(numerator, axis=0)
+      softmax_output = numerator / denominator
+      plgpu.store(o_ref.at[row_idxs], softmax_output, mask=mask)
+
+    key = jax.random.key(0)
+    x = jax.random.normal(key, [batch_size, size], dtype=dtype)
+    np.testing.assert_allclose(
+        softmax(x), jax.nn.softmax(x, axis=-1), atol=1e-5, rtol=1e-5
+    )
 
 
 if __name__ == "__main__":

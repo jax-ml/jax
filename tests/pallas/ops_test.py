@@ -2068,58 +2068,6 @@ class OpsTest(PallasBaseTest):
         rtol=0.05,
     )
 
-  @parameterized.product(
-      size=[1, 2, 64, 129, 1021],
-      block_size=[1, 2, 32, 64, 128],
-  )
-  def test_masked_load_store(self, size, block_size):
-    self.skip_if_mosaic_gpu()
-
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented")
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=(jax.ShapeDtypeStruct((size,), floatx)),
-        grid=pl.cdiv(size, block_size),
-    )
-    def kernel(x_ref, o_ref):
-      idx = pl.program_id(0) * block_size + jnp.arange(
-              block_size, dtype=jnp.int32)
-      mask = idx < x_ref.shape[0]
-      x = pl.load(x_ref, (idx,), mask=mask)
-      pl.store(o_ref, (idx,), x + 1.0, mask=mask)
-
-    key = random.key(0)
-    x = random.normal(key, (size,))
-    np.testing.assert_allclose(kernel(x), x + 1.0, atol=1e-5, rtol=1e-5)
-
-  def test_masked_oob_load_store_slice(self):
-    self.skip_if_mosaic_gpu()
-
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
-
-    n = 16
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=(jax.ShapeDtypeStruct((n,), floatx)),
-    )
-    def masked_oob_load_store_slice(x_ref, mask_ref, start_idx_ref, o_ref):
-      x = pl.load(x_ref, (pl.dslice(start_idx_ref[()], n)),
-                  mask=mask_ref[:], other=-1.)
-      o_ref[...] = x
-
-    x = random.normal(random.key(0), (n,))
-    slice_start = random.randint(random.key(2), (), 1, n)
-    indices = jnp.arange(n) + slice_start
-    mask = indices < n
-    out = masked_oob_load_store_slice(x, mask, slice_start)
-    o_new = jnp.where(mask, x[indices], jnp.full_like(x, -1.))
-    np.testing.assert_array_equal(out, o_new)
-
   def test_strided_load(self):
     self.skip_if_mosaic_gpu()
 
@@ -2147,45 +2095,12 @@ class OpsTest(PallasBaseTest):
         out_shape=(jax.ShapeDtypeStruct((m, n), floatx)),
     )
     def load(x_ref, o_ref):
-      x = pl.load(x_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]))
-      pl.store(o_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]), x + 1.0)
+      idx = (jnp.arange(m)[:, None], jnp.arange(n)[None, :])
+      o_ref[idx] = x_ref[idx] + 1.0
 
     key = random.key(0)
     x = random.normal(key, (m, n))
     np.testing.assert_allclose(load(x), x + 1.0, atol=1e-5, rtol=1e-5)
-
-  @parameterized.parameters(
-      ((16, 32), (16,)),
-      ((16, 32), (32,)),
-      ((16, 32), (16, 16)),
-  )
-  def test_invalid_broadcasted_load(self, x_shape, mask_shape):
-    self.skip_if_mosaic_gpu()
-
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
-
-    if self.INTERPRET:
-      self.skipTest("No broadcasting checks in pl.load in interpret mode")
-
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32)
-    )
-    def kernel(x_ref, mask_ref, o_ref):
-      del o_ref  # Unused.
-      pl.load(x_ref, slice(None), mask=mask_ref[:])
-
-    x = jnp.ones(x_shape, dtype=jnp.float32)
-    mask = jnp.ones(mask_shape, dtype=jnp.bool_)
-    # assertRaises* methods do not support inspecting the __cause__, so
-    # we have to check it manually.
-    try:
-      kernel(x, mask)
-    except Exception as e:
-      self.assertIn("Cannot broadcast", str(e.__cause__))
-    else:
-      self.fail("Expected exception due to invalid broadcasting")
 
   def test_swap(self):
     self.skip_if_mosaic_gpu()
@@ -2285,7 +2200,7 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(self.pallas_call, out_shape=out_shape)
     def reduce(x_ref, y_ref):
-      x = pl.load(x_ref, (jnp.arange(m),))
+      x = x_ref[jnp.arange(m)]
       y = jnp.sum(x, axis=-1)
       if use_store:
         pl.store(y_ref, (), y)
@@ -2360,11 +2275,12 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(self.pallas_call, out_shape=out_shape, grid=grid)
     def reduce(x_ref, y_ref):
-      x = pl.load(x_ref, (jnp.arange(m, dtype=jnp.int32)[:, None],
-                          jnp.arange(n, dtype=jnp.int32)[None]))
+      x = x_ref[
+          jnp.arange(m, dtype=jnp.int32)[:, None],
+          jnp.arange(n, dtype=jnp.int32)[None],
+      ]
       y = op(x, axis=axis)
-      pl.store(y_ref,
-                tuple(jnp.arange(d, dtype=jnp.int32) for d in y.shape), y)
+      y_ref[tuple(jnp.arange(d, dtype=jnp.int32) for d in y.shape)] = y
 
     for i, key in enumerate(random.split(random.key(0), 20)):
       x = make_x(key)

@@ -111,8 +111,8 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
   def matmul_kernel(x_ref, y_ref, o_ref):
     acc = jnp.zeros(o_ref.shape, dtype=jnp.float32)
     def body(i, acc_ref):
-      x_block = pl.load(x_ref, (slice(None), pl.ds(i * bk, bk)))
-      y_block = pl.load(y_ref, (pl.ds(i * bk, bk), slice(None)))
+      x_block = x_ref[:, pl.ds(i * bk, bk)]
+      y_block = y_ref[pl.ds(i * bk, bk), :]
       acc_ref[:, :] += pl.dot(x_block, y_block)
     acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
     o_ref[:, :] = acc

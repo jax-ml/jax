@@ -509,7 +509,7 @@ class OpsTest(PallasBaseTest):
     tgt_shape = (16, 256)
 
     def kernel(src, tgt):
-      tgt[:] = pl.load(src, tuple(pl.ds(0, d) for d in tgt.shape))
+      tgt[:] = src[tuple(pl.ds(d) for d in tgt.shape)]
 
     x = jnp.arange(np.prod(src_shape), dtype=jnp.float32).reshape(src_shape)
     run = pl.pallas_call(
