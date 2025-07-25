@@ -28,6 +28,7 @@ from absl.testing import absltest, parameterized
 import jax
 from jax._src import config
 from jax._src import dtypes
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -38,6 +39,7 @@ from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import fragmented_array as fa
+from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
@@ -1849,7 +1851,6 @@ class TCGen05Test(TestCase):
       mgpu.as_gpu_kernel(
           kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
       )(x).block_until_ready()
-
 
 
 class BarrierTest(TestCase):
@@ -4132,7 +4133,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     )
 
 
-class MosaicGpuDialectTCGen05Test(TestCase):
+class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
@@ -4178,8 +4179,7 @@ class MosaicGpuDialectTCGen05Test(TestCase):
           body,
           grid=(2 if collective else 1, 1, 1),
           cluster=(2 if collective else 1, 1, 1),
-          # TODO(b/431684684): Increase to 128 once [de]alloc is predicated.
-          block=(32, 1, 1),
+          block=(128, 1, 1),
           in_shape=(),
           out_shape=(jax.ShapeDtypeStruct((), jnp.int32),),
           smem_scratch_shape=[jax.ShapeDtypeStruct((), jnp.int32)],
@@ -4205,6 +4205,129 @@ class MosaicGpuDialectTCGen05Test(TestCase):
     )
     self.assertEqual(dealloc[0], '2' if collective else '1')
     self.assertEqual(dealloc[1], ld)
+
+  @parameterized.named_parameters(
+      ("unpacked", (128, 128), jnp.bfloat16, 1),
+      ("packed", (128, 128), jnp.bfloat16, 2),
+  )
+  def test_tmem_load_store(
+      self, shape, dtype, packing,
+  ):
+    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
+    if jaxlib.version < (0, 7, 1):
+      self.skipTest("Only works with jaxlib 0.7.1 or higher.")
+
+    def body(
+        ctx: launch_context.LaunchContext,
+        input: ir.Value,
+        result: ir.Value,
+        smem: list[ir.Value],
+    ):
+      del ctx
+      input_smem_ref, result_smem_ref, tma_barrier, tmem = smem
+      dialect_barrier = tma_barrier.as_barrier_memref()
+
+      el_ty = utils.dtype_to_ir_type(dtype)
+      mgpu_dialect.arrive_expect_tx(
+          barrier=dialect_barrier,
+          expect_tx=utils.bytewidth(el_ty) * math.prod(shape),
+      )
+
+      i32 = ir.IntegerType.get_signless(32)
+      zero_i32 = arith.constant(i32, 0)
+      # GMEM -> SMEM
+      mgpu_dialect.async_load(
+          source=input,
+          destination=input_smem_ref,
+          barrier=dialect_barrier,
+          indices=[zero_i32] * len(shape),
+          slice_lengths=shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+
+      parities = memref.load(tma_barrier.barrier_ref.phases, [])
+      parity, _ = tma_barrier.update_parities(parities)
+      mgpu_dialect.wait(dialect_barrier, parity)
+
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+      zero_vector_indices = [zero_index] * len(shape)
+
+      # SMEM -> registers
+      vector_type = ir.VectorType.get(shape, el_ty)
+      r_in = vector.load(vector_type, input_smem_ref, zero_vector_indices)
+
+      tmem_type = ir.MemRefType.get(
+          shape, el_ty, memory_space=mgpu_utils.tmem()
+      )
+
+      tmem_ref = mgpu_dialect.tmem_alloc(
+          result=tmem_type,
+          smem_ptr=tmem,
+          packing=packing,
+      )
+
+      vector_layout = tcgen05.TMEM_NATIVE_LAYOUT
+      vector_layout_attr = mgpu_layouts.to_layout_attr(vector_layout)
+      tmem_layout = tcgen05.TMEMLayout(
+          vector_layout.tiling,
+          vector_layout.warp_dims,
+          vector_layout.lane_dims,
+          vector_layout.vector_dim,
+      )
+      tmem_layout_attr = mgpu_layouts.to_layout_attr(tmem_layout)
+
+      # registers -> TMEM
+      store_op = mgpu_dialect.AsyncStoreTmemOp(r_in, tmem_ref)
+      store_op.attributes["in_layouts"] = ir.ArrayAttr.get([vector_layout_attr])
+      store_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get(
+          [tmem_layout_attr]
+      )
+      tcgen05.commit_tmem()
+
+      # TMEM ->registers
+      load_op = mgpu_dialect.AsyncLoadTmemOp(tmem_ref)
+      load_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get(
+          [tmem_layout_attr]
+      )
+      load_op.attributes["out_layouts"] = ir.ArrayAttr.get([vector_layout_attr])
+      # no need to wait in this case, see:
+      # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#allocating-the-accumulator-using-tmem
+
+      mgpu_dialect.tmem_dealloc(tmem_ref)
+
+      # Registers -> SMEM
+      vector.store(load_op.result, result_smem_ref, [zero_index] * len(shape))
+      mgpu.commit_shared()
+
+      # SMEM -> GMEM
+      mgpu_dialect.async_store(
+          source=result_smem_ref,
+          destination=result,
+          indices=[zero_i32, zero_i32],
+          slice_lengths=shape,
+      )
+      nvvm.cp_async_bulk_wait_group(0)
+
+    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        cluster=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=jax_shape,
+        out_shape=jax_shape,
+        smem_scratch_shape=[
+            jax_shape,
+            jax_shape,
+            core.TMABarrier(1),
+            jax.ShapeDtypeStruct((), jnp.int32),
+        ],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    key = jax.random.key(1234)
+    x = jax.random.randint(key, shape, -10, 10).astype(dtype)
+    self.assertArraysEqual(jax.jit(kernel)(x), x)
 
 
 class UtilsTest(TestCase):
