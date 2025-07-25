@@ -427,6 +427,68 @@ def erfinv(x: ArrayLike) -> Array:
   return lax.erf_inv(x)
 
 
+def erfcx(x: ArrayLike) -> Array:
+  r"""The scaled complementary error function
+
+  JAX implementation of :obj:`scipy.special.erfcx`.
+
+  .. math::
+
+     \mathrm{erfcx}(x) = e^{x^2} \mathrm{erfc}(x)
+
+  This function is useful for large positive values of `x` where
+  ``erfc(x)`` would underflow, but ``erfcx(x)`` still has a reasonable value.
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the scaled complementary error function.
+
+  Notes:
+     The JAX version only supports real-valued inputs.
+
+  See also:
+    - :func:`jax.scipy.special.erf`
+    - :func:`jax.scipy.special.erfc`
+    - :func:`jax.scipy.special.erfinv`
+  """
+  x, = promote_args_inexact("erfcx", x)
+  
+  # For large positive x, use asymptotic approximation to avoid overflow
+  # erfcx(x) ≈ 1/(sqrt(pi)*x) for large x
+  # We use a threshold of 8.0 where exp(8^2) = exp(64) is safe for float32
+  # but exp(10^2) = exp(100) would overflow
+  
+  # For negative x and small positive x, use the definition
+  # erfcx(x) = exp(x^2) * erfc(x)
+  
+  # Create a safe version that avoids overflow
+  x_abs = lax.abs(x)
+  threshold = _lax_const(x, 8.0)
+  is_large = lax.gt(x_abs, threshold)
+  
+  # For small |x|, use the definition
+  small_result = lax.exp(lax.square(x)) * lax.erfc(x)
+  
+  # For large |x|, use asymptotic expansion
+  # For x > 0: erfcx(x) ≈ 1/(sqrt(pi)*x) 
+  # For x < 0: erfcx(x) = exp(x^2) * erfc(x) = exp(x^2) * (2 - erfc(-x))
+  #                     ≈ exp(x^2) * 2 for large negative x
+  # Need to avoid division by zero when x = 0
+  sqrt_pi = lax.sqrt(_lax_const(x, np.pi))
+  large_positive_result = lax.div(1.0, lax.mul(sqrt_pi, x))
+  large_negative_result = lax.mul(lax.exp(lax.square(x)), _lax_const(x, 2.0))
+  
+  large_result = lax.select(
+      x > 0,
+      large_positive_result,
+      large_negative_result
+  )
+  
+  return lax.select(is_large, large_result, small_result)
+
+
 @custom_derivatives.custom_jvp
 def logit(x: ArrayLike) -> Array:
   r"""The logit function
