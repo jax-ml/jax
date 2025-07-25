@@ -26,6 +26,7 @@ load(
     "mosaic_internal_users",
     "pallas_fuser_users",
     "pallas_gpu_internal_users",
+    "pallas_sc_internal_users",
     "pallas_tpu_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
@@ -155,6 +156,12 @@ package_group(
     name = "pallas_tpu_users",
     includes = [":internal"],
     packages = pallas_tpu_internal_users,
+)
+
+package_group(
+    name = "pallas_sc_users",
+    includes = [":internal"],
+    packages = pallas_sc_internal_users,
 )
 
 package_group(
