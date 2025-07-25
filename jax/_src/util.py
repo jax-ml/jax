@@ -323,7 +323,7 @@ def register_cache(cache: Any, for_what: str):
   _caches[cache] = for_what
 
 def clear_all_caches():
-  for cache in _caches.keys():
+  for cache in list(_caches.keys()):
     cache.cache_clear()
 
 memoize = cache(max_size=None)
