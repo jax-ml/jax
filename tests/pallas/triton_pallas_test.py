@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import functools
+import sys
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -21,10 +22,14 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
-from jax.experimental.pallas import triton as plgpu
 import jax.lax
 import jax.numpy as jnp
 import numpy as np
+
+if sys.platform != "win32":
+  from jax.experimental.pallas import triton as plgpu
+else:
+  plgpu = None
 
 config.parse_flags_with_absl()
 
