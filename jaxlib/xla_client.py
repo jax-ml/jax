@@ -200,6 +200,8 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
     options['collective_memory_size'] = int(collective_memory_size) * (1 << 20)
   abort = os.getenv('XLA_PYTHON_CLIENT_ABORT_COLLECTIVES_ON_FAILURE', '0')
   options['abort_collectives_on_failure'] = bool(int(abort))
+  use_trft_gpu_client = os.getenv('XLA_PYTHON_CLIENT_USE_TFRT_GPU_CLIENT', '0')
+  options['use_tfrt_gpu_client'] = bool(int(use_trft_gpu_client))
   return options
 
 
