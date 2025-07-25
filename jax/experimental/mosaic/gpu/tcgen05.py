@@ -41,27 +41,7 @@ LAYOUT = fa.TCGEN05_LAYOUT
 TRANSPOSED_LAYOUT = fa.TCGEN05_TRANSPOSED_LAYOUT
 ROW_LAYOUT = fa.TCGEN05_ROW_LAYOUT
 COL_LAYOUT = fa.TCGEN05_COL_LAYOUT
-
-# A layout resembling the logical organization of TMEM. The 128 rows in a tile
-# are assigned to 128 lanes in the warpgroup. Useful when the result needs to be
-# processed in registers and then stored back into TMEM. Should not be used if
-# the result is to be written back to SMEM, as there is no good way to store it
-# without bank conflicts.
-#
-# We use a vector_dim of 2, to be able to make sure that the vectors are always
-# a multiple of 32-bits, even when the data is 16-bits.
-TMEM_NATIVE_LAYOUT = fa.TiledLayout(
-    fa.Tiling(((128, 2), (32, 2))),
-    warp_dims=(-4,),
-    lane_dims=(-2,),
-    vector_dim=-1,
-)
-TMEM_NATIVE_ROW_LAYOUT = fa.TiledLayout(
-    fa.Tiling(((128,), (32,), (1,))),
-    warp_dims=(-3,),
-    lane_dims=(-2,),
-    vector_dim=-1,
-)
+TMEM_NATIVE_LAYOUT = fa.TMEM_NATIVE_LAYOUT
 
 
 def create_instr_descriptor(
