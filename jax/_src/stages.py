@@ -709,7 +709,18 @@ class Traced(Stage):
 
   @property
   def out_info(self):
-    return self.eval_shape()
+    out_shardings = [None if isinstance(s, UnspecifiedValue) else s
+                     for s in self._params_out_shardings]
+    out = []
+    for a, out_s in zip(self.jaxpr.out_avals, out_shardings):
+      s = (a.sharding if a.sharding.mesh._are_all_axes_explicit else out_s
+           if out_s is None else out_s)
+      # TODO(yashkatariya): Add `Layout` to SDS.
+      out.append(
+          core.ShapeDtypeStruct(
+              a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
+              vma=(a.vma if config._check_vma.value else None)))
+    return tree_util.tree_unflatten(self._out_tree, out)
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):
@@ -726,20 +737,6 @@ class Traced(Stage):
           self.fun_name, fails, self._args_flat, 'jit', self._arg_names)
       raise ValueError(msg) from None
     return Lowered(lowering, self.args_info, self._out_tree)
-
-  def eval_shape(self):
-    out_shardings = [None if isinstance(s, UnspecifiedValue) else s
-                     for s in self._params_out_shardings]
-    out = []
-    for a, out_s in zip(self.jaxpr.out_avals, out_shardings):
-      s = (a.sharding if a.sharding.mesh._are_all_axes_explicit else out_s
-           if out_s is None else out_s)
-      # TODO(yashkatariya): Add `Layout` to SDS.
-      out.append(
-          core.ShapeDtypeStruct(
-              a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
-              vma=(a.vma if config._check_vma.value else None)))
-    return tree_util.tree_unflatten(self._out_tree, out)
 
 
 @runtime_checkable

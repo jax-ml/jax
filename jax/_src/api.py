@@ -2842,10 +2842,10 @@ def eval_shape(fun: Callable, *args, **kwargs):
   float32
   """
   if type(fun) is xc._xla.PjitFunction:
-    return fun.trace(*args, **kwargs).eval_shape()  # type: ignore
+    return fun.trace(*args, **kwargs).out_info  # type: ignore
   try: hash(fun)
   except TypeError: fun = partial(fun)
-  return jit(fun).trace(*args, **kwargs).eval_shape()
+  return jit(fun).trace(*args, **kwargs).out_info
 
 
 def named_call(

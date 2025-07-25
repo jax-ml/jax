@@ -313,7 +313,7 @@ def jit_lower(jit_func, *args, **kwargs):
 
 @api_boundary
 def jit_eval_shape(jit_func, *args, **kwargs):
-  return jit_trace(jit_func, *args, **kwargs).eval_shape()
+  return jit_trace(jit_func, *args, **kwargs).out_info
 
 def jit_evict_fn(self):
   self._clear_cache()
