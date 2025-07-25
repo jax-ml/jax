@@ -83,9 +83,14 @@ pytype_strict_library(
 pytype_strict_library(
     name = "core",
     srcs = ["core.py"],
+    tags = [
+        # Avoid circular dependency.
+        "ignore_for_dep=third_party.py.jax._src.pallas.mosaic_gpu.primitives.wgmma_accumulator_deref",
+    ],
     deps = [
         "//jax",
         "//jax:core",
+        "//jax:custom_batching",
         "//jax:dtypes",
         "//jax:effects",
         "//jax:frozen_dict",
@@ -94,6 +99,7 @@ pytype_strict_library(
         "//jax:pretty_printer",
         "//jax:state_types",
         "//jax:tree_util",
+        "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
         "//jaxlib/mlir:ir",

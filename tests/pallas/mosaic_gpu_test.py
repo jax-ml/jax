@@ -2113,6 +2113,34 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.parameters(
+      (((0, 0),), (128, 128), (128, 128)),
+      (((0, 1),), (128, 128), (128, 128)),
+      (((1, None),), (128, 128), (128,)),
+      (((0, 0),), (128, 128), (128, 128)),
+      (((0, 0), (0, 0)), (128, 128), (128, 128)),
+  )
+  def test_vmap_kernel(self, vmap_axes, x_shape, y_shape):
+    rng0, rng1 = jax.random.split(jax.random.key(0))
+    x = jax.random.uniform(rng0, x_shape, jnp.float32)
+    y = jax.random.uniform(rng1, y_shape, jnp.float32)
+
+    out_shape = list(x_shape)
+    for x_axis, _ in vmap_axes:
+      del out_shape[x_axis]
+    out_shape = jax.ShapeDtypeStruct(out_shape, jnp.float32)
+
+    @functools.partial(self.kernel, out_shape=out_shape)
+    def f(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...] + y_ref[...]
+
+    f_ref = lambda x, y: x + y
+    for in_axes in vmap_axes:
+      f = jax.vmap(f, in_axes)
+      f_ref = jax.vmap(f_ref, in_axes)
+
+    np.testing.assert_array_equal(f(x, y), f_ref(x, y))
+
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
