@@ -695,11 +695,6 @@ def _get_and_check_dtype(arrays: Sequence[basearray.Array | np.ndarray],
             f"of the addressable shards. Got dtype={dtype} and shard "
             f"dtype={arrays[0].dtype}`.")
   else:
-    if not config.enable_empty_arrays.value:
-      raise ValueError(
-          f"Building an Array with no addressable shards with `jax.{fname}` is "
-          "supported only if `jax.config.enable_empty_arrays` is set to True."
-      )
     if dtype is None:
       raise ValueError(
           "If the Array has no addressable shards, `dtype` must be provided "

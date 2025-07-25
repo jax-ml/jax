@@ -180,9 +180,7 @@ class SingleDeviceSharding(jsharding.Sharding):
 
   @property
   def is_fully_addressable(self) -> bool:
-    if config.enable_empty_arrays.value:
-      return xb.process_index(self._device.client) == self._device.process_index
-    return True
+    return xb.process_index(self._device.client) == self._device.process_index
 
 SingleDeviceSharding.__module__ = 'jax.sharding'
 

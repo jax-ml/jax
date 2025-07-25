@@ -20,7 +20,6 @@ import dataclasses
 import functools
 from typing import Any, Union
 
-from jax._src import config
 from jax._src.util import use_cpp_class, cache, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
@@ -198,10 +197,8 @@ class NamedSharding(JSharding.Sharding):
     if isinstance(self.mesh, mesh_lib.AbstractMesh):
       raise ValueError('is_fully_addressable is not implemented for '
                        '`jax.sharding.AbstractMesh`.')
-    if config.enable_empty_arrays.value:
-      # return False if addressable_device_list is empty.
-      return self._internal_device_list.is_fully_addressable  # type: ignore
-    return not self.mesh.is_multi_process
+    # return False if addressable_device_list is empty.
+    return self._internal_device_list.is_fully_addressable  # type: ignore
 
   @property
   def _is_concrete(self) -> bool:

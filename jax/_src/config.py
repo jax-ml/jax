@@ -1854,15 +1854,6 @@ cpu_collectives_implementation = optional_enum_state(
         '("gloo", "mpi")'),
 )
 
-enable_empty_arrays = bool_state(
-    name='jax_enable_empty_arrays',
-    default=False,
-    help=(
-        "Enable the creation of an Array from an empty list of single-device "
-        "arrays. This is to support MPMD/pipeline parallelism in McJAX (WIP)."
-    )
-)
-
 use_high_dynamic_range_gumbel = bool_state(
     name='jax_high_dynamic_range_gumbel',
     default=False,

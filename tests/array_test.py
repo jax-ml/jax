@@ -22,7 +22,6 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import op_shardings
@@ -839,7 +838,6 @@ class JaxArrayTest(jtu.JaxTestCase):
     np.array(h_tensor)
     self.assertIsNone(h_tensor._npy_value)
 
-  @config.enable_empty_arrays(True)
   def test_make_array_from_single_device_arrays_no_dtype_error(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
