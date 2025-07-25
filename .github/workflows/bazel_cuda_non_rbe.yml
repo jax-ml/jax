@@ -1,14 +1,17 @@
 # CI - Bazel CUDA tests (Non-RBE)
 #
 # This workflow runs the CUDA tests with Bazel. It can only be triggered by other workflows via
-# `workflow_call`. It is used by the `CI - Wheel Tests` workflows to run the Bazel CUDA tests.
+# `workflow_call`. It is used by the `CI - Wheel Tests (Continuous)` and
+# `CI - Wheel Tests (Nightly/Release)` workflows to run the Bazel CUDA tests.
 #
 # It consists of the following job:
 # run-tests:
-#    - Downloads the jaxlib and CUDA artifacts from a GCS bucket.
+#    - Downloads the jaxlib and CUDA artifacts from a GCS bucket if build_jaxlib is `false`.
+#       Otherwise, the artifacts are built from source.
 #    - Executes the `run_bazel_test_cuda_non_rbe.sh` script, which performs the following actions:
-#      - Installs the downloaded wheel artifacts.
-#      - Runs the CUDA tests with Bazel.
+#      - `build_jaxlib=wheel`: Runs the Bazel CPU tests with py_import dependencies.
+#        `build_jaxlib=false`: Runs the Bazel CPU tests with downloaded wheel dependencies.
+
 name: CI - Bazel CUDA tests (Non-RBE)
 
 on:
@@ -34,6 +37,11 @@ on:
         description: "GCS location URI from where the artifacts should be downloaded"
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
+      build_jaxlib:
+        description: 'Should jaxlib be built from source?'
+        required: false
+        default: 'false'
+        type: string
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -46,13 +54,14 @@ jobs:
         # Explicitly set the shell to bash
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.8-cudnn9.8:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
       JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
       # Enable writing to the Bazel remote cache bucket.
       JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: "1"
+      JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
 
     name: "jaxlib=${{ inputs.jaxlib-version }},
           ${{ (contains(inputs.runner, 'h100') && 'h100') ||
@@ -64,23 +73,29 @@ jobs:
         with:
           persist-credentials: false
       - name: Set env vars for use in artifact download URL
+        if: ${{ inputs.build_jaxlib == 'false' }}
         run: |
           os=$(uname -s | awk '{print tolower($0)}')
           arch=$(uname -m)
 
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.11, then python_major_minor=311
-          python_major_minor=$(echo "$JAXCI_HERMETIC_PYTHON_VERSION" | tr -d '.')
+          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
+          python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
 
           echo "OS=${os}" >> $GITHUB_ENV
           echo "ARCH=${arch}" >> $GITHUB_ENV
-          echo "PYTHON_MAJOR_MINOR=${python_major_minor}" >> $GITHUB_ENV
+          # Python wheels follow a naming convention: standard wheels use the pattern
+          # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
+          # `*-cp<py_version>-cp<py_version>t-*`.
+          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
       - name: Download the wheel artifacts from GCS
         id: download-wheel-artifacts
         # Set continue-on-error to true to prevent actions from failing the workflow if this step
         # fails. Instead, we verify the outcome in the next step so that we can print a more
         # informative error message.
         continue-on-error: true
+        if: ${{ inputs.build_jaxlib == 'false' }}
         run: |
           mkdir -p $(pwd)/dist
           gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
@@ -97,7 +112,7 @@ jobs:
             exit 1
           fi
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
-        if: steps.download-wheel-artifacts.outcome == 'failure'
+        if: inputs.build_jaxlib == 'false' && steps.download-wheel-artifacts.outcome == 'failure'
         run: |
           echo "Failed to download wheel artifacts from GCS. Please check if the wheels were"
           echo "built successfully by the artifact build jobs and are available in the GCS bucket."
@@ -108,6 +123,6 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Run Bazel CUDA tests (Non-RBE)
+      - name: "Bazel non-RBE CUDA tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}"
         timeout-minutes: 60
         run: ./ci/run_bazel_test_cuda_non_rbe.sh

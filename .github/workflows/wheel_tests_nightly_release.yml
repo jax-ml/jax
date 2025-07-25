@@ -4,11 +4,15 @@
 #
 # 1. run-pytest-cpu:  Calls the `pytest_cpu.yml` workflow which downloads the JAX wheels that was
 #                     built by internal CI jobs and runs CPU tests.
-# 2. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow which downloads the JAX wheels that was
+# 2. run-bazel-test-cpu:  Calls the `bazel_cpu_rbe_no_jaxlib_build.yml` workflow which downloads the JAX wheels that was
+#                     built by internal CI jobs and runs Bazel CPU tests.
+# 3. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow which downloads the JAX wheels that was
 #                     built by internal CI jobs and runs CUDA tests.
-# 3. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that was
+# 4. run-bazel-test-cuda: Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the JAX wheels that was
+#                     built by internal CI jobs and runs Bazel CUDA tests.
+# 5. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that was
 #                     built by internal CI jobs and runs TPU tests.
-# 4. verify-release-wheels-install: Verifies that JAX's release wheels can be installed.
+# 6. verify-release-wheels-install: Verifies that JAX's release wheels can be installed.
 name: CI - Wheel Tests (Nightly/Release)
 
 on:
@@ -59,6 +63,25 @@ jobs:
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
 
+  run-bazel-test-cpu:
+    uses: ./.github/workflows/bazel_cpu_rbe_no_jaxlib_build.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
+          # that build the wheels.
+          runner: ["linux-x86-n2-64", "linux-arm64-t2a-48"]
+          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14"]
+          enable-x64: [0]
+    name: "Bazel CPU tests with ${{ format('{0}', 'build_jaxlib=false') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
+      build_jaxlib: "false"
+
   run-pytest-cuda:
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
@@ -104,6 +127,26 @@ jobs:
       download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
+
+  run-bazel-test-cuda:
+    uses: ./.github/workflows/bazel_cuda_non_rbe.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
+          # that build the wheels.
+          runner: ["linux-x86-g2-48-l4-4gpu"]
+          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14"]
+          enable-x64: [0]
+    name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'build_jaxlib=false') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
+      build_jaxlib: "false"
+      jaxlib-version: "head"
 
   run-pytest-tpu:
     uses: ./.github/workflows/pytest_tpu.yml

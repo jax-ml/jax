@@ -156,13 +156,25 @@ A brief overview of each build script in this folder is given below:
     still need to be run on the host machines and because running the tests on a
     single machine can take a long time, we skip running them on these
     platforms.
+    Note for `run_bazel_test_cpu_rbe.sh`:
+    - If `$JAXCI_BUILD_JAXLIB=false`, these jobs depend on local JAX wheels and
+      therefore require that the following wheels to be present in the `../dist`
+      folder: `jax`, and `jaxlib` wheels. In CI builds, we first build these
+      wheels from source and then run the `bazel test` command.
+    - If `$JAXCI_BUILD_JAXLIB=wheel`, the Bazel tests use
+      [py_import](https://github.com/openxla/xla/blob/8190847008eddd4c7f3e57449e16d28631770823/third_party/py/py_import.bzl#L47).
+    - If `$JAXCI_BUILD_JAXLIB=true`, Bazel will use individual targets in the
+      test dependencies.
 -   **run_bazel_test_cuda_non_rbe.sh**: These run the following Bazel CUDA
     tests: Single accelerator tests with one GPU apiece and Multi-accelerator
-    tests with all GPUs. These jobs depend on local JAX wheels and therefore
-    require that the following wheels to be present in the `../dist` folder:
-    `jax`, `jaxlib`, `jax-cuda-plugin`, and `jax-cuda-pjrt` wheels. In CI
-    builds, we first build these wheels from source and then run the `bazel
-    test` command.
+    tests with all GPUs.
+    - If `$JAXCI_BUILD_JAXLIB=false`, these jobs depend on local JAX wheels and
+      therefore require that the following wheels to be present in the `../dist`
+      folder: `jax`, `jaxlib`, `jax-cuda-plugin`, and `jax-cuda-pjrt` wheels. In
+      CI builds, we first build these wheels from source and then run the `bazel
+      test` command.
+    - If `$JAXCI_BUILD_JAXLIB=wheel`, the Bazel tests use
+      [py_import](https://github.com/openxla/xla/blob/8190847008eddd4c7f3e57449e16d28631770823/third_party/py/py_import.bzl#L47).
 -   **run_pytest_*.sh**: These run tests with Pytests and use the JAX wheel
     packages installed on the system. In CI builds, we build the wheels first
     from source and then run the `pytest` commands. We test compatibility with

@@ -9,9 +9,9 @@
 #                           that was built in the previous step and runs CPU tests.
 # 3. build-cuda-artifacts:  Calls the `build_artifacts.yml` workflow to build CUDA artifacts and
 #                           uploads them to a GCS bucket.
-# 4. run-bazel-test-cpu-py-import: Calls the `bazel_cpu_py_import_rbe.yml` workflow which
+# 4. run-bazel-test-cpu-py-import: Calls the `bazel_cpu_rbe_no_jaxlib_build.yml` workflow which
 #                           runs Bazel CPU tests with py_import on RBE.
-# 5. run-bazel-test-cuda-py-import: Calls the `bazel_cuda_non_rbe_py_import.yml` workflow which
+# 5. run-bazel-test-cuda-py-import: Calls the `bazel_cuda_non_rbe.yml` workflow which
 #                           runs Bazel CUDA tests with py_import on non-RBE.
 # 6. run-pytest-cuda:       Calls the `pytest_cuda.yml` workflow which downloads the jaxlib and CUDA
 #                           artifacts that were built in the previous steps and runs the CUDA tests.
@@ -149,18 +149,19 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-bazel-test-cpu-py-import:
-    uses: ./.github/workflows/bazel_cpu_py_import_rbe.yml
+    uses: ./.github/workflows/bazel_cpu_rbe_no_jaxlib_build.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           runner: ["linux-x86-n2-16", "linux-arm64-t2a-48"]
           python: ["3.11",]
           enable-x64: [1, 0]
-    name: "Bazel CPU tests with ${{ format('{0}', 'py_import') }}"
+    name: "Bazel CPU tests with ${{ format('{0}', 'build_jaxlib=wheel') }}"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      build_jaxlib: "wheel"
 
   run-bazel-test-cuda:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
@@ -177,7 +178,7 @@ jobs:
           python: ["3.11",]
           jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1, 0]
-    name: "Bazel CUDA Non-RBE (jax version = ${{ format('{0}', 'head') }})"
+    name: "Bazel CUDA Non-RBE with build_jaxlib=false, (jax version = ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -185,13 +186,14 @@ jobs:
       jaxlib-version: ${{ matrix.jaxlib-version }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+      build_jaxlib: "false"
 
   run-bazel-test-cuda-py-import:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
     if: ${{ !cancelled() }}
-    uses: ./.github/workflows/bazel_cuda_non_rbe_py_import.yml
+    uses: ./.github/workflows/bazel_cuda_non_rbe.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
@@ -199,11 +201,13 @@ jobs:
           runner: ["linux-x86-g2-48-l4-4gpu",]
           python: ["3.11"]
           enable-x64: [1]
-    name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'py_import') }}"
+    name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'build_jaxlib=wheel') }}"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      build_jaxlib: "wheel"
+      jaxlib-version: "head"
 
   run-pytest-tpu:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
