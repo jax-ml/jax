@@ -68,19 +68,15 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
     --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
     --deselect=tests/pallas/tpu_pallas_interpret_test.py::InterpretTest::test_thread_map \
-    --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
-
-  # Run Pallas printing tests, which need to run with I/O capturing disabled.
-  TPU_STDERR_LOG_LEVEL=0 "$JAXCI_PYTHON" -m pytest -s \
-    tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
+    --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS -v tests examples
 
   # Run multi-accelerator across all chips
-  "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
+  "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" -v tests
 else
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
     --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
-    --maxfail=20 -m "not multiaccelerator" \
+    --maxfail=20 -m "not multiaccelerator" -v \
     tests/pallas/ops_test.py \
     tests/pallas/export_back_compat_pallas_test.py \
     tests/pallas/export_pallas_test.py \
@@ -90,11 +86,11 @@ else
     tests/pallas/tpu_pallas_async_test.py \
     tests/pallas/tpu_pallas_state_test.py
 
-  # Run Pallas printing tests, which need to run with I/O capturing disabled.
-  TPU_STDERR_LOG_LEVEL=0 "$JAXCI_PYTHON" -m pytest -s tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
-
   # Run multi-accelerator across all chips
-  "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" \
+  "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" -v \
     tests/pjit_test.py \
     tests/pallas/tpu_pallas_distributed_test.py
 fi
+
+# Run Pallas printing tests, which need to run with I/O capturing disabled.
+TPU_STDERR_LOG_LEVEL=0 "$JAXCI_PYTHON" -m pytest -s -v tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
