@@ -1347,8 +1347,9 @@ class Layout(SomeLayout, enum.Enum):
         check_no_args()
         return mgpu.TCGEN05_TRANSPOSED_LAYOUT
       case Layout.TCGEN05_TMEM_NATIVE:
-        check_no_args()
-        return tcgen05.TMEM_NATIVE_LAYOUT
+        if args or kwargs:
+          return mgpu.tmem_native_layout(*args, **kwargs)
+        return mgpu.TMEM_NATIVE_LAYOUT
       case Layout.TCGEN05_M64_COLLECTIVE:
         return tcgen05.fa_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
 

@@ -836,6 +836,27 @@ TCGEN05_COL_LAYOUT = TiledLayout(
 )
 
 
+def tmem_native_layout(vector_length: int):
+  """A layout resembling the logical organization of TMEM.
+
+  The 128 rows in a tile are assigned to 128 lanes in the warpgroup. Useful when
+  the result needs to be processed in registers and then stored back into TMEM.
+  Usually shouldn't be used if the result is to be written back to SMEM, as
+  there is no good way to store it without bank conflicts, but it still
+  sometimes pays off.
+  """
+  return TiledLayout(
+      Tiling(((128, vector_length), (32, vector_length))),
+      warp_dims=(-4,),
+      lane_dims=(-2,),
+      vector_dim=-1,
+  )
+
+# We use a vector_dim of 2, to be able to make sure that the vectors are always
+# a multiple of 32-bits, even when the data is 16-bits.
+TMEM_NATIVE_LAYOUT = tmem_native_layout(2)
+
+
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(init=False, frozen=True, slots=True)
 class FragmentedArray:
@@ -997,6 +1018,33 @@ class FragmentedArray:
           _registers=np.asarray(new_regs, dtype=object).reshape(new_layout.registers_shape(shape)),
           _layout=new_layout,
           _is_signed=self.is_signed,
+      )
+    if (
+        isinstance(self.layout, TiledLayout)
+        and isinstance(new_layout, TiledLayout)
+        and self.layout == tmem_native_layout(self.layout.vector_length)
+        and new_layout == tmem_native_layout(new_layout.vector_length)
+    ):
+      new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
+      if self.layout.vector_length > new_layout.vector_length:
+        ratio = self.layout.vector_length // new_layout.vector_length
+        new_length = new_layout.vector_length
+        for idx, reg in np.ndenumerate(self.registers):
+          for i in range(ratio):
+            new_reg = utils.vector_slice(
+                reg, slice(i * new_length, (i + 1) * new_length)
+            )
+            new_registers[(idx[0], idx[1] * ratio + i, *idx[2:])] = new_reg
+      elif self.layout.vector_length < new_layout.vector_length:
+        ratio = new_layout.vector_length // self.layout.vector_length
+        for idx in np.ndindex(new_registers.shape):
+          new_reg = utils.vector_concat([
+              self.registers[idx[0], idx[1] * ratio + i, *idx[2:]]
+              for i in range(ratio)
+          ])
+          new_registers[idx] = new_reg
+      return FragmentedArray(
+          _registers=new_registers, _layout=new_layout, _is_signed=self.is_signed,
       )
     if (
         self.layout == WGMMA_LAYOUT_UPCAST_2X
