@@ -254,6 +254,7 @@ def ir_constant(val: Any,
                 canonicalize_dtype: bool = False) -> IrValues:
   """Translate a Python `val` to an IR constant, canonicalizing its dtype.
 
+  See https://docs.jax.dev/en/latest/internals/constants.html.
   Args:
     val: a Python value to be translated to a constant.
     const_lowering: an optional dictionary with known lowering for some
@@ -675,6 +676,9 @@ class LoweringParameters:
   export_ignore_forward_compatibility: bool = False
   # During lowering hoist the core.Literal constants as args for the main MLIR
   # function and all the intermediate functions that need them.
+  # See https://docs.jax.dev/en/latest/internals/constants.html
+  # TODO(necula): perhaps we can use `for_export` instead of this additional
+  # field.
   hoist_constants_as_args: bool = config.use_simplified_jaxpr_constants.value
 
 
@@ -841,6 +845,7 @@ class LoweringRuleContext:
   # The values tobe used for the Literal constants, by id of the const.
   # This is used to implement passing along the constants that have been
   # hoisted as main function arguments down to where they are used.
+  # See https://docs.jax.dev/en/latest/internals/constants.html
   const_lowering: dict[int, IrValues]
   axis_size_env: dict[core.Var, ir.Value] | None = None  # Dynamic axis sizes
   # The values for the dimension variables in same order as
@@ -1238,6 +1243,7 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
   The inputs already account for the constant arguments.
+  See https://docs.jax.dev/en/latest/internals/constants.html
   """
   util.test_event("lower_jaxpr_to_module")
   platforms = tuple(map(xb.canonicalize_platform, platforms))
@@ -1537,6 +1543,7 @@ def lower_jaxpr_to_fun(
     effects: a sequence of `core.Effect`s corresponding to an ordering of tokens
       that will be created in or used by the lowered function.
     num_const_args: how many constant arguments is this function going to have.
+      See https://docs.jax.dev/en/latest/internals/constants.html
     main_function: if true, this is the main function in the module. This has
       several effects:
       * the function's visibility is set to "public".
@@ -2023,6 +2030,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   dim_var_values: the list of dimension variables values in the current
     IR function, in the order of ctx.shape_poly_state.dim_vars.
   const_lowering: the lowering for constants, by constant id.
+    See https://docs.jax.dev/en/latest/internals/constants.html
   """
   assert "gpu" not in ctx.platforms
   cached_ir_consts: dict[HashableLiteral, IrValues] = {}
@@ -2537,6 +2545,7 @@ def _lower_jaxpr_to_fun_cached(ctx: ModuleContext,
                                effects,
                                in_avals,
                                arg_names=None, result_names=None):
+  assert num_const_args + len(call_jaxpr.in_avals) == len(in_avals)
   if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
     key = (fn_name, call_jaxpr.jaxpr, tuple(effects))

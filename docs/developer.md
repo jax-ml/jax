@@ -811,10 +811,10 @@ For each code version, the building process is driven by the
 For each automated documentation build you can see the
 [documentation build logs](https://readthedocs.org/projects/jax/builds/).
 
-If you want to test the documentation generation on Readthedocs, you can push code to the `test-docs`
-branch. That branch is also built automatically, and you can
-see the generated documentation [here](https://docs.jax.dev/en/test-docs/). If the documentation build
-fails you may want to [wipe the build environment for test-docs](https://docs.readthedocs.io/en/stable/guides/wipe-environment.html).
+If you want to test the documentation generation on Readthedocs,
+you can add the "documentation" GitHub label to your PR. You will then
+be able to view the docs from the link for the "docs/readthedocs.org:jax"
+GitHub check.
 
 For a local test, I was able to do it in a fresh directory by replaying the commands
 I saw in the Readthedocs logs:

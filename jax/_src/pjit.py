@@ -1985,6 +1985,9 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
                                     effects, in_shardings,
                                     out_shardings, in_layouts, out_layouts,
                                     api_name):
+  assert len(in_avals) == num_const_args + len(jaxpr.in_avals)
+  assert len(in_avals) == len(in_shardings)
+  assert len(in_avals) == len(in_layouts)
   mod_ctx = ctx.module_context
   axis_ctx = ctx.module_context.axis_context
   num_devices = None
@@ -2047,8 +2050,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
   hoisted_const_values = [
-      mlir.ir_constant(c, ctx.const_lowering,
-                       canonicalize_dtype=True)
+      mlir.ir_constant(c, ctx.const_lowering, canonicalize_dtype=True)
       for c in const_args]
   args = (*ctx.dim_var_values, *tokens_in, *hoisted_const_values, *args)
   with mlir.source_info_to_location(
