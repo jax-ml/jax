@@ -450,7 +450,54 @@ class NNFunctionsTest(jtu.JaxTestCase):
   @parameterized.parameters([float] + jtu.dtypes.floating)
   def testMishZero(self, dtype):
     self.assertEqual(dtype(0), nn.mish(dtype(0)))
+  @jax.test_util.skip_on_flag("jax_skip_slow_tests", True)
+	def testLishtGrad():
+	    check_grads(lisht, (1e-8,), order=4,
+	                rtol=1e-2 if jax.test_util.test_device_matches(["tpu"]) else None)
 
+	def testLishtGradZero():
+	    check_grads(lisht, (0.,), order=1,
+	                rtol=1e-2 if jax.test_util.test_device_matches(["tpu"]) else None)
+
+	def testLishtGradNegInf():
+	    check_grads(lisht, (-float('inf'),), order=1,
+	                rtol=1e-2 if jax.test_util.test_device_matches(["tpu"]) else None)
+
+	def testLishtGradNan():
+	    check_grads(lisht, (float('nan'),), order=1,
+	                rtol=1e-2 if jax.test_util.test_device_matches(["tpu"]) else None)
+
+	@parameterized.parameters([float] + jax.test_util.dtypes.floating)
+	def testLishtZero(dtype):
+	    assert dtype(0) == lisht(dtype(0))
+
+	def testLishtValue():
+	    val = lisht(1e3)
+	    assert abs(val - 1e3) < 1e-3
+
+	def testLishtValueNeg():
+	    val = lisht(-1e3)
+	    assert abs(val + 1e3) < 1e-3
+
+	def testLishtValueNan():
+	    val = lisht(float('nan'))
+	    assert str(val) == "nan"
+
+	@parameterized.parameters([float] + jax.test_util.dtypes.floating)
+	def testLishtDtypeMatchesInput(dtype):
+	    x = 0
+	    out = lisht(x)
+	    assert type(out) == type(x)
+
+	def testLishtArray():
+	    x = [i for i in range(-5, 6)]
+	    y = [lisht(i) for i in x]
+	    assert len(x) == len(y)
+
+	def testLishtGradArray():
+	    x = [i for i in range(-5, 6)]
+	    for xi in x:
+	        check_grads(lisht, (xi,), order=2)
   def testReluGrad(self):
     rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
