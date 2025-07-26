@@ -230,6 +230,25 @@ class FusionTest(jtu.JaxTestCase):
     y_out = g(x, a)
     np.testing.assert_array_equal(y_out, a)
 
+  def test_vmap_fusible(self):
+
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = x_fn()
+      if y_fn is None:
+        y_fn = lambda x: x
+      return y_fn(x)
+
+    @jax.jit
+    @fuser.fuse
+    def g(x, a, b):
+      return jax.vmap(f)(a * x) + b
+
+    x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
+    a = jax.random.normal(jax.random.key(1), (128, 128), dtype=jnp.float32)
+    b = jax.random.normal(jax.random.key(2), (128, 128), dtype=jnp.float32)
+    np.testing.assert_array_almost_equal(g(x, a, b), a * x + b)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
