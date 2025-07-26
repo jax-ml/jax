@@ -396,17 +396,7 @@ print_saved_residuals(loss_checkpoint2, params, x, y)
 
 Another policy which refers to names is `jax.checkpoint_policies.save_only_these_names`.
 
-Some of the policies are:
-* `everything_saveable` (the default strategy, as if `jax.checkpoint` were not being used at all)
-* `nothing_saveable` (i.e. rematerialize everything, as if a custom policy were not being used at all)
-* `dots_saveable` or its alias `checkpoint_dots`
-* `dots_with_no_batch_dims_saveable` or its alias `checkpoint_dots_with_no_batch_dims`
-* `save_anything_but_these_names` (save any values except for the output of
-  `checkpoint_name` with any of the names given)
-* `save_any_names_but_these` (save only named values, i.e. any outputs of
-  `checkpoint_name`, except for those with the names given)
-* `save_only_these_names` (save only named values, and only among the names
-  given)
+A list of policies can be found [here](https://docs.jax.dev/en/latest/jax.html#checkpoint-policies).
 
 Policies only indicate what is saveable; a value is only saved if it's actually needed by the backward pass.
 
