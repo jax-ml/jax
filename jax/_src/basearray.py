@@ -21,7 +21,6 @@ import sys
 from typing import Any, Union
 
 from jax._src.lib import xla_client as xc
-from jax._src.util import use_cpp_class
 import numpy as np
 
 
@@ -34,8 +33,18 @@ Sharding = Any
 # core functions in jax.lax and jax.numpy; it is not meant to include
 # future non-standard array types like KeyArray and BInt.
 
+class ArrayMeta(type):
+  def __instancecheck__(self, x):
+    try:
+      return x._is_traced_array()
+    except AttributeError:
+      # xc.ArrayImpl inherits from the C++ xc.Array class, but not this Array
+      return isinstance(x, xc.Array) or super().__instancecheck__(x)
 
-class Array:
+  def __subclasscheck__(self, cls):
+    return issubclass(cls, xc.Array) or super().__subclasscheck__(cls)
+
+class Array(metaclass=ArrayMeta):
   """Array base class for JAX
 
   ``jax.Array`` is the public interface for instance checks and type annotation
@@ -171,7 +180,9 @@ class Array:
     raise NotImplementedError
 
 
-Array = use_cpp_class(xc.Array)(Array)
+# TODO(superbobry): consider re-enabling C++ when its super- and meta-classes
+# are sorted out
+# Array = use_cpp_class(xc.Array)(Array)
 Array.__module__ = "jax"
 
 
