@@ -521,21 +521,26 @@ def quantize(x, config):
   assert contract_dim >= block_size and contract_dim % block_size == 0
   x_new_shape = x_shape[:-1] + (x_shape[-1] // block_size, block_size)
   x = x.reshape(x_new_shape)  # shape = (B, M, K / block_size, block_size)
-
-  amax = jnp.max(jnp.abs(x), axis=-1, keepdims=True)
   MAX = dtypes.finfo(config.data_type).max.astype(x.dtype)
-  scales = amax / MAX  # shape = (B, M, K / block_size, 1)
+
+  def get_scales_per_block(values):
+    # shape = (B, M, K / block_size, 1)
+    return jnp.max(jnp.abs(values), axis=-1, keepdims=True) / MAX
 
   if config.mode == "mxfp8":
+    assert config.global_scale is None
     assert config.scale_type == dtypes.float8_e8m0fnu
-    scales_q = cast_to_e8m0_with_rounding_up(scales)
-    scaled_x = x / e8m0_to_dtype(scales_q, scales.dtype)
+
+    scales_q = cast_to_e8m0_with_rounding_up(get_scales_per_block(x))
+    scaled_x = x / e8m0_to_dtype(scales_q, x.dtype)
   elif config.mode == "nvfp4":
     assert config.scale_type == dtypes.float8_e4m3fn
     assert config.global_scale.dtype == np.float32
+
     SCALE_MAX = dtypes.finfo(config.scale_type).max.astype(x.dtype)
 
-    scales_q = jnp.clip(scales / config.global_scale, 0, SCALE_MAX)
+    x /= config.global_scale
+    scales_q = jnp.clip(get_scales_per_block(x), 0, SCALE_MAX)
     scales_q = lax.optimization_barrier(scales_q.astype(config.scale_type))
     scaled_x = x / scales_q.astype(np.float32)
   else:
