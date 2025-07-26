@@ -238,7 +238,7 @@ class JaxNumpyErrorTests(jtu.JaxTestCase):
         error_check.raise_if_error()
 
   @parameterized.product(jit=[True, False])
-  def test_can_raise_oob_error_take(self, jit):
+  def test_can_raise_oob_error_take(self, jit=True):
     def f(x, a):
       return x[a]
 

@@ -3255,8 +3255,8 @@ def _scatter_lower_opaque(ctx, operand, indices, updates, *,
   return res
 
 
-def _scatter_lower(ctx, operand, indices, updates, *,
-                   update_jaxpr, update_consts, dimension_numbers,
+def _scatter_lower(ctx: mlir.LoweringRuleContext, operand, indices, updates, *,
+                   update_jaxpr: core.Jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
   if update_jaxpr is None:
     assert not update_consts
@@ -3301,7 +3301,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
     out_nodes, _ = mlir.jaxpr_subcomp(
         ctx.module_context, update_jaxpr, name_stack, mlir.TokenSet(),
         update_consts, update.arguments[0], update.arguments[1],
-        dim_var_values=ctx.dim_var_values)
+        dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
           for r, aval in safe_zip(op.results, ctx.avals_out)]
