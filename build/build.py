@@ -509,11 +509,12 @@ async def main():
         clang_major_version,
     )
 
-    # Use double quotes around clang path to avoid path issues on Windows.
-    wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
-    wheel_build_command_base.append(f"--repo_env=CC=\"{clang_path}\"")
-    wheel_build_command_base.append(f"--repo_env=CXX=\"{clangpp_path}\"")
-    wheel_build_command_base.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
+    if not utils.is_hermetic_clang_supported(arch, os_name):
+      # Use double quotes around clang path to avoid path issues on Windows.
+      wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
+      wheel_build_command_base.append(f"--repo_env=CC=\"{clang_path}\"")
+      wheel_build_command_base.append(f"--repo_env=CXX=\"{clangpp_path}\"")
+      wheel_build_command_base.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
 
     if clang_major_version >= 16:
       # Enable clang settings that are needed for the build to work with newer
@@ -572,9 +573,10 @@ async def main():
   if "cuda" in args.wheels:
     wheel_build_command_base.append("--config=cuda")
     if args.use_clang:
-      wheel_build_command_base.append(
-          f"--action_env=CLANG_CUDA_COMPILER_PATH=\"{clang_path}\""
-      )
+      if not utils.is_hermetic_clang_supported(arch, os_name):
+        wheel_build_command_base.append(
+            f"--action_env=CLANG_CUDA_COMPILER_PATH=\"{clang_path}\""
+        )
       if args.build_cuda_with_clang:
         logging.debug("Building CUDA with Clang")
         wheel_build_command_base.append("--config=build_cuda_with_clang")
@@ -608,7 +610,8 @@ async def main():
     wheel_build_command_base.append("--config=rocm_base")
     if args.use_clang:
       wheel_build_command_base.append("--config=rocm")
-      wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
+      if not utils.is_hermetic_clang_supported(arch, os_name):
+        wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
     if args.rocm_path:
       logging.debug("ROCm toolkit path: %s", args.rocm_path)
       wheel_build_command_base.append(f"--action_env=ROCM_PATH=\"{args.rocm_path}\"")
@@ -682,6 +685,9 @@ async def main():
       wheel_build_command = copy.deepcopy(bazel_command_base)
       if "cuda" in args.wheels:
         wheel_build_command.append("--config=cuda_libraries_from_stubs")
+      # TODO(yuriit): Remove once hermetic C++ is supported on all platforms.
+      if not utils.is_hermetic_clang_supported(arch, os_name):
+        wheel_build_command.append("--config=clang_local")
       print("\n")
       logger.info(
         "Building %s for %s %s...",
