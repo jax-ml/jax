@@ -129,6 +129,7 @@ def sdpa_ref(query: Array,
       mask: Array | None = None,
       scale: float = 0.5,
       mask_type: MaskType = MaskType.NO_MASK,
+      is_bnth: bool = False,
       dropout_rate: float = 0.1,
       sliding_window_length: int | None = None) -> Array:
 
@@ -149,11 +150,12 @@ def sdpa_ref(query: Array,
       (q_padding + kv_padding).astype(logits.dtype) * large_negative_number
     return jax.lax.broadcast(combined_padding, logits.shape[:-2])
 
-  def get_encoded_padding_mask(encoded):
-    S = encoded.shape[1]
-    encoded_padding = (jax.lax.iota(np.int32, S) < S // 2).astype(encoded.dtype)
+  def get_encoded_padding_mask(encoded, is_bnth):
+    dim = 2 if is_bnth else 1
+    T = encoded.shape[dim]
+    encoded_padding = (jax.lax.iota(np.int32, T) < T // 2).astype(encoded.dtype)
     return jax.lax.broadcast_in_dim(
-      encoded_padding, encoded.shape, broadcast_dimensions=[1])
+      encoded_padding, encoded.shape, broadcast_dimensions=[dim])
 
   def get_sliding_window_mask(logits, window_length):
     large_negative_number = get_large_negative_number(logits.dtype)
@@ -165,9 +167,14 @@ def sdpa_ref(query: Array,
       col_idx <= row_idx - window_length).astype(logits.dtype) * large_negative_number
     return mask[(*([jnp.newaxis]*(len(logits.shape) - 2)), ...)]
 
-  B, T, qN, H = query.shape
-  _, _, kN, _ = key.shape
-  logits = jnp.einsum("bqhd,bkhd->bhqk", query, key, preferred_element_type=jnp.float32)
+  if is_bnth:
+    B, qN, T, H = query.shape
+    _, kN, _, _ = key.shape
+    logits = jnp.einsum("bhqd,bhkd->bhqk", query, key, preferred_element_type=jnp.float32)
+  else:
+    B, T, qN, H = query.shape
+    _, _, kN, _ = key.shape
+    logits = jnp.einsum("bqhd,bkhd->bhqk", query, key, preferred_element_type=jnp.float32)
   if scale != 1.0:
     logits = logits * scale
   if mask_type == MaskType.CAUSAL:
@@ -199,11 +206,14 @@ def sdpa_ref(query: Array,
     dropout_rng = jax.random.key(0)
     keep = jax.random.bernoulli(dropout_rng, keep_prob, probs.shape)
     probs = jax.lax.select(keep, probs / keep_prob, jnp.zeros_like(probs))
-  encoded = jnp.einsum("bhqk,bkhd->bqhd", probs, value, preferred_element_type=jnp.float32)
+  if is_bnth:
+    encoded = jnp.einsum("bhqk,bhkd->bhqd", probs, value, preferred_element_type=jnp.float32)
+  else:
+    encoded = jnp.einsum("bhqk,bkhd->bqhd", probs, value, preferred_element_type=jnp.float32)
   if mask_type == MaskType.PADDING:
     # cuDNN padding mask generation will mask out output accordingly
     # make sure the behavior is the same
-    encoded_mask = get_encoded_padding_mask(encoded)
+    encoded_mask = get_encoded_padding_mask(encoded, is_bnth)
     encoded = encoded * encoded_mask
   return encoded.astype(query.dtype)
 
@@ -215,12 +225,13 @@ def sdpa_train_ref(query: Array,
             mask: Array | None = None,
             scale: float = 0.5,
             mask_type: MaskType = MaskType.NO_MASK,
+            is_bnth: bool = False,
             dropout_rate: float = 0.1,
             sliding_window_length: int | None = None) -> Array:
   out_ref, sdpa_vjp_ref = jax.vjp(
     partial(
       sdpa_ref, scale=scale, mask_type=mask_type, dropout_rate=dropout_rate,
-      sliding_window_length=sliding_window_length),
+      sliding_window_length=sliding_window_length, is_bnth=is_bnth),
     query, key, value, bias, mask)
   query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref, _ = sdpa_vjp_ref(grad)
   if bias is not None and len(bias.shape) == 3:
@@ -276,6 +287,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       use_mask=[False, True],
       use_bias=[False, True],
       mask_type=[MaskType.NO_MASK],
+      is_bnth=[False, True],
       dropout_rate=[0],
       scale=[0.5],
       dtype=[jnp.float16, jnp.bfloat16]
@@ -283,20 +295,20 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cuda")
   def test_sdpa(self, batch_size: int, seq_len: int, num_heads: int,
                 head_dim: int, use_mask: bool, use_bias: bool, mask_type: MaskType,
-                dropout_rate: float, scale: float, dtype: jnp.dtype):
+                is_bnth: bool, dropout_rate: float, scale: float, dtype: jnp.dtype):
     if len(jax.local_devices()) < 4:
       self.skipTest("Require at least 4 devices to run sharding tests.")
     if use_mask and mask_type != MaskType.NO_MASK:
       self.skipTest("Either pass in mask or generate mask directly in cuDNN.")
     k1, k2, k3, k4, k5, k6 = jax.random.split(jax.random.key(0), 6)
-    query = jax.random.normal(
-        k1, (batch_size, seq_len, num_heads, head_dim), dtype=dtype)
-    key = jax.random.normal(
-        k2, (batch_size, seq_len, num_heads, head_dim), dtype=dtype)
-    value = jax.random.normal(
-        k3, (batch_size, seq_len, num_heads, head_dim), dtype=dtype)
-    grad = jax.random.normal(
-        k4, (batch_size, seq_len, num_heads, head_dim), dtype=dtype)
+    if is_bnth:
+      qkv_shape = (batch_size, num_heads, seq_len, head_dim)
+    else:
+      qkv_shape = (batch_size, seq_len, num_heads, head_dim)
+    query = jax.random.normal(k1, qkv_shape, dtype=dtype)
+    key = jax.random.normal(k2, qkv_shape, dtype=dtype)
+    value = jax.random.normal(k3, qkv_shape, dtype=dtype)
+    grad = jax.random.normal(k4, qkv_shape, dtype=dtype)
     if use_bias:
       bias = jax.random.normal(
         k5, (batch_size, num_heads, seq_len, seq_len), dtype=dtype)
@@ -310,7 +322,10 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     devices = np.array(jax.local_devices()[:4])
     devices = devices.reshape((2, 2))
     with Mesh(devices, ("dp", "tp")) as mesh:
-      qkv_spec = PartitionSpec("dp", None, "tp", None)
+      if is_bnth:
+        qkv_spec = PartitionSpec("dp", "tp", None, None)
+      else:
+        qkv_spec = PartitionSpec("dp", None, "tp", None)
       qkv_sharding = NamedSharding(mesh, qkv_spec)
       if bias is not None:
         bias_spec = PartitionSpec("dp", "tp", None, None)
@@ -336,7 +351,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       jitted_sdpa_train = jax.jit(
         partial(
           sdpa_train, scale=scale, mask_type=mask_type,
-          dropout_rate=dropout_rate),
+          dropout_rate=dropout_rate, is_bnth=is_bnth),
         in_shardings=in_shardings,
         out_shardings=out_shardings
       )
@@ -344,7 +359,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       jitted_sdpa_train_ref = jax.jit(
         partial(
           sdpa_train_ref, scale=scale, mask_type=mask_type,
-          dropout_rate=dropout_rate),
+          dropout_rate=dropout_rate, is_bnth=is_bnth),
         in_shardings=in_shardings,
         out_shardings=out_shardings
       )
@@ -904,36 +919,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       out = jitted_sdpa_inference(query, key, value)
       out_ref = jitted_sdpa_inference_ref(query, key, value)
       self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
-
-  @jtu.run_on_devices("cuda")
-  def test_layouts(self):
-    if jax.device_count() < 4:
-      self.skipTest("Requires more than 4 devices.")
-    dtype = "bfloat16"
-    B, T, N, H = 4, 1024, 8, 128
-    S = T
-    k0, k1, k2, k3 = jax.random.split(jax.random.key(123), 4)
-    query = jax.random.normal(k0, (B, T, N, H), dtype=dtype)
-    key = jax.random.normal(k1, (B, S, N, H), dtype=dtype)
-    value = jax.random.normal(k2, (B, S, N, H), dtype=dtype)
-    grad = jax.random.normal(k3, (B, T, N, H), dtype=dtype)
-
-    btnh_fn = jax.jit(partial(sdpa_train, scale=.5,
-      mask_type=MaskType.CAUSAL, is_bnth=False, dropout_rate=0.0))
-    out_ref, (dq_ref, dk_ref, dv_ref) = btnh_fn(query, key, value, grad)
-
-    def _cvt(x):
-      return jnp.einsum("BTNH->BNTH", x)
-    def _cvt_back(x):
-      return jnp.einsum("BNTH->BTNH", x)
-    bnth_fn = jax.jit(partial(sdpa_train, scale=.5, mask_type=MaskType.CAUSAL,
-                              is_bnth=True, dropout_rate=0.0))
-    out, (dq, dk, dv) = bnth_fn(_cvt(query), _cvt(key), _cvt(value), _cvt(grad))
-
-    self.assertArraysAllClose(out_ref, _cvt_back(out))
-    self.assertArraysAllClose(dq_ref, _cvt_back(dq))
-    self.assertArraysAllClose(dk_ref, _cvt_back(dk))
-    self.assertArraysAllClose(dv_ref, _cvt_back(dv))
 
   def test_sdpa_utils(self):
     if jax.device_count() < 4:
