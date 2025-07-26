@@ -523,6 +523,7 @@ jax_multiplatform_test(
     enable_configs = [
         "tpu_v5e_x8",
         "tpu_v5p",
+        "tpu_v5p_x4",
     ],
     deps = [
         "//jax:pallas_tpu",
