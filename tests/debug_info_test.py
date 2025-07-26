@@ -1383,7 +1383,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       tracer_spy.append(x)
       def to_remat(a, b):
         return for_loop.scan(f, a, b)
-      return jax.remat(to_remat)(c, as_)
+      return jax.remat(to_remat)(c, as_)  # c is closed-over
 
     def the_grad(c, as_):  # c: f32[], as_: f32[3, 2],
       tracer_spy.append(c)

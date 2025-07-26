@@ -16,6 +16,7 @@ import contextlib
 import unittest
 from absl.testing import absltest
 import jax
+from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 import jax._src.lib
@@ -136,7 +137,35 @@ class JaxAotTest(jtu.JaxTestCase):
 
     lowered = jax.jit(my_function).lower(np.full_like(const, 42., dtype=const.dtype))
     stablehlo = lowered.as_text("stablehlo")
-    self.assertRegex(stablehlo, rf"stablehlo.constant dense.*tensor<{const_size}x")
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertNotRegex(stablehlo, rf"stablehlo.constant dense.*tensor<{const_size}x")
+      self.assertLen(lowered._lowering.const_args, 1)
+      self.assertIs(lowered._lowering.const_args[0], const)
+    else:
+      self.assertRegex(stablehlo, rf"stablehlo.constant dense.*tensor<{const_size}x")
+      self.assertLen(lowered._lowering.const_args, 0)
+
+  def test_with_constants(self):
+    const = jnp.arange(16.) + 42.  # A distinctive shape and value
+
+    @pjit
+    def f(x):
+      return const[0:8] + x
+
+    inp = jnp.arange(8.)
+    compiled = f.lower(inp).compile()
+    self.assertLen(compiled.args_info[0], 1)  # Not including const_args
+    self.assertLen(compiled.in_avals[0], 1)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertLen(compiled._params.const_args, 1)
+      self.assertIs(compiled._params.const_args[0], const)
+    else:
+      self.assertLen(compiled._params.const_args, 0)
+    self.assertArraysEqual(compiled(inp), const[0:8] + inp)
+    # Trigger cache hit
+    # TODO(necula): fix the fastpath for AOT
+    expected_aot_call = 1 if config.use_simplified_jaxpr_constants.value else 0
+    self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=expected_aot_call)
 
   @jtu.run_on_devices('gpu', 'tpu')
   def test_mismatched_backends_raises(self):

@@ -298,6 +298,7 @@ count_jit_tracing_cache_miss = count_events("create_pjit_jaxpr")
 count_aot_jit_cpp_cache_miss = count_events("stages_compiled_call")
 count_jit_and_pmap_lowerings = count_events("lower_jaxpr_to_module")
 count_jit_compilation_cache_miss = count_events("pxla_cached_compilation")
+count_compilation_after_persistent_cache_miss = count_events("compile_after_persistent_compilation_miss")
 count_jax_array_shard_arg_calls = count_events("_array_shard_arg")
 
 
@@ -1434,18 +1435,27 @@ class JaxTestCase(parameterized.TestCase):
   def assertCacheMisses(self,
                         func: Callable[[], Any], *,
                         cpp: int | None = None,
+                        aot_call: int | None = None,
                         tracing: int | None = None,
-                        lowering: int | None = None):
+                        lowering: int | None = None,
+                        compilation_after_persistent_cache_miss: int | None = None):
     with (count_pjit_cpp_cache_miss() as cpp_count,
+          count_aot_jit_cpp_cache_miss() as aot_call_count,
           count_jit_tracing_cache_miss() as tracing_count,
-          count_jit_and_pmap_lowerings() as lowering_count):
+          count_jit_and_pmap_lowerings() as lowering_count,
+          count_compilation_after_persistent_cache_miss() as compilation_count):
       func()
     if cpp is not None:
       self.assertEqual(cpp, cpp_count())
+    if aot_call is not None:
+      self.assertEqual(aot_call, aot_call_count())
     if tracing is not None:
       self.assertEqual(tracing, tracing_count())
     if lowering is not None:
       self.assertEqual(lowering, lowering_count())
+    if compilation_after_persistent_cache_miss is not None:
+      self.assertEqual(compilation_after_persistent_cache_miss,
+                       compilation_count())
 
 _PJIT_IMPLEMENTATION = api.jit
 _PJIT_IMPLEMENTATION._name = "jit"

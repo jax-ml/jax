@@ -191,7 +191,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
 
   def test_pmap(self):
     f = pmap(lambda x: x - lax.psum(x, "i"), axis_name="i")
-    x = np.arange(jax.device_count(), dtype=np.int64)
+    x = np.arange(jax.device_count(), dtype=np.int32)
     f(x)
     self.assertEqual(count_cache_items(), 1)
     x = np.arange(jax.device_count(), dtype=np.float32)
@@ -199,12 +199,49 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertEqual(count_cache_items(), 2)
     # TODO: create a test for calling pmap with the same input more than once
 
+  def test_pmap_with_consts(self):
+    const = jnp.array([42, 43], dtype=np.int32)
+    clear_cache()
+    f = pmap(lambda x: x - lax.psum(x, "i") + const[0], axis_name="i")
+    x = np.arange(jax.device_count(), dtype=np.int32)
+    self.assertAllClose(f(x), x - np.sum(x, dtype=np.int32) + np.int32(42))
+    self.assertEqual(count_cache_items(), 1)
+
+    const1 = jnp.array([142, 143], dtype=np.int32)  # another const
+    f1 = pmap(lambda x: x - lax.psum(x, "i") + const1[0], axis_name="i")
+    expected_compilations = 0 if config.use_simplified_jaxpr_constants.value else 1
+    self.assertCacheMisses(lambda: f1(x),
+                           lowering=1,
+                           compilation_after_persistent_cache_miss=expected_compilations)
+    self.assertAllClose(f1(x), x - np.sum(x, dtype=np.int32) + np.int32(142))
+    self.assertEqual(count_cache_items(), 1 + expected_compilations)
+
   def test_jit(self):
     f = jit(lambda x: x * x)
-    f(1)
+    self.assertCacheMisses(lambda: f(1), lowering=1,
+                           compilation_after_persistent_cache_miss=1)
     self.assertEqual(count_cache_items(), 1)
+    f1 = jit(lambda x: x * x)
+    self.assertCacheMisses(lambda: f1(2), lowering=1,
+                           compilation_after_persistent_cache_miss=0)
     f(1.0)
     self.assertEqual(count_cache_items(), 2)
+
+  def test_jit_with_constants(self):
+    const = jnp.array([42, 43])  #  A distinctive shape
+    clear_cache()
+    f = jit(lambda x: x * const[0])
+    self.assertAllClose(f(2), 2 * 42)
+    self.assertEqual(count_cache_items(), 1)
+
+    const1 = jnp.array([142, 143])  # The closed over const can be different
+    f1 = jit(lambda x: x * const1[0])
+    expected_compilations = 0 if config.use_simplified_jaxpr_constants.value else 1
+    self.assertCacheMisses(
+        lambda: f1(3), lowering=1,
+        compilation_after_persistent_cache_miss=expected_compilations)
+    self.assertAllClose(f1(3), 3 * 142)
+    self.assertEqual(count_cache_items(), 1 + expected_compilations)
 
   def test_set_cache_dir_after_backends_init(self):
     # This a regression test for #25768

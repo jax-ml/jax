@@ -34,6 +34,7 @@ from jax._src import monitoring
 from jax._src import path as pathlib
 from jax._src import profiler
 from jax._src import traceback_util
+from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
@@ -467,7 +468,8 @@ def compile_or_get_cached(
         "/jax/compilation_cache/cache_retrieval_time_sec", cache_retrieval_time)
 
     return retrieved_executable
-  elif (
+  util.test_event("compile_after_persistent_compilation_miss")
+  if (
       config.share_binary_between_hosts.value
       and is_multi_process
       and distributed.global_state.client is not None
