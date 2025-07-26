@@ -682,6 +682,27 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_quantized_matmul_test",
+    srcs = ["tpu_quantized_matmul_test.py"],
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v6e",
+    ],
+    shard_count = 24,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "tpu_splash_attention_kernel_sharded_test",
     srcs = ["tpu_splash_attention_kernel_sharded_test.py"],
     enable_configs = [
