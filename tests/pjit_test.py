@@ -55,7 +55,7 @@ from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
 from jax._src.pjit import (pjit, mesh_cast, use_auto_axes, use_explicit_axes,
-                           _pjit_lower_cached)
+                           _pjit_lower)
 from jax._src.layout import Format, Layout as DLL
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
@@ -2166,13 +2166,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x + y
 
     out = add(a, b)
-    cache_info1 = _pjit_lower_cached.cache_info()
+    cache_info1 = _pjit_lower.cache_info()
     self.assertIsInstance(out, array.ArrayImpl)
     self.assertArraysEqual(out, a + b)
     self.assertFalse(out._committed)
 
     out2 = add(out, out)
-    cache_info2 = _pjit_lower_cached.cache_info()
+    cache_info2 = _pjit_lower.cache_info()
     self.assertIsInstance(out2, array.ArrayImpl)
     self.assertArraysEqual(out2, 2 * (a + b))
     self.assertFalse(out2._committed)
@@ -2182,7 +2182,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     c = jax.device_put(a, jax.devices()[0])
     out3 = add(c, c)
-    cache_info3 = _pjit_lower_cached.cache_info()
+    cache_info3 = _pjit_lower.cache_info()
     self.assertArraysEqual(out3, 2 * c)
     self.assertTrue(out3._committed)
 

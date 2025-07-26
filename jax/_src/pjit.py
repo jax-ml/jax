@@ -1722,6 +1722,7 @@ def _pjit_call_impl_python(
     *args, jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
     donated_invars, ctx_mesh, name, keep_unused, inline,
     compiler_options_kvs):
+  util.test_event("jit_cpp_cache_miss")
   pgle_compile_options, pgle_profiler = {}, None
   if config.enable_pgle.value and config.pgle_profiling_runs.value > 0:
     compilation_target_key = jaxpr
@@ -1825,13 +1826,9 @@ def _pjit_call_impl(*args, jaxpr,
 jit_p.def_impl(_pjit_call_impl)
 
 
-def _pjit_lower(*args, **kwargs):
-  util.test_event("pjit_lower")
-  return _pjit_lower_cached(*args, **kwargs)
-
 # This cache is important for python dispatch performance.
 @weakref_lru_cache
-def _pjit_lower_cached(
+def _pjit_lower(
     jaxpr: core.ClosedJaxpr,
     in_shardings,
     out_shardings,
