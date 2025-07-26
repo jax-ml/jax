@@ -2003,7 +2003,7 @@ Changes:
     Please upgrade to NumPy 1.20 or newer.
 * Changes
   * Added {mod}`jax.debug` that includes utilities for runtime value debugging such at {func}`jax.debug.print` and {func}`jax.debug.breakpoint`.
-  * Added new documentation for [runtime value debugging](debugging/index)
+  * Added new documentation for [runtime value debugging](https://github.com/jax-ml/jax/blob/7ac8181cce087d8bcd564d07e19f5067cb5d9d3b/docs/debugging/index.md)
 * Deprecations
   * {func}`jax.mask` {func}`jax.shapecheck` APIs have been removed.
     See {jax-issue}`#11557`.
