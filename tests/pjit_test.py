@@ -9231,10 +9231,10 @@ class UtilTest(jtu.JaxTestCase):
             transpose_perm=(1, 0),
         ),
     )
-    self.assertRaisesWithLiteralMatch(
+    self.assertRaisesRegex(
         _jax.XlaRuntimeError,
-        'INVALID_ARGUMENT: `subgroup_types`(3) should not have more dimensions '
-        'than `dims`(2).',
+        r'INVALID_ARGUMENT: `subgroup_types`\(3\) should not have more dimensions '
+        r'than `dims`\(2\).',
         lambda: xc.HloSharding.iota_tile(
             (2, 2),
             subgroup_types=(
