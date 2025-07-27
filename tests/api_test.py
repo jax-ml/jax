@@ -6251,21 +6251,24 @@ class RematTest(jtu.JaxTestCase):
       return z * ((x1 * x2) * y) * np.array([3.])
 
     res = saved_residuals(f, (2., 3.), y=4.)
-    self.assertLen(res, 6)
-    self.assertEqual(res[0][0].shape, (1,))
     if config.use_simplified_jaxpr_constants.value:
-      self.assertEqual(res[0][1], "from a literal")
+      self.assertLen(res, 5)
+      start_idx = 0
     else:
+      self.assertLen(res, 6)
+      self.assertEqual(res[0][0].shape, (1,))
       self.assertEqual(res[0][1], "from a constant")
-    self.assertEqual(res[1][0].shape, ())
-    self.assertEqual(res[1][1], "from the argument x[0]")
-    self.assertEqual(res[2][0].shape, ())
-    self.assertEqual(res[2][1], "from the argument x[1]")
-    self.assertEqual(res[3][0].shape, ())
-    self.assertEqual(res[3][1], "from the argument y")
-    self.assertEqual(res[4][0].shape, ())
-    self.assertStartsWith(res[4][1], "named 'z'")
-    self.assertEqual(res[5][0].shape, ())
+      start_idx = 1
+
+    self.assertEqual(res[start_idx][0].shape, ())
+    self.assertEqual(res[start_idx][1], "from the argument x[0]")
+    self.assertEqual(res[start_idx + 1][0].shape, ())
+    self.assertEqual(res[start_idx + 1][1], "from the argument x[1]")
+    self.assertEqual(res[start_idx + 2][0].shape, ())
+    self.assertEqual(res[start_idx + 2][1], "from the argument y")
+    self.assertEqual(res[start_idx + 3][0].shape, ())
+    self.assertStartsWith(res[start_idx + 3][1], "named 'z'")
+    self.assertEqual(res[start_idx + 4][0].shape, ())
 
   def test_saved_residuals_utility_jit(self):
     @jax.jit

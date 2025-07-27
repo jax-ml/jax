@@ -842,7 +842,7 @@ def _shard_map_lowering_shardy(
   const_arg_values = tuple(mlir.ir_constant(c, ctx.const_lowering,
                                             canonicalize_dtype=True)
                            for c in const_args)
-  in_avals_ = [core.shaped_abstractify(c) for c in const_args] + in_avals_
+  const_avals = [core.shaped_abstractify(c) for c in const_args]
   # TODO(necula,yashkatariya): how to construct consts shardy shardings from
   #  consts that can be ndarray or jax.Array?
   const_args_shardings = [
@@ -851,7 +851,8 @@ def _shard_map_lowering_shardy(
 
   num_dim_vars = len(ctx.dim_var_values)
   in_shardings = ([_shardy_shard_map_token_sharding(ctx, mesh)]
-                  * (num_tokens + num_dim_vars) + const_args_shardings +
+                  * (num_tokens + num_dim_vars) +
+                  const_args_shardings +
                   in_shardings)
   in_shardings = sharding_impls.SdyArrayList(in_shardings).build()
 
@@ -872,20 +873,32 @@ def _shard_map_lowering_shardy(
       in_shardings, out_shardings,
       sdy.ManualAxesAttr.get(
           ir.ArrayAttr.get([ir.StringAttr.get(i) for i in manual_axes])))
+  dim_var_types = [
+    mlir.aval_to_ir_type(
+        core.ShapedArray((), dtypes.canonicalize_dtype(np.int64)))
+  ] * num_dim_vars
+  token_types = [hlo.TokenType.get()] * num_tokens
+  const_arg_types = map(mlir.aval_to_ir_type, const_avals)
+  in_types = map(mlir.aval_to_ir_type, in_avals_)
   block = ir.Block.create_at_start(
       manual_computation_op.body,
-      (*(i if isinstance(i, ir.Type) else i.type for i in ctx.dim_var_values),
-       *([hlo.TokenType.get()] * num_tokens),
-       *map(mlir.aval_to_ir_type, in_avals_)))
+      (*dim_var_types, *token_types, *const_arg_types, *in_types))
   with (ir.InsertionPoint(block), _extend_axis_env(mesh, manual_axes),
         config._check_vma(check_vma)):
+    (block_dim_var_values, block_token_arg_values,
+     block_const_arg_values, block_in_args) = \
+        util.split_list(block.arguments,
+                        [num_dim_vars, num_tokens, num_const_args])
+    block_const_lowering = {id(c): ca
+                            for c, ca in zip(const_args,
+                                             block_const_arg_values)}
     out_nodes_, tokens_out = mlir.jaxpr_subcomp(
         sub_ctx, jaxpr, ctx.name_stack,
         mlir.TokenSet(zip(
-            ctx.tokens_in.effects(), block.arguments[:num_tokens])),
-        (), *block.arguments[num_tokens+num_dim_vars+num_const_args:],
-        dim_var_values=ctx.dim_var_values,
-        const_lowering=ctx.const_lowering)
+            ctx.tokens_in.effects(), block_token_arg_values)),
+        (), *block_in_args,
+        dim_var_values=block_dim_var_values,
+        const_lowering=block_const_lowering)
     sdy.ReturnOp([ir.Value(x) for x in (*[v for _, v in tokens_out.items()],
                                         *out_nodes_)])
     num_tokens = len(tokens_out.effects())
