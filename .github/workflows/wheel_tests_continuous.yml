@@ -23,14 +23,31 @@ name: CI - Wheel Tests (Continuous)
 permissions:
       contents: read
 
+# permissions:
+#       contents: read
+
+# on:
+#   schedule:
+#     - cron: "0 */3 * * *" # Run once every 3 hours
+#   workflow_dispatch: # allows triggering the workflow run manually
+
+# concurrency:
+#   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+#   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+
 on:
-  schedule:
-    - cron: "0 */3 * * *" # Run once every 3 hours
-  workflow_dispatch: # allows triggering the workflow run manually
+  # Trigger the workflow on push or pull request,
+  # but only for the main branch
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+  cancel-in-progress: true
 
 jobs:
   build-jax-artifact:

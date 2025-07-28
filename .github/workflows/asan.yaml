@@ -75,6 +75,7 @@ jobs:
           python build/build.py build --wheels=jaxlib --verbose \
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=address \
+            --bazel_options=--config=clang_local \
             --clang_path=/usr/bin/clang-18
           uv pip install dist/jaxlib-*.whl \
             -e .
