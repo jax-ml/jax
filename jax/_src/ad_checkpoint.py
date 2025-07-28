@@ -783,7 +783,7 @@ def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
 
 
 def _remat_lowering(
-    ctx,
+    ctx: mlir.LoweringRuleContext,
     *args,
     jaxpr: core.Jaxpr,
     prevent_cse: bool,
@@ -801,7 +801,8 @@ def _remat_lowering(
     jaxpr_args = args
   outs, tokens_out = mlir.jaxpr_subcomp(
       ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),
-      ctx.tokens_in, (), *jaxpr_args, dim_var_values=ctx.dim_var_values)
+      ctx.tokens_in, (), *jaxpr_args, dim_var_values=ctx.dim_var_values,
+      const_lowering=ctx.const_lowering)
   ctx.set_tokens_out(tokens_out)
   return outs
 

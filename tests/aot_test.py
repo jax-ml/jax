@@ -126,6 +126,18 @@ class JaxAotTest(jtu.JaxTestCase):
     hlo = lowered.as_text("hlo")
     self.assertNotRegex(hlo, r"sine.*metadata=.*source_file=.*")
 
+  def test_constants_in_lowering_in_aot(self):
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+
+    def my_function(x):
+      return jnp.sin(x) + const
+
+    lowered = jax.jit(my_function).lower(np.full_like(const, 42., dtype=const.dtype))
+    stablehlo = lowered.as_text("stablehlo")
+    self.assertRegex(stablehlo, rf"stablehlo.constant dense.*tensor<{const_size}x")
+
   @jtu.run_on_devices('gpu', 'tpu')
   def test_mismatched_backends_raises(self):
     @jax.jit

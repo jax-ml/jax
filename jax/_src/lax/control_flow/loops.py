@@ -2085,6 +2085,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
         cond_consts,
         *(x + z),
         dim_var_values=ctx.dim_var_values,
+        const_lowering=ctx.const_lowering,
     )
     if batched:
       pred_ctx = mlir.LoweringRuleContext(
@@ -2096,7 +2097,9 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           avals_out=[pred_aval.update(
               shape=(), sharding=pred_aval.sharding.update(spec=()))],
           tokens_in=mlir.TokenSet(),
-          tokens_out=None)
+          tokens_out=None,
+          dim_var_values=ctx.dim_var_values,
+          const_lowering=ctx.const_lowering)
       pred, = lax._unary_reduce_lower(
           hlo.OrOp,
           lambda dtype: np.array(False, dtype),
@@ -2121,7 +2124,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
                    for x in body_jaxpr.consts]
     new_z, tokens_out = mlir.jaxpr_subcomp(
         ctx.module_context, body_jaxpr.jaxpr, body_name_stack,
-        tokens_in, body_consts, *(y + z), dim_var_values=ctx.dim_var_values)
+        tokens_in, body_consts, *(y + z),
+        dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering)
     out_tokens = [tokens_out.get(eff) for eff in body_effects]
     if batched:
       body_pred_name_stack = name_stack.extend('body_pred')
@@ -2130,7 +2134,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
       (body_pred,), _ = mlir.jaxpr_subcomp(
           ctx.module_context, cond_jaxpr.jaxpr, body_pred_name_stack,
           mlir.TokenSet(), cond_consts, *(x + z),
-          dim_var_values=ctx.dim_var_values)
+          dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering)
       new_z = _map(
           partial(_pred_bcast_select_hlo, ctx, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)

@@ -3163,6 +3163,69 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("stablehlo.cosine", stablehlo)
     self.assertIn("stablehlo.sine", stablehlo)
 
+  def test_constants_not_in_lowering_jit(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest("Works only with simplified Jaxpr consts")
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+
+    @jax.jit
+    def f():
+      return jax.jit(lambda: const + 1.)()
+
+    with jtu.collect_lowered_jaxprs() as collection:
+      res = f()
+      res = f()
+    self.assertAllClose(const + 1., res)
+
+    for j, j_module in collection:
+      self.assertNotRegex(str(j_module),
+       f"stablehlo.constant dense.*tensor<{const_size}x")
+
+  def test_constants_not_in_lowering_scan(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest("Works only with simplified Jaxpr consts")
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+    def f():
+      def scan_body(carry, x):
+        return const, None  # Closed over and return
+      return lax.scan(jax.jit(scan_body),
+                      jnp.zeros((const_size,), dtype=np.float32),  # ignored
+                      jnp.zeros((8, const_size), dtype=np.float32))
+
+    with jtu.collect_lowered_jaxprs() as collection:
+      res, _ = f()
+      res, _ = f()
+    self.assertAllClose(const, res)
+
+    for j, j_module in collection:
+      self.assertNotRegex(str(j_module),
+          f"stablehlo.constant dense.*tensor<{const_size}x")
+
+  def test_constants_not_in_lowering_cond(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest("Works only with simplified Jaxpr consts")
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+
+    def f(x):
+      return lax.cond(x >= 0., jax.jit(lambda: const),
+                      lambda: const)
+
+    with jtu.collect_lowered_jaxprs() as collection:
+      res = f(42.)
+      f(43.)
+    self.assertAllClose(const, res)
+
+    for j, j_module in collection:
+      self.assertNotRegex(str(j_module),
+          f"stablehlo.constant dense.*tensor<{const_size}x")
+
+
   def test_concurrent_device_get_and_put(self):
     def f(x):
       for _ in range(100):
@@ -6923,7 +6986,7 @@ class JaxprTest(jtu.JaxTestCase):
 
     dtype = "f64" if config.enable_x64.value else "f32"
     if config.use_simplified_jaxpr_constants.value:
-      expected = f"{{ lambda ; a:f32[]. let  in (a, 1.0:{dtype}[], [0.]:f32[1]) }}"
+      expected = f"{{ lambda ; a:f32[]. let  in (a, 1.0:{dtype}[], [...]:f32[1]) }}"
     else:
       expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))

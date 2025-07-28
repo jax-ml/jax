@@ -4025,15 +4025,43 @@ class ArrayPjitTest(jtu.JaxTestCase):
     def f(x):
       return np_inp
 
-    with (jtu.count_pjit_cpp_cache_miss() as cpp_count,
-          jtu.count_jit_tracing_cache_miss() as tracing_count,
-          jtu.count_jit_and_pmap_lowerings() as lowering_count):
-      f(np_inp)
-      f(np_inp)
-      f(arr)
-      f(arr)
-    self.assertEqual((2, 1, 1),
-                     (cpp_count(), tracing_count(), lowering_count()))
+    # all misses
+    self.assertCacheMisses(lambda: f(np_inp),
+                           cpp=1, tracing=1, lowering=1)
+    # all hits
+    self.assertCacheMisses(lambda: f(np_inp),
+                           cpp=0, tracing=0, lowering=0)
+
+    # misses in the C++ cache for a different argument
+    self.assertCacheMisses(lambda: f(arr),
+                           cpp=1, tracing=0, lowering=0)
+    self.assertCacheMisses(lambda: f(arr),  # then hits
+                           cpp=0, tracing=0, lowering=0)
+
+    # Hits the lowering cache when using the AOT
+    self.assertCacheMisses(lambda: f.lower(arr),
+                           cpp=0, tracing=0, lowering=0)
+
+  @jtu.thread_unsafe_test()
+  def test_lowering_cache_hit_with_closed_over_constants_scan(self):
+    np_inp = np.arange(8)
+
+    @jax.jit
+    def scan_body(carry, x):
+      return carry + np_inp, None
+
+    @jax.jit
+    def f():
+      return lax.scan(scan_body, np.zeros_like(np_inp),
+                      np.ones((8,), dtype=np.float32))
+
+    self.assertCacheMisses(f, cpp=1, lowering=1)
+    self.assertCacheMisses(f, cpp=0, tracing=0, lowering=0)
+    # Run the scan body directly
+    self.assertCacheMisses(lambda: scan_body(np_inp, np.float32(1)),
+                           cpp=1, tracing=0, lowering=1)
+    self.assertCacheMisses(lambda: scan_body(np_inp, np.float32(1)),
+                           cpp=0, tracing=0, lowering=0)
 
   def test_lowering_cache_hit_different_devices(self):
     if jax.device_count() < 4:

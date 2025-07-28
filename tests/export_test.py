@@ -39,6 +39,7 @@ from jax import tree_util
 from jax._src import config
 from jax._src import compute_on
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import test_util as jtu
@@ -288,6 +289,17 @@ class JaxExportTest(jtu.JaxTestCase):
     exp_f = get_exported(f)(x, y)
 
     self.assertAllClose(f(x, y), exp_f.call(x, y))
+
+  def test_closed_over_constant(self):
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+
+    f = jax.jit(lambda x: x + const)
+    x = np.zeros((const_size,), dtype=np.float32)
+    exp_f = get_exported(f)(x)
+
+    self.assertAllClose(f(x), exp_f.call(x))
 
   def test_override_lowering_rules(self):
     @jax.jit
@@ -543,33 +555,47 @@ class JaxExportTest(jtu.JaxTestCase):
     context = {}
     def test_primitive_lowering(ctx, arg):
       context["for_export"] = ctx.module_context.lowering_parameters.for_export
+      context["hoist_constants_as_args"] = ctx.module_context.lowering_parameters.hoist_constants_as_args
       context["export_ignore_forward_compatibility"] = ctx.module_context.lowering_parameters.export_ignore_forward_compatibility
       return mlir.hlo.AddOp(arg, arg).results
 
     mlir.register_lowering(test_primitive, test_primitive_lowering)
+    test_primitive.def_impl(functools.partial(dispatch.apply_primitive,
+                                              test_primitive))
     self.addCleanup(lambda: mlir.register_lowering(test_primitive, None))
 
     f = jax.jit(test_primitive.bind)
     a = np.arange(3, dtype=np.float32)
     context.clear()
+
+    res = test_primitive.bind(a)  # eager mode
+    self.assertAllClose(res, a + a)
+    self.assertEqual(context,
+                     dict(for_export=False,
+                          hoist_constants_as_args=config.use_simplified_jaxpr_constants.value,
+                          export_ignore_forward_compatibility=False))
+
     res = f(a)  # Works with JIT
     self.assertAllClose(res, a + a)
     self.assertEqual(context,
                      dict(for_export=False,
+                          hoist_constants_as_args=config.use_simplified_jaxpr_constants.value,
                           export_ignore_forward_compatibility=False))
     context.clear()
-    f.lower(a)  # Works with most AOT
-    # The above was cached
-    self.assertEqual(context, {})
+    if config.use_simplified_jaxpr_constants.value:
+      f.lower(a)  # Works with most AOT
+      self.assertEqual(context, {})  # hit the cache
     _ = export.export(f)(a)
     self.assertEqual(context,
                      dict(for_export=True,
+                          hoist_constants_as_args=False,
                           export_ignore_forward_compatibility=False))
     context.clear()
     with config.export_ignore_forward_compatibility(True):
       _ = export.export(f)(a)
       self.assertEqual(context,
                        dict(for_export=True,
+                            hoist_constants_as_args=False,
                             export_ignore_forward_compatibility=True))
 
   def test_grad(self):
