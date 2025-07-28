@@ -847,6 +847,7 @@ def get_distributed_runtime_client(
     missed_heartbeat_callback: Any | None = ...,
     shutdown_on_destruction: bool | None = ...,
     use_compression: bool | None = ...,
+    recoverable: bool | None = ...,
 ) -> DistributedRuntimeClient: ...
 
 class PreemptionSyncManager:
