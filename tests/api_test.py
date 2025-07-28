@@ -4502,6 +4502,11 @@ class APITest(jtu.JaxTestCase):
       finally:
         config.update("jax_numpy_rank_promotion", allow_promotion)
 
+  def test_frexp_sharded(self):
+    mesh = jtu.create_mesh((1,), 'x')
+    x = jax.device_put(np.ones(8), jax.NamedSharding(mesh, jax.P('x')))
+    jax.jacrev(lambda x: jnp.frexp(x)[0])(x)  # doesn't crash
+
   def test_grad_negative_argnums(self):
     def f(x, y):
       return x.sum() * y.sum()

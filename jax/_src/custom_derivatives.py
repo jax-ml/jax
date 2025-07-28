@@ -378,7 +378,6 @@ def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args
           f"  primal {av_p.str_short()} with tangent {av_t.str_short()}, expecting tangent {av_et}"
           for av_p, av_et, av_t in zip(primal_avals_out, expected_tangent_avals_out, tangent_avals_out)
           if av_et != av_t)
-
       raise TypeError(msg.format('\n'.join(disagreements)))
   store.store((out_tree, primal_avals, ()))
   return primals_out + tangents_out
