@@ -272,9 +272,8 @@ def kernel(
         out_shape=tree_util.tree_map(add_batch_dim, out_shape_),
         scratch_shapes=scratch_shapes,
         compiler_params=compiler_params,
-        # TODO(cjfj): Put batch axis at start after switch to row-major.
-        grid=(*mesh_kwargs_.pop("grid", ()), axis_size),
-        grid_names=(*mesh_kwargs_.pop("grid_names", ()), axis_name),
+        grid=(axis_size, *mesh_kwargs_.pop("grid", ())),
+        grid_names=(axis_name, *mesh_kwargs_.pop("grid_names", ())),
         **mesh_kwargs_,
     )(*args)
     out_batched = tree_util.tree_map(lambda _: True, out_shape_)
