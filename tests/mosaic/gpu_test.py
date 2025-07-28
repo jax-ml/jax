@@ -1850,6 +1850,20 @@ class TCGen05Test(TestCase):
           kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
       )(x).block_until_ready()
 
+  def test_raises_error_if_collective_tmem_without_cluster(self):
+    def kernel(ctx, input, output, scratch):
+      del ctx, input, output, scratch
+
+    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+    scratch_shape = [mgpu.TMEM((128, 384), jnp.float32, collective=True)]
+    with self.assertRaisesRegex(
+        ValueError,
+        "Collective TMEM allocations are only supported for clusters with an"
+        " even number of blocks in them.",
+    ):
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+      )(x).block_until_ready()
 
 
 class BarrierTest(TestCase):

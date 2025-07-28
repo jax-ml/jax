@@ -594,6 +594,11 @@ def _launch(
                 f"{tcgen05.TMEM_MAX_COLS}."
             )
           if any(alloc.collective for alloc in tmem_allocs):
+            if math.prod(cluster) % 2:
+              raise ValueError(
+                  "Collective TMEM allocations are only supported for clusters"
+                  " with an even number of blocks in them."
+              )
             tcgen05.tmem_relinquish_alloc_permit(collective=True)
           if any(not alloc.collective for alloc in tmem_allocs):
             tcgen05.tmem_relinquish_alloc_permit(collective=False)
