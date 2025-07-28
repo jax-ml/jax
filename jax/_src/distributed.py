@@ -34,6 +34,15 @@ _CHECK_PROXY_ENVS = config.bool_flag(
 )
 
 
+_ENABLE_RECOVERABILITY = config.bool_state(
+    name="jax_enable_recoverability",
+    default=False,
+    help=(
+        "Allows a multi-controller JAX job to continue running, even after some"
+        " tasks have failed."
+    ),
+)
+
 class State:
   process_id: int = 0
   num_processes: int = 1
@@ -143,7 +152,8 @@ class State:
 
     self.client = _jax.get_distributed_runtime_client(
         coordinator_address, process_id, init_timeout=initialization_timeout,
-        use_compression=True, **heartbeat_kwargs) # type: ignore
+        use_compression=True, recoverable=_ENABLE_RECOVERABILITY.value,
+        **heartbeat_kwargs)  # type: ignore
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
