@@ -2618,6 +2618,10 @@ def _fold_and_get_constant_value(x):
     return None
 
 
+@register_lowering_rule(lax.stop_gradient_p)
+def _stop_gradient_lowering_rule(_: LoweringRuleContext, x):
+  return x
+
 @register_lowering_rule(
     lax.max_p, ensure_mlir_values=False, kernel_types=[*tpu_core.KernelType]
 )

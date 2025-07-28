@@ -139,6 +139,14 @@ class OpsTest(PallasBaseTest):
       )(inp)
       self.assertAllClose(out, out_interpret)
 
+  def test_stop_gradient(self):
+    def kernel(x_ref, y_ref):
+      y_ref[...] = jax.lax.stop_gradient(x_ref[...] + 1)
+
+    x = jnp.arange(1024, dtype=jnp.float32)
+    y = pl.pallas_call(kernel, out_shape=x)(x)
+    self.assertAllClose(y, x + 1)
+
   def test_interleave_vectors(self):
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Expect TPUv4+")
