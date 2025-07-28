@@ -1980,8 +1980,7 @@ jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
                                     name: str, jaxpr: core.ClosedJaxpr,
-                                    num_const_args: int,
-                                    in_avals,
+                                    num_const_args: int, in_avals,
                                     effects, in_shardings,
                                     out_shardings, in_layouts, out_layouts,
                                     api_name):

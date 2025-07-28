@@ -2145,6 +2145,43 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
   return (closed_jaxpr, inout_aliases, mut, in_shardings, in_layouts,
           donated_invars, out_shardings, out_layouts)
 
+
+def hoist_constants_as_args(
+    closed_jaxpr: core.ClosedJaxpr, global_in_avals, in_shardings, in_layouts,
+    donated_invars, kept_var_idx: set[int], inout_aliases, mut,
+    all_args_info: AllArgsInfo):
+  # Account for const args; do it early because the adjusted values
+  # are used for more than just lowering.
+  const_args = core.jaxpr_const_args(closed_jaxpr.jaxpr)
+  num_const_args = len(const_args)
+  if num_const_args:
+    const_arg_avals = [core.shaped_abstractify(c) for c in const_args]
+    global_in_avals = const_arg_avals + global_in_avals  # type: ignore
+    ca_shardings = pjit.const_args_shardings(const_args)
+    in_shardings = ca_shardings + in_shardings  # type: ignore
+    ca_layouts = pjit.const_args_layouts(const_args, const_arg_avals,
+                                          ca_shardings)
+    in_layouts = ca_layouts + in_layouts  # type: ignore
+
+    donated_invars = (False,) * num_const_args + donated_invars
+    kept_var_idx = set(range(num_const_args)).union(
+        {kv + num_const_args for kv in kept_var_idx})
+    if inout_aliases is not None:
+      inout_aliases = (None,) * num_const_args + inout_aliases
+    if mut is not None:
+      mut = MutationData(
+          in_mut=mut.in_mut,
+          out_mut=[None if i_idx is None else i_idx + num_const_args
+                    for i_idx in mut.out_mut])
+    all_args_info = AllArgsInfo(
+        const_arg_avals + all_args_info.in_avals,  # type: ignore
+        all_args_info.debug_info._replace(
+          arg_names=(("",) * num_const_args +
+                      all_args_info.debug_info.arg_names)))
+  return (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
+          kept_var_idx, inout_aliases, mut, all_args_info)
+
+
 @util.cache(max_size=1024, trace_context_in_key=False)
 def _abstract_to_concrete_mesh(abstract_mesh, device_assignment):
   np_dev = np.vectorize(lambda i: device_assignment[i],
@@ -2342,37 +2379,12 @@ def lower_sharding_computation(
         abstract_mesh = sharding.mesh.abstract_mesh
 
   if lowering_parameters.hoist_constants_as_args:
-    # Account for const args; do it early because the adjusted values
-    # are used for more than just lowering.
-    const_args = core.jaxpr_const_args(closed_jaxpr.jaxpr)
-    num_const_args = len(const_args)
-    if num_const_args:
-      const_arg_avals = [core.shaped_abstractify(c) for c in const_args]
-      global_in_avals = const_arg_avals + global_in_avals  # type: ignore
-      ca_shardings = pjit.const_args_shardings(const_args)
-      in_shardings = ca_shardings + in_shardings  # type: ignore
-      ca_layouts = pjit.const_args_layouts(const_args, const_arg_avals,
-                                           ca_shardings)
-      in_layouts = ca_layouts + in_layouts  # type: ignore
-
-      donated_invars = (False,) * num_const_args + donated_invars
-      kept_var_idx = {kv + num_const_args for kv in kept_var_idx}.union(
-          set(range(num_const_args)))
-      if inout_aliases is not None:
-        inout_aliases = (None,) * num_const_args + inout_aliases
-      if mut is not None:
-        mut = MutationData(
-            in_mut=mut.in_mut,
-            out_mut=[None if i_idx is None else i_idx + num_const_args
-                     for i_idx in mut.out_mut])
-      all_args_info = AllArgsInfo(
-          const_arg_avals + all_args_info.in_avals,  # type: ignore
-          all_args_info.debug_info._replace(
-            arg_names=(("",) * num_const_args +
-                       all_args_info.debug_info.arg_names)))
+    (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
+     kept_var_idx, inout_aliases, mut, all_args_info) = hoist_constants_as_args(
+         closed_jaxpr, global_in_avals, in_shardings, in_layouts,
+         donated_invars, kept_var_idx, inout_aliases, mut, all_args_info)
   else:
     const_args = []
-    num_const_args = 0
 
   semantic_in_shardings = SemanticallyEqualShardings(
       in_shardings, global_in_avals)
@@ -2385,7 +2397,7 @@ def lower_sharding_computation(
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, module_name, backend,
-       num_const_args, tuple(global_in_avals),
+       len(const_args), tuple(global_in_avals),
        semantic_in_shardings, semantic_out_shardings,
        in_layouts, out_layouts, num_devices,
        tuple(device_list) if prim_requires_devices else None,  # type: ignore[arg-type]
