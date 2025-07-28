@@ -194,6 +194,7 @@ py_library_providing_imports_info(
         [
             "*.py",
             "experimental/key_reuse/**/*.py",
+            "experimental/numerics_check/**/*.py",
             "experimental/roofline/**/*.py",
             "image/**/*.py",
             "interpreters/**/*.py",
