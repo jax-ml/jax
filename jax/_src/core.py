@@ -504,6 +504,7 @@ class DropVar(Var):
     return '_'
 
 class Literal:
+  # See https://docs.jax.dev/en/latest/internals/constants.html
   __slots__ = ["val", "aval"]
 
   val: Any
@@ -543,6 +544,7 @@ class Literal:
 literalable_types: set[type] = set()
 
 def is_literalable(x: Any) -> bool:
+  # See https://docs.jax.dev/en/latest/internals/constants.html
   for t in type(x).__mro__:
     if t in literalable_types:
       return (not np.shape(x) or config.use_simplified_jaxpr_constants.value)
@@ -553,6 +555,7 @@ def jaxpr_const_args(jaxpr: Jaxpr) -> list[ArrayLike]:
   # The non-scalar constants in core.Literal, in the entire Jaxpr,
   # uniquified by id. These will be hoisted as const arguments to the functions
   # in which they appear.
+  # See https://docs.jax.dev/en/latest/internals/constants.html
   if not config.use_simplified_jaxpr_constants.value:
     return []
   consts_by_id: dict[int, Any] = {}
