@@ -77,6 +77,7 @@ ANY = MemorySpace.ANY
 CMEM = MemorySpace.CMEM
 SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
+VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
 SEMAPHORE = MemorySpace.SEMAPHORE
 

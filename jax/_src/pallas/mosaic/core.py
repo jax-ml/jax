@@ -150,6 +150,7 @@ class CompilerParams(pallas_core.CompilerParams):
 class MemorySpace(enum.Enum):
   ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
   VMEM = "vmem"
+  VMEM_SHARED = "vmem_shared"
   SMEM = "smem"
   CMEM = "cmem"
   SEMAPHORE = "semaphore_mem"
