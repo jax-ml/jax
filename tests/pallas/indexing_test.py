@@ -545,7 +545,7 @@ class IndexerOpsTest(PallasBaseTest):
     start = 2
 
     def kernel(x_ref, indices, y_ref):
-      pl.store(y_ref, pl.ds(indices[0], m), x_ref[...])
+      y_ref[pl.ds(indices[0], m)] = x_ref[...]
 
     x = jnp.arange(m * n, dtype=jnp.int32).reshape((m, n))
     indices = jnp.array([start])

@@ -2189,8 +2189,7 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(out[0], x_new)
     np.testing.assert_array_equal(out[1], y_new)
 
-  @parameterized.parameters(False, True)
-  def test_reduce_only_dim(self, use_store):
+  def test_reduce_only_dim(self):
     self.skip_if_mosaic_gpu()
 
     # The Pallas TPU lowering currently supports only blocks of rank >= 1
@@ -2203,12 +2202,7 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(self.pallas_call, out_shape=out_shape)
     def reduce(x_ref, y_ref):
-      x = x_ref[jnp.arange(m)]
-      y = jnp.sum(x, axis=-1)
-      if use_store:
-        pl.store(y_ref, (), y)
-      else:
-        y_ref[...] = y
+      y_ref[...] = jnp.sum(x_ref[jnp.arange(m)], axis=-1)
 
     y = reduce(x)
     y_ref = jnp.sum(x, axis=-1)
@@ -2605,7 +2599,10 @@ class PallasPrimitivesTest(PallasBaseTest):
   ])
   def test_load_pretty_print(self, expr, expected):
     def body(x_ref):
-      x = pl.load(x_ref, expr())
+      with jtu.ignore_warning(
+          category=DeprecationWarning, message="pl.load is deprecated"
+      ):
+        x = pl.load(x_ref, expr())
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
@@ -2620,7 +2617,10 @@ class PallasPrimitivesTest(PallasBaseTest):
   ])
   def test_store_pretty_print(self, expr, expected):
     def body(x_ref):
-      pl.store(x_ref, expr(), pl.load(x_ref, expr()))
+      with jtu.ignore_warning(
+          category=DeprecationWarning, message="pl.(load|store) is deprecated"
+      ):
+        pl.store(x_ref, expr(), pl.load(x_ref, expr()))
       return []
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
@@ -2640,7 +2640,10 @@ class PallasPrimitivesTest(PallasBaseTest):
   ])
   def test_swap_pretty_print(self, expr, expected):
     def body(x_ref):
-      x = pl.swap(x_ref, expr(), pl.load(x_ref, expr()))
+      with jtu.ignore_warning(
+          category=DeprecationWarning, message="pl.(load|swap) is deprecated"
+      ):
+        x = pl.swap(x_ref, expr(), pl.load(x_ref, expr()))
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])

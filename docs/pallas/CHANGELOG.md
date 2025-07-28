@@ -17,6 +17,8 @@ Remember to align the itemized text with the first line of an item within a list
 
   * `pl.atomic_*` APIs have been moved to {mod}`jax.experimental.pallas.triton`.
     Accessing them via {mod}`jax.experimental.pallas` is deprecated.
+  * `pl.load` and `pl.store` are deprecated. Use indexing or backend-specific
+    loading/storing APIs instead.
 
 ## Released with jax 0.7.0
 

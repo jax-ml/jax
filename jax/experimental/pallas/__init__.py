@@ -56,7 +56,7 @@ from jax._src.pallas.primitives import atomic_xor as _deprecated_atomic_xor
 from jax._src.pallas.primitives import debug_print as debug_print
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import dot as dot
-from jax._src.pallas.primitives import load as load
+from jax._src.pallas.primitives import load as _deprecated_load
 from jax._src.pallas.primitives import max_contiguous as max_contiguous
 from jax._src.pallas.primitives import multiple_of as multiple_of
 from jax._src.pallas.primitives import num_programs as num_programs
@@ -66,7 +66,7 @@ from jax._src.pallas.primitives import run_scoped as run_scoped
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
-from jax._src.pallas.primitives import store as store
+from jax._src.pallas.primitives import store as _deprecated_store
 from jax._src.pallas.primitives import swap as swap
 from jax._src.pallas.utils import cdiv as cdiv
 from jax._src.pallas.utils import next_power_of_2 as next_power_of_2
@@ -92,9 +92,20 @@ if _typing.TYPE_CHECKING:
   atomic_or = _deprecated_atomic_or
   atomic_xchg = _deprecated_atomic_xchg
   atomic_xor = _deprecated_atomic_xor
+  load = _deprecated_load
+  store = _deprecated_store
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   _deprecations = {
+      # Deprecated on July 25th 2025.
+      "load": (
+          "pl.load is deprecated, use ``ref[idx]`` or a backend-specific loading API instead.",
+          _deprecated_load,
+      ),
+      "store": (
+          "pl.store is deprecated, use ``ref[idx] = value`` or a backend-specific storing API instead.",
+          _deprecated_store,
+      ),
       # Deprecated on July 23rd 2025.
       "atomic_add": (
           "pl.atomic_add is deprecated, access it through jax.experimental.pallas.triton.",
