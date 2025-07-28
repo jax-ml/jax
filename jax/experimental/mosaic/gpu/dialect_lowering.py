@@ -1114,7 +1114,10 @@ def _mgpu_wait_op_lowering_rule(
 ) -> Sequence[ir.Value]:
 
   barrier = utils.DialectBarrierRef.from_barrier_memref(wait_op.barrier)
-  barrier.wait_parity(wait_op.parity)
+  if parity := wait_op.parity:
+    barrier.wait_parity(parity)
+  else:
+    barrier.wait()
 
   return []
 
