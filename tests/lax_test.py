@@ -3954,7 +3954,7 @@ def make_lowering(*, shape):
   return jnp.zeros((*shape, 2), 'uint32')
 
 def bake_lowering(k):
-  return k.T
+  return k.transpose()
 
 def take_lowering(k):
   return jnp.broadcast_to(jnp.float32(k.size), k.shape)
