@@ -85,15 +85,20 @@ class TritonPallasTest(PallasBaseTest):
     self.assertArraysEqual(y, x.astype(dst_dtype))
 
   @parameterized.named_parameters(
-      ("add_i32", plgpu.atomic_add, np.array([1, 2, 3, 4], np.int32), np.sum),
-      ("max_i32", plgpu.atomic_max, np.array([1, 2, 3, 4], np.int32), np.max),
-      ("min_i32", plgpu.atomic_min, np.array([1, 2, 3, 4], np.int32), np.min),
-      ("add_f16", plgpu.atomic_add, np.array([1, 2, 3, 4], np.float16), np.sum),
-      ("add_f32", plgpu.atomic_add, np.array([1, 2, 3, 4], np.float32), np.sum),
-      ("max_f32", plgpu.atomic_max, np.array([1, 2, 3, 4], np.float32), np.max),
-      ("min_f32", plgpu.atomic_min, np.array([1, 2, 3, 4], np.float32), np.min),
+      ("add_i32", "atomic_add", np.array([1, 2, 3, 4], np.int32), np.sum),
+      ("max_i32", "atomic_max", np.array([1, 2, 3, 4], np.int32), np.max),
+      ("min_i32", "atomic_min", np.array([1, 2, 3, 4], np.int32), np.min),
+      ("add_f16", "atomic_add", np.array([1, 2, 3, 4], np.float16), np.sum),
+      ("add_f32", "atomic_add", np.array([1, 2, 3, 4], np.float32), np.sum),
+      ("max_f32", "atomic_max", np.array([1, 2, 3, 4], np.float32), np.max),
+      ("min_f32", "atomic_min", np.array([1, 2, 3, 4], np.float32), np.min),
   )
   def test_scalar_atomic(self, op, value, numpy_op):
+    if plgpu is None:
+      self.skipTest("plgpu not available on this platform.")
+
+    op = getattr(plgpu, op)
+
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((), value.dtype),
