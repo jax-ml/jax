@@ -3263,6 +3263,35 @@ class LayoutTest(TestCase):
         self.skipTest(f"{problematic_device} requires more SHFL.BFLY for an unknown reason")
       raise
 
+  @parameterized.product(
+      in_length=[1, 2, 4, 8],
+      out_length=[1, 2, 4, 8],
+  )
+  def test_convert_tmem_native_vector_length(self, in_length, out_length):
+    dtype = jnp.dtype(jnp.int16)
+    def kernel(ctx, in_, out, smems):
+      smem_in, smem_out, barrier = smems
+      ctx.async_copy(src_ref=in_, dst_ref=smem_in, barrier=barrier)
+      barrier.wait()
+      t = mgpu.FragmentedArray.load_untiled(
+          smem_in, layout=mgpu.tmem_native_layout(in_length),
+          is_signed=True, optimized=False
+      )
+      t = t.to_layout(mgpu.tmem_native_layout(out_length))
+      t.store_untiled(smem_out, optimized=False)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem_out, dst_ref=out)
+      ctx.await_async_copy(0)
+    iinfo = jnp.iinfo(dtype)
+    x = jax.random.randint(
+        jax.random.key(42), (128, 128), iinfo.min, iinfo.max, dtype=jnp.int16
+    )
+    f = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, [x, x, mgpu.TMABarrier()],
+    )
+    y = f(x)
+    np.testing.assert_array_equal(y, x)
+
 
 @dataclasses.dataclass(frozen=True)
 class Tile:
