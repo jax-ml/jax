@@ -14,6 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "if_oss",
     "jax_generate_backend_suites",
     "jax_gpu_support_deps",
     "jax_multiplatform_test",
@@ -489,16 +490,25 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_pipeline_test",
     srcs = ["tpu_pallas_pipeline_test.py"],
-    args = [
-        # Timeout on deadlocks for a better error message.
-        "--xla_tpu_debug_sflag_wait_timeout_ms=500",
-        "--xla_tpu_debug_sflag_wait_shalt_on_detection",
-    ],
+    args = if_oss(
+        [],
+        google_value = [
+            # Timeout on deadlocks for a better error message.
+            "--xla_tpu_debug_sflag_wait_timeout_ms=500",
+            "--xla_tpu_debug_sflag_wait_shalt_on_detection",
+        ],
+    ),
     enable_backends = ["tpu"],
     enable_configs = [
         "tpu_v5e_x8",
         "tpu_v5p",
     ],
+    env = if_oss(
+        {
+            "XLA_FLAGS": "--xla_tpu_debug_sflag_wait_timeout_ms=500 --xla_tpu_debug_sflag_wait_shalt_on_detection",
+        },
+        google_value = {},
+    ),
     shard_count = 5,
     tags = [
         "noasan",  # Times out.
