@@ -56,6 +56,7 @@ class LoweringContext:
   launch_context: launch_context.LaunchContext | None
   single_thread_per_block_predicate: ir.Value | None
   single_thread_per_warpgroup_predicate: ir.Value | None
+  single_warp_per_block_predicate: ir.Value | None
   lowered_operations: set[ir.Operation | ir.OpView] = dataclasses.field(
       default_factory=set
   )
@@ -1449,15 +1450,17 @@ def _tmem_alloc_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.TmemAllocOp
 ) -> Sequence[ir.Value]:
   """Lowering rule for mgpu.TmemAllocOp."""
-  del ctx
-
   output_shape = ir.MemRefType(op.result.type).shape
   ncols = output_shape[1] // op.packing.value
 
-  # TODO(b/431684684): Predicate this at the warp level.
-  tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, op.exact)
+  with mgpu_utils.when(ctx.single_warp_per_block_predicate):
+    tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, op.exact)
+  gpu.barrier()
+  tmem_addr = memref.load(op.smem_ptr, [])
 
-  cast_op = builtin.UnrealizedConversionCastOp([op.result.type], [op.smem_ptr])
+  cast_op = builtin.UnrealizedConversionCastOp(
+      [op.result.type], [tmem_addr]
+  )
   cast_op.attributes["collective"] = op.collective
   cast_op.attributes["exact"] = op.exact
   cast_op.attributes["packing"] = op.packing
@@ -1481,20 +1484,17 @@ def _tmem_dealloc_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.TmemDeallocOp
 ) -> Sequence[ir.Value]:
   """Lowering rule for mgpu.TmemDeallocOp."""
-  del ctx
-
   conversion_cast, cast_operands = _undo_conversion_cast(op.tmem_ref)
-  [smem_ref] = cast_operands
+  [tmem_addr] = cast_operands
   collective = ir.BoolAttr(conversion_cast.attributes["collective"]).value
   exact = ir.BoolAttr(conversion_cast.attributes["exact"]).value
   packing = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
 
   output_shape = ir.MemRefType(op.tmem_ref.type).shape
   ncols = output_shape[1] // packing
-  tmem_addr = memref.load(smem_ref, [])
 
-  # TODO(b/431684684): Predicate this at the warp level.
-  tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact)
+  with mgpu_utils.when(ctx.single_warp_per_block_predicate):
+    tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact)
 
   return []
 
@@ -1835,9 +1835,15 @@ def _traverse_op_lowering_rule(
   return RECURSED
 
 
-def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
-  """Returns a single thread predicate per block and one per warpgroup."""
-  block_predicate = warpgroup_predicate = None
+def _context_predicates(
+    module: ir.Module,
+) -> tuple[ir.Value, ir.Value, ir.Value]:
+  """Returns three predicates:
+    - a single thread predicate per block
+    - a single thread predicate per warpgroup.
+    - a single warp predicate per block.
+  """
+  block_predicate = warpgroup_predicate = warp_predicate = None
   for op in module.body.operations:
     for region in op.operation.regions:
       for block in region.blocks:
@@ -1853,6 +1859,11 @@ def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
               warpgroup_predicate = utils.single_thread_predicate(
                   scope=utils.ThreadSubset.WARPGROUP
               )
+              eq = arith.CmpIPredicate.eq
+              i32 = ir.IntegerType.get_signless(32)
+              warp_predicate = arith.cmpi(
+                  eq, utils.warp_idx(sync=False), utils.c(0, i32)
+              )
 
   if block_predicate is None:
     raise ValueError(
@@ -1860,7 +1871,7 @@ def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
         " predicates."
     )
 
-  return block_predicate, warpgroup_predicate
+  return block_predicate, warpgroup_predicate, warp_predicate
 
 
 def _should_lower(op: ir.OpView) -> bool:
@@ -1871,6 +1882,24 @@ def _should_lower(op: ir.OpView) -> bool:
       or inference_utils.should_have_transforms(op)
       or any(bool(b) for r in op.regions for b in r)  # Does it have subblocks?
   )
+
+
+def _lowering_context(
+    module: ir.Module, launch_context: launch_context.LaunchContext | None
+):
+  """Returns a `LoweringContext` for the given `LaunchContext`."""
+  # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
+  if launch_context is None:  # this case is used in some tests
+    block_predicate = warpgroup_predicate = warp_predicate = None
+  else:
+    block_predicate, warpgroup_predicate, warp_predicate = (
+        _context_predicates(module)
+    )
+
+  ctx = LoweringContext(
+      launch_context, block_predicate, warpgroup_predicate, warp_predicate
+  )
+  return ctx
 
 
 def lower_mgpu_dialect(
@@ -1886,14 +1915,7 @@ def lower_mgpu_dialect(
   # kernel.
   module.context.append_dialect_registry(mlir_interpreter.upstream_dialects)
   module.context.load_all_available_dialects()
-
-  # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
-  if launch_context is None:  # this case is used in some tests
-    block_predicate = warpgroup_predicate = None
-  else:
-    block_predicate, warpgroup_predicate = single_thread_predicates(module)
-
-  ctx = LoweringContext(launch_context, block_predicate, warpgroup_predicate)
+  ctx = _lowering_context(module, launch_context)
   with ir.InsertionPoint(module.body):
     for op in list(module.body):
       ctx.lower_op(op)

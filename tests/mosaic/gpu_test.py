@@ -4226,8 +4226,7 @@ class MosaicGpuDialectTCGen05Test(TestCase):
           body,
           grid=(2 if collective else 1, 1, 1),
           cluster=(2 if collective else 1, 1, 1),
-          # TODO(b/431684684): Increase to 128 once [de]alloc is predicated.
-          block=(32, 1, 1),
+          block=(128, 1, 1),
           in_shape=(),
           out_shape=(jax.ShapeDtypeStruct((), jnp.int32),),
           smem_scratch_shape=[jax.ShapeDtypeStruct((), jnp.int32)],
