@@ -111,6 +111,32 @@ class InterpretTest(jtu.JaxTestCase):
       # Workaround for https://github.com/jax-ml/jax/issues/25671
       self.skipTest(f'requires 1 device, found {self.num_devices}')
 
+  def test_revisiting_is_an_error(self):
+    def kernel(x_ref, o1_ref, o2_ref):
+      pass
+
+    @jax.jit
+    def run():
+      return pl.pallas_call(
+          kernel,
+          out_shape=[
+              jax.ShapeDtypeStruct((16, 256), jnp.float32),
+              jax.ShapeDtypeStruct((16, 256), jnp.float32),
+          ],
+          grid=(4, 4),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          out_specs=[
+              pl.BlockSpec((4, 128), lambda i, j: (i, j // 2)),
+              pl.BlockSpec((4, 128), lambda i, j: (j // 2, i % 2)),
+          ],
+          interpret=pltpu.InterpretParams(),
+      )(jnp.zeros((8, 128)))
+
+    with self.assertRaisesRegex(
+        Exception, r'Revisited block .* of output 1 in iteration \(2, 0\)'):
+      run()[0].block_until_ready()
+      pltpu.reset_tpu_interpret_mode_state()
+
   def test_matmul_example(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
       z_ref[...] = x_ref[...] @ y_ref[...]
