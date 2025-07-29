@@ -56,13 +56,6 @@ jobs:
           path: numpy
           submodules: true
           persist-credentials: false
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        if: ${{ matrix.python-version == '3.14' }}
-        with:
-          repository: scipy/scipy
-          path: scipy
-          submodules: true
-          persist-credentials: false
 
       - name: Get year & week number
         id: get-date
@@ -171,81 +164,6 @@ jobs:
             ./wheelhouse
           key: ${{ runner.os }}-numpy-tsan-${{ matrix.python-version }}-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
 
-      - name: Restore cached Scipy
-        if: ${{ matrix.python-version == '3.14' }}
-        id: cache-scipy-restore
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ./wheelhouse
-          key: ${{ runner.os }}-scipy-${{ matrix.python-version }}-${{ hashFiles('scipy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
-
-      - name: Build Scipy wheel
-        if: ${{ steps.cache-scipy-restore.outputs.cache-hit != 'true' && matrix.python-version == '3.14' }}
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # Install scipy dependencies:
-          apt install -q -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
-
-          cd scipy
-
-          # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
-          if [ ! -d ${GITHUB_WORKSPACE}/cpython-tsan/bin/ ]; then
-            echo "Extract cpython from python-tsan.tgz"
-            pushd .
-            ls ${GITHUB_WORKSPACE}/python-tsan.tgz
-            cd ${GITHUB_WORKSPACE} && tar -xzf python-tsan.tgz
-            ls ${GITHUB_WORKSPACE}/cpython-tsan/bin/
-            popd
-          fi
-
-          export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
-
-          python3 -m pip install uv~=0.5.30
-
-          python3 -m uv pip install -U --pre numpy --extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/
-          python3 -m uv pip install cython pythran pybind11 meson-python ninja
-
-          python3 -m uv pip list | grep -E "(numpy|pythran|cython|pybind11)"
-
-          export CC=clang-18
-          export CXX=clang++-18
-          python3 -m pip wheel --wheel-dir dist -vvv . --no-build-isolation --no-deps -Csetup-args=-Dbuildtype=debugoptimized
-
-          # Create simple index and copy the wheel
-          mkdir -p ${GITHUB_WORKSPACE}/wheelhouse/scipy
-
-          scipy_whl_name=($(cd dist && ls scipy*.whl))
-          if [ -z "${scipy_whl_name}" ]; then exit 1; fi
-
-          echo "Built TSAN Scipy wheel: ${scipy_whl_name}"
-
-          cp dist/${scipy_whl_name} ${GITHUB_WORKSPACE}/wheelhouse/scipy
-
-          # Recreate wheelhouse index with Numpy and Scipy
-          cat << EOF > ${GITHUB_WORKSPACE}/wheelhouse/index.html
-          <!DOCTYPE html><html><body>
-          <a href="numpy">numpy></a></br>
-          <a href="scipy">scipy></a></br>
-          </body></html>
-          EOF
-
-          cat << EOF > ${GITHUB_WORKSPACE}/wheelhouse/scipy/index.html
-          <!DOCTYPE html><html><body>
-          <a href="${scipy_whl_name}">${scipy_whl_name}</a></br>
-          </body></html>
-          EOF
-
-      - name: Save Scipy wheel
-        id: cache-scipy-save
-        if: ${{ steps.cache-scipy-restore.outputs.cache-hit != 'true' && matrix.python-version == '3.14' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ./wheelhouse
-          key: ${{ runner.os }}-scipy-${{ matrix.python-version }}-${{ hashFiles('scipy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
-
       - name: Build Jax and run tests
         timeout-minutes: 120
         env:
@@ -277,18 +195,8 @@ jobs:
           ls ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl || exit 1
           cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
           if [ "${{ matrix.python-version }}" == "3.14" ]; then
-            # Check whether we have scipy wheel or exit with error
-            ls ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl || exit 1
-            cp -v ${GITHUB_WORKSPACE}/wheelhouse/scipy/*.whl dist/
-
-            # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy and Scipy
+            # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy
             sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
-
-            # We should install jpeg dev package to be able to build Pillow from source:
-            apt install -q -y libjpeg-dev --no-install-recommends
-
-            # Install scipy runtime dependencies (in case we restore scipy wheel from cache):
-            apt install -q -y libopenblas-dev liblapack-dev --no-install-recommends
           fi
 
           echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
@@ -304,11 +212,6 @@ jobs:
 
           # Check numpy version
           ./bazel cquery @pypi_numpy//:* | grep whl
-
-          if [ "${{ matrix.python-version }}" == "3.14" ]; then
-            # Check scipy version
-            ./bazel cquery @pypi_scipy//:* | grep whl
-          fi
 
           # Build JAX and run tests
           ./bazel test \
