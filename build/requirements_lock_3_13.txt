@@ -173,7 +173,7 @@ jax-cuda12-pjrt==0.7.0 ; sys_platform == "linux" \
     # via
     #   -r build/requirements.in
     #   jax-cuda12-plugin
-jax-cuda12-plugin[with-cuda]==0.7.0 ; sys_platform == "linux" \
+jax-cuda12-plugin[with-cuda]==0.7.0 ; sys_platform == "linux" and python_version < "3.14" \
     --hash=sha256:265a4bf238c048f98929e0dad9764246d12497bdd8cfdf2e22783a69d73cc63e \
     --hash=sha256:72fdea8480d8814cb7894cb02f4a89e97a4974c96a630ea8d7c7e8e8201319d1 \
     --hash=sha256:ab7ec6433892218f25bdd5a2d1375da9087e981dfa09827ac7f373ccdbbf2c4d \
@@ -189,7 +189,7 @@ jax-cuda13-pjrt==0.0.1rc0 \
 jax-cuda13-plugin==0.0.1rc0 \
     --hash=sha256:5fa66ef5de34cffc838199d193bffc11701807e66831f914bdc1d786ed4dc26f
     # via -r build/requirements.in
-jaxlib==0.7.0 \
+jaxlib==0.7.0 ; python_version < "3.14" \
     --hash=sha256:005213b6dcbd20b0bd65580b740255950150b489e1a5306f65d8e49f9114ab85 \
     --hash=sha256:074a025664cf439b5965dccaaf20c4aae6cc955dddd74e85342568aba40dda47 \
     --hash=sha256:0782b8a1cf813c432c4dac0fa8aa2a50e94105db0e9b6b8948a6e20e4e81d677 \
@@ -294,7 +294,7 @@ markdown-it-py==3.0.0 \
     --hash=sha256:355216845c60bd96232cd8d8c40e8f9765cc86f46880e43a8fd22dc1a1a8cab1 \
     --hash=sha256:e3f60a94fa066dc52ec76661e37c851cb232d92f9886b15cb560aaada2df8feb
     # via rich
-matplotlib==3.10.3 \
+matplotlib==3.10.3 ; python_version < "3.14" \
     --hash=sha256:0ab1affc11d1f495ab9e6362b8174a25afc19c081ba5b0775ef00533a4236eea \
     --hash=sha256:0ef061f74cd488586f552d0c336b2f078d43bc00dc473d2c3e7bfee2272f3fa8 \
     --hash=sha256:151d89cb8d33cb23345cd12490c76fd5d18a56581a16d950b48c6ff19bb2ab93 \
@@ -643,7 +643,7 @@ pluggy==1.6.0 \
     --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \
     --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
     # via pytest
-portpicker==1.6.0 \
+portpicker==1.6.0 ; python_version < "3.14" \
     --hash=sha256:b2787a41404cf7edbe29b07b9e0ed863b09f2665dcc01c1eb0c2261c1e7d0755 \
     --hash=sha256:bd507fd6f96f65ee02781f2e674e9dc6c99bbfa6e3c39992e3916204c9d431fa
     # via -r build/requirements.in
@@ -742,7 +742,7 @@ sortedcontainers==2.4.0 \
     --hash=sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88 \
     --hash=sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0
     # via hypothesis
-tensorstore==0.1.76 \
+tensorstore==0.1.76 ; python_version < "3.14" \
     --hash=sha256:05aae734cfaf5c1356b6f2c56226526607361c6e9aa6751df395dda53c3783b1 \
     --hash=sha256:1c882dcf30049952cb6b183c70bd1922815cdbceca8d4115a7fbeb3b5513f9e4 \
     --hash=sha256:20782f833bfa3c59dd3787f657388054c54ee0ab48dad181b360e3e5e81e4c4b \
@@ -777,7 +777,7 @@ zipp==3.23.0 \
     --hash=sha256:071652d6115ed432f5ce1d34c336c0adfd6a884660d1e9712a256d3d3bd4b14e \
     --hash=sha256:a07157588a12518c9d4034df3fbbee09c814741a33ff63c05fa29d26a2404166
     # via etils
-zstandard==0.23.0 \
+zstandard==0.23.0 ; python_version < "3.14" \
     --hash=sha256:034b88913ecc1b097f528e42b539453fa82c3557e414b3de9d5632c80439a473 \
     --hash=sha256:0a7f0804bb3799414af278e9ad51be25edf67f78f916e08afdb983e74161b916 \
     --hash=sha256:11e3bf3c924853a2d5835b24f03eeba7fc9b07d8ca499e247e06ff5676461a15 \

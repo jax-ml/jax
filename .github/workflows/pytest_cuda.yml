@@ -91,21 +91,6 @@ jobs:
           fi
       - name: Install Python dependencies
         run: |
-          # For prerelease python 3.14, some pre-built dependency wheels aren't available,
-          # so we need to download their deps or build them from source.
-          if [[ $JAXCI_PYTHON == "python3.14" ]]; then
-            # Build numpy from source
-            # Need to include fixes for https://github.com/numpy/numpy/issues/28681.
-            $JAXCI_PYTHON -m uv pip install "git+https://github.com/numpy/numpy@v2.3.0"
-
-            # Install build requirements for scipy
-            apt update && apt upgrade -y && apt-get install -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
-            $JAXCI_PYTHON -m uv pip install "git+https://github.com/scipy/scipy@main"
-
-            # Install build requirements for pillow
-            apt install -q -y libjpeg-dev --no-install-recommends
-          fi
-
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
       # Halt for testing
       - name: Wait For Connection
