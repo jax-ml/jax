@@ -3641,7 +3641,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
     expected = x @ y
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
-  def test_collective_partitioned_copy(self):
+  @parameterized.parameters((True,), (False,))
+  def test_copy_gmem_to_smem_partitioned(self, warp_level):
     self.skip_if_wg_semantics()
     block_size = (128, 128)
     partitioned_block_size = (block_size[0] // 2, block_size[1])
@@ -3656,27 +3657,41 @@ class PallasCallSm100ATest(PallasSm100ATest):
       out_slice = pl.ds(cluster_idx * partitioned_block_size[0],
                         partitioned_block_size[0])
 
-      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-      def _per_warp():
-        warp_id = lax.axis_index("warp")
-        @pl.when(warp_id == 0)
-        def _():
-          plgpu.copy_gmem_to_smem(
-              a_gmem,
-              a_smem,
-              a_tma_barrier,
-              collective_axes="x",
-              partitioned_axis=0,
-          )
-          plgpu.copy_gmem_to_smem(
-              b_gmem,
-              b_smem,
-              b_tma_barrier,
-              collective_axes="x",
-              partitioned_axis=0,
-          )
-      # TODO(justinfu): Clean up this API where we need to explicitly wait
-      # only on the first block.
+      if warp_level:
+        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+        def _per_warp():
+          warp_id = lax.axis_index("warp")
+          @pl.when(warp_id == 0)
+          def _():
+            plgpu.copy_gmem_to_smem(
+                a_gmem,
+                a_smem,
+                a_tma_barrier,
+                collective_axes="x",
+                partitioned_axis=0,
+            )
+            plgpu.copy_gmem_to_smem(
+                b_gmem,
+                b_smem,
+                b_tma_barrier,
+                collective_axes="x",
+                partitioned_axis=0,
+            )
+      else:
+        plgpu.copy_gmem_to_smem(
+            a_gmem,
+            a_smem,
+            a_tma_barrier,
+            collective_axes="x",
+            partitioned_axis=0,
+        )
+        plgpu.copy_gmem_to_smem(
+            b_gmem,
+            b_smem,
+            b_tma_barrier,
+            collective_axes="x",
+            partitioned_axis=0,
+        )
       @pl.when(cluster_idx == 0)
       def _():
         plgpu.barrier_wait(a_tma_barrier)

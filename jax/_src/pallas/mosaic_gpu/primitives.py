@@ -465,6 +465,7 @@ def _copy_gmem_to_smem_lowering(
         lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)
         for axis in collective_axes
     )
+  is_partitioned_copy = collective and partitioned_axis is not None
   dst_ty = ir.MemRefType(dst.type)
   bits = math.prod(dst_ty.shape) * mgpu.bitwidth(dst_ty.element_type)
   if bits % 8:
@@ -473,6 +474,20 @@ def _copy_gmem_to_smem_lowering(
         f" dtype={dst_ty.element_type})"
     )
   bytes = bits // 8
+
+  if is_partitioned_copy:
+    # Bytes is the destination size, which is only half of the total
+    # size of the partitioned transfer so we need to double it.
+    bytes *= 2
+    if len(collective) != 1:  # type: ignore
+      raise ValueError(
+          f"Expected exactly one collective axis, got {collective_axes=}"
+      )
+    if math.prod(ctx.launch_ctx.cluster_size) != 2:
+      raise NotImplementedError(
+          "Partitioned loads only supported for clusters of size 2"
+      )
+
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if bytes % WARPGROUP_SIZE:
       raise NotImplementedError("Only aligned copies are supported")
@@ -483,13 +498,17 @@ def _copy_gmem_to_smem_lowering(
       # arrive with the whole transfer size, while everyone else arrives with 0.
       # But we should continue using this scheme as it's likely to be faster.
       bytes //= WARPGROUP_SIZE
-      if collective and partitioned_axis is not None:
-        raise NotImplementedError(
-            "Collective partitioned copies not implemented."
-        )
       if ctx.module_ctx.auto_barriers:
         mgpu.warpgroup_barrier()  # Make sure all reads have completed.
-      barrier.arrive_expect_tx(bytes)
+      if is_partitioned_copy:
+        first_block = arith_dialect.cmpi(
+            arith_dialect.CmpIPredicate.eq,
+            ctx.launch_ctx.cluster_idx(collective[0]),  # type: ignore
+            mgpu.c(0, ir.IndexType.get()),
+        )
+        barrier.arrive_expect_tx(bytes, predicate=first_block)
+      else:
+        barrier.arrive_expect_tx(bytes)
     else:
       # In Warp-level lowering, we arrive on each CUDA thread in a warp, but
       # the barrier still expects a full 128 arrivals so we arrive 4 times
@@ -497,21 +516,10 @@ def _copy_gmem_to_smem_lowering(
       # TODO(justinfu): The arrival counts are wrong if called outside of a
       # single warp. Figure out how to guard against this in user code.
       bytes = bytes // WARP_SIZE
-      if collective and partitioned_axis is not None:
-        if len(collective) != 1:
-          raise ValueError(
-              f"Expected exactly one collective axis, got {collective_axes=}"
-          )
-        if math.prod(ctx.launch_ctx.cluster_size) != 2:
-          raise NotImplementedError(
-              "Partitioned loads only supported for clusters of size 2"
-          )
-        # Bytes is the destination size, which is only half of the total
-        # size of the partitioned transfer so we need to double it.
-        bytes *= 2
+      if is_partitioned_copy:
         first_block = arith_dialect.cmpi(
             arith_dialect.CmpIPredicate.eq,
-            ctx.launch_ctx.cluster_idx(collective[0]),
+            ctx.launch_ctx.cluster_idx(collective[0]),  # type: ignore
             mgpu.c(0, ir.IndexType.get()),
         )
         with mgpu.when(first_block):
