@@ -5,7 +5,7 @@ concurrency:
   cancel-in-progress: true
 on:
   schedule:
-    - cron: "0 5 * * *" # Daily at 05:00 UTC == 00:00 EST == 21:00 PST
+    - cron: "0 5 * * *"  # Daily at 05:00 UTC == 00:00 EST == 21:00 PST
   workflow_dispatch: # allows triggering the workflow run manually
   pull_request: # Automatically trigger on pull requests affecting this file
     branches:

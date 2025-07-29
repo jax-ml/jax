@@ -1,7 +1,11 @@
 numpy~=2.0.0; python_version<="3.12"
 numpy~=2.1.0; python_version=="3.13"
-numpy>=2.2.6; python_version>="3.14"
+numpy>=2.3.2; python_version>="3.14"
 
 # These packages have not released free-threaded wheels.
-zstandard
-tensorstore
+
+# TODO(phawkins): enable zstandard once it ships a 3.14 wheel.
+zstandard; python_version<"3.14"
+
+# TODO(phawkins): enable tensorstore once it ships a 3.14 wheel.
+tensorstore; python_version<"3.14"
