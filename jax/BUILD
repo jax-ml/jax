@@ -311,7 +311,7 @@ py_library_providing_imports_info(
 )
 
 pytype_strict_library(
-    name = "serialize_executable",
+    name = "experimental_serialize_executable",
     srcs = ["experimental/serialize_executable.py"],
     visibility = [":serialize_executable_users"],
     deps = [
@@ -534,10 +534,69 @@ py_library_providing_imports_info(
 )
 
 pytype_strict_library(
+    name = "experimental_compute_on",
+    srcs = ["experimental/compute_on.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":compute_on",
+    ],
+)
+
+pytype_strict_library(
+    name = "experimental_mesh_utils",
+    srcs = ["experimental/mesh_utils.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":internal_mesh_utils",
+    ],
+)
+
+pytype_strict_library(
+    name = "experimental_multihost_utils",
+    srcs = ["experimental/multihost_utils.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":api",
+        ":jax",
+        ":sharding_impls",
+        "//jax/_src:ad",
+        "//jax/_src:batching",
+        "//jax/_src:core",
+        "//jax/_src:mlir",
+        "//jax/_src:util",
+        "//jax/_src:xla_bridge",
+        "//jax/_src/lib",
+        "//third_party/py/numpy",
+    ],
+)
+
+pytype_strict_library(
+    name = "experimental_pjit",
+    srcs = ["experimental/pjit.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":api",
+        ":sharding_impls",
+    ],
+)
+
+pytype_strict_library(
     name = "experimental_profiler",
     srcs = ["experimental/profiler.py"],
     visibility = ["//visibility:public"],
     deps = [
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "experimental_topologies",
+    srcs = ["experimental/topologies.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":experimental_mesh_utils",
+        ":jax",
+        "//jax/_src:xla_bridge",
         "//jax/_src/lib",
     ],
 )
@@ -566,9 +625,10 @@ py_library_providing_imports_info(
             "experimental/*.py",
             "example_libraries/*.py",
         ],
-        [
+        exclude = [
             "experimental/buffer_callback.py",
             "experimental/mosaic/gpu/*.py",
+            "experimental/serialize_executable.py",
         ],
     ),
     visibility = ["//visibility:public"],
