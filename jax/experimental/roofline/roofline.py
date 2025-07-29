@@ -164,10 +164,8 @@ def _roofline_interpreter(
     else:
       return v.aval
 
-  def calculate_peak_hbm_bytes() -> int:
-    return int(
-      sum(np.prod(shape.shape) * shape.dtype.itemsize for shape in env.values())
-    )
+  def sum_bytes(shapes: Sequence[RooflineShape]) -> int:
+    return sum(shape.bytes for shape in shapes)
 
   jaxpr = jaxpr.jaxpr if isinstance(jaxpr, core.ClosedJaxpr) else jaxpr
   make_roofline_shape = lambda x: RooflineShape.from_aval(aval(x))
@@ -178,6 +176,10 @@ def _roofline_interpreter(
   )
   foreach(write, jaxpr.invars, map(make_roofline_shape, jaxpr.invars))
   last_used = core.last_used(jaxpr)
+
+  current_hbm_bytes = sum_bytes(list(env.values()))
+  peak_hbm_bytes = current_hbm_bytes
+
   for eqn in jaxpr.eqns:
     source_info = eqn.source_info.replace(
       name_stack=name_stack + eqn.source_info.name_stack
@@ -226,10 +228,22 @@ def _roofline_interpreter(
           **eqn.params,
         )
 
-      foreach(write, eqn.outvars, map(make_roofline_shape, eqn.outvars))
-      core.clean_up_dead_vars(eqn, env, last_used)
-      result += RooflineResult(peak_hbm_bytes=calculate_peak_hbm_bytes())
+      # Add bytes for the newly-created output variables.
+      outvar_shapes = map(make_roofline_shape, eqn.outvars)
+      current_hbm_bytes += sum_bytes(outvar_shapes)
+      foreach(write, eqn.outvars, outvar_shapes)
 
+      # Remove bytes for the no-longer-needed input variables.
+      removed_shapes = [
+          env[v] for v in eqn.invars
+          if not isinstance(v, core.Literal) and last_used[v] is eqn
+      ]
+      current_hbm_bytes -= sum_bytes(removed_shapes)
+      core.clean_up_dead_vars(eqn, env, last_used)
+
+      peak_hbm_bytes = max(peak_hbm_bytes, current_hbm_bytes)
+
+  result += RooflineResult(peak_hbm_bytes=peak_hbm_bytes)
   return result
 
 
