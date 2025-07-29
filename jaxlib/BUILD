@@ -947,6 +947,7 @@ cc_library(
         "@xla//xla/python/ifrt/hlo:hlo_program",
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/python/pjrt_ifrt:pjrt_dtype",
+        "@xla//xla/python/pjrt_ifrt:pjrt_layout",
         "@xla//xla/python/pjrt_ifrt:xla_ifrt",
         "@xla//xla/service:platform_util",
         "@xla//xla/service/spmd/shardy:utils",
