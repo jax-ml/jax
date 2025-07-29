@@ -17,6 +17,7 @@
 import functools
 import os
 
+from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import test_util as jtu
@@ -47,21 +48,17 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
     super().setUp()
 
-  def test_basic_remote_dma(self):
+  def test_remote_dma_basic(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       other_dev_id = 1 - lax.axis_index('x')
       y_ref[...] = x_ref[...]
-      pl.semaphore_signal(ready_sem, device_id=other_dev_id,
-                          device_id_type=pl.DeviceIdType.LOGICAL)
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
-      neighbor_ptr = plgpu.remote_ref(
-          y_ref, other_dev_id, device_id_type=pl.DeviceIdType.LOGICAL
-      )
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
       neighbor_ptr[...] = x_ref[...]
-      pl.semaphore_signal(recv_sem, device_id=other_dev_id,
-                          device_id_type=pl.DeviceIdType.LOGICAL)
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
       pl.semaphore_wait(recv_sem)
 
     x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
@@ -88,14 +85,47 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
+  @parameterized.parameters(('x',), ('y',))
+  def test_remote_dma_2d_mesh(self, axis):
+    if jax.process_count() < 4:
+      self.skipTest('Test requires at least 4 devices (and processes).')
+    if jax.process_index() > 4:
+      return  # Only 4 processes needed.
+    def kernel(x_ref, y_ref, recv_sem):
+      other_dev_id = {axis: 1 - lax.axis_index(axis)}
+      other_y_ref = plgpu.remote_ref(y_ref, other_dev_id)
+      other_y_ref[...] = x_ref[...]
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+    def body(x):
+      return pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+      )(x)
+
+    devices = jax.devices()[:4]
+    mesh = jax.sharding.Mesh(np.asarray(devices).reshape(2, 2), ['x', 'y'])
+    y = jax.jit(
+        shard_map.shard_map(
+            body, mesh, in_specs=P(axis), out_specs=P(axis), check_rep=False,
+        )
+    )(x)
+
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
   def test_wait_twice(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
       other_dev_id = 1 - lax.axis_index('x')
-      pl.semaphore_signal(sem, 2, device_id=other_dev_id,
-                          device_id_type=pl.DeviceIdType.LOGICAL)
+      pl.semaphore_signal(sem, 2, device_id=other_dev_id)
       pl.semaphore_wait(sem)
       pl.semaphore_wait(sem)
       y_ref[...] = jnp.ones_like(y_ref)
@@ -119,8 +149,7 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
   def test_permuted_mesh(self):
     def kernel(y_ref, sem):
       other_dev_id = 1 - lax.axis_index('x')
-      pl.semaphore_signal(sem, 1, device_id=other_dev_id,
-                          device_id_type=pl.DeviceIdType.LOGICAL)
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
     kernel_call = pl.pallas_call(
