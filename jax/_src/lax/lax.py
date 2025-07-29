@@ -4028,9 +4028,10 @@ def _unbroadcast(aval, x):
   else:
     dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape))
             if not core.definitely_equal(a, b)]
-    if config.enable_checks.value: assert all(aval.shape[i] == 1 for i in dims)
-    return reshape(reduce_sum(x, dims), aval.shape,
-                   out_sharding=aval.to_cotangent_aval().sharding)
+    if config.enable_checks.value:
+      assert all(aval.shape[i] == 1 for i in dims)
+    x = reduce_sum(x, dims) if dims else x
+    return reshape(x, aval.shape, out_sharding=aval.to_cotangent_aval().sharding)
 
 def _maybe_broadcast(target_shape, x):
   x_shape = np.shape(x)
