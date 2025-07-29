@@ -810,9 +810,9 @@ def _shard_map_lowering_shardy(
   axis_ctx = ctx.module_context.axis_context
   in_avals_ = [v.aval for v in jaxpr.invars]
   if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
-    # Nested `ManualComputationOp`s cannot refer to axes that are already
-    # manual. So figure out what axes are free thus far.
-    shardy_manual_axes = frozenset(mesh.axis_names) - axis_ctx.manual_axes
+    # Nested `ManualComputationOp`s must only refer to the new manual axes, not
+    # all existing ones. Grab the newly-added manual axes.
+    shardy_manual_axes = manual_axes - axis_ctx.manual_axes
   else:
     shardy_manual_axes = manual_axes
   new_axis_context = sharding_impls.SPMDAxisContext(
