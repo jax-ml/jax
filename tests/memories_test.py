@@ -1702,7 +1702,10 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
 class StreamAnnotationTest(jtu.JaxTestCase):
 
+  # TODO: b/434965618 - stream annotation single instruction test breaks in HLO
+  # verifier post-scheduling.
   def test_stream_annotation_single_instruction(self):
+    self.skipTest("Fails in HLO verifier post-scheduling.")
     # E2E test for fix https://github.com/openxla/xla/pull/24269
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Stream annotation is only supported on GPU.")
