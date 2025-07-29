@@ -105,6 +105,10 @@ static constexpr int kMinBoundToRotateWithScratch = 27;
 using RewriteContext = ApplyVectorLayoutContext;
 
 LogicalResult applyLayoutBlock(RewriteContext &ctx, Block &block);
+FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
+    RewriteContext &ctx, OpBuilder &builder, Location loc, VectorType vty,
+    VectorLayout src, xla::Array<Value> vregs,
+    std::array<int64_t, 2> dst_tiling, LayoutOffsets dst_offsets_hint);
 namespace {
 
 void moveAllRegions(Operation &src, Operation &dst) {
@@ -6742,12 +6746,36 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeOffsets(
     }
   } else if (!dst_offsets[1].has_value()) {
     return emitError(loc, "Not implemented: Lane broadcast");
-  } else if (*src.offsets()[1] != *dst_offsets[1]) {
+  } else {
+    // Currently, doColumnShiftRelayout does not support packed (1, x) tiling,
+    // so we convert to (packing, 128)
+    // TODO(tlongeri): This is just for completeness until we have a proper
+    //                 better implementation.
+    const std::array<int64_t, 2> orig_tiling = src.tiling();
+    if (src.bitwidth() != 32 && orig_tiling[0] == 1) {
+      FAILUREOR_ASSIGN_OR_RETURN(
+          std::tie(src, vregs),
+          changeTiling(
+              ctx, builder, loc, vty, src, vregs,
+              std::array<int64_t, 2>{src.packing(), ctx.target_shape[1]},
+              dst_offsets));
+    }
+    const int64_t shift_offset =
+        *dst_offsets[1] % src.vregSlice(ctx.target_shape)[1];
     FAILUREOR_ASSIGN_OR_RETURN(
         vregs, doColumnShiftRelayout(builder, vty.getShape(), std::move(vregs),
-                                     src, *dst_offsets[1], target_shape));
-    src = VectorLayout(src.bitwidth(), {src.offsets()[0], dst_offsets[1]},
+                                     src, shift_offset, target_shape));
+    src = VectorLayout(src.bitwidth(), {src.offsets()[0], shift_offset},
                        src.tiling(), src.implicit_dim());
+    if (src.bitwidth() != 32 && orig_tiling[0] == 1) {
+      FAILUREOR_ASSIGN_OR_RETURN(
+          std::tie(src, vregs), changeTiling(ctx, builder, loc, vty, src, vregs,
+                                             orig_tiling, dst_offsets));
+      // changeTiling may mark 2nd minor offset as replicated, so materialize
+      // again
+      std::tie(src, vregs) =
+          materializeOffsets(ctx, vty.getShape(), src, vregs, dst_offsets);
+    }
   }
   CHECK(src.offsets() == dst_offsets);
   return std::make_pair(src, std::move(vregs));
