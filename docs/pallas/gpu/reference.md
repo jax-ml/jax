@@ -411,7 +411,7 @@ TODO: Explain the conditions under which it is acceptable to do this.
 The supported MMA shapes are such that:
 * `M` is divisible by 64
 * `N` is divisible by 8 and smaller than 256
-* `K` is a multiple of `swizzle` divided by the bytewidth of element type
+* `K` is a multiple of `swizzle` divided by the operand's element type bytewidth
 
 The currently supported data types are: `jnp.float32`, `jnp.bfloat16` and `jnp.float16`.
 The accumulator `D` must be a `jnp.float32`, with the exception of `jnp.float16` inputs,
