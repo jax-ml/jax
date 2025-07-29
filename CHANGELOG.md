@@ -60,6 +60,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The (undocumented) function `jax.extend.backend.add_clear_backends_callback`
     has been removed. Users should use `jax.extend.backend.register_backend_cache`
     instead.
+  * `out_sharding` arg added to `x.at[y].set` and `x.at[y].add`. Previous
+    behavior propagating operand sharding removed. Please use
+    `x.at[y].set/add(z, out_sharding=jax.typeof(x).sharding)` to retain previous
+    behavior if scatter op requires collectives.
 
 * Deprecations:
   * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new

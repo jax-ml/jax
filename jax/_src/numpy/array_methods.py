@@ -48,7 +48,6 @@ from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.pjit import PartitionSpec
 from jax._src.sharding import Sharding
-from jax._src import mesh as mesh_lib
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.ops import scatter
 from jax._src.typing import Array, ArrayLike, DimSize, DTypeLike, Shape, StaticScalar
@@ -659,16 +658,6 @@ def _chunk_iter(x, size):
 def _getitem(self, item):
   return indexing.rewriting_take(self, item)
 
-def _val_sharding(val):
-  cur_mesh = mesh_lib.get_abstract_mesh()
-  val_s = core.typeof(val).sharding
-  if val_s.mesh._are_all_axes_auto_or_manual:
-    return None
-  if val_s.mesh.empty:
-    return (NamedSharding(cur_mesh, PartitionSpec())
-            if cur_mesh._are_all_axes_explicit else None)
-  return val_s
-
 
 # Syntactic sugar for scatter operations.
 class _IndexUpdateHelper:
@@ -831,6 +820,7 @@ class _IndexUpdateRef:
   def set(self, values: ArrayLike, *, indices_are_sorted: bool = False,
           unique_indices: bool = False,
           mode: str | lax_slicing.GatherScatterMode | None = None,
+          out_sharding: Sharding | PartitionSpec | None = None,
           wrap_negative_indices: bool = True) -> None:
     """Pure equivalent of ``x[idx] = y``.
 
@@ -839,11 +829,14 @@ class _IndexUpdateRef:
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
-    out_s = _val_sharding(self.array)
+    if out_sharding is not None:
+      assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
+      out_sharding = canonicalize_sharding(out_sharding, '.set')
     return scatter._scatter_update(
         self.array, self.index, values, lax_slicing.scatter,
         indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-        mode=mode, out_sharding=out_s, normalize_indices=wrap_negative_indices)
+        mode=mode, out_sharding=out_sharding,  # type: ignore
+        normalize_indices=wrap_negative_indices)
 
   def apply(self, func: Callable[[ArrayLike], Array], *,
             indices_are_sorted: bool = False, unique_indices: bool = False,
@@ -872,6 +865,7 @@ class _IndexUpdateRef:
   def add(self, values: ArrayLike, *,
           indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | lax_slicing.GatherScatterMode | None = None,
+          out_sharding: Sharding | PartitionSpec | None = None,
           wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] += y``.
 
@@ -880,11 +874,14 @@ class _IndexUpdateRef:
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
-    out_s = _val_sharding(self.array)
+    if out_sharding is not None:
+      assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
+      out_sharding = canonicalize_sharding(out_sharding, '.add')
     return scatter._scatter_update(
         self.array, self.index, values, lax_slicing.scatter_add,
         indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-        mode=mode, normalize_indices=wrap_negative_indices, out_sharding=out_s)
+        mode=mode, out_sharding=out_sharding,  # type: ignore
+        normalize_indices=wrap_negative_indices)
 
   def subtract(self, values: ArrayLike, *,
                indices_are_sorted: bool = False, unique_indices: bool = False,

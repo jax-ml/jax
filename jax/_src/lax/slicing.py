@@ -2703,9 +2703,9 @@ def _scatter_sharding_rule(
                                        dimension_numbers)
   if out_spec is None:
     raise core.ShardingTypeError(
-        "Use `.at[...].get(out_sharding=)` to provide output PartitionSpec for"
-        " the scatter update as out sharding could not be resolved"
-        " unambiguously (or would require collectives on inputs).")
+        "Use `.at[...].set/add/mul/...(out_sharding=)` to provide output"
+        " PartitionSpec for the scatter update as out sharding could not be"
+        " resolved unambiguously (or would require collectives on inputs).")
   return NamedSharding(out_mesh, out_spec)
 
 def _clamp_scatter_indices(operand, indices, updates, *, dnums):
