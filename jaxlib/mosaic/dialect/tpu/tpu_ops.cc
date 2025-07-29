@@ -1806,9 +1806,27 @@ LogicalResult DynamicGatherOp::verify() {
 
 LogicalResult AllReduceOp::verify() {
   auto in_ty = getInput().getType();
+  auto in_bitwidth = in_ty.getElementTypeBitWidth();
   auto out_ty = getOutput().getType();
-  auto bitwidth = in_ty.getElementTypeBitWidth();
+  auto out_bitwidth = out_ty.getElementTypeBitWidth();
   auto kind = getKind();
+
+  if (in_bitwidth == 1) {
+    // For mask vectors, the single (semantically scalar) result is broadcast
+    // into a vector of 32-bit ints of whatever shape the target supports (not
+    // necessarily the same as the input).
+    if (out_bitwidth != 32) {
+      return emitOpError("Vector mask all-reduce must have i32 output");
+    }
+    switch (kind) {
+      case ReductionKind::SUM:
+        break;
+      default:
+        return emitOpError("Mask all-reduce only supports SUM kind");
+    }
+    return success();
+  }
+
   switch (kind) {
     case ReductionKind::SUM:
     case ReductionKind::MAX:
@@ -1821,13 +1839,17 @@ LogicalResult AllReduceOp::verify() {
       break;
     case ReductionKind::ARG_MAX:
     case ReductionKind::ARG_MIN:
+      if (in_ty.getShape() != out_ty.getShape()) {
+        return emitOpError(
+            "ARG_MAX and ARG_MIN must have the same input and output shape");
+      }
       if (!in_ty.getElementType().isF32()) {
         return emitOpError("Not Implemented: Only f32 input is supported for "
                            "ARG_MAX and ARG_MIN");
       }
-      if (!out_ty.getElementType().isSignlessInteger(bitwidth)) {
+      if (!out_ty.getElementType().isSignlessInteger(in_bitwidth)) {
         return emitOpError(absl::StrFormat(
-            "ARG_MAX and ARG_MIN must have i%d output", bitwidth));
+            "ARG_MAX and ARG_MIN must have i%d output", in_bitwidth));
       }
       break;
   }
