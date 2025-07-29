@@ -117,7 +117,7 @@ python-dateutil==2.9.0.post0
     # via matplotlib
 rich==14.0.0
     # via -r build/test-requirements.txt
-scipy==1.15.2
+scipy==1.16.1
     # via -r build/requirements.in
 setuptools==80.0.0
     # via
