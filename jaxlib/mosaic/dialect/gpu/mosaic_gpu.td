@@ -683,6 +683,22 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
   let hasVerifier = 1;
 }
 
+def MosaicGPU_TmemRelinquishAllocPermitOp: Op<MosaicGPU_Dialect, "tmem_relinquish_alloc_permit", []> {
+  let summary = "Relinquishing the right to allocate TMEM.";
+  let description = [{
+    The instruction specifies that the CTA of the executing thread is
+    relinquishing the right to allocate Tensor Memory. So, it is illegal for a
+    CTA to perform `tmem_alloc` after any of its constituent threads execute
+    `tmem_relinquish_alloc_permit`.
+
+    If `collective` is `true`, applies to collective TMEM allocations.
+  }];
+
+  let arguments = (ins
+    DefaultValuedAttr<BoolAttr, "false">:$collective
+  );
+}
+
 def MosaicGPU_TmemDeallocOp : Op<MosaicGPU_Dialect, "tmem_dealloc", []> {
   let summary = "Deallocates a chunk of TMEM.";
 

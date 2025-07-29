@@ -1470,6 +1470,17 @@ if jaxlib.version >= (0, 7, 0):
 
     return [cast_op.result]
 
+# TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
+if jaxlib.version >= (0, 7, 1):
+  @_register_lowering(mgpu.TmemRelinquishAllocPermitOp)
+  def _tmem_relinquish_alloc_permit_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.TmemRelinquishAllocPermitOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.TmemRelinquishAllocPermitOp."""
+    del ctx
+    tcgen05.tmem_relinquish_alloc_permit(op.collective)
+    return []
+
 
 # TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
 if jaxlib.version >= (0, 7, 0):
