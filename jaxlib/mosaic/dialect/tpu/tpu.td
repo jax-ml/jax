@@ -1068,9 +1068,6 @@ def TPU_TransposeOp : TPU_Op<"transpose", [Pure]> {
                        DenseI64ArrayAttr:$permutation);
   let results = (outs AnyVectorOfAnyRank:$result);
 
-  let builders = [
-    OpBuilder<(ins "Value":$vector, "ArrayRef<int64_t>":$permutation)>
-  ];
   let assemblyFormat = [{
     $vector `,` $permutation attr-dict `:` type($vector) `->` type($result)
   }];
