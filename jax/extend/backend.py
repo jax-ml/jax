@@ -34,4 +34,11 @@ from jax._src import (
     util as _util
 )
 register_backend_cache = _util.register_cache  # type: ignore
+
+from jax._src.lib import (
+    _jax as _jax
+)
+ifrt_proxy = _jax.ifrt_proxy
+
 del _util
+del _jax

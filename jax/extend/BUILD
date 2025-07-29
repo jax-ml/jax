@@ -34,6 +34,7 @@ pytype_strict_library(
         ":random",
         ":sharding",
         ":source_info_util",
+        "//jax/extend/mlir",
     ],
 )
 
@@ -68,6 +69,7 @@ pytype_strict_library(
         "//jax:compiler",
         "//jax:util",
         "//jax:xla_bridge",
+        "//jax/_src/lib",
     ],
 )
 

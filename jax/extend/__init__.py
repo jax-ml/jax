@@ -41,6 +41,7 @@ from jax.extend import (
     core as core,
     ffi as _ffi,
     linear_util as linear_util,
+    mlir as mlir,
     random as random,
     sharding as sharding,
     source_info_util as source_info_util,
