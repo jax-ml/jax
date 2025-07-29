@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/numeric/bits.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
@@ -434,11 +435,78 @@ void InitContext(mlir::MLIRContext* context) {
   context->loadAllAvailableDialects();
 }
 
+// Parse the SASS and reformat control codes following NervanaSystems/maxas.
+std::string FormatSassCtrl(const std::string& sass) {
+  std::string result;
+  result.reserve(sass.size());
+  std::vector<std::string> lines = absl::StrSplit(sass, '\n');
+  for (int i = 0; i < lines.size(); ++i) {
+    std::string_view line = lines[i];
+    if (i + 1 < lines.size()) {
+      const std::string& next_line = lines[i + 1];
+      size_t first_hex_start = line.rfind("/* 0x");
+      size_t first_instr_end = line.rfind(';');
+      size_t second_hex_start = next_line.rfind("/* 0x");
+      bool second_line_empty = true;
+      if (second_hex_start != std::string::npos) {
+        for (size_t i = 0; i < second_hex_start; ++i) {
+          second_line_empty &= next_line[i] == ' ';
+        }
+      }
+      if (first_hex_start != std::string::npos &&
+          first_instr_end != std::string::npos &&
+          second_hex_start != std::string::npos &&
+          second_line_empty) {
+        line = line.substr(0, first_instr_end);
+        std::string hex_str = next_line.substr(second_hex_start + 5, 16);
+        uint64_t ctrl;
+        if (absl::SimpleHexAtoi(hex_str, &ctrl)) {
+          uint64_t stall = (ctrl >> 41) & 0xf;
+          uint64_t yield = (ctrl >> 45) & 0x1;
+          uint64_t write_barrier = (ctrl >> 46) & 0x7;
+          uint64_t read_barrier = (ctrl >> 49) & 0x7;
+          uint64_t wait_barrier = (ctrl >> 52) & 0x3f;
+          std::string wait_barrier_str;
+          if (wait_barrier == 0) {
+            result += "   -";
+          } else if (absl::has_single_bit(wait_barrier)) {
+            absl::StrAppendFormat(&result, "   %d",
+                                  absl::countr_zero(wait_barrier));
+          } else {
+            int first_set = absl::countr_zero(wait_barrier);
+            uint64_t without_first_set = wait_barrier ^ (1 << first_set);
+            if (absl::has_single_bit(without_first_set)) {
+              absl::StrAppendFormat(&result, " %d&%d",
+                                    absl::countr_zero(without_first_set),
+                                    first_set);
+            } else {
+              absl::StrAppendFormat(&result, "0x%02x", wait_barrier);
+            }
+          }
+          absl::StrAppendFormat(
+              &result, ":%c:%c:%c:%02llu",
+              read_barrier == 7 ? '-' : ('0' + read_barrier),
+              write_barrier == 7 ? '-' : ('0' + write_barrier),
+              yield ? 'Y' : '-', stall);
+        }
+        i++;  // Skip the hex line.
+      }
+    }
+    result += line;
+    result.append("\n");
+  }
+  return result;
+}
+
 void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
                            const std::string& ptx_isa, const std::string& nvshmem_path) {
   bool dump_ptx = getenv("MOSAIC_GPU_DUMP_PTX") != nullptr;
   bool dump_ptxas = getenv("MOSAIC_GPU_DUMP_PTXAS") != nullptr;
   bool dump_sass = getenv("MOSAIC_GPU_DUMP_SASS") != nullptr;
+  bool dump_sass_ctrl = getenv("MOSAIC_GPU_DUMP_SASS_CTRL") != nullptr;
+  if (dump_sass_ctrl) {
+    dump_sass = true;
+  }
   if (!dump_ptx && !dump_ptxas && !dump_sass) {
     return;
   }
@@ -497,15 +565,24 @@ void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
     }
     if (!dump_sass) { continue; }  // We're done.
     // Call nvdisasm to pretty-print SASS.
-    auto result = RunCUDATool(
-        "nvdisasm", {"nvdisasm", "-ndf", "-c", elf_path.c_str(), nullptr});
+    std::vector<const char*> nvdisasm_args = {
+        "nvdisasm", "-ndf", "-c", elf_path.c_str()};
+    if (dump_sass_ctrl) {
+      nvdisasm_args.push_back("-hex");
+    }
+    nvdisasm_args.push_back(nullptr);
+    auto result = RunCUDATool("nvdisasm", nvdisasm_args);
     if (!result.ok()) {
       std::cerr << "nvdisasm invocation failed: " << result.status()
                 << std::endl;
       continue;
     }
     // Dump SASS.
-    std::cout << *result << std::endl;
+    if (!dump_sass_ctrl) {
+      std::cout << *result << std::endl;
+    } else {
+      std::cout << FormatSassCtrl(*result) << std::endl;
+    }
   }
 }
 
