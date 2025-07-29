@@ -32,6 +32,7 @@ Functions
    copy_smem_to_gmem
    emit_pipeline
    layout_cast
+   semaphore_signal_parallel
    set_max_registers
    wait_smem_to_gmem
    wgmma
