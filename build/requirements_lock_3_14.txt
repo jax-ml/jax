@@ -40,7 +40,7 @@ matplotlib==3.10.1
     # via -r build/test-requirements.txt
 mdurl==0.1.2
     # via markdown-it-py
-ml-dtypes==0.5.1
+ml-dtypes==0.5.3
     # via
     #   -r build/requirements.in
     #   tensorstore
