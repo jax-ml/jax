@@ -576,7 +576,8 @@ def commit_arrive(
   )
 
 
-def _alloc_ncols(ncols: int, exact: bool):
+def tmem_alloc_exact_ncols(ncols: int, exact: bool):
+  """Returns the exact number of columns to allocate in TMEM."""
   if exact:
     if ncols.bit_count() != 1 or not 32 <= ncols <= 512:
       raise ValueError(f"ncols must be a power of 2 and within [32, 512], got: {ncols}")
@@ -601,7 +602,7 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
     tmem_addr = utils.memref_ptr(tmem_addr, memory_space=3)
   elif tmem_addr.type != ir.Type.parse("!llvm.ptr<3>"):
     raise ValueError(f"tmem_addr must be an SMEM pointer or a memref, got: {tmem_addr.type}")
-  ncols = _alloc_ncols(ncols, exact)
+  ncols = tmem_alloc_exact_ncols(ncols, exact)
   num_cta = 2 if collective else 1
   return llvm.inline_asm(
       ir.Type.parse("!llvm.void"),
@@ -615,7 +616,7 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
 def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True):
   if tmem_addr.type != ir.IntegerType.get_signless(32):
     raise ValueError(f"tmem_addr must be an i32, got: {tmem_addr.type}")
-  ncols = _alloc_ncols(ncols, exact)
+  ncols = tmem_alloc_exact_ncols(ncols, exact)
   num_cta = 2 if collective else 1
   return llvm.inline_asm(
       ir.Type.parse("!llvm.void"),

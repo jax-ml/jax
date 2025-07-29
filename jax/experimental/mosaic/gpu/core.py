@@ -331,6 +331,33 @@ class _TMEMAlloc:
     )
 
 
+@dataclasses.dataclass()
+class _TMEMWarpgroupAlloc:
+  addr_ref: ir.Value
+  shape: tuple[int, int]
+  dtype: ir.Type
+  collective: bool
+  tmem_ref: ir.Value | None = None
+
+  def alloc(self) -> int:
+    """Allocates TMEM and returns the number of columns allocated."""
+    result_type = ir.MemRefType.get(
+        self.shape,
+        self.dtype,
+        memory_space=utils.tmem(),
+    )
+    self.tmem_ref = dialect.tmem_alloc(
+        result_type, self.addr_ref, collective=self.collective, exact=False
+    )
+    # TODO: allanrenucci - Consolidate logic to compute the number of columns.
+    ncols = self.shape[1]
+    return tcgen05.tmem_alloc_exact_ncols(ncols, exact=False)
+
+  def dealloc(self):
+    assert self.tmem_ref is not None
+    dialect.tmem_dealloc(self.tmem_ref)
+
+
 def _slice_smem(
     result: ir.Type,
     smem_base: ir.Value,
@@ -348,7 +375,9 @@ def _construct_smem_reftree(
     cluster_shape: tuple[int, int, int],
     dynamic_smem: ir.Value,
     smem_buffers: ShapeTree,
-    tmem_allocs: list[_TMEMAlloc],  # Mutated by this function!
+    tmem_allocs: list[
+        _TMEMAlloc | _TMEMWarpgroupAlloc
+    ],  # Mutated by this function!
     lowering_semantics: LoweringSemantics,
     dynamic_smem_offset: int = 0,
 ) -> Callable[[], RefTree]:
@@ -424,15 +453,21 @@ def _construct_smem_reftree(
           layout = tcgen05._infer_tmem_layout(
               shape, collective, 1 if packing is None else packing
           )
-        num_cols = layout.cols_in_shape(
-            shape, utils.bitwidth(utils.dtype_to_ir_type(dtype))
-        )
-        tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
-        def ref(addr_ref=addr_ref, shape=shape, dtype=dtype, layout=layout):
-          addr = memref.load(addr_ref, [])
-          return tcgen05.TMEMRef(
-              addr, shape, utils.dtype_to_ir_type(dtype), layout
+        ir_dtype = utils.dtype_to_ir_type(dtype)
+        if lowering_semantics == LoweringSemantics.Warpgroup:
+          tmem_allocs.append(
+              _TMEMWarpgroupAlloc(addr_ref, shape, ir_dtype, collective)
           )
+        else:
+          num_cols = layout.cols_in_shape(shape, utils.bitwidth(ir_dtype))
+          tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
+
+        def ref(
+            addr_ref=addr_ref, shape=shape, ir_dtype=ir_dtype, layout=layout
+        ):
+          addr = memref.load(addr_ref, [])
+          return tcgen05.TMEMRef(addr, shape, ir_dtype, layout)
+
         dynamic_smem_offset += 4  # i32 takes up 4 bytes
       case _:
         mlir_dtype = utils.dtype_to_ir_type(ref_ty.dtype)
@@ -570,7 +605,7 @@ def _launch(
         module, launch_context.Scratch(launch_op), cluster, prof
     )
     with ctx.named_region("Init"):
-      tmem_allocs: list[_TMEMAlloc] = []
+      tmem_allocs: list[_TMEMAlloc | _TMEMWarpgroupAlloc] = []
       smem_ref_tree_thunk = _construct_smem_reftree(
           cluster, dynamic_smem, smem_buffers, tmem_allocs, lowering_semantics
       )
@@ -583,16 +618,21 @@ def _launch(
       if tmem_allocs:
         eq = arith.CmpIPredicate.eq
         is_init_warp = arith.cmpi(eq, utils.warp_idx(sync=False), c(0, i32))
-        with utils.when(is_init_warp):
-          cols_used = 0
+        cols_used = 0
+        if lowering_semantics == LoweringSemantics.Warpgroup:
           for alloc in tmem_allocs:
             cols_used += alloc.alloc()
-          if cols_used > tcgen05.TMEM_MAX_COLS:
-            raise ValueError(
-                "Total TMEM allocation exceeds memory limit. "
-                f"Requested {cols_used} columns which exceeds limit of "
-                f"{tcgen05.TMEM_MAX_COLS}."
-            )
+        else:
+          with utils.when(is_init_warp):
+            for alloc in tmem_allocs:
+              cols_used += alloc.alloc()
+        if cols_used > tcgen05.TMEM_MAX_COLS:
+          raise ValueError(
+              "Total TMEM allocation exceeds memory limit. "
+              f"Requested {cols_used} columns which exceeds limit of "
+              f"{tcgen05.TMEM_MAX_COLS}."
+          )
+        with utils.when(is_init_warp):
           if any(alloc.collective for alloc in tmem_allocs):
             if math.prod(cluster) % 2:
               raise ValueError(
@@ -612,9 +652,13 @@ def _launch(
       if any(alloc.collective for alloc in tmem_allocs):
         nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
         nvvm.cluster_wait(aligned=ir.UnitAttr.get())
-      with utils.when(is_init_warp):
+      if lowering_semantics == LoweringSemantics.Warpgroup:
         for alloc in tmem_allocs:
           alloc.dealloc()
+      else:
+        with utils.when(is_init_warp):
+          for alloc in tmem_allocs:
+            alloc.dealloc()
     if prof is not None:
       prof.finalize(grid=grid, block=block)
     gpu.terminator()
