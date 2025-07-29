@@ -1468,6 +1468,12 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "scheduling_groups_test",
+    srcs = ["scheduling_groups_test.py"],
+    deps = py_deps("absl/testing"),
+)
+
+jax_multiplatform_test(
     name = "stax_test",
     srcs = ["stax_test.py"],
     deps = ["//jax:stax"] + py_deps([

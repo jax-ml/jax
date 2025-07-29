@@ -3299,7 +3299,10 @@ def _check_call(ctx_factory, prim, in_atoms, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(
         f"Call primitive {prim} missing 'call_jaxpr' parameter")
-  call_jaxpr = params["call_jaxpr"]
+  if isinstance(prim, ClosedCallPrimitive):
+    call_jaxpr = params["call_jaxpr"].jaxpr
+  else:
+    call_jaxpr = params["call_jaxpr"]
 
   if len(in_atoms) != len(call_jaxpr.invars):
     raise JaxprTypeError(f"Call primitive {prim} with {len(in_atoms)} "

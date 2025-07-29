@@ -308,7 +308,10 @@ class JaxprTrace(Trace['JaxprTracer']):
     unknown_arg_tracers = [t for t in tracers if not t.is_known()]
     # Adjust parameters (e.g. donated_invars) for the staged-out call's args.
     num_new_args = len(res_tracers) + len(env_tracers)
-    staged_params = dict(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
+    new_jaxpr = convert_constvars_jaxpr(jaxpr)
+    if isinstance(primitive, core.ClosedCallPrimitive):
+      new_jaxpr = close_jaxpr(new_jaxpr)  # type: ignore
+    staged_params = dict(params, call_jaxpr=new_jaxpr)
     staged_params = update_params(staged_params, map(op.not_, in_knowns),
                                   num_new_args)
     # The outputs of the staged-out call are Tracers with the new eqn as recipe.
@@ -526,13 +529,6 @@ def partial_eval_wrapper_nounits2(
 custom_partial_eval_rules: dict[Primitive, Callable] = {}
 call_partial_eval_rules: dict[Primitive, Callable] = {}
 call_param_updaters: dict[Primitive, Callable] = {}
-
-def _closed_call_param_updater(params, _, __):
-  jaxpr = params.get('call_jaxpr')
-  if jaxpr is None: return params
-  assert type(jaxpr) is core.Jaxpr
-  return dict(params, call_jaxpr=core.ClosedJaxpr(jaxpr, ()))
-call_param_updaters[core.closed_call_p] = _closed_call_param_updater
 
 def abstract_eval_fun(fun: Callable, *avals,
                       debug_info: core.DebugInfo, **params):
@@ -2104,8 +2100,7 @@ class DynamicJaxprTrace(core.Trace):
       self.frame.add_eqn(eqn)
     return out_tracers if primitive.multiple_results else out_tracers.pop()
 
-  def process_call(self, call_primitive, f: lu.WrappedFun,
-                   explicit_tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, explicit_tracers, params):
     source_info = source_info_util.current()
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
     if f.in_type is None:
@@ -2121,7 +2116,10 @@ class DynamicJaxprTrace(core.Trace):
                              propagate_source_info=False)
 
     out_avals = [aval for aval, _ in out_type]
-    new_params = dict(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
+    new_jaxpr = convert_constvars_jaxpr(jaxpr)
+    if isinstance(call_primitive, core.ClosedCallPrimitive):
+      new_jaxpr = close_jaxpr(new_jaxpr)  # type: ignore
+    new_params = dict(params, call_jaxpr=new_jaxpr)
     update_params = call_param_updaters.get(call_primitive)
     if update_params:
       new_params = update_params(new_params, [True] * len(explicit_tracers),
