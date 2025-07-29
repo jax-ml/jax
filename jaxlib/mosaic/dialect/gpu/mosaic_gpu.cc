@@ -573,10 +573,10 @@ llvm::LogicalResult VerifyTmemRefType(
                              << tmem_ref_type.getElementTypeBitWidth();
     }
     if (num_unpacked_columns % packing.value() != 0) {
-      return op->emitError() << "The number of unpacked columns must be "
-                                "divisible by the packing factor, but got: "
-                             << num_unpacked_columns << " / "
-                             << packing.value();
+      return op->emitError()
+             << "The number of unpacked columns must be "
+                "divisible by the packing factor, but got: "
+             << num_unpacked_columns << " / " << packing.value();
     }
     num_allocated_columns /= packing.value();
   }
@@ -621,6 +621,35 @@ llvm::LogicalResult TmemAllocOp::verify() {
 llvm::LogicalResult TmemDeallocOp::verify() {
   return VerifyTmemRefType(getContext(), getOperation(),
                            getTmemRef().getType());
+}
+
+llvm::LogicalResult AsyncLoadTmemOp::verify() {
+  if (getSource().getType().getElementType() !=
+      getResult().getType().getElementType()) {
+    return emitError() << "The `source` and `result` must have "
+                          "the same element type.";
+  }
+  if (getSource().getType().getShape() !=
+      getResult().getType().getShape()) {
+    return emitError()
+           << "The `source` and `result` must have the same shape.";
+  }
+  return VerifyTmemRefType(getContext(), getOperation(), getSource().getType());
+}
+
+llvm::LogicalResult AsyncStoreTmemOp::verify() {
+  if (getSource().getType().getElementType() !=
+      getDestination().getType().getElementType()) {
+    return emitError() << "The `source` and `destination` must have "
+                          "the same element type.";
+  }
+  if (getSource().getType().getShape() !=
+      getDestination().getType().getShape()) {
+    return emitError()
+           << "The `source` and `destination` must have the same shape.";
+  }
+  return VerifyTmemRefType(getContext(), getOperation(),
+                           getDestination().getType());
 }
 
 void MosaicGPUDialect::initialize() {

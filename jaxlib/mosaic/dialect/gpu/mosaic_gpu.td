@@ -712,4 +712,43 @@ def MosaicGPU_TmemDeallocOp : Op<MosaicGPU_Dialect, "tmem_dealloc", []> {
   let hasVerifier = 1;
 }
 
+def MosaicGPU_AsyncLoadTmemOp : Op<MosaicGPU_Dialect, "async_load_tmem",
+    [InferTypeOpInterface]> {
+  let summary = "Copies TMEM to registers asynchronously.";
+
+  let arguments = (ins MemRefRankOf<[AnyType], [2]>:$source);
+  let results = (outs VectorOfRank<[2]>);
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      mlir::MemRefType memref_type =
+          mlir::cast<mlir::MemRefType>(operands[0].getType());
+      auto vector_type = mlir::VectorType::get(
+          memref_type.getShape(), memref_type.getElementType());
+      inferredReturnTypes.assign({vector_type});
+      return ::mlir::success();
+    }
+  }];
+}
+
+def MosaicGPU_AsyncStoreTmemOp : Op<MosaicGPU_Dialect, "async_store_tmem", []> {
+  let summary = "Copies registers to TMEM asynchronously.";
+
+  let arguments = (ins
+    VectorOfRank<[2]>: $source,
+    MemRefRankOf<[AnyType], [2]>:$destination
+  );
+
+  let hasVerifier = 1;
+}
+
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_
