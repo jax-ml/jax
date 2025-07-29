@@ -595,34 +595,32 @@ def _mgpu_layout_cast_op_lowering_rule(
   return [fragmented_array_to_ir(out_array, op.result.type)]
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
-if hasattr(mgpu, "BroadcastInDimOp"):
-  @_register_lowering(mgpu.BroadcastInDimOp)
-  def _mgpu_broadcast_in_dim_op_lowering_rule(
-      _: LoweringContext, op: mgpu.BroadcastInDimOp
-  ) -> Sequence[ir.Value]:
-    in_ty = ir.VectorType(op.operand.type)
-    out_ty = ir.VectorType(op.result.type)
-    if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
-      raise NotImplementedError(
-          "Broadcast in dim with non-trivial broadcast dimensions is not"
-          f" supported: {op}"
-      )
+@_register_lowering(mgpu.BroadcastInDimOp)
+def _mgpu_broadcast_in_dim_op_lowering_rule(
+    _: LoweringContext, op: mgpu.BroadcastInDimOp
+) -> Sequence[ir.Value]:
+  in_ty = ir.VectorType(op.operand.type)
+  out_ty = ir.VectorType(op.result.type)
+  if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
+    raise NotImplementedError(
+        "Broadcast in dim with non-trivial broadcast dimensions is not"
+        f" supported: {op}"
+    )
 
-    broadcast_dims = list(op.broadcast_dimensions)
-    in_layout = inference_utils.in_layouts(op)[0]
-    operand_fa = _fragmented_array_from_ir(op.operand, in_layout)
+  broadcast_dims = list(op.broadcast_dimensions)
+  in_layout = inference_utils.in_layouts(op)[0]
+  operand_fa = _fragmented_array_from_ir(op.operand, in_layout)
 
-    if (operand_fa.layout == fa.WGMMA_ROW_LAYOUT and broadcast_dims == [0]):
-      out = operand_fa.broadcast_minor(out_ty.shape[1])
-    elif (operand_fa.layout == fa.WGMMA_COL_LAYOUT and broadcast_dims == [1]):
-      out = operand_fa.broadcast_in_dim(out_ty.shape, (1,), fa.WGMMA_LAYOUT)
-    else:
-      raise NotImplementedError(
-          "Broadcast in dim with non-trivial broadcast dimensions is not"
-          f" supported: {op}"
-      )
-    return [fragmented_array_to_ir(out, out_ty)]
+  if operand_fa.layout == fa.WGMMA_ROW_LAYOUT and broadcast_dims == [0]:
+    out = operand_fa.broadcast_minor(out_ty.shape[1])
+  elif operand_fa.layout == fa.WGMMA_COL_LAYOUT and broadcast_dims == [1]:
+    out = operand_fa.broadcast_in_dim(out_ty.shape, (1,), fa.WGMMA_LAYOUT)
+  else:
+    raise NotImplementedError(
+        "Broadcast in dim with non-trivial broadcast dimensions is not"
+        f" supported: {op}"
+    )
+  return [fragmented_array_to_ir(out, out_ty)]
 
 
 def swizzle_and_transforms_from_transforms_attr(
@@ -1446,29 +1444,25 @@ def _memref_store_op_lowering_rule(
   return []
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
-if jaxlib.version >= (0, 7, 0):
-  @_register_lowering(mgpu.TmemAllocOp)
-  def _tmem_alloc_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.TmemAllocOp
-  ) -> Sequence[ir.Value]:
-    """Lowering rule for mgpu.TmemAllocOp."""
-    del ctx
+@_register_lowering(mgpu.TmemAllocOp)
+def _tmem_alloc_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.TmemAllocOp
+) -> Sequence[ir.Value]:
+  """Lowering rule for mgpu.TmemAllocOp."""
+  del ctx
 
-    output_shape = ir.MemRefType(op.result.type).shape
-    ncols = output_shape[1] // op.packing.value
+  output_shape = ir.MemRefType(op.result.type).shape
+  ncols = output_shape[1] // op.packing.value
 
-    # TODO(b/431684684): Predicate this at the warp level.
-    tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, op.exact)
+  # TODO(b/431684684): Predicate this at the warp level.
+  tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, op.exact)
 
-    cast_op = builtin.UnrealizedConversionCastOp(
-        [op.result.type], [op.smem_ptr]
-    )
-    cast_op.attributes["collective"] = op.collective
-    cast_op.attributes["exact"] = op.exact
-    cast_op.attributes["packing"] = op.packing
+  cast_op = builtin.UnrealizedConversionCastOp([op.result.type], [op.smem_ptr])
+  cast_op.attributes["collective"] = op.collective
+  cast_op.attributes["exact"] = op.exact
+  cast_op.attributes["packing"] = op.packing
 
-    return [cast_op.result]
+  return [cast_op.result]
 
 # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
 if jaxlib.version >= (0, 7, 1):
@@ -1482,29 +1476,27 @@ if jaxlib.version >= (0, 7, 1):
     return []
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
-if jaxlib.version >= (0, 7, 0):
-  @_register_lowering(mgpu.TmemDeallocOp)
-  def _tmem_dealloc_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.TmemDeallocOp
-  ) -> Sequence[ir.Value]:
-    """Lowering rule for mgpu.TmemDeallocOp."""
-    del ctx
+@_register_lowering(mgpu.TmemDeallocOp)
+def _tmem_dealloc_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.TmemDeallocOp
+) -> Sequence[ir.Value]:
+  """Lowering rule for mgpu.TmemDeallocOp."""
+  del ctx
 
-    conversion_cast, cast_operands = _undo_conversion_cast(op.tmem_ref)
-    [smem_ref] = cast_operands
-    collective = ir.BoolAttr(conversion_cast.attributes["collective"]).value
-    exact = ir.BoolAttr(conversion_cast.attributes["exact"]).value
-    packing = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
+  conversion_cast, cast_operands = _undo_conversion_cast(op.tmem_ref)
+  [smem_ref] = cast_operands
+  collective = ir.BoolAttr(conversion_cast.attributes["collective"]).value
+  exact = ir.BoolAttr(conversion_cast.attributes["exact"]).value
+  packing = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
 
-    output_shape = ir.MemRefType(op.tmem_ref.type).shape
-    ncols = output_shape[1] // packing
-    tmem_addr = memref.load(smem_ref, [])
+  output_shape = ir.MemRefType(op.tmem_ref.type).shape
+  ncols = output_shape[1] // packing
+  tmem_addr = memref.load(smem_ref, [])
 
-    # TODO(b/431684684): Predicate this at the warp level.
-    tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact)
+  # TODO(b/431684684): Predicate this at the warp level.
+  tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact)
 
-    return []
+  return []
 
 
 def inline_block(

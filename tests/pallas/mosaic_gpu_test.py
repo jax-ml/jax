@@ -31,7 +31,6 @@ import jax
 from jax import export
 from jax import lax
 from jax._src import checkify
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
@@ -421,10 +420,6 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(jnp.bfloat16, jnp.int16, jnp.uint16)
   def test_inline_mgpu(self, jnp_type):
-    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
-    if jaxlib.version < (0, 7, 0):
-      self.skip_if_wg_semantics()
-
     dtype = jnp.dtype(jnp_type)
     if jnp.issubdtype(dtype, jnp.signedinteger):
       is_signed = True

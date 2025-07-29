@@ -23,7 +23,6 @@ from functools import partial
 import math
 from typing import cast
 
-from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -408,22 +407,18 @@ def _infer_memref_cast_transforms(
   return [transforms], [transforms]
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.2.
-if jaxlib.version >= (0, 6, 2):
-  @partial(_add_transform_inference_rule, mgpu.WithTransformsOp)
-  def _infer_mgpu_with_transforms_transforms(
-      op: mgpu.WithTransformsOp,
-  ) -> OptionalTransforms:
-    # Do not change the manually provided transforms.
-    return [op.transforms], [op.transforms]
+@partial(_add_transform_inference_rule, mgpu.WithTransformsOp)
+def _infer_mgpu_with_transforms_transforms(
+    op: mgpu.WithTransformsOp,
+) -> OptionalTransforms:
+  # Do not change the manually provided transforms.
+  return [op.transforms], [op.transforms]
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.0.
-if jaxlib.version >= (0, 7, 0):
-  @partial(_add_transform_inference_rule, mgpu.TmemAllocOp)
-  def _infer_tmem_alloc_transforms(op: mgpu.TmemAllocOp) -> OptionalTransforms:
-    del op
-    return [], []
+@partial(_add_transform_inference_rule, mgpu.TmemAllocOp)
+def _infer_tmem_alloc_transforms(op: mgpu.TmemAllocOp) -> OptionalTransforms:
+  del op
+  return [], []
 
 
 @partial(_add_transform_inference_rule, mgpu.CustomPrimitiveOp)
