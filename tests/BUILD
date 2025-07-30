@@ -648,7 +648,7 @@ jax_multiplatform_test(
         "cpu": ["notsan"],  # Test times out.
     },
     shard_count = {
-        "cpu": 40,
+        "cpu": 50,
         "gpu": 40,
         "tpu": 50,
     },
