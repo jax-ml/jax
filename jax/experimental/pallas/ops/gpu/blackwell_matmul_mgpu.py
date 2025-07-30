@@ -88,8 +88,8 @@ def matmul_kernel(a, b, config: TuningConfig):
 
   TMA_WARP = 0
   MMA_WARP = 1
-  STORE_WG = 0
   COMPUTE_WG = 0
+  STORE_WG = 1
 
   def kernel(a_gmem, b_gmem, out_gmem,
              a_smem, b_smem, acc_tmem, acc_smem,
