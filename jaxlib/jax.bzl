@@ -23,6 +23,7 @@ load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_roc
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load("@xla//xla/tsl:tsl.bzl", "transitive_hdrs", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
@@ -238,6 +239,7 @@ def jax_multiplatform_test(
         args = [],
         env = {},
         shard_count = None,
+        minimal_shard_count = None,
         deps = [],
         data = [],
         enable_backends = None,
@@ -266,10 +268,11 @@ def jax_multiplatform_test(
     env.setdefault("PYTHONWARNINGS", "error")
 
     for backend in ALL_BACKENDS:
-        if shard_count == None or type(shard_count) == type(0):
-            test_shards = shard_count
+        test_shard_count = minimal_shard_count if USE_MINIMAL_SHARD_COUNT else shard_count
+        if test_shard_count == None or type(test_shard_count) == type(0):
+            test_shards = test_shard_count
         else:
-            test_shards = shard_count.get(backend, 1)
+            test_shards = test_shard_count.get(backend, 1)
         test_args = list(args) + [
             "--jax_test_dut=" + backend,
             "--jax_platform_name=" + backend,

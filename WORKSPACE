@@ -70,6 +70,12 @@ load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 
 flatbuffers()
 
+load("//:test_shard_count.bzl", "test_shard_count_repository")
+
+test_shard_count_repository(
+    name = "test_shard_count",
+)
+
 load("//jaxlib:jax_python_wheel.bzl", "jax_python_wheel_repository")
 
 jax_python_wheel_repository(
