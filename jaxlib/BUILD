@@ -278,6 +278,7 @@ nanobind_pywrap_extension(
         "@nanobind",
         "@xla//third_party/python_runtime:headers",
         "@xla//xla/pjrt:lru_cache",
+        "@xla//xla/python:version",
         "@xla//xla/tsl/platform:logging",
     ],
 )
