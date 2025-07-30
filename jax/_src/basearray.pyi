@@ -20,6 +20,7 @@ import numpy as np
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
+from jax._src.layout import Format
 
 
 # TODO(jakevdp) de-duplicate this with the DTypeLike definition in typing.py.
@@ -244,6 +245,8 @@ class Array(metaclass=abc.ABCMeta):
   def devices(self) -> set[Device]: ...
   @property
   def sharding(self) -> Sharding: ...
+  @property
+  def format(self) -> Format: ...
   @property
   def committed(self) -> bool: ...
   @property

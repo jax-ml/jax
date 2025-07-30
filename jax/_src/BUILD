@@ -275,6 +275,7 @@ pytype_strict_library(
     srcs = ["basearray.py"],
     pytype_srcs = ["basearray.pyi"],
     deps = [
+        ":layout",
         ":named_sharding",
         ":partition_spec",
         ":sharding",

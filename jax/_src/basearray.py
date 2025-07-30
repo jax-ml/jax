@@ -29,6 +29,7 @@ import numpy as np
 Device = Any
 Shard = Any
 Sharding = Any
+Format = Any
 
 # Array is a type annotation for standard JAX arrays and tracers produced by
 # core functions in jax.lax and jax.numpy; it is not meant to include
@@ -116,6 +117,11 @@ class Array:
   @property
   def sharding(self) -> Sharding:
     """The sharding for the array."""
+    raise NotImplementedError
+
+  @property
+  def format(self) -> Format:
+    """The format for the array."""
     raise NotImplementedError
 
   @property
