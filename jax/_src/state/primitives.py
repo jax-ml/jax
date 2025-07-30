@@ -71,15 +71,15 @@ Indexer = Union[int, slice, Array, types.EllipsisType]
 
 
 def get_ref_and_transforms(
-    ref: Any,
+    ref_or_view: Any,
     idx: Indexer | tuple[Indexer, ...] | None,
     function_name: str,
     force_trailing_indexer: bool = True,  # TODO(apaszke): Clean this up.
 ) -> tuple[Any, tuple[Transform, ...]]:
-  if isinstance(ref, TransformedRef):
-    ref, transforms = ref.ref, ref.transforms
+  if isinstance(ref_or_view, TransformedRef):
+    ref, transforms = ref_or_view.ref, ref_or_view.transforms
   else:
-    ref, transforms = ref, ()
+    ref, transforms = ref_or_view, ()
   ref_aval = core.get_aval(ref)
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"Can only call `{function_name}` on a `Ref`: {ref}.")
@@ -95,7 +95,7 @@ def get_ref_and_transforms(
     return ref, transforms
   if not idx and transforms and isinstance(transforms[-1], indexing.NDIndexer):
     return ref, transforms
-  nd_indexer = indexing.NDIndexer.from_indices_shape(idx, ref.shape)
+  nd_indexer = indexing.NDIndexer.from_indices_shape(idx, ref_or_view.shape)
   return ref, (*transforms, nd_indexer)
 
 

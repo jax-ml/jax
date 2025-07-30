@@ -28,6 +28,12 @@ operations.
    notebooks/autodiff_remat
 
 .. toctree::
+   :caption: Non-functional programming
+   :maxdepth: 1
+
+   array_refs
+
+.. toctree::
    :caption: Deep dives
    :maxdepth: 1
 

@@ -137,6 +137,7 @@ from jax._src.shard_map import shard_map as shard_map
 from jax._src.shard_map import smap as smap
 
 from jax.ref import array_ref as array_ref
+from jax.ref import ArrayRef as ArrayRef
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
 from jax.interpreters import ad, batching, mlir, partial_eval, pxla, xla
