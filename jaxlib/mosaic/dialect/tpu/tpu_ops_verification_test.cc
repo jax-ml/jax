@@ -66,7 +66,7 @@ class TpuOpsVerificationTest : public ::testing::Test {
 
   template <typename OpTy, typename... Args>
   OpTy Create(Args&&... args) {
-    OpTy op = builder_.create<OpTy>(std::forward<Args>(args)...);
+    OpTy op = OpTy::create(builder_, std::forward<Args>(args)...);
     ops_.push_back(op.getOperation());
     return op;
   }

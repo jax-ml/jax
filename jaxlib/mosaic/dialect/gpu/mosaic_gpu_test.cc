@@ -63,8 +63,8 @@ absl::StatusOr<mlir::func::FuncOp> FromCppFunc(
   mlir::OpBuilder b(context);
   b.setInsertionPointToEnd(module.getBody());
 
-  auto fn = b.create<mlir::func::FuncOp>(
-      b.getUnknownLoc(), "function_wrapper",
+  auto fn = mlir::func::FuncOp::create(
+      b, b.getUnknownLoc(), "function_wrapper",
       b.getFunctionType({type1, type2}, std::nullopt));
   fn.addEntryBlock();
   b.setInsertionPointToStart(&fn.front());
@@ -73,7 +73,7 @@ absl::StatusOr<mlir::func::FuncOp> FromCppFunc(
                        mlir::cast<mlir::TypedValue<T2>>(fn.getArgument(1)),
                        varargs...));
 
-  b.create<mlir::func::ReturnOp>(b.getUnknownLoc());
+  mlir::func::ReturnOp::create(b, b.getUnknownLoc());
 
   if (mlir::failed(mlir::verify(module))) {
     return absl::InternalError("Failed to verify generated module");

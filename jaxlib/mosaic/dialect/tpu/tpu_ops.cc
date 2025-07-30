@@ -226,8 +226,8 @@ LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
       op.getResult().getType().getShape(), layout_ty.getElementType(),
       layout_ty.getLayout(), layout_ty.getMemorySpace());
   auto slice =
-      rewriter.create<MemRefSliceOp>(op.getLoc(), new_result_type, layout_ref,
-                                     op.getBaseIdx(), op.getDynamicSizes());
+      MemRefSliceOp::create(rewriter, op.getLoc(), new_result_type, layout_ref,
+                            op.getBaseIdx(), op.getDynamicSizes());
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), slice);
   return success();
 }
@@ -388,7 +388,7 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
                                 new_layout, layout_ty.getMemorySpace());
 
   auto new_squeeze =
-      rewriter.create<MemRefSqueezeOp>(op.getLoc(), new_ty, layout_ref);
+      MemRefSqueezeOp::create(rewriter, op.getLoc(), new_ty, layout_ref);
   rewriter.replaceOpWithNewOp<tpu::EraseLayoutOp>(op, target_type, new_squeeze);
   return success();
 }
@@ -559,7 +559,7 @@ LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
       MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
                       layout_ty.getMemorySpace());
   auto reshape =
-      rewriter.create<MemRefReshapeOp>(op.getLoc(), new_result_ty, layout_ref);
+      MemRefReshapeOp::create(rewriter, op.getLoc(), new_result_ty, layout_ref);
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), reshape);
   return success();
 }
@@ -654,7 +654,7 @@ LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
       MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
                       layout_ty.getMemorySpace());
   auto bitcast =
-      rewriter.create<MemRefBitcastOp>(op.getLoc(), new_result_ty, layout_ref);
+      MemRefBitcastOp::create(rewriter, op.getLoc(), new_result_ty, layout_ref);
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), bitcast);
   return success();
 }

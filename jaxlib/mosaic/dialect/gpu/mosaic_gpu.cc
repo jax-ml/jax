@@ -85,13 +85,13 @@ using Integer = ::mlir::TypedValue<::mlir::IntegerType>;
 
 Integer ToI64(ImplicitLocOpBuilder& b, Index index) {
   return llvm::cast<Integer>(
-      b.create<mlir::arith::IndexCastOp>(b.getI64Type(), index).getResult());
+      mlir::arith::IndexCastOp::create(b, b.getI64Type(), index).getResult());
 }
 
 template <typename T>
 Value Constant(ImplicitLocOpBuilder& b, T scalar, IntegerType type) {
-  return b.create<mlir::arith::ConstantOp>(
-      type, mlir::IntegerAttr::get(type, scalar));
+  return mlir::arith::ConstantOp::create(b, type,
+                                         mlir::IntegerAttr::get(type, scalar));
 }
 
 template <typename T>
@@ -114,8 +114,9 @@ absl::StatusOr<Pointer> ToLLVMArray(ImplicitLocOpBuilder& b,
   MLIRContext* ctx = b.getContext();
   mlir::LLVM::LLVMPointerType pointer_type =
       mlir::LLVM::LLVMPointerType::get(ctx);
-  Pointer array_pointer = b.create<mlir::LLVM::AllocaOp>(
-      pointer_type, element_type, Constant(b, values.size(), b.getI64Type()));
+  Pointer array_pointer =
+      mlir::LLVM::AllocaOp::create(b, pointer_type, element_type,
+                                   Constant(b, values.size(), b.getI64Type()));
 
   for (auto [i, value] : llvm::enumerate(values)) {
     if (value.getType() != element_type) {
@@ -125,11 +126,11 @@ absl::StatusOr<Pointer> ToLLVMArray(ImplicitLocOpBuilder& b,
     }
 
     auto element_pointer = llvm::cast<Pointer>(
-        b.create<mlir::LLVM::GEPOp>(
-             pointer_type, element_type, array_pointer,
-             mlir::ArrayRef<mlir::LLVM::GEPArg>(mlir::LLVM::GEPArg(i)))
+        mlir::LLVM::GEPOp::create(
+            b, pointer_type, element_type, array_pointer,
+            mlir::ArrayRef<mlir::LLVM::GEPArg>(mlir::LLVM::GEPArg(i)))
             .getResult());
-    b.create<mlir::LLVM::StoreOp>(value, element_pointer);
+    mlir::LLVM::StoreOp::create(b, value, element_pointer);
   }
 
   return array_pointer;
@@ -138,21 +139,21 @@ absl::StatusOr<Pointer> ToLLVMArray(ImplicitLocOpBuilder& b,
 // Extracts a pointer to the start of the parameter memref.
 Pointer FromMemref(ImplicitLocOpBuilder& b, Memref memref) {
   Index aligned_pointer_as_index =
-      b.create<mlir::memref::ExtractAlignedPointerAsIndexOp>(memref);
+      mlir::memref::ExtractAlignedPointerAsIndexOp::create(b, memref);
 
   mlir::LLVM::LLVMPointerType pointer_type =
       mlir::LLVM::LLVMPointerType::get(b.getContext());
 
-  Value alloc_pointer = b.create<mlir::LLVM::IntToPtrOp>(
-      pointer_type, ToI64(b, aligned_pointer_as_index));
+  Value alloc_pointer = mlir::LLVM::IntToPtrOp::create(
+      b, pointer_type, ToI64(b, aligned_pointer_as_index));
 
   Type tensor_element_type = memref.getType().getElementType();
 
   return mlir::cast<Pointer>(
-      b.create<mlir::LLVM::GEPOp>(
-           pointer_type, tensor_element_type, alloc_pointer,
-           mlir::ArrayRef<mlir::LLVM::GEPArg>(
-               mlir::LLVM::GEPArg(ToI64(b, aligned_pointer_as_index))))
+      mlir::LLVM::GEPOp::create(
+          b, pointer_type, tensor_element_type, alloc_pointer,
+          mlir::ArrayRef<mlir::LLVM::GEPArg>(
+              mlir::LLVM::GEPArg(ToI64(b, aligned_pointer_as_index))))
           .getResult());
 }
 
@@ -167,7 +168,7 @@ absl::Status InitTmaDescriptor(mlir::OpBuilder& builder,
       mlir::NameLoc::get(builder.getStringAttr("InitTmaDescriptor")), builder);
 
   mlir::memref::ExtractStridedMetadataOp extract_strided_metadata_op =
-      b.create<mlir::memref::ExtractStridedMetadataOp>(gmem_ref);
+      mlir::memref::ExtractStridedMetadataOp::create(b, gmem_ref);
 
   Type tensor_element_type = gmem_ref.getType().getElementType();
 
@@ -210,8 +211,8 @@ absl::Status InitTmaDescriptor(mlir::OpBuilder& builder,
   }
 
   // TODO(bchetioui): connect this to runtime.
-  b.create<mlir::func::CallOp>(
-      kRuntimeTmaDescriptorInitializerName, TypeRange{},
+  mlir::func::CallOp::create(
+      b, kRuntimeTmaDescriptorInitializerName, TypeRange{},
       ValueRange{/*tma_desc=*/host_pointer_to_descriptor,
                  /*base_addr=*/tensor_base_pointer,
                  /*elem_bytewidth=*/Constant(b, elem_bitwidth / 8, i64),
@@ -230,11 +231,10 @@ void DeclareRuntimeFunctions(mlir::OpBuilder& builder) {
   mlir::LLVM::LLVMPointerType ptr = mlir::LLVM::LLVMPointerType::get(ctx);
   IntegerType i64 = builder.getI64Type();
 
-  builder
-      .create<mlir::func::FuncOp>(
-          builder.getUnknownLoc(), kRuntimeTmaDescriptorInitializerName,
-          builder.getFunctionType(
-              TypeRange{ptr, ptr, i64, i64, ptr, ptr, i64, ptr}, TypeRange{}))
+  mlir::func::FuncOp::create(
+      builder, builder.getUnknownLoc(), kRuntimeTmaDescriptorInitializerName,
+      builder.getFunctionType(TypeRange{ptr, ptr, i64, i64, ptr, ptr, i64, ptr},
+                              TypeRange{}))
       .setVisibility(mlir::func::FuncOp::Visibility::Private);
 }
 

@@ -65,13 +65,12 @@ FailureOr<TypedValue<VectorType>> RectangularVregBounds::getVectorMask(
     const std::array<int64_t, 2> target_shape) const {
   auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, builder, loc);
   return cast<TypedValue<VectorType>>(
-      builder
-          .create<tpu::CreateMaskOp>(
-              loc, VectorType::get(target_shape, builder.getI1Type()),
-              /*low=*/
-              ValueRange{boundIdxConst(starts_[0]), boundIdxConst(starts_[1])},
-              /*high=*/
-              ValueRange{boundIdxConst(ends_[0]), boundIdxConst(ends_[1])})
+      tpu::CreateMaskOp::create(
+          builder, loc, VectorType::get(target_shape, builder.getI1Type()),
+          /*low=*/
+          ValueRange{boundIdxConst(starts_[0]), boundIdxConst(starts_[1])},
+          /*high=*/
+          ValueRange{boundIdxConst(ends_[0]), boundIdxConst(ends_[1])})
           .getResult());
 }
 
@@ -145,8 +144,8 @@ class SingleRowVRegBounds : public VRegDataBounds {
     }
     const auto i32_vreg = VectorType::get(target_shape, builder.getI32Type());
     const auto getI32VregConstant = [&](const int32_t v) {
-      return builder.create<arith::ConstantOp>(
-          loc, i32_vreg, DenseElementsAttr::get(i32_vreg, v));
+      return arith::ConstantOp::create(builder, loc, i32_vreg,
+                                       DenseElementsAttr::get(i32_vreg, v));
     };
     if (layout_.bitwidth() != 32 &&
         (start_offset_ % (target_shape[1] * layout_.packing()) != 0 ||
@@ -156,15 +155,13 @@ class SingleRowVRegBounds : public VRegDataBounds {
     const Value start = getI32VregConstant(start_offset_ / layout_.packing());
     const Value end = getI32VregConstant(stop_offset_ / layout_.packing());
     const Value iota =
-        builder.create<tpu::IotaOp>(loc, i32_vreg, ArrayRef<int32_t>{0, 1});
+        tpu::IotaOp::create(builder, loc, i32_vreg, ArrayRef<int32_t>{0, 1});
     return cast<TypedValue<VectorType>>(
-        builder
-            .create<arith::AndIOp>(
-                loc,
-                builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge,
-                                              iota, start),
-                builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
-                                              iota, end))
+        arith::AndIOp::create(builder, loc,
+                              builder.create<arith::CmpIOp>(
+                                  loc, arith::CmpIPredicate::sge, iota, start),
+                              builder.create<arith::CmpIOp>(
+                                  loc, arith::CmpIPredicate::slt, iota, end))
             .getResult());
   }
 
@@ -269,11 +266,9 @@ class TiledRectangularVregBounds : public VRegDataBounds {
     }();
     if (isComplete(target_shape)) {
       return cast<TypedValue<VectorType>>(
-          builder
-              .create<arith::ConstantOp>(
-                  loc, mask_vreg_ty,
-                  DenseElementsAttr::get(mask_vreg_ty,
-                                         builder.getBoolAttr(true)))
+          arith::ConstantOp::create(
+              builder, loc, mask_vreg_ty,
+              DenseElementsAttr::get(mask_vreg_ty, builder.getBoolAttr(true)))
               .getResult());
     }
     Value mask = nullptr;
@@ -297,8 +292,8 @@ class TiledRectangularVregBounds : public VRegDataBounds {
           std::bind(IdxConst, std::placeholders::_1, builder, loc);
       // TODO(apaszke): For loads/stores whole sublanes are covered by the
       // sublane mask, so we can focus only on lanes and partial sublanes.
-      Value tile_mask = builder.create<CreateMaskOp>(
-          loc, mask_vreg_ty,
+      Value tile_mask = CreateMaskOp::create(
+          builder, loc, mask_vreg_ty,
           ValueRange{boundIdxConst(sublane_offset + start_sub),
                      boundIdxConst(start_lane)},
           ValueRange{boundIdxConst(sublane_offset + end_sub),
@@ -316,56 +311,56 @@ class TiledRectangularVregBounds : public VRegDataBounds {
           if (end_offsets_[0] % packing == 0) {
             end_row = target_shape[0] * packing;
           }
-          auto submask = builder.create<tpu::CreateSubelementMaskOp>(
-              loc, mask_vreg_ty, start_row, end_row);
-          tile_mask = builder.create<arith::AndIOp>(loc, tile_mask, submask);
+          auto submask = tpu::CreateSubelementMaskOp::create(
+              builder, loc, mask_vreg_ty, start_row, end_row);
+          tile_mask = arith::AndIOp::create(builder, loc, tile_mask, submask);
         } else {  // packing > max_subelems
           const auto getMaskCst = [&](const uint64_t v) {
             const auto int_mask_ty =
                 VectorType::get(target_shape, builder.getI32Type());
-            return builder.create<arith::ConstantOp>(
-                loc, int_mask_ty,
+            return arith::ConstantOp::create(
+                builder, loc, int_mask_ty,
                 DenseElementsAttr::get(
                     int_mask_ty, builder.getIntegerAttr(builder.getI32Type(),
                                                         APInt(32, v))));
           };
-          tile_mask = builder.create<arith::SelectOp>(
-              loc, tile_mask, getMaskCst(0xFFFFFFFF), getMaskCst(0));
+          tile_mask = arith::SelectOp::create(
+              builder, loc, tile_mask, getMaskCst(0xFFFFFFFF), getMaskCst(0));
           if (const int64_t row_in_sublane = start_row % packing;
               row_in_sublane != 0) {
-            auto row_mask = builder.create<tpu::CreateMaskOp>(
-                loc, mask_vreg_ty,
+            auto row_mask = tpu::CreateMaskOp::create(
+                builder, loc, mask_vreg_ty,
                 ValueRange{boundIdxConst(start_row / packing),
                            boundIdxConst(0)},
                 ValueRange{boundIdxConst(start_row / packing + 1),
                            boundIdxConst(target_shape[1])});
-            auto row_bitmask = builder.create<arith::SelectOp>(
-                loc, row_mask,
+            auto row_bitmask = arith::SelectOp::create(
+                builder, loc, row_mask,
                 getMaskCst(0xFFFFFFFF << row_in_sublane * bitwidth),
                 getMaskCst(0xFFFFFFFF));
             tile_mask =
-                builder.create<arith::AndIOp>(loc, tile_mask, row_bitmask);
+                arith::AndIOp::create(builder, loc, tile_mask, row_bitmask);
           }
           if (const int64_t row_in_sublane = end_row % packing;
               row_in_sublane != 0) {
-            auto row_mask = builder.create<tpu::CreateMaskOp>(
-                loc, mask_vreg_ty,
+            auto row_mask = tpu::CreateMaskOp::create(
+                builder, loc, mask_vreg_ty,
                 ValueRange{boundIdxConst(end_row / packing), boundIdxConst(0)},
                 ValueRange{boundIdxConst(end_row / packing + 1),
                            boundIdxConst(target_shape[1])});
-            auto row_bitmask = builder.create<arith::SelectOp>(
-                loc, row_mask,
+            auto row_bitmask = arith::SelectOp::create(
+                builder, loc, row_mask,
                 getMaskCst(0xFFFFFFFFu >>
                            (packing - row_in_sublane) * bitwidth),
                 getMaskCst(0xFFFFFFFF));
             tile_mask =
-                builder.create<arith::AndIOp>(loc, tile_mask, row_bitmask);
+                arith::AndIOp::create(builder, loc, tile_mask, row_bitmask);
           }
         }
       }
       mask = mask == nullptr
                  ? tile_mask
-                 : builder.create<arith::OrIOp>(loc, tile_mask, mask);
+                 : arith::OrIOp::create(builder, loc, tile_mask, mask);
     }
     CHECK(mask != nullptr);
     return cast<TypedValue<VectorType>>(mask);
