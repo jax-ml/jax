@@ -13,6 +13,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* New features:
+
+  * `pltpu.make_async_remote_copy` and `pltpu.semaphore_signal`'s `device_id`
+    argument now allows user to pass in a dictionary that only specifies the
+    device index along the communication axis, instead of the full coordinates.
+    It also supports TPU core id index.
+
 * Deprecations
 
   * `pl.atomic_*` APIs have been moved to {mod}`jax.experimental.pallas.triton`.

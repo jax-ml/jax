@@ -691,7 +691,8 @@ def make_async_remote_copy(
     dst_ref: The destination Reference.
     send_sem: The semaphore on the source device.
     recv_sem: The semaphore on the destination device.
-    device_id: The device id of the destination device. It could be a tuple.
+    device_id: The device id of the destination device. It could be a tuple, or
+      a dictionary specifying the communication axis and destination index.
     device_id_type: The type of the device id.
 
   Returns:
