@@ -949,11 +949,8 @@ class DialectBarrierRef:
   def as_barrier_memref(self) -> ir.Value:
     num_barriers = self.barrier_ref.num_barriers
     shape = () if num_barriers == 1 else (num_barriers,)
-    return ptr_as_memref(
-        self.get_ptr(),
-        ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
-        ptr_memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE,
-    )
+    memref_type = ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier"))
+    return builtin.unrealized_conversion_cast([memref_type], [self.get_ptr()])
 
   @classmethod
   def from_barrier_memref(cls, barrier: ir.Value):
@@ -967,16 +964,17 @@ class DialectBarrierRef:
           f"!mosaic_gpu.barrier, but got {barrier.type}"
       )
 
+    ptr_type = ir.Type.parse(f"!llvm.ptr<{WORKGROUP_NVPTX_ADDRESS_SPACE}>")
+    addr = builtin.unrealized_conversion_cast([ptr_type], [barrier])
     return cls(
         barrier_ref=BarrierRef(
-            base_address=memref_ptr(
-                barrier, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
-            ),
+            base_address=addr,
             offset=c(0, ir.IntegerType.get_signless(64)),
             phases=None,
             num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
         )
     )
+
 
 @dataclasses.dataclass(frozen=True)
 class CollectiveBarrierRef:
