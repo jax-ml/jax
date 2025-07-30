@@ -378,6 +378,27 @@ def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure]> {
   let hasVerifier = 1;
 }
 
+def TPU_ScanCountOp : TPU_Op<"scan_count", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>,AllShapesMatch<["imask", "omask", "vals", "cnts"]>,]> {
+  let description = [{
+    Calculates the running duplicate occurrence count of the elements in the input vector.
+  }];
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$imask,
+    AnyVectorOfNonZeroRank:$vals
+  );
+  let results = (outs
+    VectorOfNonZeroRankOf<[I1]>:$omask,
+    VectorOfNonZeroRankOf<[I32]>:$cnts
+  );
+
+  let assemblyFormat = [{
+    `mask` `(` $imask `:` type($imask) `)`
+    `value` `(` $vals `:` type($vals) `)`
+    attr-dict `:` type(results)
+  }];
+
+}
+
 def TPU_IotaOp : TPU_Op<"iota", [Pure]> {
   let description = [{
     Creates a vector that with values that start at 0 and increase along a
