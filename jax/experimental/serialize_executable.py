@@ -33,6 +33,8 @@ def serialize(compiled: jax.stages.Compiled):
                                 '_unloaded_executable', None)
   if unloaded_executable is None:
     raise ValueError("Compilation does not support serialization")
+  if getattr(unloaded_executable, 'mut', None) and unloaded_executable.mut.in_mut:
+    raise ValueError("can't serialize with a closed-over mutable array ref")
   args_info_flat, in_tree = jax.tree_util.tree_flatten(compiled.args_info)
   # TODO(necula): deal with constants in serialized executables
   if compiled._params.const_args:

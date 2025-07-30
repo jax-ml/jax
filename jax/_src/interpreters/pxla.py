@@ -2997,7 +2997,8 @@ class UnloadedMeshExecutable:
                           self.input_shardings, self.output_shardings,
                           self.auto_spmd_lowering, self.kept_var_idx,
                           self.xla_in_layouts, self.dispatch_in_layouts,
-                          self.xla_out_layouts, self.all_args_info, self)
+                          self.xla_out_layouts, self.mut, self.all_args_info,
+                          self)
 
   @staticmethod
   def from_hlo(name: str,
@@ -3179,12 +3180,12 @@ class MeshExecutable(stages.Executable):
       "xla_executable", "_unsafe_call", "build_unsafe_call", "in_avals",
       "out_avals", "_in_shardings", "_out_shardings", "_auto_spmd_lowering",
       "_kept_var_idx", "_xla_in_layouts", "_dispatch_in_layouts",
-      "_xla_out_layouts", "_all_args_info", "_unloaded_executable",
+      "_xla_out_layouts", "_mut", "_all_args_info", "_unloaded_executable",
   ]
 
   def __init__(self, xla_executable, build_unsafe_call, in_avals, out_avals,
                in_shardings, out_shardings, auto_spmd_lowering, kept_var_idx,
-               xla_in_layouts, dispatch_in_layouts, xla_out_layouts,
+               xla_in_layouts, dispatch_in_layouts, xla_out_layouts, mut,
                all_args_info: AllArgsInfo | None = None,
                unloaded_executable=None):
     self.xla_executable = xla_executable
@@ -3201,6 +3202,7 @@ class MeshExecutable(stages.Executable):
     self._xla_in_layouts = xla_in_layouts
     self._dispatch_in_layouts = dispatch_in_layouts
     self._xla_out_layouts = xla_out_layouts
+    self._mut = mut
     self._all_args_info = all_args_info
     self._unloaded_executable = unloaded_executable
 
@@ -3217,12 +3219,10 @@ class MeshExecutable(stages.Executable):
 
   def call(self, *args):
     args_after_dce = [a for i, a in enumerate(args) if i in self._kept_var_idx]
-    assert len(args_after_dce) == len(self.in_avals)  # includes the const_args
     if self._all_args_info is None:
       kept_args = args_after_dce
       ref_avals = self.in_avals
-      # TODO(necula): ensure we have actual debug info; need debug info
-      # before DCE.
+      # TODO(necula): ensure we have actual debug info; need it before DCE.
       # See https://github.com/jax-ml/jax/issues/26480.
       debug_info = core.DebugInfo(
           "MeshExecutable", "<unknown>",
@@ -3232,11 +3232,19 @@ class MeshExecutable(stages.Executable):
       ref_avals = self._all_args_info.in_avals
       debug_info = self._all_args_info.debug_info
 
-    all_arg_avals = map(core.shaped_abstractify, kept_args)
-    check_arg_avals_for_call(ref_avals, all_arg_avals, debug_info)
-    check_array_xla_sharding_layout_match(
-        args_after_dce, self._in_shardings, self._xla_in_layouts, debug_info,
-        self._kept_var_idx)
+    check_arg_avals_for_call(ref_avals, map(core.shaped_abstractify, kept_args),
+                             debug_info)
+
+    if not self._mut:
+      arg_names = [n for i, n in enumerate(debug_info.arg_names)
+                   if i in self._kept_var_idx]
+      check_array_xla_sharding_layout_match(
+          args_after_dce, self._in_shardings, self._xla_in_layouts, arg_names)
+    else:
+      args_after_dce = [*args_after_dce, *self._mut.in_mut]
+      arg_names = debug_info.arg_names + ('',) * len(self._mut.in_mut)
+      check_array_xla_sharding_layout_match(
+          args_after_dce, self._in_shardings, self._xla_in_layouts, arg_names)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
   def create_cpp_call(self, params: stages.CompiledCallParams):
@@ -3253,7 +3261,7 @@ class MeshExecutable(stages.Executable):
           params.out_tree, out_flat)
       use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat)
                       # TODO(necula): fix the AOT fast path for const_args
-                      and not params.const_args)
+                      and not params.const_args and not self._mut)
 
       if use_fastpath:
         out_avals = [o.aval for o in out_flat]
@@ -3336,20 +3344,14 @@ def check_device_backend_on_shardings(shardings) -> bool:
 
 
 def check_array_xla_sharding_layout_match(
-    args_after_dce,
-    in_xla_shardings: Sequence[JSharding],
-    in_xla_layouts: Sequence[Layout],
-    jaxpr_debug_info: core.DebugInfo,
-    kept_var_idx: set[int]) -> None:
-  # jaxpr_debug_info.arg_names are before DCE, so need to DCE them.
-  arg_names = (
-      [a for i, a in enumerate(jaxpr_debug_info.arg_names)
-       if i in kept_var_idx]
-  )
+    args,
+    in_shardings: Sequence[JSharding],
+    in_layouts: Sequence[Layout],
+    arg_names: Sequence[str]
+) -> None:
   errors = []
   num_errors = 5
-  for arg, xs, xl, name in safe_zip(
-      args_after_dce, in_xla_shardings, in_xla_layouts, arg_names):
+  for arg, xs, xl, name in zip(args, in_shardings, in_layouts, arg_names):
     if not isinstance(arg, array.ArrayImpl):
       continue
     if isinstance(xs, (UnspecifiedValue, AUTO)):

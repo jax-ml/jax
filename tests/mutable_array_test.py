@@ -70,6 +70,21 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(x_mut[...], jnp.array([2., 6., 1.]),
                         check_dtypes=False)
 
+  def test_basic_aot_closure(self):
+    x_mut = core.mutable_array(jnp.zeros(3))
+
+    @jax.jit
+    def f():
+      x_mut[...] += 1.
+      x_mut[0] += 1
+      x_mut[1] += 5
+
+    c = f.lower().compile()
+    c()
+    c()
+    self.assertAllClose(x_mut[...], jnp.array([4., 12., 2.]),
+                        check_dtypes=False)
+
   def test_basic_sharded_aot(self):
     mesh = jtu.create_mesh((2,), ('x',))
     arr = jax.device_put(np.arange(8.), NamedSharding(mesh, P('x')))
