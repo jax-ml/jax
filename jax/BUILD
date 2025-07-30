@@ -18,6 +18,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load(
     "//jaxlib:jax.bzl",
     "buffer_callback_internal_users",
+    "if_cuda_is_configured",
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_packages",
@@ -496,12 +497,12 @@ pytype_strict_library(
 py_library_providing_imports_info(
     name = "mosaic_gpu",
     srcs = glob(["experimental/mosaic/gpu/*.py"]),
-    data = [
-        "@cuda_nvcc//:nvdisasm",
+    data = if_cuda_is_configured([
         "@cuda_nvcc//:nvvm",
-        "@cuda_nvcc//:ptxas",
+        "@local_config_cuda//cuda:runtime_nvdisasm",
+        "@local_config_cuda//cuda:runtime_ptxas",
         "@nvidia_nvshmem//:libnvshmem_device",
-    ],
+    ]),
     lib_rule = pytype_strict_library,
     visibility = [
         ":mosaic_gpu_users",
