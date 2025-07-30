@@ -76,6 +76,7 @@ from .fragmented_array import (
     tmem_native_layout as tmem_native_layout,
     WGSplatFragLayout as WGSplatFragLayout,
     WGStridedFragLayout as WGStridedFragLayout,
+    copy_tiled as copy_tiled,
     optimization_barrier as optimization_barrier,
 )
 from .utils import (
