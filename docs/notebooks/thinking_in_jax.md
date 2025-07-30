@@ -305,10 +305,10 @@ To use `jax.jit` effectively, it is useful to understand how it works. Let's put
 @jit
 def f(x, y):
   print("Running f():")
-  print(f"  x = {x}")
-  print(f"  y = {y}")
+  print(f"  {x = }")
+  print(f"  {y = }")
   result = jnp.dot(x + 1, y + 1)
-  print(f"  result = {result}")
+  print(f"  {result = }")
   return result
 
 x = np.random.randn(3, 4)
