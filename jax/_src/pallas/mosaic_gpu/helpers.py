@@ -15,6 +15,7 @@
 """Helpers for Pallas Mosaic GPU kernels."""
 
 from collections.abc import Callable, Hashable, Sequence
+import functools
 import math
 from typing import TypeVar, overload
 
@@ -44,7 +45,19 @@ def nd_loop(
   ...
 
 
-def nd_loop(grid, *, collective_axes, init_carry=None):
+# TODO(justinfu): Fix the type signature to include both carry and wave_step.
+@overload
+def nd_loop(
+    grid: Sequence[int],
+    *,
+    collective_axes: Sequence[Hashable] | Hashable,
+    include_wave_step: bool
+) -> Callable[[Callable[[Sequence[jax.Array], jax.Array], None]], None]:
+  ...
+
+
+def nd_loop(grid, *, collective_axes, init_carry=None,
+            include_wave_step=False):
   """A loop over a multi-dimensional grid partitioned along the given axes.
 
   For example, if ``collective_axes`` is ``"x"`` with :func:`lax.axis_size`
@@ -78,6 +91,10 @@ def nd_loop(grid, *, collective_axes, init_carry=None):
   take and return the carry. If it's ``None`` then no carry argument is
   expected.
 
+  If ``include_wave_step`` is True then the body will be called with an
+  additional ``wave_step`` keyword argument that specifies the current
+  iteration local to the thread.
+
   See also:
     - :func:`jax.experimental.pallas.loop`: A loop over a single dimension.
   """
@@ -87,8 +104,9 @@ def nd_loop(grid, *, collective_axes, init_carry=None):
   grid_size = math.prod(grid)
 
   def decorator(body):
-    def wrapper(thread_step, carry):
-      step = thread_step * axis_size + axis_index
+    def wrapper(wave_step, carry):
+      nonlocal body
+      step = wave_step * axis_size + axis_index
       # The loop below is conceptually ``jnp.unravel_index``, but it uses
       # ``lax`` APIs instead of ``jax.numpy`` to minimize the number of
       # primitives used.
@@ -98,6 +116,8 @@ def nd_loop(grid, *, collective_axes, init_carry=None):
         index.append(lax.rem(step, grid_dim))
         step = lax.div(step, grid_dim)
       index.reverse()
+      if include_wave_step:
+        body = functools.partial(body, wave_step=wave_step)
       if init_carry is None:
         body(tuple(index))
       else:
