@@ -117,7 +117,40 @@ They also take a `num_const_args` argument.
 
 ## Compilation and execution
 
-TO DO ...
+The lowered MLIR module contains arguments for the const args, so
+the compiled executable will need to be passed the const args.
+It is important to choose the right place where we prepend the
+const args. For example, in the following code, the second invocation
+of the jitted function `f` is expected to hit the C++ jit cache without
+any Python code executing.
+
+```python
+const = jnp.array([42.])
+f = jax.jit(lambda: const)
+
+f()
+f()
+```
+
+(TODO: yashk2810 plans to write a description of how the jit caches work.)
+This means that the `const` will have to be passed to the executable in C++
+(and thus stored in `pxla.MeshExecutableFastpathData`),
+and therefore the C++ cache
+miss functions (e.g., `pjit._cpp_pjit.cache_miss`,
+or `aot_cache_miss` in `pxla.MeshExecutable.create_cpp_call`)
+will not take the const args as arguments. Instead these cache
+miss functions will have to prepend the const args.
+
+TODO: the C++ fastpath in case of const args is still WIP.
+
+To implement this scheme, we keep the `const_args` in
+`stages.Lowering`, `stages.Lowered`, and `stages.CompiledCallParams`.
+
+Interestingly, when we serialize an executable, e.g., for the compilation
+cache, we do not need to serialize the closed over constants. The executable
+itself does not contain them, and needs to take them as const args.
+Whoever is going to deserialize the cached executable will have to pass
+the const args.
 
 ## Previous implementation
 

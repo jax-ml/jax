@@ -1709,6 +1709,7 @@ def _cpp_pmap(
         # TODO(sharadmv): Enable effects in replicated computation
         not execute_replicated.has_unordered_effects
         and not execute_replicated.has_host_callbacks and
+        len(const_args) == 0 and
         # No tracers in the outputs.
         all(isinstance(x, xc.ArrayImpl) for x in out_flat))
 

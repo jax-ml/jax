@@ -1275,19 +1275,21 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   def testPmapConstant(self):
     device_count = jax.device_count()
-    f = self.pmap(lambda x: 3)
-    x = jnp.arange(device_count)
-    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
-      ans = f(x)
-    # self.assertEqual(count(), 0)  # TODO(mattjj): fix this
-    expected = np.repeat(3, device_count)
+    const = jnp.arange(16, dtype=np.int32)  # distinctive shape
+    f = self.pmap(lambda x: x + const[15])
+    x = jnp.arange(device_count, dtype=np.int32)
+    expected = x + np.int32(15)
+    ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
+    if not config.disable_jit.value:
+      self.assertCacheMisses(lambda: f(x),
+                             compilation_after_persistent_cache_miss=0)
 
     if not config.disable_jit.value:
-      f = self.pmap(lambda x: (x, 3))
-      x = np.arange(device_count)
+      f = self.pmap(lambda x: x + const[15])
+      x = np.arange(device_count, dtype=np.int32)
       with jtu.assert_num_jit_and_pmap_compilations(1):
-        _, ans = f(x)
+        ans = f(x)
       self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPmapConstantDevices(self):

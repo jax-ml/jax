@@ -256,6 +256,8 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
   @api_boundary
   def cache_miss(*args, **kwargs):
+    # args do not include the const args
+    # See https://docs.jax.dev/en/latest/internals/constants.html.
     if config.no_tracing.value:
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
@@ -468,14 +470,14 @@ def make_jit(fun: Callable,
 class PjitParams(NamedTuple):
   # Only jaxpr constants, we can't keep other arguments alive. These go as
   # first arguments for `params['jaxpr']`.
-  consts: list[Any]
+  consts: list[ArrayLike]  # Corresponding to jaxpr.constvars
   # Everything we need to trace, lower, and compile the jit function; passed
   # to `pjit_call_impl_python`, along with the `args_flat`
   params: dict[str, Any]
-  in_avals: tuple[core.AbstractValue, ...]
-  in_tree: PyTreeDef
+  in_avals: tuple[core.AbstractValue, ...]  # Not including the const_args
+  in_tree: PyTreeDef  # Not including the const_args
   out_tree: PyTreeDef
-  arg_names: tuple[str, ...]
+  arg_names: tuple[str, ...]  # Not including the const_args
 
 
 def _infer_params_impl(
@@ -1543,7 +1545,7 @@ def _lojax_expand_params(
   return new_params
 
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
-                        in_avals) -> Sequence[Layout | None]:
+                        in_avals) -> Sequence[Layout | AutoLayout | None]:
   # If device or backend is set, return the default layout. This is because you
   # can pass arrays on cpu (with untiled layouts) to jit with backend='tpu'
   # which causes error checks to fail. Returning the default layout allows
@@ -1551,7 +1553,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
   if pxla.check_device_backend_on_shardings(resolved_in_shardings):
     return (None,) * len(jit_in_layouts)
 
-  resolved_in_layouts: list[Layout | None] = []
+  resolved_in_layouts: list[Layout | AutoLayout | None] = []
   for arg, jit_in_l, rs, aval in safe_zip(
       args, jit_in_layouts, resolved_in_shardings, in_avals):
     committed = getattr(arg, '_committed', True)
@@ -1782,8 +1784,8 @@ def _pjit_call_impl_python(
                           ("out_layouts", out_layouts),
                           ("abstract args", map(core.abstractify, args)),
                           ("fingerprint", fingerprint))
-  return (compiled.unsafe_call(*computation._const_args, *args),
-          compiled, pgle_profiler, len(computation._const_args))
+  return (compiled.unsafe_call(*computation.const_args, *args),
+          compiled, pgle_profiler, len(computation.const_args))
 
 @weakref_lru_cache
 def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
@@ -1804,6 +1806,8 @@ def _pjit_call_impl(*args, jaxpr: core.ClosedJaxpr,
                     donated_invars, ctx_mesh, name, keep_unused, inline,
                     compiler_options_kvs):
   def call_impl_cache_miss(*args_, **kwargs_):
+    # args_ do not include the const args
+    # See https://docs.jax.dev/en/latest/internals/constants.html.
     # TODO(necula): remove num_const_args when fixing the C++ path
     out_flat, compiled, pgle_profiler, num_const_args = _pjit_call_impl_python(
         *args, jaxpr=jaxpr, in_shardings=in_shardings,
@@ -2080,7 +2084,7 @@ def const_args_layouts(
     const_args: Sequence[ArrayLike],
     avals: Sequence[core.AbstractValue],
     shardings: Sequence[PjitSharding]
-    ) -> Sequence[Layout | None]:
+    ) -> Sequence[Layout | AutoLayout | None]:
   return _resolve_in_layouts(
       const_args, (None,) * len(const_args), shardings, avals)
 

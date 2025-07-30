@@ -642,7 +642,7 @@ def parallel_callable(fun: lu.WrappedFun,
       shards=shards, pci=pci)
   pmap_executable = pmap_computation.compile()
   return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint,
-                      pmap_computation._const_args])
+                      pmap_computation.const_args])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -813,7 +813,7 @@ def lower_parallel_callable(
         tuple(const_arg_avals) + shards.global_sharded_avals,  # type: ignore
         shards.num_local_shards, shards.num_global_shards)
     pci = dataclasses.replace(pci, in_axes=in_axes,
-                              avals=tuple(const_arg_avals) + pci.avals)  # type: ignore
+                              avals=tuple(const_arg_avals) + tuple(pci.avals))
   else:
     jaxpr_avals = closed_jaxpr.in_avals
     const_args = []
@@ -947,14 +947,13 @@ def _pmap_unmapped_aval(size: core.AxisSize, axis: int | None,
 
 class PmapComputation(stages.Lowering):
   _hlo: ir.Module
-  _const_args: list[ArrayLike]
   _executable: PmapExecutable | None
 
   def __init__(self, hlo: ir.Module, const_args: list[ArrayLike],
                **compile_args):
     self._executable = None
     self._hlo = hlo
-    self._const_args = const_args
+    self.const_args = const_args
     self.compile_args = compile_args
 
   # -- stages.Lowering overrides
@@ -2464,9 +2463,6 @@ def _to_logical_sharding(
 class MeshComputation(stages.Lowering):
   _hlo: ir.Module
   _executable: MeshExecutable | None
-  # the constants that have been hoisted out and must be passed as first args,
-  # after the tokens.
-  _const_args: list[ArrayLike]
 
   def __init__(self, name: str, hlo: ir.Module,
                const_args: list[ArrayLike],
@@ -2476,7 +2472,7 @@ class MeshComputation(stages.Lowering):
                **compile_args):
     self._name = name
     self._hlo = hlo
-    self._const_args = const_args
+    self.const_args = const_args
     self._donated_invars = donated_invars
     self._platforms = platforms
     self._compiler_options_kvs = compiler_options_kvs
@@ -3195,7 +3191,7 @@ class MeshExecutable(stages.Executable):
     self.build_unsafe_call = build_unsafe_call
     # in_avals is a list of global and local avals. Aval is global if input
     # is a GDA or jax.Array else local.
-    self.in_avals = in_avals
+    self.in_avals = in_avals  # includes the const_args
     self.out_avals = out_avals
     self._unsafe_call = None
     self._in_shardings = in_shardings
@@ -3221,6 +3217,7 @@ class MeshExecutable(stages.Executable):
 
   def call(self, *args):
     args_after_dce = [a for i, a in enumerate(args) if i in self._kept_var_idx]
+    assert len(args_after_dce) == len(self.in_avals)  # includes the const_args
     if self._all_args_info is None:
       kept_args = args_after_dce
       ref_avals = self.in_avals
@@ -3235,25 +3232,28 @@ class MeshExecutable(stages.Executable):
       ref_avals = self._all_args_info.in_avals
       debug_info = self._all_args_info.debug_info
 
-    all_arg_avals = map(core.abstractify, kept_args)
+    all_arg_avals = map(core.shaped_abstractify, kept_args)
     check_arg_avals_for_call(ref_avals, all_arg_avals, debug_info)
     check_array_xla_sharding_layout_match(
         args_after_dce, self._in_shardings, self._xla_in_layouts, debug_info,
         self._kept_var_idx)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
-  def create_cpp_call(self, no_kwargs, in_tree, out_tree):
+  def create_cpp_call(self, params: stages.CompiledCallParams):
     if not (isinstance(self.unsafe_call, ExecuteReplicated) and
             not self.unsafe_call.has_unordered_effects and
             not self.unsafe_call.has_host_callbacks):
       return None
 
     def aot_cache_miss(*args, **kwargs):
-      params = stages.CompiledCallParams(self, no_kwargs, in_tree, out_tree)
+      # args do not include the const args
+      # See https://docs.jax.dev/en/latest/internals/constants.html.
       outs, out_flat, args_flat = stages.Compiled.call(params, *args, **kwargs)
       out_flat, out_tree_dispatch = reflatten_outputs_for_dispatch(
-          out_tree, out_flat)
-      use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat))
+          params.out_tree, out_flat)
+      use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat)
+                      # TODO(necula): fix the AOT fast path for const_args
+                      and not params.const_args)
 
       if use_fastpath:
         out_avals = [o.aval for o in out_flat]

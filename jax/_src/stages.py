@@ -43,9 +43,10 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
-from jax._src.sharding_impls import UnspecifiedValue, AUTO
-from jax._src.layout import Format, Layout, AutoLayout
+from jax._src.typing import ArrayLike
 from jax._src.interpreters import mlir
+from jax._src.layout import Format, Layout, AutoLayout
+from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
@@ -75,7 +76,7 @@ class Executable:
     """Execute on the flat list of arguments, returning flat outputs."""
     raise NotImplementedError("compiled executable does not support invocation")
 
-  def create_cpp_call(self, no_kwargs, in_tree, out_tree) -> Any:
+  def create_cpp_call(self, params: CompiledCallParams) -> Any:
     """Optionally constructs a fast c++ dispatcher."""
     return None
 
@@ -206,6 +207,10 @@ class Executable:
 class Lowering:
 
   compile_args: dict[str, Any]
+  # the constants that have been hoisted out and must be passed as first args,
+  # after the tokens.
+  # See https://docs.jax.dev/en/latest/internals/constants.html.
+  const_args: list[ArrayLike]
 
   def hlo(self) -> xc.XlaComputation:
     """Return an HLO representation of this computation."""
@@ -342,6 +347,8 @@ class CompiledCallParams(NamedTuple):
   no_kwargs: bool
   in_tree: tree_util.PyTreeDef
   out_tree: tree_util.PyTreeDef
+  # See https://docs.jax.dev/en/latest/internals/constants.html
+  const_args: list[ArrayLike]
 
 
 class Compiled(Stage):
@@ -352,20 +359,23 @@ class Compiled(Stage):
   common API for querying properties of compiled computations across
   JAX's various compilation paths and backends.
   """
-  __slots__ = ["args_info", "out_tree", "_executable", "_no_kwargs"]
+  __slots__ = ["args_info", "out_tree", "_executable", "_no_kwargs",
+               "_params"]
 
-  args_info: Any                # PyTree of ArgInfo
+  args_info: Any                # PyTree of ArgInfo, not including const_args
   out_tree: tree_util.PyTreeDef
   _executable: Executable
   _no_kwargs: bool
+  _params: CompiledCallParams
 
-  def __init__(self, executable, args_info, out_tree, no_kwargs=False):
+  def __init__(self, executable, const_args: list[ArrayLike],
+               args_info, out_tree, no_kwargs=False):
     self._executable = executable
     self._no_kwargs = no_kwargs
     self.args_info = args_info
     self.out_tree = out_tree
     self._params = CompiledCallParams(self._executable, self._no_kwargs,
-                                      self.in_tree, self.out_tree)
+                                      self.in_tree, self.out_tree, const_args)
     self._call = None
 
   def as_text(self) -> str | None:
@@ -493,7 +503,7 @@ class Compiled(Stage):
     # extract it from args because `params` can be passed as a kwarg by users
     # which might conflict here.
     params = args[0]
-    args = args[1:]
+    args = args[1:]  # Not including const_args
     if config.dynamic_shapes.value:
       raise NotImplementedError
     if params.no_kwargs and kwargs:
@@ -515,32 +525,24 @@ class Compiled(Stage):
             f"    * at {base}{tree_util.keystr(tuple(rest))}, seen {thing2} but now"
             f" given {thing1}, so {explanation}")
       raise TypeError('\n'.join(msg))
-    try:
-      out_flat = params.executable.call(*args_flat)
-    except TypeError as e:
-      # We can't transform ahead-of-time compiled calls, since we've
-      # lowered and compiled for a fixed function signature, and JAX
-      # transformations change signatures. We interpret a Tracer
-      # argument as an indication of a transformation attempt. We
-      # could check this before the executable call, but we'd rather
-      # avoid isinstance checks on the call path. Seeing a TypeError
-      # might mean that arguments have JAX-invalid types, which in
-      # turn might mean some are Tracers.
+    if not core.trace_state_clean():
+      # We check for tracers when we are under a transformation, and skip the
+      # check in the common path. We can't transform ahead-of-time compiled
+      # calls, since we've lowered and compiled for a fixed function signature,
+      # and JAX transformations change signatures.
       for arg in args_flat:
         if isinstance(arg, core.Tracer):
           raise TypeError(
               "Cannot apply JAX transformations to a function lowered and "
               "compiled for a particular signature. Detected argument of "
-              f"Tracer type {type(arg)}.") from e
-      else:
-        raise
+              f"Tracer type {type(arg)}.")
+    out_flat = params.executable.call(*params.const_args, *args_flat)
     outs = tree_util.tree_unflatten(params.out_tree, out_flat)
     return outs, out_flat, args_flat
 
   def __call__(self, *args, **kwargs):
     if self._call is None:
-      self._call = self._executable.create_cpp_call(
-          self._no_kwargs, self.in_tree, self.out_tree)
+      self._call = self._executable.create_cpp_call(self._params)
       if self._call is None:
         params = self._params
         def cpp_call_fallback(*args, **kwargs):
@@ -561,14 +563,14 @@ class Lowered(Stage):
   """
   __slots__ = ["_lowering", "args_info", "out_tree", "_no_kwargs"]
   _lowering: Lowering
-  args_info: Any                # PyTree of ArgInfo
+  args_info: Any  # PyTree of ArgInfo, not including the const_args
   out_tree: tree_util.PyTreeDef
   _no_kwargs: bool
 
   def __init__(
       self,
       lowering: Lowering,
-      args_info,  # PyTree of ArgInfo
+      args_info,
       out_tree: tree_util.PyTreeDef,
       no_kwargs: bool = False):
 
@@ -624,6 +626,7 @@ class Lowered(Stage):
     }
     return Compiled(
         self._lowering.compile(**kw),  # pytype: disable=wrong-keyword-args
+        self._lowering.const_args,
         self.args_info,
         self.out_tree,
         no_kwargs=self._no_kwargs,
@@ -698,12 +701,14 @@ class Traced(Stage):
                lower_callable, args_flat=None, arg_names=None,
                num_consts: int = 0, params_out_shardings=None):
     self.jaxpr = jaxpr
-    self.args_info = args_info
+    self.args_info = args_info  # Not including the const_args
     self.fun_name = fun_name
     self._out_tree = out_tree
     self._lower_callable = lower_callable
+    if args_flat is not None:
+      assert len(args_flat) == len(jaxpr.in_avals)  # Not including the const_args
     self._args_flat = args_flat
-    self._arg_names = arg_names
+    self._arg_names = arg_names  # Not including the const_args
     self._num_consts = num_consts
     self._params_out_shardings = params_out_shardings
 
@@ -731,13 +736,11 @@ class Traced(Stage):
       lowering = self._lower_callable(
           lowering_platforms=lowering_platforms,
           lowering_parameters=_private_parameters)
-      assert not lowering._const_args
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
       msg = _device_assignment_mismatch_error(
           self.fun_name, fails, self._args_flat, 'jit', self._arg_names)
       raise ValueError(msg) from None
-    # TODO(necula): add the hoisted consts to the Lowered
     return Lowered(lowering, self.args_info, self._out_tree)
 
 
