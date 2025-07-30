@@ -15,6 +15,8 @@ load("@rules_python//python:defs.bzl", "py_library")
 # See the License for the specific language governing permissions and
 # limitations under the License.
 load("//jaxlib:jax.bzl", "mosaic_extension_deps")
+load("//third_party/bazel_rules/rules_cc/cc:cc_library.bzl", "cc_library")
+load("//third_party/bazel_rules/rules_cc/cc:cc_test.bzl", "cc_test")
 
 licenses(["notice"])
 
