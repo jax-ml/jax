@@ -122,7 +122,7 @@ class FusionDType(dtypes.ExtendedDType, metaclass=abc.ABCMeta):
     return str(self)
 
   @abc.abstractmethod
-  def pull_block_spec_one_step(self, *args, **kwargs):
+  def pull_block_spec_one_step(self, aval_out, *args, **kwargs):
     raise NotImplementedError()
 
 
@@ -251,7 +251,7 @@ def physicalize_interp(
         outvals = eqn.primitive.bind(*subfuns, *invals, **bind_params)
 
     if eqn.primitive.multiple_results:
-      assert len(outvals) == len(eqn.outvars)
+      assert len(outvals) == len(eqn.outvars), eqn
       foreach(write_env, eqn.outvars, outvals)
     else:
       write_env(eqn.outvars[0], outvals)
@@ -489,8 +489,7 @@ _physicalize_rules[state_primitives.get_p] = _get_rule
 
 @block_spec.register_eval_rule(pack_dtype_p)
 def _pack_dtype_eval_rule(eval_ctx: block_spec.KernelEvalContext, *args, dtype):
-  del eval_ctx
-  return pack_dtype_p.bind(*args, dtype=dtype)
+  return dtype.eval_rule(eval_ctx, *args)
 
 
 @block_spec.register_pull_block_spec_rule(pack_dtype_p)
@@ -500,8 +499,8 @@ def _pack_dtype_pull_rule(
     *,
     dtype: FusionDType,
 ):
-  del ctx
-  return dtype.pull_block_spec_one_step(block_spec)  # pytype: disable=attribute-error
+  aval_out = ctx.avals_out[0]
+  return dtype.pull_block_spec_one_step(aval_out, block_spec)  # pytype: disable=attribute-error
 
 
 def _fusible_physicalize_rule(
