@@ -165,10 +165,12 @@ static ifrt::ArrayRef GetIfRtArray(const ExecuteShardedArg& arg) {
   // TODO(hyeontaek): Find a way to compute a correct shape.
   // TODO(yashkatariya): Plumb sharding or memory_kind here.
   ifrt::Client* client = ifrt_arrays.front()->client();
+  absl::StatusOr<ifrt::DeviceListRef> device_list =
+      client->MakeDeviceList(devices);
+  TF_CHECK_OK(device_list.status());
   auto ifrt_array = client->AssembleArrayFromSingleDeviceArrays(
       ifrt_arrays.front()->shape(),
-      ifrt::OpaqueSharding::Create(client->MakeDeviceList(devices),
-                                   ifrt::MemoryKind()),
+      ifrt::OpaqueSharding::Create(*std::move(device_list), ifrt::MemoryKind()),
       absl::MakeSpan(ifrt_arrays), ifrt::ArrayCopySemantics::kReuseInput,
       ifrt::SingleDeviceShardSemantics::kAddressableShards);
   TF_CHECK_OK(ifrt_array.status());

@@ -39,6 +39,7 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
 #include "jaxlib/python_ref_manager.h"
+#include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/types.h"
@@ -75,7 +76,8 @@ PyDeviceList::PyDeviceList(nb::tuple py_device_assignment)
     }
     devices.push_back(py_device->device());
   }
-  device_list_ = py_client_->ifrt_client()->MakeDeviceList(devices);
+  device_list_ =
+      xla::ValueOrThrow(py_client_->ifrt_client()->MakeDeviceList(devices));
 }
 
 PyDeviceList::~PyDeviceList() {
@@ -307,8 +309,9 @@ bool PyDeviceList::IsFullyAddressable() {
           }
         }
         self->addressable_device_list_ = xla::make_nb_class<PyDeviceList>(
-            self->py_client_, self->py_client_->ifrt_client()->MakeDeviceList(
-                                  addressable_devices));
+            self->py_client_,
+            xla::ValueOrThrow(self->py_client_->ifrt_client()->MakeDeviceList(
+                addressable_devices)));
         break;
       }
       case 1: {
@@ -418,8 +421,8 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
     nb::handle device = std::get<1>(device_list_)[0];
     auto default_memory = device.attr("default_memory")();
     info.default_memory_kind = default_memory.attr("kind");
-    info.memory_kinds = nb::tuple(
-        nb::object(device.attr("addressable_memories")()));
+    info.memory_kinds =
+        nb::tuple(nb::object(device.attr("addressable_memories")()));
     memory_kind_info_ = std::move(info);
   } catch (nb::python_error& e) {
     // Cache the error.
@@ -484,13 +487,14 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
                      }
                      return *kind;
                    })
-      .def_prop_ro("memory_kinds", [](xla::nb_class_ptr<PyDeviceList> l) {
-        auto kinds = MemoryKinds(l);
-        if (!kinds.ok()) {
-          throw nb::value_error(kinds.status().ToString().c_str());
-        }
-        return *kinds;
-      })
+      .def_prop_ro("memory_kinds",
+                   [](xla::nb_class_ptr<PyDeviceList> l) {
+                     auto kinds = MemoryKinds(l);
+                     if (!kinds.ok()) {
+                       throw nb::value_error(kinds.status().ToString().c_str());
+                     }
+                     return *kinds;
+                   })
       .def_prop_ro("device_kind", &PyDeviceList::DeviceKind, nb::lock_self());
 }
 

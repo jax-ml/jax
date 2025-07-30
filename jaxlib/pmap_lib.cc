@@ -160,12 +160,14 @@ absl::StatusOr<ShardArgResult> ShardArg(
                               devices.end());
           // pmap does not support memory_kind for now.
           auto* ifrt_client = result.ifrt_array->client();
-          TF_ASSIGN_OR_RETURN(auto copied_ifrt_arrays,
-                              ifrt_client->CopyArrays(
-                                  absl::MakeSpan(&result.ifrt_array, 1),
-                                  ifrt_client->MakeDeviceList(ifrt_devices),
-                                  xla::ifrt::MemoryKind(),
-                                  xla::ifrt::ArrayCopySemantics::kReuseInput));
+          TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
+                              ifrt_client->MakeDeviceList(ifrt_devices));
+          TF_ASSIGN_OR_RETURN(
+              auto copied_ifrt_arrays,
+              ifrt_client->CopyArrays(
+                  absl::MakeSpan(&result.ifrt_array, 1), std::move(device_list),
+                  xla::ifrt::MemoryKind(),
+                  xla::ifrt::ArrayCopySemantics::kReuseInput));
           result.ifrt_array = std::move(copied_ifrt_arrays.front());
         }
         return result;

@@ -565,8 +565,8 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   if (!copy_groups.empty()) {
     xla::ifrt::Client* const ifrt_client =
         executable.ifrt_loaded_executable()->client();
-    xla::ifrt::DeviceListRef ifrt_devices =
-        ifrt_client->MakeDeviceList({addressable_devices[0]});
+    TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef ifrt_devices,
+                        ifrt_client->MakeDeviceList({addressable_devices[0]}));
     for (auto& [key, group] : copy_groups) {
       TF_ASSIGN_OR_RETURN(
           auto copied_ifrt_arrays,

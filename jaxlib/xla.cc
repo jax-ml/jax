@@ -173,7 +173,6 @@ bool IsSanitized() { return IsAsan() || IsMsan() || IsTsan(); }
 
 }  // namespace
 
-
 NB_MODULE(_jax, m) {
   // Initialize ABSL logging because code within XLA uses it.
 #ifndef PLATFORM_GOOGLE
@@ -490,8 +489,8 @@ NB_MODULE(_jax, m) {
             }
             ifrt_devices.push_back(py_device->device());
           }
-          ifrt::DeviceListRef device_list =
-              client->ifrt_client()->MakeDeviceList(ifrt_devices);
+          ifrt::DeviceListRef device_list = xla::ValueOrThrow(
+              client->ifrt_client()->MakeDeviceList(ifrt_devices));
           return xla::ValueOrThrow(
               client->ifrt_client()->GetTopologyForDevices(device_list));
         });

@@ -63,7 +63,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
-#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
@@ -574,13 +573,15 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
             allow_zero_copy =
                 options.allow_zero_copy]() mutable -> absl::StatusOr<Shard> {
       auto* ifrt_client = ifrt_array->client();
+      TF_ASSIGN_OR_RETURN(ifrt::DeviceListRef device_list,
+                          ifrt_client->MakeDeviceList({to_device}));
       TF_ASSIGN_OR_RETURN(
           auto copied_ifrt_arrays,
-          ifrt_client->CopyArrays(
-              absl::MakeSpan(&ifrt_array, 1),
-              ifrt_client->MakeDeviceList({to_device}), to_memory_kind,
-              allow_zero_copy ? ifrt::ArrayCopySemantics::kReuseInput
-                              : ifrt::ArrayCopySemantics::kAlwaysCopy));
+          ifrt_client->CopyArrays(absl::MakeSpan(&ifrt_array, 1),
+                                  std::move(device_list), to_memory_kind,
+                                  allow_zero_copy
+                                      ? ifrt::ArrayCopySemantics::kReuseInput
+                                      : ifrt::ArrayCopySemantics::kAlwaysCopy));
       return Shard(std::move(copied_ifrt_arrays.front()), weak_type);
     };
   }

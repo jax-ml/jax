@@ -87,7 +87,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pprof_profile_builder.h"
 #include "xla/python/types.h"
-#include "xla/python/version.h"
 #include "xla/service/platform_util.h"  // IWYU pragma: keep
 #include "xla/service/spmd/shardy/utils.h"  // IWYU pragma: keep
 #include "xla/shape.h"
@@ -347,9 +346,11 @@ absl::Status PyClient::Defragment() {
   TF_ASSIGN_OR_RETURN(DevicePutResult device_put_result,
                       DevicePutWithDevice(argument, client->ifrt_client_.get(),
                                           device, ifrt::MemoryKind(), options));
-  auto sharding = make_nb_class<jax::SingleDeviceSharding>(
-      client, client->ifrt_client()->MakeDeviceList({device}),
-      /*memory_kind=*/nb::none());
+  TF_ASSIGN_OR_RETURN(ifrt::DeviceListRef device_list,
+                      client->ifrt_client()->MakeDeviceList({device}));
+  auto sharding =
+      make_nb_class<jax::SingleDeviceSharding>(client, std::move(device_list),
+                                               /*memory_kind=*/nb::none());
 
   auto traceback = Traceback::Get();
   return PyArray::MakeFromIfrtArrayAndSharding(
