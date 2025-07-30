@@ -22,7 +22,6 @@ import math
 import operator
 import re
 import sys
-import unittest
 
 from absl.testing import absltest, parameterized
 import jax
@@ -3013,29 +3012,6 @@ class ProfilerTest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), x, x, (), prof_spec=spec
     ))
     jax.block_until_ready(f(x))
-
-
-class TorchTest(TestCase):
-
-  def setUp(self):
-    super().setUp()
-    try:
-      import torch
-    except ImportError:
-      raise unittest.SkipTest("Test requires PyTorch")
-    self.torch = torch
-
-  def test_basic(self):
-    def kernel(ctx, i_gmem, o_gmem, _):
-      x = mgpu.FragmentedArray.load_strided(i_gmem)
-      (x + x).store_untiled(o_gmem)
-
-    ty = jax.ShapeDtypeStruct((128, 128), jnp.float32)
-    x = self.torch.randn((128, 128), dtype=self.torch.float, device='cuda')
-    f = mgpu.as_torch_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), ty, ty, ())
-    y = f(x)
-    np.testing.assert_allclose(y.cpu(), x.cpu() * 2)
-    del y  # Make sure the destructor runs successfully.
 
 
 class LayoutTest(TestCase):

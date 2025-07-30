@@ -147,6 +147,10 @@ cc_library(
 cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
+    linkopts = [
+        "-Wl,--export-dynamic-symbol='MosaicGpuCompile'",
+        "-Wl,--export-dynamic-symbol='MosaicGpuUnload'",
+    ],
     deps = [
         ":library_paths",
         ":nvshmem",

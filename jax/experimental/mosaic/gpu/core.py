@@ -732,7 +732,7 @@ def _declare_runtime_functions():
   )
 
 
-def as_gpu_kernel(
+def _kernel_to_module(
     body,
     grid: tuple[int, int, int],
     block: tuple[int, int, int],
@@ -743,7 +743,6 @@ def as_gpu_kernel(
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
     kernel_name: str | None = None,
-    ir_version: int | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
     inout_shape = (),
 ):
@@ -785,7 +784,37 @@ def as_gpu_kernel(
   launch_ctx.scratch.finalize_size()
   module.operation.verify()
 
-  if launch_ctx.is_device_collective and not supports_cross_device_collectives():
+  return (
+      module,
+      in_shape,
+      inout_shape,
+      out_shape,
+      unwrap_output_tuple,
+      launch_ctx.is_device_collective,
+  )
+
+
+def as_gpu_kernel(
+    body,
+    grid: tuple[int, int, int],
+    block: tuple[int, int, int],
+    in_shape,
+    out_shape,
+    smem_scratch_shape: ShapeTree | Union[ShapeTree],
+    prof_spec: profiler.ProfilerSpec | None = None,
+    cluster: tuple[int, int, int] = (1, 1, 1),
+    module_name: str = "unknown",
+    kernel_name: str | None = None,
+    ir_version: int | None = None,
+    thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
+    inout_shape = (),
+):
+  module, in_shape, inout_shape, out_shape, unwrap_output_tuple, is_device_collective = _kernel_to_module(
+      body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
+      cluster, module_name, kernel_name, thread_semantics, inout_shape
+  )
+
+  if is_device_collective and not supports_cross_device_collectives():
     raise RuntimeError("Kernel is a cross-device collective but no support is available.")
 
   expected_arg_tys, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
@@ -852,7 +881,8 @@ def as_torch_gpu_kernel(
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
     kernel_name: str | None = None,
-    lowering_semantics: LoweringSemantics = LoweringSemantics.Lane,
+    thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
+    inout_shape = (),
 ):
   try:
     import torch  # pytype: disable=import-error
@@ -860,44 +890,16 @@ def as_torch_gpu_kernel(
     raise RuntimeError("as_torch_gpu_kernel requires PyTorch")
   torch.cuda.init()  # Make sure CUDA context is set up.
 
-  if isinstance(in_shape, list):
-    in_shape = tuple(in_shape)
-  elif not isinstance(in_shape, tuple):
-    in_shape = (in_shape,)
-  if kernel_name is None:
-    kernel_name = jax_util.fun_name(body, "anonymous")
-
-  # TODO(slebedev): Make this a parameter.
-  inout_shape = ()
-
-  flat_out_types, out_treedef = jax.tree.flatten(out_shape)
-  expected_arg_treedef = jax.tree.structure(in_shape)
-
-  module, out_shape, unwrap_output_tuple, launch_ctx = (
-      _lower_as_gpu_kernel(
-          body, grid, cluster, block, in_shape, out_shape, inout_shape,
-          smem_scratch_shape, lowering_semantics, module_name, kernel_name,
-          prof_spec
-      )
+  module, in_shape, inout_shape, out_shape, unwrap_output_tuple, is_device_collective = _kernel_to_module(
+      body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
+      cluster, module_name, kernel_name, thread_semantics, inout_shape
   )
+  flat_arg_types, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
+  flat_out_types, _ = jax.tree.flatten(out_shape)
+  out_treedef = jax.tree.structure((*out_shape, *inout_shape))
 
-  if lowering_semantics == LoweringSemantics.Warpgroup and dialect is not None:
-    # We need to run a pass that removes dead-code for which layout inference
-    # does not work.
-    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize)", module.context)
-    pm.run(module.operation)
-
-    # Run Python lowering passes. The remaining passes will be run in C++ in
-    # jax/jaxlib/mosaic/gpu/custom_call.cc
-    layout_inference.infer_layout(module)  # pytype: disable=attribute-error
-    transform_inference.infer_transforms(module)  # pytype: disable=attribute-error
-    dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
-
-  launch_ctx.scratch.finalize_size()
-  module.operation.verify()
-
-  if launch_ctx.is_device_collective:
-    raise RuntimeError("Kernel is a cross-device collective but no support is available.")
+  if is_device_collective:
+    raise RuntimeError("Kernel is a cross-device collective but no support is available for Torch.")
 
   # Get our hands on the compilation and unload functions
   try:
@@ -906,9 +908,9 @@ def as_torch_gpu_kernel(
     except ImportError:
       import jax_plugins.xla_cuda12 as cuda_plugin  # pytype: disable=import-error
   except ImportError:
-    raise RuntimeError("as_torch_gpu_kernel only works with recent jaxlib builds "
-                       "that use backend plugins")
-  dll = ctypes.CDLL(cuda_plugin._get_library_path())
+    dll = ctypes.CDLL(None)
+  else:
+    dll = ctypes.CDLL(cuda_plugin._get_library_path())
   compile_func = dll.MosaicGpuCompile
   compile_func.argtypes = [ctypes.c_void_p]
   compile_func.restype = ctypes.POINTER(ctypes.c_void_p)
@@ -916,9 +918,10 @@ def as_torch_gpu_kernel(
   unload_func.argtypes = [compile_func.restype]
   unload_func.restype = None
 
+  module = _run_serde_pass(module, serialize=True, ir_version=None)
   module_asm = module.operation.get_asm(binary=True, enable_debug_info=True)
   compiled = compile_func(ctypes.c_char_p(module_asm))
-  if compiled is None:
+  if not compiled:
     raise RuntimeError("Failed to compile the module")
   ctx, launch_ptr = compiled[0], compiled[1]
   ctx_ptr_ptr = ctypes.pointer(ctypes.c_void_p(ctx))
@@ -935,6 +938,17 @@ def as_torch_gpu_kernel(
           f"Invalid argument structure: expected {expected_arg_treedef}, got"
           f" {arg_treedef}, ({args=})"
       )
+    for arg, expected_ty in zip(flat_args, flat_arg_types):
+      if arg.shape != expected_ty.shape:
+        raise ValueError(
+            f"Argument shape mismatch: expected {expected_ty.shape}, got"
+            f" {arg.shape}"
+        )
+      if arg.dtype != as_torch_dtype(expected_ty.dtype):
+        raise ValueError(
+            "Argument dtype mismatch: expected"
+            f" {as_torch_dtype(expected_ty.dtype)}, got {arg.dtype}"
+        )
 
     # Construct a device pointer list like in the XLA calling convention
     buffers = (ctypes.c_void_p * (arg_treedef.num_leaves + out_treedef.num_leaves))()
@@ -948,6 +962,8 @@ def as_torch_gpu_kernel(
       out = torch.empty(t.shape, dtype=as_torch_dtype(t.dtype), device=device)
       flat_outs.append(out)
       buffers[i] = out.data_ptr()
+    if num_inout_args := jax.tree.structure(inout_shape).num_leaves:
+      flat_outs += flat_args[-num_inout_args:]
     # Allocate another buffer for args of the host-side program. This is sadly
     # the default MLIR calling convention.
     args_ptr = (ctypes.POINTER(ctypes.c_void_p) * 3)()
@@ -956,7 +972,10 @@ def as_torch_gpu_kernel(
     args_ptr[2] = ctypes.cast(ctypes.pointer(ctypes.pointer(buffers)),
                               ctypes.POINTER(ctypes.c_void_p))
     launch(args_ptr)
-    return jax.tree.unflatten(out_treedef, flat_outs)
+    out = jax.tree.unflatten(out_treedef, flat_outs)
+    if unwrap_output_tuple:
+      return out[0]
+    return out
 
   # Unload the compiled code when the Python function is destroyed.
   def unload(_):

@@ -49,6 +49,21 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "gpu_torch_test",
+    srcs = ["gpu_torch_test.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    deps = [
+        "//jax:mosaic_gpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+        "torch",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "gpu_test_multidevice",
     srcs = ["gpu_test_multidevice.py"],
     enable_backends = [],
