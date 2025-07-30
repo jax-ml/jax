@@ -605,6 +605,10 @@ class SharedMemory:
 
   deallocated_bytes: int = 0
 
+  # (device_id, local_core_id) -> [(grid_index, [range])]
+  output_ranges: dict[tuple[int, int], list] = dataclasses.field(
+      default_factory=lambda: collections.defaultdict(list))
+
   @property
   def num_cores(self) -> int:
     return self.num_devices * self.num_cores_per_device
@@ -698,6 +702,38 @@ def _clean_up_shared_memory(device_id):
   device_id = int(device_id)
   shared_memory = _get_shared_memory()
   shared_memory.clean_up_barrier.wait()
+
+def _check_for_revisiting(device_id, local_core_id, loop_idx, output_blocks):
+  device_id = int(device_id)
+  local_core_id = int(local_core_id)
+  loop_idx = tuple(int(x) for x in loop_idx)
+  output_ranges = [_to_range(b) if b is not None else None
+                   for b in output_blocks]
+
+  shared_memory = _get_shared_memory()
+  past_output_ranges = shared_memory.output_ranges[(device_id, local_core_id)]
+  if not past_output_ranges:
+    past_output_ranges.append((loop_idx, output_ranges))
+    return
+
+  for i in range(len(output_ranges)):
+    if output_ranges[i] is None:
+      continue
+    if past_output_ranges[-1][1][i] == output_ranges[i]:
+      continue
+    # TODO(jburnim): Do something constant time instead of linear here.
+    past_idxs = [j for j, ors in enumerate(past_output_ranges)
+                 if ors[1][i] == output_ranges[i]]
+    if past_idxs:
+      first_prev_idx = past_output_ranges[past_idxs[0]][0]
+      first_prev_idx = past_output_ranges[past_idxs[-1]][0]
+      raise RuntimeError(
+        f'Revisited block {output_ranges[i]} of output {i} in iteration '
+        f'{loop_idx}. The block was previously visited in iterations '
+        f'{past_output_ranges[past_idxs[0]][0]} through '
+        f'{past_output_ranges[past_idxs[-1]][0]} .')
+
+  past_output_ranges.append((loop_idx, output_ranges))
 
 def _validate(device_id):
   device_id = int(device_id)
@@ -2510,7 +2546,7 @@ def interpret_pallas_call(
         )
 
         # Copy from the kernel buffers to slices of the output in HBM.
-        def _store_to_output_buffer(index, output_var):
+        def _store_to_output_buffer(index, output_var, transform):
           kernel_output_val = callback.io_callback(
               # TODO(jburnim): Pass source_info from the pallas_call, in case this
               # get is involved in a data race.
@@ -2519,21 +2555,9 @@ def interpret_pallas_call(
               device_id,
               core_index,
               TPU_MEMORY_SPACE_IDXS[output_var.aval.memory_space],
-              kernel_output_ids[j],
+              kernel_output_ids[index],
               (),
               ordered=True,
-          )
-          transform = indexing.NDIndexer(
-              indices=tuple(
-                  indexing.ds(st, sz) if not iid else st
-                  for st, sz, iid in zip(
-                      cur_start_indices[num_inputs + index],
-                      block_shapes[num_inputs + index],
-                      is_squeeze_dim[num_inputs + index],
-                  )
-              ),
-              shape=output_vals[index].shape,
-              int_indexer_shape=(index),
           )
           callback.io_callback(
               # TODO(jburnim): Pass source_info from the pallas_call, in case this
@@ -2549,11 +2573,26 @@ def interpret_pallas_call(
               ordered=True,
           )
 
+        output_slices : list[Any] = []
         for j, var in enumerate(output_vars):
           if _is_any(var.aval.memory_space):
+            output_slices.append(None)
             continue
           assert len(cur_start_indices[num_inputs + j].shape) == 1
           assert len(next_start_indices[num_inputs + j].shape) == 1
+          transform = indexing.NDIndexer(
+              indices=tuple(
+                  indexing.ds(st, sz) if not iid else st  # type: ignore[misc]
+                  for st, sz, iid in zip(
+                      cur_start_indices[num_inputs + j],
+                      block_shapes[num_inputs + j],
+                      is_squeeze_dim[num_inputs + j],
+                  )
+              ),
+              shape=output_vals[j].shape,
+              int_indexer_shape=(),
+          )
+          output_slices.append((transform,))
           jax.lax.cond(
               (iteration_idx + 1 == loop_bound)
               | jax.lax.reduce_or(
@@ -2561,9 +2600,17 @@ def interpret_pallas_call(
                   != next_start_indices[num_inputs + j],
                   axes=(0,),
               ),
-              functools.partial(_store_to_output_buffer, j, var),
+              functools.partial(_store_to_output_buffer, j, var, transform),
               lambda: None,
           )
+        callback.io_callback(
+            _check_for_revisiting,
+            (),
+            device_id,
+            core_index,
+            loop_idx,
+            output_slices,
+            ordered=True)
 
         return (
             iteration_idx + 1,
