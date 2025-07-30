@@ -82,8 +82,9 @@ class Tiling:
 
   def tile_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
     """Computes the shape of an array after tiling."""
+    orig_shape = shape
     def fail():
-      raise ValueError(f"Tiling {self.tiles} does not apply to shape {shape}")
+      raise ValueError(f"Tiling {self.tiles} does not apply to shape {orig_shape}")
     for tile in self.tiles:
       if len(tile) > len(shape):
         fail()
@@ -95,9 +96,10 @@ class Tiling:
 
   def untile_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
     """Computes the shape of an array before tiling from its tiled shape."""
+    orig_shape = shape
     def fail():
       raise ValueError(
-          f"shape {shape} is not a valid result of applying tiling {self}."
+          f"shape {orig_shape} is not a valid result of applying tiling {self}."
       )
     for tile in reversed(self.tiles):
       if len(tile) > len(shape):
@@ -3176,3 +3178,105 @@ def optimization_barrier(*arrays):
     )
   # pytype cannot type check the return type of an overloaded function.
   return results[0] if len(arrays) == 1 else results  # pytype: disable=bad-return-type
+
+
+def copy_tiled(src: ir.Value, dst: ir.Value, swizzle: int = 16):
+  """Copy the data from the src reference to the dst reference.
+
+  Exactly one of src/dst should be in SMEM, while the other should be in GMEM.
+  The SMEM reference is expected to be tiled into (8, swizzle_elems) (as it
+  would for MMA), and so should have a rank larger by 2 than the GMEM ref.
+  """
+  src_ty = ir.MemRefType(src.type)
+  dst_ty = ir.MemRefType(dst.type)
+  if math.prod(src_ty.shape) != math.prod(dst_ty.shape):
+    raise ValueError(
+        "Source and destination must have the same number of elements, but got"
+        f" source shape {src_ty.shape} and destination shape {dst_ty.shape}"
+    )
+  if src_ty.element_type != dst_ty.element_type:
+    raise ValueError(
+        "Source and destination must have the same element type, but got"
+        f" source type {src_ty.element_type} and destination type"
+        f" {dst_ty.element_type}"
+    )
+  bitwidth = utils.bitwidth(src_ty.element_type)
+  swizzle_elems = 8 * swizzle // bitwidth
+  # Signedness doesn't matter, but we need to specify something for the
+  # intermediate arrays.
+  is_signed = False if ir.IntegerType.isinstance(src_ty.element_type) else None
+  if utils.is_smem_ref(src_ty) != utils.is_smem_ref(dst_ty):
+    if utils.is_smem_ref(src_ty):
+      smem_ty, gmem_ty = src_ty, dst_ty
+    else:
+      smem_ty, gmem_ty = dst_ty, src_ty
+    if smem_ty.rank != gmem_ty.rank + 2:
+      raise ValueError(
+          "SMEM reference must have a rank larger by 2 than the destination"
+          f" reference (due to 2D tiling), but got SMEM rank {smem_ty.rank} and"
+          f" destination rank {gmem_ty.rank}."
+      )
+    swizzle_elems = 8 * swizzle // utils.bitwidth(gmem_ty.element_type)
+    if smem_ty.shape[-2:] != [8, swizzle_elems]:
+      raise NotImplementedError(
+          f"For {swizzle=}, expected SMEM tiling to be (8, {swizzle_elems})"
+      )
+    expected_src_shape = utils.tile_shape(gmem_ty.shape, (8, swizzle_elems))
+    if tuple(smem_ty.shape) != expected_src_shape:
+      raise ValueError(
+          f"Expected SMEM reference to have shape {expected_src_shape} (tiling"
+          f" {gmem_ty.shape} by (8, {swizzle_elems})), but got {smem_ty.shape}"
+      )
+    row_tiles, col_tiles = smem_ty.shape[-4:-2]
+    if row_tiles % 4 == 0:
+      warp_row_tiles, warp_col_tiles = 4, 1
+    elif row_tiles % 2 == 0:
+      if col_tiles % 2:
+        raise NotImplementedError("Number of tiles is not a multiple of 4")
+      warp_row_tiles, warp_col_tiles = 2, 2
+    else:
+      if col_tiles % 4:
+        raise NotImplementedError("Number of tiles is not a multiple of 4")
+      warp_row_tiles, warp_col_tiles = 1, 4
+    row_tiles //= warp_row_tiles
+    col_tiles //= warp_col_tiles
+    bytes_per_thread = min(16, 8 * swizzle // WARP_SIZE)
+    lane_row_tiles = lane_col_tiles = 1
+    if bytes_per_thread < 16:  # Try to splread multiple tiles over a warp.
+      max_scale_up = 16 // bytes_per_thread
+      while max_scale_up > 1 and col_tiles % 2 == 0:
+        max_scale_up //= 2
+        lane_col_tiles *= 2
+        col_tiles //= 2
+      while max_scale_up > 1 and row_tiles % 2 == 0:
+        max_scale_up //= 2
+        lane_row_tiles *= 2
+        row_tiles //= 2
+      bytes_per_thread *= lane_row_tiles * lane_col_tiles
+    if 8 * bytes_per_thread < bitwidth:
+      raise NotImplementedError("Element types with bitwidth so large aren't supported")
+    vector_length = bytes_per_thread * 8 // bitwidth
+    assert (lane_col_tiles * swizzle_elems) % vector_length == 0
+    threads_per_row = (lane_col_tiles * swizzle_elems) // vector_length
+    assert lane_row_tiles * 8 >= WARP_SIZE // threads_per_row
+    layout = TiledLayout(
+        Tiling(
+            (
+                (warp_row_tiles * lane_row_tiles * 8, warp_col_tiles * lane_col_tiles * swizzle_elems),
+                (lane_row_tiles * 8, lane_col_tiles * swizzle_elems),
+                (WARP_SIZE // threads_per_row, vector_length)
+            )
+        ),
+        warp_dims=(-6, -5),
+        lane_dims=(-3, -2) if swizzle < 64 else (-2, -3),
+        vector_dim=-1,
+        _check_canonical=False,
+    ).canonicalize()
+    if utils.is_smem_ref(src_ty):
+      regs = FragmentedArray.load_tiled(src, swizzle, is_signed=is_signed, layout=layout)
+      regs.store_untiled(dst, optimized=False)
+    else:
+      regs = FragmentedArray.load_untiled(src, is_signed=is_signed, layout=layout, optimized=False)
+      regs.store_tiled(dst, swizzle)
+    return
+  raise NotImplementedError(f"Unsupported copy: {src.type} -> {dst.type}")
