@@ -313,7 +313,10 @@ py_library_providing_imports_info(
 
 pytype_strict_library(
     name = "experimental_serialize_executable",
-    srcs = ["experimental/serialize_executable.py"],
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/serialize_executable.py",
+    ],
     visibility = [":serialize_executable_users"],
     deps = [
         ":jax",
@@ -536,7 +539,10 @@ py_library_providing_imports_info(
 
 pytype_strict_library(
     name = "experimental_compute_on",
-    srcs = ["experimental/compute_on.py"],
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/compute_on.py",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":compute_on",
@@ -545,7 +551,10 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "experimental_mesh_utils",
-    srcs = ["experimental/mesh_utils.py"],
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/mesh_utils.py",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":internal_mesh_utils",
@@ -554,7 +563,10 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "experimental_multihost_utils",
-    srcs = ["experimental/multihost_utils.py"],
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/multihost_utils.py",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":api",
@@ -573,7 +585,10 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "experimental_pjit",
-    srcs = ["experimental/pjit.py"],
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/pjit.py",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":api",
@@ -583,7 +598,10 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "experimental_profiler",
-    srcs = ["experimental/profiler.py"],
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/profiler.py",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src/lib",
@@ -592,7 +610,10 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "experimental_topologies",
-    srcs = ["experimental/topologies.py"],
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/topologies.py",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":experimental_mesh_utils",
@@ -604,7 +625,10 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "experimental_transfer",
-    srcs = ["experimental/transfer.py"],
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/transfer.py",
+    ],
     deps = [
         ":jax",
         "//jax/_src:util",
