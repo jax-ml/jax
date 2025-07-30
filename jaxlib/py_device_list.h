@@ -128,7 +128,7 @@ class PyDeviceList {
   // Populated on demand. Guarded by the object's self lock.
   std::optional<bool> is_fully_addressable_;
   // Populated on demand. Guarded by the object's self lock.
-  std::optional<xla::nb_class_ptr<PyDeviceList>> addressable_device_list_;
+  std::optional<nanobind::object> addressable_device_list_;
   // Populated on demand. Guarded by the object's self lock.
   std::optional<std::set<int>> process_indices_;
   // Populated on demand. Guarded by the object's self lock.

@@ -24,6 +24,7 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
+#include "jaxlib/py_device.h"  // IWYU pragma: keep
 #include "xla/python/ifrt/device.h"
 
 namespace nb = ::nanobind;

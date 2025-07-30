@@ -332,7 +332,8 @@ bool PyDeviceList::IsFullyAddressable() {
         throw nb::value_error("Unrecognized DeviceList type");
     }
   }
-  return *self->addressable_device_list_;
+  return nb::cast<xla::nb_class_ptr<PyDeviceList>>(
+      *self->addressable_device_list_);
 }
 
 const std::set<int>& PyDeviceList::ProcessIndices() {

@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef JAXLIB_NB_CLASS_PTR_H_
 #define JAXLIB_NB_CLASS_PTR_H_
 
+#include <type_traits>
+
 #include "nanobind/nanobind.h"
 
 namespace xla {
@@ -27,6 +29,8 @@ namespace xla {
 template <typename T>
 class nb_class_ptr : public nanobind::object {
  public:
+  static constexpr auto Name = nanobind::detail::make_caster<T>::Name;
+
   inline nb_class_ptr() : nanobind::object() {}
   inline nb_class_ptr(nanobind::handle h, ::nanobind::detail::borrow_t)
       : nanobind::object(h, ::nanobind::detail::borrow_t{}) {}
@@ -36,6 +40,11 @@ class nb_class_ptr : public nanobind::object {
     nanobind::handle type = nanobind::type<T>();
     return nanobind::isinstance(h, type);
   };
+
+  template <typename U,
+            typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
+  inline nb_class_ptr(nb_class_ptr<U>&& other)
+      : nanobind::object(other.release(), ::nanobind::detail::steal_t{}) {}
 
   T* operator->() const { return nanobind::inst_ptr<T>(ptr()); }
   T& operator*() const { return *nanobind::inst_ptr<T>(ptr()); }

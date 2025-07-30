@@ -661,7 +661,8 @@ NB_MODULE(_pretty_printer, m) {
   nb::class_<Doc>(m, "Doc")
       .def("__repr__", &Doc::Repr)
       .def("__add__",
-           [](xla::nb_class_ptr<Doc> self, xla::nb_class_ptr<Doc> other) {
+           [](xla::nb_class_ptr<Doc> self,
+              xla::nb_class_ptr<Doc> other) -> xla::nb_class_ptr<Doc> {
              return xla::make_nb_class<ConcatDoc>(
                  std::vector<xla::nb_class_ptr<Doc>>{std::move(self),
                                                      std::move(other)});
@@ -679,11 +680,13 @@ NB_MODULE(_pretty_printer, m) {
   nb::class_<SourceMapDoc, Doc>(m, "SourceMapDoc");
 
   m.def(
-      "nil", []() { return xla::make_nb_class<NilDoc>(); },
+      "nil",
+      []() -> xla::nb_class_ptr<Doc> { return xla::make_nb_class<NilDoc>(); },
       "An empty document.");
   m.def(
       "text",
-      [](std::string text, std::optional<std::string> annotation) {
+      [](std::string text,
+         std::optional<std::string> annotation) -> xla::nb_class_ptr<Doc> {
         return xla::make_nb_class<TextDoc>(std::move(text),
                                            std::move(annotation));
       },
@@ -691,13 +694,16 @@ NB_MODULE(_pretty_printer, m) {
       "Literal text.");
   m.def(
       "concat",
-      [](std::vector<xla::nb_class_ptr<Doc>> children) {
+      [](std::vector<xla::nb_class_ptr<Doc>> children)
+          -> xla::nb_class_ptr<Doc> {
         return xla::make_nb_class<ConcatDoc>(std::move(children));
       },
       nb::arg("children"), "Concatenation of documents.");
   m.def(
       "brk",
-      [](std::string text) { return xla::make_nb_class<BreakDoc>(text); },
+      [](std::string text) -> xla::nb_class_ptr<Doc> {
+        return xla::make_nb_class<BreakDoc>(text);
+      },
       nb::arg("text") = std::string(" "),
       R"(A break.
 
@@ -705,7 +711,7 @@ Prints either as a newline or as `text`, depending on the enclosing group.
 )");
   m.def(
       "group",
-      [](xla::nb_class_ptr<Doc> child) {
+      [](xla::nb_class_ptr<Doc> child) -> xla::nb_class_ptr<Doc> {
         return xla::make_nb_class<GroupDoc>(std::move(child));
       },
       R"(Layout alternative groups.
@@ -716,14 +722,15 @@ inside the group as printed as newlines.
 )");
   m.def(
       "nest",
-      [](int n, xla::nb_class_ptr<Doc> child) {
+      [](int n, xla::nb_class_ptr<Doc> child) -> xla::nb_class_ptr<Doc> {
         return xla::make_nb_class<NestDoc>(n, std::move(child));
       },
       "Increases the indentation level by `n`.");
   m.def(
       "color",
       [](xla::nb_class_ptr<Doc> child, std::optional<Color> foreground,
-         std::optional<Color> background, std::optional<Intensity> intensity) {
+         std::optional<Color> background,
+         std::optional<Intensity> intensity) -> xla::nb_class_ptr<Doc> {
         return xla::make_nb_class<ColorDoc>(std::move(child), foreground,
                                             background, intensity);
       },
@@ -737,7 +744,8 @@ Requires use_colors=True to be set when printing; otherwise does nothing.
 )");
   m.def(
       "source_map",
-      [](xla::nb_class_ptr<Doc> child, nb::object source) {
+      [](xla::nb_class_ptr<Doc> child,
+         nb::object source) -> xla::nb_class_ptr<Doc> {
         return xla::make_nb_class<SourceMapDoc>(std::move(child),
                                                 std::move(source));
       },

@@ -37,6 +37,7 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/partition_spec.h"
 #include "jaxlib/py_client.h"
+#include "jaxlib/py_device.h"  // IWYU pragma: keep
 #include "jaxlib/py_device_list.h"
 #include "jaxlib/sharded_device_array.h"
 #include "xla/hlo/ir/hlo_sharding.h"
