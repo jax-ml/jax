@@ -528,8 +528,57 @@ def _options_from_jax_configs(plugin_name):
 OptionsDict = Mapping[str, str | int | list[int] | float | bool]
 
 
-# TODO(b/261345120): decide on a public name and expose a public method which is
-# an alias of this method.
+def make_pjrt_c_api_client(
+    plugin_name: str,
+    options: OptionsDict | Callable[[], OptionsDict] | None = None,
+) -> xla_client.Client:
+  """Creates a PjRt client for the given plugin.
+
+  Args:
+    plugin_name: the name of the plugin.
+    options: Optional. It is used when creating a PJRT plugin client. Can be a
+      callable, in which case it will be invoked upon plugin initialization
+      time, and will be expected to return an option dictionary.
+  """
+  if not xla_client.pjrt_plugin_initialized(plugin_name):
+    xla_client.initialize_pjrt_plugin(plugin_name)
+  updated_options: dict[str, Any] = {}
+  if options is not None:
+    updated_options.update(options() if callable(options) else options)
+  updated_options.update(_options_from_jax_configs(plugin_name))
+  if distributed.global_state.client is None:
+    return xla_client.make_c_api_client(plugin_name, updated_options, None)
+
+  distribute_options = {
+      'node_id': distributed.global_state.process_id,
+      'num_nodes': distributed.global_state.num_processes,
+  }
+  if (slice_index := distributed.global_state.slice_index) is not None:
+    distribute_options['slice_index'] = slice_index
+  if options is not None:
+    distribute_options.update(updated_options)
+  cross_host_transfer_server_factory = None
+  if (CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value and
+      hasattr(_jax, "make_transfer_server_interface_factory")):
+    transport_addresses = []
+    if CROSS_HOST_TRANSPORT_ADDRESSES.value:
+      transport_addresses = CROSS_HOST_TRANSPORT_ADDRESSES.value.split(",")
+    cross_host_transfer_server_factory = (
+        _jax.make_transfer_server_interface_factory(
+            distributed_client=distributed.global_state.client,
+            socket_address=CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value,
+            transport_addresses=transport_addresses,
+            transfer_size=CROSS_HOST_TRANSFER_TRANSFER_SIZE.value,
+        )
+    )
+  return xla_client.make_c_api_client(
+      plugin_name,
+      distribute_options,
+      distributed.global_state.client,
+      cross_host_transfer_server_factory,
+  )
+
+
 def register_plugin(
     plugin_name: str,
     *,
@@ -537,6 +586,7 @@ def register_plugin(
     library_path: str | None = None,
     options: OptionsDict | Callable[[], OptionsDict] | None = None,
     c_api: Any | None = None,
+    factory: BackendFactory | None = None,
 ) -> Any:
   """Registers a backend factory for the PJRT plugin.
 
@@ -550,45 +600,9 @@ def register_plugin(
       callable, in which case it will be invoked upon plugin initialization
       time, and will be expected to return an option dictionary.
     c_api: Optional. The plugin can provide a PJRT C API to be registered.
+    factory: Optional. A factory function that creates a PJRT client. If not
+      provided, a default factory will be used.
   """
-  def factory():
-    if not xla_client.pjrt_plugin_initialized(plugin_name):
-      xla_client.initialize_pjrt_plugin(plugin_name)
-    updated_options = {}
-    if options is not None:
-      updated_options.update(options() if callable(options) else options)
-    updated_options.update(_options_from_jax_configs(plugin_name))
-    if distributed.global_state.client is None:
-      return xla_client.make_c_api_client(plugin_name, updated_options, None)
-
-    distribute_options = {
-        'node_id': distributed.global_state.process_id,
-        'num_nodes': distributed.global_state.num_processes,
-    }
-    if (slice_index := distributed.global_state.slice_index) is not None:
-      distribute_options['slice_index'] = slice_index
-    if options is not None:
-      distribute_options.update(updated_options)
-    cross_host_transfer_server_factory = None
-    if (CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value and
-        hasattr(_jax, "make_transfer_server_interface_factory")):
-      transport_addresses = []
-      if CROSS_HOST_TRANSPORT_ADDRESSES.value:
-        transport_addresses = CROSS_HOST_TRANSPORT_ADDRESSES.value.split(",")
-      cross_host_transfer_server_factory = (
-          _jax.make_transfer_server_interface_factory(
-              distributed_client=distributed.global_state.client,
-              socket_address=CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value,
-              transport_addresses=transport_addresses,
-              transfer_size=CROSS_HOST_TRANSFER_TRANSFER_SIZE.value,
-          )
-      )
-    return xla_client.make_c_api_client(
-        plugin_name,
-        distribute_options,
-        distributed.global_state.client,
-        cross_host_transfer_server_factory,
-    )
 
   if library_path and c_api:
     logger.error(
@@ -604,6 +618,15 @@ def register_plugin(
         plugin_name,
     )
     return
+
+  if factory is not None and options is not None:
+    raise ValueError(
+        "Cannot provide both 'factory' and 'options' when registering PJRT"
+        " plugin. When providing a custom factory, the factory's must handle"
+        " its own options."
+    )
+  if factory is None:
+    factory = partial(make_pjrt_c_api_client, plugin_name, options=options)
 
   logger.debug(
       'registering PJRT plugin %s from %s', plugin_name, library_path
