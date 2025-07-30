@@ -2995,6 +2995,46 @@ class FragmentedArrayTest(TestCase):
     expected = jnp.full((m, n), value, dtype=from_dtype).astype(to_dtype)
     np.testing.assert_array_equal(result, expected)
 
+  @parameterized.product(
+      swizzle=(16, 32, 64, 128),
+      shape=((128, 128), (8, 128), (128, 32), (48, 64)),
+      to_smem=(True, False),
+  )
+  def test_copy_tiled(self, swizzle, shape, to_smem):
+    dtype = jnp.int32
+    tiling = (8, 8 * swizzle // jnp.iinfo(dtype).bits)
+    def kernel(ctx, src, dst, scratch):
+      smem, barrier = scratch
+      if to_smem:
+        mgpu.copy_tiled(src, smem, swizzle=swizzle)
+        ctx.async_copy(
+            src_ref=smem,
+            dst_ref=dst,
+            gmem_transform=mgpu.TileTransform(tiling),
+            swizzle=swizzle,
+        )
+        ctx.await_async_copy(0)
+      else:
+        ctx.async_copy(
+            src_ref=src,
+            dst_ref=smem,
+            gmem_transform=mgpu.TileTransform(tiling),
+            swizzle=swizzle,
+            barrier=barrier,
+        )
+        barrier.wait()
+        mgpu.copy_tiled(smem, dst, swizzle=swizzle)
+
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(mgpu.tile_shape(shape, tiling), dtype),
+        mgpu.TMABarrier(1),
+    ]
+    y = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+    )(x)
+    np.testing.assert_array_equal(y, x)
+
 
 class ProfilerTest(TestCase):
 
