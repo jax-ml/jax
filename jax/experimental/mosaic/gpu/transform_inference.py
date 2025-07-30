@@ -33,6 +33,7 @@ from jax._src.lib.mlir.dialects import vector
 from . import fragmented_array as fa
 from . import inference_utils
 from . import layouts as layouts_lib
+from . import tcgen05
 from . import utils
 
 # mypy: ignore-errors
@@ -225,6 +226,7 @@ def _infer_vector_load_store_transforms(
   elif (
       layout == fa.WGMMA_ROW_LAYOUT
       or layout == fa.WGMMA_COL_LAYOUT
+      or layout == tcgen05.TMEM_NATIVE_LAYOUT
       or isinstance(layout, fa.WGStridedFragLayout)
       or isinstance(layout, fa.WGSplatFragLayout)
   ):

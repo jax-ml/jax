@@ -411,20 +411,35 @@ def _vector_load_op_lowering_rule(
         is_signed=is_signed,
         vec_size=strided_layout.vec_size,
     )
-  elif layouts.from_layout_attr(out_layout_attr) == fa.WGMMA_LAYOUT:
+  elif layouts.is_tiled_layout(out_layout_attr):
+    layout = layouts.from_tiled_layout_attr(out_layout_attr)
     transforms_attr = inference_utils.in_transforms(vector_load_op)[0]
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
         transforms_attr
     )
-    ref_ty = ir.MemRefType(vector_load_op.base.type)
-    _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
-    transformed_ref = unwrap_transformed_memref(vector_load_op.base, transforms_attr)
-    fragmented_array = fa.FragmentedArray.load_tiled(
-        transformed_ref,
-        swizzle=swizzle,
-        is_signed=is_signed,
-        layout=fa.WGMMA_LAYOUT,
-    )
+    has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
+    if has_transforms:
+      transforms_attr = inference_utils.in_transforms(vector_load_op)[0]
+      swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+          transforms_attr
+      )
+      ref_ty = ir.MemRefType(vector_load_op.base.type)
+      _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
+      transformed_ref = unwrap_transformed_memref(vector_load_op.base, transforms_attr)
+      fragmented_array = fa.FragmentedArray.load_tiled(
+          transformed_ref,
+          swizzle=swizzle,
+          is_signed=is_signed,
+          layout=layout,
+      )
+    else:
+      is_tmem_native = layout == tcgen05.TMEM_NATIVE_LAYOUT
+      fragmented_array = fa.FragmentedArray.load_untiled(
+          vector_load_op.base,
+          layout=layout,
+          optimized=not is_tmem_native,
+      )
+
   else:
     raise ValueError(
         f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
@@ -457,6 +472,7 @@ def _vector_store_op_lowering_rule(
 
   unwrapped_ref = vector_store_op.base
   swizzle = None
+  has_transforms = False
   if inference_utils.should_have_transforms(vector_store_op):
     # Not all vector loads have transforms. E.g. if the store is directly to
     # gmem, it won't have any transforms.
@@ -464,21 +480,17 @@ def _vector_store_op_lowering_rule(
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
         transforms_attr
     )
+    has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms != ()
     ref_ty = ir.MemRefType(vector_store_op.base.type)
     _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
     unwrapped_ref = unwrap_transformed_memref(vector_store_op.base, transforms_attr)
 
-  if fragmented_array.layout == fa.WGMMA_LAYOUT:
+  if has_transforms:
     fragmented_array.store_tiled(unwrapped_ref, swizzle)
-  elif (fragmented_array.layout == fa.WGMMA_ROW_LAYOUT or
-        fragmented_array.layout == fa.WGMMA_COL_LAYOUT or
-        isinstance(fragmented_array.layout, fa.WGStridedFragLayout) or
-        isinstance(fragmented_array.layout, fa.WGSplatFragLayout)):
-    fragmented_array.store_untiled(unwrapped_ref)
   else:
-    raise ValueError(
-        f"{vector_store_op} has an unsupported layout: {to_store_layout}"
-    )
+    is_tmem_native = fragmented_array.layout == tcgen05.TMEM_NATIVE_LAYOUT
+    fragmented_array.store_untiled(unwrapped_ref, optimized=not is_tmem_native)
+
   mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
 
   return []
@@ -1498,6 +1510,68 @@ def _tmem_dealloc_op_lowering_rule(
 
   return []
 
+def _tmem_ref_from_ir(x: ir.Value, layout: ir.Attribute) -> tcgen05.TMEMRef:
+  """Returns a TMEMRef from an IR value."""
+  if not ir.MemRefType.isinstance(x.type):
+    raise ValueError(f"{x} is not a memref.")
+  mem_ref_ty = ir.MemRefType(x.type)
+
+  if mem_ref_ty.memory_space != mgpu_utils.tmem():
+    raise ValueError(
+        f"{x} has a memory space {mem_ref_ty.memory_space} that is not TMEM."
+    )
+
+  _, [tmem_addr] = _undo_conversion_cast(x)
+
+  shape = tuple(mem_ref_ty.shape)
+  el_ty = mem_ref_ty.element_type
+  layout = layouts_lib.from_layout_attr(layout)
+  assert isinstance(layout, fa.TiledLayout)
+  in_tmem_layout = tcgen05.TMEMLayout(
+      layout.tiling, layout.warp_dims, layout.lane_dims, layout.vector_dim
+  )
+  return tcgen05.TMEMRef(tmem_addr, shape, el_ty, in_tmem_layout)
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
+if jaxlib.version >= (0, 7, 1):
+  @_register_lowering(mgpu.AsyncLoadTmemOp)
+  def _async_load_tmem_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.AsyncLoadTmemOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.AsyncLoadTmemOp."""
+    del ctx
+
+    tmem = _tmem_ref_from_ir(op.source, inference_utils.in_tmem_layouts(op)[0])
+
+    out_layout_attr = inference_utils.out_layouts(op)[0]
+    out_layout = layouts_lib.from_tiled_layout_attr(out_layout_attr)
+    el_type = ir.MemRefType(op.source.type).element_type
+    is_signed = False if ir.IntegerType.isinstance(el_type) else None
+    fa = tmem.load(out_layout, is_signed)
+    return [fragmented_array_to_ir(fa, op.result.type)]
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
+if jaxlib.version >= (0, 7, 1):
+  @_register_lowering(mgpu.AsyncStoreTmemOp)
+  def _async_store_tmem_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.AsyncStoreTmemOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.AsyncStoreTmemOp."""
+    del ctx
+
+    tmem = _tmem_ref_from_ir(
+        op.destination, inference_utils.in_tmem_layouts(op)[0]
+    )
+
+    in_layout_attr = inference_utils.in_layouts(op)[0]
+    el_type = ir.VectorType(op.source.type).element_type
+    is_signed = False if ir.IntegerType.isinstance(el_type) else None
+    fa = _fragmented_array_from_ir(op.source, in_layout_attr, is_signed)
+    tmem.store(fa)
+
+    return []
 
 def inline_block(
     block: ir.Block, args: Sequence[ir.Value], mapper: dict[ir.Value, ir.Value],

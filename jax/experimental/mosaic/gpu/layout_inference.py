@@ -21,6 +21,7 @@ from functools import partial
 import math
 from typing import cast
 
+from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -591,6 +592,28 @@ def _infer_custom_primitive_op_layout(
   in_layouts = list(custom_primitive_op.in_layouts)
   out_layouts = list(custom_primitive_op.out_layouts)
   return in_layouts, out_layouts
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
+if jaxlib.version >= (0, 7, 1):
+  @partial(_add_layout_inference_rule, mgpu.AsyncLoadTmemOp)
+  def _infer_async_load_tmem_op_layout(
+      op: mgpu.AsyncLoadTmemOp,
+  ) -> OptionalLayouts:
+    # TODO(b/431684684): Implement this, instead of relying on manual input.
+    out_layouts = list(inference_utils.out_layouts(op))
+    return [], out_layouts
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
+if jaxlib.version >= (0, 7, 1):
+  @partial(_add_layout_inference_rule, mgpu.AsyncStoreTmemOp)
+  def _infer_async_store_tmem_op_layout(
+      op: mgpu.AsyncStoreTmemOp,
+  ) -> OptionalLayouts:
+    # TODO(b/431684684): Implement this, instead of relying on manual input.
+    in_layouts = list(inference_utils.in_layouts(op))
+    return in_layouts, []
 
 
 @partial(_add_layout_inference_rule, mgpu.BroadcastInDimOp)
