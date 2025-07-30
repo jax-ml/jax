@@ -2627,7 +2627,8 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr | core.Jaxpr, backend,
                   out_avals, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
                   const_lowering: dict[int, IrValues],
-                  arg_names=None, result_names=None):
+                  arg_names=None, result_names=None,
+                  attributes: None | dict[str, Any] = None):
   # TODO(necula): clean up the types
   if isinstance(call_jaxpr, core.ClosedJaxpr):
     const_args = core.jaxpr_const_args(call_jaxpr.jaxpr)
@@ -2651,6 +2652,8 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr | core.Jaxpr, backend,
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(symbol_name),
                              flatten_ir_values(args))
+  if attributes:
+    call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(attributes)
   out_nodes = unflatten_ir_values_like_types(call.results, output_types)
   tokens, out_nodes = util.split_list(out_nodes, [len(effects)])
   tokens_out = tokens_in.update_tokens(TokenSet(zip(effects, tokens)))

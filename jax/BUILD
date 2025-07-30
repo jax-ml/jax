@@ -210,12 +210,12 @@ py_library_providing_imports_info(
             "**/*_test.py",
         ],
     ) + [
-        "experimental/pjit.py",
-        "experimental/multihost_utils.py",
-        "experimental/shard_map.py",
-        # until checkify is moved out of experimental
         "experimental/checkify.py",
         "experimental/compilation_cache/compilation_cache.py",
+        "experimental/multihost_utils.py",
+        "experimental/pjit.py",
+        "experimental/scheduling_groups.py",
+        "experimental/shard_map.py",
     ],
     lib_rule = pytype_library,
     pytype_srcs = glob(
