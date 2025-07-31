@@ -1193,6 +1193,24 @@ class ShardMapTest(jtu.JaxTestCase):
     for i in range(len(jax.devices())):
       self.assertIn(f'instance {i} has value', output())
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_pure_callback_jit(self, mesh):
+    def host_kernel(arr: np.ndarray):
+      return arr + 1, arr * 2.0
+
+    @partial(jax.shard_map, mesh=mesh, in_specs=P('y'),
+             out_specs=(P('x'), P('y')))
+    def per_shard(x_shard):
+      spec = jax.ShapeDtypeStruct(x_shard.shape, x_shard.dtype)
+      return jax.pure_callback(host_kernel, (spec, spec), x_shard)
+
+    batch = np.arange(32, dtype=np.float32).reshape(16, 2)
+    x = jax.device_put(
+        batch, device=jax.sharding.NamedSharding(mesh, jax.P('x'))
+    )
+
+    per_shard(x)  # doesn't crash
+
   def test_psum_transpose_non_zero_cts(self):
     mesh = jtu.create_mesh((8,), 'x')
     @shard_map(mesh=mesh, in_specs=P('x'), out_specs=(P('x'), P()))

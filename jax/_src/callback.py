@@ -153,16 +153,17 @@ def _callback_op_sharding(
           " computations"
       )
     if config.use_shardy_partitioner.value:
-      ndim = 0
-      if avals_out and isinstance(avals_out[0], core.ShapedArray):
-        ndim = avals_out[0].ndim
+      ndims = [0]
+      if avals_out:
+        ndims = [x.ndim for x in avals_out if isinstance(x, core.ShapedArray)]
       op_sharding = SdyArrayList([
           SdyArray(
               mesh_shape=(),
-              dim_shardings=[
-                  SdyDim(axes=[], is_open=False)
-              ] * ndim,
-              logical_device_ids=())])
+              dim_shardings=[SdyDim(axes=[], is_open=False)] * ndim,
+              logical_device_ids=(),
+          )
+          for ndim in ndims
+      ])
     else:
       op_sharding = xc.OpSharding()  # type: ignore[assignment]
       op_sharding.type = xc.OpSharding.Type.MANUAL
@@ -640,7 +641,7 @@ def receive_from_host(
     if config.use_shardy_partitioner.value:
       assert isinstance(sharding, SdyArrayList)
       assert len(sharding.shardings) >= 1
-       # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
+      # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
       # number of shardings to match the number of results, but JAX only sees
       # the array result, we need to add an equivalent sharding for the token.
       # Note that even if a function returns N results, we will end up with N
@@ -655,7 +656,6 @@ def receive_from_host(
   # Token should be at the end of the results
   result, token = recv_op.results
   return token, result
-
 
 
 def _aval_to_xla_shape(aval: core.AbstractValue) -> xc.Shape:
