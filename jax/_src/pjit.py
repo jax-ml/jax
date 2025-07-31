@@ -68,7 +68,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     flatten_spec, _internal_use_concrete_mesh)
-from jax._src.layout import Format, Layout, AutoLayout
+from jax._src.layout import Format, Layout, AutoLayout, get_layout_for_vmap
 from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
@@ -2847,16 +2847,13 @@ def _sharding_constraint_batcher(
     vmapped_sharding = NamedSharding(
         vmapped_sharding.mesh, PartitionSpec(*new_spec))
 
-  # TODO(yashkatariya): Figure out layouts should change under vmap.
-  if layout is not None:
-    raise NotImplementedError(
-        'Concrete layout is not supported for vmap(with_sharding_constraint). '
-        f'Got layout {layout}')
+  vmapped_layout = (get_layout_for_vmap(d, layout) if layout is not None else
+                    layout)
 
   y = sharding_constraint_p.bind(
       x,
       sharding=vmapped_sharding,
-      layout=layout,
+      layout=vmapped_layout,
       context_mesh=context_mesh,
       unconstrained_dims=frozenset(unconstrained_dims))
   return y, d
@@ -3168,7 +3165,11 @@ mlir.register_lowering(layout_constraint_p,
                        _layout_constraint_hlo_lowering)
 
 def _layout_constraint_batcher(axis_data, vals_in, dims_in, layout):
-  raise NotImplementedError
+  x, = vals_in
+  d, = dims_in
+  vmapped_layout = get_layout_for_vmap(d, layout)
+  y = layout_constraint_p.bind(x, layout=vmapped_layout)
+  return y, d
 batching.fancy_primitive_batchers[layout_constraint_p] = _layout_constraint_batcher
 batching.skippable_batchers[layout_constraint_p] = lambda _: ()
 

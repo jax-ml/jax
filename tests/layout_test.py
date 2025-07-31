@@ -773,6 +773,25 @@ class LayoutTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     self.assertIn('LayoutConstraint', lowered_text)
 
+  def test_with_layout_constraint_vmap(self):
+    if not jtu.test_device_matches(['tpu']):
+      self.skipTest('Only works for TPU')
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    shape = (16, 128)
+    s = NamedSharding(mesh, P('x'))
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    def f(x):
+      y = x.T
+      # Constrain `y` to the original layout of `arr` because without it,
+      # the layout of `y` would be the transpose of `arr`.
+      y = with_layout_constraint(y, Layout(major_to_minor=(0,)))
+      return y * 2
+
+    out = jax.jit(jax.vmap(f))(arr)
+    self.assertEqual(out.format.layout.major_to_minor, (0, 1))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

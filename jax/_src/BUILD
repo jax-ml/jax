@@ -1199,6 +1199,7 @@ pytype_strict_library(
         ":dtypes",
         ":named_sharding",
         ":sharding",
+        ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )

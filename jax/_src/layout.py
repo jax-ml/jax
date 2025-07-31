@@ -20,6 +20,7 @@ import numpy as np
 from jax._src.dtypes import iinfo, issubdtype
 from jax._src.sharding import Sharding
 from jax._src.named_sharding import AUTO as AutoSharding
+from jax._src.util import tuple_insert
 from jax._src.lib import xla_client as xc
 
 Shape = tuple[int, ...]
@@ -33,16 +34,16 @@ class AutoLayout:
 class Layout:
   major_to_minor: tuple[int, ...]
   tiling: tuple[tuple[int, ...], ...] | None
-  _sub_byte_element_size_in_bits: int
+  sub_byte_element_size_in_bits: int
 
   AUTO = AutoLayout()
 
   def __init__(self, major_to_minor: tuple[int, ...],
                 tiling: tuple[tuple[int, ...], ...] | None = None,
-                _sub_byte_element_size_in_bits: int = 0):
+                sub_byte_element_size_in_bits: int = 0):
     self.major_to_minor = tuple(major_to_minor)
     self.tiling = None if tiling is None else tuple(map(tuple, tiling))
-    self._sub_byte_element_size_in_bits = _sub_byte_element_size_in_bits
+    self._sub_byte_element_size_in_bits = sub_byte_element_size_in_bits
 
   @staticmethod
   def from_pjrt_layout(pjrt_layout: xc.PjRtLayout):
@@ -55,7 +56,7 @@ class Layout:
     return (
         f'Layout(major_to_minor={self.major_to_minor},'
         f' tiling={self.tiling},'
-        f' _sub_byte_element_size_in_bits={self._sub_byte_element_size_in_bits})'
+        f' sub_byte_element_size_in_bits={self._sub_byte_element_size_in_bits})'
     )
 
   def __hash__(self):
@@ -68,6 +69,16 @@ class Layout:
     return (self.major_to_minor == other.major_to_minor and
             self.tiling == other.tiling and
             self._sub_byte_element_size_in_bits == other._sub_byte_element_size_in_bits)
+
+  def update(self, **kwargs):
+    if 'major_to_minor' not in kwargs:
+      kwargs['major_to_minor'] = self.major_to_minor
+    if 'tiling' not in kwargs:
+      kwargs['tiling'] = self.tiling
+    if 'sub_byte_element_size_in_bits' not in kwargs:
+      kwargs['sub_byte_element_size_in_bits'] = self._sub_byte_element_size_in_bits
+    return Layout(kwargs['major_to_minor'], kwargs['tiling'],
+                  kwargs['sub_byte_element_size_in_bits'])
 
   def _to_xla_layout(self, dtype) -> xc.Layout:
     if self.tiling is None:
@@ -138,3 +149,10 @@ class Format:
       return False
     return (self.layout == other.layout and
             self.sharding == other.sharding)
+
+
+def get_layout_for_vmap(dim: int, layout: Layout) -> Layout:
+  # Make the new dim major-most and shift all other dims by 1 in major_to_minor
+  new_m2m = tuple(m + 1 for m in layout.major_to_minor)
+  vmapped_major_to_minor = tuple_insert(new_m2m, dim, 0)
+  return layout.update(major_to_minor=vmapped_major_to_minor)
