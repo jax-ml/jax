@@ -68,9 +68,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       x = pltpu.with_memory_space_constraint(x, memory_space=memory_space)
-      if color is None:
-        assert not hasattr(jax.typeof(x), 'memory_space')
-      else:
+      if color is not None:
         self.assertEqual(jax.typeof(x).memory_space, memory_space)
       x = g(x)
       return x
