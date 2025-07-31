@@ -2529,10 +2529,15 @@ def _gather_lowering_rule(
 
 @register_lowering_rule(lax.transpose_p)
 def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
-  minormost_transpose = (1, 0)
-  untiled_tiled_swap = (1, 0, 2)
-  if permutation not in (minormost_transpose, untiled_tiled_swap):
-    raise NotImplementedError
+  dim_size = len(ctx.avals_in[0].shape)
+  if (
+      permutation[-2:] != (dim_size - 1, dim_size - 2)
+      and permutation[-2:] != (dim_size - 2, dim_size - 1)
+      and permutation != (1, 0, 2)
+  ):
+    raise NotImplementedError(
+        f"Unsupported transpose permutation: {permutation}"
+    )
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
   )

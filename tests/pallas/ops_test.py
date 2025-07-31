@@ -2508,6 +2508,34 @@ class OpsTest(PallasBaseTest):
     expected = jnp.swapaxes(x, 0, 1)
     np.testing.assert_array_equal(out, expected)
 
+  @parameterized.product(
+      shape_and_axes=[
+          ((8, 16, 128), (0, 2, 1)),
+          ((16, 128, 128), (1, 0, 2)),
+          ((1, 2, 16, 128), (0, 1, 2, 3)),
+          ((1, 2, 16, 128), (1, 0, 3, 2)),
+      ]
+  )
+  def test_transpose(self, shape_and_axes):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not implemented on GPU")
+    in_shape, transpose_axes = shape_and_axes
+
+    x = jnp.arange(math.prod(in_shape), dtype=jnp.float32).reshape(in_shape)
+    expected = jnp.transpose(x, axes=transpose_axes)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+    )
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jnp.transpose(x_ref[...], axes=transpose_axes)
+
+    np.testing.assert_array_equal(
+        kernel(x),
+        expected,
+    )
+
   @hp.given(batch_size=hps.integers(1, 16))
   def test_8bit_gather(self, batch_size):
     if not jtu.test_device_matches(["tpu"]):
