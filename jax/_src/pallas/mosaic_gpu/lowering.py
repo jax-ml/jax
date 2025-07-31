@@ -2667,17 +2667,17 @@ def _lower_jaxpr_to_for_loop(
         for a, v, av in zip(is_acc, vals, avals)
     ]
 
-  def loop(loop_index, body_args):
+  def loop(base_loop_index, body_args):
     outs = body_args
     if unroll is not None:
-      loop_index = arith_dialect.muli(
-          loop_index, _ir_constant(unroll, start.type)
+      base_loop_index = arith_dialect.muli(
+          base_loop_index, _ir_constant(unroll, start.type)
       )
-    loop_index = arith_dialect.addi(loop_index, start)
+    base_loop_index = arith_dialect.addi(base_loop_index, start)
     for step in range(unroll or 1):
       if has_loop_index:
         loop_index = arith_dialect.addi(
-            loop_index, _ir_constant(step, start.type)
+            base_loop_index, _ir_constant(step, start.type)
         )
         jaxpr_args = [*consts, loop_index, *outs]
       else:

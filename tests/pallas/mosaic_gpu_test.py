@@ -1329,7 +1329,7 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), x + 2 + 3)
 
-  @parameterized.product(unroll=[1, 2])
+  @parameterized.product(unroll=[1, 2, 4])
   def test_fori_loop_array_unrolled(self, unroll):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct([256], jnp.int32)
