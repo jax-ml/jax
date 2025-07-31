@@ -438,6 +438,8 @@ NB_MODULE(_jax, m) {
           ifrt::PjRtClient::CreateOptions ifrt_options;
           ifrt_options.pjrt_client =
               std::shared_ptr<PjRtClient>(std::move(c_api_client));
+          ifrt_options.kv_store = kv_store;
+          ifrt_options.use_kv_store_for_topology_exchange = false;
           if (transfer_server_factory.has_value()) {
             ifrt_options.transfer_server_factory =
                 std::move(transfer_server_factory->factory_fn);
