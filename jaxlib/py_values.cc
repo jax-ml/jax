@@ -80,6 +80,22 @@ namespace xla {
 
 namespace {
 
+// For S64/U64/F64/C128 types, returns the largest 32-bit equivalent.
+PrimitiveType Squash64BitType(PrimitiveType type) {
+  switch (type) {
+    case S64:
+      return S32;
+    case U64:
+      return U32;
+    case F64:
+      return F32;
+    case C128:
+      return C64;
+    default:
+      return type;
+  }
+}
+
 // Gets the thread-local instance.
 static DevicePutInfo& GetDevicePutInfo() {
   thread_local DevicePutInfo device_put_info;
@@ -493,7 +509,7 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
 
   PrimitiveType squashed_type;
   if (options.squash_64bit_types) {
-    squashed_type = Squash64BitTypes(type);
+    squashed_type = Squash64BitType(type);
     if (squashed_type != type) {
       TF_ASSIGN_OR_RETURN(xla::nb_dtype squashed_dtype,
                           PrimitiveTypeToNbDtype(squashed_type));
@@ -792,7 +808,7 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
           TF_ASSIGN_OR_RETURN(PrimitiveType dtype,
                               DtypeToPrimitiveType(numpy_array.dtype()));
           if (!jax_enable_x64) {
-            dtype = Squash64BitTypes(dtype);
+            dtype = Squash64BitType(dtype);
           }
           // We use reinterpret_cast<> to defend against environments where
           // ssize_t may not be precisely the same type as int64_t, even if it
