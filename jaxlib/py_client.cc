@@ -352,7 +352,7 @@ absl::Status PyClient::Defragment() {
       make_nb_class<jax::SingleDeviceSharding>(client, std::move(device_list),
                                                /*memory_kind=*/nb::none());
 
-  auto traceback = Traceback::Get();
+  auto traceback = jax::Traceback::Get();
   return PyArray::MakeFromIfrtArrayAndSharding(
       std::move(client), std::move(traceback),
       std::move(device_put_result.ifrt_array), std::move(sharding),
@@ -448,7 +448,7 @@ PyClient::CompileAndLoadIfrtProgram(
     TF_RETURN_IF_ERROR(ifrt_loaded_executable->GetReadyFuture().Await());
     TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   }
-  auto traceback = Traceback::Get();
+  auto traceback = jax::Traceback::Get();
   return make_nb_class<PyLoadedExecutable>(
       std::move(client), std::move(ifrt_loaded_executable),
       std::move(traceback), std::move(fingerprint));
@@ -558,7 +558,7 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
             std::move(ifrt_deserialize_options)));
   }
   TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
-  auto traceback = Traceback::Get();
+  auto traceback = jax::Traceback::Get();
   return make_nb_class<PyLoadedExecutable>(
       std::move(client), std::move(ifrt_loaded_executable),
       std::move(traceback), std::move(fingerprint));
@@ -567,7 +567,7 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
 namespace {
 
 struct HeapProfileKey {
-  std::optional<Traceback> traceback;
+  std::optional<jax::Traceback> traceback;
   int64_t size;
   xla::PjRtDevice* device;
   bool operator==(const HeapProfileKey& other) const;
@@ -603,7 +603,7 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
   absl::flat_hash_map<HeapProfileKey, int64_t> entries;
 
   auto add_buffer_to_profile = [&](PjRtBuffer* buffer,
-                                   std::optional<Traceback> traceback) {
+                                   std::optional<jax::Traceback> traceback) {
     // We only wish to count each PjRtBuffer once, even though they may be
     // shared by multiple PyArrays.
     if (!buffer->IsDeleted() && buffer_set.insert(buffer).second) {

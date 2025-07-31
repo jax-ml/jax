@@ -357,7 +357,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
         self.Pull(uuid_cpp, buffer_ids, std::move(pull_dests));
 
         std::vector<xla::PyArray> out;
-        auto traceback = xla::Traceback::Get();
+        auto traceback = jax::Traceback::Get();
         for (size_t i = 0; i < buffer_list.size(); ++i) {
           xla::ifrt::PjRtArray::PjRtBuffers buffers;
           buffers.reserve(buffer_list[i].size());

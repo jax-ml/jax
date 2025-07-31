@@ -35,13 +35,13 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/ndarray.h"
+#include "jaxlib/dlpack_support.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/traceback.h"
 #include "jaxlib/util.h"
-#include "jaxlib/dlpack_support.h"
 #include "xla/layout.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -418,7 +418,8 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   }
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
-  return PyArray::MakeFromSingleDeviceArray(std::move(client), Traceback::Get(),
+  return PyArray::MakeFromSingleDeviceArray(std::move(client),
+                                            jax::Traceback::Get(),
                                             std::move(ifrt_array), false, true);
 }
 
@@ -484,7 +485,8 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   }
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
-  return PyArray::MakeFromSingleDeviceArray(std::move(client), Traceback::Get(),
+  return PyArray::MakeFromSingleDeviceArray(std::move(client),
+                                            jax::Traceback::Get(),
                                             std::move(ifrt_array), false, true);
 }
 

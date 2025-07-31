@@ -460,7 +460,7 @@ struct BatchedCopyToDeviceWithShardingKey {
 PyArray_Storage::PyArray_Storage(
     nb::object aval, bool weak_type, xla::nb_dtype dtype,
     std::vector<int64_t> shape, nb::object sharding, bool committed,
-    nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
+    nb_class_ptr<PyClient> py_client, std::optional<jax::Traceback> traceback,
     ifrt::ArrayRef ifrt_array, xla::PjRtFuture<> result_status)
     : aval(std::move(aval)),
       weak_type(weak_type),
@@ -499,7 +499,7 @@ void PyInit_helper(PyArray self, nb::object aval, nb::object sharding,
   Construct(reinterpret_cast<PyArrayObject*>(self.ptr()), aval,
             nb::cast<bool>(aval.attr("weak_type")), std::move(dtype),
             std::move(shape), std::move(sharding), committed, py_client,
-            Traceback::Get(), std::move(ifrt_array), xla::PjRtFuture<>());
+            jax::Traceback::Get(), std::move(ifrt_array), xla::PjRtFuture<>());
 }
 
 void PyArray::PyInit(PyArray self, nb::object aval, nb::object sharding,
@@ -516,11 +516,10 @@ void PyArray::PyInit(PyArray self, nb::object aval, nb::object sharding,
   }
 }
 
-PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
-                                           std::optional<Traceback> traceback,
-                                           ifrt::ArrayRef ifrt_array,
-                                           bool weak_type, bool committed,
-                                           xla::PjRtFuture<> result_status) {
+PyArray PyArray::MakeFromSingleDeviceArray(
+    nb_class_ptr<PyClient> py_client, std::optional<jax::Traceback> traceback,
+    ifrt::ArrayRef ifrt_array, bool weak_type, bool committed,
+    xla::PjRtFuture<> result_status) {
   if (!llvm::isa<ifrt::SingleDeviceSharding>(ifrt_array->sharding())) {
     throw XlaRuntimeError(
         InvalidArgument("Constructing single device jax.Array from non-single "
@@ -550,7 +549,7 @@ PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
 }
 
 PyArray PyArray::MakeFromIfrtArrayAndSharding(
-    nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
+    nb_class_ptr<PyClient> py_client, std::optional<jax::Traceback> traceback,
     ifrt::ArrayRef ifrt_array, nb::object sharding, bool weak_type,
     bool committed, bool skip_checks) {
   auto shape_span = ifrt_array->shape().dims();
@@ -597,8 +596,9 @@ PyArray PyArrayResultHandler::Call(nb_class_ptr<PyClient> py_client,
                                    ifrt::ArrayRef ifrt_array,
                                    xla::PjRtFuture<> result_status) const {
   return PyArray(aval_, weak_type_, dtype_, shape_, sharding_,
-                 std::move(py_client), Traceback::Get(), std::move(ifrt_array),
-                 committed_, skip_checks_, std::move(result_status));
+                 std::move(py_client), jax::Traceback::Get(),
+                 std::move(ifrt_array), committed_, skip_checks_,
+                 std::move(result_status));
 }
 
 PyArray PyArrayResultHandler::Call(PyArray py_array) const {
@@ -609,8 +609,8 @@ PyArray PyArrayResultHandler::Call(PyArray py_array) const {
 PyArray::PyArray(nb::object aval, bool weak_type, nb_dtype dtype,
                  std::vector<int64_t> shape, nb::object sharding,
                  nb_class_ptr<PyClient> py_client,
-                 std::optional<Traceback> traceback, ifrt::ArrayRef ifrt_array,
-                 bool committed, bool skip_checks,
+                 std::optional<jax::Traceback> traceback,
+                 ifrt::ArrayRef ifrt_array, bool committed, bool skip_checks,
                  xla::PjRtFuture<> result_status) {
   auto* self =
       PyArray_tp_new(reinterpret_cast<PyTypeObject*>(type_), nullptr, nullptr);
@@ -1057,7 +1057,8 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
   }
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
-  return PyArray::MakeFromSingleDeviceArray(std::move(client), Traceback::Get(),
+  return PyArray::MakeFromSingleDeviceArray(std::move(client),
+                                            jax::Traceback::Get(),
                                             std::move(ifrt_array), false, true);
 }
 
@@ -1157,7 +1158,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
   };
   absl::flat_hash_map<BatchedCopyToDeviceWithShardingKey, Batch> batches;
 
-  auto traceback = Traceback::Get();
+  auto traceback = jax::Traceback::Get();
   {
     tsl::profiler::TraceMe results_traceme(
         "BatchedCopyToDeviceWithSharding create batch");
@@ -1315,7 +1316,7 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
                             dtype, shape, sharding, options));
 
   return PyArray(aval, weak_type, dtype, std::move(shape), std::move(sharding),
-                 py_device_list->py_client(), Traceback::Get(),
+                 py_device_list->py_client(), jax::Traceback::Get(),
                  std::move(device_put_result.ifrt_array), committed,
                  /*skip_checks=*/true);
 }

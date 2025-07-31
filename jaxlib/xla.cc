@@ -621,7 +621,7 @@ NB_MODULE(_jax, m) {
   jax::BuildJaxjitSubmodule(m);
   jax::BuildPmapSubmodule(m);
   jax::BuildPjitSubmodule(m);
-  BuildTracebackSubmodule(m);
+  jax::Traceback::RegisterType(m);
   BuildMlirSubmodule(m);
   BuildCustomCallShardingPybindAPI(m);
   jax::BuildFfiSubmodule(m);

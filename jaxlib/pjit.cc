@@ -778,7 +778,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     output_arrays = std::move(result.outputs);
   }
 
-  auto traceback = xla::Traceback::Get();
+  auto traceback = jax::Traceback::Get();
 
   // Convert the ifrt::Array objects to PyArray.
   int num_outputs = output_arrays.size();

@@ -26,7 +26,7 @@ limitations under the License.
 // placeholder for index annotation headers
 #include "nanobind/nanobind.h"
 
-namespace xla {
+namespace jax {
 
 class Traceback : public nanobind::object {
  public:
@@ -52,12 +52,12 @@ class Traceback : public nanobind::object {
   // Returns a list of Frames for the traceback.
   std::vector<Frame> Frames() const;
 
+  static void RegisterType(nanobind::module_& m);
+
  private:
   static bool Check(PyObject* o);
 };
 
-void BuildTracebackSubmodule(nanobind::module_& m);
-
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_TRACEBACK_H_

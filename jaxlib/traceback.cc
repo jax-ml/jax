@@ -51,7 +51,7 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 
 namespace {
 
@@ -300,7 +300,7 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
   return traceback;
 }
 
-void BuildTracebackSubmodule(nb::module_& m) {
+void Traceback::RegisterType(nb::module_& m) {
   nb::class_<Traceback::Frame>(m, "Frame")
       .def(nb::init<const nb::str&, const nb::str&, int, int>())
       .def_ro("file_name", &Traceback::Frame::file_name)
@@ -345,7 +345,7 @@ void BuildTracebackSubmodule(nb::module_& m) {
       object that describes the Python stack of the calling thread. Stack
       trace collection has a small overhead, so it is disabled by default. If
       traceback collection is disabled, returns ``None``. )doc");
-  type.attr("frames") = nb_property_readonly(&Traceback::Frames);
+  type.attr("frames") = xla::nb_property_readonly(&Traceback::Frames);
   type.attr("raw_frames") = nb::cpp_function(
       [](const Traceback& tb) -> nb::tuple {
         // We return a tuple of lists, rather than a list of tuples, because it
@@ -419,4 +419,5 @@ void BuildTracebackSubmodule(nb::module_& m) {
       },
       "Python wrapper around the Python C API function PyCode_Addr2Location");
 }
-}  // namespace xla
+
+}  // namespace jax

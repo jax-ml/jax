@@ -85,7 +85,8 @@ absl::Status PyShardedToken::Await() {
 PyLoadedExecutable::PyLoadedExecutable(
     nb_class_ptr<PyClient> client,
     ifrt::LoadedExecutableRef ifrt_loaded_executable,
-    std::optional<Traceback> traceback, std::optional<std::string> fingerprint)
+    std::optional<jax::Traceback> traceback,
+    std::optional<std::string> fingerprint)
     : client_(std::move(client)),
       ifrt_loaded_executable_(std::move(ifrt_loaded_executable)),
       traceback_(std::move(traceback)),
@@ -182,7 +183,7 @@ void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
                                    const PjRtFuture<>& result_status,
                                    int num_computations,
                                    std::vector<std::vector<PyArray>>& outputs) {
-  auto traceback = Traceback::Get();
+  auto traceback = jax::Traceback::Get();
   DCHECK_GT(num_computations, 0);
   int num_output_buffers = ifrt_arrays.size();
   outputs.resize(num_output_buffers);
@@ -326,7 +327,7 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
         out_handlers) {
   std::vector<nb::object> outputs;
   auto ifrt_arrays = Consume();
-  auto traceback = Traceback::Get();
+  auto traceback = jax::Traceback::Get();
   int num_output_buffers = ifrt_arrays.size();
   outputs.reserve(num_output_buffers);
   if (out_handlers.size() != num_output_buffers) {

@@ -656,7 +656,7 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
   // Having a C++ `Array`, keeping internally the PjRtBuffer
   // objects is sufficient, and we can lazily create the `PyBuffer` only if
   // we access them from Python.
-  auto traceback = xla::Traceback::Get();
+  auto traceback = jax::Traceback::Get();
   // TODO(jblespiau): Change the `client` function to return a reference.
   xla::nb_class_ptr<xla::PyClient> client = cache_entry.executable->client();
 
