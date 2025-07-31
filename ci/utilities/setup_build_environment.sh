@@ -30,7 +30,7 @@ fi
 
 function clone_main_xla() {
   echo "Cloning XLA at HEAD to $(pwd)/xla"
-  git clone --depth=1 https://github.com/openxla/xla.git $(pwd)/xla
+  git clone --depth=1 --branch test_788200220 https://github.com/openxla/xla.git $(pwd)/xla
   export JAXCI_XLA_GIT_DIR=$(pwd)/xla
 }
 

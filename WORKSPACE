@@ -3,6 +3,30 @@ load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
 
 jax_xla_workspace()
 
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# Toolchains for ML projects hermetic builds.
+# Details: https://github.com/google-ml-infra/rules_ml_toolchain
+http_archive(
+    name = "rules_ml_toolchain",
+    #sha256 = "83ecca68448b16047a2200a19539ebd5ccb9f5cbaa37dc6e741def0e0a5997f9",
+    strip_prefix = "rules_ml_toolchain-cpp-cuda-decouple",
+    urls = [
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/refs/heads/cpp-cuda-decouple.tar.gz",
+    ],
+)
+
+load(
+    "@rules_ml_toolchain//cc/deps:cc_toolchain_deps.bzl",
+    "cc_toolchain_deps",
+)
+
+cc_toolchain_deps()
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
+
 load("@xla//:workspace4.bzl", "xla_workspace4")
 
 xla_workspace4()
@@ -92,17 +116,6 @@ load(
 python_wheel_version_suffix_repository(
     name = "jax_wheel_version_suffix",
 )
-
-load(
-    "@rules_ml_toolchain//cc_toolchain/deps:cc_toolchain_deps.bzl",
-    "cc_toolchain_deps",
-)
-
-cc_toolchain_deps()
-
-register_toolchains("@rules_ml_toolchain//cc_toolchain:lx64_lx64")
-
-register_toolchains("@rules_ml_toolchain//cc_toolchain:lx64_lx64_cuda")
 
 load(
     "@rules_ml_toolchain//third_party/gpus/cuda/hermetic:cuda_json_init_repository.bzl",

@@ -30,6 +30,7 @@ source ci/envs/default.env
 if [[ -z "$JAXCI_XLA_GIT_DIR" ]]; then
     export JAXCI_CLONE_MAIN_XLA=1
 fi
+JAXCI_CLONE_MAIN_XLA=0
 
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
