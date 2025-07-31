@@ -21,7 +21,7 @@ licenses(["notice"])
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//jax:mosaic_users",
+        "//jax/experimental:mosaic_users",
     ],
 )
 

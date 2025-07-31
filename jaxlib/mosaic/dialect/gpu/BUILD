@@ -21,7 +21,7 @@ load(
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//jax:mosaic_gpu_users"],
+    default_visibility = ["//jax/experimental:mosaic_gpu_users"],
 )
 
 td_library(

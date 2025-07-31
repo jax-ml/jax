@@ -17,23 +17,14 @@
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load(
     "//jaxlib:jax.bzl",
-    "buffer_callback_internal_users",
-    "if_cuda_is_configured",
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_packages",
     "jax_visibility",
-    "mosaic_gpu_internal_users",
-    "mosaic_internal_users",
-    "pallas_fuser_users",
-    "pallas_gpu_internal_users",
-    "pallas_sc_internal_users",
-    "pallas_tpu_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
     "pytype_strict_library",
-    "serialize_executable_internal_users",
 )
 
 package(
@@ -141,61 +132,11 @@ package_group(
     ] + jax_extend_internal_users,
 )
 
-package_group(
-    name = "mosaic_users",
-    includes = [":internal"],
-    packages = mosaic_internal_users,
-)
-
-package_group(
-    name = "pallas_gpu_users",
-    includes = [":internal"],
-    packages = pallas_gpu_internal_users,
-)
-
-package_group(
-    name = "pallas_tpu_users",
-    includes = [":internal"],
-    packages = pallas_tpu_internal_users,
-)
-
-package_group(
-    name = "pallas_sc_users",
-    includes = [":internal"],
-    packages = pallas_sc_internal_users,
-)
-
-package_group(
-    name = "pallas_fuser_users",
-    includes = [":internal"],
-    packages = pallas_fuser_users,
-)
-
-package_group(
-    name = "mosaic_gpu_users",
-    includes = [":internal"],
-    packages = mosaic_gpu_internal_users,
-)
-
-package_group(
-    name = "serialize_executable_users",
-    includes = [":internal"],
-    packages = serialize_executable_internal_users,
-)
-
-package_group(
-    name = "buffer_callback_users",
-    includes = [":internal"],
-    packages = buffer_callback_internal_users,
-)
-
 py_library_providing_imports_info(
     name = "jax",
     srcs = glob(
         [
             "*.py",
-            "experimental/key_reuse/**/*.py",
-            "experimental/roofline/**/*.py",
             "image/**/*.py",
             "interpreters/**/*.py",
             "lax/**/*.py",
@@ -210,14 +151,8 @@ py_library_providing_imports_info(
             "*_test.py",
             "**/*_test.py",
         ],
-    ) + [
-        "experimental/checkify.py",
-        "experimental/compilation_cache/compilation_cache.py",
-        "experimental/multihost_utils.py",
-        "experimental/pjit.py",
-        "experimental/scheduling_groups.py",
-        "experimental/shard_map.py",
-    ],
+        # TODO(dsuo): Consider moving these files out of experimental if they're in the public API.
+    ) + ["//jax/experimental:jax_public"],
     lib_rule = pytype_library,
     pytype_srcs = glob(
         [
@@ -312,467 +247,11 @@ py_library_providing_imports_info(
 )
 
 pytype_strict_library(
-    name = "experimental_serialize_executable",
-    srcs = ["experimental/serialize_executable.py"],
-    visibility = [":serialize_executable_users"],
-    deps = [
-        ":jax",
-        "//jax/_src/lib",
-    ],
-)
-
-pytype_strict_library(
-    name = "source_mapper",
-    srcs = glob(include = ["experimental/source_mapper/**/*.py"]),
-    visibility = [
-        "//visibility:public",
-    ],
-    deps = [
-        ":jax",
-        "//jax/_src:config",
-        "//jax/_src:core",
-        "//jax/_src:source_info_util",
-        "//jax/_src:sourcemap",
-    ] + py_deps("absl/flags"),
-)
-
-pytype_strict_library(
-    name = "pallas",
-    srcs = glob(
-        [
-            "experimental/pallas/**/*.py",
-        ],
-        exclude = [
-            "experimental/pallas/mosaic_gpu.py",
-            "experimental/pallas/ops/gpu/**/*.py",
-            "experimental/pallas/ops/tpu/**/*.py",
-            "experimental/pallas/tpu.py",
-            "experimental/pallas/fuser.py",
-            "experimental/pallas/triton.py",
-        ],
-    ),
-    visibility = [
-        "//visibility:public",
-    ],
-    deps = [
-        ":jax",
-        "//jax/_src:deprecations",
-        "//jax/_src:lax",
-        "//jax/_src:source_info_util",
-        "//jax/_src:state_types",
-        "//jax/_src/pallas",
-    ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "pallas_tpu",
-    srcs = ["experimental/pallas/tpu.py"],
-    visibility = [
-        ":pallas_tpu_users",
-    ],
-    deps = [
-        ":pallas",  # build_cleaner: keep
-        "//jax/_src:deprecations",
-        "//jax/_src/pallas",
-        "//jax/_src/pallas/mosaic:core",
-        "//jax/_src/pallas/mosaic:helpers",
-        "//jax/_src/pallas/mosaic:interpret",
-        "//jax/_src/pallas/mosaic:lowering",
-        "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic:pipeline",
-        "//jax/_src/pallas/mosaic:primitives",
-        "//jax/_src/pallas/mosaic:random",
-        "//jax/_src/pallas/mosaic:verification",
-    ],
-)
-
-pytype_strict_library(
-    name = "pallas_fuser",
-    srcs = ["experimental/pallas/fuser.py"],
-    visibility = [
-        ":pallas_fuser_users",
-    ],
-    deps = [
-        ":pallas",  # build_cleaner: keep
-        "//jax/_src/pallas/fuser:block_spec",
-        "//jax/_src/pallas/fuser:custom_evaluate",
-        "//jax/_src/pallas/fuser:fusible",
-        "//jax/_src/pallas/fuser:fusion",
-        "//jax/_src/pallas/fuser:jaxpr_fusion",
-    ],
-)
-
-pytype_strict_library(
-    name = "pallas_gpu_ops",
-    srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
-    visibility = [
-        ":pallas_gpu_users",
-    ],
-    deps = [
-        ":jax",
-        ":pallas",
-        ":pallas_gpu",
-        "//jax/_src:lax",
-    ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "pallas_experimental_gpu_ops",
-    srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
-    visibility = [
-        ":mosaic_gpu_users",
-    ],
-    deps = [
-        ":jax",
-        ":mosaic_gpu",
-        ":pallas",
-        ":pallas_mosaic_gpu",
-        "//jax/_src:test_util",  # This is only to make them runnable as jax_multiplatform_test...
-        "//jax/_src/lib",
-    ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "pallas_tpu_ops",
-    srcs = glob(["experimental/pallas/ops/tpu/**/*.py"]),
-    visibility = [
-        ":pallas_tpu_users",
-    ],
-    deps = [
-        ":jax",
-        ":pallas",
-        ":pallas_tpu",
-        "//jax/_src:dtypes",
-        "//jax/_src:random",
-        "//jax/_src:shard_map",
-        "//jax/_src:util",
-    ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "pallas_gpu",
-    visibility = [
-        ":pallas_gpu_users",
-    ],
-    deps = [
-        ":pallas_triton",
-        # TODO(slebedev): Add :pallas_mosaic_gpu once it is ready.
-    ],
-)
-
-pytype_strict_library(
-    name = "pallas_triton",
-    srcs = [
-        "experimental/pallas/triton.py",
-    ],
-    visibility = [
-        ":pallas_gpu_users",
-    ],
-    deps = [
-        "//jax/_src:deprecations",
-        "//jax/_src/pallas",
-        "//jax/_src/pallas/triton:core",
-        "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
-        "//jax/_src/pallas/triton:primitives",
-    ],
-)
-
-pytype_strict_library(
-    name = "pallas_mosaic_gpu",
-    srcs = ["experimental/pallas/mosaic_gpu.py"],
-    visibility = [
-        ":mosaic_gpu_users",
-    ],
-    deps = [
-        ":mosaic_gpu",
-        "//jax/_src/pallas/mosaic_gpu:core",
-        "//jax/_src/pallas/mosaic_gpu:helpers",
-        "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic_gpu:pipeline",
-        "//jax/_src/pallas/mosaic_gpu:primitives",
-    ],
-)
-
-# This target only supports sm_90 GPUs.
-py_library_providing_imports_info(
-    name = "mosaic_gpu",
-    srcs = glob(["experimental/mosaic/gpu/*.py"]),
-    data = if_cuda_is_configured([
-        "@cuda_nvcc//:nvvm",
-        "@local_config_cuda//cuda:runtime_nvdisasm",
-        "@local_config_cuda//cuda:runtime_ptxas",
-        "@nvidia_nvshmem//:libnvshmem_device",
-    ]),
-    lib_rule = pytype_strict_library,
-    visibility = [
-        ":mosaic_gpu_users",
-    ],
-    deps = [
-        ":jax",
-        "//jax/_src:config",
-        "//jax/_src:core",
-        "//jax/_src:mlir",
-        "//jax/_src:sharding_impls",
-        "//jax/_src:stages",
-        "//jax/_src:util",
-        "//jax/_src/lib",
-        "//jaxlib/mlir:arithmetic_dialect",
-        "//jaxlib/mlir:builtin_dialect",
-        "//jaxlib/mlir:control_flow_dialect",
-        "//jaxlib/mlir:func_dialect",
-        "//jaxlib/mlir:gpu_dialect",
-        "//jaxlib/mlir:ir",
-        "//jaxlib/mlir:llvm_dialect",
-        "//jaxlib/mlir:math_dialect",
-        "//jaxlib/mlir:memref_dialect",
-        "//jaxlib/mlir:nvgpu_dialect",
-        "//jaxlib/mlir:nvvm_dialect",
-        "//jaxlib/mlir:pass_manager",
-        "//jaxlib/mlir:scf_dialect",
-        "//jaxlib/mlir:vector_dialect",
-        "//jaxlib/mosaic/python:gpu_dialect",
-    ] + py_deps("absl/flags") + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "experimental_compute_on",
-    srcs = ["experimental/compute_on.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":compute_on",
-    ],
-)
-
-pytype_strict_library(
-    name = "experimental_mesh_utils",
-    srcs = ["experimental/mesh_utils.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":internal_mesh_utils",
-    ],
-)
-
-pytype_strict_library(
-    name = "experimental_multihost_utils",
-    srcs = ["experimental/multihost_utils.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":api",
-        ":jax",
-        ":sharding_impls",
-        "//jax/_src:ad",
-        "//jax/_src:batching",
-        "//jax/_src:core",
-        "//jax/_src:mlir",
-        "//jax/_src:util",
-        "//jax/_src:xla_bridge",
-        "//jax/_src/lib",
-        "//third_party/py/numpy",
-    ],
-)
-
-pytype_strict_library(
-    name = "experimental_pjit",
-    srcs = ["experimental/pjit.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":api",
-        ":sharding_impls",
-    ],
-)
-
-pytype_strict_library(
-    name = "experimental_profiler",
-    srcs = ["experimental/profiler.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//jax/_src/lib",
-    ],
-)
-
-pytype_strict_library(
-    name = "experimental_topologies",
-    srcs = ["experimental/topologies.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":experimental_mesh_utils",
-        ":jax",
-        "//jax/_src:xla_bridge",
-        "//jax/_src/lib",
-    ],
-)
-
-pytype_strict_library(
-    name = "experimental_transfer",
-    srcs = ["experimental/transfer.py"],
-    deps = [
-        ":jax",
-        "//jax/_src:util",
-        "//jax/_src/lib",
-    ],
-)
-
-pytype_strict_library(
     name = "version",
     srcs = ["version.py"],
 )
 
 # Public JAX libraries below this point.
-
-py_library_providing_imports_info(
-    name = "experimental",
-    srcs = glob(
-        [
-            "experimental/*.py",
-            "example_libraries/*.py",
-        ],
-        exclude = [
-            "experimental/buffer_callback.py",
-            "experimental/mosaic/gpu/*.py",
-            "experimental/serialize_executable.py",
-        ],
-    ),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":jax",
-        "//jax/_src:buffer_callback",
-    ] + py_deps("absl/logging") + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "stax",
-    srcs = [
-        "example_libraries/stax.py",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [":jax"],
-)
-
-pytype_strict_library(
-    name = "experimental_sparse",
-    srcs = glob(
-        [
-            "experimental/sparse/*.py",
-        ],
-        exclude = ["experimental/sparse/test_util.py"],
-    ),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":jax",
-        "//jax/_src:ad",
-        "//jax/_src:api",
-        "//jax/_src:api_util",
-        "//jax/_src:batching",
-        "//jax/_src:config",
-        "//jax/_src:core",
-        "//jax/_src:custom_derivatives",
-        "//jax/_src:dtypes",
-        "//jax/_src:ffi",
-        "//jax/_src:lax",
-        "//jax/_src:mlir",
-        "//jax/_src:numpy",
-        "//jax/_src:partial_eval",
-        "//jax/_src:sharding_impls",
-        "//jax/_src:traceback_util",
-        "//jax/_src:typing",
-        "//jax/_src:util",
-        "//jax/_src/lib",
-    ] + py_deps("numpy") + py_deps("scipy"),
-)
-
-pytype_strict_library(
-    name = "sparse_test_util",
-    srcs = [
-        "experimental/sparse/test_util.py",
-    ],
-    visibility = [":internal"],
-    deps = [
-        ":experimental_sparse",
-        ":jax",
-        "//jax/_src:lax",
-        "//jax/_src:test_util",
-        "//jax/_src:typing",
-        "//jax/_src:util",
-    ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "optimizers",
-    srcs = [
-        "example_libraries/optimizers.py",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":jax",
-        "//jax/_src:util",
-    ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "ode",
-    srcs = ["experimental/ode.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":jax",
-        "//jax/_src:core",
-        "//jax/_src:numpy",
-        "//jax/_src:util",
-    ],
-)
-
-pytype_strict_library(
-    name = "jet",
-    srcs = ["experimental/jet.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":jax",
-        "//jax/_src:ad_util",
-        "//jax/_src:api",
-        "//jax/_src:core",
-        "//jax/_src:lax",
-        "//jax/_src:partial_eval",
-        "//jax/_src:sharding_impls",
-        "//jax/_src:util",
-    ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "experimental_host_callback",
-    srcs = [
-        "experimental/__init__.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
-        "experimental/host_callback.py",
-        "experimental/x64_context.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//jax/_src:api",
-        "//jax/_src:callback",
-        "//jax/_src:config",
-        "//jax/_src:core",
-        "//jax/_src:dtypes",
-        "//jax/_src:earray",
-    ],
-)
-
-pytype_strict_library(
-    name = "compilation_cache",
-    srcs = [
-        "experimental/compilation_cache/__init__.py",
-        "experimental/compilation_cache/compilation_cache.py",
-    ],
-    visibility = ["//visibility:public"],
-    deps = ["//jax/_src:compilation_cache_internal"],
-)
-
-pytype_strict_library(
-    name = "mesh_utils",
-    srcs = ["experimental/mesh_utils.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//jax/_src:internal_mesh_utils",
-    ],
-)
-
 # TODO(phawkins): remove this target in favor of the finer-grained targets in jax/extend/...
 pytype_strict_library(
     name = "extend",
@@ -784,68 +263,6 @@ pytype_strict_library(
         "//jax/extend:linear_util",
         "//jax/extend:random",
         "//jax/extend:source_info_util",
-    ],
-)
-
-pytype_strict_library(
-    name = "mosaic",
-    srcs = [
-        "experimental/mosaic/__init__.py",
-        "experimental/mosaic/dialects.py",
-    ],
-    visibility = [":mosaic_users"],
-    deps = [
-        "//jax/_src:tpu_custom_call",
-        "//jax/_src/lib",
-    ],
-)
-
-pytype_strict_library(
-    name = "rnn",
-    srcs = ["experimental/rnn.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":jax",
-        "//jax/_src:core",
-        "//jax/_src:custom_derivatives",
-        "//jax/_src:lax",
-        "//jax/_src:typing",
-    ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "experimental_colocated_python",
-    srcs = [
-        "experimental/colocated_python/__init__.py",
-        "experimental/colocated_python/api.py",
-        "experimental/colocated_python/func.py",
-        "experimental/colocated_python/func_backend.py",
-        "experimental/colocated_python/obj.py",
-        "experimental/colocated_python/obj_backend.py",
-        "experimental/colocated_python/serialization.py",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":jax",
-        "//jax/_src:api",
-        "//jax/_src:api_util",
-        "//jax/_src:traceback_util",
-        "//jax/_src:tree_util",
-        "//jax/_src:util",
-        "//jax/_src:xla_bridge",
-        "//jax/_src/lib",
-        "//jax/extend:ifrt_programs",
-    ] + py_deps("numpy") + py_deps("cloudpickle"),
-)
-
-pytype_strict_library(
-    name = "experimental_buffer_callback",
-    srcs = [
-        "experimental/buffer_callback.py",
-    ],
-    visibility = [":buffer_callback_users"],
-    deps = [
-        "//jax/_src:buffer_callback",
     ],
 )
 
@@ -1338,4 +755,214 @@ alias(
     name = "xla_bridge",
     actual = "//jax/_src:xla_bridge",
     visibility = [":internal"] + jax_visibility("xla_bridge"),
+)
+
+# Aliases of experimental targets.
+# TODO(dsuo): remove these aliases/targets.
+py_library_providing_imports_info(
+    name = "experimental",
+    srcs = [
+        "//jax/example_libraries:jax_example_libraries",
+        "//jax/experimental:jax_experimental",
+    ],
+    visibility = ["//visibility:public"],
+    # NOTE: Exclude mosaic_gpu, serialize_executable, and buffer_callback.
+    deps = [
+        ":jax",
+        "//jax/_src:buffer_callback",
+    ] + py_deps("absl/logging") + py_deps("numpy"),
+)
+
+alias(
+    name = "experimental_buffer_callback",
+    actual = "//jax/experimental:buffer_callback",
+    visibility = ["//jax/experimental:buffer_callback_users"],
+)
+
+alias(
+    name = "experimental_colocated_python",
+    actual = "//jax/experimental:colocated_python",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "experimental_compute_on",
+    actual = "//jax/experimental:compute_on",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "compilation_cache",
+    actual = "//jax/experimental:compilation_cache",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "jet",
+    actual = "//jax/experimental:jet",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "experimental_host_callback",
+    actual = "//jax/experimental:host_callback",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "mesh_utils",
+    actual = "//jax/experimental:mesh_utils",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "experimental_mesh_utils",
+    actual = "//jax/experimental:mesh_utils",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "mosaic",
+    actual = "//jax/experimental:mosaic",
+    visibility = ["//jax/experimental:mosaic_users"],
+)
+
+alias(
+    name = "mosaic_gpu",
+    actual = "//jax/experimental:mosaic_gpu",
+    visibility = ["//jax/experimental:mosaic_gpu_users"],
+)
+
+alias(
+    name = "experimental_multihost_utils",
+    actual = "//jax/experimental:multihost_utils",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "ode",
+    actual = "//jax/experimental:ode",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "pallas",
+    actual = "//jax/experimental:pallas",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "pallas_fuser",
+    actual = "//jax/experimental:pallas_fuser",
+    visibility = ["//jax/experimental:pallas_fuser_users"],
+)
+
+alias(
+    name = "pallas_gpu",
+    actual = "//jax/experimental:pallas_gpu",
+    visibility = ["//jax/experimental:pallas_gpu_users"],
+)
+
+alias(
+    name = "pallas_gpu_ops",
+    actual = "//jax/experimental:pallas_gpu_ops",
+    visibility = ["//jax/experimental:pallas_gpu_users"],
+)
+
+alias(
+    name = "pallas_mosaic_gpu",
+    actual = "//jax/experimental:pallas_mosaic_gpu",
+    visibility = ["//jax/experimental:mosaic_gpu_users"],
+)
+
+alias(
+    name = "pallas_tpu",
+    actual = "//jax/experimental:pallas_tpu",
+    visibility = ["//jax/experimental:pallas_tpu_users"],
+)
+
+alias(
+    name = "pallas_tpu_ops",
+    actual = "//jax/experimental:pallas_tpu_ops",
+    visibility = ["//jax/experimental:pallas_tpu_users"],
+)
+
+alias(
+    name = "pallas_triton",
+    actual = "//jax/experimental:pallas_triton",
+    visibility = ["//jax/experimental:pallas_gpu_users"],
+)
+
+alias(
+    name = "pallas_experimental_gpu_ops",
+    actual = "//jax/experimental:pallas_experimental_gpu_ops",
+    visibility = ["//jax/experimental:mosaic_gpu_users"],
+)
+
+alias(
+    name = "experimental_profiler",
+    actual = "//jax/experimental:profiler",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "experimental_pjit",
+    actual = "//jax/experimental:pjit",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "rnn",
+    actual = "//jax/experimental:rnn",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "experimental_serialize_executable",
+    actual = "//jax/experimental:serialize_executable",
+    visibility = ["//jax/experimental:serialize_executable_users"],
+)
+
+alias(
+    name = "source_mapper",
+    actual = "//jax/experimental:source_mapper",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "experimental_sparse",
+    actual = "//jax/experimental:sparse",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "sparse_test_util",
+    actual = "//jax/experimental:sparse_test_util",
+    visibility = [":internal"],
+)
+
+alias(
+    name = "experimental_topologies",
+    actual = "//jax/experimental:topologies",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "experimental_transfer",
+    actual = "//jax/experimental:transfer",
+    visibility = [":internal"],
+)
+
+# Aliases of example_library targets.
+# TODO(dsuo): remove these aliases.
+alias(
+    name = "optimizers",
+    actual = "//jax/example_libraries:optimizers",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "stax",
+    actual = "//jax/example_libraries:stax",
+    visibility = ["//visibility:public"],
 )
