@@ -1380,6 +1380,7 @@ def default_mesh_discharge_rule(
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
   del out_avals  # Unused.
+  default_memory_space = memory_space
 
   def body(*args):
     # Due to aliasing, ``args`` contains aliased inputs and outputs so we
@@ -1397,46 +1398,41 @@ def default_mesh_discharge_rule(
   in_memory_spaces = [
       memory_space if m is None else m for m in in_memory_spaces
   ]
-  @jax.jit
-  def jitted(*args):
-    args = [
-        with_memory_space_constraint_p.bind(arg, memory_space=memory_space)
-        if memory_space is not None else arg
-        for arg, memory_space in zip(args, in_memory_spaces)
-    ]
-    in_specs = [
-        BlockSpec(memory_space=memory_space) for memory_space in in_memory_spaces
-    ]
-    out_specs = [in_specs[idx] for idx in modified_idxs]
-    out_shapes = [_get_sds(in_avals[idx]) for idx in modified_idxs]
-    from jax._src.pallas import pallas_call  # Avoid circular dependency.
-
-    outs = pallas_call._pallas_call(
-        body,
-        name=name,
-        out_shape=out_shapes,
-        input_output_aliases={
-            in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
-        },
-        grid_spec=GridSpec(
-            grid=tuple(mesh.shape.items()),
-            in_specs=in_specs,
-            out_specs=out_specs,
-        ),
-        mesh=mesh,
-        compiler_params=compiler_params,
-        interpret=interpret,
-        debug=debug,
-        cost_estimate=cost_estimate,
-        metadata=metadata,
-    )(*args)
+  args = [
+      with_memory_space_constraint_p.bind(arg, memory_space=memory_space)
+      if memory_space is not None and memory_space is not default_memory_space else arg
+      for arg, memory_space in zip(args, in_memory_spaces)
+  ]
+  in_specs = [
+      BlockSpec(memory_space=memory_space) for memory_space in in_memory_spaces
+  ]
+  out_specs = [in_specs[idx] for idx in modified_idxs]
+  out_shapes = [_get_sds(in_avals[idx]) for idx in modified_idxs]
+  from jax._src.pallas import pallas_call  # Avoid circular dependency.
+  outs = pallas_call._pallas_call(
+      body,
+      name=name,
+      out_shape=out_shapes,
+      input_output_aliases={
+          in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
+      },
+      grid_spec=GridSpec(
+          grid=tuple(mesh.shape.items()),
+          in_specs=in_specs,
+          out_specs=out_specs,
+      ),
+      mesh=mesh,
+      compiler_params=compiler_params,
+      interpret=interpret,
+      debug=debug,
+      cost_estimate=cost_estimate,
+      metadata=metadata,
+  )(*args)
   # ``outs`` lacks the unmodified inputs. Add them back in.
-    all_outs = [None] * len(args)
-    for out_idx, in_idx in enumerate(modified_idxs):
-      all_outs[in_idx] = outs[out_idx]
-    return all_outs
-  out = jitted(*args)
-  return out, ()
+  all_outs = [None] * len(args)
+  for out_idx, in_idx in enumerate(modified_idxs):
+    all_outs[in_idx] = outs[out_idx]
+  return all_outs, ()
 
 
 @state_discharge.register_discharge_rule(core_map_p)
