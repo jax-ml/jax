@@ -73,6 +73,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download JAX CUDA wheels
+        if: inputs.build_jaxlib == 'false'
         uses: ./.github/actions/download-jax-cuda-wheels
         with:
           python: ${{ inputs.python }}
