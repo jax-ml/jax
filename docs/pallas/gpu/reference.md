@@ -410,7 +410,7 @@ TODO: Explain the conditions under which it is acceptable to do this.
 
 The supported MMA shapes are such that:
 * `M` is divisible by 64
-* `N` is divisible by 8 and smaller than 256
+* `N` is divisible by 8 and not greater than 256
 * `K` is a multiple of `swizzle` divided by the operand's element type bytewidth
 
 The currently supported data types are: `jnp.float32`, `jnp.bfloat16` and `jnp.float16`.
@@ -553,12 +553,12 @@ The `A` operand can be passed in as a TMEM reference as well, but it must be pac
 
 The supported **non-collective** MMA shapes are such that:
 * `M` is 64 or 128
-* `N` is divisible by 8 and smaller than 512
+* `N` is divisible by 8 and not greater than 512
 * `K` is a multiple of `8 * swizzle` divided by the bitwidth of element type
 
 The supported [**collective** MMA](#collective-mma) shapes are such that:
 * `M` is 128 or 256 (half of that per block)
-* `N` is divisible by 8 and smaller than 256 (smaller than 128 in each block)
+* `N` is divisible by 8 and not greater than 256 (not greater than 128 in each block)
 * `K` is a multiple of `8 * swizzle` divided by the bitwidth of element type
 
 The currently supported floating-point data types are: `jnp.bfloat16`,
