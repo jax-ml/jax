@@ -34,6 +34,7 @@ import threading
 from typing import Any, Union
 from collections.abc import Sequence
 import warnings
+import re
 
 from jax._src import config
 from jax._src import distributed
@@ -46,6 +47,27 @@ from jax._src.lib import _jax
 from jax._src.lib import _profiler
 
 logger = logging.getLogger(__name__)
+
+import warnings
+from packaging.version import Version
+import pkg_resources
+
+def _warn_if_problematic_cudnn():
+    try:
+        version = pkg_resources.get_distribution("nvidia-cudnn-cu12").version
+        if Version(version) >= Version("9.11.0.0"):
+            warnings.warn(
+                f"[JAX WARNING] Detected cuDNN version {version}, which may cause execution failures "
+                f"with flax.linen.Conv layers. Please set:\n\n"
+                f"  export XLA_FLAGS=--xla_gpu_strict_conv_algorithm_picker=false\n\n"
+                f"or downgrade to cuDNN 9.10.2.21.\n"
+                f"See: https://github.com/google/jax/issues/30663",
+                RuntimeWarning
+            )
+    except Exception:
+        pass
+
+
 
 jax_plugins: Any | None
 try:
@@ -1230,3 +1252,7 @@ cpu_get_global_topology_timeout_minutes = config.int_state(
     ),
     validator=_validate_backend_not_initialized,
 )
+
+# At the end of xla_bridge.py
+_warn_if_problematic_cudnn()
+
