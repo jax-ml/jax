@@ -662,6 +662,24 @@ pytype_strict_library(
     ],
 )
 
+# TODO(dsuo): Consider removing this target and moving files in __init__.py to their own targets.
+pytype_strict_library(
+    name = "experimental",
+    srcs = [
+        "__init__.py",
+        "x64_context.py",
+    ],
+    visibility = ["//jax:internal"],
+    deps = [
+        "//jax/_src:api",
+        "//jax/_src:callback",
+        "//jax/_src:config",
+        "//jax/_src:core",
+        "//jax/_src:dtypes",
+        "//jax/_src:earray",
+    ],
+)
+
 # TODO(dsuo): Remove these filegroups once experimental aliases from jax/BUILD
 # are removed.
 filegroup(
