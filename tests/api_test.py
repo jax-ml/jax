@@ -698,7 +698,10 @@ class JitTest(jtu.BufferDonationTestCase):
     f.clear_cache()
     gc.collect()
     num_live = len(client.live_executables())
-    self.assertEqual(num_live_initial, num_live)
+    # You would hope that these would be equal, but in practice we sometimes
+    # observe *fewer* live executables after this code runs in threaded tests.
+    # I suspect this is an artifact of other caches and garbage collection.
+    self.assertGreaterEqual(num_live_initial, num_live)
 
   def test_pe_close_jaxpr_cache_leak(self):
     @jax.jit
