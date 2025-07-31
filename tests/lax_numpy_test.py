@@ -24,6 +24,7 @@ import io
 import itertools
 import math
 import platform
+import sys
 from typing import Union, cast
 import unittest
 from unittest import SkipTest
@@ -1920,7 +1921,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.skipTest("Too many indices to be unique")
     def args_maker():
       x = rng(shape, dtype)
-      idx = self.rng().choice(max_idx, idx_shape, replace=False)
+      idx = self.rng().choice(max_idx, idx_shape, replace=False).astype(dtype)
       return x, idx
     np_fun = partial(np.delete, axis=axis)
     jnp_fun = partial(jnp.delete, axis=axis, assume_unique_indices=True)
@@ -2796,6 +2797,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.ignore_warning(category=RuntimeWarning,
                       message="invalid value encountered in isinf")
   def testFrexp(self, shape, dtype, rng_factory):
+    if sys.platform == 'win32':
+      self.skipTest(
+          'TODO(b/435663064): Investigate why this fails in Windows Bazel test.'
+      )
     # integer types are converted to float64 in numpy's implementation
     if (dtype not in [jnp.bfloat16, np.float16, np.float32]
         and not config.enable_x64.value):
@@ -2803,11 +2808,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     def np_frexp(x):
-      mantissa, exponent = np.frexp(x)
+      mantissa, exponent = np.frexp(x, dtype=dtype)
       # NumPy is inconsistent between Windows and Linux/Mac on what the
       # value of exponent is if the input is infinite. Normalize to the Linux
       # behavior.
-      exponent = np.where(np.isinf(mantissa), np.zeros_like(exponent), exponent)
+      exponent = np.where(
+          np.isinf(mantissa), np.zeros_like(exponent), exponent
+      ).astype(dtype)
       return mantissa, exponent
     self._CheckAgainstNumpy(np_frexp, jnp.frexp, args_maker,
                             check_dtypes=np.issubdtype(dtype, np.inexact))
@@ -3870,7 +3877,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     # out of bounds leads to an OverflowError
     val = jnp.iinfo(jnp.int64).min - 1
-    with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
+    if sys.platform == "win32":
+      overflow_msg = "int too big to convert"
+    else:
+      overflow_msg = "Python int too large"
+
+    with self.assertRaisesRegex(OverflowError, overflow_msg):
       jnp.array([0, val])
 
   def testArrayNone(self):

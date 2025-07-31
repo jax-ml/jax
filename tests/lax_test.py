@@ -4862,7 +4862,7 @@ class RaggedTest(jtu.JaxTestCase):
     args_maker = lambda: [
         rng(lhs_shape, dtype),
         rng(rhs_shape, dtype),
-        group_sizes(m, num_groups),
+        group_sizes(m, num_groups).astype(dtype),
     ]
     self._CompileAndCheck(lax.ragged_dot, args_maker)
     self._CheckAgainstNumpy(
