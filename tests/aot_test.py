@@ -167,6 +167,17 @@ class JaxAotTest(jtu.JaxTestCase):
     expected_aot_call = 1 if config.use_simplified_jaxpr_constants.value else 0
     self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=expected_aot_call)
 
+  def test_with_ref_constants(self):
+    x_ref = core.mutable_array(0)
+
+    @jax.jit
+    def f(x):
+      x_ref[...] += x
+
+    f_lowered = f.lower(1)
+    with self.assertRaisesRegex(ValueError, 'serialize with a closed-over'):
+      serialized, in_tree, out_tree = serialize(f_lowered.compile())
+
   @jtu.run_on_devices('gpu', 'tpu')
   def test_mismatched_backends_raises(self):
     @jax.jit
