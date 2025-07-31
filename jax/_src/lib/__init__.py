@@ -23,6 +23,7 @@ import os
 import pathlib
 import re
 from types import ModuleType
+import typing
 
 try:
   import jaxlib as jaxlib
@@ -114,6 +115,11 @@ has_cpu_sparse = True
 
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
+
+if jaxlib_extension_version >= 365 or typing.TYPE_CHECKING:
+  import jaxlib._ifrt_proxy as ifrt_proxy  # noqa: F401
+else:
+  ifrt_proxy = _jax.ifrt_proxy
 
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882

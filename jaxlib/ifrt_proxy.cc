@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "jaxlib/ifrt_proxy.h"
-
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -136,10 +134,8 @@ absl::StatusOr<nb_class_ptr<PyClient>> GetClient(
 
 }  // namespace
 
-void BuildIfrtProxySubmodule(nb::module_& m) {
-  nb::module_ sub_module = m.def_submodule("ifrt_proxy", "IFRT proxy");
-
-  nb::class_<PyClientConnectionOptions>(sub_module, "ClientConnectionOptions")
+NB_MODULE(_ifrt_proxy, m) {
+  nb::class_<PyClientConnectionOptions>(m, "ClientConnectionOptions")
       .def(nb::init<>())
       .def_rw("on_disconnect", &PyClientConnectionOptions::on_disconnect,
               nb::arg().none())
@@ -153,8 +149,8 @@ void BuildIfrtProxySubmodule(nb::module_& m) {
               &PyClientConnectionOptions::initialization_data,
               nb::arg().none());
 
-  sub_module.def("get_client", xla::ValueOrThrowWrapper(GetClient),
-                 nb::arg("proxy_server_address"), nb::arg("options"));
+  m.def("get_client", xla::ValueOrThrowWrapper(GetClient),
+        nb::arg("proxy_server_address"), nb::arg("options"));
 }
 
 }  // namespace proxy

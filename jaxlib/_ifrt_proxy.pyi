@@ -13,22 +13,19 @@
 # limitations under the License.
 # ==============================================================================
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 from jaxlib import _jax
 
 _Status = Any
 Client = _jax.Client
 
-
 class ClientConnectionOptions:
   on_disconnect: Callable[[_Status], None] | None = None
   on_connection_update: Callable[[str], None] | None = None
   connection_timeout_in_seconds: int | None = None
 
-
 def get_client(
-    proxy_server_address: str,
-    options: ClientConnectionOptions
+    proxy_server_address: str, options: ClientConnectionOptions
 ) -> Client: ...

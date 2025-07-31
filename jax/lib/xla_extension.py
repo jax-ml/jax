@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import jax._src.lib
+from jax._src.lib import ifrt_proxy as _ifrt_proxy
 from jax._src.lib import _jax
 
 _deprecations = {
@@ -81,7 +82,7 @@ _deprecations = {
     # Deprecated March 26 2025.
     "ifrt_proxy": (
         "jax.lib.xla_extension.ifrt_proxy is deprecated.",
-        _jax.ifrt_proxy,
+        _ifrt_proxy,
     ),
     "mlir": ("jax.lib.xla_extension.mlir is deprecated.", _jax.mlir),
     "profiler": (
@@ -118,7 +119,7 @@ if _typing.TYPE_CHECKING:
   PmapFunction = _jax.PmapFunction
   hlo_module_cost_analysis = _jax.hlo_module_cost_analysis
   hlo_module_to_dot_graph = _jax.hlo_module_to_dot_graph
-  ifrt_proxy = _jax.ifrt_proxy
+  ifrt_proxy = _ifrt_proxy
   mlir = _jax.mlir
   profiler = jax._src.lib._profiler
 else:
@@ -127,4 +128,5 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
+del _ifrt_proxy
 del _jax

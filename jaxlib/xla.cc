@@ -49,7 +49,6 @@ limitations under the License.
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/ffi.h"
-#include "jaxlib/ifrt_proxy.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
@@ -629,10 +628,6 @@ NB_MODULE(_jax, m) {
 #if defined(__linux__)
   aux::RegisterTransferServerTypes(m);
 #endif  // defined(__linux__)
-
-  // The following uses python bindings for PyClient defined above using
-  // pybind11, and hence needs pybind11::module_ (not just nanobind::module_).
-  xla::ifrt::proxy::BuildIfrtProxySubmodule(m);
 
   nb::class_<tsl::PreemptionSyncManager> preemption_sync_manager(
       m, "PreemptionSyncManager");

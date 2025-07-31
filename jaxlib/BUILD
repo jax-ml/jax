@@ -52,6 +52,7 @@ pytype_strict_library(
     name = "jaxlib",
     data = [":ffi_headers"],
     deps = [
+        ":_ifrt_proxy",
         ":_jax",
         ":_pretty_printer",
         ":cpu_feature_guard",
@@ -151,6 +152,7 @@ pywrap_library(
         }),
     },
     deps = [
+        ":_ifrt_proxy",
         ":_jax",
         ":_pretty_printer",
         ":utils",
@@ -320,7 +322,6 @@ nanobind_pywrap_extension(
         ":dlpack",
         ":ffi",
         ":guard_lib",
-        ":ifrt_proxy",
         ":jax_jit",
         ":mlir",
         ":nb_class_ptr",
@@ -620,16 +621,10 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "ifrt_proxy",
+nanobind_pywrap_extension(
+    name = "_ifrt_proxy",
     srcs = ["ifrt_proxy.cc"],
-    hdrs = ["ifrt_proxy.h"],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
+    pytype_srcs = ["_ifrt_proxy.pyi"],
     deps = [
         ":nb_class_ptr",
         ":py_client",

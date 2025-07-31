@@ -28,7 +28,6 @@ from . import config as config
 from . import ffi as ffi
 from . import guard_lib as guard_lib
 from . import ifrt_programs as ifrt_programs
-from . import ifrt_proxy as ifrt_proxy
 from . import jax_jit as jax_jit
 from . import mlir as mlir
 from . import pmap_lib as pmap_lib
