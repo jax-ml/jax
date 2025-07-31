@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import base64
 import collections
+from collections.abc import Callable, Sequence
 import functools
 import io
 from typing import Any
-from collections.abc import Callable, Sequence
 
 try:
   import cloudpickle  # type: ignore[import-not-found]
@@ -35,6 +35,7 @@ from jax._src.lib import xla_client as xc
 import numpy as np
 
 DeviceList = xc.DeviceList
+
 
 @jax._src.util.cache(max_size=None)
 def _get_cpu_device_map() -> dict[int, jax.Device]:
@@ -103,15 +104,21 @@ def _reduce_mesh(
 def _reduce_named_sharding(
     sharding: jax.sharding.NamedSharding,
 ) -> tuple[Callable[..., jax.sharding.NamedSharding], Any]:
-  # TODO(hyeontaek): Use `legacy_memory_space_behavior=false` for the
-  # CPU backend's `xla::CpuClientOptions`, and preserve the memory
-  # kind across serialization.
-  # Colocated Python implicitly relies on the default memory kind
-  # being reset to the default memory space when deserializing.
-  def _make_named_sharding(mesh, spec):
-    return jax.sharding.NamedSharding(mesh, spec)
 
-  return _make_named_sharding, (sharding.mesh, sharding.spec)
+  def make_named_sharding(
+      mesh: jax.sharding.Mesh,
+      spec: jax.sharding.PartitionSpec,
+      memory_kind: str | None,
+  ) -> jax.sharding.NamedSharding:
+    if jax._src.lib.ifrt_version < 19:
+      memory_kind = None
+    return jax.sharding.NamedSharding(mesh, spec, memory_kind=memory_kind)
+
+  return make_named_sharding, (
+      sharding.mesh,
+      sharding.spec,
+      sharding.memory_kind,
+  )
 
 
 def _reduce_device_list(
@@ -132,12 +139,19 @@ def _reduce_single_device_sharding(
     sharding: jax.sharding.SingleDeviceSharding,
 ) -> tuple[Callable[..., jax.sharding.SingleDeviceSharding], Any]:
 
-  def make_single_device_sharding(device_id: int):
+  def make_single_device_sharding(
+      device_id: int, memory_kind: str | None
+  ) -> jax.sharding.SingleDeviceSharding:
+    if jax._src.lib.ifrt_version < 19:
+      memory_kind = None
     cpu_device_map = _get_cpu_device_map()
     device = _lookup_cpu_device(cpu_device_map, device_id)
-    return jax.sharding.SingleDeviceSharding(device)
+    return jax.sharding.SingleDeviceSharding(device, memory_kind=memory_kind)
 
-  return make_single_device_sharding, (sharding.device_set.pop().id,)
+  return make_single_device_sharding, (
+      sharding.device_set.pop().id,
+      sharding.memory_kind,
+  )
 
 
 def _serialize(obj: Any) -> bytes:
@@ -239,7 +253,9 @@ def _serialize_specs(
       jax.device_put(s_np_array, device) for device in addressable_devices
   ]
   return jax.make_array_from_single_device_arrays(
-      arrays=out_arrays, sharding=replicated_sharding, shape=(),
+      arrays=out_arrays,
+      sharding=replicated_sharding,
+      shape=(),
   )
 
 

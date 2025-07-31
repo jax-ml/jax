@@ -60,7 +60,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.test_device_matches(["cpu"]):
+    if jtu.test_device_matches(["cpu"]) and jax._src.lib.ifrt_version < 19:
       self._default_memory_kind = "unpinned_host"
     else:
       self._default_memory_kind = "device"
