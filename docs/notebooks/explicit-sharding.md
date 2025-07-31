@@ -55,8 +55,7 @@ find something that doesn't work!
 import jax
 import numpy as np
 import jax.numpy as jnp
-from jax.sharding import PartitionSpec as P, AxisType, set_mesh, get_abstract_mesh
-from jax.sharding import reshard, auto_axes, explicit_axes
+from jax.sharding import PartitionSpec as P, AxisType, get_abstract_mesh, reshard
 
 jax.config.update('jax_num_cpu_devices', 8)
 ```
@@ -121,7 +120,7 @@ outputId: d888371b-080e-4bff-be5d-ea56beda3aac
 ---
 mesh = jax.make_mesh((2, 4), ("X", "Y"),
                      axis_types=(AxisType.Explicit, AxisType.Explicit))
-set_mesh(mesh)
+jax.sharding.set_mesh(mesh)
 
 print(f"Current mesh is: {get_abstract_mesh()}")
 ```
@@ -292,6 +291,8 @@ colab:
 id: fpFEaMBcXsJG
 outputId: 5b84b1d1-d7b2-4e9a-ba98-3dd34a5465ef
 ---
+from jax.sharding import auto_axes, explicit_axes
+
 some_x = reshard(np.arange(16).reshape(4, 4), P("X", None))
 some_y = reshard(np.arange(16).reshape(4, 4), P(None, "X"))
 
