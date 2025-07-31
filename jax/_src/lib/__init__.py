@@ -85,6 +85,15 @@ version = check_jaxlib_version(
 import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
+import jaxlib.xla_client as xla_client  # noqa: F401
+
+# Jaxlib code is split between the Jax and the XLA repositories.
+# Only for the internal usage of the JAX developers, we expose a version
+# number that can be used to perform changes without breaking the main
+# branch on the Jax github.
+jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
+ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
+
 import jaxlib.lapack as lapack  # noqa: F401
 import jaxlib.utils as utils  # noqa: F401
 import jaxlib._jax as _jax  # noqa: F401
@@ -94,15 +103,10 @@ from jaxlib._jax import pmap_lib as pmap_lib  # noqa: F401
 from jaxlib._jax import pytree as pytree  # noqa: F401
 from jaxlib._jax import Device as Device  # noqa: F401
 from jaxlib import _profiler as _profiler  # noqa: F401
-
-import jaxlib.xla_client as xla_client  # noqa: F401
-
-# Jaxlib code is split between the Jax and the XLA repositories.
-# Only for the internal usage of the JAX developers, we expose a version
-# number that can be used to perform changes without breaking the main
-# branch on the Jax github.
-jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
-ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
+try:
+  from jaxlib import _profile_data as _profile_data  # noqa: F401
+except (ImportError, ModuleNotFoundError):
+  _profile_data = None
 
 from jaxlib._jax import ffi as ffi  # noqa: F401
 import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
