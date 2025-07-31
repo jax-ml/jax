@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
@@ -158,42 +159,44 @@ using DevicePutHandler = std::function<absl::StatusOr<ShardFn>(
 // from a fully-replicated `shard` that is created from a host buffer (not from
 // an existing IFRT array). `shard` will be consumed.
 //
-// `user_context` will be used for a new IFRT array created.
-//
 // Expected to be called without holding GIL.
 absl::StatusOr<tsl::RCReference<ifrt::Array>>
-MakeIfrtArrayFromFullyReplicatedShard(
-    ifrt::Client* ifrt_client, ifrt::ShardingRef ifrt_sharding, Shard& shard,
-    tsl::RCReference<ifrt::UserContext> user_context) {
+MakeIfrtArrayFromFullyReplicatedShard(ifrt::Client* ifrt_client,
+                                      ifrt::ShardingRef ifrt_sharding,
+                                      Shard& shard) {
   auto host_buffer_shard = std::get<ifrt::Client::HostBuffer>(
       std::move(shard.ifrt_array_or_host_buffer));
+#if JAX_IFRT_VERSION_NUMBER >= 18
+  return ifrt_client->MakeArrayFromHostBuffer(
+      host_buffer_shard.data, host_buffer_shard.dtype,
+      std::move(host_buffer_shard.shape),
+      std::move(host_buffer_shard.byte_strides), std::move(ifrt_sharding),
+      shard.host_buffer_semantics, std::move(host_buffer_shard.on_done));
+#else
   return ifrt_client->MakeArrayFromHostBuffer(
       host_buffer_shard.data, host_buffer_shard.dtype,
       std::move(host_buffer_shard.shape),
       std::move(host_buffer_shard.byte_strides), std::move(ifrt_sharding),
       shard.host_buffer_semantics, std::move(host_buffer_shard.on_done),
-      std::move(user_context));
+      ifrt::UserContextScope::current());
+#endif
 }
 
 // Shared logic that makes a single-device IFRT array from a `shard`. `shard`
 // will be consumed.
 //
-// `user_context` will be used for a new IFRT array created from the host
-// buffer, and be not applied when reusing an existing IFRT array.
-//
 // Expected to be called without holding GIL.
 absl::StatusOr<ifrt::ArrayRef> MakeSingleDeviceIfrtArrayFromShard(
     xla::ifrt::Client* ifrt_client, xla::ifrt::Device* ifrt_device,
-    xla::ifrt::MemoryKind ifrt_memory_kind, Shard& shard,
-    tsl::RCReference<ifrt::UserContext> user_context) {
+    xla::ifrt::MemoryKind ifrt_memory_kind, Shard& shard) {
   if (auto* ifrt_array =
           std::get_if<ifrt::ArrayRef>(&shard.ifrt_array_or_host_buffer)) {
     return std::move(*ifrt_array);
   }
   ifrt::ShardingRef ifrt_sharding =
       ifrt::SingleDeviceSharding::Create(ifrt_device, ifrt_memory_kind);
-  return MakeIfrtArrayFromFullyReplicatedShard(
-      ifrt_client, std::move(ifrt_sharding), shard, std::move(user_context));
+  return MakeIfrtArrayFromFullyReplicatedShard(ifrt_client,
+                                               std::move(ifrt_sharding), shard);
 }
 
 // Makes an IFRT Array from `shards` using a batched array creation API (fast
@@ -202,8 +205,7 @@ absl::StatusOr<ifrt::ArrayRef> MakeSingleDeviceIfrtArrayFromShard(
 // Expected to be called without holding GIL.
 absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsInBatch(
     ifrt::Client* ifrt_client, ifrt::DType ifrt_dtype, ifrt::Shape ifrt_shape,
-    ifrt::ShardingRef ifrt_sharding, absl::Span<Shard> shards,
-    tsl::RCReference<ifrt::UserContext> user_context) {
+    ifrt::ShardingRef ifrt_sharding, absl::Span<Shard> shards) {
   absl::InlinedVector<
       std::pair<absl::InlinedVector<int64_t, 1>, ifrt::Client::HostBuffer>, 1>
       host_buffers;
@@ -229,10 +231,16 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsInBatch(
                       /*shape=*/std::move(ifrt_shape),
                       /*sharding=*/std::move(ifrt_sharding),
                       /*layout=*/nullptr}});
-  TF_ASSIGN_OR_RETURN(
-      auto arrays,
-      ifrt_client->MakeArraysFromHostBufferShards(
-          absl::MakeSpan(specs), safe_host_semantics, std::move(user_context)));
+#if JAX_IFRT_VERSION_NUMBER >= 18
+  TF_ASSIGN_OR_RETURN(auto arrays,
+                      ifrt_client->MakeArraysFromHostBufferShards(
+                          absl::MakeSpan(specs), safe_host_semantics));
+#else
+  TF_ASSIGN_OR_RETURN(auto arrays,
+                      ifrt_client->MakeArraysFromHostBufferShards(
+                          absl::MakeSpan(specs), safe_host_semantics,
+                          ifrt::UserContextScope::current()));
+#endif
   return std::move(arrays.front());
 }
 
@@ -244,8 +252,7 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsWithAssembly(
     ifrt::Client* ifrt_client, ifrt::DType ifrt_dtype, ifrt::Shape ifrt_shape,
     ifrt::ShardingRef ifrt_sharding,
     ifrt::DeviceList* ifrt_addressable_device_list,
-    ifrt::MemoryKind ifrt_memory_kind, absl::Span<Shard> shards,
-    tsl::RCReference<ifrt::UserContext> user_context) {
+    ifrt::MemoryKind ifrt_memory_kind, absl::Span<Shard> shards) {
   absl::Span<ifrt::Device* const> ifrt_addressable_devices =
       ifrt_addressable_device_list->devices();
   std::vector<ifrt::ArrayRef> ifrt_array_shards;
@@ -254,7 +261,7 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsWithAssembly(
     TF_ASSIGN_OR_RETURN(ifrt::ArrayRef ifrt_array_shard,
                         MakeSingleDeviceIfrtArrayFromShard(
                             ifrt_client, ifrt_addressable_devices[i],
-                            ifrt_memory_kind, shards[i], user_context));
+                            ifrt_memory_kind, shards[i]));
     ifrt_array_shards.push_back(std::move(ifrt_array_shard));
   }
   return ifrt_client->AssembleArrayFromSingleDeviceArrays(
@@ -912,16 +919,14 @@ absl::StatusOr<DevicePutResult> DevicePutWithDevice(
                       MakeShardFn(addressable_shard, ifrt_client, ifrt_device,
                                   ifrt_memory_kind, options));
 
-  tsl::RCReference<ifrt::UserContext> ifrt_user_context =
-      ifrt_client->CreateUserContext();
+  ifrt::UserContextScope user_context_scope(ifrt_client->CreateUserContext());
 
   nb::gil_scoped_release gil_release;
 
   TF_ASSIGN_OR_RETURN(Shard shard, std::move(shard_fn)());
   TF_ASSIGN_OR_RETURN(ifrt::ArrayRef ifrt_array,
                       MakeSingleDeviceIfrtArrayFromShard(
-                          ifrt_client, ifrt_device, ifrt_memory_kind, shard,
-                          std::move(ifrt_user_context)));
+                          ifrt_client, ifrt_device, ifrt_memory_kind, shard));
   return DevicePutResult(std::move(ifrt_array), shard.weak_type);
 }
 
@@ -995,8 +1000,7 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
     // cases to reduce the number of host buffers to obtain.
     is_fully_replicated = ifrt_sharding->IsFullyReplicated();
   }
-  tsl::RCReference<ifrt::UserContext> ifrt_user_context =
-      ifrt_client->CreateUserContext();
+  ifrt::UserContextScope user_context_scope(ifrt_client->CreateUserContext());
 
   nb::gil_scoped_release gil_release;
 
@@ -1040,17 +1044,15 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   if (should_batch) {
     if (is_fully_replicated && shards.size() == 1) {
       ++GetDevicePutInfo().device_put_fully_replicated;
-      TF_ASSIGN_OR_RETURN(
-          ifrt_array, MakeIfrtArrayFromFullyReplicatedShard(
-                          ifrt_client, std::move(ifrt_sharding), shards.front(),
-                          std::move(ifrt_user_context)));
+      TF_ASSIGN_OR_RETURN(ifrt_array, MakeIfrtArrayFromFullyReplicatedShard(
+                                          ifrt_client, std::move(ifrt_sharding),
+                                          shards.front()));
     } else {
       ++GetDevicePutInfo().device_put_batched;
-      TF_ASSIGN_OR_RETURN(ifrt_array,
-                          MakeIfrtArrayFromShardsInBatch(
-                              ifrt_client, ifrt_dtype, std::move(ifrt_shape),
-                              std::move(ifrt_sharding), absl::MakeSpan(shards),
-                              std::move(ifrt_user_context)));
+      TF_ASSIGN_OR_RETURN(
+          ifrt_array, MakeIfrtArrayFromShardsInBatch(
+                          ifrt_client, ifrt_dtype, std::move(ifrt_shape),
+                          std::move(ifrt_sharding), absl::MakeSpan(shards)));
     }
   } else {
     ++GetDevicePutInfo().device_put_assembled;
@@ -1058,8 +1060,7 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
         ifrt_array, MakeIfrtArrayFromShardsWithAssembly(
                         ifrt_client, ifrt_dtype, std::move(ifrt_shape),
                         std::move(ifrt_sharding), ifrt_addressable_device_list,
-                        ifrt_memory_kind, absl::MakeSpan(shards),
-                        std::move(ifrt_user_context)));
+                        ifrt_memory_kind, absl::MakeSpan(shards)));
   }
   const bool weak_type = shards.empty() ? false : shards.front().weak_type;
   return DevicePutResult(std::move(ifrt_array), weak_type);
