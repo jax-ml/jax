@@ -727,6 +727,10 @@ async def main():
 
         wheel_build_command.append(f"--jaxlib_git_hash={git_hash}")
 
+      # If we build jax wheel, we don't need to build jaxlib targets.
+      if wheel =="jax":
+        wheel_build_command.append("--//jax:build_jaxlib=false")
+
       result = await executor.run(wheel_build_command.get_command_as_string(), args.dry_run, args.detailed_timestamped_log)
       # Exit with error if any wheel build fails.
       if result.return_code != 0:
