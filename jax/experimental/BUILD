@@ -662,6 +662,24 @@ pytype_strict_library(
     ],
 )
 
+# TODO(dsuo): Remove this once experimental aliases from jax/BUILD are removed.
+pytype_strict_library(
+    name = "experimental",
+    srcs = [
+        "__init__.py",
+        "x64_context.py",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax:api",
+        "//jax:callback",
+        "//jax:config",
+        "//jax:core",
+        "//jax:dtypes",
+        "//jax:earray",
+    ],
+)
+
 # TODO(dsuo): Remove these filegroups once experimental aliases from jax/BUILD
 # are removed.
 filegroup(
