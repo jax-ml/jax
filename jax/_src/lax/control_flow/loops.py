@@ -1519,11 +1519,6 @@ def _move_right(lst, to_move):
   left, right = partition_list(to_move, lst)
   return [*left, *right, *rest]
 
-def _propagate_mem_kind_scan(*xm, reverse, length, num_consts, num_carry, jaxpr,
-                             linear, unroll, _split_transpose):
-  return pxla.get_out_memory_kinds_via_propagation(jaxpr)
-pxla.memory_kind_propagate_rule[scan_p] = _propagate_mem_kind_scan
-
 ### while_loop
 
 @api_boundary

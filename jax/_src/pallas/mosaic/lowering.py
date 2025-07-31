@@ -232,7 +232,10 @@ class LoweringRuleContext:
 
 
 def _memory_space_to_tpu_memory_space(memory_space: AnyMemorySpace | None
-                                     ) -> TPUMemorySpace:
+                                      ) -> TPUMemorySpace:
+  if memory_space == jax_core.MemorySpace.Device:
+    return TPUMemorySpace.ANY
+
   match memory_space:
     case None:
       # We pick VMEM as the default one when no memory space is

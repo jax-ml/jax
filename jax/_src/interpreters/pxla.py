@@ -2008,43 +2008,6 @@ def are_all_shardings_default_mem_kind(
       return False
   return True
 
-memory_kind_propagate_rule: dict[Any, Any] = {}
-
-@weakref_lru_cache
-def get_out_memory_kinds_via_propagation(closed_jaxpr: core.ClosedJaxpr,
-                                         in_shardings=None) -> tuple[None | str]:
-  env = {}  # type: ignore
-  jaxpr = closed_jaxpr.jaxpr
-
-  def read(var):
-    if type(var) is core.Literal:
-      return None
-    return env[var]
-
-  def write(var, val):
-    env[var] = val
-
-  def _default_rule(prim, num_outvars, *_, **__):
-    return [None] * num_outvars if prim.multiple_results else None
-
-  if in_shardings is None:
-    invar_mem_kind = [None] * len(jaxpr.invars)
-  else:
-    invar_mem_kind = [None if isinstance(s, (UnspecifiedValue, AUTO)) else s.memory_kind
-                      for s in in_shardings]
-  safe_map(write, jaxpr.invars, invar_mem_kind)
-  safe_map(write, jaxpr.constvars, [None] * len(jaxpr.constvars))
-
-  for eqn in jaxpr.eqns:
-    in_mem_kinds = safe_map(read, eqn.invars)
-    rule = memory_kind_propagate_rule.get(
-        eqn.primitive, partial(_default_rule, eqn.primitive, len(eqn.outvars)))
-    out_mem_kinds = rule(*in_mem_kinds, **eqn.params)
-    if not eqn.primitive.multiple_results:
-      out_mem_kinds = [out_mem_kinds]
-    safe_map(write, eqn.outvars, out_mem_kinds)
-  return tuple(safe_map(read, jaxpr.outvars))
-
 
 @weakref_lru_cache
 def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
@@ -2354,8 +2317,8 @@ def lower_sharding_computation(
   if all_default_mem_kind:
     propagated_out_mem_kinds = (None,) * len(global_out_avals)
   else:
-    propagated_out_mem_kinds = get_out_memory_kinds_via_propagation(
-        closed_jaxpr, in_shardings)
+    propagated_out_mem_kinds = tuple(
+        core.mem_space_to_kind(o.memory_space) for o in closed_jaxpr.out_avals)  # type: ignore
 
   out_shardings = _concretize_abstract_out_shardings(
       out_shardings, global_out_avals, device_assignment,

@@ -18,6 +18,7 @@ from collections.abc import (Callable, Collection, Hashable, Iterable, Iterator,
                              Sequence, MutableSet, MutableMapping)
 from contextlib import contextmanager
 from dataclasses import dataclass
+import enum
 import functools
 from functools import partial, total_ordering
 import gc
@@ -474,7 +475,7 @@ class Var:
   initial_qdd : QuasiDynamicData | None
   final_qdd : QuasiDynamicData | None
 
-  def __init__(self, aval: AbstractValue, initial_qdd = None, final_qdd = None):
+  def __init__(self, aval: AbstractValue, initial_qdd=None, final_qdd=None):
     assert isinstance(aval, AbstractValue)
     self.count = next(_var_counter)
     self.aval = aval
@@ -1661,11 +1662,27 @@ def check_valid_jaxtype(x):
     raise TypeError(
       f"Value {x!r} of type {type(x)} is not a valid JAX type")
 
+
+def mem_kind_to_space(mem_kind: str) -> MemorySpace:
+  if mem_kind == 'pinned_host':
+    return MemorySpace.Host
+  return MemorySpace.Device
+
+def mem_space_to_kind(mem_space: MemorySpace) -> str:
+  if mem_space == MemorySpace.Device:
+    return 'device'
+  elif mem_space == MemorySpace.Host:
+    return 'pinned_host'
+  else:
+    assert False, "unreachable"
+
 def update_aval_with_sharding(aval, sharding):
   if isinstance(sharding, NamedSharding):
-    return aval.update(sharding=NamedSharding(
-        sharding.mesh.abstract_mesh,
-        sharding.spec._normalized_spec_for_aval(aval.ndim)))
+    return aval.update(
+        sharding=NamedSharding(
+            sharding.mesh.abstract_mesh,
+            sharding.spec._normalized_spec_for_aval(aval.ndim)),
+        memory_space=mem_kind_to_space(sharding.memory_kind))
   return aval
 
 
@@ -2102,14 +2119,15 @@ def get_sharding(sharding, shape):
   assert out_s.memory_kind is None
   return out_s
 
-def str_short_aval(shape, dtype, mesh, spec, vma,
+def str_short_aval(shape, dtype, mesh, spec, vma, memory_space,
                    short_dtypes=False, mesh_axis_types=False) -> str:
   dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
   dt_str = dt_str.replace('void', 'float0')
   shapestr = _get_shape_sharding_str(shape, spec)
   mesh_axes = f'({mesh._axis_types_dict})' if mesh_axis_types else ''
   vma_ur = _vma_ur_str(vma, spec.unreduced, spec.reduced)
-  return f'{dt_str}[{shapestr}]{vma_ur}{mesh_axes}'
+  ms_str = "" if memory_space == MemorySpace.Device else f"<{memory_space!r}>"
+  return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
 @cache(max_size=4096, trace_context_in_key=False)
 def get_vma(vma, mesh):
@@ -2126,13 +2144,27 @@ def get_vma(vma, mesh):
   assert isinstance(vma, frozenset)
   return vma
 
+class MemorySpace(enum.Enum):
+  Device = enum.auto()
+  Host = enum.auto()
+
+  def __repr__(self):
+    return self.name.lower()
+
+
+def get_memory_space(memory_space):
+  assert isinstance(memory_space, MemorySpace)
+  return memory_space
+
 
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape', 'sharding', 'vma']  # inherits slots from parent
+  # inherits slots from parent
+  __slots__ = ['shape', 'sharding', 'vma', 'memory_space']
   array_abstraction_level = 2
 
   def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
-               vma: frozenset[AxisName] = frozenset()):
+               vma: frozenset[AxisName] = frozenset(),
+               memory_space: MemorySpace = MemorySpace.Device):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
@@ -2140,6 +2172,8 @@ class ShapedArray(UnshapedArray):
     # short for varying_manual_axes. See docs at
     # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
     self.vma = get_vma(vma, self.sharding.mesh)
+    # See description of https://github.com/jax-ml/jax/pull/30556
+    self.memory_space = get_memory_space(memory_space)
 
   def lower_val(self, val): return [val]
   def raise_val(self, val): return val
@@ -2156,6 +2190,8 @@ class ShapedArray(UnshapedArray):
       kwargs['sharding'] = self.sharding
     if 'vma' not in kwargs:
       kwargs['vma'] = self.vma
+    if 'memory_space' not in kwargs:
+      kwargs['memory_space'] = self.memory_space
     return ShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
@@ -2173,30 +2209,33 @@ class ShapedArray(UnshapedArray):
             and self.dtype == other.dtype and self.shape == other.shape
             and self.weak_type == other.weak_type
             and self.sharding == other.sharding
-            and self.vma == other.vma)
+            and self.vma == other.vma
+            and self.memory_space == other.memory_space)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.shape, self.dtype, self.weak_type, self.sharding,
-                 self.vma))
+                 self.vma, self.memory_space))
 
   def to_tangent_aval(self):
     return ShapedArray(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-        self.weak_type, sharding=self.sharding, vma=self.vma)
+        self.weak_type, sharding=self.sharding, vma=self.vma,
+        memory_space=self.memory_space)
 
   def to_cotangent_aval(self):
     dtype = primal_dtype_to_tangent_dtype(self.dtype)
     sharding = primal_sharding_to_cotangent_sharding(self.sharding)
     return ShapedArray(
-        self.shape, dtype, self.weak_type, sharding=sharding, vma=self.vma)
+        self.shape, dtype, self.weak_type, sharding=sharding, vma=self.vma,
+        memory_space=self.memory_space)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
         self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
-        self.vma, short_dtypes, mesh_axis_types)
+        self.vma, self.memory_space, short_dtypes, mesh_axis_types)
 
   def _len(self, ignored_tracer):
     try:
@@ -2886,19 +2925,22 @@ def _map_shaped_array(
     return aval
   sharding = aval.sharding.update(spec=tuple_delete(aval.sharding.spec, axis))
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
-                     weak_type=aval.weak_type, sharding=sharding, vma=aval.vma)
+                     weak_type=aval.weak_type, sharding=sharding, vma=aval.vma,
+                     memory_space=aval.memory_space)
 
 def _unmap_shaped_array(
     size: int, axis: int | None, explicit_mesh_axis, aval: ShapedArray
     ) -> ShapedArray:
-  if axis is None: return aval
+  if axis is None:
+    return aval
   elif type(axis) is int:
     sharding = aval.sharding.update(spec=tuple_insert(
         aval.sharding.spec, axis, explicit_mesh_axis))
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding,
-                       vma=aval.vma)
-  else: raise TypeError(axis)
+                       vma=aval.vma, memory_space=aval.memory_space)
+  else:
+    raise TypeError(axis)
 
 def _map_dshaped_array(
     size: AxisSize, axis: int | None, aval: DShapedArray) -> DShapedArray:
@@ -3009,12 +3051,12 @@ def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
     # TODO(yashkatariya): Also check `sharding` here.
     # See https://github.com/jax-ml/jax/issues/26474
     return (t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
-            and t1.vma == t2.vma)  # type: ignore
+            and t1.vma == t2.vma and t1.memory_space == t2.memory_space)  # type: ignore
   elif isinstance(t1, AbstractRef) and isinstance(t2, AbstractRef):
     # We want to use the regular typecheck for ShapedArray here.
-    return ((t1.memory_space is None or t2.memory_space is None  # type: ignore
-            or t1.memory_space == t2.memory_space)  # type: ignore
-            and typematch(t1.inner_aval, t2.inner_aval))  # type: ignore
+    return (typematch(t1.inner_aval, t2.inner_aval) and  # type: ignore
+            (t1.memory_space is None or t2.memory_space is None or  # type: ignore
+             t1.memory_space == t2.memory_space))  # type: ignore
   else:
     return False
 

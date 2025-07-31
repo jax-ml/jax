@@ -598,8 +598,15 @@ device_put_p = core.Primitive('device_put')
 device_put_p.multiple_results = True
 device_put_p.def_impl(_batched_device_put_impl)
 
+
 def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
-  return xs
+  out = []
+  for x, d in zip(xs, devices):
+    if isinstance(d, (Sharding, TransferToMemoryKind)) and d.memory_kind is not None:
+      out.append(x.update(memory_space=core.mem_kind_to_space(d.memory_kind)))
+    else:
+      out.append(x)
+  return out
 device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):
@@ -668,13 +675,3 @@ mlir.register_lowering(
 def _common_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   return xs
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
-
-def _propagate_mem_kind_dp(*xm, devices, srcs, copy_semantics):
-  memory_kinds = []
-  for device in devices:
-    if isinstance(device, (Sharding, TransferToMemoryKind)):
-      memory_kinds.append(device.memory_kind)
-    else:
-      memory_kinds.append(None)
-  return memory_kinds
-pxla.memory_kind_propagate_rule[device_put_p] = _propagate_mem_kind_dp

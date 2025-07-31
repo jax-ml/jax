@@ -109,12 +109,29 @@ def call_shape_dtype_sharding_rule(prim, shape_rule, dtype_rule, sharding_rule,
       raise
     avals_str = ', '.join(i.str_short(short_dtypes=True) for i in avals)
     mesh = mesh_lib.empty_abstract_mesh if e.mesh is None else e.mesh
-    out_aval_str = core.str_short_aval(out_shapes, out_dtypes, mesh, e.pspec,
-                                       frozenset(), short_dtypes=True)
+    out_aval_str = core.str_short_aval(
+        out_shapes, out_dtypes, mesh, e.pspec, frozenset(),
+        core.MemorySpace.Device, short_dtypes=True)
     raise core.ShardingTypeError(
         f'{prim} operation with inputs: {avals_str} produces an illegally'
         f' sharded result: {out_aval_str}') from e
   return out_shapes, out_dtypes, out_shardings
+
+def _default_memory_space_rule(prim, *avals, **kwargs):
+  prev_aval = None
+  for a in avals:
+    if not a.ndim:
+      continue
+    if prev_aval is not None and prev_aval.memory_space != a.memory_space:
+      raise ValueError(
+          f'memory_space of all inputs passed to `{prim.name}` must be the'
+          f' same. Got one aval with shape: {prev_aval.str_short()} and another'
+          f' aval with shape: {a.str_short()}')
+    prev_aval = a
+  if prev_aval is None:
+    return core.MemorySpace.Device
+  return prev_aval.memory_space
+
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
                            sharding_rule, vma_rule, unreduced_rule,
@@ -140,9 +157,10 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
         prim, shape_rule, dtype_rule, sharding_rule, unreduced_rule, False,
         *avals, **kwargs)
     out_vma = vma_rule(*avals, **kwargs)
+    out_mem_space = _default_memory_space_rule(prim, *avals, **kwargs)
     out_aval = core.ShapedArray(
         out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
-        vma=out_vma)
+        vma=out_vma, memory_space=out_mem_space)
     core.check_avals_context_mesh([out_aval], prim.name)
     return out_aval
   elif least_specialized is core.DShapedArray:
