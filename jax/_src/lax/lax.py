@@ -56,7 +56,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters.batching import RaggedAxis
 from jax._src.lax import slicing
-from jax._src import mesh as mesh_lib
+from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
   _input_dtype, dtype_to_string, standard_abstract_eval,
   standard_multi_result_abstract_eval, standard_primitive)
@@ -3579,7 +3579,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
         and not isinstance(x, core.Tracer)
         and hasattr(x, 'sharding')
         and x.sharding is not None
-        and x.sharding._is_concrete
+        and (x.sharding._is_concrete or get_concrete_mesh() is not None)
         and getattr(x, '_committed', True)
         and not weak_type
         and fill_shape == np.shape(x)  # type: ignore[arg-type]
@@ -3961,7 +3961,7 @@ def broadcasting_sharding_rule(name, *avals):
             f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
             f' another mesh: {a.sharding.mesh}')
       mesh = a.sharding.mesh
-  mesh = mesh_lib.get_abstract_mesh() if mesh is None else mesh
+  mesh = get_abstract_mesh() if mesh is None else mesh
 
   shapes = [aval.shape for aval in avals if aval.shape]
   if not shapes:

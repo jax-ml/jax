@@ -5124,6 +5124,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
       apply(x)
     self.assertEqual(count(), 3)  # misses for init, apply and inner (only once)
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_sds_input_to_zeros_like_propagates_sharding(self, mesh):
+    val = jax.ShapeDtypeStruct(
+        (32,), dtype=jnp.float32,
+        sharding=NamedSharding(mesh.abstract_mesh, P('x')))
+    out = jnp.zeros_like(val)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
 
 class ShardingInTypesTest(jtu.JaxTestCase):
 
