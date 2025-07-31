@@ -3242,21 +3242,29 @@ def copy_tiled(src: ir.Value, dst: ir.Value, swizzle: int = 16):
   # Signedness doesn't matter, but we need to specify something for the
   # intermediate arrays.
   is_signed = False if ir.IntegerType.isinstance(src_ty.element_type) else None
-  if utils.is_smem_ref(src_ty) and not utils.is_smem_ref(dst_ty):
-    if src_ty.rank != dst_ty.rank + 2:
+  if utils.is_smem_ref(src_ty) != utils.is_smem_ref(dst_ty):
+    if utils.is_smem_ref(src_ty):
+      smem_ty, gmem_ty = src_ty, dst_ty
+    else:
+      smem_ty, gmem_ty = dst_ty, src_ty
+    if smem_ty.rank != gmem_ty.rank + 2:
       raise ValueError(
           "SMEM reference must have a rank larger by 2 than the destination"
-          f" reference (due to 2D tiling), but got SMEM rank {src_ty.rank} and"
-          f" destination rank {dst_ty.rank}."
+          f" reference (due to 2D tiling), but got SMEM rank {smem_ty.rank} and"
+          f" destination rank {gmem_ty.rank}."
       )
-    if src_ty.shape[-2:] != [8, swizzle_elems]:
+    swizzle_elems = 8 * swizzle // utils.bitwidth(gmem_ty.element_type)
+    if smem_ty.shape[-2:] != [8, swizzle_elems]:
       raise NotImplementedError(
           f"For {swizzle=}, expected SMEM tiling to be (8, {swizzle_elems})"
       )
-    expected_src_shape = utils.tile_shape(dst_ty.shape, (8, swizzle_elems))
-    if tuple(src_ty.shape) != expected_src_shape:
-      raise ValueError(src_ty.shape, expected_src_shape)
-    row_tiles, col_tiles = src_ty.shape[-4:-2]
+    expected_src_shape = utils.tile_shape(gmem_ty.shape, (8, swizzle_elems))
+    if tuple(smem_ty.shape) != expected_src_shape:
+      raise ValueError(
+          f"Expected SMEM reference to have shape {expected_src_shape} (tiling"
+          f" {gmem_ty.shape} by (8, {swizzle_elems})), but got {smem_ty.shape}"
+      )
+    row_tiles, col_tiles = smem_ty.shape[-4:-2]
     if row_tiles % 4 == 0:
       warp_row_tiles, warp_col_tiles = 4, 1
     elif row_tiles % 2 == 0:
@@ -3265,7 +3273,7 @@ def copy_tiled(src: ir.Value, dst: ir.Value, swizzle: int = 16):
       warp_row_tiles, warp_col_tiles = 2, 2
     else:
       if col_tiles % 4:
-        raise NotImplementedError("Number of tiles is not a multiple of 4", src_ty.shape)
+        raise NotImplementedError("Number of tiles is not a multiple of 4")
       warp_row_tiles, warp_col_tiles = 1, 4
     row_tiles //= warp_row_tiles
     col_tiles //= warp_col_tiles
@@ -3285,23 +3293,40 @@ def copy_tiled(src: ir.Value, dst: ir.Value, swizzle: int = 16):
     if 8 * bytes_per_thread < bitwidth:
       raise NotImplementedError("Element types with bitwidth so large aren't supported")
     vector_length = bytes_per_thread * 8 // bitwidth
-    assert (lane_col_tiles * swizzle_elems) % vector_length == 0
-    threads_per_row = (lane_col_tiles * swizzle_elems) // vector_length
-    assert lane_row_tiles * 8 >= WARP_SIZE // threads_per_row
+    assert swizzle_elems % vector_length == 0
+    # How many steps of vector transfers are needed to transfer a single tile?
+    if vector_length * WARP_SIZE > 8 * swizzle_elems:
+      steps_per_tile = 1
+    else:
+      steps_per_tile = 8 * swizzle_elems // (vector_length * WARP_SIZE)
+    tile_rows_per_step = 8 // steps_per_tile
+    # There are two cases to consider here: either a single transfer fits within
+    # a single tile (lane_row_tiles == lane_col_tiles == 1), which is the case
+    # for large swizzles, or it spans multiple tiles. The layout below ensures
+    # that consecutive lanes first traverse the columns within a tile, followed
+    # by rows within a tile, columns across tiles, and then rows across tiles.
+    # This ensures we never end up with bank conflicts, and yields well
+    # coalesced GMEM accesses.
     layout = TiledLayout(
         Tiling(
             (
                 (warp_row_tiles * lane_row_tiles * 8, warp_col_tiles * lane_col_tiles * swizzle_elems),
                 (lane_row_tiles * 8, lane_col_tiles * swizzle_elems),
-                (WARP_SIZE // threads_per_row, vector_length)
+                (8, swizzle_elems),
+                (tile_rows_per_step, swizzle_elems),
+                (vector_length,)
             )
         ),
-        warp_dims=(-6, -5),
-        lane_dims=(-3, -2) if swizzle < 64 else (-2, -3),
+        warp_dims=(-9, -8),
+        lane_dims=(-7, -6, -3, -2),
         vector_dim=-1,
         _check_canonical=False,
     ).canonicalize()
-    regs = FragmentedArray.load_tiled(src, swizzle, is_signed=is_signed, layout=layout)
-    regs.store_untiled(dst, optimized=False)
+    if utils.is_smem_ref(src_ty):
+      regs = FragmentedArray.load_tiled(src, swizzle, is_signed=is_signed, layout=layout)
+      regs.store_untiled(dst, optimized=False)
+    else:
+      regs = FragmentedArray.load_untiled(src, is_signed=is_signed, layout=layout, optimized=False)
+      regs.store_tiled(dst, swizzle)
     return
   raise NotImplementedError(f"Unsupported copy: {src.type} -> {dst.type}")
