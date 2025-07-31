@@ -738,7 +738,7 @@ def buffer_to_dlpack_managed_tensor(
 ) -> Any: ...
 @overload
 def dlpack_managed_tensor_to_buffer(
-    tensor: Any, device: Device, stream: int | None
+    tensor: Any, device: Device, stream: int | None, copy: bool | None
 ) -> ArrayImpl: ...
 @overload
 def dlpack_managed_tensor_to_buffer(  # Legacy overload
