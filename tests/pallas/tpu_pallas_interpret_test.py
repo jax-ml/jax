@@ -21,7 +21,6 @@ contains only tests that do not use shard_map.
 from collections.abc import Callable
 import dataclasses
 import functools
-import threading
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -981,27 +980,6 @@ class InterpretTest(jtu.JaxTestCase):
             ],
         )
 
-  def test_thread_map(self):
-    barrier = threading.Barrier(8)
-    lock = threading.Lock()
-    concurrent_calls = [0]
-    max_concurrent_calls = [0]
-
-    def _barrier():
-      with lock:
-        concurrent_calls[0] += 1
-        max_concurrent_calls[0] = max(
-            max_concurrent_calls[0], concurrent_calls[0])
-      barrier.wait()
-      with lock:
-        concurrent_calls[0] -= 1
-
-    def f(core_index):
-      del core_index
-      jax.experimental.io_callback(_barrier, (), ordered=True)
-
-    mosaic_interpret._thread_map(f, 8)
-    self.assertEqual(max_concurrent_calls[0], 8)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

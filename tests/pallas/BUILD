@@ -399,6 +399,26 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_test",
     srcs = ["tpu_pallas_test.py"],
+    enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_v5e",
+        "tpu_v5p",
+    ],
+    shard_count = 8,
+    deps = [
+        "//jax:extend",
+        "//jax:mesh_utils",
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_pallas_call_print_test",
+    srcs = ["tpu_pallas_call_print_test.py"],
     # The flag is necessary for ``pl.debug_print`` tests to work on TPU.
     args = ["--logtostderr"],
     enable_backends = ["tpu"],
@@ -406,6 +426,12 @@ jax_multiplatform_test(
         "tpu_v5e",
         "tpu_v5p",
     ],
+    env = if_oss(
+        {
+            "TPU_STDERR_LOG_LEVEL": "0",
+        },
+        google_value = {},
+    ),
     shard_count = 8,
     deps = [
         "//jax:extend",
@@ -601,6 +627,22 @@ jax_multiplatform_test(
     name = "tpu_pallas_interpret_test",
     srcs = [
         "tpu_pallas_interpret_test.py",
+    ],
+    enable_backends = ["cpu"],
+    deps = [
+        "//jax:experimental",
+        "//jax:pallas",
+        "//jax:pallas_tpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_pallas_interpret_thread_map_test",
+    srcs = [
+        "tpu_pallas_interpret_thread_map_test.py",
     ],
     enable_backends = ["cpu"],
     deps = [
