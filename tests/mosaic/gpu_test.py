@@ -39,6 +39,7 @@ from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
+from jax.experimental.mosaic.gpu import mma
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
@@ -2966,6 +2967,50 @@ class FragmentedArrayTest(TestCase):
     )()
     iota = np.arange(m * n, dtype=jnp.uint8).reshape(m, n)
     np.testing.assert_array_equal(result, (iota > 10).astype(jnp.uint8))
+
+  @parameterized.parameters(
+      (jnp.bfloat16, (32, 32), (16, 32), (32, 16)),
+  )
+  def test_map_mma(
+      self,
+      dtype,
+      a_shape,
+      b_shape,
+      acc_shape,
+  ):
+    a_tile, b_tile, acc_tile = (16, 16), (8, 16), (16, 8)
+    a_shape = tile_shape(a_shape, a_tile)
+    b_shape = tile_shape(b_shape, b_tile)
+    acc_shape = tile_shape(acc_shape, acc_tile)
+
+    def kernel(ctx, acc, a, b, out, scratch):
+      del ctx, scratch
+
+      def load(x, op):
+        mma_layout = mgpu.make_mma_m16n8k16_layout((2, 2), op)
+        return fa.FragmentedArray.load_tiled(
+            x, swizzle=128, layout=mma_layout, optimized=False
+        )
+
+      acc_fa = load(acc, fa.MMAOperand.ACC)
+      a_fa = load(a, fa.MMAOperand.LHS)
+      b_fa = load(b, fa.MMAOperand.RHS)
+      result_fa = mma.mma_map_m16n8k16(acc_fa, a_fa, b_fa)
+      result_fa.store_tiled(out, swizzle=128, optimized=False)
+
+    acc = jnp.zeros(acc_shape, dtype=jnp.float32)
+    a = jnp.ones(a_shape, dtype=dtype)
+    b = jnp.ones(b_shape, dtype=dtype)
+    out = acc + jnp.einsum("...mk,...nk->...mn", a, b)
+    res = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (acc, a, b),
+        out_shape=out,
+        smem_scratch_shape=(),
+    )(acc, a, b)
+    np.testing.assert_allclose(res, out)
 
   @parameterized.parameters(
       (jnp.uint8, jnp.uint16, 255),

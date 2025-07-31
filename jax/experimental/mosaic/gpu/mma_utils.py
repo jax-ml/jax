@@ -20,6 +20,8 @@ from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
+from jaxlib.mlir.dialects import vector
+import numpy as np
 
 from . import utils
 
@@ -227,3 +229,36 @@ def encode_descriptor(
   desc = llvm.or_(arith.shli(c(swizzle_encoding), c(62)), c(desc_const))
   desc = llvm.or_(encoded_base_addr, desc)
   return desc
+
+
+def lc(x):
+  i32 = ir.IntegerType.get_signless(32)
+  return llvm.ConstantOp(i32, ir.IntegerAttr.get(i32, x)).result
+
+
+def as_i32_reg(v):
+  i32 = ir.IntegerType.get_signless(32)
+  return llvm.extractelement(
+      vector.bitcast(ir.VectorType.get((1,), i32), v), lc(0)
+  )
+
+
+def unpack_i32(vec_ty, r):
+  i32 = ir.IntegerType.get_signless(32)
+  return vector.bitcast(vec_ty, vector.splat(ir.VectorType.get((1,), i32), r))
+
+
+def llvm_add(x, y):
+  return llvm.add(x, y, overflow_flags=llvm.IntegerOverflowFlags.none)
+
+
+def as_fragmented_reg_ndarray(
+    flat_regs, dtype: ir.Type, shape: tuple[int, ...]
+):
+  vec_regs = []
+  for first, second in zip(flat_regs[::2], flat_regs[1::2]):
+    vec = llvm.mlir_undef(ir.VectorType.get((2,), dtype))
+    vec = llvm.insertelement(vec, first, position=lc(0))
+    vec = llvm.insertelement(vec, second, position=lc(1))
+    vec_regs.append(vec)
+  return np.asarray(vec_regs, dtype=object).reshape(shape)

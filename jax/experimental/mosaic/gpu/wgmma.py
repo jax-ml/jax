@@ -28,6 +28,7 @@ import numpy as np
 
 from . import fragmented_array as fa
 from . import mma_utils
+from . import mma_utils as mu
 from . import utils
 
 # mypy: ignore-errors
@@ -149,14 +150,17 @@ def wgmma_m64(
         for pos in range(2)
     ]
     to_acc_vec_regs = functools.partial(
-        _as_fragmented_reg_ndarray, dtype=out_ty, shape=acc.shape)
+        mma_utils.as_fragmented_reg_ndarray, dtype=out_ty, shape=acc.shape
+    )
     acc_constraint = "r" if ir.IntegerType.isinstance(out_ty) else "f"
   elif ir.F16Type.isinstance(out_ty):
     num_acc_regs = n // 4
     out_ty_field = i32
-    acc_regs = [_as_i32_reg(reg) for reg in acc.flat]
+    acc_regs = [mu.as_i32_reg(reg) for reg in acc.flat]
     vec_ty = ir.VectorType(acc.flat[0].type)
-    to_acc_vec_regs = lambda regs : np.array([_unpack_i32(vec_ty, reg) for reg in regs]).reshape(acc.shape)
+    to_acc_vec_regs = lambda regs: np.array(
+        [mma_utils.unpack_i32(vec_ty, reg) for reg in regs]
+    ).reshape(acc.shape)
     acc_constraint = "r"
   else:
     raise ValueError(
@@ -247,17 +251,17 @@ def wgmma_m64(
     # Slice out the relevant part of A or advance the A descriptor.
     if a_in_regs:
       a_slice = a[:, (i * 16) : ((i + 1) * 16)]
-      a_args = [_as_i32_reg(v) for v in a_slice.registers.flat]
+      a_args = [mu.as_i32_reg(v) for v in a_slice.registers.flat]
     else:
       if i > 0:
-        a = _llvm_add(
+        a = mu.llvm_add(
             a,
             llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, a_k_stride >> 4)),
         )
       a_args = [a]
     # Advance the B descriptor.
     if i > 0:
-      b_descriptor = _llvm_add(
+      b_descriptor = mu.llvm_add(
           b_descriptor,
           llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, b_k_stride >> 4)),
       )
@@ -418,10 +422,11 @@ def wgmma(
         ]
       else:
         a_group_offset = mi * a_m_group_stride + ki * a_k_group_stride
-        a_mk = _llvm_add(
-            a_desc_base, c(mma_utils.encode_addr(a_group_offset), i64),
+        a_mk = mu.llvm_add(
+            a_desc_base,
+            c(mma_utils.encode_addr(a_group_offset), i64),
         )
-      b_k = _llvm_add(
+      b_k = mu.llvm_add(
           b_desc_base, c(mma_utils.encode_addr(ki * b_k_group_stride), i64)
       )
       new_acc_regs[mi : mi + 1] = wgmma_m64(
@@ -455,36 +460,3 @@ def wgmma_fence(array: fa.FragmentedArray) -> fa.FragmentedArray:
   array = fa.optimization_barrier(array)
   nvvm.wgmma_fence_aligned()
   return array
-
-
-def _as_fragmented_reg_ndarray(flat_regs, dtype: ir.Type, shape: tuple[int, ...]):
-  vec_regs = []
-  for first, second in zip(flat_regs[::2], flat_regs[1::2]):
-    vec = llvm.mlir_undef(ir.VectorType.get((2,), dtype))
-    vec = llvm.insertelement(vec, first, position=_lc(0))
-    vec = llvm.insertelement(vec, second, position=_lc(1))
-    vec_regs.append(vec)
-  return np.asarray(vec_regs, dtype=object).reshape(shape)
-
-
-def _as_i32_reg(v):
-  i32 = ir.IntegerType.get_signless(32)
-  return llvm.extractelement(
-      vector.bitcast(ir.VectorType.get((1,), i32), v), _lc(0)
-  )
-
-
-def _lc(x):
-  i32 = ir.IntegerType.get_signless(32)
-  return llvm.ConstantOp(i32, ir.IntegerAttr.get(i32, x)).result
-
-
-def _llvm_add(x, y):
-  return llvm.add(x, y, overflow_flags=llvm.IntegerOverflowFlags.none)
-
-
-def _unpack_i32(vec_ty, r):
-  i32 = ir.IntegerType.get_signless(32)
-  return vector.bitcast(
-      vec_ty, vector.splat(ir.VectorType.get((1,), i32), r)
-  )

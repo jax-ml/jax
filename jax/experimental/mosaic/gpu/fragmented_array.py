@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 import dataclasses
+import enum
 import functools
 import itertools
 import math
@@ -805,6 +806,54 @@ WGMMA_TRANSPOSED_LAYOUT = TiledLayout(
     lane_dims=(-6, -3, -5),
     vector_dim=-2,
 )
+
+
+@enum.unique
+class MMAOperand(enum.Enum):
+  LHS = enum.auto()
+  RHS = enum.auto()
+  ACC = enum.auto()
+
+
+def make_mma_m16n8k16_layout(
+    warp_shape: tuple[int | Replicated, int | Replicated], operand: MMAOperand
+):
+  match operand:
+    case MMAOperand.LHS:
+      secondary_tile = (16, 16)
+    case MMAOperand.RHS:
+      secondary_tile = (8, 16)
+    case MMAOperand.ACC:
+      secondary_tile = (16, 8)
+
+  base_tile = tuple(
+      (s.times if isinstance(s, Replicated) else s) * b
+      for s, b in zip(warp_shape, secondary_tile)
+  )
+
+  if math.prod(warp_shape) != 4:
+    raise ValueError(
+        "We have exactly 4 warps per array. Tried to make a layout with warp"
+        f" configuration {warp_shape}"
+    )
+
+  if warp_shape[0] == 1:
+    warp_dims = (-6,)
+  elif warp_shape[1] == 1:
+    warp_dims = (-7,)
+  else:
+    warp_dims = tuple(
+        s if isinstance(s, Replicated) else i
+        for s, i in zip(warp_shape, (-7, -6))
+    )
+
+  return TiledLayout(
+      Tiling((base_tile, secondary_tile, (8, 8), (2,))),
+      warp_dims=warp_dims,
+      lane_dims=(-3, -2),
+      vector_dim=-1,
+  )
+
 
 # Like WGMMA_LAYOUT, only each warp holds a 32xN strip instead of 16xN.
 TCGEN05_LAYOUT = TiledLayout(
