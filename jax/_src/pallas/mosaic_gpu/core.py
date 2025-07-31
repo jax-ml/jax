@@ -1210,6 +1210,7 @@ def _gpu_mesh_discharge_rule(
     debug,
     cost_estimate,
     name,
+    metadata,
 ):
   if not isinstance(mesh, Mesh):
     raise TypeError(f"Mesh must be a `plgpu.Mesh`, got {type(mesh)}")
@@ -1232,6 +1233,7 @@ def _gpu_mesh_discharge_rule(
       cost_estimate=cost_estimate,
       name=name,
       memory_space=GMEM,
+      metadata=metadata,
   )
 
 

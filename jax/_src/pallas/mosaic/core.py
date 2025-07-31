@@ -280,6 +280,7 @@ def _tensorcore_mesh_discharge_rule(
     debug: bool,
     cost_estimate: pallas_core.CostEstimate | None,
     name: str,
+    metadata: FrozenDict[str, str] | None,
 ):
   assert isinstance(mesh, TensorCoreMesh)
   if compiler_params and not isinstance(compiler_params, CompilerParams):
@@ -317,6 +318,7 @@ def _tensorcore_mesh_discharge_rule(
       interpret=interpret,
       cost_estimate=cost_estimate,
       name=name,
+      metadata=metadata,
   )
 
 pallas_core._core_map_mesh_rules[TensorCoreMesh] = (

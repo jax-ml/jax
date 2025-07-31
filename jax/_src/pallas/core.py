@@ -32,6 +32,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import frozen_dict
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
@@ -1248,6 +1249,7 @@ def core_map(
     debug: bool = False,
     cost_estimate: CostEstimate | None = None,
     name: str | None = None,
+    metadata: dict[str, str] | None = None,
 ):
   """Runs a function on a mesh, mapping it over the devices in the mesh.
 
@@ -1260,6 +1262,8 @@ def core_map(
     interpret: Whether to run the function in interpret mode.
     debug: Whether or not to out helpful debugging information.
     cost_estimate: The cost estimate of the function.
+    metadata: Optional dictionary of information about the kernel that will be
+      serialized as JSON in the HLO. Can be used for debugging and analysis.
   """
   def wrapped(f):
     flat_args, in_tree = tree_util.tree_flatten(((), {}))
@@ -1284,6 +1288,9 @@ def core_map(
         debug=debug,
         cost_estimate=cost_estimate,
         name=name or util.fun_name(f),
+        metadata=frozen_dict.FrozenDict(metadata)
+        if metadata is not None
+        else None,
     )
     if out:
       raise ValueError("core_map-ped functions must not return any outputs.")
@@ -1369,6 +1376,7 @@ def default_mesh_discharge_rule(
     cost_estimate,
     name,
     memory_space=MemorySpace.ANY,
+    metadata,
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
   del out_avals  # Unused.
@@ -1420,6 +1428,7 @@ def default_mesh_discharge_rule(
         interpret=interpret,
         debug=debug,
         cost_estimate=cost_estimate,
+        metadata=metadata,
     )(*args)
   # ``outs`` lacks the unmodified inputs. Add them back in.
     all_outs = [None] * len(args)
