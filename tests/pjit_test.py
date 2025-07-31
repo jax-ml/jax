@@ -7800,12 +7800,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_set_mesh(self):
     mesh = jtu.create_mesh((2,), ('x',), axis_types=(AxisType.Explicit,))
     try:
-      prev_mesh = jax.sharding.set_mesh(mesh)
+      jax.sharding.set_mesh(mesh)
       out = reshard(np.arange(8), P('x'))
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
     finally:
-      self.assertIsNone(prev_mesh)
-      jax.sharding.set_mesh(prev_mesh)
+      config.abstract_mesh_context_manager.set_local(
+          mesh_lib.empty_abstract_mesh)
+      config.device_context.set_local(None)
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_auto_axes_late_bind(self, mesh):

@@ -1194,42 +1194,30 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
       allow_split_physical_axes=allow_split_physical_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
 
+class set_mesh:
 
-@contextlib.contextmanager
-def use_mesh(mesh: mesh_lib.Mesh):
-  if not isinstance(mesh, mesh_lib.Mesh):
-    raise ValueError(
-        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
-  if not core.trace_state_clean():
-    raise ValueError('`use_mesh` can only be used outside of `jax.jit`')
+  def __init__(self, mesh: mesh_lib.Mesh):
+    if not isinstance(mesh, mesh_lib.Mesh):
+      raise ValueError(
+          f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+    if not core.trace_state_clean():
+      raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
 
-  with mesh_lib.use_abstract_mesh(mesh.abstract_mesh), use_concrete_mesh(mesh):
-    yield
+    self.prev_am = config.abstract_mesh_context_manager.swap_local(
+        mesh.abstract_mesh)
+    self.prev_m = config.device_context.swap_local(mesh)
 
-def set_mesh(mesh: mesh_lib.Mesh | None) -> mesh_lib.Mesh | None:
-  """Sets the given concrete mesh globally and returns the previous concrete
-     mesh."""
-  if mesh is not None and not isinstance(mesh, mesh_lib.Mesh):
-    raise ValueError(
-        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
-  assert mesh is None or isinstance(mesh, mesh_lib.Mesh)
-  if not core.trace_state_clean():
-    raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
+  def __enter__(self):
+    pass
 
-  if mesh is None:
-    config.abstract_mesh_context_manager.set_local(mesh_lib.empty_abstract_mesh)  # type: ignore
-  else:
-    config.abstract_mesh_context_manager.set_local(mesh.abstract_mesh)  # type: ignore
+  def __exit__(self, exc_type, exc_value, traceback):
+    config.abstract_mesh_context_manager.set_local(self.prev_am)
+    config.device_context.set_local(self.prev_m)
 
-  prev_mesh = config.device_context.swap_local(mesh)
-  return None if prev_mesh is config_ext.unset else prev_mesh
 
-@contextlib.contextmanager
-def use_concrete_mesh(mesh: mesh_lib.Mesh | None):
-  if not core.trace_state_clean():
-    raise ValueError('`use_concrete_mesh` can only be used outside of `jax.jit`.')
-  with _internal_use_concrete_mesh(mesh):
-    yield
+# TODO(yashkatariya): remove this after usages are gone.
+use_mesh = set_mesh
+
 
 @contextlib.contextmanager
 def _internal_use_concrete_mesh(mesh: mesh_lib.Mesh | None):
