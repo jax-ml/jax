@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -270,7 +271,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       .def(
           "_testonly_inject_failure",
           [](PyTransferServerConnection& self) { self.conn().InjectFailure(); })
-      .def("_pull_flat", [](PyTransferServerConnection& self, uint64_t uuid,
+      .def("_pull_flat", [](PyTransferServerConnection& self, nb::int_ uuid,
                             xla::nb_class_ptr<xla::PyClient> py_client,
                             std::vector<nb::object> py_avals) {
         auto* ifrt_client = llvm::dyn_cast_or_null<xla::ifrt::PjRtClient>(
@@ -346,7 +347,14 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
           buffer_ids.push_back(static_cast<int>(buffer_ids.size()));
         }
 
-        self.Pull(uuid, buffer_ids, std::move(pull_dests));
+        uint64_t uuid_cpp;
+        try {
+          uuid_cpp = static_cast<uint64_t>(uuid);
+        } catch (std::out_of_range& e) {
+          throw nb::value_error(
+              "_pull_flat requires uuid to fit in a uint64_t");
+        }
+        self.Pull(uuid_cpp, buffer_ids, std::move(pull_dests));
 
         std::vector<xla::PyArray> out;
         auto traceback = xla::Traceback::Get();
@@ -370,14 +378,21 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
   nb::class_<PyTransferServer>(m, "TransferServer")
       .def("address", [](PyTransferServer& self) { return self.address(); })
       .def("_await_pull_flat",
-           [](PyTransferServer& self, uint64_t uuid,
+           [](PyTransferServer& self, nb::int_ uuid,
               std::vector<xla::PyArray> inputs) {
              std::vector<xla::ifrt::ArrayRef> arrs;
              arrs.reserve(inputs.size());
              for (const xla::PyArray& input : inputs) {
                arrs.push_back(tsl::FormRef(input.ifrt_array()));
              }
-             self.AwaitPull(uuid, arrs);
+             uint64_t uuid_cpp;
+             try {
+               uuid_cpp = static_cast<uint64_t>(uuid);
+             } catch (std::out_of_range& e) {
+               throw nb::value_error(
+                   "_await_pull_flat requires uuid to fit in a uint64_t");
+             }
+             self.AwaitPull(uuid_cpp, arrs);
            })
       .def("connect", [](PyTransferServer& self, const std::string& address) {
         return self.Connect(address);
