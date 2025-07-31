@@ -2793,6 +2793,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype=default_dtypes,
   )
   @jtu.ignore_warning(category=RuntimeWarning, message="overflow")
+  @jtu.ignore_warning(category=RuntimeWarning,
+                      message="invalid value encountered in isinf")
   def testFrexp(self, shape, dtype, rng_factory):
     # integer types are converted to float64 in numpy's implementation
     if (dtype not in [jnp.bfloat16, np.float16, np.float32]
