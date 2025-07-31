@@ -100,10 +100,10 @@ def get_ref_and_transforms(
 
 
 def ref_get(
-    ref_or_view: Any, idx: Indexer | tuple[Indexer, ...] | None = None
+    ref: Any, idx: Indexer | tuple[Indexer, ...] | None = None
 ) -> Array:
-  """Reads a value from a `Ref`, a.k.a. value <- ref[idx]."""
-  ref, transforms = get_ref_and_transforms(ref_or_view, idx, "ref_get")
+  "Reads from a ref, returning `ref[idx]` for NumPy-style indexer `idx`."
+  ref, transforms = get_ref_and_transforms(ref, idx, "ref_get")
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return get_p.bind(ref, *flat_transforms, tree=tree)
 
@@ -140,15 +140,15 @@ def swap_ragged_prop_rule(eqn_params, invar_raggedness, outvars):
 batching.ragged_prop_rules[swap_p] = swap_ragged_prop_rule
 
 def ref_swap(
-    ref_or_view: AbstractRef | TransformedRef,
+    ref: AbstractRef | TransformedRef,
     idx: Indexer | tuple[Indexer, ...] | None,
     value: Array,
     _function_name: str = "ref_swap",
 ) -> Array:
-  """Sets a `Ref`'s value and returns the original value."""
-  if hasattr(ref_or_view, 'dtype'):
-    value = _maybe_implicit_cast(ref_or_view.dtype, value)
-  ref, transforms = get_ref_and_transforms(ref_or_view, idx, _function_name)
+  "Sets a ref's value as `ref[idx], prev = value, ref[idx]` and returns `prev`."
+  if hasattr(ref, 'dtype'):
+    value = _maybe_implicit_cast(ref.dtype, value)
+  ref, transforms = get_ref_and_transforms(ref, idx, _function_name)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return swap_p.bind(ref, value, *flat_transforms, tree=tree)
 
@@ -167,12 +167,12 @@ def _maybe_implicit_cast(dtype, value):
 
 
 def ref_set(
-    ref_or_view: AbstractRef | TransformedRef,
+    ref: AbstractRef | TransformedRef,
     idx: Indexer | tuple[Indexer, ...] | None,
     value: Array,
 ) -> None:
-  """Sets a `Ref`'s value, a.k.a. ref[idx] <- value."""
-  ref_swap(ref_or_view, idx, value, _function_name="ref_set")
+  "Sets a ref's value like `ref[idx] = value` for NumPy-style indexer `idx`."
+  ref_swap(ref, idx, value, _function_name="ref_set")
 
 
 # `addupdate_p` mutates a `Ref`, adding a value to its existing value.
@@ -193,12 +193,12 @@ addupdate_p.def_impl(partial(dispatch.apply_primitive, addupdate_p))
 
 
 def ref_addupdate(
-    ref_or_view: AbstractRef,
+    ref: AbstractRef,
     idx: Indexer | tuple[Indexer, ...] | None,
     x: Array,
 ) -> None:
-  """Mutates a ref with an additive update i.e. `ref[idx] += x`."""
-  ref, transforms = get_ref_and_transforms(ref_or_view, idx, "ref_addupdate")
+  "Mutates a ref with an additive update, like `ref[idx] += x`."
+  ref, transforms = get_ref_and_transforms(ref, idx, "ref_addupdate")
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return addupdate_p.bind(ref, x, *flat_transforms, tree=tree)
 

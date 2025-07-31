@@ -2499,10 +2499,11 @@ class bint(dtypes.ExtendedDType):
 AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 
 
-class MutableArray:
+class ArrayRef:
   _aval: ShapedArray
   _buf: Array
   def __init__(self, aval, buf):
+    assert isinstance(buf, Array)
     self._aval = aval
     self._buf = buf
   aval = property(lambda self: self._aval)
@@ -2513,38 +2514,45 @@ class MutableArray:
   committed = _committed = property(lambda self: self._buf._committed)
   def __getitem__(self, idx): return self._aval._getitem(self, idx)
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
-  def __repr__(self) -> str: return 'Mutable' + repr(self._buf)
+  def __repr__(self) -> str: return 'ArrayRef' + repr(self._buf)[5:]
   def __len__(self) -> int: return self._aval._len(self)
-pytype_aval_mappings[MutableArray] = lambda x: x._aval
+  def unsafe_buffer_pointer(self): return self._buf.unsafe_buffer_pointer()
+pytype_aval_mappings[ArrayRef] = lambda x: x._aval
 
-def mutable_array(init_val, *, memory_space: Any = None):
-  return mutable_array_p.bind(init_val, memory_space=memory_space)
-mutable_array_p = Primitive('mutable_array')
-mutable_array_p.is_effectful = lambda params: True  # type: ignore
-mutable_array_p.ref_primitive = True
+def array_ref(init_val, *, memory_space: Any = None):
+  return array_ref_p.bind(init_val, memory_space=memory_space)
+array_ref_p = Primitive('array_ref')
+array_ref_p.is_effectful = lambda params: True  # type: ignore
+array_ref_p.ref_primitive = True
+
+# back compat
+MutableArray = ArrayRef
+mutable_array = array_ref
+mutable_array_p = array_ref_p
 
 class InternalMutableArrayEffect(effects.Effect):
   pass
-internal_mutable_array_effect = InternalMutableArrayEffect()
+array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
 effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 
-@mutable_array_p.def_effectful_abstract_eval
-def mutable_array_abstract_eval(init_aval, *, memory_space: Any):
+@array_ref_p.def_effectful_abstract_eval
+def array_ref_abstract_eval(init_aval, *, memory_space: Any):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   return (AbstractRef(init_aval, memory_space=memory_space),
           {internal_mutable_array_effect})
 
-@mutable_array_p.def_impl
-def _mutable_array_impl(init_val, *, memory_space: Any):
+@array_ref_p.def_impl
+def _array_ref_impl(init_val, *, memory_space: Any):
   if memory_space is not None:
     raise NotImplementedError(
-        "mutable_array with memory space only works inside of a `jit`."
+        "array ref with memory space only works inside of a `jit`."
     )
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
-  return MutableArray(AbstractRef(get_aval(init_val)), _array_copy(init_val))
+  return ArrayRef(AbstractRef(get_aval(init_val)), _array_copy(init_val))
 
 def freeze(ref):
+  """Invalidate a given reference and produce its final value."""
   return freeze_p.bind(ref)
 freeze_p = Primitive('freeze')
 freeze_p.is_effectful = lambda params: True  # type: ignore
@@ -3225,7 +3233,7 @@ def _check_jaxpr(
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
       if prim.ref_primitive:
-        if prim is mutable_array_p:
+        if prim is array_ref_p:
           outvar, = eqn.outvars
           in_idx[outvar] = None  # type: ignore
           mut_arrays.add(outvar)
