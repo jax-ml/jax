@@ -34,6 +34,7 @@ wheel_sources(
         "//jax:experimental_colocated_python",
         "//jax:experimental_sparse",
         "//jax:experimental_buffer_callback",
+        "//jax:experimental_serialize_executable",
         "//jax:lax_reference",
         "//jax:pallas_experimental_gpu_ops",
         "//jax:pallas_fuser",
