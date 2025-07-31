@@ -132,6 +132,10 @@ def _default_memory_space_rule(prim, *avals, **kwargs):
     return core.MemorySpace.Device
   return prev_aval.memory_space
 
+def multi_mem_space_rule(prim, num_out, *avals, **kwargs):
+  out_mem_space = _default_memory_space_rule(prim, *avals, **kwargs)
+  return [out_mem_space] * num_out
+
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
                            sharding_rule, vma_rule, unreduced_rule,
@@ -186,11 +190,14 @@ def standard_multi_result_abstract_eval(
         prim, shape_rule, dtype_rule, sharding_rule, None, True,
         *avals, **kwargs)
     out_vmas = vma_rule(*avals, **kwargs)
+    out_mem_spaces = multi_mem_space_rule(prim, len(out_shapes), *avals, **kwargs)
     if isinstance(weak_types, bool):
       weak_types = (weak_types,) * len(out_shapes)
-    out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh, vma=vma)
-                 for s, d, weak_type, sh, vma in zip(
-                     out_shapes, out_dtypes, weak_types, out_shardings, out_vmas)]
+    out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh,
+                                  vma=vma, memory_space=ms)
+                 for s, d, weak_type, sh, vma, ms in zip(
+                     out_shapes, out_dtypes, weak_types, out_shardings,
+                     out_vmas, out_mem_spaces)]
     core.check_avals_context_mesh(out_avals, prim.name)
     return out_avals
   elif least_specialized is core.UnshapedArray:
