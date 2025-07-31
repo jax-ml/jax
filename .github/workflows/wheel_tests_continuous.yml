@@ -153,7 +153,7 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          runner: ["linux-x86-n2-16", "linux-arm64-t2a-48"]
+          runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
           python: ["3.11",]
           enable-x64: [1, 0]
     name: "Bazel CPU tests with ${{ format('{0}', 'build_jaxlib=wheel') }}"

@@ -37,6 +37,12 @@ source "ci/utilities/setup_build_environment.sh"
 os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
+# Adjust os and arch for Windows
+if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
+  os="windows"
+  arch="amd64"
+fi
+
 WHEEL_SIZE_TESTS=""
 if [[ "$JAXCI_BUILD_JAXLIB" == 'true' ]]; then
     WHEEL_SIZE_TESTS="//jaxlib/tools:jaxlib_wheel_size_test //:jax_wheel_size_test"
@@ -54,22 +60,39 @@ fi
 # RBE cross-compile them on remote Linux x86 machines. As the tests still
 # need to be run on the host machine and because running the tests on a
 # single machine can take a long time, we skip running them on these
-# platforms.
+# platforms in the presubmit jobs.
 if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] ); then
-      echo "Building RBE CPU tests..."
-      bazel build --config=rbe_cross_compile_${os}_${arch} \
-            --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-            --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
-            --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
-            --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-            --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
-            --test_env=JAX_NUM_GENERATED_CASES=25 \
-            --test_env=JAX_SKIP_SLOW_TESTS=true \
-            --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
-            --test_output=errors \
-            --color=yes \
-            $WHEEL_SIZE_TESTS \
-            //tests:cpu_tests //tests:backend_independent_tests
+      if [[ "$JAXCI_BUILD_JAXLIB" == 'true' ]]; then
+          echo "Building RBE CPU tests..."
+          bazel build --config=rbe_cross_compile_${os}_${arch} \
+              --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+              --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
+              --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
+              --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
+              --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+              --test_env=JAX_NUM_GENERATED_CASES=25 \
+              --test_env=JAX_SKIP_SLOW_TESTS=true \
+              --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
+              --test_output=errors \
+              --color=yes \
+              $WHEEL_SIZE_TESTS \
+              //tests:cpu_tests //tests:backend_independent_tests
+      else
+          echo "Running RBE CPU tests..."
+          bazel test --config=rbe_cross_compile_${os}_${arch} \
+              --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+              --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
+              --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
+              --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
+              --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+              --strategy=TestRunner=local \
+              --test_env=JAX_SKIP_SLOW_TESTS=true \
+              --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
+              --test_output=errors \
+              --color=yes \
+              $WHEEL_SIZE_TESTS \
+              //tests:cpu_tests //tests:backend_independent_tests
+      fi
 else
       echo "Running RBE CPU tests..."
       bazel test --config=rbe_${os}_${arch} \
