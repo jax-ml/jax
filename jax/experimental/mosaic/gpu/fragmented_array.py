@@ -82,8 +82,9 @@ class Tiling:
 
   def tile_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
     """Computes the shape of an array after tiling."""
+    orig_shape = shape
     def fail():
-      raise ValueError(f"Tiling {self.tiles} does not apply to shape {shape}")
+      raise ValueError(f"Tiling {self.tiles} does not apply to shape {orig_shape}")
     for tile in self.tiles:
       if len(tile) > len(shape):
         fail()
@@ -95,9 +96,10 @@ class Tiling:
 
   def untile_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
     """Computes the shape of an array before tiling from its tiled shape."""
+    orig_shape = shape
     def fail():
       raise ValueError(
-          f"shape {shape} is not a valid result of applying tiling {self}."
+          f"shape {orig_shape} is not a valid result of applying tiling {self}."
       )
     for tile in reversed(self.tiles):
       if len(tile) > len(shape):
@@ -3217,33 +3219,48 @@ def copy_tiled(src: ir.Value, dst: ir.Value, swizzle: int = 16):
     expected_src_shape = utils.tile_shape(dst_ty.shape, (8, swizzle_elems))
     if tuple(src_ty.shape) != expected_src_shape:
       raise ValueError(src_ty.shape, expected_src_shape)
-    # TODO(apaszke): Take multiple tiles for small swizzles.
+    row_tiles, col_tiles = src_ty.shape[-4:-2]
+    if row_tiles % 4 == 0:
+      warp_row_tiles, warp_col_tiles = 4, 1
+    elif row_tiles % 2 == 0:
+      if col_tiles % 2:
+        raise NotImplementedError("Number of tiles is not a multiple of 4")
+      warp_row_tiles, warp_col_tiles = 2, 2
+    else:
+      if col_tiles % 4:
+        raise NotImplementedError("Number of tiles is not a multiple of 4", src_ty.shape)
+      warp_row_tiles, warp_col_tiles = 1, 4
+    row_tiles //= warp_row_tiles
+    col_tiles //= warp_col_tiles
     bytes_per_thread = min(16, 8 * swizzle // WARP_SIZE)
+    lane_row_tiles = lane_col_tiles = 1
+    if bytes_per_thread < 16:  # Try to splread multiple tiles over a warp.
+      max_scale_up = 16 // bytes_per_thread
+      while max_scale_up > 1 and col_tiles % 2 == 0:
+        max_scale_up //= 2
+        lane_col_tiles *= 2
+        col_tiles //= 2
+      while max_scale_up > 1 and row_tiles % 2 == 0:
+        max_scale_up //= 2
+        lane_row_tiles *= 2
+        row_tiles //= 2
+      bytes_per_thread *= lane_row_tiles * lane_col_tiles
     if 8 * bytes_per_thread < bitwidth:
       raise NotImplementedError("Element types with bitwidth so large aren't supported")
     vector_length = bytes_per_thread * 8 // bitwidth
-    if src_ty.shape[-4] % 4 == 0:
-      warp_rows, warp_cols = 4, 1
-    elif src_ty.shape[-4] % 2 == 0:
-      if src_ty.shape[-3] % 2:
-        raise NotImplementedError("Number of tiles is not a multiple of 4")
-      warp_rows, warp_cols = 2, 2
-    else:
-      if src_ty.shape[-3] % 4:
-        raise NotImplementedError("Number of tiles is not a multiple of 4", src_ty.shape)
-      warp_rows, warp_cols = 1, 4
-    assert swizzle_elems % vector_length == 0
-    threads_per_row = swizzle_elems // vector_length
+    assert (lane_col_tiles * swizzle_elems) % vector_length == 0
+    threads_per_row = (lane_col_tiles * swizzle_elems) // vector_length
+    assert lane_row_tiles * 8 >= WARP_SIZE // threads_per_row
     layout = TiledLayout(
         Tiling(
             (
-                (warp_rows * 8, warp_cols * swizzle_elems),
-                (8, swizzle_elems),
+                (warp_row_tiles * lane_row_tiles * 8, warp_col_tiles * lane_col_tiles * swizzle_elems),
+                (lane_row_tiles * 8, lane_col_tiles * swizzle_elems),
                 (WARP_SIZE // threads_per_row, vector_length)
             )
         ),
-        warp_dims=(-5, -6),
-        lane_dims=(-2, -3),
+        warp_dims=(-6, -5),
+        lane_dims=(-3, -2) if swizzle < 64 else (-2, -3),
         vector_dim=-1,
         _check_canonical=False,
     ).canonicalize()
