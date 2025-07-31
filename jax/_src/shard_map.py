@@ -87,7 +87,7 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
       array of devices over which to shard the data and on which to execute
       instances of ``f``. The names of the ``Mesh`` can be used in collective
       communication operations in ``f``. If mesh is None, it will be inferred
-      from the context which can be set via `jax.sharding.use_mesh` context
+      from the context which can be set via `jax.sharding.set_mesh` context
       manager.
     in_specs: (optional, default None) a pytree with
       ``jax.sharding.PartitionSpec`` instances as leaves, with a tree structure
@@ -289,7 +289,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
     if mesh.empty:
       raise ValueError(
           "The context mesh cannot be empty. Use"
-          " `jax.sharding.use_mesh(mesh)` to enter into a mesh context")
+          " `jax.sharding.set_mesh(mesh)` to enter into a mesh context")
   else:
     ctx_mesh = get_abstract_mesh()
     if (not _skip_mesh_check and not ctx_mesh.empty and

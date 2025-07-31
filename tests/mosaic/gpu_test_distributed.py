@@ -78,7 +78,7 @@ class ProfilerTest(TestCase):
     mesh = jax.make_mesh(
         (jax.device_count(),), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
     )
-    with jax.sharding.use_mesh(mesh):
+    with jax.sharding.set_mesh(mesh):
       out_shape = jax.ShapeDtypeStruct((1,), jnp.int32)
       y = jax.jit(
           jax.shard_map(
@@ -114,7 +114,7 @@ class ProfilerTest(TestCase):
     mesh = jax.make_mesh(
         (2,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
     )
-    with jax.sharding.use_mesh(mesh):
+    with jax.sharding.set_mesh(mesh):
       x_np = np.arange(64 * 64, dtype=jnp.float32).reshape(64, 64)
       x = jax.sharding.reshard(x_np, P("x"))
       sem = jax.sharding.reshard(jnp.zeros((1,), dtype=jnp.int32), P())
@@ -151,7 +151,7 @@ class ProfilerTest(TestCase):
     mesh = jax.make_mesh(
         (2,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
     )
-    with jax.sharding.use_mesh(mesh):
+    with jax.sharding.set_mesh(mesh):
       sem = jax.sharding.reshard(jnp.zeros((1,), dtype=jnp.int32), P())
       out_sem = jax.jit(
           jax.shard_map(

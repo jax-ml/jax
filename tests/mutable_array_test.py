@@ -313,7 +313,7 @@ class MutableArrayTest(jtu.JaxTestCase):
       y = x_ref[...] + 1
       return y
 
-    with jax.sharding.use_mesh(mesh):
+    with jax.sharding.set_mesh(mesh):
       x = jnp.zeros((4, 4), jnp.int32, device=sharding)
       x_ref = core.mutable_array(x)
       y = f(x_ref)

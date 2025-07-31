@@ -109,7 +109,7 @@ trivial. See "Concrete array shardings", below.) To start seeing some
 interesting shardings we need to set up an explicit-sharding mesh. We use
 `set_mesh` to set it as the current mesh for the remainder of this notebook.
 (If you only want to set the mesh for some particular scope and return to the previous
-mesh afterwards then you can use the context manager `jax.sharding.use_mesh` instead.)
+mesh afterwards then you can use the context manager `jax.sharding.set_mesh` instead.)
 
 ```{code-cell} ipython3
 ---
@@ -428,7 +428,7 @@ def f(arr1):
 
   return z + 1
 
-with jax.sharding.use_mesh(auto_mesh):
+with jax.sharding.set_mesh(auto_mesh):
   some_x = jax.device_put(np.arange(16).reshape(4, 4), P("X", "Y"))
   f(some_x)
 ```
