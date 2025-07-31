@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallVectorExtras.h"
@@ -757,6 +758,277 @@ LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
                                  std::move(out_vreg_array), ctx.target_shape));
   op.erase();
   return success();
+}
+
+FailureOr<std::pair<VectorLayout, xla::Array<Value>>> retileWithVcombine(
+    RewriteContext &ctx, OpBuilder &builder, Location loc,
+    const ArrayRef<int64_t> shape, const xla::Array<Value> &old_vregs,
+    const VectorLayout &old_layout, const std::array<int64_t, 2> new_tiling,
+    const LayoutOffsets new_offsets_hint) {
+  if (new_tiling[1] != old_layout.tiling()[1]) {
+    return emitError(loc,
+                     "Not implemented: Not a sublane-granularity retiling");
+  }
+  CHECK(old_layout.offsets()[0].has_value());
+  CHECK(old_layout.offsets()[1].has_value());
+
+  const int64_t irank = shape.size() + (2 - old_layout.layout_rank());
+  const int bitwidth = old_layout.bitwidth();
+  const std::array<int64_t, 2> old_vreg_slice =
+      old_layout.vregSlice(ctx.target_shape);
+  const std::array<int64_t, 2> new_vreg_slice =
+      VectorLayout::vregSlice(ctx.target_shape, bitwidth, new_tiling);
+  const int64_t old_sublanes_per_tile =
+      old_layout.sublanesPerTile(ctx.target_shape);
+  const int64_t new_sublanes_per_tile =
+      new_tiling[0] * new_tiling[1] /
+      (ctx.target_shape[1] * old_layout.packing());
+  CHECK(llvm::isPowerOf2_64(ctx.target_shape[0]));
+  const int64_t sublane_idx_bits = llvm::Log2_64(ctx.target_shape[0]);
+  // Pick the offset hints if they are non-replicated and aligned modulo the
+  // vreg slice.
+  LayoutOffsets new_offsets = alignedToVregSlice(
+      old_layout.offsets(), ctx.target_shape, bitwidth, new_tiling);
+  for (int i : {0, 1}) {
+    if (new_offsets_hint[i].has_value() &&
+        *new_offsets_hint[i] % old_vreg_slice[i] ==
+            *new_offsets[i] % new_vreg_slice[0]) {
+      new_offsets[i] = new_offsets[i];
+    }
+  }
+  // To deal with changing offsets and shapes that are not powers of 2, the vreg
+  // array is padded with null both before and after the data vregs.
+  // This low- and high- padded implicit shape is a power of 2 and is evenly
+  // divisible by both the old and new (correct) vreg slices.
+  const std::array<int64_t, 2> large_offsets = {
+      std::max(*old_layout.offsets()[0], *new_offsets[0]),
+      std::max(*old_layout.offsets()[1], *new_offsets[1])};
+  const std::array<int64_t, 2> large_vreg_slice = {
+      std::max(old_vreg_slice[0], new_vreg_slice[0]),
+      std::max(old_vreg_slice[1], new_vreg_slice[1])};
+  SmallVector<int64_t> padded_vreg_array_shape =
+      old_layout.implicitShape(shape);
+  *(padded_vreg_array_shape.end() - 2) = llvm::PowerOf2Ceil(
+      llvm::alignTo(*(padded_vreg_array_shape.end() - 2) + large_offsets[0],
+                    large_vreg_slice[0]));
+  *(padded_vreg_array_shape.end() - 1) = llvm::PowerOf2Ceil(
+      llvm::alignTo(*(padded_vreg_array_shape.end() - 1) + large_offsets[1],
+                    large_vreg_slice[1]));
+  *(padded_vreg_array_shape.end() - 2) /= old_vreg_slice[0];
+  *(padded_vreg_array_shape.end() - 1) /= old_vreg_slice[1];
+  xla::Array<Value> vregs(padded_vreg_array_shape);
+  old_vregs.Each([&](absl::Span<const int64_t> idx, Value vreg) {
+    SmallVector<int64_t> padded_idx(toArrayRef(idx));
+    *(padded_idx.end() - 2) += large_offsets[0] / old_vreg_slice[0];
+    *(padded_idx.end() - 1) += large_offsets[1] / old_vreg_slice[1];
+    vregs(padded_idx) = vreg;
+  });
+
+  auto get_bit_permute_gather_pattern =
+      [&](const ArrayRef<int64_t> bit_shuffle_pattern) {
+        // Creates a sublane shuffle pattern such that, for each sublane, its
+        // new index is determined by shuffling the bits of its old index
+        // according to the given bit shuffle pattern. bit_shuffle_pattern must
+        // be a permutation of 0...sublane_idx_bits-1.
+        CHECK_EQ(bit_shuffle_pattern.size(), sublane_idx_bits);
+        SmallVector<int32_t> sublane_gather_pattern(ctx.target_shape[0]);
+        for (int64_t sublane_idx = 0; sublane_idx < ctx.target_shape[0];
+             ++sublane_idx) {
+          int64_t new_sublane_idx = 0;
+          for (int64_t bit_idx = 0; bit_idx < sublane_idx_bits; ++bit_idx) {
+            new_sublane_idx |= ((sublane_idx >> bit_idx) & 0x1)
+                               << bit_shuffle_pattern[bit_idx];
+          }
+          sublane_gather_pattern[new_sublane_idx] = sublane_idx;
+        }
+        return sublane_gather_pattern;
+      };
+
+  auto apply_sublane_gather_pattern =
+      [&](const ArrayRef<int32_t> sublane_gather_pattern) {
+        vregs.Each([&](absl::Span<const int64_t> idx, Value *vreg) {
+          if (*vreg == nullptr) {  // Skip null vregs
+            return;
+          }
+          *vreg = builder.create<tpu::GatherOp>(
+              loc, vreg->getType(), *vreg,
+              builder.getDenseI32ArrayAttr(sublane_gather_pattern), 0);
+        });
+      };
+  SmallVector<int32_t> vcombine_low_pattern(ctx.target_shape[0]);
+  for (int64_t sublane_idx = 0; sublane_idx < ctx.target_shape[0];
+       ++sublane_idx) {
+    const int64_t vreg_idx = sublane_idx / (ctx.target_shape[0] / 2);
+    const int64_t in_vreg_idx = sublane_idx % (ctx.target_shape[0] / 2);
+    vcombine_low_pattern[sublane_idx] =
+        vreg_idx * ctx.target_shape[0] + in_vreg_idx;
+  }
+  SmallVector<int32_t> vcombine_high_pattern(ctx.target_shape[0]);
+  for (int64_t sublane_idx = 0; sublane_idx < ctx.target_shape[0];
+       ++sublane_idx) {
+    vcombine_high_pattern[sublane_idx] =
+        vcombine_low_pattern[sublane_idx] + ctx.target_shape[0] / 2;
+  }
+  auto vcombine_vregs = [&](Value lhs_vreg, Value rhs_vreg,
+                            const bool is_low) -> Value {
+    if (lhs_vreg == nullptr && rhs_vreg == nullptr) {
+      return nullptr;
+    }
+    if (lhs_vreg == nullptr) {  // Don't care about data for LHS sublanes
+      if (is_low) {
+        lhs_vreg = rhs_vreg;
+      } else {  // RHS sublanes already in right place
+        return rhs_vreg;
+      }
+    }
+    if (rhs_vreg == nullptr) {  // Don't care about data for RHS sublanes
+      if (is_low) {             // LHS sublanes already in right place
+        return lhs_vreg;
+      } else {
+        rhs_vreg = lhs_vreg;
+      }
+    }
+    return builder.create<tpu::SublaneShuffleOp>(
+        loc, lhs_vreg.getType(), lhs_vreg, rhs_vreg,
+        builder.getDenseI32ArrayAttr(is_low ? vcombine_low_pattern
+                                            : vcombine_high_pattern));
+  };
+  auto swap_major_bit = [&](const int64_t swap_dim,
+                            const int64_t swap_dim_bit) {
+    // Swaps out the major bit of the sublane index with the specified bit
+    // of the specified dimension of the vreg array index.
+    SmallVector<int64_t> vreg_idx(irank);
+    do {
+      if (vreg_idx[swap_dim] & (1 << swap_dim_bit)) {
+        // Vregs are handled in pairs. This pair has already been handled.
+        // TODO(tlongeri): More efficient iteration
+        continue;
+      }
+      // Vreg array must have been padded
+      CHECK_LT(vreg_idx[swap_dim] ^ (1 << swap_dim_bit), vregs.dim(swap_dim));
+      Value lhs_vreg, rhs_vreg;
+      lhs_vreg = vregs(vreg_idx);
+      vreg_idx[swap_dim] ^= (1 << swap_dim_bit);
+      rhs_vreg = vregs(vreg_idx);
+      vreg_idx[swap_dim] ^= (1 << swap_dim_bit);
+
+      // TODO(tlongeri): Relying *only* on null vregs to skip unnecessary
+      // vcombines may not be enough. E.g. for the first step, the source
+      // vregs may only have data in the low parts, but the high vcombine will
+      // have a non-null result that might be used in the second step.
+      Value new_lhs_vreg = vcombine_vregs(lhs_vreg, rhs_vreg, /*is_low=*/true);
+      Value new_rhs_vreg = vcombine_vregs(lhs_vreg, rhs_vreg, /*is_low=*/false);
+
+      vregs(vreg_idx) = new_lhs_vreg;
+      vreg_idx[swap_dim] ^= (1 << swap_dim_bit);
+      vregs(vreg_idx) = new_rhs_vreg;
+      vreg_idx[swap_dim] ^= (1 << swap_dim_bit);
+    } while (incrementIndex(vreg_idx, vregs.dimensions()));
+  };
+
+  // The bits in the sublane index are bits of the minor index (prefix) followed
+  // by bits of the 2nd minor index (suffix).
+  const int64_t old_suffix_bits = llvm::Log2_64(old_sublanes_per_tile);
+  const int64_t new_suffix_bits = llvm::Log2_64(new_sublanes_per_tile);
+  // How many index bits in the suffix remain unchanged
+  const int64_t common_suffix_bits = std::min(old_suffix_bits, new_suffix_bits);
+  // How many index bits in the prefix are kept (but need shifting)
+  const int64_t shared_prefix_bits =
+      sublane_idx_bits - std::max(old_suffix_bits, new_suffix_bits);
+  // How many index bits are different
+  const int64_t different_bits =
+      sublane_idx_bits - shared_prefix_bits - common_suffix_bits;
+  // TODO(tlongeri): When there are no shared prefix bits we can skip a shift.
+  if (old_sublanes_per_tile > new_sublanes_per_tile) {
+    // The suffix of bits from the 2nd minor shrinks
+    // We create a pattern that rotates the bits in the prefix to the right.
+    // This allows reusing it on every step.
+    // Note: This degenerates to an identity pattern if prefix is one bit.
+    SmallVector<int64_t> bit_shuffle_pattern(sublane_idx_bits);
+    for (int64_t bit_idx = 0; bit_idx < common_suffix_bits; ++bit_idx) {
+      bit_shuffle_pattern[bit_idx] = bit_idx;
+    }
+    bit_shuffle_pattern[common_suffix_bits] = sublane_idx_bits - 1;
+    for (int64_t bit_idx = common_suffix_bits + 1; bit_idx < sublane_idx_bits;
+         ++bit_idx) {
+      bit_shuffle_pattern[bit_idx] = bit_idx - 1;
+    }
+    const SmallVector<int32_t> sublane_gather_pattern =
+        get_bit_permute_gather_pattern(bit_shuffle_pattern);
+    for (int64_t i = 0; i < different_bits; ++i) {
+      apply_sublane_gather_pattern(sublane_gather_pattern);
+      swap_major_bit(irank - 1, i);
+    }
+    // The old sublane index prefix is now the vreg minor index suffix. But
+    // these bits should be in the 2nd minor...
+    const int64_t sublanes_ratio =
+        old_sublanes_per_tile / new_sublanes_per_tile;
+    SmallVector<int64_t> reshape_shape(toArrayRef(vregs.dimensions()));
+    reshape_shape.back() /= sublanes_ratio;
+    reshape_shape.push_back(sublanes_ratio);
+    vregs.Reshape(reshape_shape);
+    SmallVector<int64_t> transpose_permutation(irank + 1);
+    for (int64_t i = 0; i < irank - 1; ++i) {
+      transpose_permutation[i] = i;
+    }
+    transpose_permutation[irank - 1] = irank;
+    transpose_permutation[irank] = irank - 1;
+    vregs.TransposeDimensions(transpose_permutation);
+    reshape_shape.pop_back();
+    *(reshape_shape.end() - 2) *= sublanes_ratio;
+    vregs.Reshape(reshape_shape);
+  } else {
+    // The suffix of bits from the 2nd minor grows
+    // We create a pattern that rotates the bits in the prefix to the left.
+    // This allows reusing it on every step.
+    // Note: This degenerates to an identity pattern if prefix is one bit.
+    SmallVector<int64_t> bit_shuffle_pattern(sublane_idx_bits);
+    for (int64_t bit_idx = 0; bit_idx < common_suffix_bits; ++bit_idx) {
+      bit_shuffle_pattern[bit_idx] = bit_idx;
+    }
+    for (int64_t bit_idx = common_suffix_bits; bit_idx < sublane_idx_bits - 1;
+         ++bit_idx) {
+      bit_shuffle_pattern[bit_idx] = bit_idx + 1;
+    }
+    bit_shuffle_pattern[sublane_idx_bits - 1] = common_suffix_bits;
+    const SmallVector<int32_t> sublane_gather_pattern =
+        get_bit_permute_gather_pattern(bit_shuffle_pattern);
+    for (int64_t i = 0; i < different_bits; ++i) {
+      swap_major_bit(irank - 2, different_bits - 1 - i);
+      apply_sublane_gather_pattern(sublane_gather_pattern);
+    }
+    // The old sublane index prefix is now the vreg 2nd minor index suffix. But
+    // these bits should be in the minor...
+    const int64_t sublanes_ratio =
+        new_sublanes_per_tile / old_sublanes_per_tile;
+    SmallVector<int64_t> reshape_shape(toArrayRef(vregs.dimensions()));
+    *(reshape_shape.end() - 2) /= sublanes_ratio;
+    reshape_shape.insert(reshape_shape.end() - 1, sublanes_ratio);
+    vregs.Reshape(reshape_shape);
+    SmallVector<int64_t> transpose_permutation(irank + 1);
+    for (int64_t i = 0; i < irank - 1; ++i) {
+      transpose_permutation[i] = i;
+    }
+    transpose_permutation[irank - 1] = irank;
+    transpose_permutation[irank] = irank - 1;
+    vregs.TransposeDimensions(transpose_permutation);
+    reshape_shape.erase(reshape_shape.end() - 2);
+    reshape_shape.back() *= sublanes_ratio;
+    vregs.Reshape(reshape_shape);
+  }
+  // Remove the vreg padding
+  const VectorLayout new_layout(bitwidth, new_offsets, new_tiling,
+                                old_layout.implicit_dim());
+  xla::Array<Value> new_vregs(
+      new_layout.tileArrayImplicitShape(shape, ctx.target_shape));
+  new_vregs.Each([&](absl::Span<const int64_t> idx, Value *vreg) {
+    SmallVector<int64_t> padded_idx(toArrayRef(idx));
+    *(padded_idx.end() - 2) += large_offsets[0] / new_vreg_slice[0];
+    *(padded_idx.end() - 1) += large_offsets[1] / new_vreg_slice[1];
+    *vreg = vregs(padded_idx);
+    CHECK(*vreg != nullptr);
+  });
+  return std::make_pair(new_layout, new_vregs);
 }
 
 using rule_type = std::function<LogicalResult(
@@ -7429,6 +7701,15 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
                      intermediate_offsets_hint));
     return changeTiling(ctx, builder, loc, vty, src, vregs, dst_tiling,
                         dst_offsets_hint);
+  }
+  if (ctx.hardware_generation >= 6 && src.tiling()[1] == dst_tiling[1]) {
+    // retileWithVcombine does not support replicated offsets.
+    // TODO(tlongeri): Smarter handling of replicated offsets
+    std::tie(src, vregs) = materializeOffsets(
+        ctx, vty.getShape(), src, vregs,
+        {src.offsets()[0].value_or(0), src.offsets()[1].value_or(0)});
+    return retileWithVcombine(ctx, builder, loc, vty.getShape(), vregs, src,
+                              dst_tiling, dst_offsets_hint);
   }
   if (src.tiling()[1] == target_shape[1] && dst_tiling[1] == target_shape[1]) {
     // All clauses in the and expression are based on performance benchmarking.
