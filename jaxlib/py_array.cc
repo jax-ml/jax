@@ -200,7 +200,7 @@ ifrt::ArrayRef CreateIfRtArrayFromSingleDeviceShardedPyArrays(
     }
   }
   ifrt::DeviceListRef device_list =
-      xla::ValueOrThrow(device->client()->MakeDeviceList(devices));
+      ValueOrThrow(device->client()->MakeDeviceList(devices));
   if (device_set.size() != device_list->size()) {
     throw nb::value_error(
         absl::StrFormat(
