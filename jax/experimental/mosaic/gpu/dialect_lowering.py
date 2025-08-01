@@ -57,6 +57,7 @@ class LoweringContext:
   single_thread_per_block_predicate: ir.Value | None
   single_thread_per_warpgroup_predicate: ir.Value | None
   single_warp_per_block_predicate: ir.Value | None
+  auto_barriers: bool
   lowered_operations: set[ir.Operation | ir.OpView] = dataclasses.field(
       default_factory=set
   )
@@ -449,7 +450,7 @@ def _vector_load_op_lowering_rule(
 
 @_register_lowering(vector.StoreOp)
 def _vector_store_op_lowering_rule(
-     _: LoweringContext, vector_store_op: vector.StoreOp
+     ctx: LoweringContext, vector_store_op: vector.StoreOp
 ) -> Sequence[ir.Value]:
   for i in vector_store_op.indices:
     index_defining_op = i.owner.opview
@@ -468,7 +469,8 @@ def _vector_store_op_lowering_rule(
       vector_store_op.valueToStore, to_store_layout
   )
 
-  mgpu_utils.warpgroup_barrier()  # Make sure the reads have completed.
+  if ctx.auto_barriers:
+    mgpu_utils.warpgroup_barrier()  # Make sure the reads have completed.
 
   unwrapped_ref = vector_store_op.base
   swizzle = None
@@ -491,7 +493,8 @@ def _vector_store_op_lowering_rule(
     is_tmem_native = fragmented_array.layout == tcgen05.TMEM_NATIVE_LAYOUT
     fragmented_array.store_untiled(unwrapped_ref, optimized=not is_tmem_native)
 
-  mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
+  if ctx.auto_barriers:
+    mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
 
   return []
 
@@ -794,6 +797,8 @@ def _mgpu_async_load_op_lowering_rule(
   # multiple of 16.
 
   # TODO(dasenov): Add support for the remaining op properties.
+  if ctx.auto_barriers:
+    mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
       dst_ref=unwrapped_destination,
@@ -1959,7 +1964,7 @@ def _should_lower(op: ir.OpView) -> bool:
 
 
 def _lowering_context(
-    module: ir.Module, launch_context: launch_context.LaunchContext | None
+    module: ir.Module, launch_context: launch_context.LaunchContext | None, auto_barriers: bool,
 ):
   """Returns a `LoweringContext` for the given `LaunchContext`."""
   # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
@@ -1971,7 +1976,7 @@ def _lowering_context(
     )
 
   ctx = LoweringContext(
-      launch_context, block_predicate, warpgroup_predicate, warp_predicate
+      launch_context, block_predicate, warpgroup_predicate, warp_predicate, auto_barriers
   )
   return ctx
 
@@ -1979,6 +1984,7 @@ def _lowering_context(
 def lower_mgpu_dialect(
     module: ir.Module,
     launch_context: launch_context.LaunchContext | None,
+    auto_barriers: bool = True,
 ):
   # TODO(apaszke,bchetioui): Make sure the layouts match.
   # TODO(bchetioui): rethink this API. It doesn't make sense to pass in a full
@@ -1989,7 +1995,7 @@ def lower_mgpu_dialect(
   # kernel.
   module.context.append_dialect_registry(mlir_interpreter.upstream_dialects)
   module.context.load_all_available_dialects()
-  ctx = _lowering_context(module, launch_context)
+  ctx = _lowering_context(module, launch_context, auto_barriers)
   with ir.InsertionPoint(module.body):
     for op in list(module.body):
       ctx.lower_op(op)

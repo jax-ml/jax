@@ -1015,7 +1015,9 @@ def lower_jaxpr_to_module(
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     mgpu.infer_layout(module)  # pytype: disable=attribute-error
     mgpu.infer_transforms(module)  # pytype: disable=attribute-error
-    mgpu.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
+    mgpu.lower_mgpu_dialect(
+        module, launch_ctx, auto_barriers=not params.unsafe_no_auto_barriers
+    )
 
   launch_ctx.scratch.finalize_size()
 
