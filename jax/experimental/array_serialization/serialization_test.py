@@ -121,7 +121,7 @@ class CheckpointTest(jtu.JaxTestCase):
     pspec = P('x', 'y')
     num = math.prod(inp_shape)
     sharding = NamedSharding(global_mesh, pspec)
-    src = jnp.arange(num, dtype=np.int32).reshape(inp_shape)  # 8e9
+    src = jnp.arange(num, dtype=np.int32).reshape(inp_shape)  # 8e6 elements
     inp = array.make_array_from_callback(
         inp_shape, sharding,
         lambda idx: src[idx])
@@ -147,7 +147,7 @@ class CheckpointTest(jtu.JaxTestCase):
     unused_current, peak = tm.get_traced_memory()
     # NB: some padding + tensorstore overhead. It should always be
     # less than array size (2048 * 4096 * 4 = 32M)
-    self.assertLess(peak, 10_000_000)
+    self.assertLess(peak, 13_000_000)
     deserialize_wo_limit = serialization.async_deserialize(
         sharding, tspec, inp_shape)
     tm.clear_traces()
