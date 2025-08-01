@@ -228,7 +228,7 @@ SingleDeviceSharding::SingleDeviceSharding(nb::object device,
   type_ = nanobind::type<SingleDeviceSharding>().inc_ref().ptr();
 }
 
-SingleDeviceSharding::SingleDeviceSharding(nb_class_ptr<xla::PyClient> client,
+SingleDeviceSharding::SingleDeviceSharding(nb_class_ptr<jax::PyClient> client,
                                            xla::ifrt::DeviceListRef device_list,
                                            nb::object memory_kind)
     : Sharding(/*num_devices=*/1),

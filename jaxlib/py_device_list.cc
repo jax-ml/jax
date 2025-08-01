@@ -49,7 +49,7 @@ namespace jax {
 
 namespace nb = ::nanobind;
 
-PyDeviceList::PyDeviceList(nb_class_ptr<xla::PyClient> py_client,
+PyDeviceList::PyDeviceList(nb_class_ptr<jax::PyClient> py_client,
                            xla::ifrt::DeviceListRef device_list)
     : py_client_(std::move(py_client)), device_list_(std::move(device_list)) {}
 
@@ -62,12 +62,12 @@ PyDeviceList::PyDeviceList(nb::tuple py_device_assignment)
   absl::InlinedVector<xla::ifrt::Device*, 1> devices;
   devices.reserve(py_device_assignment.size());
   for (nb::handle obj : py_device_assignment) {
-    if (!nb::isinstance<xla::PyDevice>(obj.ptr())) {
-      // Non-`xla::PyDevice` is used on an alternative JAX backend with device
+    if (!nb::isinstance<jax::PyDevice>(obj.ptr())) {
+      // Non-`jax::PyDevice` is used on an alternative JAX backend with device
       // duck typing. Use Python device objects already set in `device_list_`.
       return;
     }
-    auto py_device = nb::cast<xla::PyDevice*>(obj);
+    auto py_device = nb::cast<jax::PyDevice*>(obj);
     if (py_client_.get() == nullptr) {
       py_client_ = py_device->client();
     } else if (py_device->client().get() != py_client_.get()) {
@@ -233,10 +233,10 @@ nb::iterator PyDeviceList::Iter() {
       struct Iterator {
         void operator++() { ++it; }
         bool operator==(const Iterator& other) const { return it == other.it; }
-        nb_class_ptr<xla::PyDevice> operator*() const {
+        nb_class_ptr<jax::PyDevice> operator*() const {
           return py_client->GetPyDevice(*it);
         }
-        nb_class_ptr<xla::PyClient> py_client;
+        nb_class_ptr<jax::PyClient> py_client;
         absl::Span<xla::ifrt::Device* const>::const_iterator it;
       };
       return nb::make_iterator(

@@ -193,7 +193,7 @@ struct CallSignature {
 
   // Shape and dtype for both the dynamic positional arguments and the keyword
   // arguments (sorted by keyword name).
-  absl::InlinedVector<xla::PyArgSignature, 2> dynamic_arg_signatures;
+  absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
 
   // The sharding of the jax.Array arguments.
   std::vector<nanobind::object> dynamic_arg_shardings;

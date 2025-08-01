@@ -252,7 +252,7 @@ absl::StatusOr<xla::ifrt::ArraySpec> ArraySpecFromShapeDtypeStruct(
   auto shape = xla::ifrt::Shape(
       xla::ifrt::Shape::Dimensions(shape_dims.begin(), shape_dims.end()));
   TF_ASSIGN_OR_RETURN(auto sharding,
-                      xla::GetIfrtHloSharding(aval.attr("sharding"), shape));
+                      jax::GetIfrtHloSharding(aval.attr("sharding"), shape));
   return xla::ifrt::ArraySpec{dtype, std::move(shape), std::move(sharding)};
 }
 
@@ -272,7 +272,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
           "_testonly_inject_failure",
           [](PyTransferServerConnection& self) { self.conn().InjectFailure(); })
       .def("_pull_flat", [](PyTransferServerConnection& self, nb::int_ uuid,
-                            jax::nb_class_ptr<xla::PyClient> py_client,
+                            jax::nb_class_ptr<jax::PyClient> py_client,
                             std::vector<nb::object> py_avals) {
         auto* ifrt_client = llvm::dyn_cast_or_null<xla::ifrt::PjRtClient>(
             py_client->ifrt_client());
@@ -356,7 +356,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
         }
         self.Pull(uuid_cpp, buffer_ids, std::move(pull_dests));
 
-        std::vector<xla::PyArray> out;
+        std::vector<jax::PyArray> out;
         auto traceback = jax::Traceback::Get();
         for (size_t i = 0; i < buffer_list.size(); ++i) {
           xla::ifrt::PjRtArray::PjRtBuffers buffers;
@@ -367,7 +367,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
           auto arr = xla::ValueOrThrow(xla::ifrt::PjRtArray::Create(
               ifrt_client, avals[i].dtype, avals[i].shape, avals[i].sharding,
               std::move(buffers), avals[i].layout));
-          out.push_back(xla::PyArray::MakeFromIfrtArrayAndSharding(
+          out.push_back(jax::PyArray::MakeFromIfrtArrayAndSharding(
               py_client, traceback, std::move(arr), shardings[i], false, true,
               /*skip_checks=*/false));
         }
@@ -379,10 +379,10 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       .def("address", [](PyTransferServer& self) { return self.address(); })
       .def("_await_pull_flat",
            [](PyTransferServer& self, nb::int_ uuid,
-              std::vector<xla::PyArray> inputs) {
+              std::vector<jax::PyArray> inputs) {
              std::vector<xla::ifrt::ArrayRef> arrs;
              arrs.reserve(inputs.size());
-             for (const xla::PyArray& input : inputs) {
+             for (const jax::PyArray& input : inputs) {
                arrs.push_back(tsl::FormRef(input.ifrt_array()));
              }
              uint64_t uuid_cpp;
@@ -400,7 +400,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
 
   m.def(
       "start_transfer_server",
-      [](jax::nb_class_ptr<xla::PyClient> py_client, std::string address,
+      [](jax::nb_class_ptr<jax::PyClient> py_client, std::string address,
          std::vector<std::string> transport_addresses_str,
          size_t max_num_parallel_copies, size_t transfer_size,
          bool supports_pinned_allocator,

@@ -31,11 +31,11 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/shape.h"
 
-namespace xla {
+namespace jax {
 
 class PyDevice {
  public:
-  PyDevice(jax::nb_class_ptr<PyClient> client, ifrt::Device* device);
+  PyDevice(nb_class_ptr<PyClient> client, xla::ifrt::Device* device);
 
   // Devices are compared using Python object identity, so we don't allow them
   // to be copied or moved.
@@ -44,8 +44,8 @@ class PyDevice {
   PyDevice& operator=(const PyDevice&) = delete;
   PyDevice& operator=(PyDevice&&) = delete;
 
-  const jax::nb_class_ptr<PyClient>& client() const { return client_; }
-  ifrt::Device* device() const { return device_; }
+  const nb_class_ptr<PyClient>& client() const { return client_; }
+  xla::ifrt::Device* device() const { return device_; }
 
   int id() const;
   int process_index() const;
@@ -56,9 +56,9 @@ class PyDevice {
   absl::string_view Str() const;
   absl::string_view Repr() const;
 
-  absl::StatusOr<jax::nb_class_ptr<PyMemorySpace>> Memory(
+  absl::StatusOr<nb_class_ptr<PyMemorySpace>> Memory(
       absl::string_view kind) const;
-  absl::StatusOr<jax::nb_class_ptr<PyMemorySpace>> DefaultMemory() const;
+  absl::StatusOr<nb_class_ptr<PyMemorySpace>> DefaultMemory() const;
   nanobind::list AddressableMemories() const;
   absl::StatusOr<std::optional<nanobind::dict>> MemoryStats() const;
 
@@ -71,10 +71,10 @@ class PyDevice {
   static int tp_clear(PyObject* self);
   static PyType_Slot slots_[];
 
-  jax::nb_class_ptr<PyClient> client_;
-  ifrt::Device* device_;
+  nb_class_ptr<PyClient> client_;
+  xla::ifrt::Device* device_;
 };
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_PY_DEVICE_H_

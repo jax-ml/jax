@@ -51,9 +51,10 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
+namespace ifrt = xla::ifrt;
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 
 namespace {
 
@@ -65,24 +66,24 @@ class CompileOnlyPyClient : public PyClient {
       std::shared_ptr<ifrt::PjRtTopology> topology) {
     auto client = nb::borrow<jax::nb_class_ptr<PyClient>>(
         jax::make_nb_class<CompileOnlyPyClient>(
-            std::make_unique<CompileOnlyIfRtClient>(std::move(topology))));
+            std::make_unique<xla::CompileOnlyIfRtClient>(std::move(topology))));
     CompileOnlyPyClient::Initialize(client);
     return client;
   }
 
   absl::StatusOr<jax::nb_class_ptr<PyExecutable>> CompileUnloaded(
       absl::string_view mlir_module, ifrt::DeviceListRef executable_devices,
-      CompileOptions options) {
+      xla::CompileOptions options) {
     ifrt::ExecutableRef ifrt_executable;
     {
       nb::gil_scoped_release gil_release;
       mlir::MLIRContext context;
       TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                          ParseMlirModuleString(mlir_module, context));
-      auto* ifrt_client =
-          llvm::dyn_cast_or_null<CompileOnlyIfRtClient>(this->ifrt_client());
+                          xla::ParseMlirModuleString(mlir_module, context));
+      auto* ifrt_client = llvm::dyn_cast_or_null<xla::CompileOnlyIfRtClient>(
+          this->ifrt_client());
       CHECK(ifrt_client) << "CompileOnlyPyClient requires ifrt_client be a "
-                            "CompileOnlyIfRtClient";
+                            "xla::CompileOnlyIfRtClient";
 
       auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
           options, std::move(executable_devices));
@@ -113,21 +114,22 @@ void RegisterCompileOnlyClient(nb::module_& m) {
       .def(
           "compile",
           [](CompileOnlyPyClient& self, nb::bytes mlir_module,
-             jax::PyDeviceList& py_executable_devices, CompileOptions options,
+             jax::PyDeviceList& py_executable_devices,
+             xla::CompileOptions options,
              std::vector<nb::capsule> host_callbacks) {
             ifrt::DeviceListRef executable_devices =
-                ValueOrThrow(py_executable_devices.ifrt_device_list());
-            return ValueOrThrow(self.CompileUnloaded(
+                xla::ValueOrThrow(py_executable_devices.ifrt_device_list());
+            return xla::ValueOrThrow(self.CompileUnloaded(
                 absl::string_view(mlir_module.c_str(), mlir_module.size()),
                 std::move(executable_devices), std::move(options)));
           },
           nb::arg("computation"), nb::arg("executable_devices"),
-          nb::arg("compile_options") = CompileOptions(),
+          nb::arg("compile_options") = xla::CompileOptions(),
           nb::arg("host_callbacks") = std::vector<nb::capsule>())
       .def("compile",
-           ValueOrThrowWrapper(&CompileOnlyPyClient::CompileUnloaded),
+           xla::ValueOrThrowWrapper(&CompileOnlyPyClient::CompileUnloaded),
            nb::arg("computation"), nb::arg("executable_devices"),
-           nb::arg("compile_options") = CompileOptions());
+           nb::arg("compile_options") = xla::CompileOptions());
 }
 
-}  // namespace xla
+}  // namespace jax

@@ -195,7 +195,7 @@ std::string CallSignature::DebugString() const {
     out->append(nb::cast<absl::string_view>(nb::str(o)));
   };
   auto signature_formatter = [](std::string* out,
-                                const xla::PyArgSignature& s) {
+                                const PyArgSignature& s) {
     out->append(s.DebugString());
   };
   auto layout_formatter = [](std::string* out,
@@ -475,22 +475,22 @@ void BuildJaxjitSubmodule(nb::module_& m) {
   jitlib.def("set_thread_local_state_initialization_callback",
              [](nb::object f) { initialize_local_state = f; });
 
-  nb::class_<xla::PyArgSignature> arg_signature(jitlib, "PyArgSignature");
+  nb::class_<PyArgSignature> arg_signature(jitlib, "PyArgSignature");
   arg_signature
       .def_prop_ro(
           "dtype",
-          [](const xla::PyArgSignature& sig) {
+          [](const PyArgSignature& sig) {
             return xla::ValueOrThrow(xla::PrimitiveTypeToNbDtype(sig.dtype));
           })
       .def_prop_ro("shape",
-                   [](const xla::PyArgSignature& sig) {
+                   [](const PyArgSignature& sig) {
                      return xla::SpanToNbTuple(absl::MakeConstSpan(sig.shape));
                    })
-      .def_ro("weak_type", &xla::PyArgSignature::weak_type);
+      .def_ro("weak_type", &PyArgSignature::weak_type);
   jitlib.def("_ArgSignatureOfValue",
-             xla::ValueOrThrowWrapper(xla::PyArgSignatureOfValue));
+             xla::ValueOrThrowWrapper(PyArgSignatureOfValue));
 
-  jitlib.def("_is_float0", &xla::IsFloat0);
+  jitlib.def("_is_float0", &IsFloat0);
 
   nb::class_<ArgumentSignature> argument_signature(jitlib, "ArgumentSignature");
   argument_signature.def_ro("static_args", &ArgumentSignature::static_args)

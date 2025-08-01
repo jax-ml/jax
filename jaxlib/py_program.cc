@@ -63,9 +63,10 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 
-namespace xla {
-
+namespace ifrt = ::xla::ifrt;
 namespace nb = ::nanobind;
+
+namespace jax {
 
 namespace {
 
@@ -170,7 +171,7 @@ absl::StatusOr<std::vector<ifrt::ArraySpec>> GetIfrtArraySpecs(
     ifrt::Shape ifrt_shape(nb::cast<std::vector<int64_t>>(aval.attr("shape")));
     TF_ASSIGN_OR_RETURN(
         auto ifrt_dtype,
-        DtypeToIfRtDType(nb::cast<nb_dtype>(aval.attr("dtype"))));
+        DtypeToIfRtDType(nb::cast<xla::nb_dtype>(aval.attr("dtype"))));
     TF_ASSIGN_OR_RETURN(
         auto ifrt_sharding,
         GetIfrtSharding(aval.attr("sharding"), ifrt_shape.dims().size()));
@@ -208,7 +209,7 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgram(
     absl::string_view mlir_module) {
   auto context = std::make_unique<mlir::MLIRContext>();
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      ParseMlirModuleString(mlir_module, *context));
+                      xla::ParseMlirModuleString(mlir_module, *context));
   return std::make_unique<xla::ifrt::HloProgram>(std::move(context),
                                                  std::move(module));
 }
@@ -225,7 +226,7 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgramFromBytes(
 }
 
 absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
-    CompileOptions options, jax::PyDeviceList& py_executable_devices,
+    xla::CompileOptions options, jax::PyDeviceList& py_executable_devices,
     std::vector<nb::capsule> host_callbacks) {
   std::vector<tsl::RCReference<ifrt::LoadedHostCallback>>
       ifrt_loaded_host_callbacks;
@@ -254,7 +255,7 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeColocatedPythonProgram(
       absl::string_view(reinterpret_cast<const char*>(picked_function.data()),
                         picked_function.size()),
       /*releaser=*/[picked_function](absl::string_view) mutable {
-        GlobalPyRefManager()->AddGarbage(std::move(picked_function));
+        xla::GlobalPyRefManager()->AddGarbage(std::move(picked_function));
       });
   TF_ASSIGN_OR_RETURN(auto ifrt_device_list, GetDeviceList(devices));
   TF_ASSIGN_OR_RETURN(auto ifrt_input_specs, GetIfrtArraySpecs(input_avals));
@@ -273,25 +274,29 @@ void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
   nb::class_<ifrt::CompileOptions> ifrt_compile_options_base_class(
       sub_module, "CompileOptions");
   sub_module
-      .def("make_hlo_program", ValueOrThrowWrapper(MakeHloProgramFromString),
+      .def("make_hlo_program",
+           xla::ValueOrThrowWrapper(MakeHloProgramFromString),
            nb::arg("mlir_module"))
-      .def("make_hlo_program", ValueOrThrowWrapper(MakeHloProgramFromBytes),
+      .def("make_hlo_program",
+           xla::ValueOrThrowWrapper(MakeHloProgramFromBytes),
            nb::arg("mlir_module"))
       .def("make_colocated_python_program",
-           ValueOrThrowWrapper(MakeColocatedPythonProgram), nb::arg("name"),
-           nb::arg("pickled_function"), nb::arg("devices"),
+           xla::ValueOrThrowWrapper(MakeColocatedPythonProgram),
+           nb::arg("name"), nb::arg("pickled_function"), nb::arg("devices"),
            nb::arg("input_avals"), nb::arg("output_avals"))
       .def("make_plugin_program",
-           ValueOrThrowWrapper(MakePluginProgramFromString), nb::arg("data"))
+           xla::ValueOrThrowWrapper(MakePluginProgramFromString),
+           nb::arg("data"))
       .def("make_plugin_program",
-           ValueOrThrowWrapper(MakePluginProgramFromBytes), nb::arg("data"))
+           xla::ValueOrThrowWrapper(MakePluginProgramFromBytes),
+           nb::arg("data"))
       .def("make_xla_compile_options",
-           ValueOrThrowWrapper(MakeXlaCompileOptions), nb::arg("options"),
+           xla::ValueOrThrowWrapper(MakeXlaCompileOptions), nb::arg("options"),
            nb::arg("executable_devices"), nb::arg("host_callbacks"))
       .def("make_colocated_python_compile_options",
-           ValueOrThrowWrapper(MakeColocatedPythonCompileOptions))
+           xla::ValueOrThrowWrapper(MakeColocatedPythonCompileOptions))
       .def("make_plugin_compile_options",
-           ValueOrThrowWrapper(MakePluginCompileOptions));
+           xla::ValueOrThrowWrapper(MakePluginCompileOptions));
 }
 
-}  // namespace xla
+}  // namespace jax
