@@ -137,7 +137,7 @@ ThreadLocalConfigState::~ThreadLocalConfigState() {
   // any garbage collection.
   GlobalConfigState::Instance().RemoveThreadLocalState(this);
   // We do not hold the GIL, so we must use deferred destruction.
-  xla::GlobalPyRefManager()->AddGarbage(absl::MakeSpan(entries_));
+  GlobalPyRefManager()->AddGarbage(absl::MakeSpan(entries_));
 }
 
 void ThreadLocalConfigState::Set(int key, nb::object value) {

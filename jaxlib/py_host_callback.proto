@@ -15,7 +15,7 @@ limitations under the License.
 
 syntax = "proto3";
 
-package xla;
+package jax;
 
 // Represents a JAX host callback that is serialized using the 'cloudpickle'
 // Python library. Typically used for

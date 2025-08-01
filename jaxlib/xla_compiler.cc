@@ -423,7 +423,7 @@ nb::ndarray<> LiteralToNdarray(Literal& obj) {
 
   xla::PrimitiveType primitive_type = shape.element_type();
   nb::dlpack::dtype dtype =
-      ValueOrThrow(PrimitiveTypeToNbDLDataType(primitive_type));
+      ValueOrThrow(jax::PrimitiveTypeToNbDLDataType(primitive_type));
 
   absl::Span<const int64_t> dimensions = shape.dimensions();
   std::vector<size_t> unsigned_dimensions(dimensions.begin(), dimensions.end());
@@ -857,7 +857,8 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
         });
   m.def(
       "hlo_module_cost_analysis",
-      xla::ValueOrThrowWrapper([](PyClient* client, const HloModule& module)
+      xla::ValueOrThrowWrapper([](jax::PyClient* client,
+                                  const HloModule& module)
                                    -> absl::StatusOr<nb::dict> {
         TF_ASSIGN_OR_RETURN(auto analysis,
                             client->pjrt_client()->GetHloCostAnalysis());

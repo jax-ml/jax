@@ -56,7 +56,7 @@ struct JitState {
       // We likely do not hold the GIL if this JitState is thread-local, so we
       // hand the Python object to the global reference manager to destroy.
       nanobind::object o = std::move(*extra_jit_context);
-      xla::GlobalPyRefManager()->AddGarbage(absl::MakeSpan(&o, 1));
+      GlobalPyRefManager()->AddGarbage(absl::MakeSpan(&o, 1));
       extra_jit_context = std::nullopt;
     }
   }
@@ -193,7 +193,7 @@ struct CallSignature {
 
   // Shape and dtype for both the dynamic positional arguments and the keyword
   // arguments (sorted by keyword name).
-  absl::InlinedVector<xla::PyArgSignature, 2> dynamic_arg_signatures;
+  absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
 
   // The sharding of the jax.Array arguments.
   std::vector<nanobind::object> dynamic_arg_shardings;
