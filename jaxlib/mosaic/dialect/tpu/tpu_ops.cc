@@ -1130,6 +1130,51 @@ LogicalResult MaskCastOp::verify() {
   return success();
 }
 
+LogicalResult ScanOp::verify() {
+  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core)) {
+    return issuing_core;
+  }
+  if (issuing_core != CoreType::kScVectorSubcore) {
+    return emitOpError("Scan is supported only on the SC vector subcore");
+  }
+
+  VectorType input_ty = getInput().getType();
+  VectorType output_ty = getOutput().getType();
+
+  if (input_ty.getElementType() != output_ty.getElementType()) {
+    return emitOpError("Input and output element type mismatch.");
+  }
+  if (input_ty.getShape() != output_ty.getShape()) {
+    return emitOpError("Input and output shape mismatch. Input shape: (")
+           << input_ty.getShape() << "). Output shape: ("
+           << output_ty.getShape() << ").";
+  }
+
+  if (input_ty.getElementType().isInteger(1) &&
+      getKind() != ReductionKind::SUM) {
+    return emitOpError("Only sum reduction is supported for i1 vector inputs.");
+  }
+
+  if (getMask() != nullptr) {
+    if (input_ty.getElementType().isInteger(1)) {
+      return emitOpError("Mask is not supported for i1 vector inputs.");
+    }
+    VectorType mask_ty = getMask().getType();
+    if (mask_ty.getShape() != input_ty.getShape()) {
+      return emitOpError("Mask and input shape mismatch. Mask shape: (")
+             << mask_ty.getShape() << "). Input shape: (" << input_ty.getShape()
+             << ").";
+    }
+  } else {
+    if (!input_ty.getElementType().isInteger(1)) {
+      return emitOpError("Mask is required for non-i1 vector inputs.");
+    }
+  }
+
+  return success();
+}
+
 LogicalResult GetBarrierSemaphoreOp::verify() {
   auto sem_type = getMemRefType(getResult());
   if (sem_type.getRank() != 0) {

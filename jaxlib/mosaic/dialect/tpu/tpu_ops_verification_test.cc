@@ -105,6 +105,13 @@ class TpuOpsVerificationTest : public ::testing::Test {
         .getResult();
   }
 
+  Value ConstantI1Vector(ArrayRef<int64_t> shape, ArrayRef<bool> values) {
+    return Create<arith::ConstantOp>(
+               /*result=*/VectorType::get(shape, builder().getI1Type()),
+               /*value=*/builder().getBoolVectorAttr(values))
+        .getResult();
+  }
+
   Value ConstantI8Vector(ArrayRef<int64_t> shape, ArrayRef<int8_t> values) {
     return Create<arith::ConstantOp>(
                /*result=*/VectorType::get(shape, builder().getI8Type()),
@@ -308,6 +315,150 @@ TEST_F(TpuOpsVerificationTest, UnpackSubelementsInvalidIndex) {
       VerifyOp(unpack),
       StatusIs(
           _, HasSubstr("Index must be between 0 and the packing factor (2)")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationWorks) {
+  Value src = ConstantI32Vector(/*shape=*/{8},
+                                /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8},
+                                /*values=*/{1});
+  auto kind = tpu::ReductionKind::SUM;
+  auto vl = Create<ScanOp>(
+      /*output=*/dst,
+      /*input=*/src,
+      /*kind=*/kind,
+      /*mask=*/mask);
+
+  ASSERT_OK(VerifyOp(vl));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       ScanVerificationMismatchElementType) {
+  Value src = ConstantI32Vector(/*shape=*/{8},
+                                /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getF32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8},
+                                /*values=*/{1});
+  auto kind = tpu::ReductionKind::SUM;
+  auto vl = Create<ScanOp>(
+      /*output=*/dst,
+      /*input=*/src,
+      /*kind=*/kind,
+      /*mask=*/mask);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr("Input and output element type mismatch.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationMismatchShape) {
+  Value src = ConstantI32Vector(/*shape=*/{4, 2},
+                                /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8, 1}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{4, 2},
+                                /*values=*/{1});
+  auto kind = tpu::ReductionKind::SUM;
+  auto vl = Create<ScanOp>(
+      /*output=*/dst,
+      /*input=*/src,
+      /*kind=*/kind,
+      /*mask=*/mask);
+
+  ASSERT_THAT(VerifyOp(vl),
+              StatusIs(_, HasSubstr("Input and output shape mismatch. Input "
+                                    "shape: (4, 2). Output shape: (8, 1).")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       ScanVerificationValidI1Input) {
+  Value src = ConstantI1Vector(/*shape=*/{8},
+                               /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI1Type());
+  auto kind = tpu::ReductionKind::SUM;
+  auto vl = Create<ScanOp>(
+      /*output=*/dst,
+      /*input=*/src,
+      /*kind=*/kind,
+      /*mask=*/nullptr);
+
+  ASSERT_OK(VerifyOp(vl));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       ScanVerificationInvalidReductionKindWithI1Input) {
+  Value src = ConstantI1Vector(/*shape=*/{4, 2},
+                               /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{4, 2}, /*type=*/builder().getI1Type());
+  Value mask = ConstantI1Vector(/*shape=*/{4, 2},
+                                /*values=*/{1});
+  auto kind = tpu::ReductionKind::MIN;
+  auto vl = Create<ScanOp>(
+      /*output=*/dst,
+      /*input=*/src,
+      /*kind=*/kind,
+      /*mask=*/mask);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(
+          _,
+          HasSubstr("Only sum reduction is supported for i1 vector inputs.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       ScanVerificationNoMaskWithI32Input) {
+  Value src = ConstantI32Vector(/*shape=*/{8},
+                                /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+  auto kind = tpu::ReductionKind::MAX;
+  auto vl = Create<ScanOp>(
+      /*output=*/dst,
+      /*input=*/src,
+      /*kind=*/kind,
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr("Mask is required for non-i1 vector inputs.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskShape) {
+  Value src = ConstantI32Vector(/*shape=*/{8},
+                                /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{4},
+                                /*values=*/{1});
+  auto kind = tpu::ReductionKind::MAX;
+  auto vl = Create<ScanOp>(
+      /*output=*/dst,
+      /*input=*/src,
+      /*kind=*/kind,
+      /*mask=*/mask);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr("Mask and input shape mismatch. Mask shape: "
+                            "(4). Input shape: (8).")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       ScanVerificationInvalidMaskWithI1Input) {
+  Value src = ConstantI1Vector(/*shape=*/{8},
+                               /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI1Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8},
+                                /*values=*/{1});
+  auto kind = tpu::ReductionKind::SUM;
+  auto vl = Create<ScanOp>(
+      /*output=*/dst,
+      /*input=*/src,
+      /*kind=*/kind,
+      /*mask=*/mask);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr("Mask is not supported for i1 vector inputs.")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaElementTypeMismatch) {
