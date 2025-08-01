@@ -43,6 +43,7 @@ py_library(
     srcs = ["matmul.py"],
     deps = [
         "//jax",
+        "//jax/_src:test_util",
         "//jax/experimental:mosaic_gpu",
     ],
 )
