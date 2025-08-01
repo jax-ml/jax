@@ -24,6 +24,7 @@ Subpackages
    jax.nn
    jax.ops
    jax.profiler
+   jax.ref
    jax.stages
    jax.test_util
    jax.tree

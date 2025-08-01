@@ -143,6 +143,7 @@ exclude_patterns = [
     'jep/9407-type-promotion.md',
     'autodidax.md',
     'autodidax2_part1.md',
+    'array_refs.md',
     'sharded-computation.md',
     'ffi.ipynb',
 ]
