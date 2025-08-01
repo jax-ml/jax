@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from absl.testing import absltest
-from jax._src import test_util as jtu
+from jax._src import test_util as jtu, mesh
 from jax.sharding import NamedSharding, PartitionSpec as P
 from jax.experimental.shard_alike import shard_alike
 from jax._src.shard_map import shard_map
@@ -270,6 +270,27 @@ class ShardAlikeTest(jtu.JaxTestCase):
     _, y = shard_alike(x, jnp.arange(8))
     self.assertTrue(y.sharding.is_equivalent_to(s, y.ndim))
 
+
+  def test_jax_lax_dot(self):
+    mesh = jtu.create_mesh((2, 2),
+                           ('x', 'y'),
+                           axis_types=(mesh.AxisType.Explicit,
+                                       mesh.AxisType.Explicit))
+    np_inp1 = np.arange(16).reshape(8, 2)
+    np_inp2 = np.arange(16).reshape(2, 8)
+    s1 = NamedSharding(mesh, P('x', 'y'))
+    s2 = NamedSharding(mesh, P('y',))
+    os = NamedSharding(mesh, P('x', 'y'))
+
+    inp1 = jax.device_put(np_inp1, s1)
+    inp2 = jax.device_put(np_inp2, s2)
+
+    @jax.jit
+    def f(x, y):
+      return jax.lax.dot(x, y, out_sharding=os)
+
+    out = f(inp1, inp2)
+    self.assertEqual(out.sharding, os)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
