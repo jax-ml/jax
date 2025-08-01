@@ -4328,6 +4328,99 @@ class WarpSpecializedPipelineTest(PallasTest):
     ref = jnp.sum(jnp.stack(np.split(ref, n // blk_n, axis=1)), axis=0)
     np.testing.assert_allclose(kernel(x), ref, atol=1e-4)
 
+  @parameterized.product(
+      num_compute_wgs=[1, 2],
+      static=[False, True],
+      manual_consumed_barriers=[False, True],
+      small_shape=[True, False],
+  )
+  def test_delay_release(self, num_compute_wgs, static, manual_consumed_barriers, small_shape):
+    self.skip_if_wg_semantics()  # Crashes!
+    if small_shape:
+      m = n = 64
+    else:
+      m = n = 256
+    blk_m, blk_n = 32, 64
+    spec = pl.BlockSpec(
+        block_shape=(num_compute_wgs * blk_m, blk_n),
+        index_map=lambda i, j: (i, j),
+    )
+
+    def tiled_add_kernel(idx, x_smem, y_smem, o_smem, *consumed_barriers):
+      wg_idx = lax.axis_index("wg")
+      m_slice = pl.ds(wg_idx * blk_m, blk_m)
+      o_smem[m_slice] = x_smem[m_slice] + y_smem[m_slice]
+      if manual_consumed_barriers:
+        @pl.when(jnp.logical_or(idx[0] != 0, idx[1] != 0))
+        def _signal_consumed():
+          for b in consumed_barriers:
+            plgpu.barrier_arrive(b)
+
+    def pipeline(*gmem_refs):
+      grid = (m // (num_compute_wgs * blk_m), n // blk_n)
+      if not static:
+        grid = jax.tree.map(jnp.asarray, grid)
+      return mgpu_pipeline.emit_pipeline_warp_specialized(
+          tiled_add_kernel,
+          grid=grid,
+          max_concurrent_steps=4,
+          delay_release=1,
+          manual_consumed_barriers=manual_consumed_barriers,
+          num_compute_wgs=num_compute_wgs,
+          memory_registers=40,
+          wg_axis="wg",
+          in_specs=[spec, spec],
+          out_specs=[spec],
+      )(*gmem_refs)
+
+    kernel = self.kernel(
+        pipeline,
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+        compiler_params=plgpu.CompilerParams(approx_math=True),
+        grid=(1,),
+        grid_names=("_",),
+        num_threads=num_compute_wgs + 1,
+        thread_name="wg",
+    )
+    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
+    y = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float32)
+    np.testing.assert_allclose(kernel(x, y), x + y, atol=1e-4)
+
+  @parameterized.product(
+      delay_release=[0, 1],
+  )
+  def test_repeat(self, delay_release):
+    num_steps = 4
+
+    def kernel_body(_, x_smem, o_smem):
+      o_smem[...] = x_smem[...] + 1.0
+
+    def kernel(x_gmem, o_gmem):
+      for _ in range(3):
+        plgpu.emit_pipeline_warp_specialized(
+            kernel_body,
+            in_specs=[plgpu.BlockSpec((64, 64), lambda i: (0, i))],
+            out_specs=[plgpu.BlockSpec((64, 64), lambda i: (0, i))],
+            grid=(num_steps,),
+            max_concurrent_steps=2,
+            delay_release=delay_release,
+            num_compute_wgs=1,
+            memory_registers=40,
+            wg_axis="wg",
+        )(x_gmem, o_gmem)
+
+    x = jnp.arange(64 * num_steps * 64)
+    x = x.reshape(-1, num_steps * 64).astype(jnp.float32)
+    kernel_fn = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        grid=(1,),
+        grid_names=("_",),
+        num_threads=2,
+        thread_name="wg",
+    )
+    np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
+
 
 class WarpSpecializedPipelineWGTest(
     WarpSpecializedPipelineTest,
