@@ -37,7 +37,7 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
 
-namespace xla {
+namespace jax {
 
 enum class PyTreeKind {
   kLeaf,        // An opaque leaf node
@@ -217,14 +217,14 @@ class PyTreeDef {
   // PyTreeDef. It is the caller's responsibility to enforce this.
   explicit PyTreeDef(PyTreeRegistry* registry) : registry_(registry) {}
 
-  explicit PyTreeDef(jax::nb_class_ptr<PyTreeRegistry> registry)
+  explicit PyTreeDef(nb_class_ptr<PyTreeRegistry> registry)
       : registry_(registry.get()), registry_ref_(std::move(registry)) {}
 
   // Flattens a Pytree into a list of leaves and a PyTreeDef.
   // Returns references to the flattened objects, which might be temporary
   // objects in the case of custom pytype handlers.
-  static std::pair<std::vector<nanobind::object>, jax::nb_class_ptr<PyTreeDef>>
-  Flatten(nanobind::handle x, jax::nb_class_ptr<PyTreeRegistry> registry,
+  static std::pair<std::vector<nanobind::object>, nb_class_ptr<PyTreeDef>>
+  Flatten(nanobind::handle x, nb_class_ptr<PyTreeRegistry> registry,
           std::optional<nanobind::callable> leaf_predicate = std::nullopt);
 
   // Flattens a Pytree into a list of `leaves` and a PyTreeDef (this).
@@ -257,14 +257,14 @@ class PyTreeDef {
 
   // Composes two PyTreeDefs, replacing the leaves of this tree with copies of
   // `inner`. The returned PyTreeDef holds a reference to its registry.
-  jax::nb_class_ptr<PyTreeDef> Compose(const PyTreeDef& inner) const;
+  nb_class_ptr<PyTreeDef> Compose(const PyTreeDef& inner) const;
 
   // Makes a Tuple PyTreeDef out of a vector of PyTreeDefs.
-  static jax::nb_class_ptr<PyTreeDef> Tuple(
-      jax::nb_class_ptr<PyTreeRegistry> registry, nanobind::list defs);
+  static nb_class_ptr<PyTreeDef> Tuple(nb_class_ptr<PyTreeRegistry> registry,
+                                       nanobind::list defs);
 
   // The returned PyTreeDefs hold a reference to the registry.
-  std::vector<jax::nb_class_ptr<PyTreeDef>> Children() const;
+  std::vector<nb_class_ptr<PyTreeDef>> Children() const;
 
   // Maps a function over a PyTree structure, applying f_leaf to each leaf, and
   // f_node(node, node_data) to each container node.
@@ -303,11 +303,10 @@ class PyTreeDef {
   // to implement `PyTreeDef.__setstate__`.
   void FromPickle(nanobind::object pickleable);
 
-  void SerializeTo(jax::PyTreeDefProto& result) const;
+  void SerializeTo(PyTreeDefProto& result) const;
 
-  static jax::nb_class_ptr<PyTreeDef> DeserializeFrom(
-      jax::nb_class_ptr<PyTreeRegistry> registry,
-      const jax::PyTreeDefProto& input);
+  static nb_class_ptr<PyTreeDef> DeserializeFrom(
+      nb_class_ptr<PyTreeRegistry> registry, const PyTreeDefProto& input);
 
   std::optional<std::pair<nanobind::object, nanobind::object>> GetNodeData()
       const;
@@ -377,7 +376,7 @@ class PyTreeDef {
   PyTreeRegistry* registry_;
   // If this class holds a reference to `registry`, it is held by
   // `registry_ref_`.
-  jax::nb_class_ptr<PyTreeRegistry> registry_ref_;
+  nb_class_ptr<PyTreeRegistry> registry_ref_;
 
   // Nodes, in a post-order traversal. We use an ordered traversal to minimize
   // allocations, and post-order corresponds to the order we need to rebuild the
@@ -399,6 +398,6 @@ H AbslHashValue(H h, const PyTreeDef& t) {
 
 void BuildPytreeSubmodule(nanobind::module_& m);
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_PYTREE_H_

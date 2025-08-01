@@ -596,7 +596,7 @@ NB_MODULE(_jax, m) {
 
   BuildConfigSubmodule(m);
   xla::BuildIfrtProgramsSubmodule(m);
-  xla::BuildPytreeSubmodule(m);
+  BuildPytreeSubmodule(m);
   BuildGuardSubmodule(m);
   BuildJaxjitSubmodule(m);
   BuildPmapSubmodule(m);

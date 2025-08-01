@@ -144,7 +144,7 @@ std::string ArgumentSignature::DebugString() const {
   auto py_object_formatter = [](std::string* out, const nb::object& o) {
     out->append(nb::cast<absl::string_view>(nb::str(o)));
   };
-  auto treedef_formatter = [](std::string* out, const xla::PyTreeDef& d) {
+  auto treedef_formatter = [](std::string* out, const PyTreeDef& d) {
     out->append(d.ToString());
   };
   return absl::StrFormat(
@@ -237,7 +237,7 @@ size_t HashShardingForJit(nb::handle sharding) {
   auto type = sharding.type();
 
   if (type.is(NamedSharding::type())) {
-    const auto* named_sharding = nb::inst_ptr<jax::NamedSharding>(sharding);
+    const auto* named_sharding = nb::inst_ptr<NamedSharding>(sharding);
     return absl::Hash<void*>()(named_sharding->mesh().ptr());
   }
 
@@ -353,8 +353,8 @@ absl::Status ParseArguments(
     absl::Span<PyObject* const> positional_args,
     absl::Span<PyObject* const> keyword_args, nb::handle kwnames,
     absl::Span<int const> static_argnums,
-    absl::Span<nb::str const> static_argnames,
-    xla::PyTreeRegistry* pytree_registry, ArgumentSignature& signature,
+    absl::Span<nb::str const> static_argnames, PyTreeRegistry* pytree_registry,
+    ArgumentSignature& signature,
     absl::InlinedVector<nanobind::object, 2>& flat_dynamic_args) {
   tsl::profiler::TraceMe traceme("ParseArguments");
 
@@ -369,7 +369,7 @@ absl::Status ParseArguments(
     // Positional arguments.
     for (int i = 0; i < positional_args.size(); ++i) {
       signature.dynamic_arg_treedefs.emplace_back(pytree_registry);
-      xla::PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
+      PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
       pytree_def.Flatten(nb::handle(positional_args[i]), flat_dynamic_args);
     }
   } else {
@@ -383,7 +383,7 @@ absl::Status ParseArguments(
                          return t >= 0 ? i == t : i == t + num_positional_args;
                        }) == static_argnums.end()) {
         signature.dynamic_arg_treedefs.emplace_back(pytree_registry);
-        xla::PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
+        PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
         pytree_def.Flatten(positional_args[i], flat_dynamic_args);
       } else {
         signature.static_args.emplace_back(
@@ -396,7 +396,7 @@ absl::Status ParseArguments(
   if (!keyword_args.empty()) {
     std::vector<std::pair<nb::handle, nb::handle>> kwargs(keyword_args.size());
     // We first intern the keys, then sort them (by name, as in the Python path)
-    // (see also xla::PyTreeDef::Flatten) and then create the signatures.
+    // (see also PyTreeDef::Flatten) and then create the signatures.
     // TODO(jblespiau): We should be able to sort the keys by interned-key
     // pointers, but this requires the Python compilation to do the same.
     for (int i = 0; i < keyword_args.size(); ++i) {
@@ -433,7 +433,7 @@ absl::Status ParseArguments(
         signature.dynamic_arg_names.push_back(
             nb::steal<nb::object>(kwargs[i].first));
         signature.dynamic_arg_treedefs.emplace_back(pytree_registry);
-        xla::PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
+        PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
         pytree_def.Flatten(nb::handle(kwargs[i].second.ptr()),
                            flat_dynamic_args);
       }
@@ -511,7 +511,7 @@ void BuildJaxjitSubmodule(nb::module_& m) {
       [](nb::sequence positional_args, nb::sequence keyword_args,
          nb::tuple kwnames, absl::Span<int const> static_argnums,
          absl::Span<nb::str const> static_argnames,
-         xla::PyTreeRegistry* pytree_registry) {
+         PyTreeRegistry* pytree_registry) {
         ArgumentSignature signature;
         absl::InlinedVector<nanobind::object, 2> flat_dynamic_args;
         nb::object positional_args_seq = nb::steal(PySequence_Fast(

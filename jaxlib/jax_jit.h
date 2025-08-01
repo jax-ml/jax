@@ -101,7 +101,7 @@ struct ArgumentSignature {
   // A PyTreeDef for each dynamic argument, positional arguments first
   // followed by keyword arguments. Keyword arguments are in the order given
   // by dynamic_arg_names.
-  absl::InlinedVector<xla::PyTreeDef, 2> dynamic_arg_treedefs;
+  absl::InlinedVector<PyTreeDef, 2> dynamic_arg_treedefs;
 
   // Dynamic keyword argument names. Interned, and sorted by the keyword
   // name. Interned values are safe to compare by pointer.
@@ -173,7 +173,7 @@ absl::Status ParseArguments(
     absl::Span<PyObject* const> keyword_args, nanobind::handle kwnames,
     absl::Span<int const> static_argnums,
     absl::Span<nanobind::str const> static_argnames,
-    xla::PyTreeRegistry* pytree_registry, ArgumentSignature& signature,
+    PyTreeRegistry* pytree_registry, ArgumentSignature& signature,
     absl::InlinedVector<nanobind::object, 2>& flat_dynamic_args);
 
 // The signature of Python jitted function call, partitioned into:
@@ -247,7 +247,7 @@ H AbslHashValue(H h, const CallSignature& s) {
 
   // TODO(chky): For now, we are only hashing the pointer of shardings to avoid
   // slow python hashing function. Consider implementing hashing function and
-  // equality checks in C++ in jax::Sharding and use those here.
+  // equality checks in C++ in Sharding and use those here.
   for (const auto& sharding : s.dynamic_arg_shardings) {
     h = H::combine(std::move(h), HashShardingForJit(sharding));
   }
