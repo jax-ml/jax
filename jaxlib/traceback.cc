@@ -255,7 +255,7 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
 
   PyThreadState* thread_state = PyThreadState_GET();
 
-#ifdef PLATFORM_GOOGLE
+#if defined(PLATFORM_GOOGLE) && PY_VERSION_HEX < 0x030e0000
 // This code is equivalent to the version using public APIs, but it saves us
 // an allocation of one object per stack frame. However, this is definitely
 // violating the API contract of CPython, so we only use this where we can be
