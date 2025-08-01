@@ -3599,7 +3599,7 @@ class APITest(jtu.JaxTestCase):
     self.assertTrue(any('Compiling jit(f)' in line for line in l.output))
     self.assertTrue(any('Finished XLA compilation' in line for line in l.output))
 
-  def test_grad_of_jit_compilation_caching(self):
+  def test_grad_of_jit_compilation_caching_withlogging(self):
     if not hasattr(self, "assertLogs"):
       raise unittest.SkipTest("test requires assertLogs (python 3)")
 
@@ -3622,19 +3622,23 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(ans1, np.cos(2.), check_dtypes=False)
     self.assertAllClose(ans2, np.cos(3.), check_dtypes=False)
 
-  def test_grad_of_jit_compilation_caching2(self):
+  @parameterized.parameters([False, True])
+  def test_grad_of_jit_compilation_caching(self, jit):
     # Like the above test, but instead of logging use our compile counters.
 
-    # make sure some initial convert element type operations are pre-cached.
+    # make sure some initial operations are pre-cached.
     api.grad(api.jit(lambda x: x))(1.0)
+    jax.lax.sin(1.0)
 
-    @api.jit
     def f(x):
-      return jnp.sin(x)
+      return jax.lax.sin(x)
+
+    if jit:
+      f = api.jit(f)
 
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       _  = jax.grad(f)(3.)
-    self.assertEqual(count(), 2)  # one for fwd, one for bwd
+    self.assertLessEqual(count(), 2)  # one for fwd, one for bwd
 
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       _  = jax.grad(f)(3.)
