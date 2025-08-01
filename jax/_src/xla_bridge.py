@@ -156,6 +156,29 @@ _at_fork_handler_installed = False
 
 _NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]
 
+def _make_transfer_server_factory(
+) -> xla_client._xla.TransferServerInterfaceFactory | None:
+  """Creates a transfer server interface factory."""
+  if (not CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value or not
+      hasattr(_jax, "make_transfer_server_interface_factory")):
+    return None
+  transport_addresses = []
+  if CROSS_HOST_TRANSPORT_ADDRESSES.value:
+    transport_addresses = CROSS_HOST_TRANSPORT_ADDRESSES.value.split(",")
+  transfer_server_kwargs = {
+      "distributed_client": distributed.global_state.client,
+      "socket_address": CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value,
+      "transport_addresses": transport_addresses,
+  }
+  if CROSS_HOST_TRANSFER_TIMEOUT_SECONDS.value is not None:
+    transfer_server_kwargs["cross_host_transfer_timeout_seconds"] = (
+        CROSS_HOST_TRANSFER_TIMEOUT_SECONDS.value)
+  if CROSS_HOST_TRANSFER_TRANSFER_SIZE.value is not None:
+    transfer_server_kwargs["transfer_size"] = (
+        CROSS_HOST_TRANSFER_TRANSFER_SIZE.value)
+  return _jax.make_transfer_server_interface_factory(**transfer_server_kwargs)  # type: ignore
+
+
 def make_tpu_client(
     library_path: str | None = None, options: _NameValueMapping | None = None
 ):
@@ -170,23 +193,11 @@ def make_tpu_client(
     _jax.initialize_pjrt_plugin('tpu')
   if options is None:
     options = {}
-  transfer_server_factory = None
-  if (CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value and
-      hasattr(_jax, "make_transfer_server_interface_factory")):
-    transport_addresses = []
-    if CROSS_HOST_TRANSPORT_ADDRESSES.value:
-      transport_addresses = CROSS_HOST_TRANSPORT_ADDRESSES.value.split(",")
-    transfer_server_factory = _jax.make_transfer_server_interface_factory(
-        distributed_client=distributed.global_state.client,
-        socket_address=CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value,
-        transport_addresses=transport_addresses,
-        transfer_size=CROSS_HOST_TRANSFER_TRANSFER_SIZE.value,
-    )
   return _jax.get_c_api_client(
       "tpu",
       options,
       distributed.global_state.client,
-      transfer_server_factory,
+      _make_transfer_server_factory(),
   )
 
 
@@ -326,18 +337,6 @@ def make_cpu_client(
       assert collectives_impl is None
 
   num_devices = num_cpu_devices.value if num_cpu_devices.value >= 0 else None
-  transfer_server_factory = None
-  if (CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value and
-      hasattr(_jax, "make_transfer_server_interface_factory")):
-    transport_addresses = []
-    if CROSS_HOST_TRANSPORT_ADDRESSES.value:
-      transport_addresses = CROSS_HOST_TRANSPORT_ADDRESSES.value.split(",")
-    transfer_server_factory = _jax.make_transfer_server_interface_factory(
-        socket_address=CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value,
-        transport_addresses=transport_addresses,
-        distributed_client=distributed.global_state.client,
-        transfer_size=CROSS_HOST_TRANSFER_TRANSFER_SIZE.value,
-    )
   return xla_client.make_cpu_client(
       asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
       distributed_client=distributed.global_state.client,
@@ -347,7 +346,7 @@ def make_cpu_client(
       num_devices=num_devices,
       get_local_topology_timeout_minutes=cpu_get_local_topology_timeout_minutes.value,
       get_global_topology_timeout_minutes=cpu_get_global_topology_timeout_minutes.value,
-      transfer_server_factory=transfer_server_factory,
+      transfer_server_factory=_make_transfer_server_factory(),
   )
 
 
@@ -557,25 +556,11 @@ def make_pjrt_c_api_client(
     distribute_options['slice_index'] = slice_index
   if options is not None:
     distribute_options.update(updated_options)
-  cross_host_transfer_server_factory = None
-  if (CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value and
-      hasattr(_jax, "make_transfer_server_interface_factory")):
-    transport_addresses = []
-    if CROSS_HOST_TRANSPORT_ADDRESSES.value:
-      transport_addresses = CROSS_HOST_TRANSPORT_ADDRESSES.value.split(",")
-    cross_host_transfer_server_factory = (
-        _jax.make_transfer_server_interface_factory(
-            distributed_client=distributed.global_state.client,
-            socket_address=CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value,
-            transport_addresses=transport_addresses,
-            transfer_size=CROSS_HOST_TRANSFER_TRANSFER_SIZE.value,
-        )
-    )
   return xla_client.make_c_api_client(
       plugin_name,
       distribute_options,
       distributed.global_state.client,
-      cross_host_transfer_server_factory,
+      _make_transfer_server_factory(),
   )
 
 
