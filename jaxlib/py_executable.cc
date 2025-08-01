@@ -83,7 +83,7 @@ absl::Status PyShardedToken::Await() {
 }
 
 PyLoadedExecutable::PyLoadedExecutable(
-    nb_class_ptr<PyClient> client,
+    jax::nb_class_ptr<PyClient> client,
     ifrt::LoadedExecutableRef ifrt_loaded_executable,
     std::optional<jax::Traceback> traceback,
     std::optional<std::string> fingerprint)
@@ -121,9 +121,9 @@ PyLoadedExecutable::~PyLoadedExecutable() {
   }
 }
 
-std::vector<nb_class_ptr<PyDevice>> PyLoadedExecutable::AddressableDevices()
-    const {
-  std::vector<nb_class_ptr<PyDevice>> devices;
+std::vector<jax::nb_class_ptr<PyDevice>>
+PyLoadedExecutable::AddressableDevices() const {
+  std::vector<jax::nb_class_ptr<PyDevice>> devices;
   devices.reserve(ifrt_loaded_executable_->addressable_devices().size());
   for (ifrt::Device* device : ifrt_loaded_executable_->addressable_devices()) {
     devices.push_back(client_->GetPyDevice(device));
@@ -178,7 +178,7 @@ static ifrt::ArrayRef GetIfRtArray(const ExecuteShardedArg& arg) {
   return *ifrt_array;
 }
 
-void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
+void PopulateExecuteShardedResults(const jax::nb_class_ptr<PyClient>& client,
                                    std::vector<ifrt::ArrayRef> ifrt_arrays,
                                    const PjRtFuture<>& result_status,
                                    int num_computations,
@@ -203,7 +203,8 @@ void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
 }
 
 absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
-    const ifrt::ExecuteOptions& options, const nb_class_ptr<PyClient>& client,
+    const ifrt::ExecuteOptions& options,
+    const jax::nb_class_ptr<PyClient>& client,
     ifrt::LoadedExecutable* ifrt_loaded_executable,
     absl::Span<const ExecuteShardedArg> args,
     std::optional<std::vector<PjRtFuture<>>>& returned_futures) {
@@ -258,7 +259,7 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
 
 }  // namespace
 
-PyExecuteResults::PyExecuteResults(const nb_class_ptr<PyClient>& client,
+PyExecuteResults::PyExecuteResults(const jax::nb_class_ptr<PyClient>& client,
                                    std::vector<ifrt::ArrayRef> ifrt_arrays,
                                    int num_computations, PyShardedToken token,
                                    PjRtFuture<> result_status)

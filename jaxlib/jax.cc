@@ -309,7 +309,7 @@ NB_MODULE(_jax, m) {
          std::optional<int> get_local_topology_timeout_minutes,
          std::optional<int> get_global_topology_timeout_minutes,
          std::optional<xla::ifrt::TransferServerInterfaceFactory>
-             transfer_server_factory) -> xla::nb_class_ptr<xla::PyClient> {
+             transfer_server_factory) -> nb_class_ptr<xla::PyClient> {
         std::unique_ptr<xla::ifrt::PjRtClient> ifrt_client;
         {
           nb::gil_scoped_release gil_release;
@@ -393,7 +393,7 @@ NB_MODULE(_jax, m) {
          const absl::flat_hash_map<std::string, xla::PjRtValueType>& options,
          std::shared_ptr<xla::DistributedRuntimeClient> distributed_client,
          std::optional<xla::ifrt::TransferServerInterfaceFactory>
-             transfer_server_factory) -> xla::nb_class_ptr<xla::PyClient> {
+             transfer_server_factory) -> nb_class_ptr<xla::PyClient> {
         std::unique_ptr<xla::ifrt::PjRtClient> ifrt_client;
         {
           nb::gil_scoped_release gil_release;
@@ -446,7 +446,7 @@ NB_MODULE(_jax, m) {
                                    topology_name, options)));
         });
   m.def("get_topology_for_devices",
-        [](const std::vector<xla::nb_class_ptr<xla::PyDevice>>& py_devices) {
+        [](const std::vector<nb_class_ptr<xla::PyDevice>>& py_devices) {
           if (py_devices.empty()) {
             throw nb::value_error(
                 "get_topology_for_devices requires >= 1 devices.");
@@ -572,7 +572,7 @@ NB_MODULE(_jax, m) {
         nb::arg("buffer"), nb::arg("stream").none() = nb::none());
   m.def(
       "dlpack_managed_tensor_to_buffer",
-      [](const nb::capsule& tensor, xla::nb_class_ptr<xla::PyDevice> device,
+      [](const nb::capsule& tensor, nb_class_ptr<xla::PyDevice> device,
          std::optional<std::intptr_t> stream) {
         return xla::ValueOrThrow(xla::DLPackManagedTensorToBuffer(
             tensor, device->device(), device->client(), stream));
@@ -582,8 +582,8 @@ NB_MODULE(_jax, m) {
   m.def(
       "dlpack_managed_tensor_to_buffer",
       [](const nb::capsule& tensor,
-         std::optional<xla::nb_class_ptr<xla::PyClient>> cpu_client,
-         std::optional<xla::nb_class_ptr<xla::PyClient>> gpu_client) {
+         std::optional<nb_class_ptr<xla::PyClient>> cpu_client,
+         std::optional<nb_class_ptr<xla::PyClient>> gpu_client) {
         return xla::ValueOrThrow(xla::DLPackManagedTensorToBuffer(
             tensor, std::move(cpu_client), std::move(gpu_client)));
       },

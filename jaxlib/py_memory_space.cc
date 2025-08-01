@@ -31,7 +31,7 @@ namespace nb = ::nanobind;
 
 namespace xla {
 
-PyMemorySpace::PyMemorySpace(nb_class_ptr<PyClient> client,
+PyMemorySpace::PyMemorySpace(jax::nb_class_ptr<PyClient> client,
                              ifrt::Memory* memory)
     : client_(std::move(client)), memory_(memory) {}
 
@@ -77,7 +77,7 @@ nb::list PyMemorySpace::AddressableByDevices() const {
 
 /* static */ int PyMemorySpace::tp_clear(PyObject* self) {
   PyMemorySpace* d = nb::inst_ptr<PyMemorySpace>(self);
-  nb_class_ptr<PyClient> client;
+  jax::nb_class_ptr<PyClient> client;
   std::swap(client, d->client_);
   return 0;
 }

@@ -60,7 +60,8 @@ struct PyArray_Storage;
 // We use a wrapper class to add Python-specific functionality.
 class PyClient {
  public:
-  static nb_class_ptr<PyClient> Make(std::shared_ptr<ifrt::Client> ifrt_client);
+  static jax::nb_class_ptr<PyClient> Make(
+      std::shared_ptr<ifrt::Client> ifrt_client);
 
   // Do not call the constructor directly. Use `PyClient::Make` instead.
   explicit PyClient(std::shared_ptr<ifrt::Client> ifrt_client);
@@ -132,21 +133,21 @@ class PyClient {
   int device_count() const { return ifrt_client_->device_count(); }
   int process_index() const { return ifrt_client_->process_index(); }
 
-  std::vector<nb_class_ptr<PyDevice>> Devices();
-  std::vector<nb_class_ptr<PyDevice>> LocalDevices();
+  std::vector<jax::nb_class_ptr<PyDevice>> Devices();
+  std::vector<jax::nb_class_ptr<PyDevice>> LocalDevices();
   // Returns all devices in the client. Private API; only use this method for
   // implementing backend._get_all_devices().
   // TODO(hyeontaek): Remove this method once we have a unified API for
   // enumerating devices with different criteria.
-  std::vector<nb_class_ptr<PyDevice>> GetAllDevices();
-  absl::StatusOr<nb_class_ptr<PyDevice>> DeviceFromLocalHardwareId(
+  std::vector<jax::nb_class_ptr<PyDevice>> GetAllDevices();
+  absl::StatusOr<jax::nb_class_ptr<PyDevice>> DeviceFromLocalHardwareId(
       int local_hardware_id);
 
   // Returns the PyDevice associated with the given ifrt::Device.
-  nb_class_ptr<PyDevice> GetPyDevice(ifrt::Device* device);
+  jax::nb_class_ptr<PyDevice> GetPyDevice(ifrt::Device* device);
 
   // Returns the PyMemorySpace associated with the given ifrt::Memory.
-  nb_class_ptr<PyMemorySpace> GetPyMemorySpace(ifrt::Memory* memory_space);
+  jax::nb_class_ptr<PyMemorySpace> GetPyMemorySpace(ifrt::Memory* memory_space);
 
   // Returns a vector of live PyArray objects. PyArray objects may share
   // PjRtBuffers, so there may be duplicates of the same underlying device
@@ -159,36 +160,37 @@ class PyClient {
   absl::Status Defragment();
 
   static absl::StatusOr<nanobind::object> BufferFromPyval(
-      nb_class_ptr<PyClient> client, nanobind::handle argument,
+      jax::nb_class_ptr<PyClient> client, nanobind::handle argument,
       ifrt::Device* device, bool force_copy,
       ifrt::Client::HostBufferSemantics host_buffer_semantics);
 
-  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
-  CompileAndLoadIfrtProgram(nb_class_ptr<PyClient> client,
+  static absl::StatusOr<jax::nb_class_ptr<PyLoadedExecutable>>
+  CompileAndLoadIfrtProgram(jax::nb_class_ptr<PyClient> client,
                             std::unique_ptr<ifrt::Program> ifrt_program,
                             std::unique_ptr<ifrt::CompileOptions> ifrt_options);
 
-  static absl::StatusOr<nb_class_ptr<PyExecutable>> Compile(
-      nb_class_ptr<PyClient> client, std::string mlir_module,
+  static absl::StatusOr<jax::nb_class_ptr<PyExecutable>> Compile(
+      jax::nb_class_ptr<PyClient> client, std::string mlir_module,
       ifrt::DeviceListRef executable_devices, CompileOptions options);
 
-  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
-      nb_class_ptr<PyClient> client, std::string mlir_module,
+  static absl::StatusOr<jax::nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
+      jax::nb_class_ptr<PyClient> client, std::string mlir_module,
       ifrt::DeviceListRef executable_devices, CompileOptions options,
       std::vector<nanobind::capsule> host_callbacks);
 
-  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
-      nb_class_ptr<PyClient> client, std::string mlir_module,
+  static absl::StatusOr<jax::nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
+      jax::nb_class_ptr<PyClient> client, std::string mlir_module,
       ifrt::DeviceListRef executable_devices, CompileOptions options,
       std::vector<nanobind::callable> host_callbacks);
 
   absl::StatusOr<nanobind::bytes> SerializeExecutable(
       const PyLoadedExecutable& executable) const;
-  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> DeserializeExecutable(
-      nb_class_ptr<PyClient> client, nanobind::bytes serialized,
-      ifrt::DeviceListRef executable_devices,
-      std::optional<CompileOptions> options,
-      std::vector<nanobind::capsule> host_callbacks);
+  static absl::StatusOr<jax::nb_class_ptr<PyLoadedExecutable>>
+  DeserializeExecutable(jax::nb_class_ptr<PyClient> client,
+                        nanobind::bytes serialized,
+                        ifrt::DeviceListRef executable_devices,
+                        std::optional<CompileOptions> options,
+                        std::vector<nanobind::capsule> host_callbacks);
 
   absl::StatusOr<nanobind::bytes> HeapProfile();
 
@@ -219,7 +221,7 @@ class PyClient {
   static void RegisterPythonTypes(nanobind::module_& m);
 
  protected:
-  static void Initialize(nb_class_ptr<PyClient> client);
+  static void Initialize(jax::nb_class_ptr<PyClient> client);
 
  private:
   friend class PyLoadedExecutable;
@@ -251,8 +253,8 @@ class PyClient {
   };
   std::array<ArraysShard, kNumArraysShards> arrays_;
 
-  absl::flat_hash_map<ifrt::Device*, nb_class_ptr<PyDevice>> devices_;
-  absl::flat_hash_map<ifrt::Memory*, nb_class_ptr<PyMemorySpace>>
+  absl::flat_hash_map<ifrt::Device*, jax::nb_class_ptr<PyDevice>> devices_;
+  absl::flat_hash_map<ifrt::Memory*, jax::nb_class_ptr<PyMemorySpace>>
       memory_spaces_;
 };
 

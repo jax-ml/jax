@@ -266,7 +266,7 @@ class PmapFunction {
   PmapFunction(nb::callable fun, nb::callable cache_miss,
                std::vector<int> static_argnums,
                nb::callable python_shard_arg_fallback,
-               xla::nb_class_ptr<xla::PyTreeRegistry> pytree_registry)
+               nb_class_ptr<xla::PyTreeRegistry> pytree_registry)
       : fun_(std::move(fun)),
         cache_miss_(std::move(cache_miss)),
         static_argnums_(std::move(static_argnums)),
@@ -309,7 +309,7 @@ class PmapFunction {
   const nb::callable& fun() const { return fun_; }
   const nb::callable& cache_miss() const { return cache_miss_; }
   const std::string& function_name() const { return function_name_; }
-  const xla::nb_class_ptr<xla::PyTreeRegistry>& pytree_registry() const {
+  const nb_class_ptr<xla::PyTreeRegistry>& pytree_registry() const {
     return pytree_registry_;
   }
   const nb::callable& python_shard_arg_fallback() const {
@@ -406,7 +406,7 @@ class PmapFunction {
   // We need to know the static arguments to remove them from the arguments
   // passed to the underlying PyLoadedExecutable. In sorted order.
   std::vector<int> static_argnums_;
-  xla::nb_class_ptr<xla::PyTreeRegistry> pytree_registry_;
+  nb_class_ptr<xla::PyTreeRegistry> pytree_registry_;
   // We need a `shared_ptr` here to ensure value pointer stability, and to
   // ensure that the cache entry remains alive in the presence of concurrent
   // removals.
@@ -451,7 +451,7 @@ void PmapFunction::PopulateCacheEntry(PmapCacheEntry& cache_entry,
     return;
   }
   cache_entry.executable = std::move(executable);
-  const std::vector<xla::nb_class_ptr<xla::PyDevice>>& devices =
+  const std::vector<nb_class_ptr<xla::PyDevice>>& devices =
       cache_entry.executable->AddressableDevices();
   cache_entry.devices.reserve(devices.size());
   for (auto& device : devices) {
@@ -462,7 +462,7 @@ void PmapFunction::PopulateCacheEntry(PmapCacheEntry& cache_entry,
   nb::list input_indices = pmap_data.attr("input_indices");
 
   cache_entry.py_devices = pmap_data.attr("input_devices");
-  auto input_devices = nb::cast<std::vector<xla::nb_class_ptr<xla::PyDevice>>>(
+  auto input_devices = nb::cast<std::vector<nb_class_ptr<xla::PyDevice>>>(
       pmap_data.attr("input_devices"));
 
   nb::list input_array_shardings = pmap_data.attr("input_array_shardings");
@@ -658,7 +658,7 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
   // we access them from Python.
   auto traceback = jax::Traceback::Get();
   // TODO(jblespiau): Change the `client` function to return a reference.
-  xla::nb_class_ptr<xla::PyClient> client = cache_entry.executable->client();
+  nb_class_ptr<xla::PyClient> client = cache_entry.executable->client();
 
   // Convert the PjRtBuffer objects to PyBuffer, and invert the order from
   // [num_devices, num_args] to [num_args, num_devices].
@@ -871,10 +871,10 @@ PyType_Slot JaxPmapFunction_slots[] = {
 
 }  // extern "C"
 
-nb::object MakePmapFunction(
-    nb::callable fun, nb::callable cache_miss, std::vector<int> static_argnums,
-    nb::callable python_shard_arg_fallback,
-    xla::nb_class_ptr<xla::PyTreeRegistry> pytree_registry) {
+nb::object MakePmapFunction(nb::callable fun, nb::callable cache_miss,
+                            std::vector<int> static_argnums,
+                            nb::callable python_shard_arg_fallback,
+                            nb_class_ptr<xla::PyTreeRegistry> pytree_registry) {
   nb::object obj = nb::steal<nb::object>(JaxPmapFunction_tp_new(
       reinterpret_cast<PyTypeObject*>(JaxPmapFunction_Type), nullptr, nullptr));
   JaxPmapFunctionObject* buf =
@@ -1089,8 +1089,8 @@ void BuildPmapSubmodule(nb::module_& m) {
             nb::cast<std::vector<int>>(pickle["static_argnums"]);
         nb::callable python_shard_arg_fallback =
             nb::cast<nb::callable>(pickle["python_shard_arg_fallback"]);
-        xla::nb_class_ptr<xla::PyTreeRegistry> pytree_registry =
-            nb::cast<xla::nb_class_ptr<xla::PyTreeRegistry>>(
+        nb_class_ptr<xla::PyTreeRegistry> pytree_registry =
+            nb::cast<nb_class_ptr<xla::PyTreeRegistry>>(
                 pickle["pytree_registry"]);
         new (&(reinterpret_cast<JaxPmapFunctionObject*>(self.ptr())->fun))
             PmapFunction(std::move(fun), std::move(cache_miss),
@@ -1126,8 +1126,8 @@ void BuildPmapSubmodule(nb::module_& m) {
       [](nb::callable fun, nb::callable cache_miss,
          std::vector<int> static_argnums, nb::callable shard_arg_fallback,
          nb::object pytree_registry) -> nb::object {
-        xla::nb_class_ptr<xla::PyTreeRegistry> registry =
-            nb::cast<xla::nb_class_ptr<xla::PyTreeRegistry>>(pytree_registry);
+        nb_class_ptr<xla::PyTreeRegistry> registry =
+            nb::cast<nb_class_ptr<xla::PyTreeRegistry>>(pytree_registry);
         return MakePmapFunction(
             std::move(fun), std::move(cache_miss), std::move(static_argnums),
             std::move(shard_arg_fallback), std::move(registry));

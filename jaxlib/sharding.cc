@@ -54,7 +54,7 @@ namespace jax {
 namespace nb = nanobind;
 
 // Gets `jax::PyDeviceList` from a JAX Sharding.
-absl::StatusOr<xla::nb_class_ptr<jax::PyDeviceList>> GetPyDeviceList(
+absl::StatusOr<nb_class_ptr<jax::PyDeviceList>> GetPyDeviceList(
     nb::handle sharding) {
   if (sharding.type().is(jax::NamedSharding::type())) {
     TF_ASSIGN_OR_RETURN(
@@ -70,14 +70,13 @@ absl::StatusOr<xla::nb_class_ptr<jax::PyDeviceList>> GetPyDeviceList(
     return nb::cast<const jax::GSPMDSharding*>(sharding)
         ->internal_device_list();
   } else {
-    return nb::cast<xla::nb_class_ptr<jax::PyDeviceList>>(
+    return nb::cast<nb_class_ptr<jax::PyDeviceList>>(
         sharding.attr("_internal_device_list"));
   }
 }
 
 nb::object CheckAndCanonicalizeMemoryKind(
-    nb::object memory_kind,
-    const xla::nb_class_ptr<PyDeviceList>& device_list) {
+    nb::object memory_kind, const nb_class_ptr<PyDeviceList>& device_list) {
   if (!memory_kind.is_none()) {
     // If memory kind is not None, check if it's supported by the devices
     // mentioned in the Sharding.
@@ -130,8 +129,7 @@ static const std::array<absl::string_view, 3> valid_memory_kinds = {
     "unpinned_host",
 };
 
-NamedSharding::NamedSharding(nb::object mesh,
-                             xla::nb_class_ptr<PartitionSpec> spec,
+NamedSharding::NamedSharding(nb::object mesh, nb_class_ptr<PartitionSpec> spec,
                              nb::object memory_kind,
                              nb::object logical_device_ids)
     : Sharding(/*num_devices=*/[&mesh]() {
@@ -145,7 +143,7 @@ NamedSharding::NamedSharding(nb::object mesh,
   if (idl.is_none()) {
     internal_device_list_ = std::nullopt;
   } else {
-    internal_device_list_ = nb::cast<xla::nb_class_ptr<jax::PyDeviceList>>(idl);
+    internal_device_list_ = nb::cast<nb_class_ptr<jax::PyDeviceList>>(idl);
   }
   if (internal_device_list_) {
     memory_kind_ =
@@ -218,7 +216,7 @@ SingleDeviceSharding::SingleDeviceSharding(nb::object device,
       device_(device),
       memory_kind_(std::move(memory_kind)),
       internal_device_list_(
-          xla::make_nb_class<PyDeviceList>(nb::make_tuple(std::move(device)))) {
+          make_nb_class<PyDeviceList>(nb::make_tuple(std::move(device)))) {
   memory_kind_ =
       CheckAndCanonicalizeMemoryKind(memory_kind_, internal_device_list_);
 }
@@ -230,13 +228,13 @@ SingleDeviceSharding::SingleDeviceSharding(nb::object device,
   type_ = nanobind::type<SingleDeviceSharding>().inc_ref().ptr();
 }
 
-SingleDeviceSharding::SingleDeviceSharding(
-    xla::nb_class_ptr<xla::PyClient> client,
-    xla::ifrt::DeviceListRef device_list, nb::object memory_kind)
+SingleDeviceSharding::SingleDeviceSharding(nb_class_ptr<xla::PyClient> client,
+                                           xla::ifrt::DeviceListRef device_list,
+                                           nb::object memory_kind)
     : Sharding(/*num_devices=*/1),
       device_(client->GetPyDevice(device_list->devices().front())),
       memory_kind_(std::move(memory_kind)),
-      internal_device_list_(xla::make_nb_class<PyDeviceList>(
+      internal_device_list_(make_nb_class<PyDeviceList>(
           std::move(client), std::move(device_list))) {
   memory_kind_ =
       CheckAndCanonicalizeMemoryKind(memory_kind_, internal_device_list_);
@@ -248,8 +246,7 @@ PmapSharding::PmapSharding(xla::nb_numpy_ndarray devices,
       devices_(std::move(devices)),
       sharding_spec_(std::move(sharding_spec)) {
   nb::object flat_devices = devices_.attr("flat");
-  internal_device_list_ =
-      xla::make_nb_class<PyDeviceList>(nb::tuple(flat_devices));
+  internal_device_list_ = make_nb_class<PyDeviceList>(nb::tuple(flat_devices));
 }
 
 /*static*/ PyObject* PmapSharding::type_ = nullptr;
@@ -261,7 +258,7 @@ PmapSharding::PmapSharding(xla::nb_numpy_ndarray devices,
   type_ = nanobind::type<PmapSharding>().inc_ref().ptr();
 }
 
-GSPMDSharding::GSPMDSharding(xla::nb_class_ptr<PyDeviceList> devices,
+GSPMDSharding::GSPMDSharding(nb_class_ptr<PyDeviceList> devices,
                              xla::HloSharding op_sharding,
                              nb::object memory_kind)
     : Sharding(/*num_devices=*/nb::len(devices.ptr())),
@@ -289,7 +286,7 @@ void RegisterSharding(nb::module_& m) {
   nb::class_<Sharding>(m, "Sharding").def(nb::init<>());
 
   nb::class_<NamedSharding, Sharding>(m, "NamedSharding", nb::dynamic_attr())
-      .def(nb::init<nb::object, xla::nb_class_ptr<PartitionSpec>, nb::object,
+      .def(nb::init<nb::object, nb_class_ptr<PartitionSpec>, nb::object,
                     nb::object>(),
            nb::arg("mesh"), nb::arg("spec"),
            nb::arg("memory_kind").none() = nb::none(),
@@ -335,12 +332,10 @@ void RegisterSharding(nb::module_& m) {
       // NOTE: We explicitly list the two PyDeviceList ctors first since they
       // are the fast path and PyDeviceList conforms to `nb::sequence` so we
       // can silently fall back to the slow sequence ctor(s).
-      .def(nb::init<xla::nb_class_ptr<PyDeviceList>, xla::OpSharding,
-                    nb::object>(),
+      .def(nb::init<nb_class_ptr<PyDeviceList>, xla::OpSharding, nb::object>(),
            nb::arg("devices"), nb::arg("op_sharding"),
            nb::arg("memory_kind").none() = nb::none())
-      .def(nb::init<xla::nb_class_ptr<PyDeviceList>, xla::HloSharding,
-                    nb::object>(),
+      .def(nb::init<nb_class_ptr<PyDeviceList>, xla::HloSharding, nb::object>(),
            nb::arg("devices"), nb::arg("op_sharding"),
            nb::arg("memory_kind").none() = nb::none())
       .def(nb::init<nb::sequence, xla::OpSharding, nb::object>(),

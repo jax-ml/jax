@@ -41,12 +41,12 @@ absl::StatusOr<nanobind::capsule> BufferToDLPackManagedTensor(
 
 absl::StatusOr<nanobind::object> DLPackManagedTensorToBuffer(
     const nanobind::capsule& tensor,
-    std::optional<nb_class_ptr<PyClient>> cpu_client,
-    std::optional<nb_class_ptr<PyClient>> gpu_client);
+    std::optional<jax::nb_class_ptr<PyClient>> cpu_client,
+    std::optional<jax::nb_class_ptr<PyClient>> gpu_client);
 
 absl::StatusOr<nanobind::object> DLPackManagedTensorToBuffer(
     const nanobind::capsule& tensor, ifrt::Device* device,
-    nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream);
+    jax::nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream);
 
 // Converts a PrimitiveType to the nanobind specific implementation of
 // DLDataType.

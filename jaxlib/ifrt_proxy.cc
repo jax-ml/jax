@@ -59,7 +59,7 @@ struct PyClientConnectionOptions {
       initialization_data;
 };
 
-absl::StatusOr<nb_class_ptr<PyClient>> GetClient(
+absl::StatusOr<jax::nb_class_ptr<PyClient>> GetClient(
     std::string proxy_server_address,
     const PyClientConnectionOptions& py_options) {
   DCHECK(PyGILState_Check());

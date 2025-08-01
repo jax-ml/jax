@@ -52,7 +52,7 @@ namespace nb = ::nanobind;
 
 namespace xla {
 
-PyDevice::PyDevice(nb_class_ptr<PyClient> client, ifrt::Device* device)
+PyDevice::PyDevice(jax::nb_class_ptr<PyClient> client, ifrt::Device* device)
     : client_(std::move(client)), device_(device) {}
 
 int PyDevice::id() const { return device_->Id().value(); }
@@ -93,7 +93,7 @@ absl::string_view PyDevice::Str() const { return device_->DebugString(); }
 
 absl::string_view PyDevice::Repr() const { return device_->ToString(); }
 
-absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
+absl::StatusOr<jax::nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
     absl::string_view kind) const {
   ifrt::Memory* result_memory_space = nullptr;
   for (auto* memory_space : device_->Memories()) {
@@ -132,7 +132,8 @@ absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
   return client_->GetPyMemorySpace(result_memory_space);
 }
 
-absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::DefaultMemory() const {
+absl::StatusOr<jax::nb_class_ptr<PyMemorySpace>> PyDevice::DefaultMemory()
+    const {
   TF_ASSIGN_OR_RETURN(auto* memory_space, device_->DefaultMemory());
   return client_->GetPyMemorySpace(memory_space);
 }
@@ -203,7 +204,7 @@ absl::StatusOr<std::intptr_t> PyDevice::GetStreamForExternalReadyEvents()
 
 /* static */ int PyDevice::tp_clear(PyObject* self) {
   PyDevice* d = nb::inst_ptr<PyDevice>(self);
-  nb_class_ptr<PyClient> client;
+  jax::nb_class_ptr<PyClient> client;
   std::swap(client, d->client_);
   return 0;
 }

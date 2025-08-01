@@ -144,7 +144,7 @@ class TextDoc final : public Doc {
 
 class ConcatDoc final : public Doc {
  public:
-  explicit ConcatDoc(std::vector<xla::nb_class_ptr<Doc>> children)
+  explicit ConcatDoc(std::vector<nb_class_ptr<Doc>> children)
       : Doc(TotalNumAnnotations(children)), children_(std::move(children)) {}
   std::string Repr() const override;
 
@@ -155,15 +155,14 @@ class ConcatDoc final : public Doc {
                       FormatState& state) const override;
 
  private:
-  static int TotalNumAnnotations(
-      absl::Span<const xla::nb_class_ptr<Doc>> children) {
+  static int TotalNumAnnotations(absl::Span<const nb_class_ptr<Doc>> children) {
     int total = 0;
     for (const auto& child : children) {
       total += child->num_annotations();
     }
     return total;
   }
-  std::vector<xla::nb_class_ptr<Doc>> children_;
+  std::vector<nb_class_ptr<Doc>> children_;
 };
 
 class BreakDoc final : public Doc {
@@ -183,7 +182,7 @@ class BreakDoc final : public Doc {
 
 class GroupDoc final : public Doc {
  public:
-  explicit GroupDoc(xla::nb_class_ptr<Doc> child)
+  explicit GroupDoc(nb_class_ptr<Doc> child)
       : Doc(/*num_annotations=*/child->num_annotations()),
         child_(std::move(child)) {}
   std::string Repr() const override;
@@ -194,12 +193,12 @@ class GroupDoc final : public Doc {
                       FormatState& state) const override;
 
  private:
-  xla::nb_class_ptr<Doc> child_;
+  nb_class_ptr<Doc> child_;
 };
 
 class NestDoc final : public Doc {
  public:
-  explicit NestDoc(int n, xla::nb_class_ptr<Doc> child)
+  explicit NestDoc(int n, nb_class_ptr<Doc> child)
       : Doc(child->num_annotations()), n_(n), child_(std::move(child)) {}
   std::string Repr() const override;
   void Fits(std::stack<const Doc*>& agenda, int& width) const override;
@@ -210,12 +209,12 @@ class NestDoc final : public Doc {
 
  private:
   int n_;
-  xla::nb_class_ptr<Doc> child_;
+  nb_class_ptr<Doc> child_;
 };
 
 class SourceMapDoc final : public Doc {
  public:
-  explicit SourceMapDoc(xla::nb_class_ptr<Doc> child, nb::object source)
+  explicit SourceMapDoc(nb_class_ptr<Doc> child, nb::object source)
       : Doc(child->num_annotations()),
         child_(std::move(child)),
         source_(std::move(source)) {}
@@ -227,14 +226,13 @@ class SourceMapDoc final : public Doc {
                       FormatState& state) const override;
 
  private:
-  xla::nb_class_ptr<Doc> child_;
+  nb_class_ptr<Doc> child_;
   nb::object source_;
 };
 
 class ColorDoc final : public Doc {
  public:
-  explicit ColorDoc(xla::nb_class_ptr<Doc> child,
-                    std::optional<Color> foreground,
+  explicit ColorDoc(nb_class_ptr<Doc> child, std::optional<Color> foreground,
                     std::optional<Color> background,
                     std::optional<Intensity> intensity)
       : Doc(child->num_annotations()),
@@ -251,7 +249,7 @@ class ColorDoc final : public Doc {
                       FormatState& state) const override;
 
  private:
-  xla::nb_class_ptr<Doc> child_;
+  nb_class_ptr<Doc> child_;
   std::optional<Color> foreground_;
   std::optional<Color> background_;
   std::optional<Intensity> intensity_;
@@ -661,11 +659,10 @@ NB_MODULE(_pretty_printer, m) {
   nb::class_<Doc>(m, "Doc")
       .def("__repr__", &Doc::Repr)
       .def("__add__",
-           [](xla::nb_class_ptr<Doc> self,
-              xla::nb_class_ptr<Doc> other) -> xla::nb_class_ptr<Doc> {
-             return xla::make_nb_class<ConcatDoc>(
-                 std::vector<xla::nb_class_ptr<Doc>>{std::move(self),
-                                                     std::move(other)});
+           [](nb_class_ptr<Doc> self,
+              nb_class_ptr<Doc> other) -> nb_class_ptr<Doc> {
+             return make_nb_class<ConcatDoc>(std::vector<nb_class_ptr<Doc>>{
+                 std::move(self), std::move(other)});
            })
       .def("_format", &Format, nb::arg("width"), nb::arg("use_color"),
            nb::arg("annotation_prefix"), nb::arg("source_map").none());
@@ -680,29 +677,26 @@ NB_MODULE(_pretty_printer, m) {
   nb::class_<SourceMapDoc, Doc>(m, "SourceMapDoc");
 
   m.def(
-      "nil",
-      []() -> xla::nb_class_ptr<Doc> { return xla::make_nb_class<NilDoc>(); },
+      "nil", []() -> nb_class_ptr<Doc> { return make_nb_class<NilDoc>(); },
       "An empty document.");
   m.def(
       "text",
       [](std::string text,
-         std::optional<std::string> annotation) -> xla::nb_class_ptr<Doc> {
-        return xla::make_nb_class<TextDoc>(std::move(text),
-                                           std::move(annotation));
+         std::optional<std::string> annotation) -> nb_class_ptr<Doc> {
+        return make_nb_class<TextDoc>(std::move(text), std::move(annotation));
       },
       nb::arg("text"), nb::arg("annotation").none() = std::nullopt,
       "Literal text.");
   m.def(
       "concat",
-      [](std::vector<xla::nb_class_ptr<Doc>> children)
-          -> xla::nb_class_ptr<Doc> {
-        return xla::make_nb_class<ConcatDoc>(std::move(children));
+      [](std::vector<nb_class_ptr<Doc>> children) -> nb_class_ptr<Doc> {
+        return make_nb_class<ConcatDoc>(std::move(children));
       },
       nb::arg("children"), "Concatenation of documents.");
   m.def(
       "brk",
-      [](std::string text) -> xla::nb_class_ptr<Doc> {
-        return xla::make_nb_class<BreakDoc>(text);
+      [](std::string text) -> nb_class_ptr<Doc> {
+        return make_nb_class<BreakDoc>(text);
       },
       nb::arg("text") = std::string(" "),
       R"(A break.
@@ -711,8 +705,8 @@ Prints either as a newline or as `text`, depending on the enclosing group.
 )");
   m.def(
       "group",
-      [](xla::nb_class_ptr<Doc> child) -> xla::nb_class_ptr<Doc> {
-        return xla::make_nb_class<GroupDoc>(std::move(child));
+      [](nb_class_ptr<Doc> child) -> nb_class_ptr<Doc> {
+        return make_nb_class<GroupDoc>(std::move(child));
       },
       R"(Layout alternative groups.
 
@@ -722,17 +716,17 @@ inside the group as printed as newlines.
 )");
   m.def(
       "nest",
-      [](int n, xla::nb_class_ptr<Doc> child) -> xla::nb_class_ptr<Doc> {
-        return xla::make_nb_class<NestDoc>(n, std::move(child));
+      [](int n, nb_class_ptr<Doc> child) -> nb_class_ptr<Doc> {
+        return make_nb_class<NestDoc>(n, std::move(child));
       },
       "Increases the indentation level by `n`.");
   m.def(
       "color",
-      [](xla::nb_class_ptr<Doc> child, std::optional<Color> foreground,
+      [](nb_class_ptr<Doc> child, std::optional<Color> foreground,
          std::optional<Color> background,
-         std::optional<Intensity> intensity) -> xla::nb_class_ptr<Doc> {
-        return xla::make_nb_class<ColorDoc>(std::move(child), foreground,
-                                            background, intensity);
+         std::optional<Intensity> intensity) -> nb_class_ptr<Doc> {
+        return make_nb_class<ColorDoc>(std::move(child), foreground, background,
+                                       intensity);
       },
       nb::arg("child"), nb::arg("foreground").none() = std::nullopt,
       nb::arg("background").none() = std::nullopt,
@@ -744,10 +738,8 @@ Requires use_colors=True to be set when printing; otherwise does nothing.
 )");
   m.def(
       "source_map",
-      [](xla::nb_class_ptr<Doc> child,
-         nb::object source) -> xla::nb_class_ptr<Doc> {
-        return xla::make_nb_class<SourceMapDoc>(std::move(child),
-                                                std::move(source));
+      [](nb_class_ptr<Doc> child, nb::object source) -> nb_class_ptr<Doc> {
+        return make_nb_class<SourceMapDoc>(std::move(child), std::move(source));
       },
       nb::arg("doc"), nb::arg("source"),
       R"(Source mapping.

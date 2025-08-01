@@ -28,7 +28,7 @@ namespace xla {
 
 class PyMemorySpace {
  public:
-  PyMemorySpace(nb_class_ptr<PyClient> client, ifrt::Memory* memory_space);
+  PyMemorySpace(jax::nb_class_ptr<PyClient> client, ifrt::Memory* memory_space);
 
   // Memory spaces are compared using Python object identity, so we don't allow
   // them to be copied or moved.
@@ -37,7 +37,7 @@ class PyMemorySpace {
   PyMemorySpace& operator=(const PyMemorySpace&) = delete;
   PyMemorySpace& operator=(PyMemorySpace&&) = delete;
 
-  const nb_class_ptr<PyClient>& client() const { return client_; }
+  const jax::nb_class_ptr<PyClient>& client() const { return client_; }
   ifrt::Memory* memory_space() const { return memory_; }
 
   int process_index() const;
@@ -56,7 +56,7 @@ class PyMemorySpace {
   static int tp_clear(PyObject* self);
   static PyType_Slot slots_[];
 
-  nb_class_ptr<PyClient> client_;
+  jax::nb_class_ptr<PyClient> client_;
   ifrt::Memory* memory_;
 };
 

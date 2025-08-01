@@ -334,8 +334,9 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
 }
 
 absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
-    const nb::capsule& tensor, std::optional<nb_class_ptr<PyClient>> cpu_client,
-    std::optional<nb_class_ptr<PyClient>> gpu_client) {
+    const nb::capsule& tensor,
+    std::optional<jax::nb_class_ptr<PyClient>> cpu_client,
+    std::optional<jax::nb_class_ptr<PyClient>> gpu_client) {
   // TODO(hyeontaek): This is a potential target for an IFRT client to multiplex
   // multiple PjRt clients. Devices from these PjRt clients could be expressed
   // as a unified set of IFRT devices.
@@ -425,7 +426,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
 
 absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     const nb::capsule& tensor, ifrt::Device* ifrt_device,
-    nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream) {
+    jax::nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream) {
   ifrt::PjRtDevice* device =
       llvm::dyn_cast_or_null<ifrt::PjRtDevice>(ifrt_device);
   if (device == nullptr) {

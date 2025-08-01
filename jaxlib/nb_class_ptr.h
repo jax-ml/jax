@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "nanobind/nanobind.h"
 
-namespace xla {
+namespace jax {
 
 // A reference-counting smart pointer to a nanobind-wrapped class on the Python
 // heap. Type T must be a class known to nanobind via a nanobind::class_
@@ -63,6 +63,6 @@ nb_class_ptr<T> make_nb_class(Args&&... args) {
   return nb_class_ptr<T>(instance.release(), ::nanobind::detail::steal_t{});
 }
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  //  JAXLIB_NB_CLASS_PTR_H_

@@ -75,14 +75,15 @@ absl::StatusOr<ifrt::DeviceListRef> GetDeviceList(nb::sequence devices) {
   if (devices.type().is(jax::PyDeviceList::type())) {
     return nb::cast<const jax::PyDeviceList*>(devices)->ifrt_device_list();
   } else {
-    auto py_devices = nb::cast<std::vector<nb_class_ptr<PyDevice>>>(devices);
+    auto py_devices =
+        nb::cast<std::vector<jax::nb_class_ptr<PyDevice>>>(devices);
     if (py_devices.empty()) {
       return absl::InvalidArgumentError(
           "Colocated Python program requires at least one device");
     }
     absl::InlinedVector<ifrt::Device*, 1> ifrt_devices;
     ifrt_devices.reserve(py_devices.size());
-    for (const nb_class_ptr<PyDevice>& py_device : py_devices) {
+    for (const jax::nb_class_ptr<PyDevice>& py_device : py_devices) {
       ifrt_devices.push_back(py_device->device());
     }
     return py_devices.front()->client()->ifrt_client()->MakeDeviceList(

@@ -272,7 +272,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
           "_testonly_inject_failure",
           [](PyTransferServerConnection& self) { self.conn().InjectFailure(); })
       .def("_pull_flat", [](PyTransferServerConnection& self, nb::int_ uuid,
-                            xla::nb_class_ptr<xla::PyClient> py_client,
+                            jax::nb_class_ptr<xla::PyClient> py_client,
                             std::vector<nb::object> py_avals) {
         auto* ifrt_client = llvm::dyn_cast_or_null<xla::ifrt::PjRtClient>(
             py_client->ifrt_client());
@@ -400,7 +400,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
 
   m.def(
       "start_transfer_server",
-      [](xla::nb_class_ptr<xla::PyClient> py_client, std::string address,
+      [](jax::nb_class_ptr<xla::PyClient> py_client, std::string address,
          std::vector<std::string> transport_addresses_str,
          size_t max_num_parallel_copies, size_t transfer_size,
          bool supports_pinned_allocator,

@@ -61,16 +61,16 @@ class CompileOnlyPyClient : public PyClient {
  public:
   using PyClient::PyClient;
 
-  static nb_class_ptr<PyClient> Make(
+  static jax::nb_class_ptr<PyClient> Make(
       std::shared_ptr<ifrt::PjRtTopology> topology) {
-    auto client =
-        nb::borrow<nb_class_ptr<PyClient>>(make_nb_class<CompileOnlyPyClient>(
+    auto client = nb::borrow<jax::nb_class_ptr<PyClient>>(
+        jax::make_nb_class<CompileOnlyPyClient>(
             std::make_unique<CompileOnlyIfRtClient>(std::move(topology))));
     CompileOnlyPyClient::Initialize(client);
     return client;
   }
 
-  absl::StatusOr<nb_class_ptr<PyExecutable>> CompileUnloaded(
+  absl::StatusOr<jax::nb_class_ptr<PyExecutable>> CompileUnloaded(
       absl::string_view mlir_module, ifrt::DeviceListRef executable_devices,
       CompileOptions options) {
     ifrt::ExecutableRef ifrt_executable;
@@ -92,18 +92,18 @@ class CompileOnlyPyClient : public PyClient {
       TF_ASSIGN_OR_RETURN(ifrt_executable,
                           ifrt::PjRtExecutable::Create(std::move(executable)));
     }
-    return make_nb_class<PyExecutable>(ifrt_executable);
+    return jax::make_nb_class<PyExecutable>(ifrt_executable);
   }
 
  private:
-  static void Initialize(nb_class_ptr<PyClient> client) {
+  static void Initialize(jax::nb_class_ptr<PyClient> client) {
     PyClient::Initialize(client);
   }
 };
 
 }  // namespace
 
-nb_class_ptr<PyClient> MakeCompileOnlyClient(
+jax::nb_class_ptr<PyClient> MakeCompileOnlyClient(
     std::shared_ptr<ifrt::PjRtTopology> topology) {
   return CompileOnlyPyClient::Make(std::move(topology));
 }
