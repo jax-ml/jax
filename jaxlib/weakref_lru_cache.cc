@@ -37,6 +37,7 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/pjrt/lru_cache.h"
+#include "xla/python/version.h"
 #include "xla/tsl/platform/logging.h"
 
 namespace nb = nanobind;
@@ -315,6 +316,17 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
 std::vector<nb::object> WeakrefLRUCache::GetKeys() {
   std::vector<nb::object> results;
   mu_.Lock();
+#if JAX_IFRT_VERSION_NUMBER >= 20
+  for (const auto& [wr_key, wr_value] : entries_) {
+    wr_value.cache->ForEach([&results, &wr_key](
+                                const Key& key,
+                                const std::shared_ptr<CacheEntry>& value) {
+      nb::tuple result =
+          nb::make_tuple(*wr_key.ref, key.context(), key.args(), key.kwargs());
+      results.push_back(std::move(result));
+    });
+  }
+#else
   for (const auto& wr_entry : entries_) {
     for (const auto& rest : *wr_entry.second.cache) {
       nb::tuple result =
@@ -323,6 +335,7 @@ std::vector<nb::object> WeakrefLRUCache::GetKeys() {
       results.push_back(std::move(result));
     }
   }
+#endif
   mu_.Unlock();
   return results;
 }
@@ -358,6 +371,22 @@ void WeakrefLRUCache::Clear() {
   Py_VISIT(cache->fn_.ptr());
   for (const auto& [wr_key, wr_value] : cache->entries_) {
     Py_VISIT(wr_key.ref.ptr());
+
+#if JAX_IFRT_VERSION_NUMBER >= 20
+    int rval = 0;
+    wr_value.cache->ForEach(
+        [&visit, &arg, &rval](const Key& key,
+                              const std::shared_ptr<CacheEntry>& value) {
+          rval = key.tp_traverse(visit, arg);
+          if (rval != 0) {
+            return;
+          }
+          value->tp_traverse(visit, arg);
+        });
+    if (rval != 0) {
+      return rval;
+    }
+#else
     for (const auto& [key, cache_value] : *wr_value.cache) {
       int rval = key.tp_traverse(visit, arg);
       if (rval != 0) {
@@ -367,6 +396,7 @@ void WeakrefLRUCache::Clear() {
         cache_value.value->get()->tp_traverse(visit, arg);
       }
     }
+#endif
   }
   return 0;
 }
