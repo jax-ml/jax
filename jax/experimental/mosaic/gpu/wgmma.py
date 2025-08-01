@@ -14,7 +14,6 @@
 # ==============================================================================
 
 import dataclasses
-import functools
 import itertools
 import math
 
@@ -45,14 +44,24 @@ class WGMMAAccumulator:
   as a WGMMA accumulator. In particular, when created from a
   FragmentedArray, the necessary synchronization is inserted at construction.
   """
-  value: fa.FragmentedArray
+  _original_layout: fa.FragmentedLayout
+  _value: fa.FragmentedArray
 
-  def __init__(self, *, _value: fa.FragmentedArray, _sync: bool = True):
-    if _value.layout != fa.WGMMA_LAYOUT:
-      raise ValueError("Only WGMMA layouts supported in WGMMAAccumulator")
-    self.value = _value
+  def __init__(
+      self,
+      *,
+      _value: fa.FragmentedArray,
+      _original_layout: fa.FragmentedLayout,
+      _sync: bool = True,
+  ):
+    self._original_layout = _original_layout
+    self._value = _value
     if _sync:
-      self.value = wgmma_fence(_value)
+      self._value = wgmma_fence(_value)
+
+  @property
+  def value(self) -> fa.FragmentedArray:
+    return self._value.to_layout(self._original_layout)
 
   @classmethod
   def zero(cls, m, n, dtype=None, *, is_signed: bool | None = None):
@@ -67,23 +76,27 @@ class WGMMAAccumulator:
       zero = arith.constant(dtype, ir.IntegerAttr.get(dtype, 0))
     else:
       zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
-    return cls(
-        _value=fa.FragmentedArray.splat(
+    return cls.from_registers(
+        fa.FragmentedArray.splat(
             zero, (m, n), fa.WGMMA_LAYOUT, is_signed=is_signed
         )
     )
 
   @classmethod
   def from_registers(cls, registers):
-    return cls(_value=registers)
+    original_layout = registers.layout
+    if registers.layout != fa.WGMMA_LAYOUT:
+      raise ValueError("Only WGMMA layouts supported in WGMMAAccumulator")
+    if utils.bitwidth(registers.mlir_dtype) == 32:
+      registers = registers.to_layout(fa.WGMMA_LAYOUT_ACC_32BIT)
+    return cls(_value=registers, _original_layout=original_layout)
 
   def tree_flatten(self):
-    return (self.value,), ()
+    return (self._value,), (self._original_layout,)
 
   @classmethod
   def tree_unflatten(cls, aux, value):
-    del aux
-    return cls(_value=value[0], _sync=False)
+    return cls(_value=value[0], _original_layout=aux[0], _sync=False)
 
 
 def _supported_wgmma_types(dtype, abtype) -> bool:
@@ -119,7 +132,6 @@ def wgmma_m64(
 
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
-  index = ir.IndexType.get()
   if b_k_stride % 16:
     raise ValueError
   # Only 16-bit types support transposes
@@ -142,21 +154,17 @@ def wgmma_m64(
 
   if ir.F32Type.isinstance(out_ty) or out_ty == i32:
     num_acc_regs = n // 2
-    out_ty_field = out_ty
-    acc_regs = [  # pylint: disable=g-complex-comprehension
-        vector.extractelement(reg, position=c(pos, index))
-        for reg in acc.flat
-        for pos in range(2)
-    ]
-    to_acc_vec_regs = functools.partial(
-        _as_fragmented_reg_ndarray, dtype=out_ty, shape=acc.shape)
+    out_ty_field = ir.VectorType.get((1,), out_ty)
+    acc_regs = list(acc.flat)
+    assert acc_regs[0].type == ir.VectorType.get((1,), out_ty)
+    to_acc_vec_regs = lambda regs: np.array(regs).reshape(acc.shape)
     acc_constraint = "r" if ir.IntegerType.isinstance(out_ty) else "f"
   elif ir.F16Type.isinstance(out_ty):
     num_acc_regs = n // 4
     out_ty_field = i32
     acc_regs = [_as_i32_reg(reg) for reg in acc.flat]
     vec_ty = ir.VectorType(acc.flat[0].type)
-    to_acc_vec_regs = lambda regs : np.array([_unpack_i32(vec_ty, reg) for reg in regs]).reshape(acc.shape)
+    to_acc_vec_regs = lambda regs: np.array([_unpack_i32(vec_ty, reg) for reg in regs]).reshape(acc.shape)
     acc_constraint = "r"
   else:
     raise ValueError(
@@ -238,7 +246,9 @@ def wgmma_m64(
 
   assert len(imms) == num_imm_regs + 1  # +1 for the use_out_reg in setp.ne.b32
 
-  if acc.ndim != 9 or acc.shape[0] != 1 or math.prod(acc.shape[2:]) != 2:
+  expected_dim = 10 if utils.bitwidth(out_ty) == 32 else 9
+  expected_regs_per_tile = 4 if utils.bitwidth(out_ty) == 32 else 2
+  if acc.ndim != expected_dim or acc.shape[0] != 1 or math.prod(acc.shape[2:]) != expected_regs_per_tile:
     raise ValueError(acc.shape)
   acc_struct_type = ir.Type.parse(
       f"!llvm.struct<({','.join(str(out_ty_field) for _ in acc_regs)})>"
@@ -320,36 +330,36 @@ def wgmma(
         "WGMMA requires A and B to have the same element type, got:"
         f" {element_type2} and {element_type}"
     )
-  if acc.value.shape != (m, n):
+  if acc._value.shape != (m, n):
     raise ValueError(
-        f"Accumulator shape mismatch: expected {(m, n)}, got {acc.value.shape}"
+        f"Accumulator shape mismatch: expected {(m, n)}, got {acc._value.shape}"
     )
   f32 = ir.F32Type.get()
   f16 = ir.F16Type.get()
   i32 = ir.IntegerType.get_signless(32)
   i8 = ir.IntegerType.get_signless(8)
   if element_type == f32 or element_type == ir.BF16Type.get():
-    if acc.value.mlir_dtype != f32:
+    if acc._value.mlir_dtype != f32:
       raise ValueError(
           f"WGMMA with element type {element_type} only supports accumulators"
-          f" of type f32, but got: {acc.value.mlir_dtype}"
+          f" of type f32, but got: {acc._value.mlir_dtype}"
       )
   elif any(
       t.isinstance(element_type)
       for t in {ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3FNType}
   ):
-    if acc.value.mlir_dtype != f16 and acc.value.mlir_dtype != f32:
+    if acc._value.mlir_dtype != f16 and acc._value.mlir_dtype != f32:
       raise ValueError(
           f"WGMMA with element type {element_type} only supports accumulators "
-          f"of type f32 or f16, but got: {acc.value.mlir_dtype}"
+          f"of type f32 or f16, but got: {acc._value.mlir_dtype}"
       )
   elif element_type == i8:
     if a_in_regs and not a.is_signed:
       raise NotImplementedError("WGMMA with lhs of type u8")
-    if acc.value.mlir_dtype != i32 or not acc.value.is_signed:
+    if acc._value.mlir_dtype != i32 or not acc._value.is_signed:
       raise ValueError(
           f"WGMMA with element type {element_type} only supports accumulators "
-          f"of type s32, but got: {acc.value.mlir_dtype}"
+          f"of type s32, but got: {acc._value.mlir_dtype}"
       )
   else:
     raise NotImplementedError(f"Unsupported element type: {element_type}")
@@ -408,7 +418,7 @@ def wgmma(
     a = wgmma_fence(a)  # Make sure the registers are ready.
 
   i64 = ir.IntegerType.get_signless(64)
-  new_acc_regs = acc.value.registers.copy()
+  new_acc_regs = acc._value.registers.copy()
   for mi in range(m_groups):
     for ki in range(k_groups):
       if a_in_regs:
@@ -438,9 +448,10 @@ def wgmma(
   return WGMMAAccumulator(
       _value=fa.FragmentedArray(
           _registers=new_acc_regs,
-          _layout=fa.WGMMA_LAYOUT,
-          _is_signed=acc.value.is_signed,
+          _layout=acc._value.layout,
+          _is_signed=acc._value.is_signed,
       ),
+      _original_layout=acc._original_layout,
       _sync=False,
   )
 

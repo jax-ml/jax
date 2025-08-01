@@ -1092,12 +1092,18 @@ def _wgmma_lowering(
     b = mgpu.memref_transpose(b, (1, 0, 3, 2))
   acc_in = acc
   if acc_indices is not None:
-    acc_in = mgpu.WGMMAAccumulator(_value=acc.value[acc_indices], _sync=False)
+    acc_in = mgpu.WGMMAAccumulator(
+        _value=acc._value[acc_indices],
+        _original_layout=acc._original_layout,
+        _sync=False,
+    )
   acc_out = mgpu.wgmma(acc_in, a, b, swizzle=rhs_swizzle)
   if acc_indices is not None:
-    acc_value = acc.value.copy()
-    acc_value[acc_indices] = acc_out.value
-    acc_out = mgpu.WGMMAAccumulator(_value=acc_value, _sync=False)
+    acc_value = acc._value.copy()
+    acc_value[acc_indices] = acc_out._value
+    acc_out = mgpu.WGMMAAccumulator(
+        _value=acc_value, _original_layout=acc._original_layout, _sync=False
+    )
   nvvm_dialect.wgmma_commit_group_sync_aligned()
   return acc_out
 

@@ -747,6 +747,20 @@ WGMMA_LAYOUT = TiledLayout(
     lane_dims=(-3, -2),
     vector_dim=-1,
 )
+# This is the same as WGMMA_LAYOUT, only with a vector length of 1. LLVM now
+# treats <2 x float> as a native PTX type and uses 64-bit registers to store
+# them. This, in turn, means that we have to explode them into 32-bit registers
+# right before WGMMA, which makes ptxas very unhappy and causes it to insert
+# lots of WGMMA waits that absolutely tank the performance. As a workaround,
+# we use this layout when 32-bit data with WGMMA_LAYOUT is used to initialize
+# a WGMMAAccumulator, to ensure that the LLVM accumulator registers will always
+# be represented as 32-bit PTX registers.
+WGMMA_LAYOUT_ACC_32BIT = TiledLayout(
+    Tiling(((64, 8), (16, 8), (8, 8), (2,), (1,))),
+    warp_dims=(-8,),
+    lane_dims=(-4, -3),
+    vector_dim=-1,
+)
 # This tiled layout is similar to the WGMMA layout, only the unit at which we
 # assign submatrices to warps grows from 8x8 to 8x16. The elements within each
 # submatrix are assigned to threads in the following way:
@@ -1047,6 +1061,29 @@ class FragmentedArray:
           new_registers[idx] = new_reg
       return FragmentedArray(
           _registers=new_registers, _layout=new_layout, _is_signed=self.is_signed,
+      )
+    if self.layout == WGMMA_LAYOUT_ACC_32BIT and new_layout == WGMMA_LAYOUT:
+      new_regs_shape = new_layout.registers_shape(shape)
+      assert new_regs_shape[-1] == 1
+      assert self.registers.shape == (*new_regs_shape[:-1], 2, 1)
+      new_regs = np.empty(new_regs_shape, dtype=object)
+      for idx in np.ndindex(new_regs_shape[:-1]):
+        new_regs[(*idx, 0)] = utils.vector_concat([
+            self.registers[*idx, i, 0] for i in range(2)
+        ])
+      return FragmentedArray(
+          _registers=new_regs, _layout=new_layout, _is_signed=self.is_signed,
+      )
+    if self.layout == WGMMA_LAYOUT and new_layout == WGMMA_LAYOUT_ACC_32BIT:
+      new_regs_shape = new_layout.registers_shape(shape)
+      assert self.registers.shape[-1] == 1
+      assert new_regs_shape == (*self.registers.shape[:-1], 2, 1)
+      new_regs = np.empty(new_regs_shape, dtype=object)
+      for idx, reg in np.ndenumerate(self.registers):
+        for i in range(2):
+          new_regs[(*idx[:-1], i, 0)] = utils.vector_slice(reg, slice(i, i + 1))
+      return FragmentedArray(
+          _registers=new_regs, _layout=new_layout, _is_signed=self.is_signed,
       )
     if (
         self.layout == WGMMA_LAYOUT_UPCAST_2X
