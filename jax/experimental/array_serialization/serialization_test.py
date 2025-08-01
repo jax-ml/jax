@@ -60,11 +60,11 @@ jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
 
 
-_default_sharding = None
+_DEFAULT_SHARDING = None  # to be overridden by tests with SingleDeviceSharding
 
 
 def tree_load(*args, **kw):
-  return pytree_serialization.load(*args, shardings=_default_sharding, **kw)
+  return pytree_serialization.load(*args, shardings=_DEFAULT_SHARDING, **kw)
 
 tree_save = pytree_serialization.save
 tree_load_pytreedef = pytree_serialization.load_pytreedef
@@ -808,8 +808,8 @@ custom_types_threading_lock = threading.Lock()
 class UserPytreeAPITest(UserAPITestCase):
   def setUp(self):
     super().setUp()
-    global _default_sharding
-    _default_sharding = SingleDeviceSharding(jax.devices()[0])
+    global _DEFAULT_SHARDING
+    _DEFAULT_SHARDING = SingleDeviceSharding(jax.devices()[0])
     self.tempdirs = []
 
   def tearDown(self):
@@ -1075,6 +1075,17 @@ class UserPytreeAPITest(UserAPITestCase):
     with self.assertRaisesRegex(ValueError,
                                 'NOT_FOUND: Error opening "zarr3" driver:'):
       _ = tree_load(path)  # default attempts to open with zarr3 and fails
+
+  def test_save_load_future_printable(self):
+    path = self.create_tempdir()
+    data = [jnp.ones(())]
+    save_fut = pytree_serialization.nonblocking_save(data, path)
+    str(save_fut)
+    save_fut.result()
+    load_fut = pytree_serialization.nonblocking_load(
+        path, shardings=_DEFAULT_SHARDING)
+    str(load_fut)
+    load_fut.result()
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
