@@ -158,7 +158,11 @@ def debug_print(fmt, *args, uniform=True, scope=None):
       if len(vec_ty.shape) > 1:
         raise NotImplementedError(vec_ty)
       vec_args = [
-          vector.extractelement(arg, position=c(i, index))
+          vector.extract(
+              arg,
+              dynamic_position=[],
+              static_position=ir.DenseI64ArrayAttr.get([i]),
+          )
           for i in range(vec_ty.shape[0])
       ]
       ty_formats, args = zip(*map(_debug_scalar_ty_format,vec_args))
@@ -1415,16 +1419,30 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
       assert 32 % x_bitwidth == 0
       x = bitcast(x, ir.IntegerType.get_signless(x_bitwidth))
       empty32 = llvm.mlir_undef(ir.VectorType.get((32 // x_bitwidth,), x.type))
-      x = vector.insertelement(x, empty32, position=c(0, index))
+      x = vector.insert(
+          x,
+          empty32,
+          dynamic_position=[],
+          static_position=ir.DenseI64ArrayAttr.get([0]),
+      )
     elif x_bitwidth > 32:
       assert x_bitwidth % 32 == 0
       num_words = x_bitwidth // 32
       xs_vec = bitcast(x, ir.VectorType.get((num_words,), i32))
       y = llvm.mlir_undef(xs_vec.type)
       for i in range(num_words):
-        x_elem = vector.extractelement(xs_vec, position=c(i, index))
+        x_elem = vector.extract(
+            xs_vec,
+            dynamic_position=[],
+            static_position=ir.DenseI64ArrayAttr.get([i]),
+        )
         y_elem = shfl_bfly(x_elem, distance)
-        y = vector.insertelement(y_elem, y, position=c(i, index))
+        y = vector.insert(
+            y_elem,
+            y,
+            dynamic_position=[],
+            static_position=ir.DenseI64ArrayAttr.get([i]),
+        )
       return bitcast(y, result_type)
     x = bitcast(x, i32)
   y = nvvm.shfl_sync(
@@ -1433,7 +1451,11 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   if (x_bitwidth := bitwidth(result_type)) < 32:
     bits_ty = ir.IntegerType.get_signless(x_bitwidth)
     y_vec = bitcast(y, ir.VectorType.get((32 // x_bitwidth,), bits_ty))
-    y = vector.extractelement(y_vec, position=c(0, index))
+    y = vector.extract(
+        y_vec,
+        dynamic_position=[],
+        static_position=ir.DenseI64ArrayAttr.get([0]),
+    )
   return bitcast(y, result_type)
 
 
@@ -1465,9 +1487,10 @@ def bitcast(x: ir.Value, new_type: ir.Type):
     new_type = ir.IntegerType(new_type)
     x_ty = ir.VectorType(x.type)
     assert new_type.width == bitwidth(x_ty.element_type) * math.prod(x_ty.shape)
-    i0 = arith.ConstantOp.create_index(0)
-    return vector.extractelement(
-        vector.bitcast(ir.VectorType.get((1,), new_type), x), position=i0
+    return vector.extract(
+        vector.bitcast(ir.VectorType.get((1,), new_type), x),
+        dynamic_position=[],
+        static_position=ir.DenseI64ArrayAttr.get([0]),
     )
   if ir.IntegerType.isinstance(x.type) and ir.VectorType.isinstance(new_type):
     new_type = ir.VectorType(new_type)
@@ -1523,8 +1546,15 @@ def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
   offset = 0
   for v in vectors:
     for i in range(vty.shape[0]):
-      elem = vector.extractelement(v, position=c(i, index))
-      result = vector.insertelement(elem, result, position=c(offset + i, index))
+      elem = vector.extract(
+          v, dynamic_position=[], static_position=ir.DenseI64ArrayAttr.get([i])
+      )
+      result = vector.insert(
+          elem,
+          result,
+          dynamic_position=[],
+          static_position=ir.DenseI64ArrayAttr.get([offset + i]),
+      )
     offset += vty.shape[0]
   return result
 

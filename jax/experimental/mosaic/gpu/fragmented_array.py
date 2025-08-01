@@ -1594,9 +1594,21 @@ class FragmentedArray:
         result = llvm.mlir_undef(arg_ty)
         [vec_len] = ir.VectorType(arg_ty).shape
         for i in range(vec_len):
-          vs = [vector.extractelement(a, position=c(i, index)) for a in args]
+          vs = [
+              vector.extract(
+                  a,
+                  dynamic_position=[],
+                  static_position=ir.DenseI64ArrayAttr.get([i]),
+              )
+              for a in args
+          ]
           vr = fast_instr(*vs)
-          result = vector.insertelement(vr, result, position=c(i, index))
+          result = vector.insert(
+              vr,
+              result,
+              dynamic_position=[],
+              static_position=ir.DenseI64ArrayAttr.get([i]),
+          )
         return result
       else:
         raise NotImplementedError(arg_ty)
@@ -1947,8 +1959,16 @@ class FragmentedArray:
       new_registers = np.empty_like(self.registers)
       empty_vec_16 = llvm.mlir_undef(ir.VectorType.get((1,), i16))
       for idx, reg in np.ndenumerate(self.registers):
-        e0 = vector.extractelement(reg, position=c(0, index))
-        e1 = vector.extractelement(reg, position=c(1, index))
+        e0 = vector.extract(
+            reg,
+            dynamic_position=[],
+            static_position=ir.DenseI64ArrayAttr.get([0]),
+        )
+        e1 = vector.extract(
+            reg,
+            dynamic_position=[],
+            static_position=ir.DenseI64ArrayAttr.get([1]),
+        )
         # TODO(bchetioui): can we do faster than this?
         if cur_dtype == bf16:
           e0 = arith.extf(f32, e0)
@@ -2130,7 +2150,11 @@ class FragmentedArray:
         [vec_len] = ir.VectorType(out_reg.type).shape
         scalar_out_reg = None
         for i in range(vec_len):
-          scalar = vector.extractelement(out_reg, position=c(i, index))
+          scalar = vector.extract(
+              out_reg,
+              dynamic_position=[],
+              static_position=ir.DenseI64ArrayAttr.get([i]),
+          )
           scalar_out_reg = (
               scalar if scalar_out_reg is None else op(scalar_out_reg, scalar)
           )
@@ -2225,7 +2249,11 @@ class FragmentedArray:
       assert out_regs.size == 1
       out_reg = out_regs.flat[0]
       assert ir.VectorType(out_reg.type).shape == [1]
-      out_reg = vector.extractelement(out_reg, position=c(0, index))
+      out_reg = vector.extract(
+          out_reg,
+          dynamic_position=[],
+          static_position=ir.DenseI64ArrayAttr.get([0]),
+      )
       out_regs = np.asarray(out_reg, dtype=object)
     else:
       reduced_layout = layout.reduce(axis)
@@ -2390,11 +2418,23 @@ class FragmentedArray:
       if ir.VectorType.isinstance(reg.type):
         [elems] = ir.VectorType(reg.type).shape
         for i in range(elems):
-          i = c(i, index)
-          val = fn(vector.extractelement(reg, position=i), (*mlir_idx[:-1], arith.addi(mlir_idx[-1], i)))
+          c_i = c(i, index)
+          val = fn(
+              vector.extract(
+                  reg,
+                  dynamic_position=[],
+                  static_position=ir.DenseI64ArrayAttr.get([i]),
+              ),
+              (*mlir_idx[:-1], arith.addi(mlir_idx[-1], c_i)),
+          )
           if create_array:
             assert new_regs is not None
-            new_regs[reg_idx] = vector.insertelement(val, new_regs[reg_idx], position=i)
+            new_regs[reg_idx] = vector.insert(
+                val,
+                new_regs[reg_idx],
+                dynamic_position=[],
+                static_position=ir.DenseI64ArrayAttr.get([i]),
+            )
       else:
         val = fn(reg, mlir_idx)
         if create_array:
@@ -3135,7 +3175,11 @@ def optimization_barrier(*arrays):
       if ir.VectorType.isinstance(reg_ty):
         [vec_len] = ir.VectorType(reg_ty).shape
         array_regs = [  # pylint: disable=g-complex-comprehension
-            vector.extractelement(reg, position=c(pos, index))
+            vector.extract(
+                reg,
+                dynamic_position=[],
+                static_position=ir.DenseI64ArrayAttr.get([pos]),
+            )
             for reg in array.registers.flat
             for pos in range(vec_len)
         ]
@@ -3151,8 +3195,10 @@ def optimization_barrier(*arrays):
       num_i32_regs = vec_len // 2
       i32_reg_ty = ir.VectorType.get((num_i32_regs,), i32)
       array_regs = [
-          vector.extractelement(
-              vector.bitcast(i32_reg_ty, reg), position=c(i, index)
+          vector.extract(
+              vector.bitcast(i32_reg_ty, reg),
+              dynamic_position=[],
+              static_position=ir.DenseI64ArrayAttr.get([i]),
           )
           for i in range(num_i32_regs)
           for reg in array.registers.flat
