@@ -437,6 +437,39 @@ nb::ndarray<> LiteralToNdarray(Literal& obj) {
 }  // namespace
 
 void BuildXlaCompilerSubmodule(nb::module_& m) {
+  // Types
+  nb::enum_<PrimitiveType>(m, "PrimitiveType", nb::is_arithmetic())
+      .value("PRIMITIVE_TYPE_INVALID", PRIMITIVE_TYPE_INVALID)
+      .value("PRED", PRED)
+      .value("S4", S4)
+      .value("S8", S8)
+      .value("S16", S16)
+      .value("S32", S32)
+      .value("S64", S64)
+      .value("U4", U4)
+      .value("U8", U8)
+      .value("U16", U16)
+      .value("U32", U32)
+      .value("U64", U64)
+      .value("F16", F16)
+      .value("F4E2M1FN", F4E2M1FN)
+      .value("F8E3M4", F8E3M4)
+      .value("F8E4M3", F8E4M3)
+      .value("F8E4M3FN", F8E4M3FN)
+      .value("F8E4M3B11FNUZ", F8E4M3B11FNUZ)
+      .value("F8E4M3FNUZ", F8E4M3FNUZ)
+      .value("F8E5M2", F8E5M2)
+      .value("F8E5M2FNUZ", F8E5M2FNUZ)
+      .value("F8E8M0FNU", F8E8M0FNU)
+      .value("BF16", BF16)
+      .value("F32", F32)
+      .value("F64", F64)
+      .value("C64", C64)
+      .value("C128", C128)
+      .value("TUPLE", TUPLE)
+      .value("OPAQUE_TYPE", OPAQUE_TYPE)
+      .value("TOKEN", TOKEN);
+
   // Shapes
   nb::class_<Layout> layout_class(m, "Layout");
   layout_class.def(nb::init<absl::Span<const int64_t>>())

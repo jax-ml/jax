@@ -312,7 +312,7 @@ nanobind_pywrap_extension(
 
 nanobind_pywrap_extension(
     name = "_jax",
-    srcs = ["xla.cc"],
+    srcs = ["jax.cc"],
     pytype_deps = py_deps(["numpy"]),
     pytype_srcs = glob(["_jax/*.pyi"]),
     visibility = ["//visibility:public"],

@@ -69,7 +69,7 @@ class PyDeviceList {
 
   // go/pywald-pybind-annotation BEGIN
   // refs {
-  //   module_path: "third_party/py/jax/jaxlib/xla.cc"
+  //   module_path: "third_party/py/jax/jaxlib/py_device_list.cc"
   //   module_arg {}
   // }
   // go/pywald-pybind-annotation END
