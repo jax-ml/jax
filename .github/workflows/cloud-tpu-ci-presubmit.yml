@@ -62,3 +62,17 @@ jobs:
       gcs_download_uri: ${{ needs.build-jax-artifacts.outputs.gcs_upload_uri }}
       halt-for-connection: ${{ inputs.halt-for-connection || false }}
     # End Presubmit Naming Check github-tpu-presubmits
+
+  run-bazel-test-tpu:
+    if: github.event.repository.fork == false
+    uses: ./.github/workflows/bazel_test_tpu.yml
+    name: "Bazel TPU test with ${{ format('{0}', 'build_jaxlib=true') }}"
+    with:
+      runner: "linux-x86-ct5lp-224-8tpu"
+      cores: "8"
+      tpu-type: "v5e-8"
+      python: "3.11"
+      libtpu-version-type: "nightly"
+      halt-for-connection: false
+      build_jaxlib: "true"
+      clone_main_xla: 1

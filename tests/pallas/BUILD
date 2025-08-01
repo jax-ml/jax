@@ -124,6 +124,9 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "tpu_v6e",
     ],
+    minimal_shard_count = {
+        "tpu": 16,
+    },
     shard_count = {
         "cpu": 16,
         "gpu": 32,
