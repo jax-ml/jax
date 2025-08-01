@@ -1360,7 +1360,7 @@ class JaxTestCase(parameterized.TestCase):
 
   @contextmanager
   def assertWarnsRegex(self, warning, regex):
-    if regex is not None:
+    if regex is not None and not isinstance(regex, re.Pattern):
         regex = re.compile(regex)
 
     with test_warning_util.record_warnings() as ws:
@@ -1371,8 +1371,8 @@ class JaxTestCase(parameterized.TestCase):
       if regex is not None and not regex.search(str(w.message)):
         continue
       return
-    self.fail(f"Expected warning not found {warning}:'{regex}', got "
-              f"{ws}")
+    self.fail(f"Expected warning not found {warning}:'{regex}', "
+              f"got warnings: {[str(w.message) for w in ws]}")
 
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True, tol=None,
