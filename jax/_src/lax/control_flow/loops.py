@@ -861,22 +861,28 @@ def _maybe_put(x):
     return x
 
 @weakref_lru_cache
-def _rearrange_mutable_const_binders(
-    jaxpr: ClosedJaxpr, num_ires: int, num_const_dots: int
+def _rearrange_mutable_binders(
+    jaxpr: ClosedJaxpr, num_prefix: int, num_binders: int
 ) -> ClosedJaxpr:
-  fst, invars, rst = split_list(jaxpr.jaxpr.invars, [num_ires, num_const_dots])
+  fst, invars, rst = split_list(jaxpr.jaxpr.invars, [num_prefix, num_binders])
   is_mutable = [isinstance(v.aval, AbstractRef) for v in invars]
   immut_invars, mut_invars = partition_list(is_mutable, invars)
   new_invars = [*fst, *mut_invars, *immut_invars, *rst]
 
   arg_names = jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.in_avals))
-  fst, names, rst = split_list(arg_names, [num_ires, num_const_dots])
+  fst, names, rst = split_list(arg_names, [num_prefix, num_binders])
   immut_names, mut_names = partition_list(is_mutable, names)
   dbg = jaxpr.jaxpr.debug_info._replace(
       arg_names=[*fst, *mut_names, *immut_names, *rst])
 
-  return ClosedJaxpr(jaxpr.jaxpr.replace(invars=new_invars, debug_info=dbg),
-                     jaxpr.consts)
+  # TODO(mattjj): don't we need to re-number effects? test coverage?
+  new_effs = pe._renumber_effects((*jaxpr.jaxpr.constvars, *new_invars),
+                                  (*jaxpr.jaxpr.constvars, *jaxpr.jaxpr.invars),
+                                  jaxpr.jaxpr.effects)
+  new_jaxpr = jaxpr.jaxpr.replace(invars=new_invars, effects=new_effs,
+                                  debug_info=dbg)
+  if config.enable_checks.value: core.check_jaxpr(new_jaxpr)
+  return ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
 def _scan_transpose(cts, *args, reverse, length, num_consts,
                     num_carry, jaxpr, linear, unroll, _split_transpose):
@@ -892,10 +898,10 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
     pass  # TODO(mattjj): error check https://github.com/jax-ml/jax/issues/1963
 
   # We follow a funny convention of passing cotangent refs like primals, so they
-  # appear in `args` mixed in with the UndefinedPrimals of the const tangents.
+  # appear in `args` mixed in with the UndefinedPrimals of `T d` and `T a`.
   # Rearrange jaxpr binders and arguments to put cotangent mutable arrays first:
-  #   Before: [ires,               T d, T c, T a, eres] -> [T c, T b]
-  #   After:  [ires, T d_mut, T d_pure, T c, T a, eres] -> [T c, T b]
+  #   Before: [ires,               T d, T c,               T a, eres] -> [T c, T b]
+  #   After:  [ires, T d_mut, T d_pure, T c, T a_mut, T a_pure, eres] -> [T c, T b]
   # where
   #   * `ires` means intensive (not scanned over / const) residuals
   #   * `T d` means the intensive tangents
@@ -903,21 +909,26 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
   #   * `T a` means the extensive (scanned over) tangent inputs
   #   * `eres` means the extensive residuals
   #   * `T b` means the extensive tangent outputs
-  ires, consts_dot, rest = split_list(args, [num_ires, num_consts - num_ires])
-  _, const_avals, _ = split_list(jaxpr.in_avals, [num_ires, num_consts - num_ires])
+  ires, consts_dot, carry_dot, xs_dot, eres = split_list(
+      args, [num_ires, num_consts - num_ires, num_carry, sum(xs_lin)])
+  _, const_avals, _, xs_avals, _ = split_list(
+      jaxpr.in_avals, [num_ires, num_consts - num_ires, num_carry, sum(xs_lin)])
   is_mutable = [isinstance(a, AbstractRef) for a in const_avals]
   immut_consts_dot, mut_consts_bar = partition_list(is_mutable, consts_dot)
-  jaxpr = _rearrange_mutable_const_binders(jaxpr, num_ires, num_consts - num_ires)
+  jaxpr = _rearrange_mutable_binders(jaxpr, num_ires, num_consts - num_ires)
   del const_avals, consts_dot
-  # Unpack the rest of the args.
-  carry_dot, xs_dot, eres = split_list(rest, [num_carry, sum(xs_lin)])
+  is_mutable_ = [isinstance(a, AbstractRef) for a in xs_avals]
+  immut_xs_dot, mut_xs_bar = partition_list(is_mutable_, xs_dot)
+  jaxpr = _rearrange_mutable_binders(jaxpr, num_consts + num_carry, sum(xs_lin))
+  del xs_avals, xs_dot
   # Check that pure tangent values are all UndefinedPrimals, and mutable
   # 'tangent values' are not (since we actually put cotangent refs there).
   assert not any(ad.is_undefined_primal(r) for r in ires)
   assert not any(ad.is_undefined_primal(x) for x in mut_consts_bar)
+  # TODO(mattjj): re-enable these asserts
   # assert     all(ad.is_undefined_primal(x) for x in immut_consts_dot)
   # assert     all(ad.is_undefined_primal(x) for x in carry_dot)
-  # assert     all(ad.is_undefined_primal(x) for x in xs_dot)
+  # assert     all(ad.is_undefined_primal(x) for x in immut_xs_dot)
   assert not any(ad.is_undefined_primal(r) for r in eres)
   del args
 
@@ -930,15 +941,15 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
                          jaxpr.in_avals[num_ires+len(mut_consts_bar):num_consts])
 
   jaxpr_trans = _transpose_scan_jaxpr(
-      jaxpr, num_ires, len(mut_consts_bar), len(immut_consts_dot), num_eres,
-      tuple(ct_ys_is_zeros))
+      jaxpr, num_ires, len(mut_consts_bar), len(immut_consts_dot),
+      len(mut_xs_bar), len(immut_xs_dot), num_eres, tuple(ct_ys_is_zeros))
 
   linear_trans = ([False] * num_ires +
                   [True] * (len(mut_consts_bar) + len(immut_consts_dot) +
-                            len(carry_dot) + len(ct_ys_nz)) +
+                            len(carry_dot) + len(mut_xs_bar) + len(ct_ys_nz)) +
                   [False] * num_eres)
   transpose_inputs = [*ires, *mut_consts_bar, *ct_immut_consts, *ct_carry,
-                      *ct_ys_nz, *eres]
+                      *mut_xs_bar, *ct_ys_nz, *eres]
 
   if not _split_transpose:
     outs = scan_p.bind(
@@ -1035,57 +1046,61 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
         for mask in outs_mask
     ]
 
-  ct_immut_consts, ct_init, ct_xs = split_list(outs, [len(immut_consts_dot), len(carry_dot)])
+  ct_immut_consts, ct_init, ct_immut_xs = split_list(outs, [len(immut_consts_dot), len(carry_dot)])
   ct_consts = merge_lists(is_mutable, ct_immut_consts, [None] * len(mut_consts_bar))
+  ct_xs = merge_lists(is_mutable_, ct_immut_xs, [None] * len(mut_xs_bar))
   return [None] * num_ires + ct_consts + ct_init + ct_xs + [None] * num_eres
 
 
 # transpose_scan_jaxpr converts the jaxpr signature:
-#  Before: [(ires,  T d_mut     T d_pure),  T c,  ( T a, eres)] -> [ T c,  T b]
-#           ---------- consts -----------         --- ext ----
+#  Before: [(ires,  T d_mut     T d_pure), T c,  (CT a_mut, T a, eres)] -> [T c,  T b]
+#           ---------- consts -----------        --------- ext -------
 #
-#  After: [(ires, CT d_mut), (CT d_pure,  CT c), (CT b, eres)] -> [(CT d_pure, CT c), CT a]
-#           --- consts ----  ----- carry ------  --- ext ----
+#  After: [(ires, CT d_mut), (CT d_pure,  CT c), (CT a_mut, CT b, eres)] -> [(CT d_pure, CT c), CT a]
+#           --- consts ----  ----- carry ------  --------- ext --------
 @weakref_lru_cache
 def _transpose_scan_jaxpr(
     jaxpr: ClosedJaxpr,
     num_ires: int,
     num_d_mut: int,
     num_d_pure: int,
+    num_a_mut: int,
+    num_a_pure: int,
     num_eres: int,
     ct_b_is_zeros: Sequence[bool]):
   num_d = num_d_mut + num_d_pure
+  num_a = num_a_mut + num_a_pure
   num_b_nz = len(ct_b_is_zeros) - sum(ct_b_is_zeros)
   num_c = len(jaxpr.out_avals) - len(ct_b_is_zeros)
-  num_a = len(jaxpr.in_avals) - num_ires - num_d - num_c - num_eres
+  assert num_a == len(jaxpr.in_avals) - num_ires - num_d - num_c - num_eres
 
-  ires_avals, d_mut_avals, d_pure_avals, c_avals, a_avals, eres_avals = split_list(
-      jaxpr.in_avals, [num_ires, num_d_mut, num_d_pure, num_c, num_a])
+  ires_avals, d_mut_avals, d_pure_avals, c_avals, a_mut_avals, a_pure_avals, eres_avals = split_list(
+      jaxpr.in_avals, [num_ires, num_d_mut, num_d_pure, num_c, num_a_mut, num_a_pure])
   _, b_avals = split_list(jaxpr.out_avals, [num_c])
   b_avals_nz = [a for a, z in zip(b_avals, ct_b_is_zeros) if not z]
 
   # TODO(mattjj,dougalm): map to cotangent types...
   def transposed(*ct_args):
-    ires_dmutbar, d_pure, c_bar, b_bar, eres = split_list(
-        ct_args, [num_ires + num_d_mut, num_d_pure, num_c, num_b_nz])
+    ires, d_mut_bar, d_pure, c_bar, a_mut_bar, b_bar, eres = split_list(
+        ct_args, [num_ires, num_d_mut, num_d_pure, num_c, num_a_mut, num_b_nz])
     b_bar_ = iter(b_bar)
     b_bar = [ad.Zero(a) if z else next(b_bar_) for a, z in zip(b_avals, ct_b_is_zeros)]
     assert next(b_bar_, None) is None
     primals = (
-        ires_dmutbar +
-        [ad.UndefinedPrimal(aval) for aval in [*d_pure_avals, *c_avals, *a_avals]] +
-        eres)
+        ires + d_mut_bar +
+        [ad.UndefinedPrimal(aval) for aval in [*d_pure_avals, *c_avals]] +
+        a_mut_bar + [ad.UndefinedPrimal(aval) for aval in a_pure_avals] + eres)
     cts_out = ad.backward_pass(
         jaxpr.jaxpr, False, jaxpr.consts, primals, c_bar + b_bar)
-    _, new_d_pure, new_c_bar, a_bar, _ = split_list(
-        cts_out, [num_ires + num_d_mut, num_d_pure, num_c, num_a])
+    _, new_d_pure, new_c_bar, _, a_bar, _ = split_list(
+        cts_out, [num_ires + num_d_mut, num_d_pure, num_c, num_a_mut, num_a_pure])
     d_pure = _map(ad.instantiate_zeros, _map(ad.add_tangents, d_pure, new_d_pure))
     new_c_bar = _map(ad.instantiate_zeros, new_c_bar)
     a_bar = _map(ad.instantiate_zeros, a_bar)
     return [*d_pure, *new_c_bar, *a_bar]
 
   transposed_wrapped = lu.wrap_init(transposed, debug_info=jaxpr.jaxpr.debug_info)
-  trans_avals = *ires_avals, *d_mut_avals, *d_pure_avals, *c_avals, *b_avals_nz, *eres_avals
+  trans_avals = *ires_avals, *d_mut_avals, *d_pure_avals, *c_avals, *a_mut_avals, *b_avals_nz, *eres_avals
   trans_jaxpr = _make_closed_jaxpr(transposed_wrapped, trans_avals)
   return trans_jaxpr
 

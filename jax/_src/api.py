@@ -2235,6 +2235,47 @@ class RSpec:
 si_vjp = saved_input_vjp
 
 
+def vjp2(f, *primals):
+  dbg = debug_info("vjp2", f, primals, {})
+  fun = lu.wrap_init(f, debug_info=dbg)
+  primals_flat, in_tree = tree_flatten(primals)
+  fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
+  out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(fun, *primals_flat)
+  out_known = [pval.is_known() for pval in out_pvals]
+  id_map = {id(x): i for i, x in enumerate(primals_flat)}
+  used, opaque_residuals = set(), []
+  spec = [used.add(id(r)) or RSpec(id_map[id(r)], True) if id(r) in id_map else  # type: ignore
+          RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
+          for r in residuals]
+  f_vjp = Partial(partial(_vjp2, spec, in_tree, out_tree(), out_known, jaxpr),
+                  opaque_residuals)
+  out_primals = tree_unflatten(out_tree(), out_primals_flat)
+  which_needed = tree_map(lambda x: id(x) in used, primals)
+  return out_primals, f_vjp, which_needed
+
+def _vjp2(spec, in_tree, out_tree, out_known, jaxpr, opaque_residuals,
+          *primals):
+  from jax._src.state.types import AbstractRef
+  primals_flat, in_tree_ = tree_flatten(primals)
+  if in_tree != in_tree_: raise Exception
+  residuals = [primals_flat[i.idx] if i.primal else opaque_residuals[i.idx]
+               for i in spec]
+  args = [x if isinstance(v.aval, AbstractRef) else ad.UndefinedPrimal(v.aval)
+          for x, v in zip(primals_flat, jaxpr.invars)]
+  return Partial(partial(_vjp2_bwd, in_tree, out_tree, out_known, jaxpr), args, residuals)
+
+def _vjp2_bwd(in_tree, out_tree, out_known, jaxpr, args, residuals, out_ct):
+  from jax._src.state.types import AbstractRef
+  cts_flat, out_tree_ = tree_flatten(out_ct)
+  if out_tree != out_tree_: raise Exception
+  cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
+  arg_cts = ad.backward_pass(jaxpr, True, residuals, args, cts_flat)
+  arg_cts = map(ad.instantiate_zeros, arg_cts)
+  arg_cts = [None if isinstance(v.aval, AbstractRef) else ct
+             for ct, v in zip(arg_cts, jaxpr.invars)]
+  return tree_unflatten(in_tree, arg_cts)
+
+
 def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   """Transpose a function that is promised to be linear.
 
