@@ -24,9 +24,9 @@
 #       jupytext_version: 1.16.4
 # ---
 
-# # `ArrayRef`: mutable arrays for plumbing data and control over memory
+# # `ArrayRef`: mutable arrays for data plumbing and memory control
 #
-# JAX `Arrays` are immutable, representing mathematical values. Immutability can
+# JAX `Array`s are immutable, representing mathematical values. Immutability can
 # make code easier to reason about, and is useful for optimized compilation,
 # parallelization, rematerialization, and transformations like autodiff.
 #
@@ -387,10 +387,6 @@ x_ref = jax.array_ref(jnp.arange(3.))
 print(x_ref.unsafe_buffer_pointer(), x_ref)
 sin_inplace(x_ref)
 print(x_ref.unsafe_buffer_pointer(), x_ref)
-
-# +
-# 538500608 ArrayRef([0., 1., 2.], dtype=float32)
-# 538500608 ArrayRef([0.        , 0.84147096, 0.9092974 ], dtype=float32)
 # -
 
 # Here `sin_inplace` operates in-place, updating the buffer backing `x_ref` so
