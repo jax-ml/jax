@@ -866,7 +866,7 @@ class DebugInfoTest(jtu.JaxTestCase):
 
   def test_nested_jit_with_const_and_unused_args(self):
     def my_f(x, y):  # y is unused
-      def my_g(u, v):  # v is unused
+      def my_g(u, v):  # u is unused
         return v + np.ones(v.shape, v.dtype)
 
       return x + jax.jit(my_g)(y, x)
@@ -880,17 +880,22 @@ class DebugInfoTest(jtu.JaxTestCase):
       expected_jaxpr_debug_infos.extend([
           "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=result",
       ])
+      expected_lowering_lines = [
+          re.compile(r".*func.func public @main\(%arg0: tensor<8xf..> {jax.const = true} loc\(unknown\)"),
+          re.compile(r".*func.func public @main\(.*%arg1: tensor<8xf..> loc\(\"x\"\)"),
+      ]
     else:
       expected_jaxpr_debug_infos.extend([
           "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=result",
       ])
+      expected_lowering_lines = [
+          re.compile(r".*func.func public @main\(%arg0: tensor<8xf..> loc\(\"x\"\)\)"),
+      ]
     self._check_tracers_and_jaxprs(
         jax.jit(my_f),
         x, y,
         expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
-        expected_lowering_lines=[
-            re.compile(r".*func.func public @main\(%arg0: tensor<8xf..> loc\(\"x\"\)\)"),
-        ]
+        expected_lowering_lines=expected_lowering_lines
     )
 
   def test_jvp_of_jit(self):
@@ -1430,6 +1435,21 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=result[0],result[1]",
             "traced_for=jit, fun=my_f, arg_names=x,as_,,, result_paths=result[0],result[1]",
         ])
+    if config.use_simplified_jaxpr_constants.value:
+      expected_lowering_lines = [
+          re.compile(r".*func.func public @main\(%arg0: tensor<3xf..> {jax.const = true} loc\(unknown\)"),
+          re.compile(r".*func.func public @main\(.*, %arg1: tensor<f..> loc\(\"c\"\)"),
+          re.compile(r".*func.func public @main\(.*, %arg2: tensor<3x2xf..> loc\(\"as_\"\)"),
+          re.compile(r".*func.func public @main\(.* -> .*tensor<f..> {jax.result_info = \"result\[0\]\""),
+          re.compile(r".*func.func public @main\(.* -> .*tensor<3x2xf..> {jax.result_info = \"result\[1\]\""),
+      ]
+    else:
+      expected_lowering_lines = [
+          re.compile(r".*func.func public @main\(%arg0: tensor<f..> loc\(\"c\"\)"),
+          re.compile(r".*func.func public @main\(.*, %arg1: tensor<3x2xf..> loc\(\"as_\"\)"),
+          re.compile(r".*func.func public @main\(.* -> .*tensor<f..> {jax.result_info = \"result\[0\]\""),
+          re.compile(r".*func.func public @main\(.* -> .*tensor<3x2xf..> {jax.result_info = \"result\[1\]\""),
+      ]
     self._check_tracers_and_jaxprs(
         jax.jit(the_grad),
         c, as_,
@@ -1441,12 +1461,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=scan, fun=f, arg_names=c,a, from a",
             "traced_for=jit, fun=my_f, arg_names=x,as_, from x",
         ],
-        expected_lowering_lines=[
-            re.compile(r".*func.func public @main\(%arg0: tensor<f..> loc\(\"c\"\)"),
-            re.compile(r".*func.func public @main\(.*, %arg1: tensor<3x2xf..> loc\(\"as_\"\)"),
-            re.compile(r".*func.func public @main\(.* -> .*tensor<f..> {jax.result_info = \"result\[0\]\""),
-            re.compile(r".*func.func public @main\(.* -> .*tensor<3x2xf..> {jax.result_info = \"result\[1\]\""),
-        ])
+        expected_lowering_lines=expected_lowering_lines)
 
   def test_while_loop(self):
     tracer_spy = TracerSpy()
