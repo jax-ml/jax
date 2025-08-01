@@ -1534,10 +1534,16 @@ def _iota_eval_rule(
   block_spec = eval_ctx.out_block_specs[0]
   block_idx = eval_ctx.get_out_block_indices()[0]
   assert len(block_idx) == len(shape)
-  iota_shape = tuple(s for s in block_spec.block_shape if s is not None)
-  dim_ = dimension - sum(s is None for s in block_spec.block_shape[:dimension])
+  iota_shape = tuple(
+      _block_size(s) for s in block_spec.block_shape if s is not None
+  )
+  dim_ = dimension - sum(
+      _block_size(s) is None for s in block_spec.block_shape[:dimension]
+  )
   local_iota = jax.lax.broadcasted_iota(dtype, iota_shape, dim_)
-  return local_iota + block_idx[dimension] * block_spec.block_shape[dimension]
+  return local_iota + block_idx[dimension] * _block_size(
+      block_spec.block_shape[dimension]
+  )
 
 
 @register_pull_block_spec_rule(lax.iota_p)
@@ -1714,10 +1720,30 @@ def _reduce_sum_pull_rule(
     *,
     axes: tuple[int, ...],
 ):
-  del ctx
-  if axes:
-   raise NotImplementedError('reduce_sum with no axes not supported yet')
-  return [block_spec]
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  new_block_shape = []
+  block_shape = iter(block_spec.block_shape)
+  for i, d in enumerate(aval_in.shape):
+    if i in axes:
+      new_block_shape.append(pallas_core.Blocked(d))
+    else:
+      new_block_shape.append(next(block_shape))
+  assert next(block_shape, None) is None
+  def new_index_map(*args):
+    idx = block_spec.index_map(*args)
+    new_idx = []
+    idx_iter = iter(idx)
+    for i in range(len(aval_in.shape)):
+      if i in axes:
+        new_idx.append(0)
+      else:
+        new_idx.append(next(idx_iter))
+    assert next(idx_iter, None) is None
+    return tuple(new_idx)
+  new_block_spec = block_spec.replace(block_shape=tuple(new_block_shape),
+                                      index_map=new_index_map)
+  return [new_block_spec]
 
 
 @register_eval_rule(lax.reduce_sum_p)
@@ -1727,10 +1753,16 @@ def _reduce_sum_eval_rule(
     *,
     axes: tuple[int, ...],
 ):
-  del ctx
-  if axes:
-   raise NotImplementedError('reduce_sum with no axes not supported yet')
-  return x
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  block_shape = tuple(ctx.in_block_specs[0].block_shape)
+  for i in axes:
+    if _block_size(block_shape[i]) != aval_in.shape[i]:
+      raise NotImplementedError(
+          f'reduce_sum on partial blocks not supported: {aval_in=},'
+          f' {block_shape=}'
+      )
+  return jax.lax.reduce_sum(x, axes=axes)
 
 
 # Higher order primitives

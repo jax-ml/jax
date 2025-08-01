@@ -1059,6 +1059,30 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         out_ref = gen((i, j))
         np.testing.assert_array_equal(out, out_ref)
 
+  def test_reduce_sum(self):
+
+    x = jnp.arange(1024 * 256, dtype=jnp.float32).reshape((1024, 256))
+    def f():
+      return x.sum(axis=1)
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(new_values, 1)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    kernel_fn, (value_block_specs,), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(8,),
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values)
+    )
+    self.assertLen(value_block_specs, 1)
+    y = x[128:256]
+    out = kernel_fn((1,), scalar_prefetch_values, (y,))
+    np.testing.assert_array_equal(out, y.sum(axis=1))
+
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):
 
