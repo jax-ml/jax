@@ -2119,15 +2119,6 @@ def get_sharding(sharding, shape):
   assert out_s.memory_kind is None
   return out_s
 
-def str_short_aval(shape, dtype, mesh, spec, vma, memory_space,
-                   short_dtypes=False, mesh_axis_types=False) -> str:
-  dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
-  dt_str = dt_str.replace('void', 'float0')
-  shapestr = _get_shape_sharding_str(shape, spec)
-  mesh_axes = f'({mesh._axis_types_dict})' if mesh_axis_types else ''
-  vma_ur = _vma_ur_str(vma, spec.unreduced, spec.reduced)
-  ms_str = "" if memory_space == MemorySpace.Device else f"<{memory_space!r}>"
-  return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
 @cache(max_size=4096, trace_context_in_key=False)
 def get_vma(vma, mesh):
@@ -2258,6 +2249,25 @@ def _get_shape_sharding_str(shape, spec):
     else:
       out.append(f"{s1}@{s2}")
   return ','.join(out)
+
+@cache(max_size=1024, trace_context_in_key=False)
+def _axis_types_dict(mesh):
+  if not mesh.axis_names:
+    return {}
+  d = defaultdict(list)
+  for n, t in safe_zip(mesh.axis_names, mesh.axis_types):
+    d[t].append(n)
+  return {t: tuple(n) for t, n in d.items()}
+
+def str_short_aval(shape, dtype, mesh, spec, vma, memory_space,
+                   short_dtypes=False, mesh_axis_types=False) -> str:
+  dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
+  dt_str = dt_str.replace('void', 'float0')
+  shapestr = _get_shape_sharding_str(shape, spec)
+  mesh_axes = f'({_axis_types_dict(mesh)})' if mesh_axis_types else ''
+  vma_ur = _vma_ur_str(vma, spec.unreduced, spec.reduced)
+  ms_str = "" if memory_space == MemorySpace.Device else f"<{memory_space!r}>"
+  return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
 def _create_str(x, prefix=None):
   x_str = f"{','.join(i for i in x)}"

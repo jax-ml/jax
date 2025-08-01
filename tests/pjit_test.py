@@ -6444,12 +6444,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         x = mesh_cast(x, P(None, None))
         return x
 
-    self.assertDictEqual(arr.sharding.mesh._axis_types_dict,
-                         {AxisType.Explicit: ('x',)})
+    self.assertTupleEqual(arr.sharding.mesh.axis_types, (AxisType.Explicit,))
     out = f(arr)
     self.assertArraysEqual(out, np_inp)
-    self.assertDictEqual(out.sharding.mesh._axis_types_dict,
-                         {AxisType.Auto: ('x',)})
+    self.assertTupleEqual(out.sharding.mesh.axis_types, (AxisType.Auto,))
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_device_put_set_mesh(self, mesh):
@@ -6473,18 +6471,15 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     auto_mesh = jax.make_mesh((2,), 'x', axis_types=(AxisType.Auto,))
     with jax.set_mesh(auto_mesh):
       arr2 = jnp.ones(8)
-    self.assertDictEqual(arr2.sharding.mesh._axis_types_dict,
-                         {AxisType.Auto: ('x',)})
+    self.assertTupleEqual(arr2.sharding.mesh.axis_types, (AxisType.Auto,))
 
     @jax.jit
     def f(x, y):
       return x, y
 
     out1, out2 = f(arr, arr2)
-    self.assertDictEqual(out1.sharding.mesh._axis_types_dict,
-                         {AxisType.Explicit: ('x',)})
-    self.assertDictEqual(out2.sharding.mesh._axis_types_dict,
-                         {AxisType.Auto: ('x',)})
+    self.assertTupleEqual(out1.sharding.mesh.axis_types, (AxisType.Explicit,))
+    self.assertTupleEqual(out2.sharding.mesh.axis_types, (AxisType.Auto,))
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_output_different_context_error(self, mesh):

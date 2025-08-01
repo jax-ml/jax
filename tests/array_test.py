@@ -1288,27 +1288,14 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(mesh1, mesh2)
 
     mesh = jax.make_mesh((1, 1), ('x', 'y'))
-    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Auto: ('x', 'y')})
+    self.assertTupleEqual(mesh.axis_types, (AxisType.Auto,) * 2)
 
     mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'),
                          axis_types=(Explicit, Auto, Manual))
-    self.assertDictEqual(
-        mesh._axis_types_dict, {AxisType.Auto: ('y',), AxisType.Explicit: ('x',),
-                          AxisType.Manual: ('z',)})
+
     self.assertEqual(mesh.explicit_axes, ('x',))
     self.assertEqual(mesh.auto_axes, ('y',))
     self.assertEqual(mesh.manual_axes, ('z',))
-
-    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'),
-                         axis_types=(Explicit, Explicit, Manual))
-    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Explicit: ('x', 'y'),
-                                           AxisType.Manual: ('z',)})
-
-    mesh = jax.make_mesh((1, 1), ('x', 'y'), axis_types=(Explicit, Explicit))
-    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Explicit: ('x', 'y')})
-
-    mesh = jax.make_mesh((1,), 'model', axis_types=Manual)
-    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Manual: ('model',)})
 
     with self.assertRaisesRegex(
         ValueError,

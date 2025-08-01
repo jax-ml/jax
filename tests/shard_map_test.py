@@ -2463,8 +2463,8 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))
 
     def g(x):
-      self.assertDictEqual(x.aval.sharding.mesh._axis_types_dict,
-                           {AxisType.Manual: ('i',), AxisType.Auto: ('j',)})
+      self.assertTupleEqual(x.aval.sharding.mesh.axis_types,
+                            (AxisType.Manual, AxisType.Auto))
       x = jax.lax.with_sharding_constraint(
           x, jax.sharding.NamedSharding(mesh, P(None, 'j')))
       return x * x
@@ -2499,8 +2499,8 @@ class ShardMapTest(jtu.JaxTestCase):
                            axis_types=(AxisType.Explicit,) * 2)
 
     def g(x):
-      self.assertDictEqual(x.aval.sharding.mesh._axis_types_dict,
-                           {AxisType.Manual: ('i',), AxisType.Explicit: ('j',)})
+      self.assertTupleEqual(x.aval.sharding.mesh.axis_types,
+                            (AxisType.Manual, AxisType.Explicit))
       self.assertEqual(x.aval.sharding.spec, P(None, 'j'))
       out = x * x
       self.assertEqual(out.aval.sharding.spec, P(None, 'j'))
@@ -2525,8 +2525,8 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
   def test_partial_auto_explicit(self, mesh):
     def g(x):
-      self.assertDictEqual(x.aval.sharding.mesh._axis_types_dict,
-                           {AxisType.Manual: ('i',), AxisType.Explicit: ('j',)})
+      self.assertTupleEqual(x.aval.sharding.mesh.axis_types,
+                            (AxisType.Manual, AxisType.Explicit))
       self.assertEqual(x.aval.sharding.spec, P(None, 'j'))
       out = x * x
       self.assertEqual(out.aval.sharding.spec, P(None, 'j'))
@@ -2566,9 +2566,9 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 1, 2, 2), ('i', 'j', 'k', 'l'))
   def test_partial_auto_explicit_multi_explicit(self, mesh):
     def g(x):
-      self.assertDictEqual(x.aval.sharding.mesh._axis_types_dict,
-                           {AxisType.Manual: ('i', 'j'),
-                            AxisType.Explicit: ('k', 'l')})
+      self.assertTupleEqual(x.aval.sharding.mesh.axis_types,
+                            (AxisType.Manual, AxisType.Manual,
+                             AxisType.Explicit, AxisType.Explicit))
       self.assertEqual(x.aval.sharding.spec, P(None, None, 'k', 'l'))
       out = x.T
       self.assertEqual(out.aval.sharding.spec, P('l', 'k', None, None))

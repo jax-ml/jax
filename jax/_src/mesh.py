@@ -141,77 +141,64 @@ def any_axis_types_match(axis_types, ty: AxisType) -> bool:
 class BaseMesh:
   axis_names: tuple[MeshAxisName, ...]
   shape_tuple: tuple[tuple[str, int], ...]
-  _axis_types: tuple[AxisType, ...]
-
-  @property
-  def axis_types(self) -> tuple[AxisType, ...]:
-    return self._axis_types
+  axis_types: tuple[AxisType, ...]
 
   @functools.cached_property
   def _are_all_axes_manual(self) -> bool:
-    return all_axis_types_match(self._axis_types, AxisType.Manual)
+    return all_axis_types_match(self.axis_types, AxisType.Manual)
 
   @functools.cached_property
   def _are_all_axes_auto(self) -> bool:
-    return all_axis_types_match(self._axis_types, AxisType.Auto)
+    return all_axis_types_match(self.axis_types, AxisType.Auto)
 
   @functools.cached_property
   def _are_all_axes_explicit(self) -> bool:
-    return all_axis_types_match(self._axis_types, AxisType.Explicit)
+    return all_axis_types_match(self.axis_types, AxisType.Explicit)
 
   @functools.cached_property
   def _are_all_axes_auto_or_manual(self) -> bool:
-    if not self._axis_types:
+    if not self.axis_types:
       return False
     return all(t == AxisType.Auto or t == AxisType.Manual
-               for t in self._axis_types)
+               for t in self.axis_types)
 
   @functools.cached_property
   def _any_axis_manual(self) -> bool:
-    return any_axis_types_match(self._axis_types, AxisType.Manual)
+    return any_axis_types_match(self.axis_types, AxisType.Manual)
 
   @functools.cached_property
   def _any_axis_auto(self) -> bool:
-    return any_axis_types_match(self._axis_types, AxisType.Auto)
+    return any_axis_types_match(self.axis_types, AxisType.Auto)
 
   @functools.cached_property
   def _any_axis_explicit(self) -> bool:
-    return any_axis_types_match(self._axis_types, AxisType.Explicit)
+    return any_axis_types_match(self.axis_types, AxisType.Explicit)
 
   @functools.cached_property
   def _any_axis_auto_or_manual(self) -> bool:
-    if not self._axis_types:
+    if not self.axis_types:
       return False
     return any(t == AxisType.Auto or t == AxisType.Manual
-               for t in self._axis_types)
+               for t in self.axis_types)
 
   @functools.cached_property
   def auto_axes(self):
-    return tuple(n for n, t in safe_zip(self.axis_names, self._axis_types)
+    return tuple(n for n, t in safe_zip(self.axis_names, self.axis_types)
                  if t == AxisType.Auto)
 
   @functools.cached_property
   def explicit_axes(self):
-    return tuple(n for n, t in safe_zip(self.axis_names, self._axis_types)
+    return tuple(n for n, t in safe_zip(self.axis_names, self.axis_types)
                  if t == AxisType.Explicit)
 
   @functools.cached_property
   def manual_axes(self):
-    return tuple(n for n, t in safe_zip(self.axis_names, self._axis_types)
+    return tuple(n for n, t in safe_zip(self.axis_names, self.axis_types)
                  if t == AxisType.Manual)
 
   @functools.cached_property
-  def _axis_types_dict(self):
-    if not self.axis_names:
-      return {}
-    d = collections.defaultdict(list)
-    for n, t in safe_zip(self.axis_names, self._axis_types):
-      d[t].append(n)
-    return {t: tuple(n) for t, n in d.items()}
-
-  @functools.cached_property
   def _name_to_type(self):
-    return dict(safe_zip(self.axis_names, self._axis_types))
+    return dict(safe_zip(self.axis_names, self.axis_types))
 
 
 def _unpicke_mesh(devices, axis_names, axis_types):
@@ -285,13 +272,13 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
     self.devices = devices.copy()
     self.devices.flags.writeable = False
     self.axis_names = axis_names
-    self._axis_types = axis_types
+    self.axis_types = axis_types
     self._size = math.prod(self.shape.values()) if self.devices.ndim else 0
     _mesh_object_dict[key] = self
     return self
 
   def __reduce__(self):
-    return (_unpicke_mesh, (self.devices, self.axis_names, self._axis_types))
+    return (_unpicke_mesh, (self.devices, self.axis_names, self.axis_types))
 
   def __eq__(self, other):
     # This is a performance optimization. Comparing thousands of devices
@@ -302,14 +289,14 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
       return False
     return (self.axis_names == other.axis_names and
             self.devices.shape == other.devices.shape and
-            self._axis_types == other._axis_types and
+            self.axis_types == other.axis_types and
             self._internal_device_list == other._internal_device_list)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
       self._hash = hash(
           (self.axis_names, self._internal_device_list, self.devices.shape,
-           self._axis_types))
+           self.axis_types))
     return self._hash
 
   def __setattr__(self, name, value):
@@ -341,6 +328,15 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
         tuple(t.physical_mesh for t in thread_resources.stack
               if not t.physical_mesh.empty))
     return False
+
+  def update(self, devices=None, axis_names=None, axis_types=None):
+    if devices is None:
+      devices = self.devices
+    if axis_names is None:
+      axis_names = self.axis_names
+    if axis_types is None:
+      axis_types = self.axis_types
+    return Mesh(devices, axis_names, axis_types)
 
   @functools.cached_property
   def shape(self):
@@ -400,14 +396,14 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
 
   def __str__(self):
     mesh_str = ", ".join(f"'{k}': {v}" for k, v in self.shape.items())
-    atr = f", axis_types={self._axis_types}"
+    atr = f", axis_types={self.axis_types}"
     return f"Mesh({mesh_str}{atr})"
 
   @functools.cached_property
   def _repr(self):
     if self.empty:
       return "Mesh(axis_sizes=(), axis_names=())"
-    atr = f", axis_types={self._axis_types}"
+    atr = f", axis_types={self.axis_types}"
     return (f"Mesh(axis_sizes={self.device_ids.shape}, "
             f"axis_names={self.axis_names!r}{atr})")
 
@@ -422,7 +418,7 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
   @functools.cached_property
   def abstract_mesh(self):
     return AbstractMesh(self.axis_sizes, self.axis_names,
-                        axis_types=self._axis_types)
+                        axis_types=self.axis_types)
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -462,9 +458,9 @@ class AbstractMesh(BaseMesh):
     self.axis_sizes = axis_sizes
     self.axis_names = axis_names
     self._size = math.prod(self.axis_sizes) if self.axis_sizes else 0
-    self._axis_types = _normalize_axis_types(
+    self.axis_types = _normalize_axis_types(
         self.axis_names, axis_types, 'AbstractMesh')
-    self._hash = hash((self.axis_sizes, self.axis_names, self._axis_types))
+    self._hash = hash((self.axis_sizes, self.axis_names, self.axis_types))
 
   def __hash__(self):
     return self._hash
@@ -476,13 +472,22 @@ class AbstractMesh(BaseMesh):
       return False
     return (self.axis_sizes == other.axis_sizes and
             self.axis_names == other.axis_names and
-            self._axis_types == other._axis_types)
+            self.axis_types == other.axis_types)
 
   def __repr__(self):
     mesh_repr = (", ".join(f"'{n}': {v}" for n, v in self.shape_tuple)
                  if self.shape_tuple else "()")
-    atr = f", axis_types={self._axis_types}"
+    atr = f", axis_types={self.axis_types}"
     return f"AbstractMesh({mesh_repr}{atr})"
+
+  def update(self, axis_sizes=None, axis_names=None, axis_types=None):
+    if axis_sizes is None:
+      axis_sizes = self.axis_sizes
+    if axis_names is None:
+      axis_names = self.axis_names
+    if axis_types is None:
+      axis_types = self.axis_types
+    return AbstractMesh(axis_sizes, axis_names, axis_types)
 
   @property
   def size(self):
@@ -512,9 +517,8 @@ class AbstractMesh(BaseMesh):
 
   def update_axis_types(self, name_to_type: dict[MeshAxisName, AxisType]):
     new_axis_types = tuple(name_to_type[n] if n in name_to_type else a
-                           for n, a in zip(self.axis_names, self._axis_types))
-    return AbstractMesh(self.axis_sizes, self.axis_names,
-                        axis_types=new_axis_types)
+                           for n, a in zip(self.axis_names, self.axis_types))
+    return self.update(axis_types=new_axis_types)
 
   @property
   def devices(self):

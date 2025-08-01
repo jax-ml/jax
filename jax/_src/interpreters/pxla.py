@@ -2187,7 +2187,7 @@ def _get_context_mesh(context_mesh: Mesh | None) -> Mesh | None:
   if cur_mesh == context_mesh.abstract_mesh:
     return context_mesh
   return Mesh(context_mesh.devices, context_mesh.axis_names,
-              axis_types=cur_mesh._axis_types)
+              axis_types=cur_mesh.axis_types)
 
 
 @profiler.annotate_function

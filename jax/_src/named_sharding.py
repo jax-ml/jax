@@ -515,12 +515,12 @@ def _check_mesh_resource_axis(mesh, pspec):
             f"Resource axis: {r} of {pspec} "
             f"is not found in mesh: {tuple(mesh.shape.keys())}.")
   check_pspec_mix_axis_type(mesh, pspec)
-  if (AxisType.Auto not in mesh._axis_types_dict and
+  if (AxisType.Auto not in mesh.axis_types and
       PartitionSpec.UNCONSTRAINED in pspec):
     raise ValueError(
         f'{pspec} cannot contain'
         ' `P.UNCONSTRAINED` when no mesh axis_types are `Auto`. Got mesh'
-        f' axis_types: {mesh._axis_types_dict}')
+        f' axis_types: {mesh.axis_types}')
 
 def _check_mesh_unreduced(mesh, pspec):
   for u in pspec.unreduced:
