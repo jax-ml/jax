@@ -84,12 +84,12 @@ py_library(
         "//jax:config",
         "//jax:core",
         "//jax:mlir",
-        "//jax:mosaic",
         "//jax:sharding_impls",
         "//jax:source_info_util",
         "//jax:tpu_custom_call",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/experimental:mosaic",
     ] + py_deps("numpy"),
 )
 
@@ -114,7 +114,6 @@ pytype_strict_library(
         "//jax:lax",
         "//jax:mesh",
         "//jax:mlir",
-        "//jax:mosaic",
         "//jax:partial_eval",
         "//jax:random",
         "//jax:source_info_util",
@@ -125,6 +124,7 @@ pytype_strict_library(
         "//jax:xla_bridge",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/experimental:mosaic",
     ] + py_deps("numpy"),
 )
 
@@ -136,9 +136,9 @@ py_library(
         ":primitives",
         "//jax",
         "//jax:api_util",
-        "//jax:pallas",
         "//jax:util",
         "//jax/_src/pallas",
+        "//jax/experimental:pallas",
         "//jax/extend:backend",
     ] + py_deps("numpy"),
 )

@@ -536,6 +536,7 @@ pytype_strict_library(
     srcs = ["scheduling_groups.py"],
     visibility = ["//visibility:public"],
     deps = [
+        "//jax/_src:ad",
         "//jax/_src:api",
         "//jax/_src:api_util",
         "//jax/_src:core",
@@ -663,7 +664,7 @@ pytype_strict_library(
 )
 
 # TODO(dsuo): Remove this once experimental aliases from jax/BUILD are removed.
-pytype_strict_library(
+py_library_providing_imports_info(
     name = "experimental",
     srcs = [
         "__init__.py",

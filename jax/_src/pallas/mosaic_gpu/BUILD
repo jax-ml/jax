@@ -49,9 +49,9 @@ pytype_strict_library(
         "//jax:core",
         "//jax:frozen_dict",
         "//jax:mlir",
-        "//jax:mosaic_gpu",
         "//jax:sharding_impls",
         "//jax/_src/pallas",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps("numpy"),
 )
 
@@ -68,8 +68,6 @@ pytype_strict_library(
         "//jax:lax",
         "//jax:mesh",
         "//jax:mlir",
-        "//jax:mosaic_gpu",
-        "//jax:pallas",
         "//jax:partial_eval",
         "//jax:source_info_util",
         "//jax:state_types",
@@ -77,6 +75,8 @@ pytype_strict_library(
         "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/experimental:mosaic_gpu",
+        "//jax/experimental:pallas",
     ] + py_deps("numpy"),
 )
 
@@ -95,13 +95,13 @@ pytype_strict_library(
         "//jax:effects",
         "//jax:frozen_dict",
         "//jax:lax",
-        "//jax:mosaic_gpu",
         "//jax:pretty_printer",
         "//jax:state_types",
         "//jax:tree_util",
         "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/experimental:mosaic_gpu",
         "//jaxlib/mlir:ir",
     ] + py_deps("numpy"),
 )
@@ -116,13 +116,13 @@ pytype_strict_library(
         "//jax:core",
         "//jax:dtypes",
         "//jax:lax",
-        "//jax:mosaic_gpu",
         "//jax:pretty_printer",
         "//jax:state_types",
         "//jax:tree_util",
         "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps("numpy"),
 )
 
@@ -134,12 +134,12 @@ pytype_strict_library(
         ":primitives",
         "//jax",
         "//jax:core",
-        "//jax:mosaic_gpu",
-        "//jax:pallas",
         "//jax:partial_eval",
         "//jax:state_types",
         "//jax:util",
         "//jax/_src/pallas",
+        "//jax/experimental:mosaic_gpu",
+        "//jax/experimental:pallas",
     ],
 )
 

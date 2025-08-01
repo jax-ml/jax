@@ -1660,8 +1660,8 @@ jax_py_test(
     srcs = ["mesh_utils_test.py"],
     deps = [
         "//jax",
-        "//jax:mesh_utils",
         "//jax:test_util",
+        "//jax/experimental:mesh_utils",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1909,8 +1909,8 @@ jax_py_test(
     srcs = ["mosaic_test.py"],
     deps = [
         "//jax",
-        "//jax:mosaic",
         "//jax:test_util",
+        "//jax/experimental:mosaic",
     ] + py_deps("absl/testing"),
 )
 
@@ -2065,8 +2065,8 @@ jax_py_test(
     srcs = ["source_mapper_test.py"],
     deps = [
         "//jax",
-        "//jax:source_mapper",
         "//jax:test_util",
+        "//jax/experimental:source_mapper",
     ] + py_deps("absl/testing"),
 )
 
