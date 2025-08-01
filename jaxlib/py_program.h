@@ -18,10 +18,10 @@ limitations under the License.
 
 #include "nanobind/nanobind.h"
 
-namespace xla {
+namespace jax {
 
 void BuildIfrtProgramsSubmodule(nanobind::module_& m);
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_PY_PROGRAM_H_

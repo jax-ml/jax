@@ -28,7 +28,7 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "tsl/profiler/lib/traceme.h"
 
-namespace xla {
+namespace jax {
 
 namespace nb = nanobind;
 
@@ -105,4 +105,4 @@ PythonRefManager* GlobalPyRefManager() {
   return static_ref_manager;
 }
 
-}  // namespace xla
+}  // namespace jax

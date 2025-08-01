@@ -33,7 +33,9 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 
-namespace xla {
+namespace ifrt = xla::ifrt;
+
+namespace jax {
 
 void BlockUntilReadyWithCancel(xla::PjRtFuture<>& future) {
   future.BlockUntilReady([](tsl::AsyncValue* value) {
@@ -73,11 +75,11 @@ absl::Status AwaitBuffersReady(absl::Span<ifrt::Array* const> ifrt_arrays) {
   if (!s.ok()) {
     // Fix up error string because some clients rely on it.
     if (s.message() == "GetReadyFuture() called on deleted or donated buffer") {
-      s = InvalidArgument(
+      s = xla::InvalidArgument(
           "BlockHostUntilReady() called on deleted or donated buffer");
     }
   }
   return s;
 }
 
-}  // namespace xla
+}  // namespace jax
