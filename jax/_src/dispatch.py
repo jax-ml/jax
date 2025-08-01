@@ -598,11 +598,16 @@ device_put_p = core.Primitive('device_put')
 device_put_p.multiple_results = True
 device_put_p.def_impl(_batched_device_put_impl)
 
+valid_memory_kinds = {'device', 'pinned_host', 'unpinned_host'}
 
 def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
   out = []
   for x, d in zip(xs, devices):
-    if isinstance(d, (Sharding, TransferToMemoryKind)) and d.memory_kind is not None:
+    if (isinstance(d, (Sharding, TransferToMemoryKind)) and
+        d.memory_kind is not None):
+      # TODO(yashkatariya): Maybe move this to `mem_kind_to_space`?
+      if d.memory_kind not in valid_memory_kinds:
+        raise ValueError(f'Got invalid memory_kind: {d.memory_kind}')
       out.append(x.update(memory_space=core.mem_kind_to_space(d.memory_kind)))
     else:
       out.append(x)

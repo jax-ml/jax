@@ -655,6 +655,14 @@ class DevicePutTest(jtu.JaxTestCase):
     out = f()
     self._check_device_put_addressable_shards(out, np_inp * 2, s_dev, 'device')
 
+  def test_device_put_invalid_mem_space(self):
+    @jax.jit
+    def f(x):
+      return jax.device_put(x, TransferToMemoryKind('device_host'))
+
+    with self.assertRaisesRegex(ValueError, 'Got invalid memory_kind'):
+      f(jnp.arange(8))
+
   @jtu.run_on_devices('tpu')
   def test_ragged_copy_on_host(self):
     mesh = jtu.create_mesh((2,), ('x'))
