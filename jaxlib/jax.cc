@@ -410,6 +410,7 @@ NB_MODULE(_jax, m) {
               std::shared_ptr<xla::PjRtClient>(std::move(c_api_client));
           ifrt_options.kv_store = kv_store;
           ifrt_options.use_kv_store_for_topology_exchange = false;
+          ifrt_options.distributed_client = distributed_client;
           if (transfer_server_factory.has_value()) {
             ifrt_options.transfer_server_factory =
                 std::move(transfer_server_factory->factory_fn);
