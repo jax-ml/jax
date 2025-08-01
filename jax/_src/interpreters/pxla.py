@@ -799,7 +799,7 @@ def lower_parallel_callable(
         f"axis_size {axis_size}.")
 
   jaxpr = closed_jaxpr.jaxpr
-
+  arg_names = jaxpr._debug_info.safe_arg_names(len(closed_jaxpr.in_avals))
   if lowering_parameters.hoist_constants_as_args:
     const_args = core.jaxpr_const_args(jaxpr)
     num_const_args = len(const_args)
@@ -814,6 +814,7 @@ def lower_parallel_callable(
         shards.num_local_shards, shards.num_global_shards)
     pci = dataclasses.replace(pci, in_axes=in_axes,
                               avals=tuple(const_arg_avals) + tuple(pci.avals))
+    arg_names = ("",) * num_const_args + arg_names
   else:
     jaxpr_avals = closed_jaxpr.in_avals
     const_args = []
@@ -902,7 +903,7 @@ def lower_parallel_callable(
           replicated_args=replicated_args,
           arg_shardings=None,
           result_shardings=None,
-          arg_names=jaxpr._debug_info.safe_arg_names(len(jaxpr_avals)),
+          arg_names=arg_names,
           result_names=jaxpr._debug_info.safe_result_paths(len(jaxpr.outvars)),
           num_replicas=replicas.num_global_replicas,
           lowering_parameters=lowering_parameters)
@@ -1930,6 +1931,7 @@ def _cached_lowering_to_hlo(closed_jaxpr: core.ClosedJaxpr, module_name, backend
         "The following ordered effects are not supported for "
         f"more than 1 device: {unsupported_effects}")
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
+  arg_names = ("",) * num_const_args + jaxpr._debug_info.safe_arg_names(len(in_avals) - num_const_args)
   with dispatch.log_elapsed_time(
         "Finished jaxpr to MLIR module conversion {fun_name} in {elapsed_time:.9f} sec",
         fun_name=module_name, event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
@@ -1948,7 +1950,7 @@ def _cached_lowering_to_hlo(closed_jaxpr: core.ClosedJaxpr, module_name, backend
         result_shardings=out_mlir_shardings,
         in_layouts=in_layouts,
         out_layouts=out_layouts,
-        arg_names=jaxpr._debug_info.safe_arg_names(len(in_avals)),
+        arg_names=arg_names,
         result_names=jaxpr._debug_info.safe_result_paths(len(out_avals)),
         num_replicas=nreps,
         num_partitions=num_partitions,

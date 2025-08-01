@@ -4804,11 +4804,10 @@ class CompositeTest(jtu.JaxTestCase):
     x = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
     self.assertAllClose(my_consts(x, scale=scale), jnp.round(x / scale))
 
-    # The constant must not appear as an extra input argument to the composite.
     mlir_module = jax.jit(partial(my_consts, scale=scale)).lower(x).as_text()
     if config.use_simplified_jaxpr_constants.value:
       self.assertIn(
-          "@my.consts(%arg0: tensor<3xf32>) -> tensor<3xf32>", mlir_module
+          "@my.consts(%arg0: tensor<3xf32> {jax.const = true}, %arg1: tensor<3xf32>) -> tensor<3xf32>", mlir_module
       )
     else:
       self.assertIn(
