@@ -4211,9 +4211,12 @@ class WarpSpecializedPipelineTest(PallasTest):
     np.testing.assert_array_equal(out_last_block, x[-(2 * blk_m):, -blk_n:])
 
   @parameterized.product(
-      m=[256, 64], n=[256, 64], num_compute_wgs=[1, 2], static=[False, True]
+      m=[256, 64], n=[256, 64], num_compute_wgs=[1, 2], static=[False, True],
+      manual_consumed_barriers=[False, True],
+      in_tree_template=[(0, 1), ((0, (1,), None))],
   )
-  def test_elementwise_add(self, m, n, num_compute_wgs, static):
+  def test_elementwise_add(self, m, n, num_compute_wgs, static,
+                           manual_consumed_barriers, in_tree_template):
     self.skip_if_wg_semantics()  # Crashes!
 
     blk_m = blk_n = 64
@@ -4223,11 +4226,20 @@ class WarpSpecializedPipelineTest(PallasTest):
         block_shape=(num_compute_wgs * blk_m, blk_n),
         index_map=lambda i, j: (i, j),
     )
+    in_treedef = jax.tree.structure(in_tree_template)
+    in_specs = jax.tree.unflatten(in_treedef, (spec, spec))
 
-    def tiled_add_kernel(_, x_smem, y_smem, o_smem):
+    def tiled_add_kernel(_, *smems):
+      flat_smems, _ = jax.tree.flatten(smems)
+      x_smem, y_smem, o_smem, *consumed_barriers = flat_smems
+
       wg_idx = lax.axis_index("wg")
       m_slice = pl.ds(wg_idx * blk_m, blk_m)
       o_smem[m_slice] = x_smem[m_slice] + y_smem[m_slice]
+      if manual_consumed_barriers:
+        [x_consumed_barrier, y_consumed_barrier] = consumed_barriers
+        plgpu.barrier_arrive(x_consumed_barrier)
+        plgpu.barrier_arrive(y_consumed_barrier)
 
     def pipeline(*gmem_refs):
       grid = (m // (num_compute_wgs * blk_m), n // blk_n)
@@ -4240,8 +4252,9 @@ class WarpSpecializedPipelineTest(PallasTest):
           num_compute_wgs=num_compute_wgs,
           memory_registers=40,
           wg_axis="wg",
-          in_specs=[spec, spec],
+          in_specs=in_specs,
           out_specs=[spec],
+          manual_consumed_barriers=manual_consumed_barriers,
       )(*gmem_refs)
 
     kernel = self.kernel(
@@ -4255,7 +4268,8 @@ class WarpSpecializedPipelineTest(PallasTest):
     )
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
     y = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float32)
-    np.testing.assert_allclose(kernel(x, y), x + y, atol=1e-4)
+    inputs = jax.tree.unflatten(in_treedef, (x, y))
+    np.testing.assert_allclose(kernel(*inputs), x + y, atol=1e-4)
 
   def test_carry_accumulate(self, m=256, n=256, num_compute_wgs=2):
     blk_m = blk_n = 64
