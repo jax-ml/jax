@@ -3026,14 +3026,14 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
   if sharding_mesh.empty and cur_mesh.empty:
     raise ValueError(
         f'Context mesh {cur_mesh} cannot be empty. Please use'
-        ' `jax.sharding.set_mesh` API to enter into a mesh context when using'
+        ' `jax.set_mesh` API to enter into a mesh context when using'
         f' `{name}` API.')
   if not sharding_mesh.empty and not cur_mesh.empty:
     if sharding_mesh != cur_mesh:
       raise ValueError(
           f'Context mesh {cur_mesh} must match the mesh passed to shardings'
           f' {sharding_mesh}. Recommended approach is to use'
-          ' `jax.sharding.set_mesh` context manager.')
+          ' `jax.set_mesh` context manager.')
     mesh_to_use = cur_mesh
   elif sharding_mesh.empty and not cur_mesh.empty:
     mesh_to_use = cur_mesh

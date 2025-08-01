@@ -564,7 +564,7 @@ def shard_map(
 where:
 * communication collectives like `psum` in the body of `f` can mention the axis names of `mesh`;
 * `mesh` encodes devices arranged in an array and with associated axis names, just like it does for `sharding.NamedSharding`; If None, mesh will be inferred from the
-context which can be set via the `jax.sharding.set_mesh` context manager.
+context which can be set via the `jax.set_mesh` context manager.
 * `in_specs` are `PartitionSpec`s which can zero or one times mention axis names from `mesh` to express slicing/unconcatenation of inputs, respectively, with unmentioned names corresponding to replication and untiling (assert-replicated-so-give-me-one-copy). If None, all mesh axes must be of type `Explicit`, in which case the in_specs are inferred from the argument types;
 * `out_specs` are `PartitionSpec`s which can zero or one times mention axis names from `mesh` to express concatenation of outputs, with unmentioned names corresponding to replication and untiling (assert-replicated-so-give-me-one-copy), respectively;
 * `axis_names` is an optional set of axis names corresponding to the subset of names of `mesh` to treat manual in the body. If empty,  `f` is manual over all axes of the mesh.

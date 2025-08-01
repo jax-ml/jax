@@ -5039,7 +5039,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return jax.lax.with_sharding_constraint(jnp.arange(8), spec)
 
     # no mesh context and mesh context behavior has to be the same
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out = f(P('x'))
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
@@ -6262,7 +6262,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       a = z @ x2
       return a
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out = f(arr, arr.T)
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x',)))
       lowered_text = f.lower(arr, arr.T).as_text()
@@ -6271,7 +6271,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     mesh2 = jtu.create_mesh((2, 2), ('x', 'y'),
                             axis_types=(mesh_lib.AxisType.Explicit,
                                         mesh_lib.AxisType.Auto))
-    with jax.sharding.set_mesh(mesh2):
+    with jax.set_mesh(mesh2):
       arr = jax.device_put(arr, NamedSharding(mesh2, P('x', 'y')))
       arr2 = jax.device_put(np_inp.T, NamedSharding(mesh2, P('y', None)))
       out = f(arr, arr2)
@@ -6285,7 +6285,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     mesh3 = jtu.create_mesh((2, 2), ('x', 'y'),
                             axis_types=(mesh_lib.AxisType.Auto,
                                         mesh_lib.AxisType.Explicit))
-    with jax.sharding.set_mesh(mesh3):
+    with jax.set_mesh(mesh3):
       arr = jax.device_put(arr, NamedSharding(mesh3, P('x', 'y')))
       arr2 = jax.device_put(np_inp.T, NamedSharding(mesh3, P(None, 'x')))
       out = f(arr, arr2)
@@ -6460,7 +6460,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_device_put_no_set_mesh_error(self):
     with self.assertRaisesRegex(
         ValueError,
-        'Please set a mesh via `jax.sharding.set_mesh` if a PartitionSpec is'
+        'Please set a mesh via `jax.set_mesh` if a PartitionSpec is'
         ' passed to device_put'):
       jax.device_put(np.arange(8), P('x'))
 
@@ -6471,7 +6471,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, s)
 
     auto_mesh = jax.make_mesh((2,), 'x', axis_types=(AxisType.Auto,))
-    with jax.sharding.set_mesh(auto_mesh):
+    with jax.set_mesh(auto_mesh):
       arr2 = jnp.ones(8)
     self.assertDictEqual(arr2.sharding.mesh._axis_types_dict,
                          {AxisType.Auto: ('x',)})
@@ -7139,7 +7139,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(z.aval.sharding.spec, P('x', None))
       return z + 1
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out = f(arr1, arr2)
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
@@ -7162,7 +7162,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       z = jax_matmul(y, arr2)
       return z + 1
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out = f(arr1, arr2)
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
@@ -7180,7 +7180,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
       return out
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       matmul_reshard(arr1, arr2)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
@@ -7228,9 +7228,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     mesh2 = Mesh(np.asarray(devs[::-1]).reshape(2, 2), ('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
 
-    with jax.sharding.set_mesh(mesh1):
+    with jax.set_mesh(mesh1):
       arr1 = jax.device_put(np_inp, NamedSharding(mesh1, P('x', 'y')))
-    with jax.sharding.set_mesh(mesh2):
+    with jax.set_mesh(mesh2):
       arr2 = jax.device_put(np_inp, NamedSharding(mesh2, P('x', 'y')))
 
     @jax.jit
@@ -7241,9 +7241,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
           jtu.count_jit_and_pmap_lowerings() as lowering_count,
           jtu.count_jit_compilation_cache_miss() as compilation_count,
           jtu.count_pjit_cpp_cache_miss() as cpp_cache_miss_count):
-      with jax.sharding.set_mesh(mesh1):
+      with jax.set_mesh(mesh1):
         out1 = f(arr1)
-      with jax.sharding.set_mesh(mesh2):
+      with jax.set_mesh(mesh2):
         out2 = f(arr2)
 
     self.assertEqual(tracing_count(), 1)
@@ -7504,7 +7504,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(out.aval.sharding.spec, P(('y', 'z'), None))
       return out
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out = iota()
       self.assertEqual(out.sharding, yz_sharding)
 
@@ -7552,7 +7552,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     x = jnp.zeros((4, 4), dtype=jnp.int32)
     x_np = np.zeros((4, 4), dtype=np.int32)
     s = NamedSharding(mesh, P('x', 'y'))
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       y = jax.device_put(x, s)
       self.assertArraysEqual(y, x)
       self.assertEqual(y.sharding, s)
@@ -7575,12 +7575,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     else:
       arr = np_inp
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out = with_sharding_constraint(arr, P('x', 'y'))
       self.assertArraysEqual(out, np_inp)
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       f = jax.jit(lambda x: with_sharding_constraint(x, P('x', 'y')))
       jaxpr = f.trace(arr).jaxpr
       self.assertIsInstance(jaxpr.eqns[0].params['sharding'].mesh,
@@ -7800,7 +7800,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_set_mesh(self):
     mesh = jtu.create_mesh((2,), ('x',), axis_types=(AxisType.Explicit,))
     try:
-      jax.sharding.set_mesh(mesh)
+      jax.set_mesh(mesh)
       out = reshard(np.arange(8), P('x'))
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
     finally:
@@ -8438,7 +8438,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_reshape_merge_replicated(self, axis_sizes):
     mesh = jtu.create_mesh(axis_sizes, ('x', 'y'),
                            axis_types=(AxisType.Explicit,) * 2)
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       np_inp = np.ones((8,4,4))
       arr = jax.device_put(np_inp, P(None, None, 'x'))
       out = jnp.reshape(arr, (-1, arr.shape[-1]))

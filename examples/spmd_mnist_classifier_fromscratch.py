@@ -122,7 +122,7 @@ if __name__ == "__main__":
     for i in range(num_batches - 1):
       print(f"Batch no {i+1} of {num_batches}")
       batch = next(batches)
-      with jax.sharding.set_mesh(mesh):
+      with jax.set_mesh(mesh):
         replicated_params = train_step(replicated_params, batch)
     epoch_time = time.time() - start_time
 

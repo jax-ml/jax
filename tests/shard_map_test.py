@@ -2398,7 +2398,7 @@ class ShardMapTest(jtu.JaxTestCase):
     out1, out2 = jax.jit(jax.grad(lambda x, y: jnp.sin(f(x, y).sum()),
                                   argnums=(0, 1)))(arr1, arr2)
 
-    with jax.sharding.set_mesh(jtu.create_mesh((1,), 'x')):
+    with jax.set_mesh(jtu.create_mesh((1,), 'x')):
       ex_out1, ex_out2 = jax.jit(jax.grad(lambda x, y: jnp.sin((x @ y).sum()),
                                           argnums=(0, 1)))(np_inp1, np_inp2)
     self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
@@ -2814,7 +2814,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return shard_map(h, in_specs=P('i', None), out_specs=P('i', None),
                        check_vma=False, axis_names=frozenset({'i'}))(x)
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       self.assertAllClose(v*v, f(v), check_dtypes=False)
 
   @parameterized.named_parameters(
@@ -2850,7 +2850,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return shard_map(h, in_specs=P(dim1, None),
                        out_specs=P(dim1, None), axis_names={'x'})(x)
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out = f(arr)
       self.assertArraysEqual(out, np_inp * np_inp)
 
@@ -2873,7 +2873,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     v = jnp.arange(32.).reshape(4, 8)
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out = jax.grad(f)(v)
       self.assertAllClose(out, v * 2, check_dtypes=False)
 
@@ -2893,7 +2893,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     v = jnp.arange(32.).reshape(4, 8)
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out = jax.grad(f)(v)
       self.assertAllClose(out, v * v * 3, check_dtypes=False)
 
@@ -2965,7 +2965,7 @@ class ShardMapTest(jtu.JaxTestCase):
                        in_specs=P('i', None), out_specs=P('i', None),
                        check_vma=False, axis_names=frozenset({'i'}))()
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       self.assertAllClose(f(), np.arange(4, dtype=np.int32).reshape(-1, 1))
 
   def test_partial_auto_axis_index_degenerated_axis(self):
@@ -3031,7 +3031,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return shard_map(g, mesh=mesh, in_specs=P('i'), out_specs=None,
                        check_vma=False, axis_names=frozenset({'i'}))(x)
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       f(x)  # don't crash
 
   def test_partial_auto_of_random_keys(self):
@@ -3701,7 +3701,7 @@ class ShardMapTest(jtu.JaxTestCase):
     if jit:
       f = jax.jit(f)
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out = f(arr)
       self.assertArraysEqual(out, np_inp * np_inp)
 
@@ -4436,7 +4436,7 @@ class SmapSystematicTest(jtu.JaxTestCase):
     mesh = self.make_mesh(mesh_shape)
     args = map(jnp.array, args)
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       fun_ = jax.smap(fun, in_axes=in_axes, out_axes=out_axes,
                       axis_name=axis_name)
       out = jax.jit(fun_)(*args)

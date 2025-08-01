@@ -1087,7 +1087,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
       raise ValueError(
           'Using PartitionSpec when you are not under a mesh context is not'
           ' allowed. Please pass a NamedSharding instance or enter into a mesh'
-          f' context via `jax.sharding.set_mesh`. Got {sharding}')
+          f' context via `jax.set_mesh`. Got {sharding}')
     sharding = NamedSharding(cur_mesh, sharding)
   else:
     # There are cases when you have multiple meshes set. Allow that for full
@@ -1213,10 +1213,6 @@ class set_mesh:
   def __exit__(self, exc_type, exc_value, traceback):
     config.abstract_mesh_context_manager.set_local(self.prev_am)
     config.device_context.set_local(self.prev_m)
-
-
-# TODO(yashkatariya): remove this after usages are gone.
-use_mesh = set_mesh
 
 
 @contextlib.contextmanager

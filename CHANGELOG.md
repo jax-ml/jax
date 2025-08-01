@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Changes
+  * Exposed `jax.set_mesh` which acts as a global setter and a context manager.
+    Removed `jax.sharding.use_mesh` in favor of `jax.set_mesh`.
+
 * Deprecations:
 
   * {func}`jax.lax.zeros_like_array` is deprecated. Please use

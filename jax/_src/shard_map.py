@@ -87,7 +87,7 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
       array of devices over which to shard the data and on which to execute
       instances of ``f``. The names of the ``Mesh`` can be used in collective
       communication operations in ``f``. If mesh is None, it will be inferred
-      from the context which can be set via `jax.sharding.set_mesh` context
+      from the context which can be set via `jax.set_mesh` context
       manager.
     in_specs: (optional, default None) a pytree with
       ``jax.sharding.PartitionSpec`` instances as leaves, with a tree structure
@@ -289,7 +289,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
     if mesh.empty:
       raise ValueError(
           "The context mesh cannot be empty. Use"
-          " `jax.sharding.set_mesh(mesh)` to enter into a mesh context")
+          " `jax.set_mesh(mesh)` to enter into a mesh context")
   else:
     ctx_mesh = get_abstract_mesh()
     if (not _skip_mesh_check and not ctx_mesh.empty and
@@ -790,7 +790,7 @@ def _shardy_shard_map_sharding(
   return sdy_sharding
 
 
-def _shardy_shard_map_token_sharding(
+def _get_token_sharding(
     ctx: mlir.LoweringRuleContext, mesh
   ) -> ir.Attribute:
   ns = _make_scoped_manual_sharding(ctx, mesh, P())
@@ -839,9 +839,9 @@ def _shard_map_lowering_shardy(
           in_specs, ctx.avals_in))
   const_args = core.jaxpr_const_args(jaxpr)
   num_const_args = len(const_args)
-  const_arg_values = tuple(mlir.ir_constant(c, ctx.const_lowering,
-                                            canonicalize_dtype=True)
-                           for c in const_args)
+  const_arg_values = tuple(
+      mlir.ir_constant(c, ctx.const_lowering, canonicalize_dtype=True)
+      for c in const_args)
   const_avals = [core.shaped_abstractify(c) for c in const_args]
   # TODO(necula,yashkatariya): how to construct consts shardy shardings from
   #  consts that can be ndarray or jax.Array?
@@ -850,17 +850,16 @@ def _shard_map_lowering_shardy(
       for c in const_args]
 
   num_dim_vars = len(ctx.dim_var_values)
-  in_shardings = ([_shardy_shard_map_token_sharding(ctx, mesh)]
-                  * (num_tokens + num_dim_vars) +
-                  const_args_shardings +
-                  in_shardings)
+  in_shardings = (
+      [_get_token_sharding(ctx, mesh)] * (num_tokens + num_dim_vars) +
+      const_args_shardings + in_shardings)
   in_shardings = sharding_impls.SdyArrayList(in_shardings).build()
 
   out_shardings = list(
       map(partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
           out_specs, ctx.avals_out))
   out_shardings = [
-      _shardy_shard_map_token_sharding(ctx, mesh)] * num_tokens + out_shardings
+      _get_token_sharding(ctx, mesh)] * num_tokens + out_shardings
   out_shardings = sharding_impls.SdyArrayList(out_shardings).build()
 
   output_types = ([hlo.TokenType.get()] * num_tokens +
@@ -868,36 +867,30 @@ def _shard_map_lowering_shardy(
 
   args = (*ctx.dim_var_values, *tokens, *const_arg_values, *in_nodes)
   manual_computation_op = sdy.ManualComputationOp(
-      output_types,
-      mlir.flatten_ir_values(args),
-      in_shardings, out_shardings,
+      output_types, mlir.flatten_ir_values(args), in_shardings, out_shardings,
       sdy.ManualAxesAttr.get(
           ir.ArrayAttr.get([ir.StringAttr.get(i) for i in manual_axes])))
-  dim_var_types = [
-    mlir.aval_to_ir_type(
-        core.ShapedArray((), dtypes.canonicalize_dtype(np.int64)))
-  ] * num_dim_vars
+
+  dim_var_types = [mlir.aval_to_ir_type(
+      core.ShapedArray((), dtypes.canonicalize_dtype(np.int64)))] * num_dim_vars
   token_types = [hlo.TokenType.get()] * num_tokens
   const_arg_types = map(mlir.aval_to_ir_type, const_avals)
   in_types = map(mlir.aval_to_ir_type, in_avals_)
   block = ir.Block.create_at_start(
       manual_computation_op.body,
       (*dim_var_types, *token_types, *const_arg_types, *in_types))
+
   with (ir.InsertionPoint(block), _extend_axis_env(mesh, manual_axes),
         config._check_vma(check_vma)):
-    (block_dim_var_values, block_token_arg_values,
-     block_const_arg_values, block_in_args) = \
-        util.split_list(block.arguments,
-                        [num_dim_vars, num_tokens, num_const_args])
-    block_const_lowering = {id(c): ca
-                            for c, ca in zip(const_args,
-                                             block_const_arg_values)}
+    dim_var_values, token_arg_values, const_arg_values, in_args = util.split_list(  # type: ignore
+        block.arguments, [num_dim_vars, num_tokens, num_const_args])
+    block_const_lowering = {
+        id(c): ca for c, ca in zip(const_args, const_arg_values)}
     out_nodes_, tokens_out = mlir.jaxpr_subcomp(
         sub_ctx, jaxpr, ctx.name_stack,
-        mlir.TokenSet(zip(
-            ctx.tokens_in.effects(), block_token_arg_values)),
-        (), *block_in_args,
-        dim_var_values=block_dim_var_values,
+        mlir.TokenSet(zip(ctx.tokens_in.effects(), token_arg_values)),
+        (), *in_args,
+        dim_var_values=dim_var_values,
         const_lowering=block_const_lowering)
     sdy.ReturnOp([ir.Value(x) for x in (*[v for _, v in tokens_out.items()],
                                         *out_nodes_)])

@@ -57,7 +57,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     mesh = jax.make_mesh(
         (num_devices,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
     )
-    context_stack.enter_context(jax.sharding.set_mesh(mesh))
+    context_stack.enter_context(jax.set_mesh(mesh))
 
   @parameterized.product(
       m_shard=(1024, 8192),

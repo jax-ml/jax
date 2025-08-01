@@ -418,7 +418,7 @@ class LayoutTest(jtu.JaxTestCase):
     custom_format = Format(Layout(major_to_minor=(0, 1)), s)
     out1 = jax.device_put(arr, custom_format)
 
-    with jax.sharding.set_mesh(mesh):
+    with jax.set_mesh(mesh):
       out2 = jax.device_put(arr, custom_format)
       out3 = jax.device_put(jnp_inp, custom_format)
       out4 = jax.device_put(np_inp, custom_format)

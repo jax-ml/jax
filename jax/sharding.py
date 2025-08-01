@@ -20,7 +20,6 @@ from jax._src.sharding_impls import (
     NamedSharding as NamedSharding,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
-    use_mesh as use_mesh,
     set_mesh as set_mesh,
 )
 from jax._src.partition_spec import (

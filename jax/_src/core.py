@@ -3463,7 +3463,7 @@ class ShapeDtypeStruct:
       if cur_mesh is None:
         raise TypeError(
             "When specifying PartitionSpec to `ShapeDtypeStruct`, the context"
-            " mesh cannot be empty. Please use `jax.sharding.set_mesh` to set"
+            " mesh cannot be empty. Please use `jax.set_mesh` to set"
             " the mesh context.")
       self.sharding = NamedSharding(cur_mesh, sharding)
     else:

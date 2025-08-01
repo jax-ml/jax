@@ -2270,7 +2270,7 @@ def lower_sharding_computation(
           f"Length of device assignment {len(device_assignment)} is not equal"
           f" to the size of the mesh {a.sharding.mesh.size} of aval"
           f" {a.str_short(True, True)}. Please enter your `jit` into a mesh"
-          " context via `jax.sharding.set_mesh`.")
+          " context via `jax.set_mesh`.")
 
   # TODO(parkers): One _raw_platform has been unified with platform,
   # change this back to just read platform.

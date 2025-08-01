@@ -106,10 +106,11 @@ foo(some_array)
 These types show the shape and dtype of array but they don't appear to
 show sharding. (Actually, they _did_ show sharding, but the shardings were
 trivial. See "Concrete array shardings", below.) To start seeing some
-interesting shardings we need to set up an explicit-sharding mesh. We use
-`set_mesh` to set it as the current mesh for the remainder of this notebook.
-(If you only want to set the mesh for some particular scope and return to the previous
-mesh afterwards then you can use the context manager `jax.sharding.set_mesh` instead.)
+interesting shardings we need to set up an explicit-sharding mesh.
+
+`jax.set_mesh` can be used as a global setter or a context manager. We use
+`jax.set_mesh` in this notebook as a global setter. You can use it as a scoped
+context manager via `with jax.set_mesh(mesh)`.
 
 ```{code-cell} ipython3
 ---
@@ -120,7 +121,7 @@ outputId: d888371b-080e-4bff-be5d-ea56beda3aac
 ---
 mesh = jax.make_mesh((2, 4), ("X", "Y"),
                      axis_types=(AxisType.Explicit, AxisType.Explicit))
-jax.sharding.set_mesh(mesh)
+jax.set_mesh(mesh)
 
 print(f"Current mesh is: {get_abstract_mesh()}")
 ```
@@ -428,7 +429,7 @@ def f(arr1):
 
   return z + 1
 
-with jax.sharding.set_mesh(auto_mesh):
+with jax.set_mesh(auto_mesh):
   some_x = jax.device_put(np.arange(16).reshape(4, 4), P("X", "Y"))
   f(some_x)
 ```
