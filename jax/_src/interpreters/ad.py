@@ -322,15 +322,6 @@ def vjp(traceable: lu.WrappedFun, primals, has_aux=False):
   else:
     return out_primals, vjp_, aux
 
-def unpair_pval(pval):
-  aval, const = pval
-  const_1, const_2 = const
-  if aval is None:
-    return (None, const_1), (None, const_2)
-  else:
-    aval_1, aval_2 = aval
-    return (aval_1, const_1), (aval_2, const_2)
-
 # NOTE: The FIXMEs below are caused by primal/tangent mixups (type
 # errors if you will)
 def backward_pass(jaxpr: core.Jaxpr, transform_stack,

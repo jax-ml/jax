@@ -551,6 +551,20 @@ class MutableArrayTest(jtu.JaxTestCase):
     expected = 2. * jnp.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_grad_scan_extensive(self):
+    def f(xs):
+      xs_ref = core.mutable_array(xs)
+
+      def g(c, x_ref):
+        return c + x_ref[...], None
+      out, _ = jax.lax.scan(g, 0., xs_ref)
+
+      return out
+
+    ans = jax.grad(f)(jnp.arange(3.))
+    expected = jnp.ones(3)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   @parameterized.parameters([False, True])
   def test_grad_jit_readonly(self, jit):
     def f(x):
