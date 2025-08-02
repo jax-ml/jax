@@ -91,7 +91,7 @@ namespace nb = nanobind;
 struct PjitCacheEntry {
   explicit PjitCacheEntry(PyTreeRegistry* registry)
       : out_pytree_def(registry) {}
-  std::shared_ptr<xla::PyLoadedExecutable> executable;
+  std::shared_ptr<PyLoadedExecutable> executable;
   std::vector<nb::object> in_shardings;
   std::vector<nb::object> out_avals;
   std::vector<xla::nb_dtype> out_dtypes;
@@ -428,7 +428,7 @@ void CallShardArgFallback(nb::handle arg, nb::handle sharding,
                           std::vector<nb::object>& keep_alive_objects) {
   tsl::profiler::TraceMe traceme("cpp_pjit_shard_arg_fallback");
   auto py_array_or_bufs = fallback(arg, sharding, layout);
-  auto py_array = nb::cast<xla::PyArray>(py_array_or_bufs);
+  auto py_array = nb::cast<jax::PyArray>(py_array_or_bufs);
   num_args_arrays.push_back(tsl::FormRef(py_array.ifrt_array()));
   keep_alive_objects.push_back(std::move(py_array_or_bufs));
 }
@@ -436,9 +436,9 @@ void CallShardArgFallback(nb::handle arg, nb::handle sharding,
 // Prepares the input PjRtBuffers from the python arguments. This is equivalent
 // to shard_args() in pxla.py but for only a few supported cases.
 absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
-    const xla::PyLoadedExecutable& executable,
+    const PyLoadedExecutable& executable,
     absl::Span<nb::object const> flat_dynamic_args,
-    absl::Span<xla::PyArgSignature const> flat_dynamic_arg_signatures,
+    absl::Span<PyArgSignature const> flat_dynamic_arg_signatures,
     bool enable_x64, const std::vector<bool>& kept_args,
     const std::vector<nb::object>& in_shardings,
     const std::vector<nb::object>& in_device_local_layouts,
@@ -462,7 +462,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
                       CopyGroup>
       copy_groups;
 
-  xla::DevicePutOptions options;
+  DevicePutOptions options;
   options.squash_64bit_types = !enable_x64;
   options.allow_zero_copy = true;
   xla::ifrt::Device* data_device = nullptr;
@@ -483,7 +483,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
 
     auto transfer_guard_formatter = [] { return std::string(""); };
 
-    if (arg.type().ptr() != xla::PyArray::type().ptr()) {
+    if (arg.type().ptr() != jax::PyArray::type().ptr()) {
       if (data_device != nullptr && in_device_local_layout.is_none()) {
         TF_RETURN_IF_ERROR(
             jax::ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
@@ -502,7 +502,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       }
     }
 
-    xla::PyArray py_array = nb::borrow<xla::PyArray>(arg);
+    jax::PyArray py_array = nb::borrow<jax::PyArray>(arg);
     const auto& sharding = py_array.sharding();
     int sharding_num_devices =
         nb::cast<const jax::Sharding*>(sharding)->num_devices();
@@ -541,7 +541,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
 
     xla::ifrt::Array* ifrt_array = py_array.ifrt_array();
     // PyArray inputs should have already been checked in
-    // `xla::PyArgSignatureOfValue()` called by
+    // `PyArgSignatureOfValue()` called by
     // `PjitFunction::ComputeCallSignature()`.
     DCHECK(ifrt_array != nullptr) << "PyArray has been unexpectedly deleted.";
 
@@ -551,7 +551,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       auto& copy_group = copy_groups[std::make_tuple(
           ifrt_sharding.devices()->devices().front(),
           ifrt_sharding.memory_kind(),
-          xla::GetMemoryKind(in_shardings[dce_index]))];
+          GetMemoryKind(in_shardings[dce_index]))];
       copy_group.indices.push_back(num_args_arrays.size());
       copy_group.arrays.push_back(tsl::FormRef(ifrt_array));
       num_args_arrays.push_back({});
@@ -648,11 +648,11 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // will fallback to python. For jit, numpy arrays and scalars are also
   // allowed, which we will check later.
   for (const auto& arg : flat_dynamic_args) {
-    if (arg.type().ptr() != xla::PyArray::type().ptr()) {
+    if (arg.type().ptr() != jax::PyArray::type().ptr()) {
       continue;
     }
 
-    xla::PyArray py_array = nb::borrow<xla::PyArray>(arg);
+    jax::PyArray py_array = nb::borrow<jax::PyArray>(arg);
 
     // Only allow committed PyArray in cpp pjit for now as the logic on handling
     // sharding for uncommitted PyArray is complicated and still under
@@ -761,7 +761,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   xla::ifrt::ExecuteOptions execute_options =
       cache_entry->executable->options();
   execute_options.launch_id = cache_entry->executable->GetNextLaunchId();
-  execute_options.execution_stream_id = xla::GetExecutionStreamId();
+  execute_options.execution_stream_id = GetExecutionStreamId();
   if (execute_options.execution_stream_id == 0) {
     execute_options.execution_stream_id =
         tsl::Env::Default()->GetCurrentThreadId();
@@ -788,7 +788,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     // Creating the PyArray result. In addition to the IFRT arrays, the metadata
     // like `aval` and `sharding` are retrieved from the cache for this
     // function, which are produced by the python path in `cache_miss`.
-    xla::PyArray py_array(
+    jax::PyArray py_array(
         cache_entry->out_avals[i], cache_entry->out_weak_types[i],
         cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
         cache_entry->out_shardings[i], cache_entry->executable->client(),
@@ -845,13 +845,13 @@ absl::Status PjitFunction::ComputeCallSignature(
 
   for (nb::handle arg : flat_dynamic_args) {
     TF_ASSIGN_OR_RETURN(auto arg_signature,
-                        xla::PyArgSignatureOfValue(arg, jax_enable_x64));
+                        PyArgSignatureOfValue(arg, jax_enable_x64));
     signature.dynamic_arg_signatures.push_back(std::move(arg_signature));
 
     // It should be already checked previously in the entry point of
     // PjitFunction::Call().
-    if (arg.type().ptr() == xla::PyArray::type().ptr()) {
-      auto py_array = nb::borrow<xla::PyArray>(arg);
+    if (arg.type().ptr() == jax::PyArray::type().ptr()) {
+      auto py_array = nb::borrow<jax::PyArray>(arg);
       signature.dynamic_arg_shardings.push_back(py_array.sharding());
       auto layout = py_array.layout();
       if (absl::IsUnimplemented(layout.status())) {
@@ -886,7 +886,7 @@ void PjitFunction::PopulateCacheEntry(PjitCacheEntry& cache_entry,
 
   nb::tuple fastpath_data = nb::cast<nb::tuple>(out_and_fastpath_data[1]);
 
-  cache_entry.executable = nb::cast<std::shared_ptr<xla::PyLoadedExecutable>>(
+  cache_entry.executable = nb::cast<std::shared_ptr<PyLoadedExecutable>>(
       fastpath_data.attr("xla_executable"));
 
   nb::sequence in_shardings = fastpath_data.attr("in_shardings");

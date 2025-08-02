@@ -75,22 +75,23 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 
 namespace nb = nanobind;
+namespace ifrt = xla::ifrt;
 
-namespace xla {
+namespace jax {
 
 namespace {
 
-// For S64/U64/F64/C128 types, returns the largest 32-bit equivalent.
-PrimitiveType Squash64BitType(PrimitiveType type) {
+// For xla::S64/U64/F64/C128 types, returns the largest 32-bit equivalent.
+xla::PrimitiveType Squash64BitType(xla::PrimitiveType type) {
   switch (type) {
-    case S64:
-      return S32;
-    case U64:
-      return U32;
-    case F64:
-      return F32;
-    case C128:
-      return C64;
+    case xla::S64:
+      return xla::S32;
+    case xla::U64:
+      return xla::U32;
+    case xla::F64:
+      return xla::F32;
+    case xla::C128:
+      return xla::C64;
     default:
       return type;
   }
@@ -295,24 +296,25 @@ absl::StatusOr<ShardFn> HandlePythonScalar(nb::handle obj, ifrt::Client* client,
   try {
     value = nb::cast<T>(obj);
   } catch (const std::exception& e) {
-    return InvalidArgument(
+    return xla::InvalidArgument(
         "Unable to convert Python scalar to %s. This most likely means the "
         "value (%s) overflows the range of the type.",
-        PrimitiveType_Name(primitive_util::NativeToPrimitiveType<T>()),
+        xla::PrimitiveType_Name(
+            xla::primitive_util::NativeToPrimitiveType<T>()),
         nb::cast<absl::string_view>(nb::repr(obj)));
   }
 
   std::variant<T, SquashedT> data;
-  Shape shape;
-  PrimitiveType type;
+  xla::Shape shape;
+  xla::PrimitiveType type;
   if (std::is_same<T, SquashedT>() || !options.squash_64bit_types) {
     data.template emplace<0>(value);
-    type = primitive_util::NativeToPrimitiveType<T>();
+    type = xla::primitive_util::NativeToPrimitiveType<T>();
   } else {
     // TODO(phawkins): we should check for overflow here, e.g., because of bugs
     // like https://github.com/google/jax/issues/2006
     data.template emplace<1>(static_cast<SquashedT>(value));
-    type = primitive_util::NativeToPrimitiveType<SquashedT>();
+    type = xla::primitive_util::NativeToPrimitiveType<SquashedT>();
   }
   TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(type));
 
@@ -332,31 +334,33 @@ absl::StatusOr<ShardFn> HandlePythonInt(nb::handle obj, ifrt::Client* client,
                                         ifrt::Device* to_device,
                                         ifrt::MemoryKind to_memory_kind,
                                         const DevicePutOptions& options) {
-  PrimitiveType type;
+  xla::PrimitiveType type;
   std::variant<int64_t, int32_t> data;
 
   if (options.squash_64bit_types) {
     try {
       data.emplace<1>(nb::cast<int32_t>(obj));
     } catch (const std::exception& e) {
-      return InvalidArgument(
+      return xla::InvalidArgument(
           "Unable to convert Python scalar to %s. This most likely means the "
           "value (%s) overflows the range of the type.",
-          PrimitiveType_Name(primitive_util::NativeToPrimitiveType<int32_t>()),
+          PrimitiveType_Name(
+              xla::primitive_util::NativeToPrimitiveType<int32_t>()),
           nb::cast<absl::string_view>(nb::repr(obj)));
     }
-    type = S32;
+    type = xla::S32;
   } else {
     try {
       data.emplace<0>(nb::cast<int64_t>(obj));
     } catch (const std::exception& e) {
-      return InvalidArgument(
+      return xla::InvalidArgument(
           "Unable to convert Python scalar to %s. This most likely means the "
           "value (%s) overflows the range of the type.",
-          PrimitiveType_Name(primitive_util::NativeToPrimitiveType<int64_t>()),
+          xla::PrimitiveType_Name(
+              xla::primitive_util::NativeToPrimitiveType<int64_t>()),
           nb::cast<absl::string_view>(nb::repr(obj)));
     }
-    type = S64;
+    type = xla::S64;
   }
   TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(type));
   return [data, ifrt_dtype]() -> absl::StatusOr<Shard> {
@@ -377,63 +381,63 @@ absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
                                           ifrt::MemoryKind to_memory_kind,
                                           const DevicePutOptions& options) {
   std::variant<T, SquashedT, void*> data;
-  PrimitiveType type;
+  xla::PrimitiveType type;
   // For extension types, ScalarAsCtype returns a pointer to the data.
   if (std::is_same<T, xla::s2>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = S2;
+    type = xla::S2;
   } else if (std::is_same<T, xla::s4>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = S4;
+    type = xla::S4;
   } else if (std::is_same<T, xla::u2>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = U2;
+    type = xla::U2;
   } else if (std::is_same<T, xla::u4>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = U4;
-  } else if (std::is_same<T, bfloat16>()) {
+    type = xla::U4;
+  } else if (std::is_same<T, xla::bfloat16>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = BF16;
+    type = xla::BF16;
   } else if (std::is_same<T, tsl::float4_e2m1fn>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = F4E2M1FN;
+    type = xla::F4E2M1FN;
   } else if (std::is_same<T, tsl::float8_e3m4>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = F8E3M4;
+    type = xla::F8E3M4;
   } else if (std::is_same<T, tsl::float8_e4m3>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = F8E4M3;
+    type = xla::F8E4M3;
   } else if (std::is_same<T, tsl::float8_e4m3fn>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = F8E4M3FN;
+    type = xla::F8E4M3FN;
   } else if (std::is_same<T, tsl::float8_e4m3b11fnuz>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = F8E4M3B11FNUZ;
+    type = xla::F8E4M3B11FNUZ;
   } else if (std::is_same<T, tsl::float8_e5m2>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = F8E5M2;
+    type = xla::F8E5M2;
   } else if (std::is_same<T, tsl::float8_e4m3fnuz>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = F8E4M3FNUZ;
+    type = xla::F8E4M3FNUZ;
   } else if (std::is_same<T, tsl::float8_e5m2fnuz>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = F8E5M2FNUZ;
+    type = xla::F8E5M2FNUZ;
   } else if (std::is_same<T, tsl::float8_e8m0fnu>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
-    type = F8E8M0FNU;
+    type = xla::F8E8M0FNU;
   } else if (std::is_same<T, SquashedT>() || !options.squash_64bit_types) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<0>());
-    type = primitive_util::NativeToPrimitiveType<T>();
+    type = xla::primitive_util::NativeToPrimitiveType<T>();
   } else {
     T value;
     PyArray_ScalarAsCtype(h.ptr(), &value);
     data.template emplace<1>(static_cast<SquashedT>(value));
-    type = primitive_util::NativeToPrimitiveType<SquashedT>();
+    type = xla::primitive_util::NativeToPrimitiveType<SquashedT>();
   }
-  std::shared_ptr<PythonRefManager::ManagedPyObjects> py_buffer_ref;
+  std::shared_ptr<xla::PythonRefManager::ManagedPyObjects> py_buffer_ref;
   if (data.index() == 2) {
     py_buffer_ref =
-        GlobalPyRefManager()->ManageReference(nb::cast<nb::object>(h));
+        xla::GlobalPyRefManager()->ManageReference(nb::cast<nb::object>(h));
   }
   TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(type));
   return [data, py_buffer_ref = std::move(py_buffer_ref),
@@ -505,9 +509,10 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
                                   options);
   }
 
-  TF_ASSIGN_OR_RETURN(PrimitiveType type, DtypeToPrimitiveType(array.dtype()));
+  TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                      DtypeToPrimitiveType(array.dtype()));
 
-  PrimitiveType squashed_type;
+  xla::PrimitiveType squashed_type;
   if (options.squash_64bit_types) {
     squashed_type = Squash64BitType(type);
     if (squashed_type != type) {
@@ -529,8 +534,8 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
     byte_strides[i] = array.strides(i);
   }
   const void* data = array.data();
-  std::shared_ptr<PythonRefManager::ManagedPyObjects> py_buffer_ref =
-      GlobalPyRefManager()->ManageReference(std::move(array));
+  std::shared_ptr<xla::PythonRefManager::ManagedPyObjects> py_buffer_ref =
+      xla::GlobalPyRefManager()->ManageReference(std::move(array));
   TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(squashed_type));
   return [data, ifrt_dtype, dims = std::move(dims),
           byte_strides = std::move(byte_strides),
@@ -564,7 +569,7 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
 
   // We only allow single device case for PyArray in device put.
   if (py_array.num_shards() != 1) {
-    return InvalidArgument(
+    return xla::InvalidArgument(
         "device_put expects an array with exactly one shard, got an array with "
         "with %d shards.",
         py_array.num_shards());
@@ -572,7 +577,7 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
 
   ifrt::Array* ifrt_array = py_array.ifrt_array();
   if (ifrt_array == nullptr) {
-    return InvalidArgument("Array has been deleted.");
+    return xla::InvalidArgument("Array has been deleted.");
   }
 
   // Fallback to python for non-matching clients or pmap sharding.
@@ -640,7 +645,7 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     std::unique_ptr<PyObjectDeviceHandlerMap> p =
         std::make_unique<PyObjectDeviceHandlerMap>();
 
-    const NumpyScalarTypes& dtypes = GetNumpyScalarTypes();
+    const xla::NumpyScalarTypes& dtypes = xla::GetNumpyScalarTypes();
     // Python scalar types.
     static_assert(sizeof(bool) == 1, "Conversion code assumes bool is 1 byte");
     (*p)[reinterpret_cast<PyObject*>(&PyBool_Type)] =
@@ -649,7 +654,7 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     (*p)[reinterpret_cast<PyObject*>(&PyFloat_Type)] =
         HandlePythonScalar<double, float>;
     (*p)[reinterpret_cast<PyObject*>(&PyComplex_Type)] =
-        HandlePythonScalar<complex128, complex64>;
+        HandlePythonScalar<xla::complex128, xla::complex64>;
 
     (*p)[reinterpret_cast<PyObject*>(&PyArray_Type)] = HandleNumpyArray;
 
@@ -681,12 +686,13 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
         HandleNumpyScalar<tsl::float8_e5m2fnuz>;
     (*p)[dtypes.np_float8_e8m0fnu.ptr()] =
         HandleNumpyScalar<tsl::float8_e8m0fnu>;
-    (*p)[dtypes.np_bfloat16.ptr()] = HandleNumpyScalar<bfloat16>;
-    (*p)[dtypes.np_float16.ptr()] = HandleNumpyScalar<half>;
+    (*p)[dtypes.np_bfloat16.ptr()] = HandleNumpyScalar<xla::bfloat16>;
+    (*p)[dtypes.np_float16.ptr()] = HandleNumpyScalar<xla::half>;
     (*p)[dtypes.np_float32.ptr()] = HandleNumpyScalar<float>;
     (*p)[dtypes.np_float64.ptr()] = HandleNumpyScalar<double, float>;
-    (*p)[dtypes.np_complex64.ptr()] = HandleNumpyScalar<complex64>;
-    (*p)[dtypes.np_complex128.ptr()] = HandleNumpyScalar<complex128, complex64>;
+    (*p)[dtypes.np_complex64.ptr()] = HandleNumpyScalar<xla::complex64>;
+    (*p)[dtypes.np_complex128.ptr()] =
+        HandleNumpyScalar<xla::complex128, xla::complex64>;
     static_assert(sizeof(long long) == sizeof(int64_t),  // NOLINT
                   "long long must be the same size as int64_t");
     (*p)[dtypes.np_longlong.ptr()] = HandleNumpyScalar<int64_t, int32_t>;
@@ -711,7 +717,7 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
         return res->second(arg, client, to_device, to_memory_kind, options);
       }
     }
-    return InvalidArgument(
+    return xla::InvalidArgument(
         "%s", absl::StrCat(
                   "Not supported: The C++ jax jit execution path, only accepts "
                   "DeviceArray, Numpy arrays scalars of supported types "
@@ -724,7 +730,7 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
 }  // namespace
 
 bool IsFloat0(xla::nb_numpy_ndarray arg) {
-  const nb::object& float0_dtype = SafeStaticInit<nb::object>([] {
+  const nb::object& float0_dtype = xla::SafeStaticInit<nb::object>([] {
     nb::module_ dtypes_module = nb::module_::import_("jax.dtypes");
     nb::object float0_dtype = dtypes_module.attr("float0");
     return std::make_unique<nb::object>(float0_dtype);
@@ -748,26 +754,27 @@ using ToPyArgSignatureHandler =
 absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
                                                      bool jax_enable_x64) {
   const absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>& handlers =
-      SafeStaticInit<
+      xla::SafeStaticInit<
           absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>>([] {
         auto p = std::make_unique<
             absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>>();
 
-        const NumpyScalarTypes& dtypes = GetNumpyScalarTypes();
+        const xla::NumpyScalarTypes& dtypes = xla::GetNumpyScalarTypes();
 
         // The 4 Python native types.
         ToPyArgSignatureHandler bool_handler =
             [](nb::handle, bool) -> absl::StatusOr<PyArgSignature> {
-          return PyArgSignature(PrimitiveType::PRED, {}, true);
+          return PyArgSignature(xla::PrimitiveType::PRED, {}, true);
         };
         ToPyArgSignatureHandler int_handler =
             [](nb::handle h,
                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
-          // TODO(phawkins): we should consider checking for integer overflow.
+          // TODO(phawkins): we should consider checking for integer
+          // overflow.
           if (jax_enable_x64) {
-            return PyArgSignature(PrimitiveType::S64, {}, true);
+            return PyArgSignature(xla::PrimitiveType::S64, {}, true);
           } else {
-            return PyArgSignature(PrimitiveType::S32, {}, true);
+            return PyArgSignature(xla::PrimitiveType::S32, {}, true);
           }
         };
         ToPyArgSignatureHandler float_handler =
@@ -776,9 +783,9 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
           // Only Python native types has a True weak_type.
           bool weak_type = !nb::isinstance(h, dtypes.np_float64);
           if (jax_enable_x64) {
-            return PyArgSignature(PrimitiveType::F64, {}, weak_type);
+            return PyArgSignature(xla::PrimitiveType::F64, {}, weak_type);
           } else {
-            return PyArgSignature(PrimitiveType::F32, {}, weak_type);
+            return PyArgSignature(xla::PrimitiveType::F32, {}, weak_type);
           }
         };
         ToPyArgSignatureHandler complex_handler =
@@ -789,9 +796,9 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
           // isinstance(np.complex64(3), complex) returns False
           bool weak_type = !nb::isinstance(h, dtypes.np_complex128);
           if (jax_enable_x64) {
-            return PyArgSignature(PrimitiveType::C128, {}, weak_type);
+            return PyArgSignature(xla::PrimitiveType::C128, {}, weak_type);
           } else {
-            return PyArgSignature(PrimitiveType::C64, {}, weak_type);
+            return PyArgSignature(xla::PrimitiveType::C64, {}, weak_type);
           }
         };
 
@@ -805,14 +812,14 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           xla::nb_numpy_ndarray numpy_array =
               nb::cast<xla::nb_numpy_ndarray>(h);
-          TF_ASSIGN_OR_RETURN(PrimitiveType dtype,
+          TF_ASSIGN_OR_RETURN(xla::PrimitiveType dtype,
                               DtypeToPrimitiveType(numpy_array.dtype()));
           if (!jax_enable_x64) {
             dtype = Squash64BitType(dtype);
           }
           // We use reinterpret_cast<> to defend against environments where
-          // ssize_t may not be precisely the same type as int64_t, even if it
-          // is the same size (long vs long long).
+          // ssize_t may not be precisely the same type as int64_t, even if
+          // it is the same size (long vs long long).
           static_assert(sizeof(int64_t) == sizeof(ssize_t),
                         "Code assumes ssize_t is the same as int64_t");
           return PyArgSignature(
@@ -828,34 +835,38 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
             [](nb::handle h,
                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           if (jax_enable_x64) {
-            return PyArgSignature(PrimitiveType::U64, {}, /*weak_type=*/false);
+            return PyArgSignature(xla::PrimitiveType::U64, {},
+                                  /*weak_type=*/false);
           } else {
-            return PyArgSignature(PrimitiveType::U32, {}, /*weak_type=*/false);
+            return PyArgSignature(xla::PrimitiveType::U32, {},
+                                  /*weak_type=*/false);
           }
         };
         ToPyArgSignatureHandler np_int_handler =
             [](nb::handle h,
                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           if (jax_enable_x64) {
-            return PyArgSignature(PrimitiveType::S64, {}, /*weak_type=*/false);
+            return PyArgSignature(xla::PrimitiveType::S64, {},
+                                  /*weak_type=*/false);
           } else {
-            return PyArgSignature(PrimitiveType::S32, {}, /*weak_type=*/false);
+            return PyArgSignature(xla::PrimitiveType::S32, {},
+                                  /*weak_type=*/false);
           }
         };
         ToPyArgSignatureHandler numpy_array_handler =
             [](nb::handle h,
                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
-          // This block deals with all numpy scalar types, except for int64_dt,
-          // float64_dt and complex128_dt which are taken care of in previous if
-          // blocks.
+          // This block deals with all numpy scalar types, except for
+          // int64_dt, float64_dt and complex128_dt which are taken care of
+          // in previous if blocks.
           TF_ASSIGN_OR_RETURN(auto dtype,
-                              DtypeToPrimitiveType(h.attr("dtype")));
+                              xla::DtypeToPrimitiveType(h.attr("dtype")));
           return PyArgSignature(dtype, {}, /*weak_type=*/false);
         };
 
-        // This block deals with all numpy scalar types, except for int64_dt,
-        // float64_dt and complex128_dt which are taken care of in previous if
-        // blocks.
+        // This block deals with all numpy scalar types, except for
+        // int64_dt, float64_dt and complex128_dt which are taken care of in
+        // previous if blocks.
         (*p)[dtypes.np_bool.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_int4.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_int8.ptr()] = numpy_array_handler;
@@ -908,7 +919,7 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         return res->second(arg, jax_enable_x64);
       }
     }
-    return InvalidArgument(
+    return xla::InvalidArgument(
         "%s",
         absl::StrCat("Not supported: The C++ ToPyArgSignature only accepts "
                      "Buffer/DeviceArray, Numpy "
@@ -927,8 +938,9 @@ absl::StatusOr<DevicePutResult> DevicePutWithDevice(
   ++GetDevicePutInfo().device_put_with_device;
 
   if (!ifrt_device->IsAddressable()) {
-    return InvalidArgument("Cannot copy array to non-addressable device: %s",
-                           ifrt_device->DebugString());
+    return xla::InvalidArgument(
+        "Cannot copy array to non-addressable device: %s",
+        ifrt_device->DebugString());
   }
 
   TF_ASSIGN_OR_RETURN(ShardFn shard_fn,
@@ -948,7 +960,7 @@ absl::StatusOr<DevicePutResult> DevicePutWithDevice(
 
 absl::StatusOr<DevicePutResult> DevicePutWithSharding(
     absl::Span<const nanobind::handle> addressable_shards,
-    ifrt::Client* ifrt_client, const nb_dtype& dtype,
+    ifrt::Client* ifrt_client, const xla::nb_dtype& dtype,
     absl::Span<const int64_t> shape, nanobind::handle sharding,
     const DevicePutOptions& options) {
   tsl::profiler::TraceMe traceme("DevicePutWithSharding");
@@ -970,20 +982,20 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
     if (addressable_shards.size() > ifrt_addressable_devices.size()) {
       for (ifrt::Device* device : ifrt_device_list->devices()) {
         if (!device->IsAddressable()) {
-          return InvalidArgument(
+          return xla::InvalidArgument(
               "Cannot copy array to non-addressable device: %s",
               device->DebugString());
         }
       }
     }
     // Otherwise, generate a generic error message.
-    return InvalidArgument(
+    return xla::InvalidArgument(
         "Number of addressable shard data does not match the number "
         "of addressable devices in the sharding: %d vs. %d",
         addressable_shards.size(), ifrt_addressable_devices.size());
   }
   if (is_pmap_sharding && addressable_shards.empty()) {
-    return InvalidArgument(
+    return xla::InvalidArgument(
         "Pmap sharding requires at least one addressable shard.");
   }
 
@@ -1093,4 +1105,4 @@ std::unordered_map<std::string, int64_t> DevicePutInfo::GetInfo() {
   });
 }
 
-}  // namespace xla
+}  // namespace jax

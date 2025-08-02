@@ -195,9 +195,9 @@ NB_MODULE(_jax, m) {
   // Must be before PyClient.compile.
   xla::BuildXlaCompilerSubmodule(m);
 
-  xla::PyDevice::RegisterPythonType(m);
-  xla::PyMemorySpace::RegisterPythonType(m);
-  xla::PyClient::RegisterPythonTypes(m);
+  PyDevice::RegisterPythonType(m);
+  PyMemorySpace::RegisterPythonType(m);
+  PyClient::RegisterPythonTypes(m);
 
   nb::enum_<xla::ifrt::ArrayCopySemantics>(m, "ArrayCopySemantics",
                                            nb::is_arithmetic())
@@ -309,7 +309,7 @@ NB_MODULE(_jax, m) {
          std::optional<int> get_local_topology_timeout_minutes,
          std::optional<int> get_global_topology_timeout_minutes,
          std::optional<xla::ifrt::TransferServerInterfaceFactory>
-             transfer_server_factory) -> nb_class_ptr<xla::PyClient> {
+             transfer_server_factory) -> nb_class_ptr<PyClient> {
         std::unique_ptr<xla::ifrt::PjRtClient> ifrt_client;
         {
           nb::gil_scoped_release gil_release;
@@ -346,7 +346,7 @@ NB_MODULE(_jax, m) {
           ifrt_client = xla::ValueOrThrow(
               xla::ifrt::PjRtClient::Create(std::move(ifrt_options)));
         }
-        return xla::PyClient::Make(std::move(ifrt_client));
+        return PyClient::Make(std::move(ifrt_client));
       },
       nb::arg("asynchronous") = true, nb::arg("distributed_client") = nullptr,
       nb::arg("node_id") = 0, nb::arg("num_nodes") = 1,
@@ -393,7 +393,7 @@ NB_MODULE(_jax, m) {
          const absl::flat_hash_map<std::string, xla::PjRtValueType>& options,
          std::shared_ptr<xla::DistributedRuntimeClient> distributed_client,
          std::optional<xla::ifrt::TransferServerInterfaceFactory>
-             transfer_server_factory) -> nb_class_ptr<xla::PyClient> {
+             transfer_server_factory) -> nb_class_ptr<PyClient> {
         std::unique_ptr<xla::ifrt::PjRtClient> ifrt_client;
         {
           nb::gil_scoped_release gil_release;
@@ -418,7 +418,7 @@ NB_MODULE(_jax, m) {
           ifrt_client = xla::ValueOrThrow(
               xla::ifrt::PjRtClient::Create(std::move(ifrt_options)));
         }
-        return xla::PyClient::Make(std::move(ifrt_client));
+        return PyClient::Make(std::move(ifrt_client));
       },
       nb::arg("platform_name"),
       nb::arg("options") =
@@ -447,7 +447,7 @@ NB_MODULE(_jax, m) {
                                    topology_name, options)));
         });
   m.def("get_topology_for_devices",
-        [](const std::vector<nb_class_ptr<xla::PyDevice>>& py_devices) {
+        [](const std::vector<nb_class_ptr<PyDevice>>& py_devices) {
           if (py_devices.empty()) {
             throw nb::value_error(
                 "get_topology_for_devices requires >= 1 devices.");
@@ -469,7 +469,7 @@ NB_MODULE(_jax, m) {
               client->ifrt_client()->GetTopologyForDevices(device_list));
         });
 
-  TF_CHECK_OK(xla::PyArray::RegisterTypes(m));
+  TF_CHECK_OK(PyArray::RegisterTypes(m));
   PyDeviceList::Register(m);
   RegisterSharding(m);
 
@@ -503,77 +503,72 @@ NB_MODULE(_jax, m) {
               &xla::CompiledMemoryStats::peak_memory_in_bytes)
       .def("__str__", &xla::CompiledMemoryStats::DebugString);
 
-  nb::class_<xla::PyExecuteResults>(m, "ExecuteResults")
-      .def("__len__",
-           [](xla::PyExecuteResults& results) { return results.Size(); })
+  nb::class_<PyExecuteResults>(m, "ExecuteResults")
+      .def("__len__", [](PyExecuteResults& results) { return results.Size(); })
       .def("disassemble_into_single_device_arrays",
-           &xla::PyExecuteResults::DisassembleIntoSingleDeviceArrays)
+           &PyExecuteResults::DisassembleIntoSingleDeviceArrays)
       .def("disassemble_prefix_into_single_device_arrays",
-           &xla::PyExecuteResults::DisassemblePrefixIntoSingleDeviceArrays)
-      .def("consume_with_handlers", &xla::PyExecuteResults::ConsumeWithHandlers)
-      .def("consume_token", &xla::PyExecuteResults::ConsumeToken);
+           &PyExecuteResults::DisassemblePrefixIntoSingleDeviceArrays)
+      .def("consume_with_handlers", &PyExecuteResults::ConsumeWithHandlers)
+      .def("consume_token", &PyExecuteResults::ConsumeToken);
 
-  m.def("get_execution_stream_id",
-        []() { return xla::GetExecutionStreamId(); });
+  m.def("get_execution_stream_id", []() { return GetExecutionStreamId(); });
   m.def("set_execution_stream_id",
-        [](int64_t id) { xla::GetExecutionStreamId() = id; });
+        [](int64_t id) { GetExecutionStreamId() = id; });
 
-  nb::class_<xla::PyLoadedExecutable>(m, "LoadedExecutable")
-      .def_prop_ro("client", &xla::PyLoadedExecutable::client)
-      .def("local_devices", &xla::PyLoadedExecutable::AddressableDevices)
+  nb::class_<PyLoadedExecutable>(m, "LoadedExecutable")
+      .def_prop_ro("client", &PyLoadedExecutable::client)
+      .def("local_devices", &PyLoadedExecutable::AddressableDevices)
       .def("size_of_generated_code_in_bytes",
-           &xla::PyLoadedExecutable::SizeOfGeneratedCodeInBytes)
-      .def("get_compiled_memory_stats",
-           xla::ValueOrThrowWrapper(
-               &xla::PyLoadedExecutable::GetCompiledMemoryStats))
+           &PyLoadedExecutable::SizeOfGeneratedCodeInBytes)
+      .def(
+          "get_compiled_memory_stats",
+          xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetCompiledMemoryStats))
       .def("execute_sharded",
-           xla::ValueOrThrowWrapper(&xla::PyLoadedExecutable::ExecuteSharded),
+           xla::ValueOrThrowWrapper(&PyLoadedExecutable::ExecuteSharded),
            nb::arg("arguments"), nb::arg("with_tokens") = false)
       .def("hlo_modules",
-           xla::ValueOrThrowWrapper(&xla::PyLoadedExecutable::HloModules))
+           xla::ValueOrThrowWrapper(&PyLoadedExecutable::HloModules))
       .def("get_output_memory_kinds",
-           xla::ValueOrThrowWrapper(
-               &xla::PyLoadedExecutable::GetOutputMemoryKinds))
-      .def("get_output_shardings", &xla::PyLoadedExecutable::GetOutputShardings)
+           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetOutputMemoryKinds))
+      .def("get_output_shardings", &PyLoadedExecutable::GetOutputShardings)
       .def("get_parameter_layouts",
-           xla::ValueOrThrowWrapper(
-               &xla::PyLoadedExecutable::GetParameterLayouts))
+           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetParameterLayouts))
       .def("get_output_layouts",
-           xla::ValueOrThrowWrapper(&xla::PyLoadedExecutable::GetOutputLayouts))
+           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetOutputLayouts))
       .def("get_parameter_shardings",
-           &xla::PyLoadedExecutable::GetParameterShardings)
-      .def("keep_alive", &xla::PyLoadedExecutable::KeepAlive)
+           &PyLoadedExecutable::GetParameterShardings)
+      .def("keep_alive", &PyLoadedExecutable::KeepAlive)
       .def("cost_analysis",
-           [](const xla::PyLoadedExecutable& self) {
+           [](const PyLoadedExecutable& self) {
              auto map = xla::ValueOrThrow(self.GetCostAnalysis());
              return xla::ifrt::ToPjRtAttributeMap(std::move(map));
            })
-      .def_prop_ro("traceback", &xla::PyLoadedExecutable::traceback)
-      .def_prop_ro("fingerprint",
-                   [](xla::PyLoadedExecutable* exec) -> nb::object {
-                     if (exec->fingerprint().has_value()) {
-                       return nb::bytes(exec->fingerprint()->data(),
-                                        exec->fingerprint()->size());
-                     } else {
-                       return nb::none();
-                     }
-                   });
-  nb::class_<xla::PyToken> token(m, "Token");
+      .def_prop_ro("traceback", &PyLoadedExecutable::traceback)
+      .def_prop_ro("fingerprint", [](PyLoadedExecutable* exec) -> nb::object {
+        if (exec->fingerprint().has_value()) {
+          return nb::bytes(exec->fingerprint()->data(),
+                           exec->fingerprint()->size());
+        } else {
+          return nb::none();
+        }
+      });
+  nb::class_<PyToken> token(m, "Token");
   token.def("block_until_ready",
-            [](xla::PyToken& self) { xla::ThrowIfError(self.Await()); });
+            [](PyToken& self) { xla::ThrowIfError(self.Await()); });
 
-  nb::class_<xla::PyShardedToken> sharded_token(m, "ShardedToken");
-  sharded_token.def("block_until_ready", [](xla::PyShardedToken& self) {
+  nb::class_<PyShardedToken> sharded_token(m, "ShardedToken");
+  sharded_token.def("block_until_ready", [](PyShardedToken& self) {
     xla::ThrowIfError(self.Await());
   });
-  sharded_token.def("get_token", &xla::PyShardedToken::GetPyToken);
+  sharded_token.def("get_token", &PyShardedToken::GetPyToken);
 
   m.def("buffer_to_dlpack_managed_tensor",
         xla::ValueOrThrowWrapper(xla::BufferToDLPackManagedTensor),
         nb::arg("buffer"), nb::arg("stream").none() = nb::none());
   m.def(
       "dlpack_managed_tensor_to_buffer",
-      [](const nb::capsule& tensor, nb_class_ptr<xla::PyDevice> device,
+      [](const nb::capsule& tensor, nb_class_ptr<PyDevice> device,
          std::optional<std::intptr_t> stream) {
         return xla::ValueOrThrow(xla::DLPackManagedTensorToBuffer(
             tensor, device->device(), device->client(), stream));
@@ -583,20 +578,20 @@ NB_MODULE(_jax, m) {
   m.def(
       "dlpack_managed_tensor_to_buffer",
       [](const nb::capsule& tensor,
-         std::optional<nb_class_ptr<xla::PyClient>> cpu_client,
-         std::optional<nb_class_ptr<xla::PyClient>> gpu_client) {
+         std::optional<nb_class_ptr<PyClient>> cpu_client,
+         std::optional<nb_class_ptr<PyClient>> gpu_client) {
         return xla::ValueOrThrow(xla::DLPackManagedTensorToBuffer(
             tensor, std::move(cpu_client), std::move(gpu_client)));
       },
       nb::arg("dlpack"), nb::arg("cpu_backend").none() = nb::none(),
       nb::arg("gpu_backend").none() = nb::none());
   m.def("cuda_array_interface_to_buffer",
-        xla::ValueOrThrowWrapper(xla::CudaArrayInterfaceToBuffer),
-        nb::arg("cai"), nb::arg("gpu_backend").none() = nb::none(),
+        xla::ValueOrThrowWrapper(CudaArrayInterfaceToBuffer), nb::arg("cai"),
+        nb::arg("gpu_backend").none() = nb::none(),
         nb::arg("device_id").none() = nb::none());
 
   BuildConfigSubmodule(m);
-  xla::BuildIfrtProgramsSubmodule(m);
+  BuildIfrtProgramsSubmodule(m);
   BuildPytreeSubmodule(m);
   BuildGuardSubmodule(m);
   BuildJaxjitSubmodule(m);
@@ -867,14 +862,14 @@ NB_MODULE(_jax, m) {
         "Decodes an uncompressed pprof Profile protocol buffer into a JSON "
         "representation");
 
-  xla::RegisterCompileOnlyClient(m);
+  RegisterCompileOnlyClient(m);
   nb::class_<xla::ifrt::Topology>(m, "DeviceTopology")
       .def("_make_compile_only_devices",
            [](std::shared_ptr<xla::ifrt::Topology> topology) {
              if (!llvm::isa<xla::ifrt::PjRtTopology>(*topology)) {
                throw xla::XlaRuntimeError("Only PjRtTopologies are supported.");
              }
-             return xla::MakeCompileOnlyClient(
+             return MakeCompileOnlyClient(
                         std::dynamic_pointer_cast<xla::ifrt::PjRtTopology>(
                             topology))
                  ->Devices();
@@ -908,25 +903,25 @@ NB_MODULE(_jax, m) {
   nb::class_<xla::ifrt::TransferServerInterfaceFactory>(
       m, "TransferServerInterfaceFactory");
 
-  nb::class_<xla::PyExecutable>(m, "Executable")
+  nb::class_<PyExecutable>(m, "Executable")
       .def("hlo_modules",
-           xla::ValueOrThrowWrapper(&xla::PyExecutable::GetHloModules))
+           xla::ValueOrThrowWrapper(&PyExecutable::GetHloModules))
       .def("get_output_memory_kinds",
-           xla::ValueOrThrowWrapper(&xla::PyExecutable::GetOutputMemoryKinds))
-      .def("get_output_shardings", &xla::PyExecutable::GetOutputShardings)
+           xla::ValueOrThrowWrapper(&PyExecutable::GetOutputMemoryKinds))
+      .def("get_output_shardings", &PyExecutable::GetOutputShardings)
       .def("get_parameter_layouts",
-           xla::ValueOrThrowWrapper(&xla::PyExecutable::GetParameterLayouts))
+           xla::ValueOrThrowWrapper(&PyExecutable::GetParameterLayouts))
       .def("get_output_layouts",
-           xla::ValueOrThrowWrapper(&xla::PyExecutable::GetOutputLayouts))
-      .def("get_parameter_shardings", &xla::PyExecutable::GetParameterShardings)
+           xla::ValueOrThrowWrapper(&PyExecutable::GetOutputLayouts))
+      .def("get_parameter_shardings", &PyExecutable::GetParameterShardings)
       .def("get_compiled_memory_stats",
-           xla::ValueOrThrowWrapper(&xla::PyExecutable::GetCompiledMemoryStats))
+           xla::ValueOrThrowWrapper(&PyExecutable::GetCompiledMemoryStats))
       .def("serialize",
-           [](const xla::PyExecutable& exec) -> nb::bytes {
+           [](const PyExecutable& exec) -> nb::bytes {
              std::string serialized = xla::ValueOrThrow(exec.Serialize());
              return nb::bytes(serialized.data(), serialized.size());
            })
-      .def("cost_analysis", [](const xla::PyExecutable& exec) {
+      .def("cost_analysis", [](const PyExecutable& exec) {
         auto attrs = xla::ValueOrThrow(exec.GetCostAnalysis());
         return xla::ifrt::ToPjRtAttributeMap(std::move(attrs));
       });
@@ -939,11 +934,11 @@ NB_MODULE(_jax, m) {
   m.def(
       "batched_device_put",
       [](nb::object aval, nb::object sharding, std::vector<nb::object> xs,
-         std::vector<const xla::PyDevice*> dst_devices, bool committed,
+         std::vector<const PyDevice*> dst_devices, bool committed,
          bool force_copy,
          xla::PjRtClient::HostBufferSemantics host_buffer_semantics)
           -> nb::object {
-        return xla::ValueOrThrow(xla::PyArray::BatchedDevicePut(
+        return xla::ValueOrThrow(PyArray::BatchedDevicePut(
             aval, sharding, std::move(xs), std::move(dst_devices), committed,
             force_copy, host_buffer_semantics, GetEnableX64()));
       },
@@ -953,15 +948,15 @@ NB_MODULE(_jax, m) {
           xla::PjRtClient::HostBufferSemantics::kImmutableZeroCopy);
   m.def(
       "reorder_shards",
-      [](xla::PyArray x, nb::object dst_sharding,
+      [](PyArray x, nb::object dst_sharding,
          xla::ifrt::ArrayCopySemantics array_copy_semantics) {
-        return xla::ValueOrThrow(xla::PyArray::ReorderShards(
+        return xla::ValueOrThrow(PyArray::ReorderShards(
             std::move(x), std::move(dst_sharding), array_copy_semantics));
       },
       nb::arg("x"), nb::arg("dst_sharding"), nb::arg("array_copy_semantics"));
 
   m.def("batched_block_until_ready", [](std::vector<nb::object> xs) {
-    xla::ThrowIfError(xla::PyArray::BatchedBlockUntilReady(std::move(xs)));
+    xla::ThrowIfError(PyArray::BatchedBlockUntilReady(std::move(xs)));
   });
 
   m.def("check_and_canonicalize_memory_kind", &CheckAndCanonicalizeMemoryKind,
@@ -976,7 +971,7 @@ NB_MODULE(_jax, m) {
         nb::arg("input_size_override") = -1);
 
   m.def("get_internal_device_put_info",
-        []() { return xla::DevicePutInfo::GetInfo(); });
+        []() { return DevicePutInfo::GetInfo(); });
 
   PartitionSpec::Register(m);
 }  // NOLINT(readability/fn_size)

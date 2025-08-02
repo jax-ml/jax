@@ -857,7 +857,8 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
         });
   m.def(
       "hlo_module_cost_analysis",
-      xla::ValueOrThrowWrapper([](PyClient* client, const HloModule& module)
+      xla::ValueOrThrowWrapper([](jax::PyClient* client,
+                                  const HloModule& module)
                                    -> absl::StatusOr<nb::dict> {
         TF_ASSIGN_OR_RETURN(auto analysis,
                             client->pjrt_client()->GetHloCostAnalysis());
