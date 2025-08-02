@@ -46,7 +46,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/shape.h"
 
-namespace xla {
+namespace jax {
 
 class PyClient;
 class PyLoadedExecutable;
@@ -56,45 +56,45 @@ class PyDevice;
 class PyMemorySpace;
 struct PyArray_Storage;
 
-// Python wrapper around PjRtClient.
+// Python wrapper around xla::PjRtClient.
 // We use a wrapper class to add Python-specific functionality.
 class PyClient {
  public:
-  static jax::nb_class_ptr<PyClient> Make(
-      std::shared_ptr<ifrt::Client> ifrt_client);
+  static nb_class_ptr<PyClient> Make(
+      std::shared_ptr<xla::ifrt::Client> ifrt_client);
 
   // Do not call the constructor directly. Use `PyClient::Make` instead.
-  explicit PyClient(std::shared_ptr<ifrt::Client> ifrt_client);
+  explicit PyClient(std::shared_ptr<xla::ifrt::Client> ifrt_client);
   virtual ~PyClient();
 
-  ifrt::Client* ifrt_client() const { return ifrt_client_.get(); }
-  const std::shared_ptr<ifrt::Client>& shared_ptr_ifrt_client() const {
+  xla::ifrt::Client* ifrt_client() const { return ifrt_client_.get(); }
+  const std::shared_ptr<xla::ifrt::Client>& shared_ptr_ifrt_client() const {
     return ifrt_client_;
   }
 
-  // Short-term escape hatch to get PjRtClient from PyClient.
+  // Short-term escape hatch to get xla::PjRtClient from PyClient.
   // TODO(hyeontaek): Migrate all users of this method to be agnostic of PjRt.
   xla::PjRtClient* pjrt_client() const {
-    auto* pjrt_client =
-        llvm::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(ifrt_client_.get());
+    auto* pjrt_client = llvm::dyn_cast_or_null<xla::ifrt::PjRtCompatibleClient>(
+        ifrt_client_.get());
     if (pjrt_client == nullptr) {
-      throw XlaRuntimeError(
+      throw xla::XlaRuntimeError(
           "This operation is implemented for a PjRt-compatible backend only.");
     }
     return pjrt_client->pjrt_client();
   }
-  std::shared_ptr<PjRtClient> shared_ptr_pjrt_client() {
-    auto* pjrt_client =
-        llvm::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(ifrt_client_.get());
+  std::shared_ptr<xla::PjRtClient> shared_ptr_pjrt_client() {
+    auto* pjrt_client = llvm::dyn_cast_or_null<xla::ifrt::PjRtCompatibleClient>(
+        ifrt_client_.get());
     if (pjrt_client == nullptr) {
-      throw XlaRuntimeError(
+      throw xla::XlaRuntimeError(
           "This operation is implemented for a PjRt-compatible backend only.");
     }
     return pjrt_client->shared_ptr_pjrt_client();
   }
 
   // Legacy aliases.
-  std::shared_ptr<PjRtClient> shared_pjrt_client() {
+  std::shared_ptr<xla::PjRtClient> shared_pjrt_client() {
     return shared_ptr_pjrt_client();
   }
 
@@ -133,26 +133,26 @@ class PyClient {
   int device_count() const { return ifrt_client_->device_count(); }
   int process_index() const { return ifrt_client_->process_index(); }
 
-  std::vector<jax::nb_class_ptr<PyDevice>> Devices();
-  std::vector<jax::nb_class_ptr<PyDevice>> LocalDevices();
+  std::vector<nb_class_ptr<PyDevice>> Devices();
+  std::vector<nb_class_ptr<PyDevice>> LocalDevices();
   // Returns all devices in the client. Private API; only use this method for
   // implementing backend._get_all_devices().
   // TODO(hyeontaek): Remove this method once we have a unified API for
   // enumerating devices with different criteria.
-  std::vector<jax::nb_class_ptr<PyDevice>> GetAllDevices();
-  absl::StatusOr<jax::nb_class_ptr<PyDevice>> DeviceFromLocalHardwareId(
+  std::vector<nb_class_ptr<PyDevice>> GetAllDevices();
+  absl::StatusOr<nb_class_ptr<PyDevice>> DeviceFromLocalHardwareId(
       int local_hardware_id);
 
-  // Returns the PyDevice associated with the given ifrt::Device.
-  jax::nb_class_ptr<PyDevice> GetPyDevice(ifrt::Device* device);
+  // Returns the PyDevice associated with the given xla::ifrt::Device.
+  nb_class_ptr<PyDevice> GetPyDevice(xla::ifrt::Device* device);
 
-  // Returns the PyMemorySpace associated with the given ifrt::Memory.
-  jax::nb_class_ptr<PyMemorySpace> GetPyMemorySpace(ifrt::Memory* memory_space);
+  // Returns the PyMemorySpace associated with the given xla::ifrt::Memory.
+  nb_class_ptr<PyMemorySpace> GetPyMemorySpace(xla::ifrt::Memory* memory_space);
 
   // Returns a vector of live PyArray objects. PyArray objects may share
   // PjRtBuffers, so there may be duplicates of the same underlying device
   // buffer.
-  std::vector<nanobind::object> LiveBuffersOnDevice(ifrt::Device* device);
+  std::vector<nanobind::object> LiveBuffersOnDevice(xla::ifrt::Device* device);
 
   nanobind::list LiveExecutables();
 
@@ -160,37 +160,37 @@ class PyClient {
   absl::Status Defragment();
 
   static absl::StatusOr<nanobind::object> BufferFromPyval(
-      jax::nb_class_ptr<PyClient> client, nanobind::handle argument,
-      ifrt::Device* device, bool force_copy,
-      ifrt::Client::HostBufferSemantics host_buffer_semantics);
+      nb_class_ptr<PyClient> client, nanobind::handle argument,
+      xla::ifrt::Device* device, bool force_copy,
+      xla::ifrt::Client::HostBufferSemantics host_buffer_semantics);
 
-  static absl::StatusOr<jax::nb_class_ptr<PyLoadedExecutable>>
-  CompileAndLoadIfrtProgram(jax::nb_class_ptr<PyClient> client,
-                            std::unique_ptr<ifrt::Program> ifrt_program,
-                            std::unique_ptr<ifrt::CompileOptions> ifrt_options);
+  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
+  CompileAndLoadIfrtProgram(
+      nb_class_ptr<PyClient> client,
+      std::unique_ptr<xla::ifrt::Program> ifrt_program,
+      std::unique_ptr<xla::ifrt::CompileOptions> ifrt_options);
 
-  static absl::StatusOr<jax::nb_class_ptr<PyExecutable>> Compile(
-      jax::nb_class_ptr<PyClient> client, std::string mlir_module,
-      ifrt::DeviceListRef executable_devices, CompileOptions options);
+  static absl::StatusOr<nb_class_ptr<PyExecutable>> Compile(
+      nb_class_ptr<PyClient> client, std::string mlir_module,
+      xla::ifrt::DeviceListRef executable_devices, xla::CompileOptions options);
 
-  static absl::StatusOr<jax::nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
-      jax::nb_class_ptr<PyClient> client, std::string mlir_module,
-      ifrt::DeviceListRef executable_devices, CompileOptions options,
+  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
+      nb_class_ptr<PyClient> client, std::string mlir_module,
+      xla::ifrt::DeviceListRef executable_devices, xla::CompileOptions options,
       std::vector<nanobind::capsule> host_callbacks);
 
-  static absl::StatusOr<jax::nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
-      jax::nb_class_ptr<PyClient> client, std::string mlir_module,
-      ifrt::DeviceListRef executable_devices, CompileOptions options,
+  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
+      nb_class_ptr<PyClient> client, std::string mlir_module,
+      xla::ifrt::DeviceListRef executable_devices, xla::CompileOptions options,
       std::vector<nanobind::callable> host_callbacks);
 
   absl::StatusOr<nanobind::bytes> SerializeExecutable(
       const PyLoadedExecutable& executable) const;
-  static absl::StatusOr<jax::nb_class_ptr<PyLoadedExecutable>>
-  DeserializeExecutable(jax::nb_class_ptr<PyClient> client,
-                        nanobind::bytes serialized,
-                        ifrt::DeviceListRef executable_devices,
-                        std::optional<CompileOptions> options,
-                        std::vector<nanobind::capsule> host_callbacks);
+  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> DeserializeExecutable(
+      nb_class_ptr<PyClient> client, nanobind::bytes serialized,
+      xla::ifrt::DeviceListRef executable_devices,
+      std::optional<xla::CompileOptions> options,
+      std::vector<nanobind::capsule> host_callbacks);
 
   absl::StatusOr<nanobind::bytes> HeapProfile();
 
@@ -210,8 +210,8 @@ class PyClient {
   // types, and None for Token argument. The callable must return a tuple of
   // either arrays or None values.
   absl::StatusOr<nanobind::object> MakePythonCallbackUsingHostSendAndRecv(
-      nanobind::callable callable, absl::Span<Shape const> operand_shapes,
-      absl::Span<Shape const> result_shapes,
+      nanobind::callable callable, absl::Span<xla::Shape const> operand_shapes,
+      absl::Span<xla::Shape const> result_shapes,
       absl::Span<uint16_t const> send_channel_ids,
       absl::Span<uint16_t const> recv_channel_ids,
       nanobind::callable serializer);
@@ -221,7 +221,7 @@ class PyClient {
   static void RegisterPythonTypes(nanobind::module_& m);
 
  protected:
-  static void Initialize(jax::nb_class_ptr<PyClient> client);
+  static void Initialize(nb_class_ptr<PyClient> client);
 
  private:
   friend class PyLoadedExecutable;
@@ -232,7 +232,7 @@ class PyClient {
   static int tp_clear(PyObject* self);
   static PyType_Slot slots_[];
 
-  std::shared_ptr<ifrt::Client> ifrt_client_;
+  std::shared_ptr<xla::ifrt::Client> ifrt_client_;
   xla::ifrt::AttributeMap client_attributes_;
   // Pointers to intrusive doubly-linked lists of arrays and executables, used
   // to iterate over all known objects when heap profiling. The list structure
@@ -253,8 +253,8 @@ class PyClient {
   };
   std::array<ArraysShard, kNumArraysShards> arrays_;
 
-  absl::flat_hash_map<ifrt::Device*, jax::nb_class_ptr<PyDevice>> devices_;
-  absl::flat_hash_map<ifrt::Memory*, jax::nb_class_ptr<PyMemorySpace>>
+  absl::flat_hash_map<xla::ifrt::Device*, nb_class_ptr<PyDevice>> devices_;
+  absl::flat_hash_map<xla::ifrt::Memory*, nb_class_ptr<PyMemorySpace>>
       memory_spaces_;
 };
 
@@ -264,6 +264,6 @@ inline int64_t& GetExecutionStreamId() {
   return execution_stream_id;
 }
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_PY_CLIENT_H_

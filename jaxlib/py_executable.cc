@@ -62,7 +62,8 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/profiler/lib/traceme.h"
 
-namespace xla {
+namespace ifrt = xla::ifrt;
+
 namespace {
 
 uint32_t GetBaseLaunchId(std::optional<std::string> fingerprint,
@@ -85,6 +86,8 @@ uint32_t GetBaseLaunchId(std::optional<std::string> fingerprint,
 
 namespace nb = nanobind;
 
+namespace jax {
+
 absl::Status PyToken::Await() {
   CHECK(future_.IsValid());
   nb::gil_scoped_release gil_release;
@@ -102,10 +105,9 @@ absl::Status PyShardedToken::Await() {
 }
 
 PyLoadedExecutable::PyLoadedExecutable(
-    jax::nb_class_ptr<PyClient> client,
+    nb_class_ptr<PyClient> client,
     ifrt::LoadedExecutableRef ifrt_loaded_executable,
-    std::optional<jax::Traceback> traceback,
-    std::optional<std::string> fingerprint)
+    std::optional<Traceback> traceback, std::optional<std::string> fingerprint)
     : client_(std::move(client)),
       ifrt_loaded_executable_(std::move(ifrt_loaded_executable)),
       traceback_(std::move(traceback)),
@@ -139,9 +141,9 @@ PyLoadedExecutable::~PyLoadedExecutable() {
   }
 }
 
-std::vector<jax::nb_class_ptr<PyDevice>>
-PyLoadedExecutable::AddressableDevices() const {
-  std::vector<jax::nb_class_ptr<PyDevice>> devices;
+std::vector<nb_class_ptr<PyDevice>> PyLoadedExecutable::AddressableDevices()
+    const {
+  std::vector<nb_class_ptr<PyDevice>> devices;
   devices.reserve(ifrt_loaded_executable_->addressable_devices().size());
   for (ifrt::Device* device : ifrt_loaded_executable_->addressable_devices()) {
     devices.push_back(client_->GetPyDevice(device));
@@ -196,12 +198,12 @@ static ifrt::ArrayRef GetIfRtArray(const ExecuteShardedArg& arg) {
   return *ifrt_array;
 }
 
-void PopulateExecuteShardedResults(const jax::nb_class_ptr<PyClient>& client,
+void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
                                    std::vector<ifrt::ArrayRef> ifrt_arrays,
-                                   const PjRtFuture<>& result_status,
+                                   const xla::PjRtFuture<>& result_status,
                                    int num_computations,
                                    std::vector<std::vector<PyArray>>& outputs) {
-  auto traceback = jax::Traceback::Get();
+  auto traceback = Traceback::Get();
   DCHECK_GT(num_computations, 0);
   int num_output_buffers = ifrt_arrays.size();
   outputs.resize(num_output_buffers);
@@ -221,20 +223,19 @@ void PopulateExecuteShardedResults(const jax::nb_class_ptr<PyClient>& client,
 }
 
 absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
-    const ifrt::ExecuteOptions& options,
-    const jax::nb_class_ptr<PyClient>& client,
+    const ifrt::ExecuteOptions& options, const nb_class_ptr<PyClient>& client,
     ifrt::LoadedExecutable* ifrt_loaded_executable,
     absl::Span<const ExecuteShardedArg> args,
-    std::optional<std::vector<PjRtFuture<>>>& returned_futures) {
+    std::optional<std::vector<xla::PjRtFuture<>>>& returned_futures) {
   std::vector<ifrt::ArrayRef> output_arrays;
   std::unique_ptr<ifrt::Future<>> returned_future;
   int num_computations = ifrt_loaded_executable->addressable_devices().size();
-  PjRtFuture<> result_status;
+  xla::PjRtFuture<> result_status;
   {
     nb::gil_scoped_release gil_release;
     for (const auto& arg : args) {
       if (GetNumDevices(arg) != num_computations) {
-        return InvalidArgument(
+        return xla::InvalidArgument(
             "Expected args to execute_sharded_on_local_devices to have %d "
             "shards, got: [%s]",
             num_computations,
@@ -277,10 +278,10 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
 
 }  // namespace
 
-PyExecuteResults::PyExecuteResults(const jax::nb_class_ptr<PyClient>& client,
+PyExecuteResults::PyExecuteResults(const nb_class_ptr<PyClient>& client,
                                    std::vector<ifrt::ArrayRef> ifrt_arrays,
                                    int num_computations, PyShardedToken token,
-                                   PjRtFuture<> result_status)
+                                   xla::PjRtFuture<> result_status)
     : client_(client),
       ifrt_arrays_(std::move(ifrt_arrays)),
       num_computations_(num_computations),
@@ -312,7 +313,7 @@ PyExecuteResults::DisassembleIntoSingleDeviceArrays() {
   std::vector<std::vector<PyArray>> outputs;
   PopulateExecuteShardedResults(
       client_, Consume(),
-      result_status_.IsValid() ? result_status_ : PjRtFuture<>(),
+      result_status_.IsValid() ? result_status_ : xla::PjRtFuture<>(),
       num_computations_, outputs);
   return outputs;
 }
@@ -336,7 +337,7 @@ PyExecuteResults::DisassemblePrefixIntoSingleDeviceArrays(size_t n) {
   std::vector<std::vector<PyArray>> outputs;
   PopulateExecuteShardedResults(
       client_, std::move(ifrt_arrays),
-      result_status_.IsValid() ? result_status_ : PjRtFuture<>(),
+      result_status_.IsValid() ? result_status_ : xla::PjRtFuture<>(),
       num_computations_, outputs);
   return outputs;
 }
@@ -346,7 +347,7 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
         out_handlers) {
   std::vector<nb::object> outputs;
   auto ifrt_arrays = Consume();
-  auto traceback = jax::Traceback::Get();
+  auto traceback = Traceback::Get();
   int num_output_buffers = ifrt_arrays.size();
   outputs.reserve(num_output_buffers);
   if (out_handlers.size() != num_output_buffers) {
@@ -360,7 +361,7 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
     if (std::holds_alternative<const PyArrayResultHandler*>(handler)) {
       outputs.push_back(std::get<const PyArrayResultHandler*>(handler)->Call(
           client_, std::move(ifrt_arrays[buffer_id]),
-          result_status_.IsValid() ? result_status_ : PjRtFuture<>()));
+          result_status_.IsValid() ? result_status_ : xla::PjRtFuture<>()));
     } else {
       tsl::profiler::TraceMe traceme("ConsumeWithHandlers fallback.");
       auto disassembled_arrays =
@@ -374,7 +375,7 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
       for (auto& disassembled_array : *disassembled_arrays) {
         nb::object array = PyArray::MakeFromSingleDeviceArray(
             client_, traceback, std::move(disassembled_array), false, true,
-            result_status_.IsValid() ? result_status_ : PjRtFuture<>());
+            result_status_.IsValid() ? result_status_ : xla::PjRtFuture<>());
         PyList_SET_ITEM(bufs.ptr(), i, array.release().ptr());
         ++i;
       }
@@ -393,7 +394,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   if (options.execution_stream_id == 0) {
     options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
   }
-  std::optional<std::vector<PjRtFuture<>>> returned_futures;
+  std::optional<std::vector<xla::PjRtFuture<>>> returned_futures;
   if (with_tokens) {
     returned_futures.emplace();
   }
@@ -403,7 +404,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
                                               span_args, returned_futures);
 }
 
-absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>
+absl::StatusOr<std::vector<std::shared_ptr<xla::HloModule>>>
 PyLoadedExecutable::HloModules() const {
   nb::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetHloModules();
@@ -415,26 +416,26 @@ PyLoadedExecutable::GetOutputMemoryKinds() const {
   return ifrt_loaded_executable_->GetOutputMemoryKinds();
 }
 
-absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
+absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
 PyLoadedExecutable::GetParameterLayouts() const {
   nb::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetParameterLayouts();
 }
 
-absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
+absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
 PyLoadedExecutable::GetOutputLayouts() const {
   nb::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetOutputLayouts();
 }
 
-std::optional<std::vector<OpSharding>>
+std::optional<std::vector<xla::OpSharding>>
 PyLoadedExecutable::GetParameterShardings() const {
   nb::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetParameterShardings();
 }
 
-std::optional<std::vector<OpSharding>> PyLoadedExecutable::GetOutputShardings()
-    const {
+std::optional<std::vector<xla::OpSharding>>
+PyLoadedExecutable::GetOutputShardings() const {
   nb::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetOutputShardings();
 }
@@ -448,4 +449,4 @@ void PyLoadedExecutable::KeepAlive(nb::object obj) {
   keepalives_.push_back(std::move(obj));
 }
 
-}  // namespace xla
+}  // namespace jax

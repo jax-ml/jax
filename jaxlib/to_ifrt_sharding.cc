@@ -39,7 +39,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
-namespace xla {
+namespace jax {
 
 namespace nb = ::nanobind;
 
@@ -137,4 +137,4 @@ absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtConcreteSharding(
       /*shard_shapes=*/std::move(shard_shapes));
 }
 
-}  // namespace xla
+}  // namespace jax

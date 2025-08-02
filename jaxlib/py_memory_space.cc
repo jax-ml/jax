@@ -27,9 +27,10 @@ limitations under the License.
 #include "jaxlib/py_device.h"  // IWYU pragma: keep
 #include "xla/python/ifrt/device.h"
 
+namespace ifrt = ::xla::ifrt;
 namespace nb = ::nanobind;
 
-namespace xla {
+namespace jax {
 
 PyMemorySpace::PyMemorySpace(jax::nb_class_ptr<PyClient> client,
                              ifrt::Memory* memory)
@@ -100,4 +101,4 @@ PyType_Slot PyMemorySpace::slots_[] = {
            "Returns devices that can address this memory.");
 }
 
-}  // namespace xla
+}  // namespace jax

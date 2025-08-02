@@ -33,7 +33,7 @@ namespace jax {
 // Device list with various caching and direct access to IFRT DeviceList.
 class PyDeviceList {
  public:
-  PyDeviceList(nb_class_ptr<xla::PyClient> py_client,
+  PyDeviceList(nb_class_ptr<PyClient> py_client,
                xla::ifrt::DeviceListRef device_list);
   explicit PyDeviceList(nanobind::tuple py_device_assignment);
   ~PyDeviceList();
@@ -49,7 +49,7 @@ class PyDeviceList {
   }
 
   // These two methods are safe to call from C++ without GIL.
-  nb_class_ptr<xla::PyClient> py_client() const { return py_client_; }
+  nb_class_ptr<PyClient> py_client() const { return py_client_; }
   absl::StatusOr<xla::ifrt::DeviceListRef> ifrt_device_list() const;
 
   int Len() const;                      // Requires the GIL in GIL mode.
@@ -110,7 +110,7 @@ class PyDeviceList {
 
   // Valid only if `device_list_` contains `xla::ifrt::DeviceList` and
   // non-empty.
-  nb_class_ptr<xla::PyClient> py_client_;
+  nb_class_ptr<PyClient> py_client_;
 
   // Either C++ `ifrt::DeviceList` or Python duck-type devices.
   // TODO(hyeontaek): Remove support for Python duck-type devices once all

@@ -251,7 +251,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> MakePjrtBuffer(
 
 absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
     nb::handle py_buffer, std::optional<std::intptr_t> stream) {
-  ifrt::Array* ifrt_array = nb::cast<xla::PyArray>(py_buffer).ifrt_array();
+  ifrt::Array* ifrt_array = nb::cast<jax::PyArray>(py_buffer).ifrt_array();
   if (ifrt_array == nullptr) {
     return Unimplemented(
         "BufferToDLPackManagedTensor called on deleted array.");
@@ -335,8 +335,8 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
 
 absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     const nb::capsule& tensor,
-    std::optional<jax::nb_class_ptr<PyClient>> cpu_client,
-    std::optional<jax::nb_class_ptr<PyClient>> gpu_client) {
+    std::optional<jax::nb_class_ptr<jax::PyClient>> cpu_client,
+    std::optional<jax::nb_class_ptr<jax::PyClient>> gpu_client) {
   // TODO(hyeontaek): This is a potential target for an IFRT client to multiplex
   // multiple PjRt clients. Devices from these PjRt clients could be expressed
   // as a unified set of IFRT devices.
@@ -419,14 +419,15 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   }
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
-  return PyArray::MakeFromSingleDeviceArray(std::move(client),
-                                            jax::Traceback::Get(),
-                                            std::move(ifrt_array), false, true);
+  return jax::PyArray::MakeFromSingleDeviceArray(
+      std::move(client), jax::Traceback::Get(), std::move(ifrt_array), false,
+      true);
 }
 
 absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     const nb::capsule& tensor, ifrt::Device* ifrt_device,
-    jax::nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream) {
+    jax::nb_class_ptr<jax::PyClient> client,
+    std::optional<std::intptr_t> stream) {
   ifrt::PjRtDevice* device =
       llvm::dyn_cast_or_null<ifrt::PjRtDevice>(ifrt_device);
   if (device == nullptr) {
@@ -486,9 +487,9 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   }
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
-  return PyArray::MakeFromSingleDeviceArray(std::move(client),
-                                            jax::Traceback::Get(),
-                                            std::move(ifrt_array), false, true);
+  return jax::PyArray::MakeFromSingleDeviceArray(
+      std::move(client), jax::Traceback::Get(), std::move(ifrt_array), false,
+      true);
 }
 
 absl::StatusOr<nanobind::dlpack::dtype> PrimitiveTypeToNbDLDataType(

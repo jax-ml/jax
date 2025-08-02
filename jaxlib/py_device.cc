@@ -48,11 +48,12 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
+namespace ifrt = ::xla::ifrt;
 namespace nb = ::nanobind;
 
-namespace xla {
+namespace jax {
 
-PyDevice::PyDevice(jax::nb_class_ptr<PyClient> client, ifrt::Device* device)
+PyDevice::PyDevice(nb_class_ptr<PyClient> client, ifrt::Device* device)
     : client_(std::move(client)), device_(device) {}
 
 int PyDevice::id() const { return device_->Id().value(); }
@@ -93,7 +94,7 @@ absl::string_view PyDevice::Str() const { return device_->DebugString(); }
 
 absl::string_view PyDevice::Repr() const { return device_->ToString(); }
 
-absl::StatusOr<jax::nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
+absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
     absl::string_view kind) const {
   ifrt::Memory* result_memory_space = nullptr;
   for (auto* memory_space : device_->Memories()) {
@@ -132,8 +133,7 @@ absl::StatusOr<jax::nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
   return client_->GetPyMemorySpace(result_memory_space);
 }
 
-absl::StatusOr<jax::nb_class_ptr<PyMemorySpace>> PyDevice::DefaultMemory()
-    const {
+absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::DefaultMemory() const {
   TF_ASSIGN_OR_RETURN(auto* memory_space, device_->DefaultMemory());
   return client_->GetPyMemorySpace(memory_space);
 }
@@ -147,7 +147,7 @@ nb::list PyDevice::AddressableMemories() const {
 }
 
 absl::StatusOr<std::optional<nb::dict>> PyDevice::MemoryStats() const {
-  GlobalPyRefManager()->CollectGarbage();
+  xla::GlobalPyRefManager()->CollectGarbage();
   ifrt::PjRtDevice* device = llvm::dyn_cast<ifrt::PjRtDevice>(device_);
   if (device == nullptr || !device->IsAddressable()) {
     return xla::InvalidArgument(
@@ -159,7 +159,7 @@ absl::StatusOr<std::optional<nb::dict>> PyDevice::MemoryStats() const {
     return std::nullopt;
   }
   // Raise error if any status other than Unimplemented is returned.
-  ThrowIfError(maybe_stats.status());
+  xla::ThrowIfError(maybe_stats.status());
 
   nb::dict result;
   result["num_allocs"] = maybe_stats->num_allocs;
@@ -204,7 +204,7 @@ absl::StatusOr<std::intptr_t> PyDevice::GetStreamForExternalReadyEvents()
 
 /* static */ int PyDevice::tp_clear(PyObject* self) {
   PyDevice* d = nb::inst_ptr<PyDevice>(self);
-  jax::nb_class_ptr<PyClient> client;
+  nb_class_ptr<PyClient> client;
   std::swap(client, d->client_);
   return 0;
 }
@@ -243,22 +243,23 @@ PyType_Slot PyDevice::slots_[] = {
           "platforms.")
       .def("__str__", &PyDevice::Str)
       .def("__repr__", &PyDevice::Repr)
-      .def("memory", ValueOrThrowWrapper(&PyDevice::Memory), nb::arg("kind"))
-      .def("default_memory", ValueOrThrowWrapper(&PyDevice::DefaultMemory),
+      .def("memory", xla::ValueOrThrowWrapper(&PyDevice::Memory),
+           nb::arg("kind"))
+      .def("default_memory", xla::ValueOrThrowWrapper(&PyDevice::DefaultMemory),
            "Returns the default memory of a device.")
       .def("addressable_memories", &PyDevice::AddressableMemories,
            "Returns all the memories that a device can address.")
 
       .def("live_buffers",
            [](nb::handle device) {
-             PythonDeprecationWarning(
+             xla::PythonDeprecationWarning(
                  /*stacklevel=*/1,
                  "Per device live_buffers() is deprecated. Please "
                  "use the jax.live_arrays() for jax.Arrays instead.");
              return nb::list();
            })
       .def(
-          "memory_stats", ValueOrThrowWrapper(&PyDevice::MemoryStats),
+          "memory_stats", xla::ValueOrThrowWrapper(&PyDevice::MemoryStats),
           "Returns memory statistics for this device keyed by name. May not "
           "be implemented on all platforms, and different platforms may return "
           "different stats, or -1 for unavailable stats. 'bytes_in_use' is "
@@ -302,4 +303,4 @@ PyType_Slot PyDevice::slots_[] = {
       reinterpret_cast<PyTypeObject*>(device.ptr()), &get_attr_method));
 }
 
-}  // namespace xla
+}  // namespace jax

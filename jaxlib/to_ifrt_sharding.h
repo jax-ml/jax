@@ -29,7 +29,7 @@ limitations under the License.
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 
-namespace xla {
+namespace jax {
 
 // Gets `xla::HloSharding` from a JAX Sharding.
 xla::HloSharding GetXlaHloSharding(nanobind::handle sharding,
@@ -56,6 +56,6 @@ absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtConcreteSharding(
     nanobind::handle sharding, const xla::ifrt::Shape& shape,
     std::vector<xla::ifrt::Shape> shard_shapes);
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_TO_IFRT_SHARDING_H_

@@ -59,7 +59,7 @@ struct PyClientConnectionOptions {
       initialization_data;
 };
 
-absl::StatusOr<jax::nb_class_ptr<PyClient>> GetClient(
+absl::StatusOr<jax::nb_class_ptr<jax::PyClient>> GetClient(
     std::string proxy_server_address,
     const PyClientConnectionOptions& py_options) {
   DCHECK(PyGILState_Check());
@@ -128,8 +128,8 @@ absl::StatusOr<jax::nb_class_ptr<PyClient>> GetClient(
     TF_ASSIGN_OR_RETURN(client, CreateClient(proxy_server_address, options));
   }
 
-  // Constructing `xla::PyClient` requires GIL as it may dec-ref Python objects.
-  return xla::PyClient::Make(std::move(client));
+  // Constructing `jax::PyClient` requires GIL as it may dec-ref Python objects.
+  return jax::PyClient::Make(std::move(client));
 }
 
 }  // namespace
