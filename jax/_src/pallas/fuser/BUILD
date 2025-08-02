@@ -58,6 +58,7 @@ pytype_strict_library(
         "//jax:tree_util",
         "//jax:util",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/mosaic:primitives",
     ] + py_deps("numpy"),
 )
 
