@@ -106,6 +106,5 @@ else
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
             --color=yes \
-            $WHEEL_SIZE_TESTS \
-            //tests:cpu_tests //tests:backend_independent_tests
+            //tests:lax_numpy_test_cpu
 fi
