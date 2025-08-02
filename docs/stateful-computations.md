@@ -235,4 +235,4 @@ Handling parameters manually seems fine if you're dealing with two parameters, b
 
 2) Are we supposed to pipe all these things around manually?
 
-The details can be tricky to handle, but there are examples of libraries that take care of this for you. See [JAX Neural Network Libraries](https://github.com/jax-ml/jax#neural-network-libraries) for some examples.
+The details can be tricky to handle, but there are examples of libraries that take care of this for you. See [JAX Ecosystem Libraries](https://docs.jax.dev/en/latest/#ecosystem) for some examples.
