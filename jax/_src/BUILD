@@ -1139,6 +1139,20 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "hijax",
+    srcs = ["hijax.py"],
+    deps = [
+        ":ad",
+        ":ad_util",
+        ":core",
+        ":effects",
+        ":partial_eval",
+        ":tree_util",
+        ":util",
+    ],
+)
+
+pytype_strict_library(
     name = "stages",
     srcs = ["stages.py"],
     visibility = ["//jax:internal"] + jax_visibility("stages"),
