@@ -1344,7 +1344,7 @@ bool hasHbmOrVmemSharedMemorySpace(MemRefType ty) {
          HasMemorySpace(ty, MemorySpace::kVmemShared);
 }
 
-FailureOr<bool> isGather(Operation& op, Value source, Value target) {
+FailureOr<bool> isGather(Operation &op, Value source, Value target) {
   const MemRefType source_ty = getMemRefType(source);
   const MemRefType target_ty = getMemRefType(target);
   if (hasHbmOrVmemSharedMemorySpace(source_ty) &&
@@ -1744,6 +1744,100 @@ LogicalResult DynamicGatherOp::verify() {
   VectorType indices_vty = cast<VectorType>(operands[1].getType());
   inferredReturnTypes.push_back(
       VectorType::get(indices_vty.getShape(), source_vty.getElementType()));
+  return success();
+}
+
+LogicalResult AllReduceOp::verify() {
+  auto in_ty = getInput().getType();
+  auto in_bitwidth = in_ty.getElementTypeBitWidth();
+  auto out_ty = getOutput().getType();
+  auto out_bitwidth = out_ty.getElementTypeBitWidth();
+  auto kind = getKind();
+
+  if (in_bitwidth == 1) {
+    // For mask vectors, the single (semantically scalar) result is broadcast
+    // into a vector of 32-bit ints of whatever shape the target supports (not
+    // necessarily the same as the input).
+    if (out_bitwidth != 32) {
+      return emitOpError("Vector mask all-reduce must have i32 output");
+    }
+    switch (kind) {
+      case ReductionKind::SUM:
+        break;
+      default:
+        return emitOpError(
+            "Mask all-reduce only supports SUM and FIND_FIRST_SET kind");
+    }
+    return success();
+  }
+
+  switch (kind) {
+    case ReductionKind::SUM:
+    case ReductionKind::MAX:
+    case ReductionKind::MIN:
+      if (in_ty != out_ty) {
+        return emitOpError(
+            "SUM, MAX, and MIN reductions must have the same "
+            "input and output type");
+      }
+      break;
+    case ReductionKind::ARG_MAX:
+    case ReductionKind::ARG_MIN:
+      if (in_ty.getShape() != out_ty.getShape()) {
+        return emitOpError(
+            "ARG_MAX and ARG_MIN must have the same input and output shape");
+      }
+      if (!in_ty.getElementType().isF32()) {
+        return emitOpError(
+            "Not Implemented: Only f32 input is supported for "
+            "ARG_MAX and ARG_MIN");
+      }
+      if (!out_ty.getElementType().isSignlessInteger(out_bitwidth)) {
+        return emitOpError(absl::StrFormat(
+            "ARG_MAX and ARG_MIN must have i%d output", out_bitwidth));
+      }
+      break;
+  }
+  return success();
+}
+
+LogicalResult ReduceIndexOp::verify() {
+  auto in_ty = getInput().getType();
+  auto out_ty = getOutput().getType();
+  auto out_bitwidth = out_ty.getElementTypeBitWidth();
+  auto axis = getAxis();
+  auto kind = getKind();
+  if (kind != ReductionKind::ARG_MAX && kind != ReductionKind::ARG_MIN) {
+    return emitOpError("Reduction kind must be ARG_MAX or ARG_MIN");
+  }
+  if (!in_ty.getElementType().isF32()) {
+    return emitOpError(
+        "Not Implemented: Only f32 input is supported for "
+        "ARG_MAX and ARG_MIN");
+  }
+  if (!out_ty.getElementType().isSignlessInteger(out_bitwidth)) {
+    return emitOpError(absl::StrFormat(
+        "ARG_MAX and ARG_MIN must have i%d output", out_bitwidth));
+  }
+
+  auto in_shape = in_ty.getShape();
+  auto out_shape = out_ty.getShape();
+  if (axis > in_shape.size()) {
+    return emitOpError("Axis must be in [0, rank), but got ") << axis;
+  }
+
+  if (axis != 1) {
+    return emitOpError("Not Implemented: Only axis 1 is supported");
+  }
+  if (in_shape.size() != 2) {
+    return emitOpError("Not Implemented: Only 2D input is supported");
+  }
+  // TODO(yixiuliu): Check the input and output shapes match on non-reduction
+  // dimensions after higher rank input and keepdims are implemented.
+  if (in_shape[0] != out_shape[0]) {
+    return emitOpError(
+        "Input and output shapes must match on the first dimension");
+  }
   return success();
 }
 
