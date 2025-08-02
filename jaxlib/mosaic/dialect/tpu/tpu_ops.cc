@@ -753,6 +753,52 @@ LogicalResult VectorLoadOp::verify() {
   return success();
 }
 
+LogicalResult VectorStoreIdxOp::verify() {
+  VectorType value_ty = getValueToStore().getType();
+  MemRefType ref_ty = getBase().getType();
+
+  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
+    return emitOpError("Expected base memref to be in VMEM.");
+  }
+
+  if (value_ty.getElementType() != ref_ty.getElementType()) {
+    return emitOpError("Expected base and valueToStore element type to match");
+  }
+  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+    return emitOpError(
+               "Expected one index vector for each dimension of the base "
+               "memref with dimension: ")
+           << ref_ty.getRank() << ". Got: " << llvm::size(getIndices()) << ".";
+  }
+  if (llvm::size(getIndices()) != value_ty.getRank()) {
+    return emitOpError(
+               "Expected one index vector for each dimension of the value "
+               "to store with dimension: ")
+           << value_ty.getRank() << ". Got: " << llvm::size(getIndices())
+           << ".";
+  }
+  for (const auto [i, index] : llvm::enumerate(getIndices())) {
+    VectorType index_ty = llvm::cast<VectorType>(index.getType());
+    if (index_ty.getShape() != value_ty.getShape()) {
+      return emitOpError("Expected ")
+             << value_ty.getShape() << " elements in indices. Got "
+             << index_ty.getShape() << " in index #" << i << ".";
+    }
+  }
+
+  if (getMask()) {
+    if (value_ty.getElementTypeBitWidth() != 32) {
+      return emitOpError(
+          "Not implemented: masked store with non-32-bit element type");
+    }
+    if (value_ty.getShape() != getMask().getType().getShape())
+      return emitOpError("Expected mask shape to match result shape: (")
+             << value_ty.getShape() << "). Got: ("
+             << getMask().getType().getShape() << ").";
+  }
+  return success();
+}
+
 LogicalResult ReinterpretCastOp::verify() {
   auto source_type = getMemRefType(getInput());
   auto target_type = getType();

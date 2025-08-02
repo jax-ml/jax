@@ -27,6 +27,7 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -113,11 +114,17 @@ class TpuOpsVerificationTest : public ::testing::Test {
         .getResult();
   }
 
+  Value ConstantIndexVector(ArrayRef<int64_t> shape, ArrayRef<int64_t> values) {
+    return Create<arith::ConstantOp>(
+               /*result=*/VectorType::get(shape, builder().getIndexType()),
+               /*value=*/builder().getIndexVectorAttr(values))
+        .getResult();
+  }
+
   Value ConstantI32Vector(ArrayRef<int64_t> shape, ArrayRef<int32_t> values) {
     return Create<arith::ConstantOp>(
                /*result=*/VectorType::get(shape, i32()),
-               /*value=*/dyn_cast<TypedAttr>(
-                   builder().getDenseI32ArrayAttr(values)))
+               /*value=*/builder().getI32VectorAttr(values))
         .getResult();
   }
 
@@ -308,6 +315,142 @@ TEST_F(TpuOpsVerificationTest, UnpackSubelementsInvalidIndex) {
       VerifyOp(unpack),
       StatusIs(
           _, HasSubstr("Index must be between 0 and the packing factor (2)")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxVerificationWorks) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store =
+      ConstantI32Vector(/*shape=*/{8},
+                        /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0, 1, 2, 3, 4, 5, 6, 7});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr,
+      /*add=*/builder().getBoolAttr(true));
+
+  ASSERT_OK(VerifyOp(vl));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidMemorySpace) {
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  Value vector_to_store =
+      ConstantI32Vector(/*shape=*/{8},
+                        /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0, 1, 2, 3, 4, 5, 6, 7});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr,
+      /*add=*/nullptr);
+
+  ASSERT_THAT(VerifyOp(vl),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidElementType) {
+  Value memref =
+      Create<memref::AllocaOp>(
+          GetMemRefType({8}, builder().getF32Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8},
+                                            /*values=*/{1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr,
+      /*add=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr(
+                      "Expected base and valueToStore element type to match")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidIndicesDimension) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8},
+                                            /*values=*/{1});
+  Value indices = ConstantIndexVector(/*shape=*/{4, 1},
+                                      /*values=*/{0});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices, indices},
+      /*mask=*/nullptr,
+      /*add=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr("Expected one index vector for each dimension of "
+                            "the base memref with dimension: 1. Got: 2.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidValueToStoreDimension) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{4, 2},
+                                            /*values=*/{1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr,
+      /*add=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr("Expected one index vector for each dimension of "
+                            "the value to store with dimension: 2. Got: 1.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxValidMask) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8},
+                                            /*values=*/{1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  Value mask = ConstantI32Vector(/*shape=*/{8},
+                                 /*values=*/{1});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/mask,
+      /*add=*/nullptr);
+
+  ASSERT_OK(VerifyOp(vl));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidMaskShape) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8},
+                                            /*values=*/{1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  Value mask = ConstantI32Vector(/*shape=*/{4, 2},
+                                 /*values=*/{1});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/mask,
+      /*add=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(
+          _,
+          HasSubstr(
+              "Expected mask shape to match result shape: (8). Got: (4, 2).")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaElementTypeMismatch) {
