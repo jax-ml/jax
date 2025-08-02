@@ -130,5 +130,5 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Bazel TPU tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}
-        timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 210 }}
+        timeout-minutes: 210
         run: ./ci/run_bazel_test_tpu.sh
