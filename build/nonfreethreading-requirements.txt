@@ -4,7 +4,8 @@ numpy>=2.3.2; python_version>="3.14"
 
 # These packages have not released free-threaded wheels.
 
-# TODO(phawkins): enable zstandard once it ships a 3.14 wheel.
+# zstandard is available in the Python 3.14 standard library as
+# compression.zstd, and we'll use that if available.
 zstandard; python_version<"3.14"
 
 # TODO(phawkins): enable tensorstore once it ships a 3.14 wheel.
