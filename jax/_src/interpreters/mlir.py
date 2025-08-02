@@ -66,7 +66,7 @@ from jax._src.sharding_impls import ( AUTO, NamedSharding,
                                      modify_sdy_sharding_wrt_axis_types)
 from jax._src.state.types import AbstractRef
 from jax._src.typing import ArrayLike
-from jax._src.util import foreach
+from jax._src.util import foreach, unzip2
 import numpy as np
 
 # mypy: ignore-errors
@@ -1172,9 +1172,13 @@ def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
   if (threshold := config.captured_constants_warn_bytes.value) == -1:
     return
 
+  if config.use_simplified_jaxpr_constants.value:
+    consts, consts_loc = unzip2(core.jaxpr_const_args_with_loc(closed_jaxpr.jaxpr))
+  else:
+    consts, consts_loc = closed_jaxpr.consts, [None] * len(closed_jaxpr.consts)
   # need the unaesthetic getter here as some of the consts in the test suite are arbitrary objects
   total_iter, nbytes_iter = itertools.tee(
-      map(lambda c: getattr(c, "nbytes", 0), closed_jaxpr.consts)
+      map(lambda c: getattr(c, "nbytes", 0), consts)
   )
 
   if (total_bytes := sum(total_iter)) < threshold:
@@ -1196,21 +1200,39 @@ def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
 
   message += (
       "The subsequent report may be disabled by setting JAX_CAPTURED_CONSTANTS_REPORT_FRAMES=0.\n\n"
-      f"Largest {min(num_frames, len(closed_jaxpr.consts))} allocation(s):\n"
+      f"Largest {min(num_frames, len(consts))} allocation(s):\n"
   )
-  try:
+  def report():
+    rep = ""
     nbytes_var_const = zip(nbytes_iter, closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts)
     for nbytes, var, const in heapq.nlargest(5, nbytes_var_const, key=operator.itemgetter(0)):
-      message += f"  Constant {type(const)}, {var.aval.str_short()}, {util.pprint_bytes(nbytes)} captured at:\n"
+      rep += f"  Constant {type(const)}, {var.aval.str_short()}, {util.pprint_bytes(nbytes)} captured at:\n"
 
       for eqn in jaxpr_util.eqns_using_var(closed_jaxpr.jaxpr, var):
         call_frame_source_info = source_info_util.summarize(eqn.source_info, num_frames)
-        message += "  " * 2 + call_frame_source_info.replace("\n", "\n" + "  " * 2) + "\n\n"
+        rep += "  " * 2 + call_frame_source_info.replace("\n", "\n" + "  " * 2) + "\n\n"
+    return rep
 
-    warnings.warn(message)
+  def report_with_consts_from_literals():
+    rep = ""
+    nbytes_const = zip(nbytes_iter, consts, consts_loc)
+    for nbytes, const, const_loc in heapq.nlargest(5, nbytes_const, key=operator.itemgetter(0)):
+      rep += f"  Constant {type(const)}, {util.pprint_bytes(nbytes)} captured at:\n"
+      if consts_loc is None:
+        rep += "    return value"
+      else:
+        call_frame_source_info = source_info_util.summarize(const_loc, num_frames)
+        rep += "  " * 2 + call_frame_source_info.replace("\n", "\n" + "  " * 2) + "\n\n"
+    return rep
+  try:
+    if config.use_simplified_jaxpr_constants.value:
+      message += report_with_consts_from_literals()
+    else:
+      message += report()
   except Exception as exc:
     warnings.warn(message + f" Exception raised while generating report: {exc}")
 
+  warnings.warn(message)
 
 def lower_jaxpr_to_module(
     module_name: str,
@@ -1246,6 +1268,8 @@ def lower_jaxpr_to_module(
   See https://docs.jax.dev/en/latest/internals/constants.html
   """
   util.test_event("lower_jaxpr_to_module")
+  if config.use_simplified_jaxpr_constants.value:
+    check_jaxpr_constants(jaxpr)
   platforms = tuple(map(xb.canonicalize_platform, platforms))
 
   sharded_in_avals = (in_avals if arg_shardings is None else
@@ -1564,7 +1588,8 @@ def lower_jaxpr_to_fun(
     MLIR func op
   """
   util.test_event("lower_jaxpr_to_fun", name)
-  check_jaxpr_constants(jaxpr)
+  if not config.use_simplified_jaxpr_constants.value:
+    check_jaxpr_constants(jaxpr)
 
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)

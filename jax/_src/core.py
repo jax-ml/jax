@@ -552,32 +552,46 @@ def is_literalable(x: Any) -> bool:
   return False
 
 @partial(weakref_lru_cache, trace_context_in_key=False)
-def jaxpr_const_args(jaxpr: Jaxpr) -> list[ArrayLike]:
-  # The non-scalar constants in core.Literal, in the entire Jaxpr,
-  # uniquified by id. These will be hoisted as const arguments to the functions
-  # in which they appear.
-  # See https://docs.jax.dev/en/latest/internals/constants.html
+def jaxpr_const_args_with_loc(
+    jaxpr: Jaxpr
+) -> list[tuple[ArrayLike, source_info_util.SourceInfo | None]]:
+  """Non-scalar constants in core.Literal, in the entire Jaxpr.
+
+  Returns the constants along with the source info of one JaxprEqn that
+  use the constant, uniquified by `id` of the constant.
+  The source info is None if the constant is used as an outvar of the `jaxpr`.
+  See https://docs.jax.dev/en/latest/internals/constants.html
+  """
   if not config.use_simplified_jaxpr_constants.value:
     return []
-  consts_by_id: dict[int, Any] = {}
+  consts_by_id: dict[int, tuple[ArrayLike, source_info_util.SourceInfo | None]] = {}
   for v in jaxpr.outvars:
     if type(v) is Literal and np.shape(v.val):  # type: ignore
-      consts_by_id[id(v)] = v.val  # type: ignore
+      consts_by_id[id(v)] = (v.val, None)  # type: ignore
 
   for eqn in jaxpr.eqns:
     for v in eqn.invars:
       if type(v) is Literal and np.shape(v.val):  # type: ignore
-        consts_by_id[id(v)] = v.val  # type: ignore
+        consts_by_id[id(v)] = (v.val, eqn.source_info)  # type: ignore
     consts_by_id.update({id(v): v
-                         for v in eqn_params_const_args(eqn.params)})
+                         for v in eqn_params_const_args_with_loc(eqn.params)})
   return list(consts_by_id.values())
 
-def eqn_params_const_args(params) -> list[ArrayLike]:
-  consts_by_id: dict[int, Any] = {}
+def jaxpr_const_args(jaxpr: Jaxpr) -> list[ArrayLike]:
+  return [c for c, _ in jaxpr_const_args_with_loc(jaxpr)]
+
+def eqn_params_const_args_with_loc(
+    params
+) -> list[tuple[ArrayLike, source_info_util.SourceInfo | None]]:
+  consts_by_id: dict[int, tuple[ArrayLike, source_info_util.SourceInfo | None]] = {}
   for j in jaxprs_in_params(params):
-    consts_by_id.update({id(v): v for v in jaxpr_const_args(j)})
+    consts_by_id.update({id(v): v for v in jaxpr_const_args_with_loc(j)})
 
   return list(consts_by_id.values())
+
+def eqn_params_const_args(params) -> list[ArrayLike] :
+  return [c for c, _ in eqn_params_const_args_with_loc(params)]
+
 
 Atom = Union[Var, Literal]
 
