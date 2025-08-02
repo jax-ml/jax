@@ -23,6 +23,7 @@ licenses(["notice"])
 COMMON_REQUIREMENTS = [
     "requirements.in",
     "test-requirements.txt",
+    "nvidia-requirements.txt",
 ]
 
 # It isn't possible to constraint based on free-threaded vs non-free threaded
