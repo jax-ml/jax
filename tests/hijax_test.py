@@ -384,32 +384,31 @@ class BoxTest(jtu.JaxTestCase):
 
     self.assertAllClose(box.get(), 2.0)
 
-  # TODO(mattjj,dougalm): make this work...
-  # @parameterized.parameters([False, True])
-  # def test_custom_vjp_plumbing_abstracted(self, jit):
-  #   box = Box(0.0)
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_plumbing_abstracted(self, jit):
+    box = Box(0.0)
 
-  #   @jax.custom_vjp
-  #   def foo(box, x):
-  #     return x
-  #   def foo_fwd(box, x):
-  #     return x, box
-  #   def foo_bwd(box, g):
-  #     box.set(g)
-  #     return None, g
-  #   foo.defvjp(foo_fwd, foo_bwd)
+    @jax.custom_vjp
+    def foo(box, x):
+      return x
+    def foo_fwd(box, x):
+      return x, box
+    def foo_bwd(box, g):
+      box.set(g)
+      return None, g
+    foo.defvjp(foo_fwd, foo_bwd)
 
-  #   def f(box, x):
-  #     x = 2 * x
-  #     x = foo(box, x)
-  #     x = 2 * x
-  #     return x
+    def f(box, x):
+      x = 2 * x
+      x = foo(box, x)
+      x = 2 * x
+      return x
 
-  #   if jit:
-  #     f = jax.jit(f)
+    if jit:
+      f = jax.jit(f)
 
-  #   jax.grad(partial(f, box))(1.0)
-  #   self.assertAllClose(box.get(), 2.0)
+    jax.grad(partial(f, box))(1.0)
+    self.assertAllClose(box.get(), 2.0)
 
   @parameterized.parameters([False, True])
   def test_grad_closure_stop_gradient(self, jit):
@@ -564,6 +563,29 @@ class BoxTest(jtu.JaxTestCase):
     self.assertIsInstance(b_, MyArray)
     self.assertAllClose(a_.arr, 1, check_dtypes=False)
     self.assertAllClose(b_.arr, 2, check_dtypes=False)
+
+  # TODO(mattjj,dougalm): make this work
+  # def test_closed_over_type_changing_box(self):
+
+  #   box = Box(None)
+
+  #   @jax.jit
+  #   def f():
+  #     breakpoint()
+  #     x = box.get()
+  #     if x is None:
+  #       box.set(0)
+  #     else:
+  #       box.set(x + 1)
+
+  #   f()
+  #   f()
+  #   self.assertEqual(box.get(), 1)
+  #   box.set(None)
+  #   f()
+  #   f()
+  #   f()
+  #   self.assertEqual(box.get(), 2)
 
 
 if __name__ == '__main__':

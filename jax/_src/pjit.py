@@ -2511,7 +2511,9 @@ def _pjit_transpose(cts_in, *primals_in,
     *prune_type(ad.UndefinedPrimal, in_layouts, primals_in),
     *prune_type(ad.Zero, out_layouts, cts_in)
   )
-  global_cts_in_avals = tuple(core.get_aval(ct) for ct in primals_and_nz_cts_in)
+  global_cts_in_avals = tuple(
+      core.AvalQDD(a, core.cur_qdd(ct)) if (a := core.get_aval(ct)).has_qdd else a
+      for ct in primals_and_nz_cts_in)
 
   transpose_jaxpr = _pjit_transpose_trace(body, global_cts_in_avals)
   cts_out_treedef = cts_out_treedef_thunk()
