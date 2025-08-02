@@ -14,6 +14,7 @@ module = [
     "IPython.*",
     "absl.*",
     "colorama.*",
+    "compression.*",
     "etils.*",
     "filelock.*",
     "flatbuffers.*",
