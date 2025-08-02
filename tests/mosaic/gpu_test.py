@@ -3528,9 +3528,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       )
       set_in_transforms(load_op, [test_case.transforms])
 
-      parities = memref.load(tma_barrier.barrier_ref.phases, [])
-      parity, _ = tma_barrier.update_parities(parities)
-      mgpu_dialect.wait(dialect_barrier, parity)
+      mgpu_dialect.wait(dialect_barrier)
 
       # SMEM -> GMEM
       zero_index = arith.constant(i32, 0)
@@ -3613,9 +3611,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           collective=ir.ArrayAttr.get([]),
       )
 
-      parities = memref.load(tma_barrier.barrier_ref.phases, [])
-      parity, _ = tma_barrier.update_parities(parities)
-      mgpu_dialect.wait(dialect_barrier, parity)
+      mgpu_dialect.wait(dialect_barrier)
 
       zero_index = arith.constant(ir.IndexType.get(), 0)
       zero_vector_indices = [zero_index] * memref_type.rank
@@ -3937,9 +3933,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           collective=ir.ArrayAttr.get([]),
       )
 
-      parities = memref.load(tma_barrier.barrier_ref.phases, [])
-      parity, _ = tma_barrier.update_parities(parities)
-      mgpu_dialect.wait(dialect_barrier, parity)
+      mgpu_dialect.wait(dialect_barrier)
 
       # SubView
       dynamic_offsets = [
@@ -4094,9 +4088,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
           collective=ir.ArrayAttr.get([]),
       )
 
-      parities = memref.load(tma_barrier.barrier_ref.phases, [])
-      parity, _ = tma_barrier.update_parities(parities)
-      mgpu_dialect.wait(dialect_barrier, parity)
+      mgpu_dialect.wait(dialect_barrier)
 
       # Computation
       shape_result = ir.MemRefType(result_gmem_ref.type).shape
