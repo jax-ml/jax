@@ -12,12 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax.experimental.pallas.ops.tpu.ragged_paged_attention import kernel
+from jax.experimental.pallas.ops.tpu.ragged_paged_attention import kernel_v2
 from jax.experimental.pallas.ops.tpu.ragged_paged_attention import tuned_block_sizes
+from jax.experimental.pallas.ops.tpu.ragged_paged_attention import util
 
-cdiv = kernel.cdiv
-dynamic_validate_inputs = kernel.dynamic_validate_inputs
-ragged_paged_attention = kernel.ragged_paged_attention
-ref_ragged_paged_attention = kernel.ref_ragged_paged_attention
-static_validate_inputs = kernel.static_validate_inputs
+cdiv = util.cdiv
+align_to = util.align_to
+get_dtype_packing = util.get_dtype_packing
+next_power_of_2 = util.next_power_of_2
+get_tpu_version = util.get_tpu_version
+
+dynamic_validate_inputs = kernel_v2.dynamic_validate_inputs
+static_validate_inputs = kernel_v2.static_validate_inputs
+prepare_inputs = kernel_v2.prepare_inputs
+prepare_outputs = kernel_v2.prepare_outputs
+get_vmem_estimate_bytes = kernel_v2.get_vmem_estimate_bytes
+get_smem_estimate_bytes = kernel_v2.get_smem_estimate_bytes
+ragged_paged_attention = kernel_v2.ragged_paged_attention
+ref_ragged_paged_attention = kernel_v2.ref_ragged_paged_attention
+
 get_tuned_block_sizes = tuned_block_sizes.get_tuned_block_sizes
+get_simplified_key = tuned_block_sizes.get_simplified_key
