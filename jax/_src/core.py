@@ -559,7 +559,7 @@ def jaxpr_const_args(jaxpr: Jaxpr) -> list[ArrayLike]:
   # See https://docs.jax.dev/en/latest/internals/constants.html
   if not config.use_simplified_jaxpr_constants.value:
     return []
-  consts_by_id: dict[int, Any] = {}
+  consts_by_id: dict[int, ArrayLike] = {}
   for v in jaxpr.outvars:
     if type(v) is Literal and np.shape(v.val):  # type: ignore
       consts_by_id[id(v)] = v.val  # type: ignore
@@ -573,7 +573,7 @@ def jaxpr_const_args(jaxpr: Jaxpr) -> list[ArrayLike]:
   return list(consts_by_id.values())
 
 def eqn_params_const_args(params) -> list[ArrayLike]:
-  consts_by_id: dict[int, Any] = {}
+  consts_by_id: dict[int, ArrayLike] = {}
   for j in jaxprs_in_params(params):
     consts_by_id.update({id(v): v for v in jaxpr_const_args(j)})
 

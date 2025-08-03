@@ -1169,6 +1169,8 @@ def _get_unconstrained_variants(s, aval) -> UnconstrainedVariants:
 
 def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
   """Check if a JAXPR contains an excessive amount of constants, if so, report where they were captured"""
+  if config.use_simplified_jaxpr_constants.value:
+    return
   if (threshold := config.captured_constants_warn_bytes.value) == -1:
     return
 
@@ -1564,7 +1566,8 @@ def lower_jaxpr_to_fun(
     MLIR func op
   """
   util.test_event("lower_jaxpr_to_fun", name)
-  check_jaxpr_constants(jaxpr)
+  if not config.use_simplified_jaxpr_constants.value:
+    check_jaxpr_constants(jaxpr)
 
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
