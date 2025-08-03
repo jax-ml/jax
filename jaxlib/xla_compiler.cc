@@ -423,7 +423,7 @@ nb::ndarray<> LiteralToNdarray(Literal& obj) {
 
   xla::PrimitiveType primitive_type = shape.element_type();
   nb::dlpack::dtype dtype =
-      ValueOrThrow(PrimitiveTypeToNbDLDataType(primitive_type));
+      ValueOrThrow(jax::PrimitiveTypeToNbDLDataType(primitive_type));
 
   absl::Span<const int64_t> dimensions = shape.dimensions();
   std::vector<size_t> unsigned_dimensions(dimensions.begin(), dimensions.end());

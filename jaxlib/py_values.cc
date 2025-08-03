@@ -434,10 +434,10 @@ absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
     data.template emplace<1>(static_cast<SquashedT>(value));
     type = xla::primitive_util::NativeToPrimitiveType<SquashedT>();
   }
-  std::shared_ptr<xla::PythonRefManager::ManagedPyObjects> py_buffer_ref;
+  std::shared_ptr<PythonRefManager::ManagedPyObjects> py_buffer_ref;
   if (data.index() == 2) {
     py_buffer_ref =
-        xla::GlobalPyRefManager()->ManageReference(nb::cast<nb::object>(h));
+        GlobalPyRefManager()->ManageReference(nb::cast<nb::object>(h));
   }
   TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(type));
   return [data, py_buffer_ref = std::move(py_buffer_ref),
@@ -534,8 +534,8 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
     byte_strides[i] = array.strides(i);
   }
   const void* data = array.data();
-  std::shared_ptr<xla::PythonRefManager::ManagedPyObjects> py_buffer_ref =
-      xla::GlobalPyRefManager()->ManageReference(std::move(array));
+  std::shared_ptr<PythonRefManager::ManagedPyObjects> py_buffer_ref =
+      GlobalPyRefManager()->ManageReference(std::move(array));
   TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(squashed_type));
   return [data, ifrt_dtype, dims = std::move(dims),
           byte_strides = std::move(byte_strides),
@@ -581,7 +581,7 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
   }
 
   // Fallback to python for non-matching clients or pmap sharding.
-  if (py_array.sharding().type().ptr() == jax::PmapSharding::type().ptr() ||
+  if (py_array.sharding().type().ptr() == PmapSharding::type().ptr() ||
       ifrt_array->sharding().devices()->devices().front()->client() !=
           to_device->client()) {
     return HandleNumpyArray(obj.attr("_value"), client, to_device,
@@ -974,7 +974,7 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
       ifrt_addressable_device_list->devices();
   // Pmap sharding requires special handling because it needs a shard shape
   // upfront.
-  const bool is_pmap_sharding = sharding.type().is(jax::PmapSharding::type());
+  const bool is_pmap_sharding = sharding.type().is(PmapSharding::type());
 
   if (addressable_shards.size() != ifrt_addressable_devices.size()) {
     // Try to generate a friendly error message if the user attempted to copy to

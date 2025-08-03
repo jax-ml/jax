@@ -88,7 +88,7 @@ class PyShardedToken {
 
 class PyExecuteResults {
  public:
-  PyExecuteResults(const jax::nb_class_ptr<PyClient>& client,
+  PyExecuteResults(const nb_class_ptr<PyClient>& client,
                    std::vector<xla::ifrt::ArrayRef> ifrt_arrays,
                    int num_computations, PyShardedToken token,
                    xla::PjRtFuture<> result_status = xla::PjRtFuture<>());
@@ -116,7 +116,7 @@ class PyExecuteResults {
  private:
   bool is_exploded_ = false;
   bool token_consumed_ = false;
-  jax::nb_class_ptr<PyClient> client_;
+  nb_class_ptr<PyClient> client_;
   std::vector<xla::ifrt::ArrayRef> ifrt_arrays_;
   int num_computations_;
   PyShardedToken token_;
@@ -179,13 +179,13 @@ class PyExecutable {
 // b) to add Python-specific functionality.
 class PyLoadedExecutable {
  public:
-  PyLoadedExecutable(jax::nb_class_ptr<PyClient> client,
+  PyLoadedExecutable(nb_class_ptr<PyClient> client,
                      xla::ifrt::LoadedExecutableRef ifrt_loaded_executable,
                      std::optional<Traceback> traceback,
                      std::optional<std::string> fingerprint);
   ~PyLoadedExecutable();
 
-  jax::nb_class_ptr<PyClient> client() const { return client_; }
+  nb_class_ptr<PyClient> client() const { return client_; }
   xla::ifrt::LoadedExecutable* ifrt_loaded_executable() const {
     return ifrt_loaded_executable_.get();
   }
@@ -194,7 +194,7 @@ class PyLoadedExecutable {
     return ifrt_loaded_executable_;
   }
 
-  std::vector<jax::nb_class_ptr<PyDevice>> AddressableDevices() const;
+  std::vector<nb_class_ptr<PyDevice>> AddressableDevices() const;
 
   int64_t SizeOfGeneratedCodeInBytes() const {
     return ifrt_loaded_executable_->SizeOfGeneratedCodeInBytes();
@@ -266,7 +266,7 @@ class PyLoadedExecutable {
  private:
   friend class PyClient;
 
-  jax::nb_class_ptr<PyClient> client_;
+  nb_class_ptr<PyClient> client_;
   xla::ifrt::LoadedExecutableRef ifrt_loaded_executable_;
   std::optional<Traceback> traceback_;
 

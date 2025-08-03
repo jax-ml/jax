@@ -62,16 +62,16 @@ class CompileOnlyPyClient : public PyClient {
  public:
   using PyClient::PyClient;
 
-  static jax::nb_class_ptr<PyClient> Make(
+  static nb_class_ptr<PyClient> Make(
       std::shared_ptr<ifrt::PjRtTopology> topology) {
-    auto client = nb::borrow<jax::nb_class_ptr<PyClient>>(
-        jax::make_nb_class<CompileOnlyPyClient>(
+    auto client =
+        nb::borrow<nb_class_ptr<PyClient>>(make_nb_class<CompileOnlyPyClient>(
             std::make_unique<xla::CompileOnlyIfRtClient>(std::move(topology))));
     CompileOnlyPyClient::Initialize(client);
     return client;
   }
 
-  absl::StatusOr<jax::nb_class_ptr<PyExecutable>> CompileUnloaded(
+  absl::StatusOr<nb_class_ptr<PyExecutable>> CompileUnloaded(
       absl::string_view mlir_module, ifrt::DeviceListRef executable_devices,
       xla::CompileOptions options) {
     ifrt::ExecutableRef ifrt_executable;
@@ -93,18 +93,18 @@ class CompileOnlyPyClient : public PyClient {
       TF_ASSIGN_OR_RETURN(ifrt_executable,
                           ifrt::PjRtExecutable::Create(std::move(executable)));
     }
-    return jax::make_nb_class<PyExecutable>(ifrt_executable);
+    return make_nb_class<PyExecutable>(ifrt_executable);
   }
 
  private:
-  static void Initialize(jax::nb_class_ptr<PyClient> client) {
+  static void Initialize(nb_class_ptr<PyClient> client) {
     PyClient::Initialize(client);
   }
 };
 
 }  // namespace
 
-jax::nb_class_ptr<PyClient> MakeCompileOnlyClient(
+nb_class_ptr<PyClient> MakeCompileOnlyClient(
     std::shared_ptr<ifrt::PjRtTopology> topology) {
   return CompileOnlyPyClient::Make(std::move(topology));
 }
@@ -114,8 +114,7 @@ void RegisterCompileOnlyClient(nb::module_& m) {
       .def(
           "compile",
           [](CompileOnlyPyClient& self, nb::bytes mlir_module,
-             jax::PyDeviceList& py_executable_devices,
-             xla::CompileOptions options,
+             PyDeviceList& py_executable_devices, xla::CompileOptions options,
              std::vector<nb::capsule> host_callbacks) {
             ifrt::DeviceListRef executable_devices =
                 xla::ValueOrThrow(py_executable_devices.ifrt_device_list());

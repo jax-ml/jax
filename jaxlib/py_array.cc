@@ -801,7 +801,7 @@ absl::Status PyArray::BlockUntilReady() const {
         "BlockHostUntilReady() called on deleted or donated buffer");
   }
   ifrt::Array* ifrt_array = this->ifrt_array();
-  return xla::AwaitBuffersReady(absl::MakeConstSpan(&ifrt_array, 1));
+  return AwaitBuffersReady(absl::MakeConstSpan(&ifrt_array, 1));
 }
 
 absl::StatusOr<size_t> PyArray::GetOnDeviceSizeInBytes() {
@@ -1225,7 +1225,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
 
   std::vector<std::pair<int, ifrt::ArrayRef>> ifrt_arrays;
   {
-    xla::GlobalPyRefManager()->CollectGarbage();
+    GlobalPyRefManager()->CollectGarbage();
     nb::gil_scoped_release gil_release;
 
     tsl::profiler::TraceMe copy_traceme(
@@ -1282,7 +1282,7 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
         ", dst_sharding=", nb::cast<absl::string_view>(nb::repr(sharding)));
   };
 
-  xla::GlobalPyRefManager()->CollectGarbage();
+  GlobalPyRefManager()->CollectGarbage();
 
   auto n_devices = dst_devices.size();
 
@@ -1461,9 +1461,9 @@ absl::Status PyArray::BatchedBlockUntilReady(std::vector<nb::object> objs) {
     }
   }
 
-  xla::GlobalPyRefManager()->CollectGarbage();
+  GlobalPyRefManager()->CollectGarbage();
   nb::gil_scoped_release gil_release;
-  return xla::AwaitBuffersReady(absl::MakeConstSpan(ifrt_arrays));
+  return AwaitBuffersReady(absl::MakeConstSpan(ifrt_arrays));
 }
 
 absl::Status PyArray::ReplaceWithAlias(PyArray o) {
@@ -1917,7 +1917,7 @@ absl::Status PyHostValue::CopyToHostAsync(
   // Make sure the destination of the copy remains alive until the copy is done.
   value_.inc_ref();
   ready_.OnReady([array{value_.ptr()}](absl::Status status) {
-    xla::GlobalPyRefManager()->AddGarbage(nb::steal(array));
+    GlobalPyRefManager()->AddGarbage(nb::steal(array));
   });
   value_.attr("flags").attr("writeable") = nb::bool_(false);
   return absl::OkStatus();

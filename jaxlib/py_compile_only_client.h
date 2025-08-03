@@ -35,7 +35,7 @@ namespace jax {
 // Python duck typing to treat the unloaded executable like a loaded executable
 // (except it will raise errors if you try to run it, which is what we want for
 // AOT environments).
-jax::nb_class_ptr<PyClient> MakeCompileOnlyClient(
+nb_class_ptr<PyClient> MakeCompileOnlyClient(
     std::shared_ptr<xla::ifrt::PjRtTopology>);
 
 void RegisterCompileOnlyClient(nanobind::module_& m);

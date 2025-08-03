@@ -51,7 +51,7 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 namespace {
 
 std::string PrintModule(mlir::ModuleOp module) {
@@ -82,7 +82,7 @@ void EnablePrintBeforeAndAfter(mlir::PassManager& pm) {
 absl::StatusOr<nb::bytes> HloToStableHlo(const nb::bytes& hlo_module_proto) {
   mlir::MLIRContext context;
   if (VLOG_IS_ON(3)) context.disableMultithreading();
-  HloModuleProto proto;
+  xla::HloModuleProto proto;
   proto.ParseFromArray(hlo_module_proto.c_str(), hlo_module_proto.size());
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       ConvertHloToStablehlo(context, &proto));
@@ -95,7 +95,7 @@ absl::StatusOr<nb::bytes> HloToStableHlo(const nb::bytes& hlo_module_proto) {
 // TODO(phawkins): port remaining users of XlaComputations to use mlir::Modules
 // instead and delete this function.
 absl::StatusOr<std::string> PyXlaComputationToMlirModule(
-    const XlaComputation& computation) {
+    const xla::XlaComputation& computation) {
   mlir::MLIRContext context;
   if (VLOG_IS_ON(3)) context.disableMultithreading();
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
@@ -103,12 +103,12 @@ absl::StatusOr<std::string> PyXlaComputationToMlirModule(
   return PrintModule(*module);
 }
 
-absl::StatusOr<XlaComputation> PyMlirModuleToXlaComputation(
+absl::StatusOr<xla::XlaComputation> PyMlirModuleToXlaComputation(
     absl::string_view mlir_module, bool use_tuple_args, bool return_tuple) {
   mlir::MLIRContext context;
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      ParseMlirModuleString(mlir_module, context));
-  XlaComputation computation;
+                      xla::ParseMlirModuleString(mlir_module, context));
+  xla::XlaComputation computation;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
                                           return_tuple,
                                           /*exec_build_options=*/nullptr));
@@ -120,13 +120,13 @@ absl::StatusOr<nb::bytes> PyMhloToStablehlo(absl::string_view mlir_module) {
   if (VLOG_IS_ON(3)) context.disableMultithreading();
   // JAX can be customized in a way that involves operations from custom
   // dialects showing up in JAX IR.
-  // `ParseMlirModuleString` won't know about these dialects, but that's fine
-  // since we just want to convert MHLO ops to StableHLO ops here and leave
+  // `xla::ParseMlirModuleString` won't know about these dialects, but that's
+  // fine since we just want to convert MHLO ops to StableHLO ops here and leave
   // everything else unchanged.
   // In order to achieve that, we're allowing unregistered dialects here.
   context.allowUnregisteredDialects(true);
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      ParseMlirModuleString(mlir_module, context));
+                      xla::ParseMlirModuleString(mlir_module, context));
   mlir::PassManager pm(&context);
   if (VLOG_IS_ON(3)) EnablePrintBeforeAndAfter(pm);
   pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
@@ -145,14 +145,14 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
   mlir::MLIRContext context;
   if (VLOG_IS_ON(3)) context.disableMultithreading();
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      ParseMlirModuleString(mlir_module, context));
+                      xla::ParseMlirModuleString(mlir_module, context));
 
   // Serialize portable artifact
-  TF_ASSIGN_OR_RETURN(std::string bytecode,
-                      SerializeUsingVersionedStablehlo(
-                          *module, target, /*inplace=*/true,
-                          /*allow_mixed_serialization*/
-                          use_mixed_serialization));
+  TF_ASSIGN_OR_RETURN(
+      std::string bytecode,
+      xla::SerializeUsingVersionedStablehlo(*module, target, /*inplace=*/true,
+                                            /*allow_mixed_serialization*/
+                                            use_mixed_serialization));
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
@@ -217,9 +217,8 @@ void BuildMlirSubmodule(nb::module_& m) {
       "serialize_portable_artifact",
       [](absl::string_view mlir_module, absl::string_view target,
          bool use_mixed_serialization) {
-        return xla::ValueOrThrow(
-            PySerializePortableArtifact(mlir_module, target,
-                                        use_mixed_serialization));
+        return xla::ValueOrThrow(PySerializePortableArtifact(
+            mlir_module, target, use_mixed_serialization));
       },
       nb::arg("mlir_module"), nb::arg("target"),
       nb::arg("use_mixed_serialization") = false);
@@ -232,7 +231,7 @@ void BuildMlirSubmodule(nb::module_& m) {
          bool validate_static_shapes, bool enable_shardy) -> nb::bytes {
         std::string buffer;
         llvm::raw_string_ostream os(buffer);
-        xla::ThrowIfError(RefinePolymorphicShapes(
+        xla::ThrowIfError(xla::RefinePolymorphicShapes(
             absl::string_view(bytecode.c_str(), bytecode.size()), os,
             enable_shape_assertions, validate_static_shapes, enable_shardy));
         return nb::bytes(buffer.data(), buffer.size());
@@ -248,4 +247,4 @@ void BuildMlirSubmodule(nb::module_& m) {
       )");
 }
 
-}  // namespace xla
+}  // namespace jax

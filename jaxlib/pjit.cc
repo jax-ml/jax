@@ -428,7 +428,7 @@ void CallShardArgFallback(nb::handle arg, nb::handle sharding,
                           std::vector<nb::object>& keep_alive_objects) {
   tsl::profiler::TraceMe traceme("cpp_pjit_shard_arg_fallback");
   auto py_array_or_bufs = fallback(arg, sharding, layout);
-  auto py_array = nb::cast<jax::PyArray>(py_array_or_bufs);
+  auto py_array = nb::cast<PyArray>(py_array_or_bufs);
   num_args_arrays.push_back(tsl::FormRef(py_array.ifrt_array()));
   keep_alive_objects.push_back(std::move(py_array_or_bufs));
 }
@@ -483,10 +483,10 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
 
     auto transfer_guard_formatter = [] { return std::string(""); };
 
-    if (arg.type().ptr() != jax::PyArray::type().ptr()) {
+    if (arg.type().ptr() != PyArray::type().ptr()) {
       if (data_device != nullptr && in_device_local_layout.is_none()) {
         TF_RETURN_IF_ERROR(
-            jax::ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
+            ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
         TF_ASSIGN_OR_RETURN(
             auto device_put_result,
             DevicePutWithDevice(arg,
@@ -502,10 +502,10 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       }
     }
 
-    jax::PyArray py_array = nb::borrow<jax::PyArray>(arg);
+    PyArray py_array = nb::borrow<PyArray>(arg);
     const auto& sharding = py_array.sharding();
     int sharding_num_devices =
-        nb::cast<const jax::Sharding*>(sharding)->num_devices();
+        nb::cast<const Sharding*>(sharding)->num_devices();
 
     // Currently only committed PyArray inputs or uncommitted PyArray on a
     // single device inputs are allowed. This is checked previously in the entry
@@ -525,7 +525,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       }
     }
 
-    if (sharding.type().ptr() == jax::PmapSharding::type().ptr()) {
+    if (sharding.type().ptr() == PmapSharding::type().ptr()) {
       CallShardArgFallback(arg, in_shardings[dce_index], in_device_local_layout,
                            shard_arg_fallback, num_args_arrays,
                            keep_alive_objects);
@@ -550,8 +550,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
         ifrt_sharding.devices()->devices().front() != addressable_devices[0]) {
       auto& copy_group = copy_groups[std::make_tuple(
           ifrt_sharding.devices()->devices().front(),
-          ifrt_sharding.memory_kind(),
-          GetMemoryKind(in_shardings[dce_index]))];
+          ifrt_sharding.memory_kind(), GetMemoryKind(in_shardings[dce_index]))];
       copy_group.indices.push_back(num_args_arrays.size());
       copy_group.arrays.push_back(tsl::FormRef(ifrt_array));
       num_args_arrays.push_back({});
@@ -594,7 +593,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // while True:
   //   f(x)
   // may never free temporary buffers for copies of arguments.
-  xla::GlobalPyRefManager()->MaybeCollectGarbage();
+  GlobalPyRefManager()->MaybeCollectGarbage();
 
   if (GetDisableJit()) {
     if (!fun_.has_value()) {
@@ -648,11 +647,11 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // will fallback to python. For jit, numpy arrays and scalars are also
   // allowed, which we will check later.
   for (const auto& arg : flat_dynamic_args) {
-    if (arg.type().ptr() != jax::PyArray::type().ptr()) {
+    if (arg.type().ptr() != PyArray::type().ptr()) {
       continue;
     }
 
-    jax::PyArray py_array = nb::borrow<jax::PyArray>(arg);
+    PyArray py_array = nb::borrow<PyArray>(arg);
 
     // Only allow committed PyArray in cpp pjit for now as the logic on handling
     // sharding for uncommitted PyArray is complicated and still under
@@ -661,7 +660,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     // TODO(chky): Consider support uncommitted PyArray in cpp when the python
     // side stabilizes.
     int sharding_num_devices =
-        nb::cast<const jax::Sharding*>(py_array.sharding())->num_devices();
+        nb::cast<const Sharding*>(py_array.sharding())->num_devices();
     if (!py_array.committed() && sharding_num_devices > 1) {
       VLOG(2) << "PyArray argument is not committed and number of global "
                  "devices is more than 1; fallback to python.";
@@ -778,7 +777,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     output_arrays = std::move(result.outputs);
   }
 
-  auto traceback = jax::Traceback::Get();
+  auto traceback = Traceback::Get();
 
   // Convert the ifrt::Array objects to PyArray.
   int num_outputs = output_arrays.size();
@@ -788,7 +787,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     // Creating the PyArray result. In addition to the IFRT arrays, the metadata
     // like `aval` and `sharding` are retrieved from the cache for this
     // function, which are produced by the python path in `cache_miss`.
-    jax::PyArray py_array(
+    PyArray py_array(
         cache_entry->out_avals[i], cache_entry->out_weak_types[i],
         cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
         cache_entry->out_shardings[i], cache_entry->executable->client(),
@@ -829,8 +828,8 @@ absl::Status PjitFunction::ComputeCallSignature(
   signature.function_name = function_name_;
 
   // Get dynamic argument signatures.
-  JitState& global_state = jax::GlobalJitState();
-  JitState& tls = jax::ThreadLocalJitState();
+  JitState& global_state = GlobalJitState();
+  JitState& tls = ThreadLocalJitState();
   bool jax_enable_x64 = GetEnableX64();
 
   signature.default_device = GetDefaultDevice();
@@ -850,8 +849,8 @@ absl::Status PjitFunction::ComputeCallSignature(
 
     // It should be already checked previously in the entry point of
     // PjitFunction::Call().
-    if (arg.type().ptr() == jax::PyArray::type().ptr()) {
-      auto py_array = nb::borrow<jax::PyArray>(arg);
+    if (arg.type().ptr() == PyArray::type().ptr()) {
+      auto py_array = nb::borrow<PyArray>(arg);
       signature.dynamic_arg_shardings.push_back(py_array.sharding());
       auto layout = py_array.layout();
       if (absl::IsUnimplemented(layout.status())) {

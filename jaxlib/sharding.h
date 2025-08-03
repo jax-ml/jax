@@ -57,8 +57,8 @@ class Sharding {
   int num_devices_;
 };
 
-// Gets `jax::PyDeviceList` from a JAX Sharding.
-absl::StatusOr<nb_class_ptr<jax::PyDeviceList>> GetPyDeviceList(
+// Gets `PyDeviceList` from a JAX Sharding.
+absl::StatusOr<nb_class_ptr<PyDeviceList>> GetPyDeviceList(
     nanobind::handle sharding);
 
 // Checks if the memory kind is valid, and canonicalizes the
@@ -113,7 +113,7 @@ class SingleDeviceSharding : public Sharding {
       nanobind::object device, nanobind::object memory_kind = nanobind::none());
 
   // Used only in C++ to accelerate `PyArray::MakeFromSingleDeviceArray()`.
-  SingleDeviceSharding(nb_class_ptr<jax::PyClient> client,
+  SingleDeviceSharding(nb_class_ptr<PyClient> client,
                        xla::ifrt::DeviceListRef device_list,
                        nanobind::object memory_kind);
 

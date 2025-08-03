@@ -73,18 +73,17 @@ namespace {
 // Gets `ifrt::DeviceList` from a sequence of JAX devices.
 absl::StatusOr<ifrt::DeviceListRef> GetDeviceList(nb::sequence devices) {
   ifrt::DeviceListRef ifrt_device_list;
-  if (devices.type().is(jax::PyDeviceList::type())) {
-    return nb::cast<const jax::PyDeviceList*>(devices)->ifrt_device_list();
+  if (devices.type().is(PyDeviceList::type())) {
+    return nb::cast<const PyDeviceList*>(devices)->ifrt_device_list();
   } else {
-    auto py_devices =
-        nb::cast<std::vector<jax::nb_class_ptr<PyDevice>>>(devices);
+    auto py_devices = nb::cast<std::vector<nb_class_ptr<PyDevice>>>(devices);
     if (py_devices.empty()) {
       return absl::InvalidArgumentError(
           "Colocated Python program requires at least one device");
     }
     absl::InlinedVector<ifrt::Device*, 1> ifrt_devices;
     ifrt_devices.reserve(py_devices.size());
-    for (const jax::nb_class_ptr<PyDevice>& py_device : py_devices) {
+    for (const nb_class_ptr<PyDevice>& py_device : py_devices) {
       ifrt_devices.push_back(py_device->device());
     }
     return py_devices.front()->client()->ifrt_client()->MakeDeviceList(
@@ -95,8 +94,8 @@ absl::StatusOr<ifrt::DeviceListRef> GetDeviceList(nb::sequence devices) {
 // Gets `xla::HloSharding` from a JAX Sharding.
 xla::HloSharding GetXlaHloSharding(nb::handle sharding,
                                    int64_t num_dimensions) {
-  if (sharding.type().is(jax::GSPMDSharding::type())) {
-    return nb::cast<jax::GSPMDSharding*>(sharding)->hlo_sharding();
+  if (sharding.type().is(GSPMDSharding::type())) {
+    return nb::cast<GSPMDSharding*>(sharding)->hlo_sharding();
   } else {
     return nb::cast<xla::HloSharding>(
         sharding.attr("_to_xla_hlo_sharding")(num_dimensions));
@@ -105,26 +104,25 @@ xla::HloSharding GetXlaHloSharding(nb::handle sharding,
 
 // Gets `ifrt::DeviceList` from a JAX Sharding.
 absl::StatusOr<ifrt::DeviceListRef> GetIfrtDeviceList(nb::handle sharding) {
-  if (sharding.type().is(jax::NamedSharding::type())) {
+  if (sharding.type().is(NamedSharding::type())) {
     TF_ASSIGN_OR_RETURN(
         auto ns_device_list,
-        nb::cast<const jax::NamedSharding*>(sharding)->internal_device_list());
+        nb::cast<const NamedSharding*>(sharding)->internal_device_list());
     return ns_device_list->ifrt_device_list();
-  } else if (sharding.type().is(jax::SingleDeviceSharding::type())) {
-    return nb::cast<const jax::SingleDeviceSharding*>(sharding)
+  } else if (sharding.type().is(SingleDeviceSharding::type())) {
+    return nb::cast<const SingleDeviceSharding*>(sharding)
         ->internal_device_list()
         ->ifrt_device_list();
-  } else if (sharding.type().is(jax::PmapSharding::type())) {
-    return nb::cast<const jax::PmapSharding*>(sharding)
+  } else if (sharding.type().is(PmapSharding::type())) {
+    return nb::cast<const PmapSharding*>(sharding)
         ->internal_device_list()
         ->ifrt_device_list();
-  } else if (sharding.type().is(jax::GSPMDSharding::type())) {
-    return nb::cast<const jax::GSPMDSharding*>(sharding)
+  } else if (sharding.type().is(GSPMDSharding::type())) {
+    return nb::cast<const GSPMDSharding*>(sharding)
         ->internal_device_list()
         ->ifrt_device_list();
   } else {
-    return nb::cast<const jax::PyDeviceList*>(
-               sharding.attr("_internal_device_list"))
+    return nb::cast<const PyDeviceList*>(sharding.attr("_internal_device_list"))
         ->ifrt_device_list();
   }
 }
@@ -145,9 +143,9 @@ absl::StatusOr<ifrt::ShardingRef> GetIfrtSharding(nb::handle sharding,
                                                   int64_t num_dimensions) {
   auto ifrt_memory_kind = GetIfrtMemoryKind(sharding);
   ifrt::ShardingRef ifrt_sharding;
-  if (sharding.type().is(jax::SingleDeviceSharding::type())) {
+  if (sharding.type().is(SingleDeviceSharding::type())) {
     TF_ASSIGN_OR_RETURN(auto ifrt_device_list,
-                        nb::cast<const jax::SingleDeviceSharding*>(sharding)
+                        nb::cast<const SingleDeviceSharding*>(sharding)
                             ->internal_device_list()
                             ->ifrt_device_list());
     return ifrt::SingleDeviceSharding::Create(
@@ -226,7 +224,7 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgramFromBytes(
 }
 
 absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
-    xla::CompileOptions options, jax::PyDeviceList& py_executable_devices,
+    xla::CompileOptions options, PyDeviceList& py_executable_devices,
     std::vector<nb::capsule> host_callbacks) {
   std::vector<tsl::RCReference<ifrt::LoadedHostCallback>>
       ifrt_loaded_host_callbacks;
@@ -255,7 +253,7 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeColocatedPythonProgram(
       absl::string_view(reinterpret_cast<const char*>(picked_function.data()),
                         picked_function.size()),
       /*releaser=*/[picked_function](absl::string_view) mutable {
-        xla::GlobalPyRefManager()->AddGarbage(std::move(picked_function));
+        GlobalPyRefManager()->AddGarbage(std::move(picked_function));
       });
   TF_ASSIGN_OR_RETURN(auto ifrt_device_list, GetDeviceList(devices));
   TF_ASSIGN_OR_RETURN(auto ifrt_input_specs, GetIfrtArraySpecs(input_avals));

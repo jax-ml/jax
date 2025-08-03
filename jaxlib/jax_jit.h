@@ -56,7 +56,7 @@ struct JitState {
       // We likely do not hold the GIL if this JitState is thread-local, so we
       // hand the Python object to the global reference manager to destroy.
       nanobind::object o = std::move(*extra_jit_context);
-      xla::GlobalPyRefManager()->AddGarbage(absl::MakeSpan(&o, 1));
+      GlobalPyRefManager()->AddGarbage(absl::MakeSpan(&o, 1));
       extra_jit_context = std::nullopt;
     }
   }

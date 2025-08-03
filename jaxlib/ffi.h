@@ -109,7 +109,7 @@ ffi::Error XlaBufferCallback(int32_t device_ordinal, const XLA_FFI_Api* api,
   auto nb_args =
       nb::steal<nb::tuple>(PyTuple_New(1 + args.size() + rets.size()));
 
-  jax::PyFfiContext py_ctx(api, ctx, XLA_FFI_ExecutionStage_EXECUTE);
+  PyFfiContext py_ctx(api, ctx, XLA_FFI_ExecutionStage_EXECUTE);
   PyTuple_SET_ITEM(nb_args.ptr(), 0, nb::cast(py_ctx).release().ptr());
 
   size_t offset = 1;
@@ -118,7 +118,7 @@ ffi::Error XlaBufferCallback(int32_t device_ordinal, const XLA_FFI_Api* api,
     if (arg.has_error()) {
       return arg.error();
     }
-    jax::PyFfiAnyBuffer py_buffer(DeviceType, device_ordinal, arg.value());
+    PyFfiAnyBuffer py_buffer(DeviceType, device_ordinal, arg.value());
     PyTuple_SET_ITEM(nb_args.ptr(), offset,
                      nb::cast(py_buffer).release().ptr());
   }
@@ -128,7 +128,7 @@ ffi::Error XlaBufferCallback(int32_t device_ordinal, const XLA_FFI_Api* api,
     if (ret.has_error()) {
       return ret.error();
     }
-    jax::PyFfiAnyBuffer py_buffer(DeviceType, device_ordinal, ret.value());
+    PyFfiAnyBuffer py_buffer(DeviceType, device_ordinal, ret.value());
     PyTuple_SET_ITEM(nb_args.ptr(), offset,
                      nb::cast(py_buffer).release().ptr());
   }

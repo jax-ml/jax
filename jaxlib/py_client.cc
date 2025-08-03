@@ -340,7 +340,7 @@ absl::Status PyClient::Defragment() {
         "Cannot copy value to device '%s' with '%s' backend",
         device->DebugString(), client->ifrt_client_->platform_name());
   }
-  xla::GlobalPyRefManager()->CollectGarbage();
+  GlobalPyRefManager()->CollectGarbage();
 
   DevicePutOptions options;
   options.squash_64bit_types = false;
@@ -523,7 +523,7 @@ PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, std::string mlir_module,
   // Extract `ifrt::LoadedHostCallback`s from host callback capsules that
   // were created by `PyClient::MakePythonCallbackUsingHostSendAndRecv()`.
   for (auto& host_callback : host_callbacks) {
-    auto callback = tsl::MakeRef<xla::PyFfiLoadedHostCallback>(
+    auto callback = tsl::MakeRef<PyFfiLoadedHostCallback>(
         client->ifrt_client(), std::move(host_callback));
     ifrt_loaded_host_callbacks.push_back(callback);
   }
@@ -690,7 +690,7 @@ absl::StatusOr<nb::object> PyClient::MakePythonCallbackUsingHostSendAndRecv(
     absl::Span<uint16_t const> recv_channel_ids, nb::callable serializer) {
   TF_ASSIGN_OR_RETURN(
       auto loaded_host_callback,
-      xla::PyHostSendAndRecvLoadedHostCallback::Create(
+      PyHostSendAndRecvLoadedHostCallback::Create(
           ifrt_client(), std::move(callable), operand_shapes, result_shapes,
           send_channel_ids, recv_channel_ids, std::move(serializer)));
   nb::capsule callback_capsule(

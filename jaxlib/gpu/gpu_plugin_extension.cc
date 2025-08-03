@@ -41,7 +41,7 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 
 namespace {
 
@@ -60,7 +60,7 @@ absl::StatusOr<TritonCompilationResult> CompileTritonToASM(
       pjrt::FindExtension<PJRT_Triton_Extension>(
           c_api, PJRT_Extension_Type::PJRT_Extension_Type_Triton);
   if (triton_ext == nullptr) {
-    return Unimplemented("The plugin does not have a Triton extension.");
+    return xla::Unimplemented("The plugin does not have a Triton extension.");
   }
   PJRT_Triton_Compile_Args args;
   args.struct_size = PJRT_Triton_Compile_Args_STRUCT_SIZE;
@@ -92,13 +92,15 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
       pjrt::FindExtension<PJRT_Gpu_Custom_Call>(
           c_api, PJRT_Extension_Type::PJRT_Extension_Type_Gpu_Custom_Call);
   if (custom_call_ext == nullptr) {
-    return Unimplemented("The plugin does not have a custom call extension.");
+    return xla::Unimplemented(
+        "The plugin does not have a custom call extension.");
   }
   PJRT_Gpu_Register_Custom_Call* register_custom_call =
       custom_call_ext->custom_call;
 
   if (traits != 0) {
-    return Unimplemented("The plugin does not support custom call traits.");
+    return xla::Unimplemented(
+        "The plugin does not support custom call traits.");
   }
 
   PJRT_Gpu_Register_Custom_Call_Args args;
@@ -180,7 +182,7 @@ absl::Status RegisterCustomTypeId(const PJRT_Api* c_api,
   const PJRT_FFI_Extension* ffi_ext = pjrt::FindExtension<PJRT_FFI_Extension>(
       c_api, PJRT_Extension_Type::PJRT_Extension_Type_FFI);
   if (ffi_ext == nullptr) {
-    return Unimplemented("The plugin does not have the FFI extension.");
+    return xla::Unimplemented("The plugin does not have the FFI extension.");
   }
 
   PJRT_FFI_TypeID_Register_Args args;
@@ -259,4 +261,4 @@ void BuildGpuPluginExtension(nanobind::module_& m) {
       nb::arg("c_api"), nb::arg("type_name"), nb::arg("type_id"));
 }
 
-}  // namespace xla
+}  // namespace jax

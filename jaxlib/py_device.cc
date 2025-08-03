@@ -147,7 +147,7 @@ nb::list PyDevice::AddressableMemories() const {
 }
 
 absl::StatusOr<std::optional<nb::dict>> PyDevice::MemoryStats() const {
-  xla::GlobalPyRefManager()->CollectGarbage();
+  GlobalPyRefManager()->CollectGarbage();
   ifrt::PjRtDevice* device = llvm::dyn_cast<ifrt::PjRtDevice>(device_);
   if (device == nullptr || !device->IsAddressable()) {
     return xla::InvalidArgument(

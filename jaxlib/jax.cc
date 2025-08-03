@@ -564,13 +564,13 @@ NB_MODULE(_jax, m) {
   sharded_token.def("get_token", &PyShardedToken::GetPyToken);
 
   m.def("buffer_to_dlpack_managed_tensor",
-        xla::ValueOrThrowWrapper(xla::BufferToDLPackManagedTensor),
+        xla::ValueOrThrowWrapper(BufferToDLPackManagedTensor),
         nb::arg("buffer"), nb::arg("stream").none() = nb::none());
   m.def(
       "dlpack_managed_tensor_to_buffer",
       [](const nb::capsule& tensor, nb_class_ptr<PyDevice> device,
          std::optional<std::intptr_t> stream) {
-        return xla::ValueOrThrow(xla::DLPackManagedTensorToBuffer(
+        return xla::ValueOrThrow(DLPackManagedTensorToBuffer(
             tensor, device->device(), device->client(), stream));
       },
       nb::arg("dlpack"), nb::arg("device"), nb::arg("stream").none());
@@ -580,7 +580,7 @@ NB_MODULE(_jax, m) {
       [](const nb::capsule& tensor,
          std::optional<nb_class_ptr<PyClient>> cpu_client,
          std::optional<nb_class_ptr<PyClient>> gpu_client) {
-        return xla::ValueOrThrow(xla::DLPackManagedTensorToBuffer(
+        return xla::ValueOrThrow(DLPackManagedTensorToBuffer(
             tensor, std::move(cpu_client), std::move(gpu_client)));
       },
       nb::arg("dlpack"), nb::arg("cpu_backend").none() = nb::none(),
@@ -598,8 +598,8 @@ NB_MODULE(_jax, m) {
   BuildPmapSubmodule(m);
   BuildPjitSubmodule(m);
   Traceback::RegisterType(m);
-  xla::BuildMlirSubmodule(m);
-  xla::BuildCustomCallShardingPybindAPI(m);
+  BuildMlirSubmodule(m);
+  BuildCustomCallShardingPybindAPI(m);
   BuildFfiSubmodule(m);
 #if defined(__linux__)
   aux::RegisterTransferServerTypes(m);
@@ -848,8 +848,7 @@ NB_MODULE(_jax, m) {
       nb::arg("shutdown_on_destruction").none() = std::nullopt,
       nb::arg("use_compression").none() = std::nullopt);
 
-  m.def("collect_garbage",
-        []() { xla::GlobalPyRefManager()->CollectGarbage(); });
+  m.def("collect_garbage", []() { GlobalPyRefManager()->CollectGarbage(); });
 
   m.def("is_optimized_build", &IsOptimizedBuild);
 

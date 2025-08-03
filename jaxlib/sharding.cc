@@ -53,24 +53,23 @@ namespace jax {
 
 namespace nb = nanobind;
 
-// Gets `jax::PyDeviceList` from a JAX Sharding.
-absl::StatusOr<nb_class_ptr<jax::PyDeviceList>> GetPyDeviceList(
+// Gets `PyDeviceList` from a JAX Sharding.
+absl::StatusOr<nb_class_ptr<PyDeviceList>> GetPyDeviceList(
     nb::handle sharding) {
-  if (sharding.type().is(jax::NamedSharding::type())) {
+  if (sharding.type().is(NamedSharding::type())) {
     TF_ASSIGN_OR_RETURN(
         auto ns_device_list,
-        nb::cast<const jax::NamedSharding*>(sharding)->internal_device_list());
+        nb::cast<const NamedSharding*>(sharding)->internal_device_list());
     return ns_device_list;
-  } else if (sharding.type().is(jax::SingleDeviceSharding::type())) {
-    return nb::cast<const jax::SingleDeviceSharding*>(sharding)
+  } else if (sharding.type().is(SingleDeviceSharding::type())) {
+    return nb::cast<const SingleDeviceSharding*>(sharding)
         ->internal_device_list();
-  } else if (sharding.type().is(jax::PmapSharding::type())) {
-    return nb::cast<const jax::PmapSharding*>(sharding)->internal_device_list();
-  } else if (sharding.type().is(jax::GSPMDSharding::type())) {
-    return nb::cast<const jax::GSPMDSharding*>(sharding)
-        ->internal_device_list();
+  } else if (sharding.type().is(PmapSharding::type())) {
+    return nb::cast<const PmapSharding*>(sharding)->internal_device_list();
+  } else if (sharding.type().is(GSPMDSharding::type())) {
+    return nb::cast<const GSPMDSharding*>(sharding)->internal_device_list();
   } else {
-    return nb::cast<nb_class_ptr<jax::PyDeviceList>>(
+    return nb::cast<nb_class_ptr<PyDeviceList>>(
         sharding.attr("_internal_device_list"));
   }
 }
@@ -143,7 +142,7 @@ NamedSharding::NamedSharding(nb::object mesh, nb_class_ptr<PartitionSpec> spec,
   if (idl.is_none()) {
     internal_device_list_ = std::nullopt;
   } else {
-    internal_device_list_ = nb::cast<nb_class_ptr<jax::PyDeviceList>>(idl);
+    internal_device_list_ = nb::cast<nb_class_ptr<PyDeviceList>>(idl);
   }
   if (internal_device_list_) {
     memory_kind_ =
@@ -228,7 +227,7 @@ SingleDeviceSharding::SingleDeviceSharding(nb::object device,
   type_ = nanobind::type<SingleDeviceSharding>().inc_ref().ptr();
 }
 
-SingleDeviceSharding::SingleDeviceSharding(nb_class_ptr<jax::PyClient> client,
+SingleDeviceSharding::SingleDeviceSharding(nb_class_ptr<PyClient> client,
                                            xla::ifrt::DeviceListRef device_list,
                                            nb::object memory_kind)
     : Sharding(/*num_devices=*/1),

@@ -19,10 +19,10 @@ limitations under the License.
 // placeholder for index annotation headers
 #include "nanobind/nanobind.h"
 
-namespace xla {
+namespace jax {
 
 void BuildCustomCallShardingPybindAPI(nanobind::module_& m);
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_CUSTOM_CALL_SHARDING_H_
