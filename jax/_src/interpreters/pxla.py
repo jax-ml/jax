@@ -2177,11 +2177,9 @@ def _concretize_abstract_out_shardings(shardings, avals, device_assignment,
   return tuple(out)
 
 
-def _get_context_mesh(context_mesh: Mesh | None) -> Mesh | None:
-  if context_mesh is None:
-    return context_mesh
+def _get_context_mesh(context_mesh: Mesh) -> Mesh:
   # Don't update the mesh because the old `with mesh` ctx mgr is set.
-  if get_concrete_mesh() is None:
+  if get_concrete_mesh().empty:
     return context_mesh
   cur_mesh = get_abstract_mesh()
   if cur_mesh.empty or context_mesh.empty:
@@ -2204,7 +2202,7 @@ def lower_sharding_computation(
     donated_invars: Sequence[bool],
     *,
     keep_unused: bool,
-    context_mesh: Mesh | None,
+    context_mesh: Mesh,
     compiler_options_kvs: tuple[tuple[str, Any], ...],
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
@@ -2247,8 +2245,8 @@ def lower_sharding_computation(
 
   context_mesh = _get_context_mesh(context_mesh)
 
-  devices_from_context = (None if context_mesh is None or context_mesh.empty
-                          else context_mesh._flat_devices_tuple)
+  devices_from_context = (None if context_mesh.empty else
+                          context_mesh._flat_devices_tuple)
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
   unique_intermediate_shardings = util.stable_unique(

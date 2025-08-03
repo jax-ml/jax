@@ -3470,7 +3470,7 @@ class ShapeDtypeStruct:
     elif isinstance(sharding, P):
       # TODO(yashkatariya): Should this be abstract mesh?
       cur_mesh = get_concrete_mesh()
-      if cur_mesh is None:
+      if cur_mesh.empty:
         raise TypeError(
             "When specifying PartitionSpec to `ShapeDtypeStruct`, the context"
             " mesh cannot be empty. Please use `jax.set_mesh` to set"

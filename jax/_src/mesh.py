@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Definitions of Mesh and ResourceEnv."""
+"""Definitions of Mesh and AbstractMesh"""
 
 from __future__ import annotations
 
@@ -558,8 +558,9 @@ def _raise_value_error(name):
   raise ValueError(f"AbstractMesh does not implement {name}")
 
 empty_abstract_mesh = AbstractMesh((), ())
+empty_concrete_mesh = Mesh(np.empty((), dtype=object), ())
 
-class UseAbstractMeshContextManager:
+class use_abstract_mesh:
   __slots__ = ['mesh', 'prev']
 
   def __init__(self, mesh: AbstractMesh):
@@ -575,11 +576,11 @@ class UseAbstractMeshContextManager:
   def __exit__(self, exc_type, exc_value, traceback):
     jax_config.abstract_mesh_context_manager.set_local(self.prev)
 
-use_abstract_mesh = UseAbstractMeshContextManager
 
 def get_abstract_mesh() -> AbstractMesh:
   val = jax_config.abstract_mesh_context_manager.value
   return empty_abstract_mesh if val is None else val
 
-def get_concrete_mesh() -> Mesh | None:
-  return jax_config.device_context.value
+def get_concrete_mesh() -> Mesh:
+  val = jax_config.device_context.value
+  return empty_concrete_mesh if val is None else val

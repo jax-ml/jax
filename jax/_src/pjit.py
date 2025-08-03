@@ -483,7 +483,7 @@ class PjitParams(NamedTuple):
 def _infer_params_impl(
     fun: Callable,
     ji: PjitInfo,
-    ctx_mesh: mesh_lib.Mesh | None,
+    ctx_mesh: mesh_lib.Mesh,
     dbg: core.DebugInfo,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
@@ -495,11 +495,10 @@ def _infer_params_impl(
     raise ValueError(
         "pjit does not support kwargs when in_shardings is specified.")
 
-  if ctx_mesh is not None:
-    if (ji.backend or ji.device) and not ctx_mesh.empty:
-      raise ValueError(
-          "Mesh context manager should not be used with jit when backend or "
-          "device is also specified as an argument to jit.")
+  if not ctx_mesh.empty and (ji.backend or ji.device):
+    raise ValueError(
+        "Mesh context manager should not be used with jit when backend or "
+        "device is also specified as an argument to jit.")
 
   axes_specs = _flat_axes_specs(ji.abstracted_axes, *args, **kwargs)
 
@@ -619,7 +618,7 @@ def _infer_params_cached(
     jit_info: PjitInfo,
     signature: jax_jit.ArgumentSignature,
     in_avals: tuple[core.AbstractValue, ...],
-    ctx_mesh: mesh_lib.Mesh | None,
+    ctx_mesh: mesh_lib.Mesh,
 ) -> InferParamsCacheEntry:
   return InferParamsCacheEntry()
 
@@ -943,31 +942,17 @@ def hashable_pytree(pytree):
 
 def _create_sharding_for_array(mesh, x, name, api_name):
   if x is None:
-    if api_name == 'jit' or mesh is None or mesh.empty:
+    if api_name == 'jit' or mesh.empty:
       return UNSPECIFIED
     return sharding_impls.cached_named_sharding(mesh, PartitionSpec())
   if isinstance(x, (AUTO, UnspecifiedValue, Sharding)):
     return x
-  if mesh is None:
-    msg = ('jax.jit only supports `Sharding`s being passed to'
-           f' {name}. Looks like you are passing either `PartitionSpec` or `None`'
-           f' which is not allowed in jax.jit.\n')
-    if name == 'in_shardings':
-      msg += (f'Note that {name} argument is optional. JAX will infer the shardings'
-              " from the input jax.Array's and will default to replicating the"
-              ' input if the sharding cannot be inferred.')
-    elif name == 'out_shardings':
-      msg += (f'Note that {name} is optional. If not specified, jax.jit will'
-              " use GSPMD's sharding propagation to figure out what the sharding"
-              ' of the output(s) should be.')
-    raise RuntimeError(msg)
   if mesh.empty:
     raise RuntimeError(
-        f'{api_name} requires a non-empty mesh if you are passing'
-        f' `PartitionSpec`s or `None` to {name}! Is a mesh defined at the call'
-        f' site? Alternatively, provide `Sharding`s to {name} and'
-        ' then the mesh context manager is not required.')
-  # A nice user error is raised in prepare_axis_resources.
+        f'{api_name} requires a non-empty mesh in context if you are passing'
+        f' `PartitionSpec`s to {name}. You can define a context mesh via'
+        ' `jax.set_mesh(mesh)`. Alternatively, provide `Sharding`s to'
+        f' {name} and then the mesh context manager is not required.')
   assert isinstance(x, PartitionSpec), x
   return sharding_impls.cached_named_sharding(mesh, x)
 
@@ -2160,7 +2145,7 @@ def _pjit_batcher_for_sharding(
           s.mesh, pxla.batch_spec(s.spec, dim, spmd_axis_name))
     if isinstance(s, NamedSharding):
       mesh = s.mesh
-    if mesh is None or mesh.empty:
+    if mesh.empty:
       raise ValueError(
           'If you are using spmd_axis_name parameter of jax.vmap,'
           ' please make sure to run your jitted function inside the mesh'
@@ -2613,7 +2598,7 @@ def _pjit_pp_rule(eqn: core.JaxprEqn,
     del params['out_layouts']
   if not params['keep_unused']:
     del params['keep_unused']
-  if params['ctx_mesh'] is None or params['ctx_mesh'].empty:
+  if params['ctx_mesh'].empty:
     del params['ctx_mesh']
   if not params['compiler_options_kvs']:
     del params['compiler_options_kvs']
@@ -2689,7 +2674,7 @@ def with_sharding_constraint(x, shardings):
   del layouts
 
   context_mesh = (
-      mesh_lib.get_abstract_mesh() if mesh_lib.get_concrete_mesh() is not None
+      mesh_lib.get_abstract_mesh() if not mesh_lib.get_concrete_mesh().empty
       else mesh_lib.thread_resources.env.physical_mesh)
 
   shardings_flat = [_create_sharding_for_array(context_mesh, a, 'shardings',
@@ -2733,7 +2718,7 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
     if (not context_mesh.empty and isinstance(context_mesh, AbstractMesh) and
         not hasattr(x, 'sharding')):
       concrete_mesh = mesh_lib.get_concrete_mesh()
-      assert concrete_mesh is not None
+      assert not concrete_mesh.empty
       sharding = NamedSharding(concrete_mesh, sharding.spec)
     else:
       aval = core.shaped_abstractify(x)
@@ -2977,7 +2962,7 @@ reshard_p.def_abstract_eval(_reshard_abstract_eval)
 
 def _reshard_impl(x, dst_sharding):
   cur_concrete_mesh = mesh_lib.get_concrete_mesh()
-  if cur_concrete_mesh is not None and not cur_concrete_mesh.is_multi_process:
+  if not cur_concrete_mesh.empty and not cur_concrete_mesh.is_multi_process:
     return api.device_put(x, dst_sharding.spec)
   return dispatch.apply_primitive(reshard_p, x, dst_sharding=dst_sharding)
 reshard_p.def_impl(_reshard_impl)

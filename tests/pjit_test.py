@@ -2305,9 +2305,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_array_enabled_non_empty_mesh_with_pspec(self):
     arr = jnp.array([1, 2, 3])
     with self.assertRaisesRegex(
-        RuntimeError,
-        r'jit requires a non-empty mesh if you are passing `PartitionSpec`s or'
-        r' `None` to in_shardings.*'):
+        RuntimeError, r'pjit requires a non-empty mesh in context.*'):
       pjit(lambda x: x, in_shardings=P('x'))(arr)
 
     with self.assertRaisesRegex(
@@ -3295,9 +3293,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_jit_with_mesh_context_manager(self):
     mesh = jtu.create_mesh((1,), ('x',))
     with self.assertRaisesRegex(
-        RuntimeError,
-        "jax.jit only supports `Sharding`s being passed to "
-        "in_shardings"):
+        RuntimeError, "jit requires a non-empty mesh in context"):
       with mesh:
         jax.jit(lambda x: x, in_shardings=P('x'),
                 out_shardings=P('x'))(jnp.arange(8))
@@ -8944,9 +8940,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, SingleDeviceSharding(jax.devices()[0]))
 
   def test_pspec_to_wsc_without_mesh(self):
-    error = (
-        r'with_sharding_constraint requires a non-empty mesh if you are '
-        r'passing `PartitionSpec`s or `None` to shardings.*')
+    error = r'with_sharding_constraint requires a non-empty mesh in context.*'
     with self.assertRaisesRegex(RuntimeError, error):
       pjit(lambda x: with_sharding_constraint(x, P('x')))(jnp.arange(4))
 

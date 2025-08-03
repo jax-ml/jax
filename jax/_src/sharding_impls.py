@@ -1195,6 +1195,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
 
 class set_mesh:
+  __slots__ = ["prev_abstract_mesh", "prev_mesh"]
 
   def __init__(self, mesh: mesh_lib.Mesh):
     if not isinstance(mesh, mesh_lib.Mesh):
@@ -1203,23 +1204,21 @@ class set_mesh:
     if not core.trace_state_clean():
       raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
 
-    self.prev_am = config.abstract_mesh_context_manager.swap_local(
+    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
         mesh.abstract_mesh)
-    self.prev_m = config.device_context.swap_local(mesh)
+    self.prev_mesh = config.device_context.swap_local(mesh)
 
   def __enter__(self):
     pass
 
   def __exit__(self, exc_type, exc_value, traceback):
-    config.abstract_mesh_context_manager.set_local(self.prev_am)
-    config.device_context.set_local(self.prev_m)
+    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
+    config.device_context.set_local(self.prev_mesh)
 
 
 @contextlib.contextmanager
-def _internal_use_concrete_mesh(mesh: mesh_lib.Mesh | None):
-  if mesh is not None and not isinstance(mesh, mesh_lib.Mesh):
-    raise ValueError(
-        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+def _internal_use_concrete_mesh(mesh: mesh_lib.Mesh):
+  assert isinstance(mesh, mesh_lib.Mesh)
   prev_val = config.device_context.swap_local(mesh)
   try:
     yield

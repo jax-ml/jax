@@ -74,7 +74,7 @@ def _initialize_error_code_ref() -> None:
   # Get mesh from the context.
   mesh = mesh_lib.get_concrete_mesh()
 
-  if mesh is None:  # single-device case.
+  if mesh.empty:  # single-device case.
     error_code: ArrayLike = np.uint32(_NO_ERROR)
 
   else:  # multi-device case.

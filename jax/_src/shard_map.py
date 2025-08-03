@@ -800,7 +800,7 @@ def _get_token_sharding(
 def _get_spmdaxis_ctx_mesh(mesh):
   if isinstance(mesh, AbstractMesh):
     concrete_mesh = get_concrete_mesh()
-    return concrete_mesh if concrete_mesh is not None else mesh
+    return concrete_mesh if not concrete_mesh.empty else mesh
   return mesh
 
 
@@ -1015,7 +1015,7 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
   del prim
   if isinstance(mesh, AbstractMesh):
     concrete_mesh = get_concrete_mesh()
-    mesh = concrete_mesh if concrete_mesh is not None else mesh
+    mesh = concrete_mesh if not concrete_mesh.empty else mesh
     mesh = get_mesh_from_args(args, mesh)
   cur_mesh = get_abstract_mesh()
   args = map(partial(_unmatch_spec, mesh, check_vma, cur_mesh), in_specs, args)

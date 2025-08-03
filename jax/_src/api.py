@@ -2528,7 +2528,7 @@ def _check_sharding(aval, s):
 def pspec_to_sharding(val):
   if isinstance(val, P):
     mesh = get_concrete_mesh()
-    if mesh is None:
+    if mesh.empty:
       raise ValueError(
           "Please set a mesh via `jax.set_mesh` if a PartitionSpec is"
           " passed to device_put")
