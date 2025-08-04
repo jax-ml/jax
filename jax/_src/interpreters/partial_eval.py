@@ -1658,6 +1658,9 @@ class DynamicJaxprTracer(core.Tracer):
   def _short_repr(self):
     return f"JitTracer<{self.aval}>"
 
+  def cur_qdd(self):
+    return self.mutable_qdd.cur_val
+
   @property
   def aval_mutable_qdd(self):
     aval = self.aval
@@ -2004,7 +2007,7 @@ class DynamicJaxprTrace(core.Trace):
     if tracer is None:
       aval = get_aval(c)
       if aval.has_qdd:
-        with core.set_current_trace(self.parent_trace):
+        with core.set_current_trace(self.parent_trace or core.eval_trace):
           aval = core.AvalQDD(aval, core.cur_qdd(c))
       aval = self._lift_tracers_in_aval(aval, source_info)
       tracer = self._new_const(aval, c, source_info)
@@ -2207,7 +2210,7 @@ class DynamicJaxprTrace(core.Trace):
     source_info = source_info_util.current()
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
     tracers = map(to_jaxpr_tracer, tracers)
-    in_avals = [t.aval for t in tracers]
+    in_avals = [core.AvalQDD(t.aval, core.cur_qdd(t)) if t.aval.has_qdd else t.aval for t in tracers]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun, in_avals)
     num_consts = len(consts)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
@@ -2316,7 +2319,7 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
 @profiler.annotate_function
 def trace_to_jaxpr_dynamic(
     fun: lu.WrappedFun,
-    in_avals: Sequence[AbstractValue],
+    in_avals: Sequence[AbstractValue | core.AvalQDD],
     *,
     keep_inputs: list[bool] | None = None,
     lower: bool = False,
@@ -2595,8 +2598,8 @@ def _extract_implicit_args(
   return [t for t, (_, e) in zip(tracers, in_type) if not e]  # type: ignore
 
 def _input_type_to_tracers(
-    new_arg: Callable[[AbstractValue], Tracer],
-    in_avals: Sequence[AbstractValue]
+    new_arg: Callable[[AbstractValue | core.AvalQDD], Tracer],
+    in_avals: Sequence[AbstractValue | core.AvalQDD]
   )  -> Sequence[Tracer]:
   # Create input Tracers given input AbstractValues, each of which can contain
   # DeBruijn indices which refer to positions in the input argument list. That
@@ -2604,7 +2607,7 @@ def _input_type_to_tracers(
   # which must refer to positions left of `a`'s.
   in_tracers: list[Tracer] = []
 
-  def _substitute_tracers_in_aval(a: AbstractValue) -> AbstractValue:
+  def _substitute_tracers_in_aval(a):
     if isinstance(a, DShapedArray) and any(type(d) is DBIdx for d in a.shape):
       shape = [in_tracers[d.val] if type(d) is DBIdx else d for d in a.shape]
       return a.update(shape=tuple(shape))

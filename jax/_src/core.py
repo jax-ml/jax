@@ -481,7 +481,7 @@ class Var:
   final_qdd : QuasiDynamicData | None
 
   def __init__(self, aval: AbstractValue, initial_qdd=None, final_qdd=None):
-    assert isinstance(aval, AbstractValue)
+    assert isinstance(aval, AbstractValue), aval
     self.count = next(_var_counter)
     self.aval = aval
     self.initial_qdd = initial_qdd
@@ -1812,6 +1812,9 @@ class MutableQuasiDynamicData:
 
   def update(self, val):
     self.cur_val = val
+
+  def __repr__(self):
+    return f'MutableQuasiDynamicData(init_val={self.init_val}, cur_val={self.cur_val})'
 
 class QuasiDynamicData:
   pass
