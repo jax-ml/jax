@@ -2448,11 +2448,7 @@ def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
   )
-  if jaxlib_version < (0, 6, 3):
-    # TODO: b/425259894 - Remove after 2025-07-24
-    return tpu.iota(out_type, dimensions=dimension)
-  else:
-    return tpu.iota(out_type, dimensions=[dimension])
+  return tpu.iota(out_type, dimensions=[dimension])
 
 
 @register_lowering_rule(lax.gather_p)
@@ -2507,11 +2503,7 @@ def _gather_lowering_rule(
         operand_batching_dims=(1,),
         start_indices_batching_dims=(1,),
     ):
-      if jaxlib_version < (0, 6, 3):
-        # TODO: b/423649694 - Remove on 2025-07-18
-        return tpu.dynamic_gather(x, recovered_indices, 0)
-      else:
-        return tpu.dynamic_gather(x, recovered_indices, [0])
+      return tpu.dynamic_gather(x, recovered_indices, [0])
     if dimension_numbers == lax.GatherDimensionNumbers(
         offset_dims=(),
         collapsed_slice_dims=(1,),
@@ -2519,11 +2511,7 @@ def _gather_lowering_rule(
         operand_batching_dims=(0,),
         start_indices_batching_dims=(0,),
     ):
-      if jaxlib_version < (0, 6, 3):
-        # TODO: b/423649694 - Remove on 2025-07-18
-        return tpu.dynamic_gather(x, recovered_indices, 1)
-      else:
-        return tpu.dynamic_gather(x, recovered_indices, [1])
+      return tpu.dynamic_gather(x, recovered_indices, [1])
   raise NotImplementedError("Unsupported gather")
 
 
