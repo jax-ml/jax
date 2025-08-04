@@ -4749,6 +4749,61 @@ if hp is not None:
       self.assertNotEqual(layout, canonical_layout)
       self.assertEqual(layout.canonicalize(), canonical_layout)
 
+    def test_copy_tiled(self):
+      @hps.composite
+      def strategy(draw):
+        swizzle = draw(hps.sampled_from([16, 32, 64, 128]))
+        dtype = draw(hps.sampled_from([jnp.int32, jnp.int16, jnp.int8]))
+        tiling = (8, swizzle // jnp.dtype(dtype).itemsize)
+        shape = [draw(hps.integers(1, 6)) for t in tiling]
+        while math.prod(shape) % 4:
+          shape[draw(hps.booleans())] *= 2
+        shape = [s * t for s, t in zip(shape, tiling)]
+        to_smem = draw(hps.booleans())
+        return shape, dtype, swizzle, to_smem
+
+      @hp.given(strategy())
+      @hp.example(((48, 64), jnp.int32, 16, False))
+      @hp.example(((48, 64), jnp.int32, 32, False))
+      @hp.example(((48, 64), jnp.int32, 64, False))
+      @hp.example(((48, 64), jnp.int32, 128, False))
+      def run(args):
+        shape, dtype, swizzle, to_smem = args
+        tiling = (8, 8 * swizzle // jnp.iinfo(dtype).bits)
+        def kernel(ctx, src, dst, scratch):
+          smem, barrier = scratch
+          if to_smem:
+            mgpu.copy_tiled(src, smem, swizzle=swizzle)
+            mgpu.commit_shared()
+            ctx.async_copy(
+                src_ref=smem,
+                dst_ref=dst,
+                gmem_transform=mgpu.TileTransform(tiling),
+                swizzle=swizzle,
+            )
+            ctx.await_async_copy(0)
+          else:
+            ctx.async_copy(
+                src_ref=src,
+                dst_ref=smem,
+                gmem_transform=mgpu.TileTransform(tiling),
+                swizzle=swizzle,
+                barrier=barrier,
+            )
+            barrier.wait()
+            mgpu.copy_tiled(smem, dst, swizzle=swizzle)
+
+        x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+        scratch_shape = [
+            jax.ShapeDtypeStruct(mgpu.tile_shape(shape, tiling), dtype),
+            mgpu.TMABarrier(1),
+        ]
+        y = mgpu.as_gpu_kernel(
+            kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+        )(x)
+        np.testing.assert_array_equal(y, x)
+      run()
+
 
 if __name__ == "__main__":
   absltest.main(argv=["python"], testLoader=jtu.JaxTestLoader())
