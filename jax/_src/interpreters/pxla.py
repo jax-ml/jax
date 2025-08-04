@@ -1984,11 +1984,8 @@ def jaxpr_transfer_mem_kinds(jaxpr: core.Jaxpr):
   out = []  # type: ignore
   for eqn in jaxpr.eqns:
     if eqn.primitive is dispatch.device_put_p:
-      for d in eqn.params['devices']:
-        if isinstance(d, sharding_impls.TransferToMemoryKind):
-          out.append(d)
-        elif isinstance(d, core.MemorySpace):
-          out.append(d)  # type: ignore
+      out.extend(d for d in eqn.params['devices']
+                 if isinstance(d, core.MemorySpace))
   for subjaxpr in core.subjaxprs(jaxpr):
     out.extend(jaxpr_transfer_mem_kinds(subjaxpr))
   return out

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+__all__ = ['Space']
+
 from jax._src.core import MemorySpace as _MemorySpace
 
 Space = _MemorySpace

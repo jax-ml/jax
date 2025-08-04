@@ -1221,7 +1221,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "sharding_impls",
     srcs = ["sharding_impls.py"],
-    visibility = ["//jax:internal"] + jax_visibility("sharding_impls"),
+    visibility = ["//jax:internal"],
     deps = [
         ":config",
         ":core",
