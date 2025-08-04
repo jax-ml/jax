@@ -55,10 +55,6 @@ XLADeviceAssignment = tuple[Device, ...]
 # TODO(yashkatariya): Remove this after 3 months of deprecation.
 XLACompatibleSharding = jsharding.Sharding
 
-@dataclasses.dataclass(frozen=True)
-class TransferToMemoryKind:
-  memory_kind: str
-
 
 def hashed_index(x) -> int:
   # This works for both `pjit` indices and `pmap` indices (which might

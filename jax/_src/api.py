@@ -69,8 +69,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.mesh import get_concrete_mesh
-from jax._src.sharding_impls import (
-    PmapSharding, TransferToMemoryKind, PartitionSpec as P, NamedSharding)
+from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
+                                     NamedSharding)
 from jax._src.layout import Format
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
@@ -2508,12 +2508,11 @@ def _check_string_compatible_sharding(s):
 @util.cache(max_size=2048, trace_context_in_key=False)
 def _check_sharding(aval, s):
   if (s is not None and
-      not isinstance(s, (xc.Device, Sharding, Format, TransferToMemoryKind,
-                         core.MemorySpace))):
+      not isinstance(s, (xc.Device, Sharding, Format, core.MemorySpace))):
     raise ValueError(
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
-        " `jax.Device`, `Format` or a pytree of these values. Received"
-        f" invalid value: {s}")
+        " `jax.Device`, `Format`, `jax.memory.Space` or a pytree of these"
+        f" values. Received invalid value: {s}")
 
   if isinstance(aval, core.ShapedArray) and dtypes.is_string_dtype(aval.dtype):
     _check_string_compatible_sharding(s)
@@ -2576,15 +2575,13 @@ def device_put(
   with config.explicit_device_put_scope():
     x_flat, treedef = tree_flatten(x)
     if (device is None or
-        isinstance(device, (xc.Device, Sharding, TransferToMemoryKind,
-                            core.MemorySpace))):
+        isinstance(device, (xc.Device, Sharding, core.MemorySpace))):
       device_flat = [device] * len(x_flat)
     else:
       device_flat = flatten_axes("device_put device", treedef, device)
 
     if (src is None or
-        isinstance(src, (xc.Device, Sharding, TransferToMemoryKind,
-                         core.MemorySpace))):
+        isinstance(src, (xc.Device, Sharding, core.MemorySpace))):
       src_flat = [_infer_src_sharding(src, xf) for xf in x_flat]
     else:
       src_flat = flatten_axes("device_put source", treedef, src)
