@@ -2423,7 +2423,8 @@ CanonicalPrecision = Union[
 
 
 def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
-        preferred_element_type: DTypeLike | None = None) -> Array:
+        preferred_element_type: DTypeLike | None = None, *,
+        out_sharding=None) -> Array:
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
   Wraps XLA's `Dot <https://www.openxla.org/xla/operation_semantics#dot>`_
@@ -2460,7 +2461,8 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
   if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and core.definitely_equal(lhs.shape[-1], rhs.shape[0]):
     return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
                        precision=precision,
-                       preferred_element_type=preferred_element_type)
+                       preferred_element_type=preferred_element_type,
+                       out_sharding=out_sharding)
   else:
     raise TypeError("Incompatible shapes for dot: got {} and {}.".format(
         lhs.shape, rhs.shape))
