@@ -6884,15 +6884,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x, y, z):
-      return jnp.einsum('bthD, bthi, bthj->ijD', x, y, z,
-                        out_sharding=P('data', None, None))
+      out = jnp.einsum('bthD, bthi, bthj->ijD', x, y, z,
+                       out_sharding=P('data', None, None))
+      self.assertEqual(out.aval.sharding.spec, P('data', None, None))
+      return out
 
-    # Errors out on the intermediate einsum: `bthj,bthD->bthjD`
-    # because of a conflict
-    with self.assertRaisesRegex(
-        core.ShardingTypeError,
-        'dot_general operation.*produces an illegally sharded result'):
-      f(arr1, arr2, arr3)
+    out = f(arr1, arr2, arr3)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('data', None, None)))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
                       axis_types=(mesh_lib.AxisType.Explicit,
@@ -8807,6 +8805,15 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out[0].sharding, NamedSharding(mesh, P(None, None)))
     self.assertEqual(out[1].sharding, NamedSharding(mesh, P(None, None)))
     self.assertEqual(out[2].sharding, NamedSharding(mesh, z_spec))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_multi_einsum_intermediate_einsum_auto(self, mesh):
+    AB = jnp.ones((8,16), out_sharding=P('x', 'y'))
+    BC = jnp.ones((16, 4), out_sharding=P('y', None))
+    AC = jnp.ones((8, 4), out_sharding=P('x', None))
+
+    out = jnp.einsum('ab,bc,ac->c', AB, BC, AC, out_sharding=jax.P())
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

@@ -5255,25 +5255,13 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
 
+  if out_sharding is not None:
+    assert isinstance(out_sharding, NamedSharding)
+    return out_sharding
+
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
   rhs_contracting_spec = tuple(rhs.sharding.spec[i] for i in rhs_contracting)
-
-  if out_sharding is not None:
-    assert isinstance(out_sharding, NamedSharding)
-    if out_sharding.spec.unreduced:
-      if lhs_contracting_spec != rhs_contracting_spec:
-        raise core.ShardingTypeError(
-            'lhs and rhs contracting dims should be sharded identically when'
-            ' out_sharding provided to dot_general mentions unreduced_axes.'
-            f' Got {out_sharding=}, {lhs_contracting_spec=},'
-            f' {rhs_contracting_spec=}')
-      if out_sharding.spec.unreduced != frozenset(lhs_contracting_spec):
-        raise core.ShardingTypeError(
-            "out_sharding's unreduced axes should be equal to the contracting"
-            f' specs. Got unreduced axes={out_sharding.spec.unreduced} and'
-            f' contracting spec={lhs_contracting_spec}')
-    return out_sharding
 
   lhs_batch_spec = tuple(lhs.sharding.spec[i] for i in lhs_batch)
   rhs_batch_spec = tuple(rhs.sharding.spec[i] for i in rhs_batch)
@@ -5310,6 +5298,27 @@ def _dot_general_sharding_computation(lhs_spec, rhs_spec,
   rhs_contract_or_batch = tuple(sorted(tuple(rhs_contracting) + tuple(rhs_batch)))
   rhs_tensored_spec = tuple_delete(rhs_spec, rhs_contract_or_batch)
   return NamedSharding(mesh, P(*(batch_spec + lhs_tensored_spec + rhs_tensored_spec)))
+
+
+def _dot_general_unreduced_rule(out_s, lhs, rhs, *, dimension_numbers,
+                                **kwargs):
+  if out_s.spec.unreduced:
+    (lhs_contracting, rhs_contracting), _ = dimension_numbers
+    lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
+    rhs_contracting_spec = tuple(rhs.sharding.spec[i] for i in rhs_contracting)
+    if lhs_contracting_spec != rhs_contracting_spec:
+      raise core.ShardingTypeError(
+          'lhs and rhs contracting dims should be sharded identically when'
+          ' out_sharding provided to dot_general mentions unreduced_axes.'
+          f' Got {out_s=}, {lhs_contracting_spec=},'
+          f' {rhs_contracting_spec=}')
+    if out_s.spec.unreduced != frozenset(lhs_contracting_spec):
+      raise core.ShardingTypeError(
+          "out_sharding's unreduced axes should be equal to the contracting"
+          f' specs. Got unreduced axes={out_s.spec.unreduced} and'
+          f' contracting spec={lhs_contracting_spec}')
+  return out_s
+
 
 def tuple_delete(tup, idx):
   idx_ = set(idx)
@@ -5609,7 +5618,8 @@ dot_general_p = standard_primitive(
     _dot_general_dtype_rule,
     'dot_general',
     sharding_rule=_dot_general_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'dot_general')
+    vma_rule=partial(core.standard_vma_rule, 'dot_general'),
+    unreduced_rule=_dot_general_unreduced_rule,
 )
 
 

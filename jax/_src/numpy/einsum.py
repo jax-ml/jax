@@ -16,6 +16,7 @@ import collections
 from typing import overload, Any
 from collections.abc import Callable, Sequence
 
+from functools import partial
 import numpy as np
 import opt_einsum
 
@@ -26,6 +27,7 @@ from jax._src import dtypes
 from jax._src.export import shape_poly
 from jax._src.lax import lax
 from jax._src.numpy import util
+from jax._src.pjit import auto_axes
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import partition_list, set_module, unzip2
@@ -462,8 +464,8 @@ def _einsum(
     sqez_axes, keep_axes = partition_list(keep, list(range(operand.ndim)))
     return lax.squeeze(operand, sqez_axes), "".join(names[i] for i in keep_axes)
 
-  for i, (operand_indices, contracted_names_set, einstr) in enumerate(contractions):
-    last_contraction = i == len(contractions) - 1
+  num_contractions = len(contractions)
+  for _, (operand_indices, contracted_names_set, einstr) in enumerate(contractions):
     contracted_names = sorted(contracted_names_set)
     input_str, result_names = einstr.split('->')
     input_names = input_str.split(',')
@@ -550,24 +552,25 @@ def _einsum(
                                **k_out_sharding)
       else:
         names = batch_names_str + remaining_lhs_names + remaining_rhs_names
-        if not last_contraction:
-          dot_general_out_sharding = None
-        elif out_sharding is not None and names != result_names:
-          if len(result_names) > len(out_sharding.spec):
-            out_sharding = out_sharding.update(spec=
-                out_sharding.spec._normalized_spec_for_aval(len(result_names)))
-          spec = out_sharding.spec
-          inverse_spec = tuple(spec[result_names.index(name)] for name in names)
-          dot_general_out_sharding = NamedSharding(
-              out_sharding.mesh, spec.update(partitions=inverse_spec))
-        else:
-          dot_general_out_sharding = out_sharding  # type: ignore
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
-        dot_general_out_sharding = ({} if dot_general_out_sharding is None else  # type: ignore
-                                    {'out_sharding': dot_general_out_sharding})
-        operand = _dot_general(lhs, rhs, dimension_numbers, precision,
-                               preferred_element_type=preferred_element_type,
-                               **dot_general_out_sharding)
+        if num_contractions > 1 and out_sharding is not None:
+          out_sharding = (_get_inverse_sharding(out_sharding, names, result_names)
+                          if names != result_names else out_sharding)
+          operand = auto_axes(
+              partial(_dot_general, dimension_numbers=dimension_numbers,
+                      precision=precision,
+                      preferred_element_type=preferred_element_type),
+              out_sharding=out_sharding,
+              axes=out_sharding.mesh.explicit_axes)(lhs, rhs)
+        else:
+          out_sharding = (_get_inverse_sharding(out_sharding, names, result_names)
+                          if out_sharding is not None and names != result_names
+                          else out_sharding)
+          dot_out_sharding = ({} if out_sharding is None else  # type: ignore
+                              {'out_sharding': out_sharding})
+          operand = _dot_general(lhs, rhs, dimension_numbers, precision,
+                                 preferred_element_type=preferred_element_type,
+                                 **dot_out_sharding)
     else:
       raise NotImplementedError  # if this is actually reachable, open an issue!
 
@@ -582,5 +585,14 @@ def _einsum(
 
   return lax._convert_element_type(operands[0], preferred_element_type,
                                    output_weak_type)
+
+def _get_inverse_sharding(out_sharding, names, result_names):
+  if len(result_names) > len(out_sharding.spec):
+    out_sharding = out_sharding.update(spec=
+        out_sharding.spec._normalized_spec_for_aval(len(result_names)))
+  spec = out_sharding.spec
+  inverse_spec = tuple(spec[result_names.index(name)] for name in names)
+  return NamedSharding(out_sharding.mesh, spec.update(partitions=inverse_spec))
+
 
 _poly_einsum_handlers[shape_poly._DimExpr] = shape_poly._einsum_contract_path
