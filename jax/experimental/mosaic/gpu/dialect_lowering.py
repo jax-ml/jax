@@ -99,6 +99,7 @@ _lowerings: dict[str, MlirLoweringRule] = {}
 
 def _undo_conversion_cast(
     ir_value: ir.Value,
+    expected_types: Sequence[ir.Type],
 ) -> tuple[builtin.UnrealizedConversionCastOp, Sequence[ir.Value]]:
   """Undoes the provided unrealized conversion cast.
 
@@ -108,6 +109,9 @@ def _undo_conversion_cast(
   - The original unrealzied conversion cast (useful for extract attributes).
   - The list of operands of the original conversion cast (which are the result
     values of the undone conversion cast).
+
+  The function will verify that the returned values have types that match
+  `expected_types`.
   """
   conversion_cast = cast(
       builtin.UnrealizedConversionCastOp, ir_value.owner.opview  # pytype: disable=attribute-error
@@ -120,8 +124,15 @@ def _undo_conversion_cast(
       [operand.type for operand in conversion_cast.operands],
       conversion_cast.results,
   )
-  if not isinstance(converted_outputs, list):
+  if isinstance(converted_outputs, ir.OpResultList):
+    converted_outputs = list(converted_outputs)
+  elif not isinstance(converted_outputs, list):
     converted_outputs = [converted_outputs]
+
+  for v, t in zip(converted_outputs, expected_types, strict=True):
+    if v.type != t:
+      raise ValueError(f"Expected type {t} for value {v}")
+
   return conversion_cast, converted_outputs
 
 
@@ -153,9 +164,14 @@ def _fragmented_array_from_ir(
     layout: ir.Attribute,
     is_signed: bool | None = None,
 ) -> fa.FragmentedArray:
+  producer_layout_attr = fragmented_array_as_ir.owner.attributes["layout"]
+  producer_layout = layouts.from_layout_attr(producer_layout_attr)
+  vector_ty = ir.VectorType(fragmented_array_as_ir.type)
+  reg_shape = producer_layout.registers_shape(tuple(vector_ty.shape))
+  reg_ty = producer_layout.registers_element_type(vector_ty.element_type)
 
   conversion_cast, converted_outputs = _undo_conversion_cast(
-      fragmented_array_as_ir
+      fragmented_array_as_ir, [reg_ty] * math.prod(reg_shape)
   )
 
   reverse_conversion_cast = converted_outputs[0].owner.opview
@@ -166,7 +182,6 @@ def _fragmented_array_from_ir(
   registers = np.array(list(converted_outputs)).reshape(
     [attr.value for attr in conversion_cast.attributes["registers_shape"]]
   )
-  producer_layout = layouts.from_layout_attr(conversion_cast.attributes["layout"])
 
   if ir.IntegerType.isinstance(conversion_cast.outputs[0].type.element_type):
     is_signed = False if is_signed is None else is_signed
@@ -197,7 +212,9 @@ def unwrap_transformed_memref(
 ) -> ir.Value:
   """Uwraps a memref from an unrealized cast and verifies its transforms."""
 
-  conversion_cast, [result] = _undo_conversion_cast(ref)
+  _, transforms = swizzle_and_transforms_from_transforms_attr(expected_transforms)
+  transformed_type = transformed_smem_ref_type(ref.type, transforms)
+  conversion_cast, [result] = _undo_conversion_cast(ref, [transformed_type])
 
   # Check that the actual transforms match the expected ones.
   if expected_transforms != conversion_cast.attributes["transforms"]:
@@ -1501,8 +1518,8 @@ def _tmem_dealloc_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.TmemDeallocOp
 ) -> Sequence[ir.Value]:
   """Lowering rule for mgpu.TmemDeallocOp."""
-  conversion_cast, cast_operands = _undo_conversion_cast(op.tmem_ref)
-  [tmem_addr] = cast_operands
+  i32 = ir.IntegerType.get_signless(32)
+  conversion_cast, [tmem_addr] = _undo_conversion_cast(op.tmem_ref, [i32])
   collective = ir.BoolAttr(conversion_cast.attributes["collective"]).value
   exact = ir.BoolAttr(conversion_cast.attributes["exact"]).value
   packing = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
@@ -1526,7 +1543,8 @@ def _tmem_ref_from_ir(x: ir.Value, layout: ir.Attribute) -> tcgen05.TMEMRef:
         f"{x} has a memory space {mem_ref_ty.memory_space} that is not TMEM."
     )
 
-  _, [tmem_addr] = _undo_conversion_cast(x)
+  i32 = ir.IntegerType.get_signless(32)
+  _, [tmem_addr] = _undo_conversion_cast(x, [i32])
 
   shape = tuple(mem_ref_ty.shape)
   el_ty = mem_ref_ty.element_type
