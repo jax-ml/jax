@@ -52,7 +52,7 @@ from jax._src.monitoring import record_scalar, record_event_duration_secs, recor
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    NamedSharding, SingleDeviceSharding, TransferToMemoryKind, GSPMDSharding,
+    NamedSharding, SingleDeviceSharding, GSPMDSharding,
     is_single_device_sharding)
 from jax._src.stages import SourceInfo
 import numpy as np
@@ -533,8 +533,7 @@ def _device_put_sharding_impl(x, aval, device, copy):
 def _device_put_impl(
     x, *, device: Device | Sharding | Format | None,
     src: Device | Sharding | Format | None, copy: CopySemantics):
-  if (isinstance(device, (TransferToMemoryKind, core.MemorySpace)) or
-      isinstance(src, (TransferToMemoryKind, core.MemorySpace))):
+  if isinstance(device, core.MemorySpace) or isinstance(src, core.MemorySpace):
     raise ValueError(
         "`jax.memory.Space` argument to jax.device_put can only be used"
         " inside jax.jit. If you are using device_put outside jax.jit, then"
@@ -603,17 +602,11 @@ device_put_p = core.Primitive('device_put')
 device_put_p.multiple_results = True
 device_put_p.def_impl(_batched_device_put_impl)
 
-valid_memory_kinds = {'device', 'pinned_host', 'unpinned_host'}
 
 def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
   out = []
   for x, d in zip(xs, devices):
-    if (isinstance(d, (Sharding, TransferToMemoryKind)) and
-        d.memory_kind is not None):
-      # TODO(yashkatariya): Delete this check after TransferToMemoryKind is
-      # deleted.
-      if d.memory_kind not in valid_memory_kinds:
-        raise ValueError(f'Got invalid memory_kind: {d.memory_kind}')
+    if isinstance(d, Sharding) and d.memory_kind is not None:
       out.append(x.update(memory_space=core.mem_kind_to_space(d.memory_kind)))
     elif isinstance(d, core.MemorySpace):
       out.append(x.update(memory_space=d))
@@ -663,8 +656,8 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   if ctx.module_context.all_default_mem_kind:
     return xs
   def lower(x, device, aval, out_aval):
-    if ((isinstance(device, (Sharding, TransferToMemoryKind)) and
-         device.memory_kind is not None) or isinstance(device, core.MemorySpace)):
+    if ((isinstance(device, Sharding) and device.memory_kind is not None) or
+        isinstance(device, core.MemorySpace)):
       if isinstance(device, Sharding):
         if config.use_shardy_partitioner.value:
           x = mlir.wrap_with_sharding_op(

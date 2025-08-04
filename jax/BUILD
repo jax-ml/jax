@@ -670,7 +670,7 @@ alias(
 alias(
     name = "sharding_impls",
     actual = "//jax/_src:sharding_impls",
-    visibility = [":internal"] + jax_visibility("sharding_impls"),
+    visibility = [":internal"],
 )
 
 alias(
