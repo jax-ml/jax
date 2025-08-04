@@ -93,6 +93,11 @@ def apply_primitive(prim, *args, **params):
     lib.jax_jit.swap_thread_local_state_disable_jit(prev)
   return outs
 
+# TODO(necula): this cache will contain strong references to all
+# Jaxprs in `params` (for higher-order primitives).
+# This is not immediately fixable by using
+# util.multi_weakref_lru_cache, because the `params` (including the Jaxpr)
+# are closed over in the `prim_fun` lambda. Leaving this fix for a later PR.
 @util.cache()
 def xla_primitive_callable(prim: core.Primitive, **params):
   util.test_event("xla_primitive_callable_cache_miss")

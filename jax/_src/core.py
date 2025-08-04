@@ -52,7 +52,8 @@ from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
-                           partition_list, StrictABCMeta, foreach)
+                           partition_list, StrictABCMeta, foreach,
+                           weakref_cache_key_types)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
@@ -199,6 +200,7 @@ class Jaxpr:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
     return jaxpr
 
+weakref_cache_key_types.add(Jaxpr)
 
 def join_effects(*effects: Effects) -> Effects:
   return set().union(*effects) if effects else no_effects
@@ -290,6 +292,9 @@ class ClosedJaxpr:
 
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
+
+weakref_cache_key_types.add(ClosedJaxpr)
+
 
 @curry
 def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
