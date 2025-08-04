@@ -169,6 +169,7 @@ else
     --test_output=errors \
     -- \
     //tests/pallas:ops_test_tpu \
+    //tests/pallas:export_back_compat_pallas_test_tpu \
     //tests/pallas:export_pallas_test_tpu \
     //tests/pallas:tpu_ops_test_tpu \
     //tests/pallas:tpu_pallas_random_test_tpu \
