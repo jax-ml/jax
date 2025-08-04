@@ -32,6 +32,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features:
   * Added `jax.P` which is an alias for `jax.sharding.PartitionSpec`.
   * Added {func}`jax.tree.reduce_associative`.
+  * The {attr}`jax.numpy.ndarray.at` indexing methods now support a `wrap_negative_indices`
+    argument, which defaults to `True` to match the current behavior ({jax-issue}`#29434`).
 
 * Breaking changes:
   * JAX is migrating from GSPMD to Shardy by default. See the
