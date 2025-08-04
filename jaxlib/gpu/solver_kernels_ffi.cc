@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string_view>
 
 #if JAX_GPU_HAVE_64_BIT
@@ -51,8 +50,6 @@ namespace JAX_GPU_NAMESPACE {
 
 namespace ffi = ::xla::ffi;
 
-#if JAX_GPU_HAVE_64_BIT
-
 // Map an FFI buffer element type to the appropriate GPU solver type.
 inline absl::StatusOr<gpuDataType> SolverDataType(ffi::DataType dataType,
                                                   std::string_view func) {
@@ -70,8 +67,6 @@ inline absl::StatusOr<gpuDataType> SolverDataType(ffi::DataType dataType,
           "Unsupported dtype %s in %s", absl::FormatStreamed(dataType), func));
   }
 }
-
-#endif
 
 #define SOLVER_DISPATCH_IMPL(impl, ...)           \
   switch (dataType) {                             \
@@ -1172,6 +1167,117 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(SytrdFfi, SytrdDispatch,
                                   .Ret<ffi::AnyBuffer>()         // tau
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+
+// General eigenvalue decomposition: geev
+
+#if JAX_GPU_HAVE_SOLVER_GEEV
+
+ffi::Error GeevImpl(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                    bool left, bool right, ffi::AnyBuffer a,
+                    ffi::Result<ffi::AnyBuffer> out,
+                    ffi::Result<ffi::AnyBuffer> w,
+                    ffi::Result<ffi::AnyBuffer> vl,
+                    ffi::Result<ffi::AnyBuffer> vr,
+                    ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  auto dataType = a.element_type();
+  if (dataType != w->element_type() || dataType != vl->element_type() ||
+      dataType != vr->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to geev must have the same element type");
+  }
+
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  if (rows != cols) {
+    return ffi::Error::InvalidArgument(
+        "The input matrix to geev must be square");
+  }
+  FFI_RETURN_IF_ERROR(CheckShape(w->dimensions(), {batch, cols}, "w", "geev"));
+  if (left) {
+    FFI_RETURN_IF_ERROR(
+        CheckShape(vl->dimensions(), {batch, rows, cols}, "vl", "geev"));
+  }
+  if (right) {
+    FFI_RETURN_IF_ERROR(
+        CheckShape(vr->dimensions(), {batch, rows, cols}, "vr", "geev"));
+  }
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "geev"));
+
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+  FFI_ASSIGN_OR_RETURN(auto aType, SolverDataType(dataType, "geev"));
+  FFI_ASSIGN_OR_RETURN(auto wType, SolverDataType(w->element_type(), "geev"));
+
+  gpusolverEigMode_t jobvl =
+      left ? GPUSOLVER_EIG_MODE_VECTOR : GPUSOLVER_EIG_MODE_NOVECTOR;
+  gpusolverEigMode_t jobvr =
+      right ? GPUSOLVER_EIG_MODE_VECTOR : GPUSOLVER_EIG_MODE_NOVECTOR;
+
+  gpusolverDnParams_t params;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnCreateParams(&params));
+  std::unique_ptr<gpusolverDnParams, void (*)(gpusolverDnParams_t)>
+      params_cleanup(
+          params, [](gpusolverDnParams_t p) { gpusolverDnDestroyParams(p); });
+
+  size_t workspaceInBytesOnDevice, workspaceInBytesOnHost;
+  JAX_FFI_RETURN_IF_GPU_ERROR(cusolverDnXgeev_bufferSize(
+      handle.get(), params, jobvl, jobvr, cols, aType, /*a=*/nullptr, cols,
+      wType, /*w=*/nullptr, aType, /*vl=*/nullptr, cols, aType, /*vr=*/nullptr,
+      cols, aType, &workspaceInBytesOnDevice, &workspaceInBytesOnHost));
+
+  auto maybe_workspace = scratch.Allocate(workspaceInBytesOnDevice);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error(ffi::ErrorCode::kResourceExhausted,
+                      "Unable to allocate device workspace for syevd");
+  }
+  auto workspaceOnDevice = maybe_workspace.value();
+  auto workspaceOnHost =
+      std::unique_ptr<char[]>(new char[workspaceInBytesOnHost]);
+
+  const char* a_data = static_cast<const char*>(a.untyped_data());
+  char* out_data = static_cast<char*>(out->untyped_data());
+  char* w_data = static_cast<char*>(w->untyped_data());
+  char* vl_data = static_cast<char*>(vl->untyped_data());
+  char* vr_data = static_cast<char*>(vr->untyped_data());
+  int* info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  size_t out_step = cols * cols * ffi::ByteWidth(dataType);
+  size_t w_step = cols * ffi::ByteWidth(w->element_type());
+
+  for (auto i = 0; i < batch; ++i) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXgeev(
+        handle.get(), params, jobvl, jobvr, cols, aType, out_data, cols, wType,
+        w_data, aType, vl_data, cols, aType, vr_data, cols, aType,
+        workspaceOnDevice, workspaceInBytesOnDevice, workspaceOnHost.get(),
+        workspaceInBytesOnHost, info_data));
+    out_data += out_step;
+    w_data += w_step;
+    vl_data += out_step;
+    vr_data += out_step;
+    ++info_data;
+  }
+
+  return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(GeevFfi, GeevImpl,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Attr<bool>("left")
+                                  .Attr<bool>("right")
+                                  .Arg<ffi::AnyBuffer>()         // a
+                                  .Ret<ffi::AnyBuffer>()         // out
+                                  .Ret<ffi::AnyBuffer>()         // w
+                                  .Ret<ffi::AnyBuffer>()         // vl
+                                  .Ret<ffi::AnyBuffer>()         // vr
+                                  .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
+
+#endif  // JAX_GPU_HAVE_SOLVER_GEEV
 
 #undef SOLVER_DISPATCH_IMPL
 #undef SOLVER_BLAS_DISPATCH_IMPL
