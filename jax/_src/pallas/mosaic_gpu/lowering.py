@@ -318,7 +318,9 @@ def _run_scoped_resource_estimator(
       else:
         rs += Resources(tmem_scratch_cols=cols_used)
     elif aval.memory_space == gpu_core.SMEM:
-      rs += Resources(smem_scratch_bytes=aval.size * aval.dtype.itemsize)
+      rs += Resources(
+          smem_scratch_bytes=aval.size * dtypes.bit_width(aval.dtype) // 8
+      )
     elif aval.memory_space == gpu_core.REGS:
       # Don't need to allocate anything.
       pass
@@ -522,7 +524,7 @@ class ModuleContext:
       views.append(view)
 
       off += gpu_core.align_to(
-          math.prod(s.shape) * jnp.dtype(s.dtype).itemsize,
+          math.prod(s.shape) * dtypes.bit_width(jnp.dtype(s.dtype)) // 8,
           gpu_core.SMEM_ALIGNMENT,
       )
     assert off <= self.smem_requested_bytes, "Ran out of scoped SMEM"

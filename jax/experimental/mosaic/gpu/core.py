@@ -29,6 +29,7 @@ import weakref
 
 import itertools
 import jax
+from jax._src import dtypes
 from jax._src import lib
 from jax._src import sharding_impls
 from jax._src import util as jax_util
@@ -301,7 +302,7 @@ class TMEM:
 
 
 def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
-  return math.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
+  return math.prod(shape_dtype.shape) * dtypes.bit_width(dtypes.dtype(shape_dtype.dtype)) // 8
 
 
 class LoweringSemantics(enum.Enum):
