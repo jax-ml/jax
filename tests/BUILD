@@ -586,8 +586,8 @@ jax_py_test(
     srcs = ["jaxpr_util_test.py"],
     deps = [
         "//jax",
-        "//jax:jaxpr_util",
         "//jax:test_util",
+        "//jax/_src:jaxpr_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -1520,7 +1520,7 @@ pytype_test(
     deps = [
         "//jax",
         "//jax:test_util",
-        "//jax:typing",
+        "//jax/_src:typing",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1571,8 +1571,8 @@ jax_py_test(
     srcs = ["lru_cache_test.py"],
     deps = [
         "//jax",
-        "//jax:lru_cache",
         "//jax:test_util",
+        "//jax/_src:lru_cache",
     ] + py_deps([
         "filelock",
         "absl/logging",
@@ -2075,8 +2075,8 @@ jax_py_test(
     srcs = ["sourcemap_test.py"],
     deps = [
         "//jax",
-        "//jax:sourcemap",
         "//jax:test_util",
+        "//jax/_src:sourcemap",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -2125,9 +2125,9 @@ jax_py_test(
     srcs = ["custom_partitioning_sharding_rule_test.py"],
     deps = [
         "//jax",
-        "//jax:custom_partitioning_sharding_rule",
         "//jax:experimental",
         "//jax:test_util",
+        "//jax/_src:custom_partitioning_sharding_rule",
     ] + py_deps("absl/testing"),
 )
 

@@ -673,12 +673,12 @@ py_library_providing_imports_info(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "//jax:api",
-        "//jax:callback",
-        "//jax:config",
-        "//jax:core",
-        "//jax:dtypes",
-        "//jax:earray",
+        "//jax/_src:api",
+        "//jax/_src:callback",
+        "//jax/_src:config",
+        "//jax/_src:core",
+        "//jax/_src:dtypes",
+        "//jax/_src:earray",
     ],
 )
 
