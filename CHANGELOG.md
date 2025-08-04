@@ -431,7 +431,7 @@ This is a patch release of jax 0.4.36. Only "jax" was released at this version.
     for information on migrating to the new API.
   * The `initial` argument to {func}`jax.nn.softmax` and {func}`jax.nn.log_softmax`
     has been removed, after being deprecated in v0.4.27.
-  * Calling `np.asarray` on typed PRNG keys (i.e. keys produced by :func:`jax.random.key`)
+  * Calling `np.asarray` on typed PRNG keys (i.e. keys produced by {func}`jax.random.key`)
     now raises an error. Previously, this returned a scalar object array.
   * The following deprecated methods and functions in {mod}`jax.export` have
     been removed:
@@ -922,7 +922,7 @@ See the 0.4.33 release notes for more details.
     positional-only, following deprecation of the keywords in JAX v0.4.21.
   * Non-array arguments to functions in {mod}`jax.lax.linalg` now must be
     specified by keyword. Previously, this raised a DeprecationWarning.
-  * Array-like arguments are now required in several :func:`jax.numpy` APIs,
+  * Array-like arguments are now required in several {func}`jax.numpy` APIs,
     including {func}`~jax.numpy.apply_along_axis`,
     {func}`~jax.numpy.apply_over_axes`, {func}`~jax.numpy.inner`,
     {func}`~jax.numpy.outer`, {func}`~jax.numpy.cross`,
@@ -1441,7 +1441,7 @@ See the 0.4.33 release notes for more details.
     https://docs.jax.dev/en/latest/deprecation.html
   * JAX now requires NumPy 1.22 or newer as per
     https://docs.jax.dev/en/latest/deprecation.html
-  * Passing optional arguments to {func}`jax.numpy.ndarray.at` by position is
+  * Passing optional arguments to {attr}`jax.numpy.ndarray.at` by position is
     no longer supported, after being deprecated in JAX version 0.4.7.
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
   * The following `jax.Array` methods have been removed, after being deprecated
@@ -1541,7 +1541,7 @@ See the 0.4.33 release notes for more details.
 
 * Deprecations
   * `jax.abstract_arrays` and its contents are now deprecated. See related
-    functionality in :mod:`jax.core`.
+    functionality in {mod}`jax.core`.
   * `jax.numpy.alltrue`: use `jax.numpy.all`. This follows the deprecation
     of `numpy.alltrue` in NumPy version 1.25.0.
   * `jax.numpy.sometrue`: use `jax.numpy.any`. This follows the deprecation
@@ -1686,7 +1686,7 @@ See the 0.4.33 release notes for more details.
     for which it is an alias.
   * The type `jax.interpreters.pxla.ShardedDeviceArray` is deprecated. Use
     `jax.Array` instead.
-  * Passing additional arguments to {func}`jax.numpy.ndarray.at` by position is deprecated.
+  * Passing additional arguments to {attr}`jax.numpy.ndarray.at` by position is deprecated.
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
   * `jax.interpreters.xla.device_put` is deprecated. Please use `jax.device_put`.
   * `jax.interpreters.pxla.device_put` is deprecated. Please use `jax.device_put`.
@@ -1771,7 +1771,7 @@ Changes:
     * `jax.interpreters.pxla.Mesh`: use `jax.sharding.Mesh`.
     * `jax.interpreters.pxla.PartitionSpec`: use `jax.sharding.PartitionSpec`.
 * Breaking Changes
-  * the `initial` argument to reduction functions like :func:`jax.numpy.sum`
+  * the `initial` argument to reduction functions like {func}`jax.numpy.sum`
     is now required to be a scalar, consistent with the corresponding NumPy API.
     The previous behavior of broadcasting the output against non-scalar `initial`
     values was an unintentional implementation detail ({jax-issue}`#14446`).
@@ -2097,7 +2097,7 @@ Changes:
     traces as an alternative to the TensorBoard UI.
   * Added a `jax.named_scope` context manager that adds profiler metadata to
     Python programs (similar to `jax.named_call`).
-  * In scatter-update operations (i.e. :attr:`jax.numpy.ndarray.at`), unsafe implicit
+  * In scatter-update operations (i.e. {attr}`jax.numpy.ndarray.at`), unsafe implicit
     dtype casts are deprecated, and now result in a `FutureWarning`.
     In a future release, this will become an error. An example of an unsafe implicit
     cast is `jnp.zeros(4, dtype=int).at[0].set(1.5)`, in which `1.5` previously was
