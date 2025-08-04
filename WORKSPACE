@@ -22,6 +22,7 @@ python_init_repositories(
     default_python_version = "system",
     local_wheel_dist_folder = "../dist",
     local_wheel_inclusion_list = [
+        "libtpu*",
         "ml_dtypes*",
         "ml-dtypes*",
         "numpy*",
