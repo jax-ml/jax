@@ -72,6 +72,9 @@ jobs:
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
       - name: Install Python dependencies
         run: |
+          if [[ $JAXCI_HERMETIC_PYTHON_VERSION == "3.14" && $OS == "win" ]]; then
+            export JAXCI_PYTHON="C:\\python314\\python.exe"
+          fi
           $JAXCI_PYTHON -m pip install uv~=0.5.30
 
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
